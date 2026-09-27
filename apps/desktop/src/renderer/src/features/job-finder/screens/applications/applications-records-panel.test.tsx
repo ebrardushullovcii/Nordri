@@ -7,7 +7,12 @@ import {
   screen,
   within,
 } from "@testing-library/react";
-import type { ApplicationRecord } from "@unemployed/contracts";
+import {
+  ApplicationRecordSchema,
+  ApplyJobResultSchema,
+  type ApplicationRecord,
+  type ApplyJobResult,
+} from "@unemployed/contracts";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApplicationsRecordsPanel } from "./applications-records-panel";
@@ -25,6 +30,68 @@ import {
 afterEach(cleanup);
 
 describe("ApplicationsRecordsPanel", () => {
+  it.each(["filling", "submitted"] as const)(
+    "announces the current %s result instead of a stale attempt",
+    (state) => {
+      const record = ApplicationRecordSchema.parse({
+        id: "application_latest",
+        jobId: "job_latest",
+        title: "Product Engineer",
+        company: "Acme",
+        status: "ready_for_review",
+        lastActionLabel: "Application created",
+        nextActionLabel: null,
+        lastUpdatedAt: new Date().toISOString(),
+        lastAttemptState: state === "filling" ? null : "paused",
+      });
+      const result = ApplyJobResultSchema.parse({
+        id: "result_latest",
+        runId: "run_latest",
+        jobId: record.jobId,
+        applicationRecordId: record.id,
+        state,
+        summary: "Current application result",
+        detail: "Current application result",
+        startedAt: record.lastUpdatedAt,
+        updatedAt: record.lastUpdatedAt,
+      });
+      render(
+        <MemoryRouter>
+          <ApplicationsRecordsPanel
+            activeFilter="all"
+            applicationRecords={[record]}
+            latestApplyResultByRecordId={new Map([[record.id, result]])}
+            filterCounts={{
+              all: 1,
+              needs_action: 0,
+              in_progress: 0,
+              submitted: 0,
+              manual_only: 0,
+            }}
+            hasAnyApplications
+            onFilterChange={vi.fn()}
+            onSelectRecord={vi.fn()}
+            selectedRecord={null}
+          />
+        </MemoryRouter>,
+      );
+      const row = screen.getByRole("button", {
+        name: "View details for Product Engineer at Acme",
+      });
+      const description = document.getElementById(
+        row.getAttribute("aria-describedby") ?? "",
+      )?.textContent;
+      expect(description).toContain(
+        state === "filling"
+          ? "Preparation attempt Filling in"
+          : "Preparation attempt Applied",
+      );
+      expect(description).not.toMatch(
+        /No apply attempt|Needs follow-up|Ready to send/,
+      );
+    },
+  );
+
   it("titles the preparation workspace after its own view instead of the tracker", () => {
     render(
       <MemoryRouter>
@@ -46,12 +113,14 @@ describe("ApplicationsRecordsPanel", () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByRole("heading", { name: "Preparation" })).toBeTruthy();
+    expect(
+      screen.getByRole("heading", { name: "All applications" }),
+    ).toBeTruthy();
     expect(screen.queryByText("Application tracker")).toBeNull();
-    expect(screen.getByText("No application started yet")).toBeTruthy();
+    expect(screen.getByText("Nothing applied to yet")).toBeTruthy();
     expect(
       screen.getByText(
-        /Shortlisting a job or tailoring its resume does not create an application record.*choose Fill it in/i,
+        /Press Apply on a shortlisted job and it shows up here/i,
       ),
     ).toBeTruthy();
     expect(
@@ -67,7 +136,7 @@ describe("ApplicationsRecordsPanel", () => {
       company: "Acme",
       status: "ready_for_review",
       lastActionLabel: "Resume approved",
-      nextActionLabel: "Fill it in",
+      nextActionLabel: "Apply",
       lastUpdatedAt: "2026-08-09T08:00:00.000Z",
       lastAttemptState: "paused",
       questionSummary: {
@@ -86,7 +155,7 @@ describe("ApplicationsRecordsPanel", () => {
       },
       events: [],
       crm: null,
-    automationMode: "prepare_only" as const,
+      automationMode: "prepare_only" as const,
     };
 
     render(
@@ -125,7 +194,7 @@ describe("ApplicationsRecordsPanel", () => {
           company: "Acme",
           status: "ready_for_review",
           lastActionLabel: "Resume approved",
-          nextActionLabel: "Fill it in",
+          nextActionLabel: "Apply",
           lastUpdatedAt: "2026-08-09T08:00:00.000Z",
           lastAttemptState: "paused",
           questionSummary: {
@@ -144,7 +213,7 @@ describe("ApplicationsRecordsPanel", () => {
           },
           events: [],
           crm: null,
-    automationMode: "prepare_only" as const,
+          automationMode: "prepare_only" as const,
         }) as ApplicationRecord,
     );
 
@@ -215,7 +284,7 @@ describe("ApplicationsRecordsPanel", () => {
       company: "Acme International Technology Group",
       status: "ready_for_review",
       lastActionLabel: "A detailed resume was approved for this application",
-      nextActionLabel: "Fill it in",
+      nextActionLabel: "Apply",
       lastUpdatedAt: "2026-08-09T08:00:00.000Z",
       lastAttemptState: "paused",
       questionSummary: {
@@ -234,7 +303,7 @@ describe("ApplicationsRecordsPanel", () => {
       },
       events: [],
       crm: null,
-    automationMode: "prepare_only" as const,
+      automationMode: "prepare_only" as const,
     };
 
     render(
@@ -314,7 +383,7 @@ describe("ApplicationsRecordsPanel", () => {
       company: "Acme",
       status: "ready_for_review",
       lastActionLabel: "Resume approved",
-      nextActionLabel: "Fill it in",
+      nextActionLabel: "Apply",
       lastUpdatedAt: "2026-08-09T08:00:00.000Z",
       lastAttemptState: "paused",
       questionSummary: {
@@ -333,7 +402,7 @@ describe("ApplicationsRecordsPanel", () => {
       },
       events: [],
       crm: null,
-    automationMode: "prepare_only" as const,
+      automationMode: "prepare_only" as const,
     };
 
     const { container } = render(
@@ -412,7 +481,7 @@ describe("ApplicationsRecordsPanel", () => {
       },
       events: [],
       crm: null,
-    automationMode: "prepare_only" as const,
+      automationMode: "prepare_only" as const,
     } as const;
     const pausedOnBrowserStep = {
       ...baseRecord,
@@ -485,6 +554,38 @@ describe("ApplicationsRecordsPanel", () => {
     expect(within(rows[1]!).getByText("Needs recovery")).toBeTruthy();
   });
 
+  it("filters by the newest five-state result instead of the older record stage", () => {
+    const ready = {
+      id: "application_ready",
+      jobId: "job_ready",
+      automationMode: "prepare_only",
+      nextActionLabel: "Review",
+      status: "ready_for_review",
+      lastAttemptState: "in_progress",
+    } as unknown as ApplicationRecord;
+    const needsYou = {
+      id: "application_question",
+      jobId: "job_question",
+      automationMode: "prepare_only",
+      nextActionLabel: "Answer",
+      status: "ready_for_review",
+      lastAttemptState: "failed",
+    } as unknown as ApplicationRecord;
+
+    expect(
+      matchesApplicationsFilter(ready, "in_progress", "ready_to_send"),
+    ).toBe(false);
+    expect(
+      matchesApplicationsFilter(ready, "needs_action", "ready_to_send"),
+    ).toBe(false);
+    expect(
+      matchesApplicationsFilter(needsYou, "needs_action", "needs_you"),
+    ).toBe(true);
+    expect(
+      matchesApplicationsFilter(needsYou, "in_progress", "needs_you"),
+    ).toBe(false);
+  });
+
   it("keeps a large application list bounded to one page", () => {
     const applicationRecords = Array.from(
       { length: 226 },
@@ -496,7 +597,7 @@ describe("ApplicationsRecordsPanel", () => {
           company: "Acme",
           status: "ready_for_review",
           lastActionLabel: "Resume approved",
-          nextActionLabel: "Fill it in",
+          nextActionLabel: "Apply",
           lastUpdatedAt: "2026-08-09T08:00:00.000Z",
           lastAttemptState: "paused",
           questionSummary: {
@@ -515,7 +616,7 @@ describe("ApplicationsRecordsPanel", () => {
           },
           events: [],
           crm: null,
-    automationMode: "prepare_only" as const,
+          automationMode: "prepare_only" as const,
         }) as ApplicationRecord,
     );
 
@@ -556,7 +657,7 @@ describe("ApplicationsRecordsPanel", () => {
       company: "Acme",
       status: "ready_for_review",
       lastActionLabel: "Resume approved",
-      nextActionLabel: "Fill it in",
+      nextActionLabel: "Apply",
       lastUpdatedAt: "2026-08-09T08:00:00.000Z",
       lastAttemptState: "paused",
       questionSummary: {
@@ -575,7 +676,7 @@ describe("ApplicationsRecordsPanel", () => {
       },
       events: [],
       crm: null,
-    automationMode: "prepare_only" as const,
+      automationMode: "prepare_only" as const,
     };
 
     const { container } = render(
@@ -636,7 +737,7 @@ describe("ApplicationsRecordsPanel", () => {
       },
       events: [],
       crm: null,
-    automationMode: "prepare_only" as const,
+      automationMode: "prepare_only" as const,
     };
 
     render(
@@ -707,7 +808,7 @@ describe("ApplicationsRecordsPanel", () => {
       },
       events: [],
       crm: null,
-    automationMode: "prepare_only" as const,
+      automationMode: "prepare_only" as const,
     };
 
     const { rerender } = render(
@@ -810,7 +911,7 @@ describe("ApplicationsRecordsPanel", () => {
       },
       events: [],
       crm: null,
-    automationMode: "prepare_only" as const,
+      automationMode: "prepare_only" as const,
     };
 
     render(
@@ -910,5 +1011,87 @@ describe("ApplicationsRecordsPanel", () => {
     expect(application.textContent).toContain("Staff Platform Engineer");
     expect(application.textContent).toContain("Northwind");
     expect(application.textContent).toContain("Next: Try again");
+  });
+
+  it("never calls a job held by the person's pause Filling in", () => {
+    const record = {
+      id: "application_held",
+      jobId: "job_held",
+      title: "Frontend Engineer",
+      company: "Dusk",
+      status: "ready_for_review",
+      lastActionLabel: "Waiting its turn in this run.",
+      nextActionLabel: "Review the prepared run approval in Applications.",
+      lastUpdatedAt: "2026-09-01T08:00:00.000Z",
+      lastAttemptState: "in_progress",
+      questionSummary: {
+        total: 0,
+        required: 0,
+        answered: 0,
+        unansweredRequired: 0,
+      },
+      latestBlocker: null,
+      consentSummary: { status: "none", pendingCount: 0 },
+      replaySummary: {
+        sourceInstructionArtifactId: null,
+        lastUrl: null,
+        checkpointCount: 0,
+        evidenceCount: 0,
+      },
+      events: [],
+      crm: null,
+      automationMode: "prepare_only" as const,
+    } as ApplicationRecord;
+    const result = {
+      id: "result_held",
+      runId: "run_1",
+      jobId: "job_held",
+      applicationRecordId: "application_held",
+      state: "planned",
+      startedAt: "2026-09-01T08:00:00.000Z",
+      updatedAt: "2026-09-01T08:00:00.000Z",
+      completedAt: null,
+    } as unknown as ApplyJobResult;
+
+    render(
+      <MemoryRouter>
+        <ApplicationsRecordsPanel
+          activeFilter="all"
+          applicationRecords={[record]}
+          filterCounts={{
+            all: 1,
+            needs_action: 0,
+            in_progress: 1,
+            submitted: 0,
+            manual_only: 0,
+          }}
+          hasAnyApplications
+          latestApplyResultByRecordId={new Map([[record.id, result]])}
+          liveRunLinesByJobId={
+            new Map([
+              [
+                "job_held",
+                "Paused before this application. It carries on when you resume.",
+              ],
+            ])
+          }
+          readApplyRunContext={() => ({
+            state: "running",
+            activityPaused: true,
+            started: true,
+          })}
+          onFilterChange={vi.fn()}
+          onSelectRecord={vi.fn()}
+          selectedRecord={null}
+        />
+      </MemoryRouter>,
+    );
+
+    const application = within(
+      screen.getByRole("list", { name: "Applications" }),
+    ).getByRole("listitem");
+    const badge = application.querySelector('[data-slot="badge"]');
+    expect(badge?.textContent).toBe("Paused");
+    expect(application.textContent).not.toContain("Filling in");
   });
 });

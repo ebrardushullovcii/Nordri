@@ -487,6 +487,29 @@ export function sanitizeDerivedDetail(
 }
 
 export function detectRequestedYearsExperience(request: string): number | null {
+  const numberWords: Record<string, number> = {
+    zero: 0,
+    one: 1,
+    two: 2,
+    three: 3,
+    four: 4,
+    five: 5,
+    six: 6,
+    seven: 7,
+    eight: 8,
+    nine: 9,
+    ten: 10,
+    eleven: 11,
+    twelve: 12,
+    thirteen: 13,
+    fourteen: 14,
+    fifteen: 15,
+    sixteen: 16,
+    seventeen: 17,
+    eighteen: 18,
+    nineteen: 19,
+    twenty: 20,
+  };
   const normalized = request.toLowerCase();
 
   if (
@@ -495,6 +518,19 @@ export function detectRequestedYearsExperience(request: string): number | null {
     )
   ) {
     return null;
+  }
+
+  const correctedRange = normalized.match(
+    /\bfrom\s+(\d{1,2}|[a-z]+)\s+years?(?:\s+of\s+experience)?\s+to\s+(\d{1,2}|[a-z]+)\b/,
+  );
+  if (correctedRange) {
+    const rawNext = correctedRange[2] ?? "";
+    const next = /^\d{1,2}$/u.test(rawNext)
+      ? Number(rawNext)
+      : numberWords[rawNext];
+    if (Number.isInteger(next) && next !== undefined) {
+      return next;
+    }
   }
 
   const trailingInteger = extractTrailingInteger(request);

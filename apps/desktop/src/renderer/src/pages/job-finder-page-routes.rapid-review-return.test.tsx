@@ -86,7 +86,21 @@ function workspace(): JobFinderWorkspaceSnapshot {
     discoverySessions: [],
     sourceAccessPrompts: [],
     browserSession: {},
-    intelligence: { rapidReviewLogs: [] },
+    intelligence: {
+      rapidReviewLogs: [],
+      // Home reads the safeguards block on every render; a parsed snapshot
+      // always carries it (the contract defaults it), so the fixture must too.
+      safeguards: {
+        abnormalFailurePauses: [],
+        companyApplicationCaps: [],
+        contradictoryAnswerDetections: [],
+        listingSignals: [],
+        preparedBatchSampleReviews: [],
+        safeguardDismissals: [],
+        simultaneousApplicationConflicts: [],
+        updatedAt: null,
+      },
+    },
     hydration: { phase: "ready", deferredCollections: [] },
   } as unknown as JobFinderWorkspaceSnapshot;
 }

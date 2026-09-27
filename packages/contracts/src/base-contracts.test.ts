@@ -15,6 +15,8 @@ import {
   ResumeApplicationModeSchema,
   SourceAccessPromptStateSchema,
   WorkModeListSchema,
+  WriteClipboardTextInputSchema,
+  WriteClipboardTextResultSchema,
   annualizeCompensationAmount,
   applicationStatusValues,
   isPreparedApplicationStatus,
@@ -23,6 +25,23 @@ import {
 } from "./index";
 
 describe("contracts base schemas", () => {
+  test("bounds clipboard text and its success result", () => {
+    expect(
+      WriteClipboardTextInputSchema.parse({ text: "https://example.test" }),
+    ).toEqual({
+      text: "https://example.test",
+    });
+    expect(() =>
+      WriteClipboardTextInputSchema.parse({ text: "x".repeat(100_001) }),
+    ).toThrow();
+    expect(WriteClipboardTextResultSchema.parse({ written: true })).toEqual({
+      written: true,
+    });
+    expect(() =>
+      WriteClipboardTextResultSchema.parse({ written: false }),
+    ).toThrow();
+  });
+
   test("supports the full application status list", () => {
     expect(applicationStatusValues).toContain("submitted");
     expect(ApplicationStatusSchema.parse("interview")).toBe("interview");
@@ -42,9 +61,9 @@ describe("contracts base schemas", () => {
       }),
     ).toBe(false);
     expect(isPreparedApplicationStatus({ status: "approved" })).toBe(false);
-    expect(
-      isPreparedApplicationStatus({ status: "ready_for_review" }),
-    ).toBe(true);
+    expect(isPreparedApplicationStatus({ status: "ready_for_review" })).toBe(
+      true,
+    );
     expect(
       isPreparedApplicationStatus({
         status: "approved",

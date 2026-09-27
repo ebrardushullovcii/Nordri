@@ -10,6 +10,7 @@ import {
   createFreshStartCandidateProfile,
   evaluateProfileSetupReadiness,
   deriveProfileSetupState,
+  getProfileSetupLandingStep,
   getProfileSetupReadinessBlockers,
   hasProfileSetupPlaceholderValue,
   normalizeProfileSetupStep,
@@ -982,8 +983,123 @@ describe("contracts profile setup schemas", () => {
       },
     );
 
+    // This profile has no job source, so it is not materially complete.
     expect(state.status).toBe("in_progress");
     expect(state.currentStep).toBe("background");
+    expect(state.completedAt).toBeNull();
+  });
+
+  test("keeps a finished, materially complete setup finished when a later import raises review items", () => {
+    const profile = CandidateProfileSchema.parse({
+      id: "candidate_reimport",
+      firstName: "Alex",
+      lastName: "Vanguard",
+      fullName: "Alex Vanguard",
+      headline: "Senior systems designer",
+      summary: "Builds resilient workflows.",
+      currentLocation: "London, UK",
+      yearsExperience: 10,
+      email: "alex@example.com",
+      baseResume: {
+        id: "resume_1",
+        fileName: "alex.pdf",
+        uploadedAt: "2026-04-11T10:00:00.000Z",
+        textContent: "Alex Vanguard",
+        textUpdatedAt: "2026-04-11T10:00:00.000Z",
+        extractionStatus: "ready",
+      },
+      workEligibility: {
+        authorizedWorkCountries: ["United Kingdom"],
+        requiresVisaSponsorship: false,
+      },
+      targetRoles: ["Principal Designer"],
+      locations: ["Remote"],
+      experiences: [
+        {
+          id: "experience_1",
+          companyName: "Signal Systems",
+          title: "Senior Product Designer",
+          startDate: "2022-01",
+          isCurrent: true,
+          summary: "Owned workflow tooling.",
+        },
+      ],
+    });
+    const searchPreferences = JobSearchPreferencesSchema.parse({
+      ...blankSearchPreferencesFixture,
+      targetRoles: ["Principal Designer"],
+      locations: ["Remote"],
+      workModes: ["remote"],
+      discovery: {
+        historyLimit: 5,
+        targets: [
+          {
+            id: "source_1",
+            label: "Signal Systems careers",
+            startingUrl: "https://signal.example/careers",
+            enabled: true,
+            adapterKind: "auto",
+          },
+        ],
+      },
+    });
+    expect(
+      evaluateProfileSetupReadiness(profile, searchPreferences)
+        .materiallyComplete,
+    ).toBe(true);
+
+    const state = deriveProfileSetupState(profile, searchPreferences, {
+      currentState: {
+        status: "completed",
+        currentStep: "targeting",
+        completedAt: "2026-04-11T10:15:00.000Z",
+        reviewItems: [
+          {
+            id: "review_1",
+            step: "background",
+            target: { domain: "experience", key: "record", recordId: null },
+            label: "Senior Backend Engineer at Acme Payments",
+            reason: "Confirm the imported experience record.",
+            severity: "critical",
+            status: "pending",
+            proposedValue: "Senior Backend Engineer",
+            sourceSnippet: null,
+            sourceCandidateId: null,
+            sourceRunId: null,
+            createdAt: "2026-04-11T10:20:00.000Z",
+            resolvedAt: null,
+          },
+        ],
+        lastResumedAt: null,
+      },
+      now: "2026-04-11T10:30:00.000Z",
+    });
+
+    // Re-importing reopened a finished setup: Profile lost "Profile ready"
+    // and Home asked the person to finish setting up again. The item stays
+    // pending for review in Profile.
+    expect(state.status).toBe("completed");
+    expect(state.completedAt).toBe("2026-04-11T10:15:00.000Z");
+    expect(state.reviewItems[0]?.status).toBe("pending");
+  });
+
+  test("reopens a finished setup once it is no longer materially complete", () => {
+    const state = deriveProfileSetupState(
+      createFreshStartCandidateProfile(),
+      blankSearchPreferencesFixture,
+      {
+        currentState: {
+          status: "completed",
+          currentStep: "targeting",
+          completedAt: "2026-04-11T10:15:00.000Z",
+          reviewItems: [],
+          lastResumedAt: null,
+        },
+        now: "2026-04-11T10:30:00.000Z",
+      },
+    );
+
+    expect(state.status).not.toBe("completed");
     expect(state.completedAt).toBeNull();
   });
 
@@ -1042,16 +1158,145 @@ describe("contracts profile setup schemas", () => {
     expect(readiness.started).toBe(false);
     expect(readiness.materiallyComplete).toBe(false);
     expect(readiness.recommendedStep).toBe("import");
+    // A name with a contact, one job source, and the two answers every
+    // application form asks gate finishing.
     expect(getProfileSetupReadinessBlockers(readiness)).toEqual([
       { id: "identity_contact", step: "essentials" },
-      { id: "background", step: "background" },
-      { id: "eligibility_preferences", step: "targeting" },
-      { id: "work_mode_preference", step: "targeting" },
       { id: "discovery_source", step: "targeting" },
+      { id: "work_eligibility_answers", step: "targeting" },
     ]);
   });
 
-  test("keeps setup incomplete until the work-mode preference is chosen", () => {
+  test("needs both work-eligibility answers, as facts or saved sentences", () => {
+    const withAnswers = (workEligibility: object, answerBank: object = {}) =>
+      evaluateProfileSetupReadiness(
+        CandidateProfileSchema.parse({
+          ...completeProfileFixture,
+          workEligibility: {
+            ...completeProfileFixture.workEligibility,
+            authorizedWorkCountries: [],
+            requiresVisaSponsorship: null,
+            ...workEligibility,
+          },
+          answerBank: { ...emptyAnswerBank, ...answerBank },
+        }),
+        completeSearchPreferencesFixture,
+      ).hasWorkEligibilityAnswers;
+
+    expect(withAnswers({})).toBe(false);
+    expect(withAnswers({ authorizedWorkCountries: ["Germany"] })).toBe(false);
+    expect(withAnswers({ requiresVisaSponsorship: false })).toBe(false);
+    expect(
+      withAnswers({
+        authorizedWorkCountries: ["Germany"],
+        requiresVisaSponsorship: false,
+      }),
+    ).toBe(true);
+    // "Needs sponsorship: yes" is an answer too.
+    expect(
+      withAnswers({
+        authorizedWorkCountries: ["Germany"],
+        requiresVisaSponsorship: true,
+      }),
+    ).toBe(true);
+    expect(
+      withAnswers({}, { workAuthorization: "Yes", visaSponsorship: "No" }),
+    ).toBe(true);
+    // Materially complete is unchanged, so a setup finished before the
+    // question existed is not reopened.
+    expect(
+      evaluateProfileSetupReadiness(
+        CandidateProfileSchema.parse({
+          ...completeProfileFixture,
+          workEligibility: {
+            ...completeProfileFixture.workEligibility,
+            authorizedWorkCountries: [],
+            requiresVisaSponsorship: null,
+          },
+        }),
+        completeSearchPreferencesFixture,
+      ).materiallyComplete,
+    ).toBe(true);
+  });
+
+  test("lands an import on the first step that needs the person, not on an optional suggestion", () => {
+    const importedProfile = CandidateProfileSchema.parse({
+      ...completeProfileFixture,
+      workEligibility: {
+        ...completeProfileFixture.workEligibility,
+        authorizedWorkCountries: [],
+        requiresVisaSponsorship: null,
+      },
+    });
+    const readiness = evaluateProfileSetupReadiness(
+      importedProfile,
+      blankSearchPreferencesFixture,
+    );
+    const optionalProofPoint = ProfileReviewItemSchema.parse({
+      id: "review_proof_point",
+      step: "extras",
+      target: { domain: "proof_point", key: "claim", recordId: null },
+      label: "Proof point",
+      reason: "Imported proof point.",
+      severity: "optional",
+      status: "pending",
+      createdAt: "2026-09-23T10:00:00.000Z",
+    });
+    const recommendedSummary = ProfileReviewItemSchema.parse({
+      id: "review_summary",
+      step: "essentials",
+      target: { domain: "identity", key: "summary", recordId: null },
+      label: "Professional summary",
+      reason: "Confirm the imported summary.",
+      severity: "recommended",
+      status: "pending",
+      createdAt: "2026-09-23T10:00:00.000Z",
+    });
+
+    // Basics is complete; Job targets owns the source and the eligibility
+    // answers, so that is where the import lands.
+    expect(
+      getProfileSetupLandingStep(readiness, [
+        optionalProofPoint,
+        recommendedSummary,
+      ]),
+    ).toBe("targeting");
+
+    // A critical item on an earlier step still wins.
+    const criticalName = ProfileReviewItemSchema.parse({
+      ...recommendedSummary,
+      id: "review_name",
+      target: { domain: "identity", key: "fullName", recordId: null },
+      severity: "critical",
+    });
+    expect(getProfileSetupLandingStep(readiness, [criticalName])).toBe(
+      "essentials",
+    );
+
+    // Nothing blocking at all: Job targets, which owns Finish.
+    expect(
+      getProfileSetupLandingStep(
+        evaluateProfileSetupReadiness(
+          completeProfileFixture,
+          completeSearchPreferencesFixture,
+        ),
+        [optionalProofPoint],
+      ),
+    ).toBe("targeting");
+
+    // No resume and no name yet: the import step.
+    expect(
+      getProfileSetupLandingStep(
+        evaluateProfileSetupReadiness(
+          createFreshStartCandidateProfile(),
+          blankSearchPreferencesFixture,
+        ),
+        [],
+      ),
+    ).toBe("import");
+  });
+
+  test("finishes setup without a work-mode preference; the preference stays a hint", () => {
     const preferencesWithoutWorkMode = {
       ...completeSearchPreferencesFixture,
       workModes: [],
@@ -1062,19 +1307,12 @@ describe("contracts profile setup schemas", () => {
     );
 
     expect(readinessWithoutWorkMode.hasWorkModePreference).toBe(false);
-    expect(readinessWithoutWorkMode.materiallyComplete).toBe(false);
+    expect(readinessWithoutWorkMode.materiallyComplete).toBe(true);
     expect(
       getProfileSetupReadinessBlockers(readinessWithoutWorkMode).map(
         (blocker) => blocker.id,
       ),
-    ).toEqual(["work_mode_preference"]);
-
-    const stateWithoutWorkMode = deriveProfileSetupState(
-      completeProfileFixture,
-      preferencesWithoutWorkMode,
-      { now: "2026-04-11T10:15:00.000Z" },
-    );
-    expect(stateWithoutWorkMode.status).not.toBe("completed");
+    ).toEqual([]);
 
     const readinessWithWorkMode = evaluateProfileSetupReadiness(
       completeProfileFixture,

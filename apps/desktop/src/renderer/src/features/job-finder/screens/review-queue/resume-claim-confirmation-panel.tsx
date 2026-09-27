@@ -6,6 +6,7 @@ import type {
   ResumeDraft,
 } from "@unemployed/contracts";
 import {
+  isBlockingResumeClaimAssessment,
   isResumeClaimAssessmentApprovable,
   isResumeSkillClaimAssessment,
   resumeClaimOwnershipStatement,
@@ -14,27 +15,11 @@ import { Button } from "@renderer/components/ui/button";
 import { StatusBadge } from "../../components/status-badge";
 import { formatResumeClaimLocatorLabel } from "./resume-assistant-proposal-provenance";
 
-/**
- * The exact wording a user must attest. Rendered visibly and submitted
- * verbatim: the domain rejects any other statement, so the UI never paraphrases
- * it and never sends an id in its place.
- */
-const OWNERSHIP_STATEMENT_PROMPT = `Required confirmation: “${resumeClaimOwnershipStatement}”`;
-
-const PANEL_PURPOSE =
-  "These lines go a little past your saved evidence so the resume can clear screening for the first interview. Export stays blocked until you confirm you can stand behind each one. Proof happens in the interview — that call is yours.";
-
-const WORDING_NEEDS_CONFIRMATION_EXPLANATION =
-  "This line goes a little past your saved evidence so the resume can clear screening. Confirm you can stand behind it.";
-
-const CONFIRMED_EXPLANATION =
-  "Your confirmation is recorded for this exact saved wording. Editing the text removes it until you confirm again.";
-
 const STALE_PROJECTION_ERROR =
-  "This wording no longer matches the saved draft. Reload the workspace and try again.";
+  "This wording no longer matches the saved resume. Reload and try again.";
 
 const UNKNOWN_FAILURE_ERROR =
-  "Saving the confirmation failed. Reload the workspace and try again.";
+  "That did not save. Reload the resume and try again.";
 
 /**
  * Mirrors the export gate's matcher exactly: only the same draft, locator
@@ -60,17 +45,60 @@ export function matchResumeClaimConfirmation(input: {
 }
 
 /**
- * Rows the panel can honestly resolve: the current v2 verifier's
- * `confirm_needed` verdicts only. Unsupported claims can never be confirmed,
- * and stale-verifier rows must revalidate first, so neither gets controls.
+ * Every line the person decides on here: the current verifier's
+ * `confirm_needed` claims, kept or not (a kept line stays visible so the
+ * decision is reversible). Stale-verifier rows must revalidate first, so they
+ * never appear. Claims that contradict the evidence stay in the validation
+ * list, where Edit, Restore previous text, and Approve as accurate live.
+ *
+ * One list, on purpose. The same line used to appear twice: once as a
+ * "confirm this wording" row and once as a "Blocks approval" validation row
+ * with a different verb, and people finished one list and were told the
+ * other still blocked them.
  */
-export function listConfirmNeededClaimAssessments(
+/** The start of a flagged line, short enough for a control's name. */
+export function abbreviateClaimText(text: string, maxLength = 60): string {
+  const flattened = text.replace(/\s+/gu, " ").trim();
+  return flattened.length > maxLength
+    ? `${flattened.slice(0, maxLength).replace(/\s+\S*$/u, "")}…`
+    : flattened;
+}
+
+export function listDecidableClaimAssessments(
   claimAssessments: readonly ResumeClaimAssessment[],
 ): ResumeClaimAssessment[] {
   return claimAssessments.filter(
     (assessment) =>
       assessment.status === "confirm_needed" &&
       assessment.verifier === "deterministic_candidate_evidence_v2",
+  );
+}
+
+/** Alias kept for callers that named the subset by its verdict. */
+export const listConfirmNeededClaimAssessments = listDecidableClaimAssessments;
+
+/**
+ * Validation issues that only restate a line in the decision list, so the
+ * issue list does not print them a second time with a different verb.
+ */
+export function isClaimIssueCoveredByDecisionList(
+  issueId: string,
+  claimAssessments: readonly ResumeClaimAssessment[],
+): boolean {
+  const decidable = listDecidableClaimAssessments(claimAssessments);
+  if (decidable.length === 0) {
+    return false;
+  }
+  const confirmationPrefix = "issue_claim_confirmation_";
+  const groundingPrefix = "issue_claim_grounding_";
+  const assessmentId = issueId.startsWith(confirmationPrefix)
+    ? issueId.slice(confirmationPrefix.length)
+    : issueId.startsWith(groundingPrefix)
+      ? issueId.slice(groundingPrefix.length)
+      : null;
+  return (
+    assessmentId !== null &&
+    decidable.some((assessment) => assessment.id === assessmentId)
   );
 }
 
@@ -91,7 +119,7 @@ export type ResumeClaimConfirmationRequest =
     }
   | { intent: "remove"; confirmationId: string };
 
-function findProjectedConfirmNeededAssessment(input: {
+function findProjectedAssessment(input: {
   captured: Pick<
     ResumeClaimAssessment,
     "field" | "sectionId" | "entryId" | "bulletId" | "contentHash"
@@ -147,7 +175,7 @@ export function buildResumeClaimConfirmationCommandInput(input: {
 
   if (request.intent === "add_many") {
     const assessments = request.targets.map((target) =>
-      findProjectedConfirmNeededAssessment({
+      findProjectedAssessment({
         captured: target,
         claimAssessments: input.claimAssessments,
       }),
@@ -177,7 +205,7 @@ export function buildResumeClaimConfirmationCommandInput(input: {
     };
   }
 
-  const assessment = findProjectedConfirmNeededAssessment({
+  const assessment = findProjectedAssessment({
     captured: request.target,
     claimAssessments: input.claimAssessments,
   });
@@ -211,12 +239,12 @@ interface ResumeClaimConfirmationPanelProps {
     input: JobFinderSetResumeClaimConfirmationInput,
   ) => Promise<unknown>;
   /**
-   * The other half of the decision. Listing-asked skills can be confirmed
-   * together; each skill still gets its own confirmation record. Present only
-   * for a line the draft patch schema can remove — a bullet, including every
-   * added core skill.
+   * Removes the line from the resume. Present only for a line the draft
+   * patch schema can remove: a bullet, including every added core skill.
    */
   onRejectClaim?: (assessment: ResumeClaimAssessment) => void;
+  /** Opens the line in the editor so the person can reword it. */
+  onEditClaim?: (assessment: ResumeClaimAssessment) => void;
 }
 
 function buildAddRequestKey(
@@ -235,6 +263,14 @@ function buildAddRequestKey(
   ].join(":");
 }
 
+/**
+ * "Lines to confirm": every line that stretches past the saved evidence, in
+ * one list with two verbs, Keep and Remove. Keeping a line records the
+ * ownership statement for that exact wording (ADR 0018); editing the line
+ * clears it. Skills the job asked for can be kept together; wording lines
+ * are kept one at a time, because each is a separate claim the person is
+ * making.
+ */
 export function ResumeClaimConfirmationPanel(
   props: ResumeClaimConfirmationPanelProps,
 ) {
@@ -246,7 +282,7 @@ export function ResumeClaimConfirmationPanel(
     message: string;
   } | null>(null);
 
-  const assessments = listConfirmNeededClaimAssessments(props.claimAssessments);
+  const assessments = listDecidableClaimAssessments(props.claimAssessments);
 
   if (assessments.length === 0) {
     return null;
@@ -259,6 +295,10 @@ export function ResumeClaimConfirmationPanel(
       confirmations: props.draft.claimConfirmations,
       draftId: props.draft.id,
     }),
+    blocking: isBlockingResumeClaimAssessment({
+      assessment,
+      draft: props.draft,
+    }),
     requestKey: buildAddRequestKey(assessment),
     targetLabel: formatResumeClaimLocatorLabel({
       draft: props.draft,
@@ -268,9 +308,9 @@ export function ResumeClaimConfirmationPanel(
   }));
   const skillRows = rows.filter((row) => row.isSkill);
   const wordingRows = rows.filter((row) => !row.isSkill);
-  const unconfirmedCount = rows.filter((row) => !row.confirmation).length;
-  const unconfirmedSkillTargets = skillRows
-    .filter((row) => !row.confirmation)
+  const undecidedCount = rows.filter((row) => row.blocking).length;
+  const undecidedSkillTargets = skillRows
+    .filter((row) => row.blocking)
     .map((row) => row.assessment);
   const requestInFlight =
     pendingRequestKey !== null || props.isWorkspacePending;
@@ -278,7 +318,7 @@ export function ResumeClaimConfirmationPanel(
   const runRequest = async (
     request: ResumeClaimConfirmationRequest,
     requestKey: string,
-    successMessage: string,
+    successMessage: string | null,
   ) => {
     if (pendingRequestKey !== null || props.isWorkspacePending) {
       return;
@@ -301,7 +341,9 @@ export function ResumeClaimConfirmationPanel(
 
     try {
       await props.onSetResumeClaimConfirmation(commandInput);
-      setFeedback({ kind: "success", message: successMessage });
+      if (successMessage) {
+        setFeedback({ kind: "success", message: successMessage });
+      }
     } catch (error) {
       setFeedback({
         kind: "error",
@@ -315,77 +357,103 @@ export function ResumeClaimConfirmationPanel(
     }
   };
 
-  const renderConfirmControls = (row: (typeof rows)[number]) => (
-    <div className="flex flex-wrap gap-2">
-      {/* Pending keeps the control exposed but inert instead of
-          natively disabled, so focus survives the in-flight request. */}
-      <Button
-        aria-label={`${row.confirmation ? (row.isSkill ? "Undo skill confirmation" : "Undo confirmation") : row.isSkill ? "Confirm this skill" : "Confirm this wording"} · ${row.targetLabel}`}
-        aria-pressed={Boolean(row.confirmation)}
-        disabled={requestInFlight}
-        onClick={() => {
-          void (row.confirmation
-            ? runRequest(
-                {
-                  intent: "remove",
-                  confirmationId: row.confirmation.id,
-                },
-                `remove:${row.confirmation.id}`,
-                `Removed your confirmation · ${row.targetLabel}. Export blocks again until you confirm this wording.`,
-              )
-            : runRequest(
-                {
-                  intent: "add",
-                  target: row.assessment,
-                },
-                row.requestKey,
-                `Recorded your confirmation · ${row.targetLabel}.`,
-              ));
-        }}
-        pending={requestInFlight}
-        size="compact"
-        type="button"
-        variant={row.confirmation ? "secondary" : "primary"}
-      >
-        {row.confirmation
-          ? row.isSkill
-            ? "Undo skill confirmation"
-            : "Undo confirmation"
-          : row.isSkill
-            ? "Confirm this skill"
-            : "Confirm this wording"}
-      </Button>
-      {!row.confirmation && props.onRejectClaim && row.assessment.bulletId ? (
+  const renderControls = (row: (typeof rows)[number]) => {
+    // A screen reader hears the line itself, not only where it sits:
+    // "Keep · Core Skills · Bullet 4" did not say which skill was kept.
+    const lineName = `“${abbreviateClaimText(row.assessment.claimText)}” · ${row.targetLabel}`;
+    return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      {row.confirmation ? (
         <Button
-          aria-label={`Remove this line · ${row.targetLabel}`}
-          data-resume-claim-reject={row.requestKey}
+          aria-label={`Undo keeping ${lineName}`}
           disabled={requestInFlight}
-          onClick={() => props.onRejectClaim?.(row.assessment)}
+          onClick={() => {
+            void runRequest(
+              {
+                intent: "remove",
+                confirmationId: row.confirmation!.id,
+              },
+              `remove:${row.confirmation!.id}`,
+              null,
+            );
+          }}
+          pending={requestInFlight}
           size="compact"
           type="button"
-          variant="secondary"
+          variant="ghost"
         >
-          Remove this line
+          Undo
         </Button>
-      ) : null}
+      ) : (
+        <>
+          {/* Pending keeps the control exposed but inert instead of natively
+              disabled, so focus survives the in-flight request. */}
+          <Button
+            aria-label={`Keep ${lineName}`}
+            data-resume-claim-keep={row.requestKey}
+            disabled={requestInFlight}
+            onClick={() => {
+              void runRequest(
+                { intent: "add", target: row.assessment },
+                row.requestKey,
+                null,
+              );
+            }}
+            pending={requestInFlight}
+            size="compact"
+            type="button"
+            variant="primary"
+          >
+            Keep
+          </Button>
+          {props.onRejectClaim && row.assessment.bulletId ? (
+            <Button
+              aria-label={`Remove ${lineName}`}
+              data-resume-claim-reject={row.requestKey}
+              disabled={requestInFlight}
+              onClick={() => props.onRejectClaim?.(row.assessment)}
+              size="compact"
+              type="button"
+              variant="secondary"
+            >
+              Remove
+            </Button>
+          ) : null}
+          {props.onEditClaim && !row.isSkill ? (
+            <Button
+              aria-label={`Edit ${lineName}`}
+              data-resume-claim-edit={row.requestKey}
+              disabled={requestInFlight}
+              onClick={() => props.onEditClaim?.(row.assessment)}
+              size="compact"
+              type="button"
+              variant="ghost"
+            >
+              Edit
+            </Button>
+          ) : null}
+        </>
+      )}
     </div>
-  );
+    );
+  };
 
   const renderSkillRow = (row: (typeof rows)[number]) => (
     <li
-      className="flex min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-1.5 rounded-(--radius-field) border border-(--surface-panel-border) bg-(--surface-panel) px-2.5 py-1.5 text-(length:--text-small) leading-5"
+      className="flex min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-1 rounded-(--radius-field) border border-(--surface-panel-border) bg-(--surface-panel) px-2.5 py-1.5 text-(length:--text-small) leading-5"
       data-resume-claim-confirmation-row={row.requestKey}
+      data-resume-claim-kept={row.confirmation ? "true" : undefined}
       key={row.assessment.id}
     >
       <div className="flex min-w-0 flex-wrap items-center gap-2">
         <span className="min-w-0 break-words font-medium text-(length:--text-body) leading-6 text-(--text-headline)">
           {row.assessment.claimText}
         </span>
-        <StatusBadge tone={row.confirmation ? "positive" : "critical"}>
-          {row.confirmation ? "Confirmed by you" : "Needs your confirmation"}
-        </StatusBadge>
+        {row.confirmation ? (
+          <StatusBadge tone="positive">Kept</StatusBadge>
+        ) : null}
       </div>
-      {renderConfirmControls(row)}
+      {renderControls(row)}
     </li>
   );
 
@@ -393,6 +461,7 @@ export function ResumeClaimConfirmationPanel(
     <li
       className="grid min-w-0 gap-1.5 rounded-(--radius-field) border border-(--surface-panel-border) bg-(--surface-panel) px-2.5 py-2 text-(length:--text-small) leading-5"
       data-resume-claim-confirmation-row={row.requestKey}
+      data-resume-claim-kept={row.confirmation ? "true" : undefined}
       key={row.assessment.id}
     >
       <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1">
@@ -402,60 +471,46 @@ export function ResumeClaimConfirmationPanel(
             {row.assessment.claimText}
           </span>
         </span>
-        <StatusBadge tone={row.confirmation ? "positive" : "critical"}>
-          {row.confirmation ? "Confirmed by you" : "Needs your confirmation"}
-        </StatusBadge>
+        {row.confirmation ? (
+          <StatusBadge tone="positive">Kept</StatusBadge>
+        ) : null}
       </div>
-      <p className="text-foreground-soft">
-        {row.confirmation
-          ? CONFIRMED_EXPLANATION
-          : WORDING_NEEDS_CONFIRMATION_EXPLANATION}
-      </p>
-      <p className="min-w-0 font-medium text-(--text-headline) [overflow-wrap:anywhere]">
-        {OWNERSHIP_STATEMENT_PROMPT}
-      </p>
-      {renderConfirmControls(row)}
+      {renderControls(row)}
     </li>
   );
 
   return (
     <section
       aria-labelledby="resume-claim-confirmation-heading"
-      className="grid min-w-0 gap-3 px-4 py-3"
+      className="grid min-w-0 gap-3 rounded-(--radius-field) border border-(--warning-border) bg-(--warning-surface)/40 px-4 py-3"
       data-resume-claim-confirmations
       tabIndex={-1}
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3
-          className="font-display text-primary"
+          className="font-display text-(--text-headline)"
           id="resume-claim-confirmation-heading"
         >
-          Claim confirmations
+          Lines to confirm
         </h3>
-        <StatusBadge tone={unconfirmedCount > 0 ? "critical" : "positive"}>
-          {unconfirmedCount > 0
-            ? `${unconfirmedCount} need${unconfirmedCount === 1 ? "s" : ""} your confirmation`
-            : "All confirmed"}
+        <StatusBadge tone={undecidedCount > 0 ? "warning" : "positive"}>
+          {undecidedCount > 0 ? `${undecidedCount} to decide` : "All decided"}
         </StatusBadge>
       </div>
       <p aria-live="polite" role="status">
-        {unconfirmedCount > 0
-          ? PANEL_PURPOSE
-          : "Every listed claim is confirmed by you."}
+        {undecidedCount > 0
+          ? "These lines go a little past what your saved evidence proves, to help this resume clear screening. Keep the ones you can back up in an interview and remove the rest. Keeping a line records that it is accurate and your own."
+          : props.draft.status === "approved" && !props.hasUnsavedChanges
+            ? "Every line is decided. This resume is approved."
+            : "Every line is decided. Approve the resume when you are ready."}
       </p>
-      {unconfirmedCount > 0 ? (
-        <p className="text-(length:--text-small) leading-5 text-foreground-muted">
-          {unconfirmedCount} of {rows.length} still need your confirmation
-          before this resume can be exported.
-        </p>
-      ) : null}
       {props.hasUnsavedChanges ? (
         <p
           className="rounded-(--radius-field) border border-(--warning-border) bg-(--warning-surface) p-3 text-(length:--text-small) leading-5 text-(--warning-text)"
           role="status"
         >
-          These checks describe the last saved draft. Save your edits to refresh
-          claim evidence.
+          This list describes the last saved version. Save your edits to refresh
+          it.
         </p>
       ) : null}
       {feedback ? (
@@ -472,43 +527,32 @@ export function ResumeClaimConfirmationPanel(
       ) : null}
       {skillRows.length > 0 ? (
         <div className="grid min-w-0 gap-2" data-resume-claim-confirm-skills>
-          <div className="grid min-w-0 gap-1">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <h4 className="font-medium text-(--text-headline)">
               Skills the job asked for
-              {skillRows.length > 0 ? ` · ${skillRows.length}` : ""}
             </h4>
-            <p className="text-(length:--text-small) leading-5 text-foreground-soft">
-              Confirm you can back these in the interview, or remove any you do
-              not want on this resume.
-            </p>
-            <p className="min-w-0 font-medium text-(--text-headline) [overflow-wrap:anywhere]">
-              {OWNERSHIP_STATEMENT_PROMPT}
-            </p>
-            {unconfirmedSkillTargets.length >= 2 ? (
-              <div>
-                <Button
-                  aria-label={`Confirm all ${unconfirmedSkillTargets.length} skills`}
-                  data-resume-claim-confirm-all-skills
-                  disabled={requestInFlight}
-                  onClick={() => {
-                    void runRequest(
-                      {
-                        intent: "add_many",
-                        targets: unconfirmedSkillTargets,
-                      },
-                      "add_many:skills",
-                      `Recorded your confirmation for ${unconfirmedSkillTargets.length} skills.`,
-                    );
-                  }}
-                  pending={requestInFlight}
-                  size="compact"
-                  type="button"
-                  variant="primary"
-                  className="w-full sm:w-auto"
-                >
-                  Confirm all {unconfirmedSkillTargets.length} skills
-                </Button>
-              </div>
+            {undecidedSkillTargets.length >= 2 ? (
+              <Button
+                aria-label={`Keep all ${undecidedSkillTargets.length} skills`}
+                data-resume-claim-confirm-all-skills
+                disabled={requestInFlight}
+                onClick={() => {
+                  void runRequest(
+                    {
+                      intent: "add_many",
+                      targets: undecidedSkillTargets,
+                    },
+                    "add_many:skills",
+                    null,
+                  );
+                }}
+                pending={requestInFlight}
+                size="compact"
+                type="button"
+                variant="primary"
+              >
+                Keep all {undecidedSkillTargets.length}
+              </Button>
             ) : null}
           </div>
           <ul className="grid min-w-0 gap-1.5">
@@ -518,19 +562,17 @@ export function ResumeClaimConfirmationPanel(
       ) : null}
       {wordingRows.length > 0 ? (
         <div className="grid min-w-0 gap-2" data-resume-claim-confirm-wording>
-          <div className="grid min-w-0 gap-1">
-            <h4 className="font-medium text-(--text-headline)">
-              Wording that stretches saved evidence
-            </h4>
-            <p className="text-(length:--text-small) leading-5 text-foreground-soft">
-              Confirm each line you can stand behind in the interview.
-            </p>
-          </div>
+          <h4 className="font-medium text-(--text-headline)">
+            Wording that stretches your evidence
+          </h4>
           <ul className="grid min-w-0 gap-1.5">
             {wordingRows.map(renderWordingRow)}
           </ul>
         </div>
       ) : null}
+      <p className="text-(length:--text-tiny) leading-4 text-foreground-muted">
+        Keep records: “{resumeClaimOwnershipStatement}”
+      </p>
     </section>
   );
 }

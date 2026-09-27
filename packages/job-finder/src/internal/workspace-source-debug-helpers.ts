@@ -60,7 +60,6 @@ function shouldReadRouteHintSection(
 
   return (
     trimmedLine.startsWith("[Search]") &&
-    phase !== "site_structure_mapping" &&
     !phase.includes("auth")
   );
 }
@@ -80,7 +79,7 @@ export function buildSourceDebugPhasePacket(
     access_auth_probe:
       "Verify whether the site is reachable, bounded to the hostname, and blocked by auth or consent.",
     site_structure_mapping:
-      "Map the jobs landing path, result list route, and likely job detail path.",
+      "Learn how this site works so a future search can use it well: whether it opens without a sign-in, where the job list lives and the best repeatable way to reach it, which search and filter controls really change results (and which mislead), how job pages are laid out and addressed, and how applying starts. Sample a few postings to prove each point; do not collect jobs for their own sake.",
     search_filter_probe:
       "Find search controls or filters that change the result set in a reliable way.",
     job_detail_validation:
@@ -96,9 +95,10 @@ export function buildSourceDebugPhasePacket(
       "Detect login or manual blockers honestly",
     ],
     site_structure_mapping: [
-      "Find the best repeatable jobs/result path",
-      "Identify a plausible detail path",
-      "Check whether recommendation rows, curated collections, or show-all links lead to reusable job lists",
+      "Say whether the site opens without a sign-in, and what it wants if not",
+      "Find the best repeatable route to the job list and to a job's own page",
+      "Prove at least one search, filter, pagination, or show-all control changes the result set, or say that none could be confirmed",
+      "Say how applying starts (on the site, on the employer's site, or behind an account) without sending anything",
     ],
     search_filter_probe: [
       "Probe the obvious visible search box plus the first visible filters on the homepage and jobs/results route when those surfaces exist",
@@ -221,7 +221,7 @@ export function deriveSourceDebugStartingUrls(
     return [target.startingUrl];
   }
   const synthesizedSearchUrl =
-    phase === "search_filter_probe"
+    phase === "search_filter_probe" || phase === "site_structure_mapping"
       ? buildEvidenceDrivenDiscoverySearchUrl(
           target,
           instructionArtifact,
@@ -362,7 +362,16 @@ export function deriveSourceDebugStartingUrls(
   }
 
   const preferredUrls =
-    phase === "search_filter_probe"
+    phase === "site_structure_mapping"
+      ? [
+          ...collectionUrls,
+          ...landingUrls,
+          target.startingUrl,
+          ...(synthesizedSearchUrl ? [synthesizedSearchUrl] : []),
+          ...searchUrls,
+          ...otherUrls,
+        ]
+      : phase === "search_filter_probe"
       ? synthesizedSearchUrl
         ? [
             synthesizedSearchUrl,
@@ -405,6 +414,21 @@ export function classifySourceDebugAttemptOutcome(
   >,
   phase: SourceDebugPhase,
 ): SourceDebugWorkerAttempt["outcome"] {
+  // The agent's own typed ending comes first. Matching words in a warning
+  // is how "no login required to view" became "Sign-in recommended".
+  const completionMode = result.agentMetadata?.phaseCompletionMode ?? null;
+  if (completionMode === "blocked_auth") {
+    return "blocked_auth";
+  }
+  if (
+    completionMode === "blocked_manual_step" ||
+    completionMode === "blocked_site_protection"
+  ) {
+    return "blocked_manual_step";
+  }
+  if (completionMode === "structured_finish") {
+    return result.warning ? "partial" : "succeeded";
+  }
   const warning = (result.warning ?? "").toLowerCase();
 
   if (warning.includes("login") || warning.includes("session is not ready")) {
@@ -535,6 +559,7 @@ export function getSourceDebugTargetJobCount(phase: SourceDebugPhase): number {
     case "access_auth_probe":
       return 1;
     case "site_structure_mapping":
+      return 3;
     case "search_filter_probe":
       return 1;
     case "job_detail_validation":
@@ -552,14 +577,13 @@ export function resolveSourceDebugPhases(_input: {
 }): SourceDebugPhase[] {
   void _input;
 
-  return [
-    "access_auth_probe",
-    "site_structure_mapping",
-    "search_filter_probe",
-    "job_detail_validation",
-    "apply_path_validation",
-    "replay_verification",
-  ];
+  // One learning run, then one short replay. Six separate phases meant six
+  // agent runs re-learning the same site, six restatements of the same
+  // findings, and a quarter of an hour per check. The agent is told the
+  // whole goal and decides the order (ADR 0023); the replay proves the
+  // guidance it wrote reaches jobs from scratch, which is what "validated"
+  // means.
+  return ["site_structure_mapping", "replay_verification"];
 }
 
 export function getSourceDebugMaxSteps(

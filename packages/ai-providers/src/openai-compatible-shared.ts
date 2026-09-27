@@ -125,6 +125,8 @@ interface CanonicalExperienceEvidence {
 interface ResumeGenerationQualityAccumulator {
   proposedRewriteCount: number;
   acceptedRewriteCount: number;
+  /** Accepted on the model's wording alone, without a matched line of evidence. */
+  unverifiedRewriteCount: number;
   rejectedRewriteCount: number;
   acceptedRewriteCharacters: number;
   acceptedInferredRewriteCount: number;
@@ -144,6 +146,12 @@ interface ResumeRewriteContext {
   allowReasonableInference: boolean;
   allowExactClaims: boolean;
   allowParaphrasedClaims: boolean;
+  /**
+   * Keep a rewrite the verifier could not match to saved evidence, as long
+   * as it states no number, and flag it for the person's review. The
+   * evidence check is advice here, not a gate (ADR 0023).
+   */
+  allowUnverifiedRewrites: boolean;
   maxEvidenceRefsPerBullet: number;
 }
 
@@ -330,6 +338,11 @@ function selectGroundedResumeText(input: {
     maxEvidenceRefsPerBullet: input.rewriteContext.maxEvidenceRefsPerBullet,
   });
 
+  const unverified =
+    !selection &&
+    parsedGenerated !== null &&
+    !isCanonical &&
+    isAcceptableUnverifiedRewrite(parsedGenerated, input.rewriteContext);
   if (parsedGenerated && !isCanonical) {
     input.rewriteContext.quality.proposedRewriteCount += 1;
     if (selection?.kind === "grounded_rewrite") {
@@ -339,6 +352,11 @@ function selectGroundedResumeText(input: {
       if (selection.inferred) {
         input.rewriteContext.quality.acceptedInferredRewriteCount += 1;
       }
+    } else if (unverified) {
+      input.rewriteContext.quality.acceptedRewriteCount += 1;
+      input.rewriteContext.quality.unverifiedRewriteCount += 1;
+      input.rewriteContext.quality.acceptedRewriteCharacters +=
+        parsedGenerated.text.length;
     } else {
       input.rewriteContext.quality.rejectedRewriteCount += 1;
     }
@@ -346,6 +364,7 @@ function selectGroundedResumeText(input: {
 
   return (
     selection?.text ??
+    (unverified && parsedGenerated ? parsedGenerated.text.trim() : null) ??
     normalizeNullableString(input.fallback) ??
     normalizeNullableString(input.canonical)
   );
@@ -402,6 +421,10 @@ function selectGroundedResumeBullets(
         maxEvidenceRefsPerBullet: rewriteContext.maxEvidenceRefsPerBullet,
       });
 
+      const unverified =
+        !selection &&
+        !isCanonical &&
+        isAcceptableUnverifiedRewrite(parsedGenerated, rewriteContext);
       if (!isCanonical) {
         rewriteContext.quality.proposedRewriteCount += 1;
         if (selection?.kind === "grounded_rewrite") {
@@ -414,12 +437,18 @@ function selectGroundedResumeBullets(
           selection.referencedEvidenceText.forEach((text) => {
             replacedCanonicalText.add(normalizeComparableText(text));
           });
+        } else if (unverified) {
+          rewriteContext.quality.acceptedRewriteCount += 1;
+          rewriteContext.quality.unverifiedRewriteCount += 1;
+          rewriteContext.quality.acceptedRewriteCharacters +=
+            parsedGenerated.text.length;
         } else {
           rewriteContext.quality.rejectedRewriteCount += 1;
         }
       }
 
-      return selection ? [selection.text] : [];
+      if (selection) return [selection.text];
+      return unverified ? [parsedGenerated.text.trim()] : [];
     }),
   );
   const remainingFallbackBullets = fallbackBullets.filter(
@@ -845,6 +874,7 @@ export function completeTailoredResumeDraft(
   const quality: ResumeGenerationQualityAccumulator = {
     proposedRewriteCount: 0,
     acceptedRewriteCount: 0,
+    unverifiedRewriteCount: 0,
     rejectedRewriteCount: 0,
     acceptedRewriteCharacters: 0,
     acceptedInferredRewriteCount: 0,
@@ -865,6 +895,12 @@ export function completeTailoredResumeDraft(
       fallbackInput.strategy?.evidenceBoundaries.allowExactClaims ?? true,
     allowParaphrasedClaims:
       fallbackInput.strategy?.evidenceBoundaries.allowParaphrasedClaims ?? true,
+    // Aggressive tailoring is the mode the person chose for heavy rewriting
+    // and reviews line by line; there the evidence check advises. Balanced
+    // tailoring keeps it as the gate.
+    allowUnverifiedRewrites:
+      (fallbackInput.strategy?.tailoringStrength ??
+        fallbackInput.searchPreferences.tailoringMode) === "aggressive",
     maxEvidenceRefsPerBullet:
       fallbackInput.strategy?.evidenceBoundaries.maxEvidenceRefsPerBullet ?? 8,
   };
@@ -1060,16 +1096,38 @@ export function completeTailoredResumeDraft(
   });
 }
 
+/**
+ * A rewrite worth keeping on the model's word alone: plain wording with no
+ * figure in it. Numbers, years, and percentages are the claims a wrong
+ * rewrite does harm with, so those still need a matched line of evidence.
+ */
+function isAcceptableUnverifiedRewrite(
+  parsed: { text: string; evidenceRefs: readonly string[] },
+  context: Pick<ResumeRewriteContext, "allowUnverifiedRewrites">,
+): boolean {
+  const trimmed = parsed.text.trim();
+  return (
+    context.allowUnverifiedRewrites &&
+    // A rewrite that cites evidence and fails the check claimed support it
+    // does not have; that stays rejected. Only wording offered as wording
+    // is kept on the model's word.
+    parsed.evidenceRefs.length === 0 &&
+    trimmed.length > 0 &&
+    trimmed.length <= 600 &&
+    !/\d/u.test(trimmed)
+  );
+}
+
 const DETERMINISTIC_TAILORER_NOTE =
   "Used the built-in deterministic resume tailorer.";
 
 /**
  * The model answered, so the draft is no longer a plain deterministic draft
  * even when every proposal was rejected. Record what actually happened: an
- * `ai` draft when at least one rewrite survived evidence verification, or a
- * deterministic draft with the `provider_output_unverified` reason when the
- * model's proposals could not be grounded. The note list is rewritten in
- * place so the human-readable trail matches the structured provenance.
+ * `ai` draft when the completed model task proposed a grounded rewrite,
+ * shaped the structure while rejected wording stayed out, or deliberately
+ * kept an already-strong draft unchanged. The note list is rewritten in place
+ * so the human-readable trail matches the structured provenance.
  */
 function describeUnconfirmedListingSkills(
   addedListingSkills: readonly string[],
@@ -1093,30 +1151,38 @@ function describeModelDraftProvenance(
     if (deterministicNoteIndex >= 0) {
       notes.splice(deterministicNoteIndex, 1);
     }
+    const unverified = quality.unverifiedRewriteCount;
+    const verified = accepted - unverified;
     const detail =
-      `Created with AI: ${accepted} of ${proposed} proposed ${proposed === 1 ? "rewrite" : "rewrites"} verified against saved evidence; the rest keeps grounded resume wording.` +
+      `Created with AI: ${accepted} of ${proposed} proposed ${proposed === 1 ? "rewrite" : "rewrites"} kept${verified > 0 ? `, ${verified} matched to saved evidence` : ""}${unverified > 0 ? `, ${unverified} in the model's own wording without a matched line of evidence; read ${unverified === 1 ? "that one" : "those"} before approving` : ""}; the rest keeps grounded resume wording.` +
       describeUnconfirmedListingSkills(addedListingSkills);
     notes.unshift(detail);
     return { method: "ai", reason: null, detail };
   }
 
-  // Anything the verifier could not support but that stayed in the draft is
-  // named here too. A line reading "none could be verified" above a skills
-  // list that gained a word from the listing reads as two answers to one
-  // question; the addition is a proposal the person has to settle, so it is
-  // stated in the same breath rather than left to be discovered.
-  const detail =
-    (proposed > 0
-      ? `AI proposed ${proposed} ${proposed === 1 ? "rewrite" : "rewrites"}, but none could be verified against your saved evidence.`
-      : "AI could not produce usable rewrite suggestions this time.") +
-    describeUnconfirmedListingSkills(addedListingSkills);
-  if (!notes.includes(DETERMINISTIC_TAILORER_NOTE)) {
-    notes.unshift(DETERMINISTIC_TAILORER_NOTE);
+  // The model answered and shaped the draft even when every rewrite it
+  // proposed was held back: which roles lead, what is emphasised, which
+  // skills surface. That is not "the built-in generator", and saying so sent
+  // people looking for a setting that does not exist. What is true is that
+  // the wording stayed theirs, and why.
+  if (proposed > 0) {
+    const deterministicNoteIndex = notes.indexOf(DETERMINISTIC_TAILORER_NOTE);
+    if (deterministicNoteIndex >= 0) {
+      notes.splice(deterministicNoteIndex, 1);
+    }
+    const detail =
+      `Created with AI, keeping your own wording: it proposed ${proposed} ${proposed === 1 ? "rewrite" : "rewrites"}, none matched your saved evidence closely enough to use, so the sentences come from your profile and the structure and emphasis from the model.` +
+      describeUnconfirmedListingSkills(addedListingSkills);
+    notes.unshift(detail);
+    return { method: "ai", reason: null, detail };
   }
-  notes.push(detail);
-  return {
-    method: "deterministic",
-    reason: "provider_output_unverified",
-    detail,
-  };
+  const deterministicNoteIndex = notes.indexOf(DETERMINISTIC_TAILORER_NOTE);
+  if (deterministicNoteIndex >= 0) {
+    notes.splice(deterministicNoteIndex, 1);
+  }
+  const detail =
+    "AI completed the review without proposing wording changes, so your wording stayed unchanged." +
+    describeUnconfirmedListingSkills(addedListingSkills);
+  notes.unshift(detail);
+  return { method: "ai", reason: null, detail };
 }

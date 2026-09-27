@@ -323,6 +323,10 @@ export function ProfileCopilotTranscript(props: {
   messages: readonly ProfileCopilotMessage[];
   onApplyPatchGroup?: ((patchGroupId: string) => void) | undefined;
   onRejectPatchGroup?: ((patchGroupId: string) => void) | undefined;
+  /** Sends a saved question that never got an answer, as it was asked. */
+  onAskAgain?:
+    | ((content: string, context: ProfileCopilotContext) => void)
+    | undefined;
   onRetryFailedRequest?: (() => void) | undefined;
   onUndoRevision?: ((revisionId: string) => void) | undefined;
   onUsePrompt: (prompt: string) => void;
@@ -337,6 +341,29 @@ export function ProfileCopilotTranscript(props: {
     () => getUndonePatchGroupIds(revisions),
     [revisions],
   );
+  // A question is saved before the Assistant answers. When the last message
+  // is a question and nothing is working on it, it was never answered: the
+  // app closed mid-answer, or the AI did not answer. It used to vanish, or
+  // sit there with no way to ask it again but retyping it.
+  const lastMessage = props.messages.at(-1) ?? null;
+  const unansweredQuestion =
+    lastMessage?.role === "user" && !props.isPendingHere && !props.busy
+      ? lastMessage
+      : null;
+  // The same question as the failed request is shown once, under the saved
+  // copy, with the reason it failed.
+  const failedRequest =
+    props.failedRequest &&
+    unansweredQuestion &&
+    unansweredQuestion.content.trim() === props.failedRequest.content.trim()
+      ? null
+      : props.failedRequest;
+  const unansweredReason =
+    props.failedRequest &&
+    unansweredQuestion &&
+    unansweredQuestion.content.trim() === props.failedRequest.content.trim()
+      ? props.failedRequest.message
+      : "No answer yet: the Assistant stopped before it replied.";
 
   return (
     <ScrollArea
@@ -421,6 +448,36 @@ export function ProfileCopilotTranscript(props: {
                     </div>
                   ) : null}
                 </div>
+                {unansweredQuestion?.id === message.id ? (
+                  <div
+                    className="flex max-w-full flex-wrap items-center justify-end gap-2 text-(length:--text-tiny)"
+                    data-profile-copilot-unanswered="true"
+                  >
+                    <p
+                      className={
+                        props.failedRequest
+                          ? "text-destructive"
+                          : "text-foreground-soft"
+                      }
+                      role={props.failedRequest ? "alert" : "status"}
+                    >
+                      {unansweredReason}
+                    </p>
+                    {props.onAskAgain ? (
+                      <Button
+                        disabled={props.busy || props.isPendingHere}
+                        onClick={() =>
+                          props.onAskAgain?.(message.content, message.context)
+                        }
+                        size="xs"
+                        type="button"
+                        variant="secondary"
+                      >
+                        Ask again
+                      </Button>
+                    ) : null}
+                  </div>
+                ) : null}
               </article>
             );
           })
@@ -455,30 +512,29 @@ export function ProfileCopilotTranscript(props: {
           </div>
         )}
 
-        {props.failedRequest ? (
+        {failedRequest ? (
           <article
             className="grid justify-items-end gap-1.5"
             data-profile-copilot-failed-turn="true"
           >
             <div className="surface-card-tint max-w-[84%] rounded-2xl border border-destructive/35 px-3 py-2.5 text-sm leading-6 text-foreground">
               <p className="whitespace-pre-wrap break-words">
-                {props.failedRequest.content}
+                {failedRequest.content}
               </p>
             </div>
             <div className="flex max-w-full flex-wrap items-center justify-end gap-2 text-(length:--text-tiny)">
               <p className="text-destructive" role="alert">
-                {props.failedRequest.message}
+                {failedRequest.message}
               </p>
               {props.onRetryFailedRequest ? (
                 <Button
-                  aria-label="Retry failed message"
                   disabled={props.busy || props.isPendingHere}
                   onClick={props.onRetryFailedRequest}
                   size="xs"
                   type="button"
-                  variant="ghost"
+                  variant="secondary"
                 >
-                  Retry
+                  Ask again
                 </Button>
               ) : null}
             </div>
@@ -675,7 +731,7 @@ export function ProfileCopilotCollapsedBubble(props: {
         Assistant
         {badgeLabel ? (
           <span
-            className="absolute right-0.5 top-0.5 size-2 rounded-full border border-background bg-primary"
+            className="size-2 shrink-0 rounded-full border border-background bg-primary"
             title={badgeLabel}
           >
             <span className="sr-only">{badgeLabel}</span>

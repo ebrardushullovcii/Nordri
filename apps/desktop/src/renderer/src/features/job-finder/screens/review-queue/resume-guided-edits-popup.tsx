@@ -113,7 +113,27 @@ export function getGuidedEditsPanelMaxWidth(viewportWidth: number): number {
 const STUDIO_LAUNCHER_SLOT_SELECTOR =
   "[data-resume-studio-assistant-launcher-slot]";
 
-function useStudioLauncherSlot(): HTMLElement | null {
+/**
+ * The studio's dock for the open Assistant: a right-hand column beside the
+ * preview and tools panes (see `ResumeWorkspaceStudioShell`).
+ *
+ * The open panel used to float over the studio, hung below the approval row
+ * and above the tools column's Undo row, which put it in the middle of the
+ * right side, over Save, the template chooser and the editor controls. No
+ * floating position avoids that at every window size and scroll position,
+ * because the tools column runs the full studio height. Docked, the panel
+ * sits where a chat is expected (the right edge, down to the bottom corner)
+ * and the studio narrows to make room: it covers nothing.
+ *
+ * Rendered without a studio shell (no dock slot), the panel falls back to the
+ * floating placement below.
+ */
+export const STUDIO_ASSISTANT_DOCK_SLOT_SELECTOR =
+  "[data-resume-studio-assistant-dock-slot]";
+
+function useStudioLauncherSlot(
+  selector: string = STUDIO_LAUNCHER_SLOT_SELECTOR,
+): HTMLElement | null {
   const [slot, setSlot] = useState<HTMLElement | null>(null);
 
   useLayoutEffect(() => {
@@ -122,9 +142,7 @@ function useStudioLauncherSlot(): HTMLElement | null {
     }
 
     const resolve = () => {
-      const next = document.querySelector<HTMLElement>(
-        STUDIO_LAUNCHER_SLOT_SELECTOR,
-      );
+      const next = document.querySelector<HTMLElement>(selector);
       setSlot((current) => (current === next ? current : next));
     };
 
@@ -137,7 +155,7 @@ function useStudioLauncherSlot(): HTMLElement | null {
     const observer = new MutationObserver(resolve);
     observer.observe(document.body, { childList: true, subtree: true });
     return () => observer.disconnect();
-  }, []);
+  }, [selector]);
 
   return slot;
 }
@@ -151,7 +169,7 @@ export function ResumeGuidedEditsPopup(props: {
   onReloadWorkspace?: () => void;
   /** Whole-draft rewrite, offered here as the single named AI action. */
   onRegenerateDraft?: () => void;
-  /** Reports open/minimized state; the studio reserves no width for it. */
+  /** Reports open/minimized state; the studio docks the open panel. */
   onOpenChange?: (open: boolean) => void;
   openRequestKey?: number;
   onEditProposalWording?: (targetId: string) => void;
@@ -184,6 +202,7 @@ export function ResumeGuidedEditsPopup(props: {
   // The row that owns this screen's actions, resolved from the DOM because the
   // studio shell renders it, not this component's parent.
   const launcherSlot = useStudioLauncherSlot();
+  const dockSlot = useStudioLauncherSlot(STUDIO_ASSISTANT_DOCK_SLOT_SELECTOR);
   // Only the panel's own width follows the window. The studio grid never
   // changes with it, so nothing behind the panel can reflow.
   const [viewportWidth, setViewportWidth] = useState(() =>
@@ -736,12 +755,9 @@ export function ResumeGuidedEditsPopup(props: {
     return null;
   }
 
-  // The Assistant is a floating panel at every width, exactly like the Profile
-  // Copilot. It used to take a real third studio grid column while open, which
-  // squeezed the preview and tools panes and shifted every control in them the
-  // moment it opened. It now rests over the studio instead: the grid behind it
-  // is identical open, minimized and closed.
-  // While collapsed there is no floating surface at all — only the button in
+  // Open, the Assistant docks into the studio's right-hand column (below);
+  // the floating placement is the fallback when no studio shell is mounted.
+  // While collapsed there is no surface at all — only the button in
   // the studio header. Nothing can rest over the tools column at any scroll
   // position because nothing is painted over it.
   if (!isOpen) {
@@ -793,6 +809,74 @@ export function ResumeGuidedEditsPopup(props: {
       : null;
   }
 
+  const minimizeButton = (
+    /* Minimizing is the only way back to the full-width studio, so it may not
+       be the least visible control on the panel. It uses the same bordered
+       treatment every dialog close control uses instead of a bare ghost icon. */
+    <Button
+      aria-controls={panelId}
+      aria-expanded={isOpen}
+      aria-label="Minimize the Assistant"
+      className="border border-(--border-strong) text-foreground"
+      data-resume-guided-edits-minimize
+      onClick={toggleOpen}
+      size="icon-xs"
+      title="Minimize the Assistant"
+      type="button"
+      variant="ghost"
+    >
+      <Minus className="size-3.5" />
+    </Button>
+  );
+  const panelCallbacks = {
+    ...(props.onEditProposalWording
+      ? { onEditProposalWording: props.onEditProposalWording }
+      : {}),
+    ...(props.onReloadWorkspace
+      ? { onReloadWorkspace: props.onReloadWorkspace }
+      : {}),
+    ...(props.onRegenerateDraft
+      ? { onRegenerateDraft: props.onRegenerateDraft }
+      : {}),
+    ...(props.onResolveProposal
+      ? { onResolveProposal: props.onResolveProposal }
+      : {}),
+  };
+
+  if (dockSlot) {
+    // Docked: an ordinary column inside the studio, so it scrolls with nothing,
+    // needs no drag, and a window-owning modal makes it inert together with
+    // the rest of #root.
+    return createPortal(
+      <aside
+        aria-labelledby={titleId}
+        aria-modal="false"
+        className="guided-edits-panel-enter flex h-full min-h-0 w-full min-w-0 flex-col overflow-hidden rounded-(--radius-field) border border-(--surface-panel-border) bg-(--guided-edits-panel-bg)"
+        data-resume-guided-edits-docked="true"
+        data-resume-guided-edits-open="true"
+        data-resume-guided-edits-panel="true"
+        id={panelId}
+        ref={panelRef}
+        role="dialog"
+      >
+        <ResumeAssistantPanel
+          assistantMessages={props.assistantMessages}
+          assistantPending={props.assistantPending}
+          composerId={composerId}
+          draft={props.draft ?? null}
+          headerActions={minimizeButton}
+          isWorkspacePending={props.isWorkspacePending}
+          {...panelCallbacks}
+          onSendAssistantMessage={props.onSendAssistantMessage}
+          titleId={titleId}
+          transcriptViewportRef={transcriptViewportRef}
+          validation={props.validation ?? null}
+        />
+      </aside>,
+      dockSlot,
+    );
+  }
+
   return createPortal(
     <div
       aria-hidden={isCoveredByModal ? "true" : undefined}
@@ -832,26 +916,7 @@ export function ResumeGuidedEditsPopup(props: {
             assistantPending={props.assistantPending}
             composerId={composerId}
             draft={props.draft ?? null}
-            headerActions={
-              /* Minimizing is the only way back to the full-width preview, so
-                 it may not be the least visible control on the panel. It uses
-                 the same bordered treatment every dialog close control uses
-                 instead of a bare ghost icon. */
-              <Button
-                aria-controls={panelId}
-                aria-expanded={isOpen}
-                aria-label="Minimize the Assistant"
-                className="border border-(--border-strong) text-foreground"
-                data-resume-guided-edits-minimize
-                onClick={toggleOpen}
-                size="icon-xs"
-                title="Minimize the Assistant"
-                type="button"
-                variant="ghost"
-              >
-                <Minus className="size-3.5" />
-              </Button>
-            }
+            headerActions={minimizeButton}
             headerLeading={
               <GripHorizontal
                 aria-hidden="true"
@@ -868,18 +933,7 @@ export function ResumeGuidedEditsPopup(props: {
               onPointerUp: finishDrag,
             }}
             isWorkspacePending={props.isWorkspacePending}
-            {...(props.onEditProposalWording
-              ? { onEditProposalWording: props.onEditProposalWording }
-              : {})}
-            {...(props.onReloadWorkspace
-              ? { onReloadWorkspace: props.onReloadWorkspace }
-              : {})}
-            {...(props.onRegenerateDraft
-              ? { onRegenerateDraft: props.onRegenerateDraft }
-              : {})}
-            {...(props.onResolveProposal
-              ? { onResolveProposal: props.onResolveProposal }
-              : {})}
+            {...panelCallbacks}
             onSendAssistantMessage={props.onSendAssistantMessage}
             titleId={titleId}
             transcriptViewportRef={transcriptViewportRef}

@@ -1,4 +1,7 @@
-import type { JobFinderAiClient } from "@unemployed/ai-providers";
+import {
+  createDeterministicJobFinderAiClient,
+  type JobFinderAiClient,
+} from "@unemployed/ai-providers";
 import type {
   CandidateProfile,
   JobSearchPreferences,
@@ -358,6 +361,19 @@ const operationCases = {
     ],
     expectedAfterApply: [["Platform Design"], ["Relocation-required onsite"]],
   },
+  set_resume_approach: {
+    operation: "set_resume_approach",
+    request: "Use Light resumes for new jobs from now on",
+    context: { surface: "profile", section: "preferences" },
+    buildOperation: () => ({
+      operation: "set_resume_approach",
+      value: "conservative",
+    }),
+    // The strength half; the Original half is Settings and has its own
+    // round-trip test in workspace-service.profile-copilot-resume-level.
+    observe: (state) => state.searchPreferences.tailoringMode,
+    expectedAfterApply: "conservative",
+  },
   replace_compensation_preferences_fields: {
     operation: "replace_compensation_preferences_fields",
     request: "My compensation range is now 185k to 230k USD per year",
@@ -475,6 +491,38 @@ const operationCases = {
     }),
     observe: (state) => state.profile.education.map((entry) => entry.id),
     expectedAfterApply: [],
+  },
+  reorder_education_records: {
+    operation: "reorder_education_records",
+    request:
+      "Put my Technical University education before Royal College of Art",
+    context: { surface: "profile", section: "background" },
+    buildSeed: (base) => ({
+      ...base,
+      profile: {
+        ...base.profile,
+        education: [
+          ...base.profile.education,
+          {
+            id: "education_2",
+            schoolName: "Technical University of Munich",
+            degree: "MSc",
+            fieldOfStudy: "Human-Computer Interaction",
+            location: "Munich, DE",
+            startDate: "2010-10",
+            endDate: "2012-08",
+            isDraft: false,
+            summary: null,
+          },
+        ],
+      },
+    }),
+    buildOperation: () => ({
+      operation: "reorder_education_records",
+      orderedRecordIds: ["education_2", "education_1"],
+    }),
+    observe: (state) => state.profile.education.map((entry) => entry.id),
+    expectedAfterApply: ["education_2", "education_1"],
   },
   upsert_certification_record: {
     operation: "upsert_certification_record",
@@ -833,9 +881,295 @@ async function runProfileCopilotOperationCase(
 }
 
 describe("workspaceService profile copilot exhaustive patch operations", () => {
+  test("upsert_experience_record edits the matching role instead of adding a second card and keeps its bullets", async () => {
+    const baseSeed = createSeed();
+    const existing = baseSeed.profile.experiences[0];
+    if (!existing) {
+      throw new Error("seed needs one experience");
+    }
+    const patchGroup: ProfileCopilotPatchGroup =
+      ProfileCopilotPatchGroupSchema.parse({
+        id: "patch_group_upsert_merge",
+        summary: "Set the role location",
+        applyMode: "applied",
+        operations: [
+          {
+            operation: "upsert_experience_record",
+            record: {
+              id: existing.id,
+              location: "Remote, United States",
+            },
+          },
+        ],
+        createdAt: "2026-04-15T09:00:00.000Z",
+      });
+    const { repository, workspaceService } = createWorkspaceServiceHarness({
+      seed: baseSeed,
+      aiClient: createPatchStubAiClient(patchGroup, []),
+    });
+    await workspaceService.getWorkspaceSnapshot();
+
+    const proposal = await workspaceService.proposeProfileCopilotChange(
+      `Set the location of my ${existing.title ?? "role"} role to Remote, United States`,
+      { surface: "profile", section: "experience" },
+    );
+    const proposed = proposal.profileCopilotMessages
+      .flatMap((message) => message.patchGroups ?? [])
+      .at(-1);
+    if (!proposed) {
+      throw new Error("expected a proposed patch group");
+    }
+    await workspaceService.applyProfileCopilotPatchGroup(proposed.id);
+    const state = await readAuthoritativeState(repository);
+    const roles = state.profile.experiences.filter(
+      (entry) => entry.title === existing.title,
+    );
+
+    expect(roles).toHaveLength(1);
+    expect(roles[0]?.id).toBe(existing.id);
+    expect(roles[0]?.location).toBe("Remote, United States");
+    expect(roles[0]?.startDate).toBe(existing.startDate);
+    expect(roles[0]?.isCurrent).toBe(true);
+    expect(roles[0]?.achievements).toEqual(existing.achievements);
+  });
+
+  test("upsert_experience_record honors an explicit current-role change without an end date", async () => {
+    const baseSeed = createSeed();
+    const existing = baseSeed.profile.experiences[0];
+    if (!existing) {
+      throw new Error("seed needs one experience");
+    }
+    const patchGroup = ProfileCopilotPatchGroupSchema.parse({
+      id: "patch_group_end_current_role",
+      summary: "Mark the role as no longer current",
+      applyMode: "applied",
+      operations: [
+        {
+          operation: "upsert_experience_record",
+          record: { id: existing.id, isCurrent: false },
+        },
+      ],
+      createdAt: "2026-04-15T09:00:00.000Z",
+    });
+    const { repository, workspaceService } = createWorkspaceServiceHarness({
+      seed: baseSeed,
+      aiClient: createPatchStubAiClient(patchGroup, []),
+    });
+
+    const proposal = await workspaceService.proposeProfileCopilotChange(
+      "This role is no longer current; I do not know the end date.",
+      { surface: "profile", section: "experience" },
+    );
+    const proposed = proposal.profileCopilotMessages
+      .flatMap((message) => message.patchGroups ?? [])
+      .at(-1);
+    if (!proposed) {
+      throw new Error("expected a proposed patch group");
+    }
+    await workspaceService.applyProfileCopilotPatchGroup(proposed.id);
+    const state = await readAuthoritativeState(repository);
+    const role = state.profile.experiences.find(
+      (entry) => entry.id === existing.id,
+    );
+
+    expect(role?.isCurrent).toBe(false);
+    expect(role?.endDate).toBeNull();
+  });
+
+  test("upsert_experience_record applies explicit clears and preserves omitted fields", async () => {
+    const baseSeed = createSeed();
+    const existing = baseSeed.profile.experiences[0];
+    if (!existing) {
+      throw new Error("seed needs one experience");
+    }
+    const patchGroup = ProfileCopilotPatchGroupSchema.parse({
+      id: "patch_group_clear_experience_fields",
+      summary: "Clear the role location and bullets",
+      applyMode: "applied",
+      operations: [
+        {
+          operation: "upsert_experience_record",
+          record: {
+            id: existing.id,
+            location: null,
+            achievements: [],
+          },
+        },
+      ],
+      createdAt: "2026-04-15T09:00:00.000Z",
+    });
+    const { repository, workspaceService } = createWorkspaceServiceHarness({
+      seed: baseSeed,
+      aiClient: createPatchStubAiClient(patchGroup, []),
+    });
+
+    const proposal = await workspaceService.proposeProfileCopilotChange(
+      "Clear the location and remove every bullet from my current role.",
+      { surface: "profile", section: "experience" },
+    );
+    const proposed = proposal.profileCopilotMessages
+      .flatMap((message) => message.patchGroups ?? [])
+      .at(-1);
+    if (!proposed) {
+      throw new Error("expected a proposed patch group");
+    }
+    await workspaceService.applyProfileCopilotPatchGroup(proposed.id);
+    const state = await readAuthoritativeState(repository);
+    const role = state.profile.experiences.find(
+      (entry) => entry.id === existing.id,
+    );
+
+    expect(role).toEqual({
+      ...existing,
+      location: null,
+      achievements: [],
+    });
+  });
+
+  test("upsert_experience_record materializes defaults for a new partial card", async () => {
+    const baseSeed = createSeed();
+    const patchGroup = ProfileCopilotPatchGroupSchema.parse({
+      id: "patch_group_add_minimal_experience",
+      summary: "Add a role with the known detail",
+      applyMode: "applied",
+      operations: [
+        {
+          operation: "upsert_experience_record",
+          record: { id: null, title: "Volunteer mentor" },
+        },
+      ],
+      createdAt: "2026-04-15T09:00:00.000Z",
+    });
+    const { repository, workspaceService } = createWorkspaceServiceHarness({
+      seed: baseSeed,
+      aiClient: createPatchStubAiClient(patchGroup, []),
+    });
+
+    const proposal = await workspaceService.proposeProfileCopilotChange(
+      "Add a Volunteer mentor role; that is the only detail I know.",
+      { surface: "profile", section: "experience" },
+    );
+    const proposed = proposal.profileCopilotMessages
+      .flatMap((message) => message.patchGroups ?? [])
+      .at(-1);
+    if (!proposed) {
+      throw new Error("expected a proposed patch group");
+    }
+    await workspaceService.applyProfileCopilotPatchGroup(proposed.id);
+    const state = await readAuthoritativeState(repository);
+    const role = state.profile.experiences.find(
+      (entry) => entry.title === "Volunteer mentor",
+    );
+
+    expect(role?.id).toEqual(expect.stringMatching(/^experience_/));
+    expect(role).toEqual(
+      expect.objectContaining({
+        title: "Volunteer mentor",
+        companyName: null,
+        location: null,
+        isCurrent: false,
+        achievements: [],
+      }),
+    );
+  });
+
+  test.each([
+    {
+      operation: {
+        operation: "replace_identity_fields" as const,
+        value: { summary: "Synced from the legacy summary field." },
+      },
+      expected: "Synced from the legacy summary field.",
+    },
+    {
+      operation: {
+        operation: "replace_professional_summary_fields" as const,
+        value: { fullSummary: "Synced from the editable summary field." },
+      },
+      expected: "Synced from the editable summary field.",
+    },
+  ])(
+    "keeps the two persisted professional summary fields aligned for $operation.operation",
+    async ({ operation, expected }) => {
+      const patchGroup = ProfileCopilotPatchGroupSchema.parse({
+        id: `patch_group_${operation.operation}_summary_sync`,
+        summary: "Update the professional summary",
+        applyMode: "applied",
+        operations: [operation],
+        createdAt: "2026-04-15T09:00:00.000Z",
+      });
+      const { repository, workspaceService } = createWorkspaceServiceHarness({
+        seed: createSeed(),
+        aiClient: createPatchStubAiClient(patchGroup, []),
+      });
+
+      const proposal = await workspaceService.proposeProfileCopilotChange(
+        "Update my professional summary",
+        { surface: "profile", section: "basics" },
+      );
+      const proposed = proposal.profileCopilotMessages
+        .flatMap((message) => message.patchGroups ?? [])
+        .at(-1);
+      if (!proposed) throw new Error("expected a proposed patch group");
+      await workspaceService.applyProfileCopilotPatchGroup(proposed.id);
+      const state = await readAuthoritativeState(repository);
+
+      expect(state.profile.summary).toBe(expected);
+      expect(state.profile.professionalSummary.fullSummary).toBe(expected);
+    },
+  );
+
   for (const [operation, testCase] of caseEntries) {
     test(`${operation}: chat proposal stays review-only, applies, persists, and undoes`, async () => {
       await runProfileCopilotOperationCase(testCase);
     });
   }
+
+  test("applies the owner's exact compound experience and monthly salary correction through the real conversation path", async () => {
+    const request =
+      "I want to correct my experience from six years to seven and update expected salary: minimum 2,000 euro per month but really want 3,000.";
+    const baseSeed = createSeed();
+    const { repository, workspaceService } = createWorkspaceServiceHarness({
+      aiClient: createDeterministicJobFinderAiClient(),
+      seed: {
+        ...baseSeed,
+        profile: {
+          ...baseSeed.profile,
+          yearsExperience: 6,
+        },
+        searchPreferences: {
+          ...baseSeed.searchPreferences,
+          compensation: {
+            minimum: null,
+            maximum: null,
+            interval: "year",
+            currency: "EUR",
+            currencyStatus: "explicit",
+          },
+          minimumSalaryUsd: null,
+          targetSalaryUsd: null,
+        },
+      },
+    });
+
+    const snapshot = await workspaceService.sendProfileCopilotMessage(request, {
+      surface: "profile",
+      section: "preferences",
+    });
+    const state = await readAuthoritativeState(repository);
+
+    expect(snapshot.profileCopilotMessages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ role: "user", content: request }),
+      ]),
+    );
+    expect(state.profile.yearsExperience).toBe(7);
+    expect(state.searchPreferences.compensation).toEqual({
+      minimum: 2000,
+      maximum: 3000,
+      interval: "month",
+      currency: "EUR",
+      currencyStatus: "explicit",
+    });
+  });
 });

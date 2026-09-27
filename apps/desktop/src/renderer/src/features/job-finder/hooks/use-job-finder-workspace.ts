@@ -18,10 +18,12 @@ import type {
   JobFinderApplyRunActionInput,
   JobFinderApplyRunDetailsQuery,
   JobFinderApplicationStartTarget,
+  JobFinderPreparedApplicationPageInput,
   JobFinderOpenBrowserSessionInput,
   JobFinderSetResumeClaimConfirmationInput,
   JobFinderSetWorkHistoryReviewAcknowledgmentInput,
   JobFinderSettings,
+  JobFinderSearchRequest,
   JobFinderWorkspaceSnapshot,
   JobFinderWorkspaceEntityMutation,
   JobFinderWorkspaceSyncResult,
@@ -48,6 +50,7 @@ import type {
   ProjectGroupedManualAnswerCommand,
   ResumeImportProgressEvent,
   ResumeApplicationMode,
+  TailoringMode,
   ResumePdfExportIntent,
   ResumeTimelineRepairAction,
   ResumeDraft,
@@ -57,6 +60,7 @@ import type {
   SourceDebugProgressEvent,
   UpdateApplicationDefaultsInput,
   UpdateWorkspaceBehaviorInput,
+  UpdateAiBehaviorInput,
   UserActionCommandInput,
 } from "@unemployed/contracts";
 import type { JobFinderShellActions } from "../lib/job-finder-types";
@@ -230,7 +234,17 @@ export function useJobFinderWorkspace(): JobFinderWorkspaceState {
         assertWorkspaceHydrated();
       }
       const sequence = beginWorkspaceRequest();
-      const workspace = await action();
+      let workspace: JobFinderWorkspaceSnapshot;
+      try {
+        workspace = await action();
+      } catch (error) {
+        // Main often records the failure before it throws (a resume run that
+        // failed saves a failed asset with its cause). Without a re-sync the
+        // screen kept its pre-action state, "No resume yet" with "Create the
+        // resume", until the window was reloaded.
+        scheduleConvergenceFetch();
+        throw error;
+      }
       if (!isCurrentWorkspaceRequest(sequence)) {
         scheduleConvergenceFetch();
         return workspaceRef.current ?? workspace;
@@ -260,6 +274,7 @@ export function useJobFinderWorkspace(): JobFinderWorkspaceState {
       beginWorkspaceRequest,
       commitWorkspace,
       isCurrentWorkspaceRequest,
+      scheduleConvergenceFetch,
     ],
   );
 
@@ -534,6 +549,13 @@ export function useJobFinderWorkspace(): JobFinderWorkspaceState {
             revisionId,
           ),
         ),
+      undoResumeAssistantEdit: (jobId: string, revisionId: string) =>
+        runWorkspaceAction(() =>
+          window.unemployed.jobFinder.undoResumeAssistantEdit(
+            jobId,
+            revisionId,
+          ),
+        ),
       exportResumePdf: (
         jobId: string,
         intent: ResumePdfExportIntent = "download",
@@ -602,9 +624,13 @@ export function useJobFinderWorkspace(): JobFinderWorkspaceState {
         ),
       startAutoApplyQueueRun: (
         jobIds: JobFinderApplyQueueActionInput["jobIds"],
+        applicationAutomationMode?: JobFinderApplyQueueActionInput["applicationAutomationMode"],
       ) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.startAutoApplyQueueRun(jobIds),
+          window.unemployed.jobFinder.startAutoApplyQueueRun(
+            jobIds,
+            applicationAutomationMode,
+          ),
         ),
       approveApplyRun: (input: JobFinderApplyRunActionInput) =>
         runWorkspaceAction(() =>
@@ -622,9 +648,19 @@ export function useJobFinderWorkspace(): JobFinderWorkspaceState {
         runWorkspaceAction(() =>
           window.unemployed.jobFinder.revokeApplyRunApproval(input),
         ),
+      focusPreparedApplicationPage: (
+        input: JobFinderPreparedApplicationPageInput,
+      ) =>
+        runWorkspaceAction(() =>
+          window.unemployed.jobFinder.focusPreparedApplicationPage(input),
+        ),
       submitPreparedApplication: (input: { jobId: string }) =>
         runWorkspaceAction(() =>
           window.unemployed.jobFinder.submitPreparedApplication(input),
+        ),
+      sendPreparedApplications: (input: { jobIds: string[] }) =>
+        runWorkspaceAction(() =>
+          window.unemployed.jobFinder.sendPreparedApplications(input),
         ),
       mutateApplicationCrm: (input: ApplicationCrmMutationInput) =>
         runWorkspaceAction(() =>
@@ -644,25 +680,30 @@ export function useJobFinderWorkspace(): JobFinderWorkspaceState {
         ),
       exportApplicationCrm: (input: ApplicationCrmExportInput) =>
         window.unemployed.jobFinder.exportApplicationCrm(input),
-      importResume: () => {
+      importResume: (options?: { retryInterrupted?: boolean }) => {
         const requestSequence = ++resumeImportRequestSequenceRef.current;
         setWorkspaceState((currentState) =>
           currentState.status === "ready"
             ? { ...currentState, resumeImportProgress: null }
             : currentState,
         );
-        const importPromise = runWorkspaceAction(() =>
-          window.unemployed.jobFinder.importResume((progress) => {
-            if (resumeImportRequestSequenceRef.current !== requestSequence) {
-              return;
-            }
+        const onImportProgress = (progress: ResumeImportProgressEvent) => {
+          if (resumeImportRequestSequenceRef.current !== requestSequence) {
+            return;
+          }
 
-            setWorkspaceState((currentState) =>
-              currentState.status === "ready"
-                ? { ...currentState, resumeImportProgress: progress }
-                : currentState,
-            );
-          }),
+          setWorkspaceState((currentState) =>
+            currentState.status === "ready"
+              ? { ...currentState, resumeImportProgress: progress }
+              : currentState,
+          );
+        };
+        const importPromise = runWorkspaceAction(() =>
+          options?.retryInterrupted === true
+            ? window.unemployed.jobFinder.importResume(onImportProgress, {
+                retryInterrupted: true,
+              })
+            : window.unemployed.jobFinder.importResume(onImportProgress),
         );
 
         return importPromise.finally(() => {
@@ -689,11 +730,13 @@ export function useJobFinderWorkspace(): JobFinderWorkspaceState {
       setJobResumeApplicationMode: (
         jobId: string,
         resumeApplicationMode: ResumeApplicationMode,
+        resumeTailoringMode?: TailoringMode | null,
       ) =>
         runWorkspaceEntityMutation({
           type: "set_job_resume_application_mode",
           jobId,
           resumeApplicationMode,
+          ...(resumeTailoringMode === undefined ? {} : { resumeTailoringMode }),
         }),
       refreshWorkspace: syncWorkspace,
       resetWorkspace: () =>
@@ -701,9 +744,14 @@ export function useJobFinderWorkspace(): JobFinderWorkspaceState {
       runAgentDiscovery: (
         onProgress?: (event: DiscoveryActivityEvent) => void,
         targetId?: string,
+        searchRequest?: JobFinderSearchRequest,
       ) =>
         runWorkspaceResultAction(() =>
-          window.unemployed.jobFinder.runAgentDiscovery(onProgress, targetId),
+          window.unemployed.jobFinder.runAgentDiscovery(
+            onProgress,
+            targetId,
+            searchRequest,
+          ),
         ),
       cancelAgentDiscovery: (input) =>
         runWorkspaceAction(() =>
@@ -918,6 +966,10 @@ export function useJobFinderWorkspace(): JobFinderWorkspaceState {
       updateWorkspaceBehavior: (input: UpdateWorkspaceBehaviorInput) =>
         runWorkspaceAction(() =>
           window.unemployed.jobFinder.updateWorkspaceBehavior(input),
+        ),
+      updateAiBehavior: (input: UpdateAiBehaviorInput) =>
+        runWorkspaceAction(() =>
+          window.unemployed.jobFinder.updateAiBehavior(input),
         ),
       updateAppearanceTheme: (appearanceTheme: AppearanceTheme) =>
         runWorkspaceAction(() =>

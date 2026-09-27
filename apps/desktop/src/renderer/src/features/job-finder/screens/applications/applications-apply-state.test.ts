@@ -57,11 +57,18 @@ describe("where an application stands", () => {
   it("never calls an unconfirmed attempt submitted, and never offers a retry", () => {
     const presentation = getApplicationApplyPresentation({
       record: record(),
-      applyResult: applyResult("outcome_uncertain"),
+      applyResult: {
+        ...applyResult("outcome_uncertain"),
+        state: "awaiting_review",
+        blockerReason: null,
+      } as ApplyJobResult,
     });
     expect(presentation.state).toBe("submitted_unverified");
-    expect(presentation.label).toBe("Sent — unconfirmed");
-    expect(presentation.summary).toContain("will not be sent again");
+    expect(presentation.label).toBe("Needs you");
+    expect(presentation.summary).toContain("could not confirm whether");
+    expect(presentation.summary).toContain(
+      "Check the employer site before sending it again",
+    );
     expect(presentation.summary).not.toMatch(/try again|retry/iu);
     expect(presentation.nextStep).toContain("Northwind Tools");
   });
@@ -106,6 +113,44 @@ describe("where an application stands", () => {
       }),
     });
     expect(presentation.state).toBe("paused");
+  });
+
+  it("lets a blocker-free resumed review result replace a stale paused record", () => {
+    const presentation = getApplicationApplyPresentation({
+      record: record({
+        lastAttemptState: "paused",
+        automationMode: "confirm_before_submit",
+      }),
+      applyResult: {
+        ...applyResult(null),
+        state: "awaiting_review",
+        blockerReason: null,
+      } as ApplyJobResult,
+    });
+
+    expect(presentation.state).toBe("awaiting_your_review");
+    expect(presentation.nextStep).toBe("Review it and send it");
+  });
+
+  it("keeps a current review result with a person blocker paused", () => {
+    const presentation = getApplicationApplyPresentation({
+      record: record({
+        lastAttemptState: "paused",
+        automationMode: "confirm_before_submit",
+        latestBlocker: {
+          code: "site_login_required",
+          summary: "The site wants you signed in first.",
+        },
+      }),
+      applyResult: {
+        ...applyResult(null),
+        state: "awaiting_review",
+        blockerReason: "auth_required",
+      } as ApplyJobResult,
+    });
+
+    expect(presentation.state).toBe("paused");
+    expect(presentation.summary).toBe("The site wants you signed in first.");
   });
 
   it("an unconfirmed send outranks a local pause", () => {

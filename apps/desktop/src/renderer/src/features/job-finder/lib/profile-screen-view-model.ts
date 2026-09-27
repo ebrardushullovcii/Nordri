@@ -159,6 +159,13 @@ export function buildProfileScreenViewModel(
           "Manage the public careers pages and boards Job Finder can search.",
         progress: sectionProgress.sources,
       },
+      {
+        id: "files",
+        label: "Files",
+        description:
+          "Extra files Job Finder may attach when an application asks for them.",
+        progress: sectionProgress.files,
+      },
     ],
   };
 }
@@ -299,5 +306,8 @@ function buildProfileSectionProgress(
 
   const sources = buildJobSourceProgress(input.discoveryTargets);
 
-  return { basics, experience, background, preferences, sources };
+  // Files are never required and never counted: a portfolio is not progress.
+  const files = { filled: 0, percent: 0, total: 0 };
+
+  return { basics, experience, background, preferences, sources, files };
 }

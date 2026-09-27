@@ -16,7 +16,9 @@ import {
   SHELL_SIDEBAR_ROW_ACTIVE_CLASS,
   SHELL_SIDEBAR_ROW_CLASS,
   SHELL_SIDEBAR_ROW_COLLAPSED_CLASS,
+  SHELL_SIDEBAR_SHORTCUTS_BUTTON_CLASS,
   SHELL_SIDEBAR_ROW_INACTIVE_CLASS,
+  SidebarDestinationLabel,
 } from "@renderer/features/job-finder/components/job-finder-shell";
 import { JobFinderShellBrand } from "@renderer/features/job-finder/components/job-finder-shell-brand";
 import { SourceCheckQueueRunner } from "@renderer/features/job-finder/lib/source-check-queue-runner";
@@ -35,14 +37,11 @@ import { ThemeProvider } from "@renderer/app/theme-provider";
 import { Button } from "@renderer/components/ui/button";
 import { useModalFocusTrap } from "@renderer/features/job-finder/components/profile/use-modal-focus-trap";
 import {
-  BarChart3,
-  Building2,
   ClipboardCheck,
   Compass,
   FileText,
   House,
   Keyboard,
-  Layers3,
   Menu,
   Minus,
   Settings,
@@ -82,7 +81,6 @@ export {
   JobFinderCompaniesRoute,
   JobFinderCompanyDetailRoute,
   JobFinderDiscoveryRoute,
-  JobFinderDocumentsRoute,
   JobFinderHomeRoute,
   JobFinderProfileRoute,
   JobFinderProfileSetupRoute,
@@ -190,63 +188,26 @@ const openingShellPrimaryDestinations: readonly {
   },
 ];
 
-// Mirrors the loaded shell's `menuGroups`: the expanded rail lists every
-// secondary destination inline under "Everything else", grouped by what each
-// destination *is*. The opening frame has to render the same rows in the same
-// order, or the sidebar visibly re-groups and re-flows the moment the
+// Mirrors the loaded shell's pinned rail footer: Safeguards sits quietly
+// above Settings, Settings sits under the journey, outside the scroll region,
+// with the shortcuts reference beside it. The opening frame has to render the
+// same rows in the same place, or the sidebar visibly re-flows the moment the
 // workspace resolves.
-const openingShellSecondaryGroups: readonly {
+const openingShellSafeguardsDestination = {
+  icon: ShieldCheck,
+  label: "Safeguards",
+  path: "/job-finder/safeguards",
+} as const;
+const openingShellFooterDestinations: readonly {
+  icon: LucideIcon;
   label: string;
-  destinations: readonly {
-    icon: LucideIcon;
-    label: string;
-    path: string;
-  }[];
+  path: string;
 }[] = [
+  openingShellSafeguardsDestination,
   {
-    label: "Your data",
-    destinations: [
-      {
-        icon: FileText,
-        label: "Documents",
-        path: "/job-finder/documents",
-      },
-      {
-        icon: Building2,
-        label: "Companies",
-        path: "/job-finder/companies",
-      },
-      {
-        icon: BarChart3,
-        label: "Outcomes",
-        path: "/job-finder/analytics",
-      },
-    ],
-  },
-  {
-    label: "Setup and safety",
-    destinations: [
-      {
-        icon: Layers3,
-        label: "Search plans",
-        path: "/job-finder/campaigns",
-      },
-      {
-        icon: Layers3,
-        label: "Resume approaches",
-        path: "/job-finder/resume-strategies",
-      },
-      {
-        icon: ShieldCheck,
-        label: "Safeguards",
-        path: "/job-finder/safeguards",
-      },
-      {
-        icon: Settings,
-        label: "Settings",
-        path: "/job-finder/settings",
-      },
-    ],
+    icon: Settings,
+    label: "Settings",
+    path: "/job-finder/settings",
   },
 ];
 
@@ -267,7 +228,7 @@ const openingShellSidebarGroups: readonly {
 
 const openingShellAllDestinations = [
   ...openingShellPrimaryDestinations,
-  ...openingShellSecondaryGroups.flatMap((group) => group.destinations),
+  ...openingShellFooterDestinations,
 ];
 
 /**
@@ -321,7 +282,7 @@ function readInitialDesktopPlatform(): "darwin" | "linux" | "win32" | null {
  */
 const OPENING_ROUTE_TITLE_OVERRIDES: Readonly<Record<string, string>> = {
   "/job-finder/profile": "Your profile",
-  "/job-finder/review-queue": "Shortlisted jobs",
+  "/job-finder/review-queue": "Shortlisted",
 };
 
 function getOpeningRouteTitle(pathname: string, label: string): string {
@@ -427,10 +388,6 @@ function JobFinderOpeningShell() {
   const isLockedOpeningRoute = isOpeningRouteLocked(location.pathname);
   const dragRegionStyle = { WebkitAppRegion: "drag" } as CSSProperties;
   const noDragRegionStyle = { WebkitAppRegion: "no-drag" } as CSSProperties;
-  const sidebarGroupEyebrowClass = cn(
-    "whitespace-nowrap px-2 text-(length:--text-eyebrow) uppercase tracking-(--tracking-caps) text-muted-foreground",
-    isSidebarCollapsed && "sr-only",
-  );
 
   async function runWindowAction(
     action: () => Promise<typeof windowControlsState>,
@@ -454,6 +411,7 @@ function JobFinderOpeningShell() {
     return (
       <button
         aria-current={isActive ? "page" : undefined}
+        aria-label={destination.label}
         className={cn(
           SHELL_SIDEBAR_ROW_CLASS,
           isSidebarCollapsed && SHELL_SIDEBAR_ROW_COLLAPSED_CLASS,
@@ -467,11 +425,10 @@ function JobFinderOpeningShell() {
         type="button"
       >
         <destination.icon aria-hidden="true" className="size-4 shrink-0" />
-        <span
-          className={cn("min-w-0 truncate", isSidebarCollapsed && "sr-only")}
-        >
-          {destination.label}
-        </span>
+        <SidebarDestinationLabel
+          collapsed={isSidebarCollapsed}
+          label={destination.label}
+        />
       </button>
     );
   }
@@ -678,7 +635,7 @@ function JobFinderOpeningShell() {
                 </Button>
                 <Button
                   aria-label="Close window"
-                  className="h-full w-12 rounded-none border-0 bg-transparent p-0 text-muted-foreground shadow-none hover:bg-(--button-close-hover) hover:text-primary-foreground"
+                  className="h-full w-12 rounded-none border-0 bg-transparent p-0 text-muted-foreground shadow-none hover:bg-(--button-close-hover) hover:text-primary-fill-foreground"
                   disabled={!windowControlsState.isClosable}
                   onClick={() => {
                     void window.unemployed.window.close();
@@ -780,11 +737,14 @@ function JobFinderOpeningShell() {
           <div
             className={cn(
               "mb-1 flex h-10 shrink-0 items-center",
-              isSidebarCollapsed ? "justify-center" : "justify-start",
+              isSidebarCollapsed ? "justify-center" : "justify-between",
             )}
             data-job-finder-sidebar-toggle
             style={noDragRegionStyle}
           >
+            {!isSidebarCollapsed ? (
+              <span className="job-finder-sidebar-heading">Your job search</span>
+            ) : null}
             {/* The rail's collapse control is owned by the loaded shell; the
                 opening frame paints the same 36px box in the same place so
                 the icon does not slide when it becomes interactive. */}
@@ -811,82 +771,72 @@ function JobFinderOpeningShell() {
                 key={group.label}
                 role="group"
               >
-                {/* An eyebrow is never a heading tag: the sidebar group labels
-                    are 11px eyebrows, so they must not enter the heading
-                    outline ahead of the route's own h1. */}
-                <span className={cn(sidebarGroupEyebrowClass, "font-semibold")}>
-                  {group.label}
-                </span>
-                <div className="grid min-w-0 gap-0.5 overflow-hidden">
+                <div
+                  className={cn(
+                    "grid min-w-0 overflow-hidden",
+                    isSidebarCollapsed ? "gap-1.5" : "gap-0.5",
+                  )}
+                >
                   {group.destinations.map((destination) =>
                     renderOpeningSidebarDestination(destination),
                   )}
                 </div>
               </section>
             ))}
-            <section
-              aria-label="Everything else"
-              className={cn(
-                "grid min-w-0",
-                isSidebarCollapsed ? "gap-2" : "gap-3",
-              )}
-              data-job-finder-sidebar-secondary
-              role="group"
-            >
-              {/* Same treatment as the loaded shell: accessible name only,
-                  with a hairline standing in for the visible label. */}
-              <span className="sr-only">Everything else</span>
-              <span
-                aria-hidden="true"
-                className="mx-3 border-t border-(--surface-panel-border)"
-              />
-              {openingShellSecondaryGroups.map((group) => (
-                <div
-                  aria-label={group.label}
-                  className="grid min-w-0 gap-1"
-                  key={group.label}
-                  role="group"
-                >
-                  <span className={cn(sidebarGroupEyebrowClass, "font-medium")}>
-                    {group.label}
-                  </span>
-                  <div className="grid min-w-0 gap-0.5 overflow-hidden">
-                    {group.destinations.map((destination) =>
-                      renderOpeningSidebarDestination(destination),
-                    )}
-                  </div>
-                </div>
-              ))}
-              <div className="grid min-w-0 gap-0.5 overflow-hidden">
-                {/* The shortcuts dialog belongs to the loaded shell. Its row
-                    is still reserved here, or the rail is one row shorter
-                    while opening and every group above it shifts. */}
-                <span
-                  aria-hidden="true"
-                  className={cn(
-                    SHELL_SIDEBAR_ROW_CLASS,
-                    isSidebarCollapsed && SHELL_SIDEBAR_ROW_COLLAPSED_CLASS,
-                  )}
-                  data-job-finder-sidebar-shortcuts-entry
-                >
-                  <Keyboard aria-hidden="true" className="size-4 shrink-0" />
-                  <span
-                    className={cn(
-                      "min-w-0 truncate",
-                      isSidebarCollapsed && "sr-only",
-                    )}
-                  >
-                    {JOB_FINDER_SHORTCUTS_DIALOG_LABEL}
-                  </span>
-                  {isSidebarCollapsed ? null : (
-                    <kbd className="mr-1 ml-auto inline-flex min-w-6 shrink-0 items-center justify-center rounded-(--radius-field) border border-(--surface-panel-border) bg-(--input) px-1.5 py-0.5 text-(length:--text-tiny) font-medium text-foreground">
-                      ?
-                    </kbd>
-                  )}
-                </span>
-              </div>
-            </section>
           </nav>
+          <div
+            aria-label="Workspace"
+            className={cn(
+              "mt-2 flex min-w-0 shrink-0 border-t border-(--surface-panel-border) pt-2",
+              isSidebarCollapsed
+                ? "flex-col-reverse gap-0.5"
+                : "flex-wrap items-center gap-1",
+            )}
+            data-job-finder-sidebar-footer
+            role="group"
+          >
+            <div
+              className={cn(
+                "min-w-0",
+                isSidebarCollapsed ? "order-last" : "basis-full",
+              )}
+              data-job-finder-sidebar-safeguards-entry
+            >
+              {renderOpeningSidebarDestination(
+                openingShellSafeguardsDestination,
+              )}
+            </div>
+            <div className={cn("min-w-0", !isSidebarCollapsed && "flex-1")}>
+              {openingShellFooterDestinations
+                .filter(
+                  (destination) =>
+                    destination !== openingShellSafeguardsDestination,
+                )
+                .map((destination) =>
+                  renderOpeningSidebarDestination(destination),
+                )}
+            </div>
+            {/* The shortcuts dialog belongs to the loaded shell. Its control
+                is still reserved here, or the footer is narrower while
+                opening and Settings shifts when it becomes interactive. */}
+            <span
+              aria-hidden="true"
+              className={cn(
+                isSidebarCollapsed
+                  ? cn(
+                      SHELL_SIDEBAR_ROW_CLASS,
+                      SHELL_SIDEBAR_ROW_COLLAPSED_CLASS,
+                    )
+                  : SHELL_SIDEBAR_SHORTCUTS_BUTTON_CLASS,
+              )}
+              data-job-finder-sidebar-shortcuts-entry
+            >
+              <Keyboard aria-hidden="true" className="size-4 shrink-0" />
+              <span className="sr-only">
+                {JOB_FINDER_SHORTCUTS_DIALOG_LABEL}
+              </span>
+            </span>
+          </div>
         </div>
       </aside>
 
@@ -971,7 +921,7 @@ export function ApplyCopilotVisualCheckpointDialog(props: {
   onClose: () => void;
   /**
    * Returns a refusal sentence when the start could not begin. The dialog then
-   * stays open and says so: pressing "Fill it in" and watching the
+   * stays open and says so: pressing "Apply" and watching the
    * dialog close with nothing else happening is the defect this return value
    * exists to prevent.
    */
@@ -1052,7 +1002,7 @@ export function ApplyCopilotVisualCheckpointDialog(props: {
         <div className="flex items-start justify-between gap-4">
           <div className="grid gap-2">
             <p className="text-(length:--text-tiny) uppercase tracking-(--tracking-label) text-foreground-muted">
-              Fill it in
+              Apply
             </p>
             {/* The heading is the identity: which application this gate is
                 actually about. Group 6 supplies the subject line. */}
@@ -1170,7 +1120,7 @@ export function ApplyCopilotVisualCheckpointDialog(props: {
               type="button"
               variant="primary"
             >
-              Fill it in
+              Apply
             </Button>
           )}
         </div>

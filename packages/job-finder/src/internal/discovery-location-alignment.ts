@@ -4,10 +4,15 @@ import type {
   MatchAssessment,
   SavedJob,
 } from "@unemployed/contracts";
-import { assessLocationCompatibility } from "./matching";
+import {
+  assessLocationCompatibility,
+  readLocationMatchOptions,
+} from "./matching";
 
 const REMOTE_LISTING_PATTERN =
   /\b(?:remote|anywhere|worldwide|work from home|wfh|global|distributed)\b/iu;
+const GLOBAL_REMOTE_PREFERENCE_PATTERN =
+  /^(?:remote(?:\s*[,/-]\s*(?:anywhere|worldwide|global))?|anywhere|worldwide|global)$/iu;
 
 function isRemoteListing(
   posting: Pick<
@@ -48,6 +53,9 @@ function hasNoNamedLocation(location: string): boolean {
 function requestedLocalWork(preferences: JobSearchPreferences): boolean {
   return (
     preferences.locations.length > 0 &&
+    !preferences.locations.some((location) =>
+      GLOBAL_REMOTE_PREFERENCE_PATTERN.test(location.trim()),
+    ) &&
     !preferences.workModes.includes("remote") &&
     (preferences.workModes.length === 0 ||
       preferences.workModes.includes("onsite") ||
@@ -57,6 +65,20 @@ function requestedLocalWork(preferences: JobSearchPreferences): boolean {
 
 function requestedLocationLabel(preferences: JobSearchPreferences): string {
   return preferences.locations.join(" or ");
+}
+
+function hasNamedCompatibleLocation(
+  posting: Pick<JobPosting, "location">,
+  preferences: JobSearchPreferences,
+): boolean {
+  return (
+    !hasNoNamedLocation(posting.location) &&
+    assessLocationCompatibility(
+      posting.location,
+      preferences.locations,
+      readLocationMatchOptions(preferences),
+    ) === "compatible"
+  );
 }
 
 /**
@@ -71,11 +93,7 @@ export function correctRemoteOnlyLocationAlignment(
 ): MatchAssessment {
   // A concrete city/region match is the strongest location evidence. A
   // generic remote word elsewhere in the page must never overturn it.
-  if (
-    !hasNoNamedLocation(posting.location) &&
-    assessLocationCompatibility(posting.location, preferences.locations) ===
-    "compatible"
-  ) {
+  if (hasNamedCompatibleLocation(posting, preferences)) {
     return assessment.locationReach === "in_area"
       ? assessment
       : { ...assessment, locationReach: "in_area" };
@@ -136,7 +154,7 @@ export function correctRemoteOnlyLocationAlignment(
   };
 }
 
-/** Plain run notice when the chosen sources supplied remote listings only. */
+/** Describe only this search's returned listings, not a source's full inventory. */
 export function describeRemoteOnlySourceMismatch(
   jobs: readonly SavedJob[],
   preferences: JobSearchPreferences,
@@ -144,12 +162,22 @@ export function describeRemoteOnlySourceMismatch(
   if (
     jobs.length === 0 ||
     !requestedLocalWork(preferences) ||
-    jobs.some((job) => !isRemoteListing(job))
+    jobs.some(
+      (job) =>
+        !(
+          job.workMode.includes("remote") ||
+          REMOTE_LISTING_PATTERN.test(
+            [job.location, job.canonicalUrl, job.applicationUrl ?? ""].join(
+              " ",
+            ),
+          )
+        ) || hasNamedCompatibleLocation(job, preferences),
+    )
   ) {
     return null;
   }
 
-  return `Your sources only list remote jobs; add a site that lists jobs in ${requestedLocationLabel(
+  return `This search returned only remote jobs; try another search for jobs in ${requestedLocationLabel(
     preferences,
   )}.`;
 }

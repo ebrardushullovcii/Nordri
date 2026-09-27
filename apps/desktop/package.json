@@ -7,6 +7,8 @@
   "type": "module",
   "main": "out/main/index.cjs",
   "scripts": {
+    "qa": "node ./scripts/agent-qa/cli.mjs",
+    "qa:test": "node --test ./scripts/agent-qa/support.test.mjs",
     "dev": "node ./scripts/prepare-resume-parser-sidecar.mjs --mode best-effort && electron-vite dev",
     "build": "node ./scripts/prepare-resume-parser-sidecar.mjs --mode best-effort && electron-vite build",
     "package:dir": "pnpm run prepare:resume-parser-sidecar -- --target win32-x64 && pnpm build && electron-builder --config electron-builder.json --dir",
@@ -78,6 +80,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "jsdom": "^26.1.0",
+    "jszip": "^3.10.1",
     "lucide-react": "^0.577.0",
     "mammoth": "^1.8.0",
     "pdfjs-dist": "^5.4.54",

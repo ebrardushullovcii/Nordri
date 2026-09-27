@@ -215,7 +215,7 @@ async function captureFindJobsTop(page, viewport, report) {
     .locator("section")
     .filter({
       has: page.getByRole("heading", {
-        name: "Job results",
+        name: "Results",
       }),
     })
     .first();

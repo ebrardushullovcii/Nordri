@@ -22,15 +22,36 @@ export type JobIdentityInput = {
   title?: string | null;
   company?: string | null;
   location?: string | null;
+  description?: string | null;
   postedAt?: string | null;
   postedAtText?: string | null;
+  /**
+   * Listing links the same job has on its other sources (ADR 0030). Passed
+   * only when matching new sightings to saved jobs, so a job that now shows
+   * one source's listing still recognises another source's link.
+   */
+  alternateListingUrls?: readonly string[] | null;
+  /**
+   * Match on title, employer and place between different sites (ADR 0030).
+   * Only discovery's merge asks for it; other indexes (the ledger, company
+   * duplicates) keep to link and content identity.
+   */
+  matchAcrossSources?: boolean;
 };
+
+/**
+ * Beyond this many saved jobs sharing one title, employer and place, the
+ * facts identify nothing: the match is skipped rather than scanned.
+ */
+const MAX_CROSS_SOURCE_CANDIDATES = 8;
 
 export type JobIdentityAliasKind =
   | "provider_posting_id"
   | "source_posting_id"
   | "employer_application_url"
   | "canonical_listing_url"
+  | "exact_listing_content"
+  | "cross_source_listing_facts"
   | "corroborated_listing_facts";
 
 export type JobIdentityAlias = {
@@ -135,6 +156,100 @@ function normalizePostedDate(input: JobIdentityInput): string | null {
     : null;
 }
 
+const MIN_EXACT_CONTENT_IDENTITY_CHARACTERS = 200;
+const MIN_EXACT_CONTENT_IDENTITY_WORDS = 40;
+
+function normalizeListingContentIdentity(
+  description: string | null | undefined,
+): string | null {
+  if (!description) {
+    return null;
+  }
+  const normalized = normalizeText(description)
+    // A source may label the same final link "Apply" or "Apply now". That
+    // call to action is page chrome, not listing identity.
+    .replace(/\bapply(?: now)?$/u, "")
+    .trim();
+  if (
+    normalized.length < MIN_EXACT_CONTENT_IDENTITY_CHARACTERS ||
+    normalized.split(/\s+/u).length < MIN_EXACT_CONTENT_IDENTITY_WORDS
+  ) {
+    return null;
+  }
+  return normalized;
+}
+
+function readCompatibleTitleShape(title: string | null | undefined): {
+  full: string;
+  stem: string;
+  hasExplicitQualifier: boolean;
+} | null {
+  if (!title) {
+    return null;
+  }
+  const full = normalizeText(title);
+  if (!full) {
+    return null;
+  }
+  const qualifierMatch = /,|\s[|–—]\s/u.exec(title);
+  if (!qualifierMatch || qualifierMatch.index <= 0) {
+    return { full, stem: full, hasExplicitQualifier: false };
+  }
+  const stem = normalizeText(title.slice(0, qualifierMatch.index));
+  const qualifier = normalizeText(
+    title.slice(qualifierMatch.index + qualifierMatch[0].length),
+  );
+  return {
+    full,
+    stem: stem || full,
+    // A trailing comma is extraction damage, not an explicit qualifier.
+    hasExplicitQualifier: qualifier.length > 0,
+  };
+}
+
+/**
+ * Strong content identity is deliberately narrow. It only accepts a complete
+ * body, exact employer and location, and a compatible title (including a
+ * source that drops a comma-delimited team/product qualifier).
+ */
+export function hasEquivalentListingContentIdentity(
+  left: JobIdentityInput,
+  right: JobIdentityInput,
+): boolean {
+  const leftContent = normalizeListingContentIdentity(left.description);
+  const rightContent = normalizeListingContentIdentity(right.description);
+  if (!leftContent || leftContent !== rightContent) {
+    return false;
+  }
+  const leftCompany = normalizeText(left.company ?? "");
+  const rightCompany = normalizeText(right.company ?? "");
+  const leftLocation = normalizeText(left.location ?? "");
+  const rightLocation = normalizeText(right.location ?? "");
+  if (
+    !leftCompany ||
+    leftCompany !== rightCompany ||
+    !leftLocation ||
+    leftLocation !== rightLocation
+  ) {
+    return false;
+  }
+  const leftTitle = readCompatibleTitleShape(left.title);
+  const rightTitle = readCompatibleTitleShape(right.title);
+  if (!leftTitle || !rightTitle) {
+    return false;
+  }
+  const titlesAreCompatible =
+    leftTitle.full === rightTitle.full ||
+    (!leftTitle.hasExplicitQualifier || !rightTitle.hasExplicitQualifier) &&
+      (leftTitle.hasExplicitQualifier
+        ? leftTitle.stem === rightTitle.full
+        : rightTitle.stem === leftTitle.full);
+  if (!titlesAreCompatible) {
+    return false;
+  }
+  return true;
+}
+
 export function buildJobIdentityAliases(
   input: JobIdentityInput,
 ): JobIdentityAlias[] {
@@ -206,10 +321,59 @@ export function buildJobIdentityAliases(
       priority: 40,
     });
   }
+  const alternateKeys = new Set<string>();
+  for (const alternate of input.alternateListingUrls ?? []) {
+    const key = `listing-url:${normalizeJobIdentityUrl(alternate)}`;
+    if (
+      alternate === input.canonicalUrl ||
+      alternateKeys.has(key) ||
+      aliases.some((alias) => alias.key === key)
+    ) {
+      continue;
+    }
+    alternateKeys.add(key);
+    aliases.push({
+      key,
+      kind: "canonical_listing_url",
+      confidence: "strong",
+      priority: 41,
+    });
+  }
+
+  const exactContent = normalizeListingContentIdentity(input.description);
+  const contentCompany = input.company ? normalizeText(input.company) : "";
+  const contentLocation = input.location ? normalizeText(input.location) : "";
+  if (exactContent && contentCompany && contentLocation) {
+    aliases.push({
+      key: `content:${contentCompany}\u0000${contentLocation}\u0000${exactContent}`,
+      kind: "exact_listing_content",
+      confidence: "strong",
+      priority: 50,
+    });
+  }
 
   const title = input.title ? normalizeText(input.title) : "";
   const company = input.company ? normalizeText(input.company) : "";
   const location = input.location ? normalizeText(input.location) : "";
+  // One job listed by two different sites (ADR 0030): the same title, the
+  // same employer and the same place, and no two different application
+  // forms. The host is not part of it; a board and the employer's own form
+  // rarely share one. The index only accepts it between sightings from
+  // different sites, so two openings on one site stay two jobs.
+  if (
+    input.matchAcrossSources &&
+    title &&
+    company &&
+    location &&
+    input.canonicalUrl
+  ) {
+    aliases.push({
+      key: `cross-source:${title}\u0000${company}\u0000${location}`,
+      kind: "cross_source_listing_facts",
+      confidence: "strong",
+      priority: 60,
+    });
+  }
   const postedDate = normalizePostedDate(input);
   if (title && company && location && postedDate) {
     aliases.push({
@@ -225,9 +389,79 @@ export function buildJobIdentityAliases(
   return aliases;
 }
 
+/**
+ * The site a listing link belongs to: its host and first path segment, since
+ * several sources can share one host (ADR 0030).
+ */
+function readListingSiteKey(value: string): string | null {
+  try {
+    const parsed = new URL(value);
+    const firstSegment = parsed.pathname.split("/").find(Boolean) ?? "";
+    return `${parsed.hostname.toLowerCase()}/${firstSegment.toLowerCase()}`;
+  } catch {
+    return null;
+  }
+}
+
+function readListingSiteKeys(input: JobIdentityInput): Set<string> {
+  const keys = new Set<string>();
+  for (const url of [input.canonicalUrl, ...(input.alternateListingUrls ?? [])]) {
+    const key = url ? readListingSiteKey(url) : null;
+    if (key) keys.add(key);
+  }
+  return keys;
+}
+
+/**
+ * Where a sighting says to apply, when that is somewhere other than its own
+ * listing page: the path only, since one form can be reached on two hosts.
+ */
+function readApplicationRoutePath(input: JobIdentityInput): string | null {
+  if (!input.applicationUrl) return null;
+  const application = normalizeJobIdentityUrl(input.applicationUrl);
+  if (
+    input.canonicalUrl &&
+    application === normalizeJobIdentityUrl(input.canonicalUrl)
+  ) {
+    return null;
+  }
+  try {
+    const parsed = new URL(application);
+    return `${parsed.pathname.toLowerCase()}${parsed.search}`;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Title, employer and place identify one job only across sites, and only
+ * when the two do not name different application forms: a site that lists
+ * the same title twice at one employer and place has two openings, and two
+ * known, different forms are two openings too.
+ */
+export function areListedOnDifferentSites(
+  left: JobIdentityInput,
+  right: JobIdentityInput,
+): boolean {
+  const leftSites = readListingSiteKeys(left);
+  const rightSites = readListingSiteKeys(right);
+  if (leftSites.size === 0 || rightSites.size === 0) return false;
+  for (const site of leftSites) {
+    if (rightSites.has(site)) return false;
+  }
+  const leftRoute = readApplicationRoutePath(left);
+  const rightRoute = readApplicationRoutePath(right);
+  return !leftRoute || !rightRoute || leftRoute === rightRoute;
+}
+
 export function createJobIdentityDigest(input: JobIdentityInput): string {
   const basis = buildJobIdentityAliases(input)
-    .filter((alias) => alias.confidence === "strong")
+    // Ids stay what they were before cross-source matching existed.
+    .filter(
+      (alias) =>
+        alias.confidence === "strong" &&
+        alias.kind !== "cross_source_listing_facts",
+    )
     .map((alias) => alias.key)
     .join("|");
   let hash = 0x811c9dc5;
@@ -308,7 +542,30 @@ export function createJobIdentityIndex<T extends object>(
       if (alias.confidence !== "strong") {
         continue;
       }
-      const matches = valuesByAlias.get(alias.key);
+      const indexedMatches = valuesByAlias.get(alias.key);
+      const matches =
+        alias.kind === "exact_listing_content" && indexedMatches
+          ? new Set(
+              [...indexedMatches].filter((candidate) =>
+                hasEquivalentListingContentIdentity(
+                  identity,
+                  selectIdentity(candidate),
+                ),
+              ),
+            )
+          : alias.kind === "cross_source_listing_facts" && indexedMatches
+            ? new Set(
+                indexedMatches.size > MAX_CROSS_SOURCE_CANDIDATES
+                  ? []
+                  :
+                    [...indexedMatches].filter((candidate) =>
+                      areListedOnDifferentSites(
+                        identity,
+                        selectIdentity(candidate),
+                      ),
+                    ),
+              )
+            : indexedMatches;
       if (!matches || matches.size === 0) {
         continue;
       }

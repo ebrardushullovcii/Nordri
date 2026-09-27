@@ -33,7 +33,7 @@ describe("ApplyCopilotVisualCheckpointDialog", () => {
     );
 
     fireEvent.click(
-      screen.getByRole("button", { name: "Fill it in" }),
+      screen.getByRole("button", { name: "Apply" }),
     );
 
     // Never a silent close: the reason lands in the dialog the person is
@@ -45,7 +45,7 @@ describe("ApplyCopilotVisualCheckpointDialog", () => {
       screen.getByRole("button", { name: "Open Safeguards" }),
     ).toBeTruthy();
     expect(
-      screen.queryByRole("button", { name: "Fill it in" }),
+      screen.queryByRole("button", { name: "Apply" }),
     ).toBeNull();
   });
 
@@ -59,7 +59,7 @@ describe("ApplyCopilotVisualCheckpointDialog", () => {
     );
 
     fireEvent.click(
-      screen.getByRole("button", { name: "Fill it in" }),
+      screen.getByRole("button", { name: "Apply" }),
     );
     const refusal = await screen.findByRole("alert");
     expect(refusal.textContent).toMatch(/could not start this preparation/i);
@@ -77,7 +77,7 @@ describe("ApplyCopilotVisualCheckpointDialog", () => {
     );
 
     fireEvent.click(
-      screen.getByRole("button", { name: "Fill it in" }),
+      screen.getByRole("button", { name: "Apply" }),
     );
     await waitFor(() => {
       expect(onResolve).toHaveBeenCalledWith(false);

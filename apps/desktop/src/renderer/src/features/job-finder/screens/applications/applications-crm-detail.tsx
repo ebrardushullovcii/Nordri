@@ -296,12 +296,14 @@ export function ApplicationsCrmDetail(props: {
         expectedRevision: crm.revision,
         mutation,
       });
+      return true;
     } catch (caught) {
       setError(
         caught instanceof Error
           ? caught.message
           : "The application update could not be saved.",
       );
+      return false;
     } finally {
       setPending(false);
     }
@@ -369,7 +371,8 @@ export function ApplicationsCrmDetail(props: {
     void mutate({
       type: "upsert_reminder",
       reminder: { ...entry, dueAt, updatedAt: new Date().toISOString() },
-    }).then(() => {
+    }).then((saved) => {
+      if (!saved) return;
       setReminderReschedules((current) => {
         const next = { ...current };
         delete next[entry.id];
@@ -599,7 +602,9 @@ export function ApplicationsCrmDetail(props: {
                   createdAt: new Date().toISOString(),
                   updatedAt: new Date().toISOString(),
                 },
-              }).then(() => setNote(""));
+              }).then((saved) => {
+                if (saved) setNote("");
+              });
             }}
           >
             <label
@@ -695,7 +700,8 @@ export function ApplicationsCrmDetail(props: {
                   updatedAt: now,
                   completedAt: null,
                 },
-              }).then(() => {
+              }).then((saved) => {
+                if (!saved) return;
                 setReminderTitle("");
                 setReminderAt("");
               });
@@ -860,7 +866,8 @@ export function ApplicationsCrmDetail(props: {
                   createdAt: now,
                   updatedAt: now,
                 },
-              }).then(() => {
+              }).then((saved) => {
+                if (!saved) return;
                 setInterviewTitle("");
                 setInterviewAt("");
               });
@@ -988,7 +995,8 @@ export function ApplicationsCrmDetail(props: {
                   createdAt: now,
                   updatedAt: now,
                 },
-              }).then(() => {
+              }).then((saved) => {
+                if (!saved) return;
                 setContactName("");
                 setContactEmail("");
               });
@@ -1190,7 +1198,9 @@ export function ApplicationsCrmDetail(props: {
                       : "other",
                     addedAt: new Date().toISOString(),
                   },
-                }).then(() => setSelectedAssetId(""));
+                }).then((saved) => {
+                  if (saved) setSelectedAssetId("");
+                });
               }}
               size="sm"
               type="button"
@@ -1236,9 +1246,8 @@ export function ApplicationsCrmDetail(props: {
             </ul>
           ) : null}
           <p className="text-xs leading-5 text-muted-foreground">
-            Only metadata is linked here. Candidate Asset consent, retention,
-            integrity checks, and stored bytes remain owned by Documents &amp;
-            assets.
+            Only metadata is linked here. The file itself, its integrity checks,
+            and its stored bytes stay with your files under Profile.
           </p>
         </div>
       </details>

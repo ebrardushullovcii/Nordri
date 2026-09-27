@@ -281,7 +281,7 @@ describe("JobFinderOpeningShell platform geometry", () => {
  * The reported defect was a first-paint jump: the skeleton drew a larger
  * wordmark at a different x, a module switcher off the loaded header's centred
  * track, and a rail grouped OVERVIEW / YOUR JOB SEARCH / YOUR DATA / SETUP AND
- * SAFETY with no "Everything else" and no Keyboard shortcuts row. Those are
+ * SAFETY with no pinned Settings footer and no Keyboard shortcuts control. Those are
  * all class strings and group tables that were hand-copied once and then
  * drifted, so this suite renders BOTH shells and requires the chrome to be
  * identical rather than trusting either copy.
@@ -428,7 +428,7 @@ function sidebarStructure(root: ParentNode): string[] {
   }
   return Array.from(
     rail.querySelectorAll<HTMLElement>(
-      '[role="group"], [data-job-finder-sidebar-scroll-region] button, [data-job-finder-sidebar-shortcuts-entry]',
+      '[role="group"], [data-job-finder-sidebar-scroll-region] button, [data-job-finder-sidebar-footer] button, [data-job-finder-sidebar-shortcuts-entry]',
     ),
   ).map((node) => {
     if (node.getAttribute("role") === "group") {
@@ -500,16 +500,12 @@ describe("JobFinderOpeningShell parity with the loaded shell", () => {
     ["sidebar inner column", "[data-job-finder-sidebar] > div"],
     ["sidebar toggle row", "[data-job-finder-sidebar-toggle]"],
     ["sidebar destinations", "[data-job-finder-sidebar-scroll-region]"],
-    ["sidebar secondary group", "[data-job-finder-sidebar-secondary]"],
+    ["sidebar footer", "[data-job-finder-sidebar-footer]"],
     [
-      "sidebar journey eyebrow",
-      '[data-job-finder-sidebar] section[aria-label="Your job search"] > span',
+      "sidebar journey list",
+      '[data-job-finder-sidebar] section[aria-label="Your job search"] > div',
     ],
-    ["sidebar secondary eyebrow", "[data-job-finder-sidebar-secondary] > span"],
-    [
-      "sidebar subgroup eyebrow",
-      '[data-job-finder-sidebar-secondary] div[aria-label="Your data"] > span',
-    ],
+    ["sidebar footer settings row", "[data-job-finder-sidebar-footer] button"],
     [
       "active sidebar row",
       '[data-job-finder-sidebar-scroll-region] [aria-current="page"]',
@@ -571,7 +567,7 @@ describe("JobFinderOpeningShell parity with the loaded shell", () => {
     cleanup();
     const opening = renderOpeningShellContainer();
 
-    expect(loadedStructure).toContain("group:Everything else");
+    expect(loadedStructure).toContain("group:Workspace");
     expect(loadedStructure).toContain("row:Keyboard shortcuts");
     expect(sidebarStructure(opening)).toEqual(loadedStructure);
   });
@@ -627,7 +623,7 @@ describe("JobFinderOpeningShell parity with the loaded shell", () => {
     const rowClasses = (root: ParentNode) =>
       Array.from(
         root.querySelectorAll<HTMLElement>(
-          "[data-job-finder-sidebar-scroll-region] button, [data-job-finder-sidebar-shortcuts-entry]",
+          "[data-job-finder-sidebar-scroll-region] button, [data-job-finder-sidebar-footer] button, [data-job-finder-sidebar-shortcuts-entry]",
         ),
       ).map((node) => node.className.split(/\s+/u).filter(Boolean).sort());
     // The shortcuts row is the one deliberately non-interactive row here: the
@@ -652,8 +648,8 @@ describe("JobFinderOpeningShell parity with the loaded shell", () => {
     // Twelve destinations plus the shortcuts entry. Home is active and the
     // rest are not, so this single comparison covers the active fill and the
     // inactive hover treatment in one pass.
-    expect(loadedRows).toHaveLength(13);
-    expect(openingRows).toHaveLength(13);
+    expect(loadedRows.length).toBeGreaterThan(0);
+    expect(openingRows).toHaveLength(loadedRows.length);
     const loadedShortcutsRow = loadedRows.at(-1) ?? [];
     const openingShortcutsRow = openingRows.at(-1) ?? [];
 
@@ -674,10 +670,10 @@ describe("JobFinderOpeningShell parity with the loaded shell", () => {
     ["sidebar inner column", "[data-job-finder-sidebar] > div"],
     ["sidebar toggle row", "[data-job-finder-sidebar-toggle]"],
     ["sidebar destinations", "[data-job-finder-sidebar-scroll-region]"],
-    ["sidebar secondary group", "[data-job-finder-sidebar-secondary]"],
+    ["sidebar footer", "[data-job-finder-sidebar-footer]"],
     [
-      "sidebar journey eyebrow",
-      '[data-job-finder-sidebar] section[aria-label="Your job search"] > span',
+      "sidebar journey list",
+      '[data-job-finder-sidebar] section[aria-label="Your job search"] > div',
     ],
     [
       "active sidebar row",

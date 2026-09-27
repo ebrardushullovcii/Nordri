@@ -85,7 +85,7 @@ export function ProfileBackgroundTab({
         <ProfileSectionHeader
           eyebrow="Background"
           title="Education and credentials"
-          description="Keep schools and certifications in their own cards so this section stays readable even when it grows."
+          description="Schools, certifications, and other credentials."
           action={
             <div className="flex flex-wrap items-stretch gap-2.5">
               <Button

@@ -129,36 +129,31 @@ describe("getDiscoverySearchChips", () => {
 });
 
 describe("DiscoverySearchBar", () => {
-  it("shows the focused scope and widens the kept set without starting a search", () => {
+  it("keeps result scope out of the bar: the results panel owns that toggle", () => {
     const onToggleResultScope = vi.fn();
-    const { onRunAgentDiscovery } = renderBar({
+    renderBar({
       hiddenResultCount: 42,
       onToggleResultScope,
       resultScope: "focused",
     });
-
-    const toggle = screen.getByRole("button", {
-      name: "Focused search. Show wider results (42 hidden)",
-    });
-    expect(toggle.textContent).toBe("Focused search · Show wider results");
-    fireEvent.click(toggle);
-    expect(onToggleResultScope).toHaveBeenCalledTimes(1);
-    expect(onRunAgentDiscovery).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("discovery-result-scope-toggle")).toBeNull();
+    expect(onToggleResultScope).not.toHaveBeenCalled();
   });
 
-  it("opens the setup editor in place from any chip, with no route change", () => {
+  it("opens the setup editor in place from one Search defaults chip, with no route change", () => {
     const { onToggleSetup } = renderBar();
 
-    const rolesChip = screen.getByRole("button", { name: "2 search targets" });
-    expect(rolesChip.getAttribute("aria-controls")).toBe(
+    const chip = screen.getByRole("button", { name: "Roles, places & sources" });
+    expect(chip.getAttribute("aria-controls")).toBe(
       "discovery-search-setup-panel",
     );
-    expect(rolesChip.getAttribute("aria-expanded")).toBe("false");
-    fireEvent.click(rolesChip);
+    expect(chip.getAttribute("aria-expanded")).toBe("false");
+    // The counts that used to be three chips ride along as the chip's title.
+    expect(chip.getAttribute("title")).toContain("2 search targets");
+    expect(chip.getAttribute("title")).toContain("1 enabled source");
+    fireEvent.click(chip);
     expect(onToggleSetup).toHaveBeenCalledWith("roles");
-
-    fireEvent.click(screen.getByRole("button", { name: "1 enabled source" }));
-    expect(onToggleSetup).toHaveBeenLastCalledWith("sources");
+    expect(screen.queryByRole("button", { name: "2 search targets" })).toBeNull();
   });
 
   it("closes an open editor from the same chip", () => {
@@ -167,26 +162,10 @@ describe("DiscoverySearchBar", () => {
       openSetupChipId: "places",
     });
 
-    const placesChip = screen.getByRole("button", { name: "Remote only" });
-    expect(placesChip.getAttribute("aria-expanded")).toBe("true");
-    fireEvent.click(placesChip);
+    const chip = screen.getByRole("button", { name: "Roles, places & sources" });
+    expect(chip.getAttribute("aria-expanded")).toBe("true");
+    fireEvent.click(chip);
     expect(onToggleSetup).toHaveBeenCalledWith(null);
-  });
-
-  it("switches to another chip's section instead of closing the panel", () => {
-    const { onToggleSetup } = renderBar({
-      isSetupOpen: true,
-      openSetupChipId: "places",
-    });
-
-    // Only the chip that owns the open section reports itself as expanded;
-    // before, all three lit up whenever any section was open.
-    const sourcesChip = screen.getByRole("button", {
-      name: "1 enabled source",
-    });
-    expect(sourcesChip.getAttribute("aria-expanded")).toBe("false");
-    fireEvent.click(sourcesChip);
-    expect(onToggleSetup).toHaveBeenCalledWith("sources");
   });
 
   it("keeps one search command and demotes the browser to a small link", () => {
@@ -201,10 +180,60 @@ describe("DiscoverySearchBar", () => {
     fireEvent.click(screen.getByRole("button", { name: "Search now" }));
     expect(onRunAgentDiscovery).toHaveBeenCalledTimes(1);
 
+    // A browser that is merely not open is not the person's problem: the
+    // search opens it. The link appears only when the browser needs them.
+    expect(screen.queryByTestId("discovery-search-bar-browser")).toBeNull();
+    expect(onOpenBrowserSession).not.toHaveBeenCalled();
+  });
+
+  it("names the browser only when it needs a sign-in or is blocked", () => {
+    const { onOpenBrowserSession } = renderBar({
+      browserSession: { ...browserSession, status: "login_required" },
+    });
+
     const browserLink = screen.getByTestId("discovery-search-bar-browser");
-    expect(browserLink.textContent).toBe("Browser not open");
+    expect(browserLink.textContent).toBe("Browser needs sign-in");
     fireEvent.click(browserLink);
     expect(onOpenBrowserSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("starts the run with the plain-language goal and run-scoped knobs", () => {
+    const { onRunAgentDiscovery } = renderBar({
+      searchPreferences: preferences({
+        discovery: {
+          historyLimit: 5,
+          targets: [
+            target(),
+            target({
+              id: "target_example",
+              label: "Example Careers",
+              startingUrl: "https://example.test/careers",
+            }),
+          ],
+        },
+      } as Partial<JobSearchPreferences>),
+    });
+
+    fireEvent.change(screen.getByRole("textbox", { name: "Search focus (optional)" }), {
+      target: { value: "around engineering" },
+    });
+    // How picky a search is lives in Settings (AI behavior), so the bar no
+    // longer offers a breadth choice of its own.
+    expect(screen.queryByRole("radiogroup", { name: "Search breadth" })).toBeNull();
+    const preferRecent = screen.getByRole("button", { name: "Prefer recent" });
+    expect(preferRecent.getAttribute("title")).toContain(
+      "Older or undated roles may still appear",
+    );
+    fireEvent.click(preferRecent);
+    fireEvent.click(screen.getByRole("button", { name: "All sources" }));
+    fireEvent.click(screen.getByLabelText("Example Careers"));
+    fireEvent.click(screen.getByRole("button", { name: "Search now" }));
+
+    expect(onRunAgentDiscovery).toHaveBeenCalledWith({
+      intent: "around engineering",
+      freshness: "recent",
+      sourceIds: ["target_wellfound"],
+    });
   });
 
   it("omits the browser link on the offline catalog runtime", () => {
@@ -252,36 +281,13 @@ describe("DiscoverySearchBar plan chip", () => {
     ]);
   });
 
-  it("names the plan Search now runs with and switches it in place", () => {
-    const onSelectCampaign = vi.fn();
-    renderBar({
-      campaigns: plans,
-      activeCampaignId: "plan_a",
-      onSelectCampaign,
-    });
-
-    const select = screen.getByLabelText<HTMLSelectElement>("Search plan");
-    expect(select.value).toBe("plan_a");
-    expect(
-      screen.getByTestId("discovery-search-plan").getAttribute("title"),
-    ).toContain("Search now");
-    fireEvent.change(select, { target: { value: "plan_b" } });
-    expect(onSelectCampaign).toHaveBeenCalledWith("plan_b");
-  });
-
-  it("does not offer a switch while a search is running, and hides without plans", () => {
+  it("never shows a plan switch in the bar; Search plans owns that", () => {
     renderBar({
       campaigns: plans,
       activeCampaignId: "plan_a",
       onSelectCampaign: vi.fn(),
-      isSearchRunning: true,
-      searchStartedAt: "2026-09-01T00:00:00.000Z",
     });
-    expect(
-      screen.getByLabelText<HTMLSelectElement>("Search plan").disabled,
-    ).toBe(true);
-    cleanup();
-    renderBar({ campaigns: [], activeCampaignId: null });
     expect(screen.queryByLabelText("Search plan")).toBeNull();
+    expect(screen.queryByTestId("discovery-search-plan")).toBeNull();
   });
 });

@@ -1,5 +1,6 @@
 import {
   createApplyPageHands,
+  createMoveReviewer,
   runApplyAgent,
   type ApplyAgentResult,
   type ApplyAuthority,
@@ -28,6 +29,7 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 
 import {
+  AiBehaviorPreferenceSchema,
   ApplicationReviewCardSchema,
   CoverLetterPreferenceSchema,
 } from "@unemployed/contracts";
@@ -36,7 +38,9 @@ import type {
   ApplyPageSession,
   ApplicationAttemptBlocker,
   ApplicationAttemptCheckpoint,
+  ApplicationAttemptExternalWriteEvidence,
   ApplicationAttemptQuestion,
+  ApplyExecutionModelUse,
   ApplyExecutionResult,
   ApplicationReviewCard,
   CandidateProfile,
@@ -60,6 +64,8 @@ export interface AgentApplicationPreparationInput {
    * never crosses this boundary: the browser layer keeps it.
    */
   session: ApplyPageSession;
+  /** The runtime's live URL for this exact bound page. */
+  currentUrl?: string;
   /** The saved permission this run works inside, when there is one. */
   envelope?: ApplicationAuthorityEnvelope | null;
   executionInput: ApplyPreparationInput;
@@ -67,6 +73,10 @@ export interface AgentApplicationPreparationInput {
   startedAt: string;
   /** What the person would call this site. */
   siteLabel: string;
+  /** Who the model is, for the privacy receipt: "OpenCode Go", "muse-spark-1.3". */
+  providerLabel?: string | null;
+  modelLabel?: string | null;
+  onProgress?: Parameters<typeof runApplyAgent>[0]["onProgress"];
   /**
    * Writes and renders the letter this application sends. Omitted when the
    * caller has no way to produce one, in which case a form that asks for a
@@ -100,32 +110,76 @@ function toApplyAuthority(
     // Confirm-first works the form all the way to its send button but is never
     // itself allowed to press it.
     submitAuthorized: mode === "autonomous_submit" && submitAuthorized,
-    preApprovedAttestationKinds:
-      executionInput.preApprovedAttestationKinds ?? [],
+    // The saved permission's list plus the routine declarations the person
+    // allows in Settings (ADR 0027). Without the second, every "I certify"
+    // box stopped the run, because nothing in the product ever wrote the
+    // first.
+    preApprovedAttestationKinds: [
+      ...new Set([
+        ...(executionInput.preApprovedAttestationKinds ?? []),
+        ...AiBehaviorPreferenceSchema.parse(
+          executionInput.settings.aiBehavior ?? {},
+        ).applying.preApprovedDeclarations,
+      ]),
+    ],
     salaryDisclosure: executionInput.salaryDisclosure ?? "pause_for_user",
     allowedOrigins: executionInput.applyAllowedOrigins ?? [],
   };
 }
 
-function toApplyDocuments(
+export function resolveApplicationDocumentMimeType(fileName: string): string {
+  const extension = fileName.trim().toLowerCase().split(".").at(-1);
+  switch (extension) {
+    case "pdf":
+      return "application/pdf";
+    case "doc":
+      return "application/msword";
+    case "docx":
+      return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    case "txt":
+      return "text/plain";
+    case "rtf":
+      return "application/rtf";
+    case "odt":
+      return "application/vnd.oasis.opendocument.text";
+    default:
+      return "application/octet-stream";
+  }
+}
+
+export function toApplyDocuments(
   executionInput: ApplyPreparationInput,
 ): ApplyDocument[] {
   const resume: ApplyDocument = {
     id: `document_resume_${executionInput.resumeArtifact.id}`,
     fileName: executionInput.resumeArtifact.fileName,
-    mimeType: "application/pdf",
+    mimeType: resolveApplicationDocumentMimeType(
+      executionInput.resumeArtifact.fileName,
+    ),
     label: "Your CV",
     kind: "resume",
     loadBytes: () => loadVerifiedResumeBytes(executionInput.resumeArtifact),
   };
 
+  // The person's own files keep their kind. Every one of them used to arrive
+  // as "other", so a cover letter added under Profile › Files was never
+  // "already available" to the agent, and it wrote a fresh letter beside the
+  // one the person had chosen.
   const attachments = (executionInput.applicationAttachments ?? []).map(
     (attachment): ApplyDocument => ({
       id: `document_asset_${attachment.assetId}`,
       fileName: attachment.fileName,
       mimeType: attachment.mime,
       label: attachment.prompt,
-      kind: "other",
+      kind:
+        attachment.assetKind ??
+        (attachment.questionKind === "cover_letter"
+          ? "cover_letter"
+          : attachment.questionKind === "resume"
+            ? "resume"
+            : attachment.questionKind === "portfolio"
+              ? "portfolio"
+              : "other"),
       loadBytes: () => attachment.loadVerifiedBytes(),
     }),
   );
@@ -183,8 +237,15 @@ function toBlocker(
   if (blocked?.blocker) {
     return {
       code: BLOCKER_CODES[blocked.blocker.code],
-      userActionKind: null,
-      summary: blocked.blocker.summary,
+      userActionKind:
+        blocked.blocker.code === "security_challenge" &&
+        blocked.blocker.requiresPerson === true
+          ? "captcha"
+          : null,
+      // The agent's own sentence is the report the person acts on. Keep the
+      // page-derived blocker detail as supporting evidence, but do not replace
+      // the agent's explanation with a generic wrapper.
+      summary: result.reason,
       detail: blocked.blocker.detail,
       questionIds: [],
       sourceDebugEvidenceRefIds: [],
@@ -196,10 +257,36 @@ function toBlocker(
         : result.finalUrl,
     };
   }
-  // ADR 0022: a question Job Finder could not answer is not a task. The run
-  // fills what it can and hands the browser over; the questions are kept on
-  // the record so the person can see what is left, but nothing blocks.
-  void questions;
+  if (questions.length > 0) {
+    return {
+      code: "missing_candidate_answer",
+      userActionKind: questions.some(
+        (question) => question.answerControlType === "file",
+      )
+        ? "manual_upload"
+        : null,
+      summary: result.reason,
+      detail: result.reason,
+      questionIds: questions.map((question) => question.id),
+      sourceDebugEvidenceRefIds: [],
+      url: result.finalUrl,
+    };
+  }
+  // A run that said it was stuck never reached the end of the form. Without a
+  // blocker it read as "Ready to send" beside its own sentence saying the
+  // form could not be reached; the record now says it could not apply and
+  // offers another go.
+  if (result.outcome === "stuck") {
+    return {
+      code: "requires_manual_review",
+      userActionKind: null,
+      summary: result.reason,
+      detail: result.reason,
+      questionIds: [],
+      sourceDebugEvidenceRefIds: [],
+      url: result.finalUrl,
+    };
+  }
   return null;
 }
 
@@ -208,14 +295,63 @@ function toCheckpoints(
   jobId: string,
   startedAt: string,
 ): ApplicationAttemptCheckpoint[] {
-  return result.notes.slice(0, 40).map((note, index) => ({
+  // Each line is stamped with the moment it was written, not with the run's
+  // start: a trail where every step happened "at 19:41" is no trail.
+  const lines =
+    result.timeline.length > 0
+      ? result.timeline
+      : result.notes.map((text) => ({ at: startedAt, text }));
+  return lines.slice(0, 40).map((line, index) => ({
     id: `checkpoint_${jobId}_agent_${index + 1}`,
-    at: startedAt,
+    at: line.at,
     label: "Working through the form",
-    detail: note,
+    detail: line.text,
     state: "in_progress" as const,
     visualEvidence: [],
   }));
+}
+
+/** What the run wrote on the site, for the receipt: each field, each file. */
+function toExternalWrites(
+  result: ApplyAgentResult,
+): ApplicationAttemptExternalWriteEvidence[] {
+  return [
+    ...result.filled.map((entry) => ({
+      category:
+        entry.questionKind === "personal_info"
+          ? ("profile_field" as const)
+          : ("application_answer" as const),
+      fieldLabel: entry.label,
+      occurredAt: entry.at,
+      verified: false,
+    })),
+    ...result.attachments.map((entry) => ({
+      category: "resume_attachment" as const,
+      fieldLabel: entry.controlLabel,
+      occurredAt: entry.at,
+      verified: false,
+    })),
+  ];
+}
+
+/** The model this run talked to, for the receipt. Empty only when it never did. */
+function toModelUse(
+  result: ApplyAgentResult,
+  input: Pick<AgentApplicationPreparationInput, "providerLabel" | "modelLabel">,
+  startedAt: string,
+): ApplyExecutionModelUse[] {
+  if (result.modelTurns === 0) {
+    return [];
+  }
+  return [
+    {
+      purpose: "application_answering",
+      providerLabel: input.providerLabel?.trim() || "Job Finder's assistant",
+      modelLabel: input.modelLabel?.trim() || null,
+      occurredAt: startedAt,
+      turns: result.modelTurns,
+    },
+  ];
 }
 
 function nextActionFor(result: ApplyAgentResult): string {
@@ -224,37 +360,21 @@ function nextActionFor(result: ApplyAgentResult): string {
     return blocked.blocker.nextActionLabel;
   }
   if (result.pauses.some((pause) => pause.question !== null)) {
-    return "Open the browser and finish it";
+    return "Answer the form's questions and continue";
+  }
+  if (result.outcome === "stuck") {
+    return "Try again, or open the listing and apply on the site";
   }
   return result.outcome === "awaiting_your_review"
     ? "Review it and send it"
     : "Open the application and finish it";
 }
 
-/** How many questions the run left for the person, in one plain phrase. */
-function questionsLeftPhrase(result: ApplyAgentResult): string {
-  const count = result.pauses.reduce(
-    (total, pause) =>
-      total + (pause.questions?.length ?? (pause.question ? 1 : 0)),
-    0,
-  );
-  return count === 1 ? "1 question left for you" : `${count} questions left for you`;
-}
-
 function summaryFor(result: ApplyAgentResult): string {
-  switch (result.outcome) {
-    case "paused":
-      return result.pauses.some((pause) => pause.question !== null) &&
-        !result.pauses.some((pause) => pause.blocker !== null)
-        ? `Filled in what it could; ${questionsLeftPhrase(result)}`
-        : "This application needs you";
-    case "stuck":
-      return "Job Finder could not finish this application";
-    case "awaiting_your_review":
-      return "Ready for you to review and send";
-    default:
-      return "Filled in and waiting";
-  }
+  return (
+    result.reason.trim() ||
+    "Job Finder stopped before finishing this application."
+  );
 }
 
 /**
@@ -268,19 +388,75 @@ function summaryFor(result: ApplyAgentResult): string {
 async function runApplyAgentSafely(
   input: AgentApplicationPreparationInput,
   config: Parameters<typeof runApplyAgent>[0],
-): Promise<{ ok: true; result: ApplyAgentResult } | { ok: false; detail: string }> {
+): Promise<
+  { ok: true; result: ApplyAgentResult } | { ok: false; detail: string }
+> {
   try {
     return { ok: true, result: await runApplyAgent(config, input.llmClient) };
   } catch (error) {
     const reason =
       error instanceof Error && error.message.trim()
-        ? error.message.trim()
-        : "something went wrong while it was working through the form";
+        ? error.message.trim().replace(/\.?$/u, ".")
+        : "Something went wrong while it was working through the form.";
     return {
       ok: false,
-      detail: `Job Finder stopped working on ${input.siteLabel} because ${reason}. Nothing was sent, and anything it filled in is still on the page.`,
+      detail: `Job Finder hit a problem on ${input.siteLabel} it could not work around. ${reason} Nothing was sent, and anything it filled in is still on the page.`,
     };
   }
+}
+
+function hostnameOf(url: string): string | null {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return null;
+  }
+}
+
+function originOf(url: string): string | null {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "http:" || parsed.protocol === "https:"
+      ? parsed.origin
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+export function resolveApplicationPreparationTarget(input: {
+  executionInput: ApplyPreparationInput;
+  currentUrl?: string;
+}): { targetUrl: string; isContinuation: boolean } {
+  const configuredUrl =
+    input.executionInput.job.applicationUrl ??
+    input.executionInput.job.canonicalUrl;
+  const isContinuation = Boolean(input.executionInput.startingUrl?.trim());
+  const permittedOrigins = new Set(
+    [
+      originOf(configuredUrl),
+      ...(input.executionInput.applyAllowedOrigins ?? []).map(originOf),
+    ].filter((origin): origin is string => origin !== null),
+  );
+  const currentUrl = input.currentUrl?.trim() ?? "";
+  const currentOrigin = originOf(currentUrl);
+
+  // The browser runtime owns the exact Page binding. Its live URL, observed
+  // after an authorized sign-in or other setup, is newer than the persisted
+  // checkpoint and listing URLs. Only trust it inside this application's
+  // already-authorized origins.
+  if (currentOrigin && permittedOrigins.has(currentOrigin)) {
+    return { targetUrl: currentUrl, isContinuation };
+  }
+
+  const persistedStart = input.executionInput.startingUrl?.trim();
+  return {
+    targetUrl:
+      persistedStart && originOf(persistedStart)
+        ? persistedStart
+        : configuredUrl,
+    isContinuation,
+  };
 }
 
 export async function runAgentApplicationPreparation(
@@ -297,48 +473,107 @@ export async function runAgentApplicationPreparation(
     allowedOrigins: executionInput.applyAllowedOrigins ?? [],
   });
 
-  const targetUrl =
-    executionInput.job.applicationUrl ?? executionInput.job.canonicalUrl;
+  const { targetUrl, isContinuation } =
+    resolveApplicationPreparationTarget(input);
+  const authority = toApplyAuthority(executionInput);
+  const allowedOrigins = [...authority.allowedOrigins];
+  const activeAuthority: ApplyAuthority = {
+    ...authority,
+    allowedOrigins,
+  };
+  let activeEnvelope = input.envelope ?? null;
+  const moveReviewer = createMoveReviewer({
+    llmClient: input.llmClient,
+    goal: isContinuation
+      ? `Continue the ${executionInput.job.title} application at ${executionInput.job.company} on the currently open retained page at ${targetUrl}. Confirm that the open page is still this employer's application. Keep working on that current form; do not return to the listing or reload it. Nothing is sent.`
+      : `Apply for ${executionInput.job.title} at ${executionInput.job.company} on the open page at ${targetUrl}. Confirm that the open page is this employer's application, then fill in the form; nothing is sent.`,
+    homeLabel: input.siteLabel,
+    homeHosts: [hostnameOf(targetUrl) ?? input.siteLabel],
+    ...(input.signal ? { signal: input.signal } : {}),
+  });
 
   const outcome = await runApplyAgentSafely(input, {
     hands: createApplyPageHands(input.session, now),
-      safety: input.session,
-      intermediateWritesAuthorized:
-        executionInput.intermediateMutationsAuthorized === true,
-      authority: toApplyAuthority(executionInput),
-      sources: {
-        profile: executionInput.profile,
-        resumeText: executionInput.profile.baseResume.textContent,
-        posting: {
-          title: executionInput.job.title,
-          company: executionInput.job.company,
-          location: executionInput.job.location,
-          description: executionInput.job.description,
-        },
-        reusableAnswers: executionInput.profile.answerBank.customAnswers,
-        documents: toApplyDocuments(executionInput),
+    safety: input.session,
+    intermediateWritesAuthorized:
+      executionInput.intermediateMutationsAuthorized === true,
+    accountCreationAuthorized:
+      executionInput.accountCreationAuthorized === true,
+    authority: activeAuthority,
+    sources: {
+      profile: executionInput.profile,
+      resumeText: executionInput.profile.baseResume.textContent,
+      posting: {
+        title: executionInput.job.title,
+        company: executionInput.job.company,
+        location: executionInput.job.location,
+        description: executionInput.job.description,
       },
-      application: {
-        jobId: executionInput.job.id,
-        applicationId: executionInput.idempotencyKey ?? executionInput.job.id,
-        startingUrl: targetUrl,
-      },
-      siteLabel: input.siteLabel,
-      ...(input.letters
+      reusableAnswers: executionInput.profile.answerBank.customAnswers,
+      documents: toApplyDocuments(executionInput),
+    },
+    application: {
+      jobId: executionInput.job.id,
+      applicationId: executionInput.idempotencyKey ?? executionInput.job.id,
+      startingUrl: targetUrl,
+      ...(isContinuation
         ? {
-            letters: createApplicationLetterProvider({
-              ...input.letters,
-              application: {
-                jobId: executionInput.job.id,
-                applicationId:
-                  executionInput.idempotencyKey ?? executionInput.job.id,
-              },
-              ...(input.signal ? { signal: input.signal } : {}),
-            }),
+            continuation: {
+              sourceUrls: [
+                executionInput.startingUrl,
+                executionInput.job.applicationUrl,
+                executionInput.job.canonicalUrl,
+              ].filter(
+                (url): url is string =>
+                  typeof url === "string" && url.trim().length > 0,
+              ),
+            },
           }
         : {}),
-      now,
-      ...(input.signal ? { signal: input.signal } : {}),
+    },
+    siteLabel: input.siteLabel,
+    writing: AiBehaviorPreferenceSchema.parse(
+      executionInput.settings.aiBehavior ?? {},
+    ).applying,
+    reviewMove: async (move) => {
+      const review = await moveReviewer(move);
+      if (!review.allowed) return review;
+      let origin: string | null = null;
+      try {
+        origin = new URL(move.url).origin;
+      } catch {
+        origin = null;
+      }
+      if (
+        origin &&
+        !allowedOrigins.includes(origin) &&
+        executionInput.authorizeReviewedApplicationOrigin
+      ) {
+        const widened =
+          await executionInput.authorizeReviewedApplicationOrigin(origin);
+        if (widened) {
+          activeEnvelope = widened;
+          allowedOrigins.push(origin);
+        }
+      }
+      return review;
+    },
+    ...(input.letters
+      ? {
+          letters: createApplicationLetterProvider({
+            ...input.letters,
+            application: {
+              jobId: executionInput.job.id,
+              applicationId:
+                executionInput.idempotencyKey ?? executionInput.job.id,
+            },
+            ...(input.signal ? { signal: input.signal } : {}),
+          }),
+        }
+      : {}),
+    now,
+    ...(input.onProgress ? { onProgress: input.onProgress } : {}),
+    ...(input.signal ? { signal: input.signal } : {}),
   });
 
   if (!outcome.ok) {
@@ -347,7 +582,9 @@ export async function runAgentApplicationPreparation(
     // that does nothing and a record that says it is still going.
     return buildPreparationResult({
       executionInput,
-      state: "paused",
+      // A run the model or browser dropped is a failed attempt to try again,
+      // not a step waiting on the person.
+      state: "failed",
       summary: "Job Finder could not finish this application",
       detail: outcome.detail,
       questions: [],
@@ -374,7 +611,9 @@ export async function runAgentApplicationPreparation(
   // One line the developer can read beside the person's own notes. The same
   // numbers are in the run's trail; this is so a slow run can be diagnosed
   // from the console without opening the record.
-  const timingNote = result.notes.find((note) => note.startsWith("[apply] timing"));
+  const timingNote = result.notes.find((note) =>
+    note.startsWith("[apply] timing"),
+  );
   if (timingNote) {
     console.info(timingNote);
   }
@@ -384,7 +623,7 @@ export async function runAgentApplicationPreparation(
     handoff: decideApplySubmissionHandoff({
       result,
       mode: toApplyAuthority(executionInput).mode,
-      envelope: input.envelope ?? null,
+      envelope: activeEnvelope,
       siteLabel: input.siteLabel,
     }),
     reviewCard: buildApplyReviewCard({
@@ -395,14 +634,24 @@ export async function runAgentApplicationPreparation(
   });
 
   const questions = toQuestions(result);
+  const blocker = toBlocker(result, questions);
+  // A form worked to the end with nothing left for the person is ready for
+  // them to read over and send. Recording it as "paused" put every finished
+  // application in the Waiting-on-you count beside the ones that were stuck.
+  const attemptState: ApplyExecutionResult["state"] =
+    result.outcome === "stuck"
+      ? "failed"
+      : blocker === null && questions.length === 0
+        ? "ready"
+        : "paused";
 
   return buildPreparationResult({
     executionInput,
-    state: "paused",
+    state: attemptState,
     summary: summaryFor(result),
     detail: result.reason,
     questions,
-    blocker: toBlocker(result, questions),
+    blocker,
     checkpoints: toCheckpoints(result, executionInput.job.id, startedAt),
     checkpointLabel: summaryFor(result),
     checkpointDetail: result.reason,
@@ -410,6 +659,8 @@ export async function runAgentApplicationPreparation(
     lastUrl: result.finalUrl,
     now: now().toISOString(),
     nextActionLabel: nextActionFor(result),
+    externalWrites: toExternalWrites(result),
+    modelUse: toModelUse(result, input, startedAt),
   });
 }
 
@@ -441,6 +692,7 @@ export function resolveApplySiteLabel(input: {
  * something the person can configure, and the caller says so in those words.
  */
 export function toApplyLlmClient(aiClient: {
+  getStatus?: () => { label: string; model: string | null };
   chatWithTools?: (
     messages: Parameters<LLMClient["chatWithTools"]>[0],
     tools: Parameters<LLMClient["chatWithTools"]>[1],
@@ -473,28 +725,24 @@ export function createApplyFormPreparer(input: {
     | undefined;
   envelope?: ApplicationAuthorityEnvelope | null;
   onPrepared?: AgentApplicationPreparationInput["onPrepared"];
+  onProgress?: AgentApplicationPreparationInput["onProgress"];
   now?: () => Date;
 }): NonNullable<ExecuteApplicationFlowInput["prepareApplicationForm"]> {
-  return async ({ session, startedAt, signal }) => {
+  return async ({ session, currentUrl, startedAt, signal, onProgress }) => {
     const llmClient = toApplyLlmClient(input.aiClient);
     if (!llmClient) {
       const detail =
         "Job Finder could not fill this application in because its assistant is unavailable right now. Nothing was changed on the site. Try again shortly.";
       return buildPreparationResult({
         executionInput: input.executionInput,
-        state: "paused",
+        // The person cannot resolve a missing model. Persist this as a failed
+        // attempt so recovery offers Try again without adding a Needs-you
+        // blocker or pretending a form is ready.
+        state: "failed",
         summary: "Job Finder could not fill this application in",
         detail,
         questions: [],
-        blocker: {
-          code: "requires_manual_review",
-          userActionKind: null,
-          summary: "Job Finder could not fill this application in.",
-          detail,
-          questionIds: [],
-          sourceDebugEvidenceRefIds: [],
-          url: null,
-        },
+        blocker: null,
         checkpoints: [],
         checkpointLabel: "Stopped before filling anything in",
         checkpointDetail: detail,
@@ -505,15 +753,31 @@ export function createApplyFormPreparer(input: {
       });
     }
 
+    const status = input.aiClient.getStatus?.() ?? null;
+    const reportProgress =
+      input.onProgress || onProgress
+        ? async (
+            progress: Parameters<
+              NonNullable<AgentApplicationPreparationInput["onProgress"]>
+            >[0],
+          ) => {
+            await input.onProgress?.(progress);
+            await onProgress?.(progress);
+          }
+        : undefined;
     return runAgentApplicationPreparation({
       session,
+      currentUrl,
       executionInput: input.executionInput,
       llmClient,
       startedAt,
       siteLabel: input.siteLabel,
+      providerLabel: status?.label ?? null,
+      modelLabel: status?.model ?? null,
       ...(input.letters ? { letters: input.letters } : {}),
       ...(input.envelope ? { envelope: input.envelope } : {}),
       ...(input.onPrepared ? { onPrepared: input.onPrepared } : {}),
+      ...(reportProgress ? { onProgress: reportProgress } : {}),
       ...(signal ? { signal } : {}),
       ...(input.now ? { now: input.now } : {}),
     });
@@ -540,15 +804,13 @@ export function buildApplyLetterDependencies(input: {
       job: SavedJob;
       profile: CandidateProfile;
       settings: JobFinderSettings;
-      fileType: "pdf" | "docx" | null;
+      fileType: "pdf" | "docx" | "txt" | null;
     }) => Promise<RenderedLetterArtifact>;
   };
   job: SavedJob;
   profile: CandidateProfile;
   settings: JobFinderSettings;
-}):
-  | Omit<ApplicationLetterDependencies, "application" | "signal">
-  | undefined {
+}): Omit<ApplicationLetterDependencies, "application" | "signal"> | undefined {
   const chatWithTools = input.aiClient.chatWithTools;
   if (!chatWithTools) {
     return undefined;
@@ -560,15 +822,36 @@ export function buildApplyLetterDependencies(input: {
     preference: CoverLetterPreferenceSchema.parse(
       input.settings.coverLetter ?? {},
     ),
-    writeLetter: async ({ prompt, signal }) => {
+    writeLetter: async ({
+      prompt,
+      purpose,
+      groundedIn,
+      language,
+      preference,
+      priorText,
+      signal,
+    }) => {
       const reply = await chatWithTools(
         [
           {
             role: "system",
             content:
-              "You write cover letters for one person. Every claim must be supported by what you are given. Return only the letter.",
+              "You write application documents for one person. Every claim must be supported by the supplied profile, selected resume, and job posting. Follow the saved tone, length, and language preference. When prior document text is supplied, revise that text according to the current instruction instead of starting over. Return only the finished document text.",
           },
-          { role: "user", content: prompt },
+          {
+            role: "user",
+            content: [
+              `Document purpose: ${purpose.replace(/_/gu, " ")}`,
+              `Current instruction: ${prompt}`,
+              `Saved tone: ${preference.tone}`,
+              `Saved length: ${preference.length}`,
+              `Language: ${language ?? preference.language ?? "Follow the job posting"}`,
+              "",
+              "Grounded application context:",
+              ...groundedIn.map((entry) => `- ${entry}`),
+              ...(priorText ? ["", "Prior version to revise:", priorText] : []),
+            ].join("\n"),
+          },
         ],
         [],
         signal ? { signal } : {},
@@ -595,9 +878,7 @@ export function buildApplyLetterDependencies(input: {
               // The exact bytes that were written are the bytes that go out.
               loadBytes: async () => {
                 const bytes = await readFile(rendered.storagePath);
-                const actual = createHash("sha256")
-                  .update(bytes)
-                  .digest("hex");
+                const actual = createHash("sha256").update(bytes).digest("hex");
                 if (actual !== rendered.sha256) {
                   throw new Error(
                     "The letter changed after it was written, so it was not attached.",
@@ -628,29 +909,49 @@ export function buildApplyReviewCard(input: {
   const letterEntry = input.result.filled.find(
     (entry) => entry.questionKind === "cover_letter",
   );
+  // The card's schema caps every string. The run's own text (a grounding
+  // note that quotes a resume line, a long field label) can run past a cap,
+  // and an over-long note used to make this parse throw after the form had
+  // been filled in, so the run ended as "stopped safely" and nothing was
+  // sent. Text is clamped to what the card can hold; the record keeps the
+  // full run trail.
+  const clamp = (text: string, max: number): string => {
+    const trimmed = text.trim() || "-";
+    return trimmed.length <= max
+      ? trimmed
+      : `${trimmed.slice(0, max - 1).trimEnd()}…`;
+  };
+  const clampGrounding = (notes: readonly string[]): string[] =>
+    notes
+      .map((note) => note.trim())
+      .filter((note) => note.length > 0)
+      .slice(0, 8)
+      .map((note) => clamp(note, 240));
 
   return ApplicationReviewCardSchema.parse({
-    siteLabel: input.siteLabel,
+    siteLabel: clamp(input.siteLabel, 240),
     pageUrl: input.result.finalUrl,
-    answers: input.result.filled.map((entry) => ({
-      question: entry.label,
-      answer: entry.answer.value,
-      source: entry.answer.provenanceLabel,
+    answers: input.result.filled.slice(0, 200).map((entry) => ({
+      question: clamp(entry.label, 2_000),
+      answer: clamp(entry.answer.value, 12_000),
+      source: clamp(entry.answer.provenanceLabel, 240),
       written: entry.answer.sourceKind === "generated",
-      groundedIn: entry.answer.groundedIn,
+      groundedIn: clampGrounding(entry.answer.groundedIn),
     })),
-    attachments: input.result.attachments.map((attachment) => ({
-      label: attachment.label,
-      fileName: attachment.fileName,
-      field: attachment.controlLabel,
+    attachments: input.result.attachments.slice(0, 20).map((attachment) => ({
+      label: clamp(attachment.label, 240),
+      fileName: clamp(attachment.fileName, 240),
+      field: clamp(attachment.controlLabel, 2_000),
     })),
     letter: letterEntry
       ? {
-          text: letterEntry.answer.value,
-          groundedIn: letterEntry.answer.groundedIn,
+          text: clamp(letterEntry.answer.value, 12_000),
+          groundedIn: clampGrounding(letterEntry.answer.groundedIn),
         }
       : null,
-    waitingOnYou: input.result.pauses.map((pause) => pause.summary),
+    waitingOnYou: input.result.pauses
+      .slice(0, 20)
+      .map((pause) => clamp(pause.summary, 2_000)),
     preparedAt: input.preparedAt,
   });
 }

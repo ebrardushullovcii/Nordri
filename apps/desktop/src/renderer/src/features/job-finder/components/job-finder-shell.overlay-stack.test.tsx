@@ -58,9 +58,9 @@ function createWorkspace(): JobFinderWorkspaceSnapshot {
 
 function taskCenterSummary(): HTMLElement {
   const summary = document.querySelector<HTMLElement>(
-    "summary[aria-label^='Tasks']",
+    "summary[aria-label^='Activity']",
   );
-  if (!summary) throw new Error("Expected the Tasks trigger to be rendered.");
+  if (!summary) throw new Error("Expected the Activity trigger to be rendered.");
   return summary;
 }
 

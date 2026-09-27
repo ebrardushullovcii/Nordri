@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { JobFinderWorkspaceSnapshot } from "@unemployed/contracts";
 import {
   applyResultStoppedStructurally,
+  buildApplyRunContextReader,
   formatQuestionPrompt,
   getApplicationStopReasonSentence,
   resolveApplicationRecoveryPresentation,
@@ -47,12 +48,137 @@ function resolve(result: ApplyResult | null, isApplyPending = false) {
 }
 
 describe("resolveApplicationRecoveryPresentation", () => {
+  it.each(["site_protection", "required_human_input"] as const)(
+    "opens the browser for a CAPTCHA instead of repeating preparation (%s)",
+    (blockerReason) => {
+      const result = buildResult({
+        state: "awaiting_review",
+        blockerReason,
+        summary: "The site asks you to complete a CAPTCHA.",
+      });
+      expect(resolve(result)).toMatchObject({
+        statusLine: "This application needs a security check",
+        primaryAction: "open_browser",
+      });
+      if (blockerReason === "required_human_input") {
+        expect(resolve({ ...result, state: "skipped" }).primaryAction).toBe(
+          "try_again",
+        );
+      }
+    },
+  );
+
+  it.each(["failed", "skipped"] as const)(
+    "offers retry after a question step ends as %s despite retained questions",
+    (state) => {
+      const result = buildResult({
+        state,
+        blockerReason: "required_human_input",
+        latestQuestionCount: 4,
+        detail: "The person closed this step. Choose Try again to continue.",
+      });
+      expect(
+        resolveApplicationRecoveryPresentation({
+          canOpenSafeguards: false,
+          isApplyPending: false,
+          pausedQuestionCount: 4,
+          visibleApplyResult: result,
+        }),
+      ).toMatchObject({
+        state: "retry",
+        statusLine: "This application did not finish",
+        primaryAction: "try_again",
+        primaryActionLabel: "Try again",
+        reasonSentence: result.detail,
+      });
+    },
+  );
+
+  it("does not retry a failed question result with an uncertain submission", () => {
+    expect(
+      resolve(
+        buildResult({
+          state: "failed",
+          blockerReason: "required_human_input",
+          latestQuestionCount: 4,
+          privacyReceipt: {
+            submissionOutcome: { outcome: "outcome_uncertain" },
+          } as ApplyResult["privacyReceipt"],
+        }),
+      ),
+    ).toMatchObject({ state: "verify_outcome", primaryAction: "none" });
+  });
+
+  it("shows a confirmed submission as terminal and never offers Try again", () => {
+    const presentation = resolve(
+      buildResult({
+        state: "submitted",
+        summary: "Application submitted",
+        detail: "The employer site confirmed that it received the application.",
+        privacyReceipt: {
+          submissionOutcome: { outcome: "submitted" },
+        } as ApplyResult["privacyReceipt"],
+      }),
+    );
+
+    expect(presentation.state).toBe("submitted");
+    expect(presentation.statusLine).toBe("Application submitted");
+    expect(presentation.primaryAction).toBe("none");
+    expect(presentation.primaryActionLabel).toBeNull();
+  });
+
+  it("shows an application the person sent on the site as sent, with no Try again", () => {
+    const presentation = resolve(
+      buildResult({
+        state: "submitted",
+        summary: "You sent this application yourself on the site.",
+        detail:
+          "The site showed its confirmation after you sent the form Job Finder filled in. Job Finder did not press send.",
+        privacyReceipt: null,
+      }),
+    );
+
+    expect(presentation).toMatchObject({
+      state: "submitted",
+      primaryAction: "none",
+      primaryActionLabel: null,
+    });
+  });
+
+  it("keeps an uncertain submission terminal until a person verifies it", () => {
+    const presentation = resolve(
+      buildResult({ blockerReason: "submission_outcome_uncertain" }),
+    );
+
+    expect(presentation.state).toBe("verify_outcome");
+    expect(presentation.primaryAction).toBe("none");
+    expect(presentation.primaryActionLabel).toBeNull();
+  });
+
   it("gives a running preparation a sentence and no action", () => {
     const presentation = resolve(buildResult({ state: "filling" }), true);
 
     expect(presentation.state).toBe("preparing");
     expect(presentation.primaryAction).toBe("none");
     expect(presentation.primaryActionLabel).toBeNull();
+  });
+
+  it("does not repeat an obsolete blocker summary after exact-page verification reaches review", () => {
+    const result = buildResult({
+      state: "awaiting_review",
+      summary: "The CAPTCHA still needs to be completed.",
+      detail: "The CAPTCHA still needs to be completed.",
+      blockerReason: null,
+      blockerSummary: null,
+    });
+
+    expect(getApplicationStopReasonSentence(result)).toBeNull();
+    expect(resolve(result)).toMatchObject({
+      state: "finish_in_browser",
+      statusLine: "Ready for you to read over and send",
+      reasonSentence:
+        "Job Finder filled the form in and stopped before the send button.",
+    });
   });
 
   it("lets a pause the person must finish outrank the in-flight flag", () => {
@@ -114,6 +240,19 @@ describe("resolveApplicationRecoveryPresentation", () => {
         }),
       ),
     ).toBe(false);
+  });
+
+  it("offers Try again when the exact prepared browser page was lost", () => {
+    const presentation = resolve(
+      buildResult({
+        state: "failed",
+        blockerReason: "unexpected_navigation",
+        summary: "The prepared application page is no longer open.",
+      }),
+    );
+
+    expect(presentation.state).toBe("retry");
+    expect(presentation.primaryActionLabel).toBe("Try again");
   });
 
   it("always carries a reason sentence for a stopped run", () => {
@@ -267,11 +406,11 @@ describe("resolveApplicationRecoveryPresentation", () => {
     expect(presentation.reasonSentence).toBe(
       "The form asks: Are you subject to any employment agreements?",
     );
-    expect(presentation.primaryActionLabel).toBe("Answer in Needs you");
+    expect(presentation.primaryActionLabel).toBe("Answer the questions");
     expect(presentation.primaryAction).not.toBe("try_again");
   });
 
-  it("offers the saving permission, not a retry, when the site saves as you type", () => {
+  it("offers a plain retry when an older run stopped because the site saves as you type", () => {
     const presentation = resolveApplicationRecoveryPresentation({
       canOpenSafeguards: true,
       destinationUrl: "https://www.boards.example.com/apply/123",
@@ -285,12 +424,10 @@ describe("resolveApplicationRecoveryPresentation", () => {
 
     expect(presentation.state).toBe("site_saves_as_you_go");
     expect(presentation.reasonSentence).toBe(
-      "This site saves your answers as you type, and Job Finder is not allowed to let it.",
+      "This site saves your answers as you type. Job Finder now lets sites do that, so run it again.",
     );
-    expect(presentation.primaryActionLabel).toBe(
-      "Allow saving on boards.example.com and try again",
-    );
-    expect(presentation.primaryAction).not.toBe("try_again");
+    expect(presentation.primaryActionLabel).toBe("Try again");
+    expect(presentation.primaryAction).toBe("try_again");
   });
 
   it("prints a field description only when it differs from the label", () => {
@@ -325,7 +462,36 @@ describe("resolveApplicationRecoveryPresentation", () => {
     });
 
     expect(presentation.reasonSentence).toBe("The form asks 3 questions.");
-    expect(presentation.primaryActionLabel).toBe("Answer in Needs you");
+    expect(presentation.primaryActionLabel).toBe("Answer the questions");
+  });
+
+  it("offers a same-record retry after the current resume-review blocker clears", () => {
+    const presentation = resolveApplicationRecoveryPresentation({
+      canOpenSafeguards: true,
+      isApplyPending: false,
+      recordLatestBlockerCode: null,
+      visibleApplyResult: buildResult({
+        state: "blocked",
+        blockerReason: "required_human_input",
+        blockerSummary:
+          "The resume for 'Senior Product Designer' leaves out a role that Job Finder wants you to confirm first.",
+      }),
+    });
+
+    expect(presentation.state).toBe("retry");
+    expect(presentation.primaryActionLabel).toBe("Try again");
+  });
+
+  it("does not reuse the previous attempt's age while a retry is starting", () => {
+    const presentation = resolveApplicationRecoveryPresentation({
+      canOpenSafeguards: true,
+      isApplyPending: true,
+      now: Date.parse("2026-09-01T11:37:00.000Z"),
+      visibleApplyResult: buildResult({ state: "blocked" }),
+    });
+
+    expect(presentation.state).toBe("preparing");
+    expect(presentation.statusLine).toBe("Job Finder is filling in the form");
   });
 
   it("keeps saying it is working for as long as the run record is running", () => {
@@ -346,5 +512,83 @@ describe("resolveApplicationRecoveryPresentation", () => {
     );
     expect(presentation.primaryAction).toBe("none");
     expect(presentation.primaryActionLabel).toBeNull();
+  });
+});
+
+describe("a planned job's standing in its batch", () => {
+  const planned = buildResult({
+    runId: "run_1",
+    state: "planned",
+    completedAt: null,
+  });
+
+  it("reads what the run is doing from the workspace", () => {
+    const read = buildApplyRunContextReader({
+      applyRuns: [
+        { id: "run_1", state: "running" },
+      ] as unknown as JobFinderWorkspaceSnapshot["applyRuns"],
+      applyJobResults: [
+        buildResult({
+          id: "result_0",
+          runId: "run_1",
+          state: "awaiting_review",
+        }),
+        planned,
+      ],
+      activityControl: { paused: true, pauseBehavior: "finish_current" },
+    });
+    expect(read(planned)).toEqual({
+      state: "running",
+      activityPaused: true,
+      started: true,
+    });
+    expect(read(buildResult({ runId: "run_gone" }))).toBeNull();
+  });
+
+  it("offers Try again for a job a safety limit left behind", () => {
+    expect(
+      resolveApplicationRecoveryPresentation({
+        canOpenSafeguards: true,
+        isApplyPending: false,
+        run: {
+          state: "paused_for_user_review",
+          activityPaused: false,
+          started: true,
+        },
+        visibleApplyResult: planned,
+      }),
+    ).toMatchObject({
+      state: "retry",
+      statusLine: "Job Finder did not get to this application",
+      primaryAction: "try_again",
+    });
+  });
+
+  it("says Paused, with no action, while the person's pause holds it", () => {
+    expect(
+      resolveApplicationRecoveryPresentation({
+        canOpenSafeguards: true,
+        isApplyPending: false,
+        run: { state: "running", activityPaused: true, started: true },
+        visibleApplyResult: planned,
+      }),
+    ).toMatchObject({
+      statusLine: "Paused before this application",
+      primaryAction: "none",
+    });
+  });
+
+  it("waits its turn in a batch that is still going", () => {
+    expect(
+      resolveApplicationRecoveryPresentation({
+        canOpenSafeguards: true,
+        isApplyPending: false,
+        run: { state: "running", activityPaused: false, started: true },
+        visibleApplyResult: planned,
+      }),
+    ).toMatchObject({
+      statusLine: "Waiting its turn in this batch",
+      primaryAction: "none",
+    });
   });
 });

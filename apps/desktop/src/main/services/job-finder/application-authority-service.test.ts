@@ -42,6 +42,101 @@ function expectApplied(result: ApplicationAuthorityEnvelopeMutationResult) {
 }
 
 describe("Job Finder application authority service", () => {
+  it("atomically replaces one grant after it has been used", async () => {
+    const repository = createInMemoryJobFinderRepository(
+      createEmptyJobFinderRepositoryState(),
+    );
+    let nextId = 0;
+    const service = createJobFinderApplicationAuthorityService({
+      repository,
+      now: () => NOW,
+      idFactory: () => String(++nextId),
+    });
+    const first = expectApplied(
+      await service.create(
+        createPolicy({
+          scope: { campaignId: null, jobIds: ["job_first"] },
+        }),
+      ),
+    );
+    const replacement = expectApplied(
+      await service.replaceUsed({
+        ...createPolicy({
+          scope: { campaignId: null, jobIds: ["job_first", "job_second"] },
+          allowedOrigins: [
+            "https://boards.example.com",
+            "https://ats.example.com",
+          ],
+        }),
+        id: first.id,
+        expectedRevision: first.revision,
+      }),
+    );
+    expect(replacement.id).not.toBe(first.id);
+    expect(replacement.scope.jobIds).toEqual(["job_first", "job_second"]);
+    expect(replacement.allowedOrigins).toEqual([
+      "https://boards.example.com",
+      "https://ats.example.com",
+    ]);
+    expect(
+      await repository.listApplicationAuthorityEnvelopes({ status: "active" }),
+    ).toEqual([replacement]);
+    expect(
+      await repository.getApplicationAuthorityEnvelope(first.id),
+    ).toMatchObject({ status: "revoked" });
+  });
+  it.each(["confirm_before_submit", "autonomous_submit"] as const)(
+    "approves an empty answer bank and creates the first %s permission",
+    async (mode) => {
+      const repository = createInMemoryJobFinderRepository(
+        createEmptyJobFinderRepositoryState(),
+      );
+      const service = createJobFinderApplicationAuthorityService({
+        repository,
+        now: () => NOW,
+        idFactory: () => "empty",
+      });
+      const profileState = await repository.getProfileWithRevision();
+      const approval = await service.approveCurrentAnswers({
+        expectedProfileRevision: profileState.revision,
+        confirmedCurrentAnswers: true,
+      });
+      expect(approval).toMatchObject({
+        status: "created",
+        snapshot: { entryCount: 0, kinds: [] },
+        readiness: { approvedSnapshot: { entryCount: 0 } },
+      });
+      await expect(service.getReadiness()).resolves.toMatchObject({
+        approvedSnapshot: { entryCount: 0 },
+      });
+      const created = expectApplied(
+        await service.create(
+          createPolicy({
+            mode,
+            scope: { campaignId: null, jobIds: ["job_first"] },
+            expiresAt: LATER,
+            intermediateMutationsAuthorized: true,
+          }),
+        ),
+      );
+      expect(created).toMatchObject({
+        mode,
+        allowedResumeSha256: [SHA],
+        accountCreationAuthorized: false,
+        decisionPolicy: {
+          answerPolicy: {
+            approvedAnswerSnapshot: {
+              revision: approval.snapshot?.revision,
+              digest: approval.snapshot?.digest,
+            },
+            unknownRequiredQuestion: "pause_for_user",
+            unknownEligibility: "pause_for_user",
+          },
+        },
+      });
+    },
+  );
+
   it("creates, reads, revision-updates, and revokes one prepare-only envelope", async () => {
     const repository = createInMemoryJobFinderRepository(
       createEmptyJobFinderRepositoryState(),
@@ -358,7 +453,7 @@ describe("Job Finder application authority service", () => {
     });
   });
 
-  it("reports an empty answer bank without hashing or throwing, while optional kinds stay optional", async () => {
+  it("reports an empty answer bank without throwing, while optional kinds stay optional", async () => {
     const repository = createInMemoryJobFinderRepository(
       createEmptyJobFinderRepositoryState(),
     );
@@ -371,7 +466,9 @@ describe("Job Finder application authority service", () => {
     });
     const empty = await service.getReadiness();
     expect(empty.answerApprovalStatus).toBe("missing_answers");
-    expect(empty.currentAnswers.digest).toBeNull();
+    // An empty bank still hashes: approving "nothing on file" is what lets
+    // sending start on a fresh profile (ADR 0027).
+    expect(empty.currentAnswers.digest).not.toBeNull();
     expect(empty.currentAnswers.entryCount).toBe(0);
     expect(empty.blockers).toContainEqual({
       code: "no_reusable_answers",

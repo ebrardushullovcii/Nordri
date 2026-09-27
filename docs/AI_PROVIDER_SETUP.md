@@ -23,6 +23,9 @@ UNEMPLOYED_AI_BASE_URL=https://opencode.ai/zen/go/v1
 UNEMPLOYED_AI_MODEL=muse-spark-1.3-contributor
 UNEMPLOYED_AI_API_MODE=responses
 UNEMPLOYED_AI_REASONING_EFFORT=xhigh
+# Browser agents (search, source checks, applying) and page reads take many
+# short turns; they think briefly. Resume writing keeps the effort above.
+UNEMPLOYED_AI_AGENT_REASONING_EFFORT=low
 
 # Aggressive resume tailoring runs on its own dedicated route so the whole
 # aggressive lifecycle (draft, re-tailor, and model-backed review/regenerate)

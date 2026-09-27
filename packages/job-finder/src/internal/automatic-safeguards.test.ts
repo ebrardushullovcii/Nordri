@@ -11,6 +11,7 @@ import { describe, expect, test } from "vitest";
 import {
   deriveDiscoveryFailureEvidence,
   deriveDiscoveryRunFailureEvidence,
+  derivePreparedBatchSampleInput,
   deriveSimultaneousApplicationConflicts,
   deriveSourceDebugCampaignWork,
   deriveSourceDebugFailureEvidence,
@@ -20,6 +21,86 @@ import {
 
 const startedAt = "2026-08-15T10:00:00.000Z";
 const completedAt = "2026-08-15T10:01:00.000Z";
+
+test("samples only inspectable prepared forms, not Needs you handoffs", () => {
+  const run = ApplyRunSchema.parse({
+    id: "run_reviewable",
+    mode: "queue_auto",
+    state: "completed",
+    jobIds: ["job_1", "job_2", "job_3", "job_4"],
+    createdAt: startedAt,
+    updatedAt: completedAt,
+    completedAt,
+    totalJobs: 4,
+    summary: "Prepared batch completed.",
+    detail: "Review prepared forms.",
+  });
+  const reviewCard = {
+    siteLabel: "Replica form",
+    pageUrl: "http://127.0.0.1/apply",
+    answers: [],
+    attachments: [],
+    letter: null,
+    waitingOnYou: [],
+    preparedAt: completedAt,
+  };
+  const results = [
+    ApplyJobResultSchema.parse({
+      id: "result_1",
+      runId: run.id,
+      jobId: "job_1",
+      state: "awaiting_review",
+      summary: "Prepared",
+      detail: "Review this form.",
+      startedAt,
+      updatedAt: completedAt,
+      reviewCard,
+    }),
+    ApplyJobResultSchema.parse({
+      id: "result_2",
+      runId: run.id,
+      jobId: "job_2",
+      state: "awaiting_review",
+      summary: "Prepared",
+      detail: "Review this form.",
+      startedAt,
+      updatedAt: completedAt,
+      reviewCard,
+    }),
+    ApplyJobResultSchema.parse({
+      id: "result_3",
+      runId: run.id,
+      jobId: "job_3",
+      state: "awaiting_review",
+      summary: "Needs your answer",
+      detail: "A required question is waiting.",
+      startedAt,
+      updatedAt: completedAt,
+      blockerReason: "required_human_input",
+    }),
+    ApplyJobResultSchema.parse({
+      id: "result_4",
+      runId: run.id,
+      jobId: "job_4",
+      state: "awaiting_review",
+      summary: "Prepared",
+      detail: "Review this form.",
+      startedAt,
+      updatedAt: completedAt,
+      reviewCard,
+    }),
+  ];
+  expect(
+    derivePreparedBatchSampleInput({ run, results, campaign: null })?.prepared,
+  ).toEqual([{ id: "result_1" }, { id: "result_2" }, { id: "result_4" }]);
+  expect(
+    derivePreparedBatchSampleInput({
+      run,
+      results: [results[0]!, results[2]!],
+      campaign: null,
+    }),
+  ).toBeNull();
+});
 
 function discoveryRun(input: {
   id: string;

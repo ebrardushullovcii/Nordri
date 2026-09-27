@@ -2,641 +2,487 @@ import type {
   BrowserSessionState,
   ReviewQueueItem,
   SavedJob,
+  TailoredAsset,
 } from "@unemployed/contracts";
 import { describe, expect, it } from "vitest";
+import { JOB_FINDER_BROWSER_NAME } from "../../lib/job-finder-browser-handoff-copy";
 import {
   buildMissionPanelState,
-  getApplicationReadinessFacts,
+  describeApplyOutcome,
   getApplySupportState,
-  partitionApplicationReadinessFacts,
+  getPrimaryApplicationAction,
+  shouldShowMissionActionMessage,
   stripInternalCodeParenthetical,
 } from "./review-queue-mission-panel-helpers";
+import { AI_UNAVAILABLE_RESUME_RESULT_MESSAGE } from "./review-queue-status";
 
-const BANNED_OPERATION_COPY = /apply copilot|restage|submit approval/i;
+function createBrowserSession(
+  status: BrowserSessionState["status"] = "ready",
+): BrowserSessionState {
+  return {
+    source: "target_site",
+    status,
+    driver: "chrome_profile_agent",
+    label: "Browser",
+    detail: null,
+    lastCheckedAt: "2026-08-20T00:00:00.000Z",
+  } as BrowserSessionState;
+}
 
-const readyBrowser = {
-  source: "target_site",
-  status: "ready",
-  driver: "chrome_profile_agent",
-  label: "Browser ready",
-  detail: "Ready when needed.",
-  lastCheckedAt: "2026-07-30T10:00:00.000Z",
-} as BrowserSessionState;
+function createJob(overrides: Partial<SavedJob> = {}): SavedJob {
+  return {
+    id: "job_1",
+    title: "Product Designer",
+    company: "Example Co",
+    canonicalUrl: "https://jobs.example/role",
+    applicationUrl: "https://jobs.example/apply",
+    applyPath: "easy_apply",
+    easyApplyEligible: true,
+    matchAssessment: { score: 90, reasons: [], gaps: [] },
+    ...overrides,
+  } as unknown as SavedJob;
+}
 
-const originalResumeItem = {
-  jobId: "job_circle",
-  title: "Senior Full-Stack Software Engineer",
-  company: "Circle",
-  location: "Remote",
-  matchScore: 90,
-  applicationStatus: "ready_for_review",
-  resumeApplicationMode: "original_resume",
-  assetStatus: "ready",
-  progressPercent: 100,
-  resumeAssetId: "resume_ebrar",
-  resumeReview: {
-    status: "original_resume",
-    sourceDocumentId: "resume_ebrar",
-    fileName: "Ebrar.pdf",
-    filePath: "/tmp/Ebrar.pdf",
-  },
-  updatedAt: "2026-07-30T10:00:00.000Z",
-} as ReviewQueueItem;
+function createItem(overrides: Partial<ReviewQueueItem> = {}): ReviewQueueItem {
+  return {
+    jobId: "job_1",
+    title: "Product Designer",
+    company: "Example Co",
+    location: "Remote",
+    matchScore: 90,
+    applicationStatus: "shortlisted",
+    assetStatus: "not_started",
+    progressPercent: null,
+    resumeAssetId: null,
+    resumeApplicationMode: "tailored_per_job",
+    resumeTailoringMode: "balanced",
+    resumeReview: { status: "not_started" },
+    updatedAt: "2026-08-20T00:00:00.000Z",
+    ...overrides,
+  };
+}
 
-const baseJob = {
-  id: "job_circle",
-  title: originalResumeItem.title,
-  company: originalResumeItem.company,
-  summary: "Build applied AI products for a global remote team.",
-  description: "Build applied AI products for a global remote team.",
-  employerWebsiteUrl: null,
-  canonicalUrl: "https://circle.com/jobs/senior-full-stack",
-  applicationUrl:
-    "https://circle.com/jobs/senior-full-stack/apply?candidate_token=secret#form",
-  atsProvider: "Circle Careers",
-  screeningHints: { requiresConsentInterrupt: false },
-  applyPath: "easy_apply",
-  easyApplyEligible: true,
-  matchAssessment: {
-    score: 90,
-    reasons: ["Relevant full-stack experience"],
-    gaps: [],
-    recommendation: "review_before_applying",
-    recommendationRationale: "Remote eligibility still needs confirmation.",
-    requirements: [],
-  },
-} as unknown as SavedJob;
-
-describe("getApplicationReadinessFacts", () => {
-  it("names the exact unchanged resume and redacts destination query data", () => {
-    const facts = getApplicationReadinessFacts({
-      browserSession: readyBrowser,
-      selectedAsset: null,
-      selectedItem: originalResumeItem,
-      selectedJob: baseJob,
-    });
-
-    expect(facts).toContainEqual(
-      expect.objectContaining({
-        label: "Resume file",
-        value: "Ebrar.pdf",
-      }),
-    );
-    expect(facts).toContainEqual(
-      expect.objectContaining({
-        label: "Destination",
-        value: "circle.com",
-        detail:
-          "https://circle.com/jobs/senior-full-stack/apply | Circle Careers",
-      }),
-    );
-    expect(JSON.stringify(facts)).not.toContain("candidate_token");
-    const factsText = JSON.stringify(facts);
-    expect(facts).toContainEqual(
-      expect.objectContaining({
-        label: "Final submit",
-        value: "Disabled for this run",
-      }),
-    );
-    expect(factsText).toMatch(/stops before the employer's send control/);
-    // Banned copy: the readiness facts never say "site behavior to report".
-    expect(factsText).not.toMatch(
-      /site behavior to report|submit click|safe review checkpoint|verified writes/i,
-    );
-    expect(factsText).toMatch(/never clicks the final submit/i);
-    expect(factsText).not.toMatch(/No application was submitted/i);
+function createApprovedItem(): ReviewQueueItem {
+  return createItem({
+    assetStatus: "ready",
+    resumeAssetId: "asset_1",
+    resumeReview: {
+      status: "approved",
+      approvedAt: "2026-08-20T00:00:00.000Z",
+      approvedExportId: "export_1",
+      approvedFormat: "pdf",
+      approvedFilePath: "/tmp/resume.pdf",
+    },
   });
+}
 
-  it.each([
-    ["signup", "Sign-up may be required"],
-    ["existing_account_decision", "Account choice likely"],
-    ["manual_verification", "Manual verification likely"],
-  ] as const)("describes a %s handoff before browser launch", (kind, value) => {
-    const facts = getApplicationReadinessFacts({
-      browserSession: readyBrowser,
-      selectedAsset: null,
-      selectedItem: originalResumeItem,
-      selectedJob: {
-        ...baseJob,
-        screeningHints: {
-          requiresConsentInterrupt: true,
-          requiresConsentInterruptKind: kind,
-        },
-      } as SavedJob,
-    });
+function createReadyAsset(): TailoredAsset {
+  return {
+    id: "asset_1",
+    jobId: "job_1",
+    kind: "resume",
+    status: "ready",
+    label: "Tailored Resume",
+    version: "v1",
+    templateName: "Chronology Classic",
+    compatibilityScore: 80,
+    progressPercent: 100,
+    updatedAt: "2026-08-20T00:00:00.000Z",
+    storagePath: "/tmp/resume.pdf",
+    contentText: "Resume",
+    previewSections: [],
+    generationMethod: "ai",
+    generationReason: null,
+    notes: [],
+    failureMessage: null,
+    failedAt: null,
+  } as unknown as TailoredAsset;
+}
 
-    expect(facts).toContainEqual(
-      expect.objectContaining({
-        label: "Sign-in or account",
-        value,
+const baseActionInput = {
+  applySupportState: "supported" as const,
+  browserSession: createBrowserSession(),
+  hasGenerationFailure: false,
+  hasReadyApprovedAsset: true,
+  isApplyPending: false,
+  isGenerating: false,
+  isSelectedJobPending: false,
+  needsGeneration: false,
+  resumeReviewStatus: "approved" as const,
+  usesOriginalResume: false,
+};
+
+describe("getPrimaryApplicationAction", () => {
+  it("walks one job through create, review, and apply in plain words", () => {
+    expect(
+      getPrimaryApplicationAction({
+        ...baseActionInput,
+        hasReadyApprovedAsset: false,
+        needsGeneration: true,
+        resumeReviewStatus: "not_started",
       }),
-    );
-  });
+    ).toMatchObject({ kind: "generate_resume", label: "Create the resume" });
 
-  it("states when the current browser session needs user sign-in", () => {
-    const facts = getApplicationReadinessFacts({
-      browserSession: {
-        ...readyBrowser,
-        status: "login_required",
-      },
-      selectedAsset: null,
-      selectedItem: originalResumeItem,
-      selectedJob: baseJob,
-    });
-
-    expect(facts).toContainEqual(
-      expect.objectContaining({
-        label: "Sign-in or account",
-        value: "Sign-in required now",
+    expect(
+      getPrimaryApplicationAction({
+        ...baseActionInput,
+        hasReadyApprovedAsset: false,
+        isGenerating: true,
+        resumeReviewStatus: "not_started",
       }),
-    );
-  });
-  it("allows an approved resume to start when the browser has not opened yet", () => {
-    const state = buildMissionPanelState({
-      browserSession: { ...readyBrowser, status: "unknown" },
-      isApplyPending: false,
-      isJobPending: () => false,
-      queue: [originalResumeItem],
-      queueSelection: [],
-      selectedAsset: null,
-      selectedItem: originalResumeItem,
-      selectedJob: { ...baseJob, applyPath: "unknown" } as SavedJob,
-    });
+    ).toMatchObject({ kind: "waiting", label: "Writing the resume…" });
 
-    expect(state.canApproveApply).toBe(true);
-    expect(state.primaryApplicationAction).toMatchObject({
-      kind: "start_apply",
-      label: "Fill it in",
+    expect(
+      getPrimaryApplicationAction({
+        ...baseActionInput,
+        hasReadyApprovedAsset: false,
+        resumeReviewStatus: "needs_review",
+      }),
+    ).toMatchObject({ kind: "approve_and_apply", label: "Apply" });
+
+    expect(
+      getPrimaryApplicationAction({
+        ...baseActionInput,
+        draftNeedsPersonReview: true,
+        hasReadyApprovedAsset: false,
+        resumeReviewStatus: "needs_review",
+      }),
+    ).toMatchObject({ kind: "approve_resume", label: "Review the resume" });
+
+    expect(getPrimaryApplicationAction(baseActionInput)).toMatchObject({
       enabled: true,
-      blocker: null,
+      kind: "start_apply",
+      label: "Apply",
     });
-    expect(state.checklist).toContainEqual(
-      expect.objectContaining({
-        label: "Browser handoff",
-        state: "attention",
+  });
+
+  it("offers a retry after a failed resume run", () => {
+    expect(
+      getPrimaryApplicationAction({
+        ...baseActionInput,
+        hasGenerationFailure: true,
+        hasReadyApprovedAsset: false,
+        resumeReviewStatus: "not_started",
       }),
-    );
-    expect(state.readinessDescription).toMatch(
-      /open and check the destination/i,
-    );
-  });
-
-  it("blocks only when a job has no usable application destination", () => {
-    expect(
-      getApplySupportState({
-        ...baseJob,
-        applicationUrl: null,
-        canonicalUrl: "",
-        applyPath: "unknown",
-      } as SavedJob),
-    ).toBe("incomplete");
-    expect(
-      getApplySupportState({ ...baseJob, applyPath: "unknown" } as SavedJob),
-    ).toBe("manual_follow_up");
-  });
-
-  it("returns one plain recovery for each primary application blocker", () => {
-    const missingOriginal = buildMissionPanelState({
-      browserSession: readyBrowser,
-      isApplyPending: false,
-      isJobPending: () => false,
-      queue: [],
-      queueSelection: [],
-      selectedAsset: null,
-      selectedItem: {
-        ...originalResumeItem,
-        assetStatus: "not_started",
-        resumeAssetId: null,
-        resumeReview: { status: "not_started" },
-      },
-      selectedJob: baseJob,
+    ).toMatchObject({
+      kind: "generate_resume",
+      label: "Try again",
+      blocker: "The last attempt to write this resume did not finish.",
     });
-    expect(missingOriginal.primaryApplicationAction).toMatchObject({
+  });
+
+  it("names the recorded cause of a failed resume run instead of a generic line", () => {
+    expect(
+      getPrimaryApplicationAction({
+        ...baseActionInput,
+        hasGenerationFailure: true,
+        generationFailureDetail:
+          "Your profile changed while this resume was being written, so it was not saved. Try again to write it from your updated profile.",
+        hasReadyApprovedAsset: false,
+        resumeReviewStatus: "not_started",
+      }),
+    ).toMatchObject({
+      kind: "generate_resume",
+      label: "Try again",
+      blocker:
+        "Your profile changed while this resume was being written, so it was not saved. Try again to write it from your updated profile.",
+    });
+  });
+
+  it("returns one plain recovery for each blocker", () => {
+    expect(
+      getPrimaryApplicationAction({
+        ...baseActionInput,
+        hasReadyApprovedAsset: false,
+        resumeReviewStatus: "not_started",
+        usesOriginalResume: true,
+      }),
+    ).toMatchObject({
       kind: "blocked",
-      label: "Fill it in",
-      enabled: false,
       recovery: { kind: "open_profile", label: "Import original resume" },
     });
 
-    const missingUrl = buildMissionPanelState({
-      browserSession: readyBrowser,
-      isApplyPending: false,
-      isJobPending: () => false,
-      queue: [originalResumeItem],
-      queueSelection: [],
-      selectedAsset: null,
-      selectedItem: originalResumeItem,
-      selectedJob: {
-        ...baseJob,
-        applicationUrl: null,
-        canonicalUrl: "",
-      } as SavedJob,
-    });
-    expect(missingUrl.primaryApplicationAction).toMatchObject({
+    expect(
+      getPrimaryApplicationAction({
+        ...baseActionInput,
+        applySupportState: "incomplete",
+      }),
+    ).toMatchObject({
       kind: "blocked",
-      recovery: {
-        kind: "open_job_details",
-        label: "Review job details",
-      },
+      recovery: { kind: "open_job_details", label: "Check the job details" },
     });
 
-    const browserBlocked = buildMissionPanelState({
-      browserSession: { ...readyBrowser, status: "blocked" },
-      isApplyPending: false,
-      isJobPending: () => false,
-      queue: [originalResumeItem],
-      queueSelection: [],
-      selectedAsset: null,
-      selectedItem: originalResumeItem,
-      selectedJob: baseJob,
-    });
-    expect(browserBlocked.primaryApplicationAction).toMatchObject({
+    expect(
+      getPrimaryApplicationAction({
+        ...baseActionInput,
+        browserSession: createBrowserSession("blocked"),
+      }),
+    ).toMatchObject({
       kind: "blocked",
       recovery: {
         kind: "open_browser",
-        label: "Fix browser connection",
+        label: `Open ${JOB_FINDER_BROWSER_NAME}`,
       },
     });
   });
 
-  it("makes Review and approve the primary action when a tailored PDF is not approved", () => {
+  it("replaces Apply with Open Safeguards while a safeguard holds, without internal codes", () => {
+    const action = getPrimaryApplicationAction({
+      ...baseActionInput,
+      safeguardBlocker:
+        "Automatic runs are paused after repeated failures (abnormal_failure_pause: automatic_discovery_failures:campaign_default).",
+    });
+
+    expect(action).toMatchObject({
+      enabled: true,
+      kind: "open_safeguards",
+      label: "Open Safeguards",
+    });
+    expect(action.blocker).toBe(
+      "Automatic runs are paused after repeated failures.",
+    );
+    expect(
+      stripInternalCodeParenthetical("Paused (user requested pause)"),
+    ).toBe("Paused (user requested pause)");
+  });
+
+  it("keeps saying the run is in flight for as long as the run record runs", () => {
+    expect(
+      getPrimaryApplicationAction({
+        ...baseActionInput,
+        runElapsedLabel: "3 min",
+      }),
+    ).toMatchObject({
+      enabled: false,
+      kind: "start_apply",
+      label: "Filling in the form… (3 min)",
+    });
+    expect(
+      getPrimaryApplicationAction({ ...baseActionInput, isApplyPending: true }),
+    ).toMatchObject({ enabled: false, label: "Filling in the form…" });
+  });
+});
+
+describe("describeApplyOutcome", () => {
+  it("says what Apply does in the mode the person chose once in Settings", () => {
+    expect(describeApplyOutcome("prepare_only", false)).toBe(
+      "Job Finder opens the application, fills it in, attaches this resume, and leaves the browser open for you to send.",
+    );
+    expect(describeApplyOutcome("confirm_before_submit", true)).toContain(
+      "attaches your original resume, then waits for your go-ahead before sending.",
+    );
+    expect(describeApplyOutcome("autonomous_submit", false)).toContain(
+      "and sends it. It stops and asks you only when the site needs you.",
+    );
+  });
+
+  it("never promises a send in the fill-in mode", () => {
+    expect(describeApplyOutcome("prepare_only", false)).not.toMatch(
+      /sends it|submits/i,
+    );
+  });
+});
+
+describe("buildMissionPanelState", () => {
+  it("lets the failure box name the cause without a generic line above it", () => {
+    const cause =
+      "Your profile changed while this resume was being written, so it was not saved. Try again to write it from your updated profile.";
     const state = buildMissionPanelState({
-      browserSession: readyBrowser,
+      browserSession: createBrowserSession(),
       isApplyPending: false,
       isJobPending: () => false,
-      queue: [],
-      queueSelection: [],
       selectedAsset: {
-        id: "asset_tailored",
-        jobId: "job_circle",
-        kind: "resume",
-        status: "ready",
-        label: "Tailored resume",
-        version: "1",
-        templateName: "default",
-        compatibilityScore: 80,
-        progressPercent: 100,
-        updatedAt: "2026-07-30T10:00:00.000Z",
-        storagePath: "/tmp/tailored.pdf",
-        contentText: null,
-        previewSections: [],
-        generationMethod: "deterministic",
-        notes: [],
-        failureMessage: null,
-        failedAt: null,
-      },
-      selectedItem: {
-        ...originalResumeItem,
-        resumeApplicationMode: "tailored_per_job",
+        ...createReadyAsset(),
+        status: "failed",
+        failureMessage: cause,
+        failedAt: "2026-08-20T00:01:00.000Z",
+      } as TailoredAsset,
+      selectedItem: createItem({ assetStatus: "failed" }),
+      selectedJob: createJob(),
+    });
+
+    expect(state.primaryApplicationAction).toMatchObject({
+      blocker: cause,
+      label: "Try again",
+    });
+    expect(state.readinessDescription).toBeNull();
+  });
+
+  it("is quiet when the job is ready: no state line, Apply enabled", () => {
+    const state = buildMissionPanelState({
+      browserSession: createBrowserSession(),
+      isApplyPending: false,
+      isJobPending: () => false,
+      selectedAsset: createReadyAsset(),
+      selectedItem: createApprovedItem(),
+      selectedJob: createJob(),
+    });
+
+    expect(state.primaryApplicationAction).toMatchObject({
+      enabled: true,
+      kind: "start_apply",
+      label: "Apply",
+    });
+    expect(state.readinessDescription).toBeNull();
+    expect(state.canApproveApply).toBe(true);
+  });
+
+  it("explains an Aggressive draft's review step instead of promising Apply", () => {
+    const state = buildMissionPanelState({
+      browserSession: createBrowserSession(),
+      isApplyPending: false,
+      isJobPending: () => false,
+      selectedAsset: { ...createReadyAsset(), storagePath: null },
+      selectedItem: createItem({
         assetStatus: "ready",
-        resumeAssetId: "asset_tailored",
+        resumeAssetId: "asset_1",
+        resumeTailoringMode: "aggressive",
         resumeReview: { status: "needs_review" },
-      },
-      selectedJob: baseJob,
+      }),
+      selectedJob: createJob(),
     });
 
     expect(state.primaryApplicationAction).toMatchObject({
       kind: "approve_resume",
-      label: "Review and approve resume",
-      enabled: true,
-      recovery: null,
+      label: "Review the resume",
     });
-    // One status sentence, one noun: the ordinary "not approved yet" state is
-    // stated once by Current state, not repeated as a blocker box that calls
-    // the same artifact a draft, a PDF, and a resume.
-    expect(state.primaryApplicationAction.blocker).toBeNull();
     expect(state.readinessDescription).toBe(
-      "This resume is ready for your review. Approving it unlocks Fill it in.",
-    );
-    const approvedPdfItem = state.checklist.find(
-      (item) => item.label === "Approved tailored PDF ready",
-    );
-    expect(approvedPdfItem?.state).toBe("blocked");
-    expect(approvedPdfItem?.description).toBe(
-      "Approve this resume to unlock Fill it in.",
+      "Aggressive resumes stretch a little past your saved evidence. Read it, keep or remove the flagged lines, then approve it.",
     );
   });
 
-  it("explains a long-running tailored resume request without treating it as failed", () => {
+  it("makes Apply the approval for a Light or Tailored draft", () => {
     const state = buildMissionPanelState({
-      browserSession: readyBrowser,
+      browserSession: createBrowserSession(),
+      isApplyPending: false,
+      isJobPending: () => false,
+      selectedAsset: { ...createReadyAsset(), storagePath: null },
+      selectedItem: createItem({
+        assetStatus: "ready",
+        resumeAssetId: "asset_1",
+        resumeReview: { status: "needs_review" },
+      }),
+      selectedJob: createJob(),
+    });
+
+    expect(state.primaryApplicationAction).toMatchObject({
+      kind: "approve_and_apply",
+      label: "Apply",
+    });
+    expect(state.readinessDescription).toBe(
+      "The resume is ready. Apply approves it and starts the application.",
+    );
+  });
+
+  it("explains a long-running resume request without treating it as failed", () => {
+    const state = buildMissionPanelState({
+      browserSession: createBrowserSession(),
       isApplyPending: false,
       isJobPending: () => true,
       isSelectedJobPendingTooLong: true,
-      queue: [],
-      queueSelection: [],
       selectedAsset: null,
-      selectedItem: {
-        ...originalResumeItem,
-        assetStatus: "not_started",
-        resumeApplicationMode: "tailored_per_job",
-        resumeAssetId: null,
-        resumeReview: { status: "not_started" },
-      },
-      selectedJob: baseJob,
+      selectedItem: createItem(),
+      selectedJob: createJob(),
     });
 
-    expect(state.primaryApplicationAction).toMatchObject({
-      enabled: false,
-      kind: "waiting",
-      label: "Creating tailored resume…",
-    });
-    expect(state.readinessDescription).toMatch(/taking longer than expected/i);
-    expect(state.readinessDescription).toMatch(/Reload workspace/i);
-    expect(state.readinessDescription).not.toMatch(/failed|finished/i);
+    expect(state.isGenerating).toBe(true);
+    expect(state.primaryApplicationAction.kind).toBe("waiting");
+    expect(state.readinessDescription).toContain("taking longer than usual");
+    expect(state.readinessDescription).toContain("will update here when ready");
+    expect(state.readinessDescription).not.toMatch(/failed|reload/i);
   });
 
-  it("keeps the primary action label stable across every blocker and ready state", () => {
-    const states = [
-      { browserSession: readyBrowser, selectedItem: originalResumeItem },
-      {
-        browserSession: {
-          ...readyBrowser,
-          status: "blocked",
-        } as BrowserSessionState,
-        selectedItem: originalResumeItem,
-      },
-      {
-        browserSession: readyBrowser,
-        selectedItem: {
-          ...originalResumeItem,
-          assetStatus: "not_started",
-          resumeAssetId: null,
-          resumeReview: { status: "not_started" },
-        },
-      },
-    ] as const;
+  it("says a safeguard is what is stopping the run", () => {
+    const state = buildMissionPanelState({
+      browserSession: createBrowserSession("unknown"),
+      isApplyPending: false,
+      isJobPending: () => false,
+      safeguardBlocker:
+        "Automatic runs are paused (abnormal_failure_pause: x).",
+      selectedAsset: createReadyAsset(),
+      selectedItem: createApprovedItem(),
+      selectedJob: createJob(),
+    });
 
-    for (const state of states) {
-      const missionState = buildMissionPanelState({
-        browserSession: state.browserSession,
-        isApplyPending: false,
-        isJobPending: () => false,
-        queue: [],
-        queueSelection: [],
-        selectedAsset: null,
-        selectedItem: state.selectedItem,
-        selectedJob: baseJob,
-      });
-
-      expect(missionState.primaryApplicationAction.label).toBe(
-        "Fill it in",
-      );
-    }
+    expect(state.primaryApplicationAction.kind).toBe("open_safeguards");
+    expect(state.readinessDescription).toBe("Automatic runs are paused.");
   });
 
-  it("describes batch selection with preparation vocabulary instead of staging jargon", () => {
-    const emptyQueueState = buildMissionPanelState({
-      browserSession: readyBrowser,
+  it("keeps the start control counting while the run record runs", () => {
+    const state = buildMissionPanelState({
+      browserSession: createBrowserSession(),
       isApplyPending: false,
       isJobPending: () => false,
-      queue: [],
-      queueSelection: [],
-      selectedAsset: null,
-      selectedItem: originalResumeItem,
-      selectedJob: baseJob,
+      selectedApplyResult: {
+        startedAt: new Date(Date.now() - 4 * 60_000).toISOString(),
+      },
+      selectedAsset: createReadyAsset(),
+      selectedItem: createApprovedItem(),
+      selectedJob: createJob(),
     });
-    expect(emptyQueueState.queueSummary).toMatch(/preparation run/);
-    expect(emptyQueueState.queueSummary).not.toMatch(BANNED_OPERATION_COPY);
-    expect(emptyQueueState.queueSummary).not.toMatch(/queue staging|stage/i);
 
-    const selectedQueueState = buildMissionPanelState({
-      browserSession: readyBrowser,
-      isApplyPending: false,
-      isJobPending: () => false,
-      queue: [originalResumeItem],
-      queueSelection: [originalResumeItem.jobId],
-      selectedAsset: null,
-      selectedItem: originalResumeItem,
-      selectedJob: baseJob,
-    });
-    expect(selectedQueueState.queueSummary).toBe(
-      "1 selected job will join one safe non-submitting preparation run.",
+    expect(state.primaryApplicationAction.enabled).toBe(false);
+    expect(state.primaryApplicationAction.label).toMatch(
+      /^Filling in the form… \(/,
     );
-  });
-
-  it("marks approved-ready jobs as ready-to-prepare for compact mission UI", () => {
-    const ready = buildMissionPanelState({
-      browserSession: readyBrowser,
-      isApplyPending: false,
-      isJobPending: () => false,
-      queue: [originalResumeItem],
-      queueSelection: [],
-      selectedAsset: null,
-      selectedItem: originalResumeItem,
-      selectedJob: baseJob,
-    });
-    expect(ready.isReadyToPrepare).toBe(true);
-    expect(ready.canApproveApply).toBe(true);
-    expect(ready.nextBlockedChecklistItem).toBeNull();
-    expect(ready.primaryApplicationAction).toMatchObject({
-      kind: "start_apply",
-      label: "Fill it in",
-      enabled: true,
-    });
-
-    const needsApprove = buildMissionPanelState({
-      browserSession: readyBrowser,
-      isApplyPending: false,
-      isJobPending: () => false,
-      queue: [],
-      queueSelection: [],
-      selectedAsset: {
-        id: "asset_tailored",
-        jobId: "job_circle",
-        kind: "resume",
-        status: "ready",
-        label: "Tailored resume",
-        version: "1",
-        templateName: "default",
-        compatibilityScore: 80,
-        progressPercent: 100,
-        updatedAt: "2026-07-30T10:00:00.000Z",
-        storagePath: "/tmp/tailored.pdf",
-        contentText: null,
-        previewSections: [],
-        generationMethod: "deterministic",
-        notes: [],
-        failureMessage: null,
-        failedAt: null,
-      },
-      selectedItem: {
-        ...originalResumeItem,
-        resumeApplicationMode: "tailored_per_job",
-        assetStatus: "ready",
-        resumeAssetId: "asset_tailored",
-        resumeReview: { status: "needs_review" },
-      },
-      selectedJob: baseJob,
-    });
-    expect(needsApprove.isReadyToPrepare).toBe(false);
-  });
-
-  it.each(["ready", "unknown", "blocked", "login_required"] as const)(
-    "keeps %s browser guidance free of legacy operation names",
-    (status) => {
-      const missionState = buildMissionPanelState({
-        browserSession: { ...readyBrowser, status } as BrowserSessionState,
-        isApplyPending: false,
-        isJobPending: () => false,
-        queue: [originalResumeItem],
-        queueSelection: [],
-        selectedAsset: null,
-        selectedItem: originalResumeItem,
-        selectedJob: baseJob,
-      });
-
-      for (const item of missionState.checklist) {
-        expect(`${item.label} ${item.description}`).not.toMatch(
-          BANNED_OPERATION_COPY,
-        );
-      }
-      if (missionState.readinessDescription) {
-        expect(missionState.readinessDescription).not.toMatch(
-          BANNED_OPERATION_COPY,
-        );
-      }
-      for (const fact of missionState.readinessFacts) {
-        expect(`${fact.value} ${fact.detail}`).not.toMatch(
-          BANNED_OPERATION_COPY,
-        );
-      }
-    },
-  );
-
-  it("never claims a run submitted anything in readiness or safety copy", () => {
-    const facts = getApplicationReadinessFacts({
-      browserSession: readyBrowser,
-      selectedAsset: null,
-      selectedItem: originalResumeItem,
-      selectedJob: baseJob,
-    });
-    const factsText = facts
-      .map((fact) => `${fact.value} ${fact.detail}`)
-      .join(" ");
-
-    expect(factsText).toMatch(/never clicks the final submit/i);
-    expect(factsText).not.toMatch(/will submit|submits your application/i);
-  });
-
-  it("partitions ready-strip primary facts away from secondary boundaries", () => {
-    const facts = getApplicationReadinessFacts({
-      browserSession: readyBrowser,
-      selectedAsset: null,
-      selectedItem: originalResumeItem,
-      selectedJob: baseJob,
-    });
-    const { primary, secondary } = partitionApplicationReadinessFacts(facts);
-
-    expect(primary.map((fact) => fact.label)).toEqual([
-      "Resume file",
-      "Destination",
-      "Final submit",
-    ]);
-    expect(secondary.map((fact) => fact.label)).toEqual([
-      "Sign-in or account",
-      "Required answers",
-      "What gets typed into the site",
-    ]);
   });
 });
 
-describe("a safeguard holding preparation back", () => {
-  const blockerSentence =
-    "Safeguards are blocking this step (abnormal_failure_pause: automatic_discovery_failures:campaign_default). Too many searches or source checks failed in a row.";
-
-  it("replaces Fill it in with Open Safeguards and says why", () => {
-    const state = buildMissionPanelState({
-      browserSession: readyBrowser,
-      isApplyPending: false,
-      isJobPending: () => false,
-      queue: [originalResumeItem],
-      queueSelection: [],
-      safeguardBlocker: blockerSentence,
-      selectedAsset: null,
-      selectedItem: originalResumeItem,
-      selectedJob: baseJob,
-    });
-
-    expect(state.primaryApplicationAction).toMatchObject({
-      enabled: true,
-      kind: "open_safeguards",
-      label: "Open Safeguards",
-      recovery: null,
-    });
-    // Current state says the blocker, not "Job Finder will open and check the
-    // destination when you start".
-    expect(state.readinessDescription).toBe(
-      "Safeguards are blocking this step. Too many searches or source checks failed in a row.",
-    );
-    expect(state.readinessDescription).not.toMatch(/abnormal_failure_pause/);
-    expect(state.canApproveApply).toBe(false);
-  });
-
-  it("strips only internal-code parentheticals", () => {
+describe("getApplySupportState", () => {
+  it("blocks only when a job has no usable application destination", () => {
+    expect(getApplySupportState(null)).toBe("incomplete");
     expect(
-      stripInternalCodeParenthetical(
-        "Blocked (abnormal_failure_pause: automatic_discovery_failures:campaign_default). Try later.",
+      getApplySupportState(
+        createJob({ applicationUrl: null, canonicalUrl: "  " } as never),
       ),
-    ).toBe("Blocked. Try later.");
+    ).toBe("incomplete");
+    expect(getApplySupportState(createJob())).toBe("supported");
     expect(
-      stripInternalCodeParenthetical("Two searches failed (the last two runs)."),
-    ).toBe("Two searches failed (the last two runs).");
-  });
-
-  it("leaves the ordinary start control alone with no blocker", () => {
-    const state = buildMissionPanelState({
-      browserSession: readyBrowser,
-      isApplyPending: false,
-      isJobPending: () => false,
-      queue: [originalResumeItem],
-      queueSelection: [],
-      selectedAsset: null,
-      selectedItem: originalResumeItem,
-      selectedJob: baseJob,
-    });
-
-    expect(state.primaryApplicationAction.kind).not.toBe("open_safeguards");
+      getApplySupportState(createJob({ applyPath: "external" } as never)),
+    ).toBe("manual_follow_up");
   });
 });
 
-describe("a run that is still working", () => {
-  it("keeps the start control disabled and counting while the run record runs", () => {
-    const startedAt = new Date(Date.now() - 7 * 60_000).toISOString();
-    const state = buildMissionPanelState({
-      browserSession: readyBrowser,
-      // The local pending flag expired minutes ago.
-      isApplyPending: false,
-      isJobPending: () => false,
-      queue: [originalResumeItem],
-      queueSelection: [],
-      selectedApplyResult: { startedAt },
-      selectedAsset: null,
-      selectedItem: originalResumeItem,
-      selectedJob: baseJob,
-    });
-
-    expect(state.primaryApplicationAction).toMatchObject({
-      enabled: false,
-      kind: "start_apply",
-      label: "Filling in the form… (7 min)",
-    });
-    expect(state.canApproveApply).toBe(false);
+describe("shouldShowMissionActionMessage", () => {
+  it("hides a result line the box already says", () => {
+    expect(
+      shouldShowMissionActionMessage({
+        actionMessage: "The cause.",
+        blocker: "The cause.",
+        aiUnavailableLine: null,
+      }),
+    ).toBe(false);
+    expect(
+      shouldShowMissionActionMessage({
+        actionMessage: AI_UNAVAILABLE_RESUME_RESULT_MESSAGE,
+        blocker: null,
+        aiUnavailableLine:
+          "AI could not write this resume, so it keeps your saved wording. Try again, or apply it as it is.",
+      }),
+    ).toBe(false);
   });
 
-  it("returns to the ordinary start control once no run is running", () => {
-    const state = buildMissionPanelState({
-      browserSession: readyBrowser,
-      isApplyPending: false,
-      isJobPending: () => false,
-      queue: [originalResumeItem],
-      queueSelection: [],
-      selectedApplyResult: null,
-      selectedAsset: null,
-      selectedItem: originalResumeItem,
-      selectedJob: baseJob,
-    });
-
-    expect(state.primaryApplicationAction.label).not.toMatch(/filling in/i);
+  it("keeps a result line that adds news", () => {
+    expect(
+      shouldShowMissionActionMessage({
+        actionMessage: AI_UNAVAILABLE_RESUME_RESULT_MESSAGE,
+        blocker: null,
+        aiUnavailableLine: null,
+      }),
+    ).toBe(true);
+    expect(
+      shouldShowMissionActionMessage({
+        actionMessage: "Resume created.",
+        blocker: null,
+        aiUnavailableLine: null,
+      }),
+    ).toBe(true);
+    expect(
+      shouldShowMissionActionMessage({
+        actionMessage: "  ",
+        blocker: null,
+        aiUnavailableLine: null,
+      }),
+    ).toBe(false);
   });
 });

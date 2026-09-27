@@ -44,6 +44,10 @@ const sectionDestination: Record<
     actionLabel: "Review in Preferences",
     section: "preferences",
   },
+  work_eligibility: {
+    actionLabel: "Review in Preferences",
+    section: "preferences",
+  },
 };
 
 const recordPrefixBySection: Partial<
@@ -80,6 +84,10 @@ const scalarFieldNameByTarget: Record<string, string> = {
   "answer_bank.careerTransition": "answerBank.careerTransition",
   "application_identity.preferredEmail": "applicationIdentity.preferredEmail",
   "application_identity.preferredPhone": "applicationIdentity.preferredPhone",
+  "work_eligibility.authorizedWorkCountries":
+    "eligibility.authorizedWorkCountries",
+  "work_eligibility.requiresVisaSponsorship":
+    "eligibility.requiresVisaSponsorship",
 };
 
 const fixedElementIdByTarget: Record<string, string> = {

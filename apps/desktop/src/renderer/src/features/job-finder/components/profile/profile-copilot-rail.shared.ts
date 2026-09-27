@@ -2,8 +2,10 @@ import type {
   JobFinderWorkspaceSnapshot,
   ProfileCopilotContext,
   ProfileCopilotPatchOperation,
+  ResumeApproach,
 } from "@unemployed/contracts";
 import { formatStatusLabel } from "../../lib/job-finder-utils";
+import { formatProfileSetupStepLabel } from "./setup/profile-setup-steps";
 
 function getDiscoveryTargetCount(
   operation: ProfileCopilotPatchOperation,
@@ -140,7 +142,8 @@ export function getProfileCopilotContextLabel(
   context: ProfileCopilotContext,
 ): string {
   if (context.surface === "setup") {
-    return `Setup - ${formatStatusLabel(context.step)}`;
+    // Name the step the way the step tabs do ("Basics", not "Essentials").
+    return `Setup - ${formatProfileSetupStepLabel(context.step)}`;
   }
 
   if (context.surface === "profile") {
@@ -159,6 +162,17 @@ export function getPatchGroupBadgeVariant(
 
   return applyMode === "rejected" ? "destructive" : "outline";
 }
+
+/**
+ * The resume level in the words Settings > AI behavior > Resumes uses, so a
+ * card that changes it reads like the choice it changes.
+ */
+const RESUME_LEVEL_CARD_LABEL: Record<ResumeApproach, string> = {
+  original_resume: "Original (your imported file, unchanged)",
+  conservative: "Light (small edits, every fact kept)",
+  balanced: "Tailored (a fuller rewrite, every fact kept)",
+  aggressive: "Aggressive (may stretch, with your say-so)",
+};
 
 export function describePatchOperation(
   operation: ProfileCopilotPatchOperation,
@@ -266,18 +280,16 @@ export function describePatchOperation(
         }
       }
 
-      const range =
-        minimumIsNumber && maximumIsNumber
-          ? // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
-            `${formatNumber(minimum as number)}–${formatNumber(maximum as number)}`
-          : minimumIsNumber
-            ? // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
-              `from ${formatNumber(minimum as number)}`
-            : maximumIsNumber
-              ? // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
-                `up to ${formatNumber(maximum as number)}`
-              : "range";
-      return `Set compensation to ${range} / ${intervalLabel} (${currencyLabel})`;
+      if (minimumIsNumber && maximumIsNumber) {
+        return `Set minimum compensation to ${formatNumber(minimum)} and target compensation to ${formatNumber(maximum)} / ${intervalLabel} (${currencyLabel})`;
+      }
+      if (minimumIsNumber) {
+        return `Set minimum compensation to ${formatNumber(minimum)} / ${intervalLabel} (${currencyLabel})`;
+      }
+      if (maximumIsNumber) {
+        return `Set target compensation to ${formatNumber(maximum)} / ${intervalLabel} (${currencyLabel})`;
+      }
+      return `Update compensation / ${intervalLabel} (${currencyLabel})`;
     }
     case "remove_profile_list_entries": {
       // The confirmation card quotes what would go, so nothing disappears
@@ -299,6 +311,8 @@ export function describePatchOperation(
       return `Add or update education: ${operation.record.schoolName ?? operation.record.degree ?? "record"}`;
     case "remove_education_record":
       return `Remove education record ${operation.recordId}`;
+    case "reorder_education_records":
+      return `Reorder ${operation.orderedRecordIds.length} education records`;
     case "upsert_certification_record":
       return `Add or update certification: ${operation.record.name ?? "record"}`;
     case "remove_certification_record":
@@ -325,6 +339,8 @@ export function describePatchOperation(
       return `Remove reusable answer ${operation.recordId}`;
     case "resolve_review_items":
       return `Resolve ${operation.reviewItemIds.length} review item${operation.reviewItemIds.length === 1 ? "" : "s"} as ${formatStatusLabel(operation.resolutionStatus)}`;
+    case "set_resume_approach":
+      return `Resume level for new jobs: ${RESUME_LEVEL_CARD_LABEL[operation.value]}`;
   }
 
   return "Update profile data";

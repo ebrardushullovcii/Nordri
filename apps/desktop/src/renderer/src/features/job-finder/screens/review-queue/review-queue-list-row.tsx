@@ -21,22 +21,20 @@ import type { BadgeTone } from "../../lib/job-finder-types";
 /**
  * One Shortlisted row.
  *
- * Batch preparation is a single run that moves one job at a time, and the
- * whole list used to re-render on every one of those steps: forty rows
- * rebuilt to change one badge, with the pointer hovering a row whose subtree
- * was being replaced underneath it. The row takes only already-derived,
- * comparable values, so React's shallow prop check is enough to skip the rows
- * the step did not touch. Nothing here is recomputed from the queue.
+ * A resume run changes individual jobs, and the whole list used to re-render
+ * on every one of those steps. The row takes only already-derived, comparable
+ * values, so React's shallow prop check is enough to skip the rows the step
+ * did not touch. Nothing here is recomputed from the queue.
  *
  * Every prop is a string, a boolean, or a handler the panel keeps stable
  * across renders. Adding an object or an inline function to this list
  * silently un-memoises every row, so derive it in the panel instead.
  */
 export interface ReviewQueueRowProps {
-  /** Rendered only while the batch-actions disclosure is open. */
-  batchSelectionVisible: boolean;
-  checkboxId: string;
-  disabledReasonId: string;
+  choosingResumes: boolean;
+  resumeSelected: boolean;
+  resumeSelectionDisabled: boolean;
+  onToggleResume: (jobId: string) => void;
   employerLocationLine: string | null;
   jobId: string;
   onSelect: (jobId: string) => void;
@@ -44,14 +42,8 @@ export interface ReviewQueueRowProps {
     event: KeyboardEvent<HTMLButtonElement>,
     jobId: string,
   ) => void;
-  onToggleSelection: (jobId: string, checked: boolean) => void;
   resumePolicyCaption: string;
   selected: boolean;
-  selectedForBatch: boolean;
-  /** The whole batch is full, so an unselected row cannot join it. */
-  selectionLimitReached: boolean;
-  selectionDisabled: boolean;
-  selectionDisabledReason: string | null;
   showProgress: boolean;
   statusLabel: string;
   statusTone: BadgeTone;
@@ -59,20 +51,16 @@ export interface ReviewQueueRowProps {
 }
 
 function ReviewQueueRowComponent({
-  batchSelectionVisible,
-  checkboxId,
-  disabledReasonId,
+  choosingResumes,
+  resumeSelected,
+  resumeSelectionDisabled,
+  onToggleResume,
   employerLocationLine,
   jobId,
   onSelect,
   onSelectionKeyDown,
-  onToggleSelection,
   resumePolicyCaption,
   selected,
-  selectedForBatch,
-  selectionLimitReached,
-  selectionDisabled,
-  selectionDisabledReason,
   showProgress,
   statusLabel,
   statusTone,
@@ -85,34 +73,21 @@ function ReviewQueueRowComponent({
     // row below it.
     <SelectableRow
       as="div"
-      className={cn(jobFinderListRowClassName, "text-foreground")}
+      className={cn(
+        jobFinderListRowClassName,
+        "text-foreground",
+        choosingResumes && "grid-cols-[auto_minmax(0,1fr)] items-start",
+      )}
       selected={selected}
     >
-      {batchSelectionVisible ? (
-        <label
-          htmlFor={checkboxId}
-          className={cn(
-            "inline-flex items-center gap-2 text-(length:--text-tiny) uppercase tracking-(--tracking-badge)",
-            !selectionDisabled
-              ? "text-foreground-soft"
-              : "text-muted-foreground",
-          )}
-        >
-          <Checkbox
-            aria-describedby={selectionDisabled ? disabledReasonId : undefined}
-            id={checkboxId}
-            checked={selectedForBatch}
-            disabled={selectionDisabled}
-            onCheckedChange={(value) => {
-              const checked = value === true;
-              if (checked && !selectedForBatch && selectionLimitReached) {
-                return;
-              }
-              onToggleSelection(jobId, checked);
-            }}
-          />
-          Select for batch
-        </label>
+      {choosingResumes ? (
+        <Checkbox
+          aria-label={`Create resume for ${title}`}
+          className="mt-1"
+          checked={resumeSelected}
+          disabled={resumeSelectionDisabled}
+          onCheckedChange={() => onToggleResume(jobId)}
+        />
       ) : null}
       <button
         aria-current={selected ? "true" : undefined}
@@ -158,14 +133,6 @@ function ReviewQueueRowComponent({
         >
           {resumePolicyCaption}
         </SelectableRowLine>
-        {selectionDisabledReason ? (
-          <span
-            className="block w-full text-(length:--text-small) leading-5 text-muted-foreground"
-            id={disabledReasonId}
-          >
-            {selectionDisabledReason}
-          </span>
-        ) : null}
         {showProgress ? (
           <div className="grid min-w-0 w-full gap-1.5">
             {/* Row-level progress had no real percentage behind it either; it

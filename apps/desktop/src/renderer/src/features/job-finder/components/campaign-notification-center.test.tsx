@@ -142,4 +142,24 @@ describe("CampaignNotificationCenter", () => {
     ]);
     expect(screen.getAllByText("Read")).toHaveLength(1);
   });
+
+  it("opens a failed application's actual recovery instead of an empty Needs you page", () => {
+    const onNavigate = vi.fn();
+    renderCenter({
+      applicationRecoveryRecords: [
+        { jobId: "job_failed", applicationRecordId: "application_failed" },
+      ],
+      notifications: [
+        notification("failed", {
+          kind: "blocked_work",
+          jobId: "job_failed",
+        }),
+      ],
+      onNavigate,
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Open Applications" }));
+    expect(onNavigate).toHaveBeenCalledWith(
+      "/job-finder/applications?applicationRecordId=application_failed&jobId=job_failed",
+    );
+  });
 });

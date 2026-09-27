@@ -99,8 +99,8 @@ describe("RapidReviewScreen readability", () => {
     expect(screen.getByRole("heading", { name: "Quick review" })).toBeTruthy();
     expect(screen.queryByRole("heading", { name: "Rapid review" })).toBeNull();
 
-    const link = screen.getByRole("link", { name: "Open Search plans" });
-    expect(link.getAttribute("href")).toBe("/job-finder/campaigns");
+    const link = screen.getByRole("link", { name: "Open Find jobs" });
+    expect(link.getAttribute("href")).toBe("/job-finder/discovery");
   });
 
   it("formats the posted date instead of exposing a raw ISO timestamp", () => {

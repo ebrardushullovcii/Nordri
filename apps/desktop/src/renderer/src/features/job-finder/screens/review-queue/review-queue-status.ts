@@ -1,12 +1,17 @@
 import {
-  isPreparedApplicationStatus,
+  type ApplicationAttemptState,
   type ApplicationStatus,
   type BrowserSessionState,
+  type ResumeApplicationMode,
   type ReviewQueueItem,
   type TailoredAsset,
+  type TailoringMode,
 } from "@unemployed/contracts";
 import type { BadgeTone } from "../../lib/job-finder-types";
-import { describeUntailorableListing } from "./resume-workspace-utils";
+import {
+  describeAiUnavailableResume,
+  describeUntailorableListing,
+} from "./resume-workspace-utils";
 
 export const APPLICATION_PREPARATION_BATCH_LIMIT = 10;
 export const TAILORED_DRAFT_PREPARATION_LIMIT = 10;
@@ -25,12 +30,15 @@ export interface TailoredDraftPreparationViewState {
   eligibleRemainingCount: number;
   failedCount: number;
   status: TailoredDraftPreparationStatus;
+  /** Stop was pressed: nothing new starts; drafts already started finish. */
+  stopRequested?: boolean;
   totalCount: number;
 }
 
 export interface TailoredDraftPreparationProgress {
   completedCount: number;
   currentIndex: number;
+  failedCount: number;
   totalCount: number;
 }
 
@@ -66,6 +74,8 @@ export function getReviewQueueWorkflowStatus(
   isPending = false,
   /** Jobs whose application is already prepared; see isQueueStageReady. */
   preparedJobIds?: ReadonlySet<string>,
+  /** Jobs with a preparation attempt that is still running. */
+  applicationPreparingJobIds?: ReadonlySet<string>,
 ): ReviewQueueWorkflowStatus {
   if (!item) {
     return {
@@ -76,45 +86,62 @@ export function getReviewQueueWorkflowStatus(
 
   if (hasResumeGenerationFailure(item, asset)) {
     return {
-      label: "Resume issue",
+      label: "Resume failed",
       tone: "critical",
     };
   }
 
   if (isPending) {
     return {
-      label: "Preparing resume",
+      label: "Writing resume",
       tone: "active",
     };
   }
 
-  if (item.assetStatus === "not_started") {
+  if (applicationPreparingJobIds?.has(item.jobId)) {
     return {
-      label: "Needs resume",
-      tone: "muted",
-    };
-  }
-
-  if (item.assetStatus === "generating" || item.assetStatus === "queued") {
-    return {
-      label: "Preparing resume",
+      label: "Applying",
       tone: "active",
     };
   }
 
   if (preparedJobIds?.has(item.jobId)) {
     return {
-      label: "Application prepared",
+      label: "In Applications",
       tone: "positive",
+    };
+  }
+
+  if (item.assetStatus === "not_started") {
+    return {
+      label:
+        item.resumeApplicationMode === "original_resume"
+          ? "Ready to apply"
+          : "No resume yet",
+      tone:
+        item.resumeApplicationMode === "original_resume" ? "positive" : "muted",
+    };
+  }
+
+  if (item.assetStatus === "generating" || item.assetStatus === "queued") {
+    return {
+      label: "Writing resume",
+      tone: "active",
+    };
+  }
+
+  // An Aggressive draft is read by the person before it is used (ADR 0018),
+  // so the row says so instead of promising Apply.
+  if (needsPersonResumeReview(item, asset)) {
+    return {
+      label: "Review resume",
+      tone: "active",
     };
   }
 
   if (isQueueStageReady(item)) {
     return {
-      label:
-        item.resumeReview.status === "original_resume"
-          ? "Original resume ready"
-          : "Ready to prepare",
+      label: "Ready to apply",
       tone: "positive",
     };
   }
@@ -137,15 +164,101 @@ export function getReviewQueueWorkflowStatus(
   }
 
   return {
-    label: "Needs approval",
+    label: "Review resume",
     tone: "active",
   };
+}
+
+/**
+ * Lines in the job's saved resume still waiting for the person's decision.
+ * Apply cannot approve such a resume at any level, so the job is not ready.
+ */
+export function countResumeLinesToDecide(
+  item: Pick<ReviewQueueItem, "resumeLinesToDecide" | "resumeReview"> | null,
+): number {
+  if (!item || item.resumeReview.status === "approved") return 0;
+  return item.resumeLinesToDecide ?? 0;
+}
+
+/**
+ * True when the draft has to be read by the person before it is used: an
+ * Aggressive draft that is not yet approved (ADR 0018), or a draft at any
+ * level with a line still waiting for their decision. Light and Tailored
+ * otherwise keep every fact, so pressing Apply is their approval.
+ */
+export function needsPersonResumeReview(
+  item: ReviewQueueItem | null,
+  /**
+   * The job's written resume, when the caller has it. A resume written
+   * without the listing text kept the person's own wording: nothing was
+   * stretched, so there are no flagged lines to read, whatever the level.
+   */
+  asset?: Pick<
+    TailoredAsset,
+    "id" | "generationMethod" | "generationReason"
+  > | null,
+): boolean {
+  if (
+    item !== null &&
+    item.resumeApplicationMode !== "original_resume" &&
+    countResumeLinesToDecide(item) > 0
+  ) {
+    return true;
+  }
+  if (
+    asset &&
+    item?.resumeAssetId === asset.id &&
+    asset.generationMethod === "deterministic" &&
+    (asset.generationReason === "listing_text_missing" ||
+      asset.generationReason === "listing_text_not_distinguishing")
+  ) {
+    return false;
+  }
+  return (
+    item !== null &&
+    item.resumeApplicationMode !== "original_resume" &&
+    item.resumeTailoringMode === "aggressive" &&
+    Boolean(item.resumeAssetId) &&
+    item.resumeReview.status !== "approved"
+  );
 }
 
 export function isResumeGenerationInProgress(
   item: ReviewQueueItem | null,
 ): boolean {
   return item?.assetStatus === "generating" || item?.assetStatus === "queued";
+}
+
+/**
+ * Picking another level for a job whose resume is already written rewrites
+ * it at that level. Changing Light to Tailored used to leave the Light text
+ * in place, still "ready", and Apply approved and sent it; the only rewrite
+ * sat inside the guided-edits popup. Original sends the imported file, so
+ * moving to it rewrites nothing, and a job with no resume yet keeps its
+ * "Create the resume" step.
+ */
+export function shouldRewriteResumeAfterLevelChange(input: {
+  item: Pick<
+    ReviewQueueItem,
+    "assetStatus" | "resumeApplicationMode" | "resumeTailoringMode"
+  >;
+  /** The saved strength a job without its own level is written at. */
+  defaultTailoringMode: TailoringMode;
+  nextApplicationMode: ResumeApplicationMode;
+  nextTailoringMode?: TailoringMode | null;
+}): boolean {
+  if (
+    input.nextApplicationMode === "original_resume" ||
+    input.item.assetStatus !== "ready"
+  ) {
+    return false;
+  }
+  const currentLevel =
+    input.item.resumeApplicationMode === "original_resume"
+      ? "original_resume"
+      : (input.item.resumeTailoringMode ?? input.defaultTailoringMode);
+  const nextLevel = input.nextTailoringMode ?? input.defaultTailoringMode;
+  return currentLevel !== nextLevel;
 }
 
 export function needsResumeGeneration(item: ReviewQueueItem | null): boolean {
@@ -173,27 +286,34 @@ export function hasResumeGenerationFailure(
 }
 
 /**
- * Jobs whose application has already been prepared, read from the workspace's
- * application records. A prepared job must stop advertising itself as ready to
- * prepare: the Shortlisted list kept offering ten already-prepared jobs back to
- * the user, who re-prepared eight of them by accident. Only records that
- * reached preparation count — a run stopped before the draft existed leaves a
- * staged record behind, and that row has to stay preparable.
+ * Jobs that have moved to Applications, including a failed or staged attempt.
+ * ADR 0026 excludes them from Shortlisted's Apply to all count. Their next
+ * action belongs to the existing record in Applications, where Try again
+ * preserves its history instead of starting another batch entry here.
  */
 export function collectPreparedApplicationJobIds(
   applicationRecords:
     | readonly {
         jobId: string;
         status: ApplicationStatus;
-        lastAttemptState?: Parameters<
-          typeof isPreparedApplicationStatus
-        >[0]["lastAttemptState"];
+        lastAttemptState?: ApplicationAttemptState | null;
+      }[]
+    | undefined,
+): ReadonlySet<string> {
+  return new Set((applicationRecords ?? []).map((record) => record.jobId));
+}
+
+export function collectInProgressApplicationJobIds(
+  applicationRecords:
+    | readonly {
+        jobId: string;
+        lastAttemptState?: ApplicationAttemptState | null | undefined;
       }[]
     | undefined,
 ): ReadonlySet<string> {
   return new Set(
     (applicationRecords ?? [])
-      .filter((record) => isPreparedApplicationStatus(record))
+      .filter((record) => record.lastAttemptState === "in_progress")
       .map((record) => record.jobId),
   );
 }
@@ -215,6 +335,10 @@ export function isQueueStageReady(
     return true;
   }
 
+  if (needsPersonResumeReview(item)) {
+    return false;
+  }
+
   return Boolean(
     item.assetStatus === "ready" &&
     item.resumeAssetId &&
@@ -226,39 +350,9 @@ export function isQueueStageReady(
 }
 
 /**
- * The one sentence that says a shortlisted job cannot join a preparation
- * batch. The row's disabled reason and the batch card read it from here, so
- * the row can never name a resume state the batch does not accept.
- */
-export const QUEUE_STAGE_RESUME_REQUIREMENT =
-  "Batch preparation needs a ready resume file: an approved tailored PDF or unchanged original resume.";
-
-/**
- * Why no shortlisted job can be prepared right now, in the words of what
- * would change it; null when at least one job can.
- */
-export function describeQueueStagePreparationBlocker(
-  queue: readonly ReviewQueueItem[],
-  preparedJobIds?: ReadonlySet<string>,
-): string | null {
-  if (countQueueStageReady(queue, preparedJobIds) > 0) {
-    return null;
-  }
-
-  if (queue.length === 0) {
-    return "Shortlist a job first — preparation runs on the jobs you shortlisted.";
-  }
-
-  if (queue.every((item) => preparedJobIds?.has(item.jobId))) {
-    return "An application is already prepared for every shortlisted job. Open them from Applications to continue.";
-  }
-
-  return QUEUE_STAGE_RESUME_REQUIREMENT;
-}
-
-/**
- * Shortlisted list-card caption for the resume policy. Must match readiness:
- * never say a tailored resume "will be created" when an approved PDF is ready.
+ * Shortlisted row caption: what the resume for this job is right now, in
+ * one short line. Must match readiness: never say a resume "will be created"
+ * when one is ready.
  */
 export function getReviewQueueResumePolicyCaption(
   item: ReviewQueueItem,
@@ -272,18 +366,12 @@ export function getReviewQueueResumePolicyCaption(
 
   if (item.resumeApplicationMode === "original_resume") {
     return item.resumeReview.status === "original_resume"
-      ? "Original resume ready"
-      : "Original resume will be used unchanged";
-  }
-
-  if (isQueueStageReady(item)) {
-    return item.resumeReview.status === "approved"
-      ? "Approved resume ready"
-      : "Tailored draft ready for your review";
+      ? "Original resume, unchanged"
+      : "Original resume, unchanged (import it in Profile)";
   }
 
   if (item.assetStatus === "generating" || item.assetStatus === "queued") {
-    return "Creating a tailored resume…";
+    return "Writing the resume…";
   }
 
   if (item.resumeReview.status === "stale") {
@@ -291,20 +379,40 @@ export function getReviewQueueResumePolicyCaption(
   }
 
   if (hasResumeGenerationFailure(item)) {
-    return "Tailored resume needs another try";
+    return "Resume failed — try again";
+  }
+
+  if (item.resumeReview.status === "approved") {
+    return "Resume approved";
+  }
+
+  // The built-in generator wrote it because AI was unavailable. It is usable,
+  // but the row must not read like an AI-written resume.
+  if (item.assetStatus === "ready" && describeAiUnavailableResume(asset)) {
+    return "Your saved wording — AI was unavailable";
+  }
+
+  const linesToDecide = countResumeLinesToDecide(item);
+  if (linesToDecide > 0) {
+    return linesToDecide === 1
+      ? "A line in this resume needs your decision"
+      : `${linesToDecide} lines in this resume need your decision`;
+  }
+
+  if (needsPersonResumeReview(item, asset)) {
+    return "Resume ready — review it before applying";
   }
 
   if (
     item.assetStatus === "ready" ||
     item.resumeReview.status === "needs_review" ||
-    item.resumeReview.status === "draft" ||
-    item.resumeReview.status === "approved"
+    item.resumeReview.status === "draft"
   ) {
-    return "Tailored draft ready for your review";
+    return "Resume ready — Apply approves it";
   }
 
   // Nothing has been requested yet; name the need, not a promised action.
-  return "Needs a tailored resume";
+  return "No resume yet";
 }
 
 /**
@@ -348,17 +456,17 @@ export function describeTailoredDraftPreparationBlocker(
   }
 
   if (queue.length === 0) {
-    return "Shortlist a job first — this writes the first draft for jobs that have none.";
+    return "Shortlist a job first.";
   }
 
   const allOriginalResume = queue.every(
     (item) => item.resumeApplicationMode === "original_resume",
   );
   if (allOriginalResume) {
-    return "Every shortlisted job is set to use your original resume, so there is no draft to write. Switch a job to a tailored resume to use this.";
+    return "Every job here uses your original resume, so there is nothing to write.";
   }
 
-  return "Every shortlisted job already has a draft. This only writes first drafts for jobs that have none.";
+  return "Every job here already has a resume.";
 }
 
 export function getTailoredDraftPreparationCandidates(
@@ -440,7 +548,7 @@ export function countQueueStageReady(
   return count;
 }
 
-export async function prepareTailoredDraftsSequentially(
+export async function prepareTailoredDraftBatch(
   queue: readonly ReviewQueueItem[],
   onGenerateResume: (jobId: string) => Promise<boolean>,
   options: {
@@ -454,39 +562,48 @@ export async function prepareTailoredDraftsSequentially(
   const failedJobIds: string[] = [];
   let stopped = false;
 
-  for (const [index, item] of candidates.entries()) {
-    if (options.shouldStop?.()) {
-      stopped = true;
-      break;
-    }
-
-    attemptedCount += 1;
+  const reportProgress = () => {
     options.onProgress?.({
       completedCount,
-      currentIndex: index + 1,
+      currentIndex: attemptedCount,
+      failedCount: failedJobIds.length,
       totalCount: candidates.length,
     });
-
-    let succeeded = false;
-    try {
-      succeeded = await onGenerateResume(item.jobId);
-    } catch {
-      succeeded = false;
+  };
+  const worker = async () => {
+    while (attemptedCount < candidates.length) {
+      if (options.shouldStop?.()) {
+        stopped = true;
+        return;
+      }
+      // Claim synchronously before awaiting so each job has exactly one owner.
+      const item = candidates[attemptedCount++]!;
+      reportProgress();
+      let succeeded = false;
+      try {
+        succeeded = await onGenerateResume(item.jobId);
+      } catch {
+        succeeded = false;
+      }
+      if (succeeded) completedCount += 1;
+      else failedJobIds.push(item.jobId);
+      reportProgress();
     }
+  };
 
-    if (!succeeded) {
-      failedJobIds.push(item.jobId);
-      continue;
-    }
-
-    completedCount += 1;
-  }
+  // Two requests keep providers and local PDF work bounded. Stop prevents new
+  // claims; already-started drafts finish and remain available.
+  await Promise.all(
+    Array.from({ length: Math.min(2, candidates.length) }, worker),
+  );
 
   return {
     attemptedCount,
     completedCount,
     failedCount: failedJobIds.length,
-    failedJobIds,
+    failedJobIds: candidates
+      .filter((item) => failedJobIds.includes(item.jobId))
+      .map((item) => item.jobId),
     stopped,
     totalCount: candidates.length,
   };
@@ -495,8 +612,8 @@ export async function prepareTailoredDraftsSequentially(
 function formatEligibleRemainderSentence(count: number): string {
   const safeCount = Math.max(0, count);
   return safeCount === 1
-    ? "1 eligible job remains for another run."
-    : `${safeCount} eligible jobs remain for another run.`;
+    ? "1 more job still needs a resume; run it again."
+    : `${safeCount} more jobs still need a resume; run it again.`;
 }
 
 /**
@@ -518,26 +635,26 @@ export function getTailoredDraftPreparationResultMessage(
   const completedCount = Math.max(0, state.completedCount);
   const failedCount = Math.max(0, state.failedCount);
   const eligibleRemainingCount = Math.max(0, state.eligibleRemainingCount);
-  const completedDrafts = `${completedCount} tailored draft${completedCount === 1 ? "" : "s"}`;
+  const completedDrafts = `${completedCount} resume${completedCount === 1 ? "" : "s"}`;
   const remainderSentence =
     eligibleRemainingCount > 0
       ? ` ${formatEligibleRemainderSentence(eligibleRemainingCount)}`
       : "";
 
   if (state.status === "completed") {
-    return `Prepared ${completedDrafts}.${remainderSentence} Each draft still needs your review and approval. Nothing was approved, queued, submitted, or sent.`;
+    return `Wrote ${completedDrafts}.${remainderSentence} Nothing was sent.`;
   }
 
   if (state.status === "stopped") {
-    return `Stopped after ${completedCount} completed draft${completedCount === 1 ? "" : "s"}. Nothing was approved, queued, submitted, or sent.`;
+    return `Stopped after ${completedDrafts}. Nothing was sent.`;
   }
 
   const ranToCompletion = state.attemptedCount >= state.totalCount;
   const leadSentence = ranToCompletion
-    ? `Prepared ${completedDrafts}; ${failedCount} failed.`
-    : `Stopped after ${completedCount} completed draft${completedCount === 1 ? "" : "s"}; ${failedCount} failed.`;
+    ? `Wrote ${completedDrafts}; ${failedCount} failed.`
+    : `Stopped after ${completedDrafts}; ${failedCount} failed.`;
 
-  return `${leadSentence}${remainderSentence} Fix the failed job${failedCount === 1 ? "" : "s"} and rerun to target only remaining eligible jobs. Nothing was approved, queued, submitted, or sent.`;
+  return `${leadSentence}${remainderSentence} Run it again to retry the failed job${failedCount === 1 ? "" : "s"}. Nothing was sent.`;
 }
 
 export function getApplyReadinessStatus(params: {
@@ -570,31 +687,31 @@ export function getApplyReadinessStatus(params: {
 
   if (hasGenerationFailure) {
     return {
-      label: "Resume issue",
+      label: "Resume failed",
       tone: "critical",
     };
   }
 
-  // An in-flight run wins over "Needs resume": both flags are true while a
+  // An in-flight run wins over "No resume yet": both flags are true while a
   // draft is being written, and the readiness description already orders
   // them this way.
   if (isGenerating) {
     return {
-      label: "Preparing resume",
+      label: "Writing resume",
       tone: "active",
     };
   }
 
   if (needsGeneration) {
     return {
-      label: "Needs resume",
+      label: "No resume yet",
       tone: "muted",
     };
   }
 
   if (!hasReadyApprovedAsset) {
     return {
-      label: resumeReviewStatus === "stale" ? "Out of date" : "Needs approval",
+      label: resumeReviewStatus === "stale" ? "Out of date" : "Review resume",
       tone: "critical",
     };
   }
@@ -632,7 +749,7 @@ export function getApplyReadinessStatus(params: {
 
   if (browserSession.status === "ready") {
     return {
-      label: "Ready to prepare",
+      label: "Ready to apply",
       tone: "positive",
     };
   }
@@ -655,4 +772,35 @@ export function getApplyReadinessStatus(params: {
     label: "Browser blocked",
     tone: "critical",
   };
+}
+
+/** The Shortlisted level name for a saved tailoring strength. */
+export function describeSavedResumeLevel(level: TailoringMode): string {
+  return level === "aggressive"
+    ? "Aggressive"
+    : level === "conservative"
+      ? "Light"
+      : "Tailored";
+}
+
+/** What the action line says after a resume run for one job finished. */
+export const AI_UNAVAILABLE_RESUME_RESULT_MESSAGE =
+  "AI was unavailable, so this resume keeps your saved wording. Press Try again with AI when you are ready.";
+
+/**
+ * A resume run can end with the built-in resume when AI was unavailable. The
+ * action line must say so instead of "Resume created", which reads as an AI
+ * resume that is ready.
+ */
+export function describeResumeRunResult(
+  snapshot: { tailoredAssets?: readonly TailoredAsset[] } | null | undefined,
+  jobId: string,
+  successMessage: string,
+): string {
+  const asset = snapshot?.tailoredAssets?.find(
+    (candidate) => candidate.jobId === jobId,
+  );
+  return describeAiUnavailableResume(asset)
+    ? AI_UNAVAILABLE_RESUME_RESULT_MESSAGE
+    : successMessage;
 }

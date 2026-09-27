@@ -28,6 +28,50 @@ export type QueueEntry = {
   includeInRecovery: boolean;
 };
 
+const ACTIONABLE_ANSWER_REQUEST_STATES = new Set([
+  "pending",
+  "page_opened",
+  "awaiting_user",
+  "verifying",
+]);
+
+/**
+ * Finds the one manual-answer request the selected run can still continue.
+ * A cancelled or older run for the same job must never leave an answer form
+ * that saves successfully and then fails on Continue.
+ */
+export function findActionableApplicationAnswerRequest(input: {
+  applicationRecordId: string;
+  jobId: string;
+  run: JobFinderWorkspaceSnapshot["applyRuns"][number] | null;
+  requests:
+    | readonly JobFinderWorkspaceSnapshot["userActionRequests"][number][]
+    | undefined;
+}) {
+  const { applicationRecordId, jobId, run, requests } = input;
+  if (
+    !run ||
+    run.state === "completed" ||
+    run.state === "cancelled" ||
+    run.state === "failed"
+  ) {
+    return null;
+  }
+
+  return (
+    (requests ?? []).find(
+      (request) =>
+        request.kind === "manual_answer" &&
+        ACTIONABLE_ANSWER_REQUEST_STATES.has(request.state) &&
+        request.scope.type === "application" &&
+        request.scope.runId === run.id &&
+        request.scope.jobId === jobId &&
+        (request.scope.applicationRecordId === applicationRecordId ||
+          request.scope.applicationRecordId === null),
+    ) ?? null
+  );
+}
+
 const APPLY_TRANSPORT_LANGUAGE =
   /\b(?:post|xhr|xmlhttprequest|fetch|network request|mutating page action|prepare-only (?:safety )?guard)\b/i;
 
@@ -573,6 +617,10 @@ export function getQueueStateExplanation(
     return null;
   }
 
+  if (input.runState === "running") {
+    return "This run is still working through its jobs. Progress and outcomes update here as each application finishes.";
+  }
+
   if (input.runState === "paused_for_consent") {
     return "This application is paused until you deal with the item below — often signing in on the job site. Handle it in Needs you, then Job Finder carries on. You can also start again on just the jobs that stopped.";
   }
@@ -586,7 +634,7 @@ export function getQueueStateExplanation(
   }
 
   if (input.runState === "awaiting_submit_approval") {
-    return "This has not started yet — it is waiting for your go-ahead. Approve it to let Job Finder open the applications and fill them in, or pick a shorter list of jobs first. It never sends an application.";
+    return "This has not started yet. Approve it to start the applications in the chosen apply mode, or pick a shorter list of jobs first.";
   }
 
   if (input.runState === "cancelled") {
@@ -602,7 +650,7 @@ export function getQueueStateExplanation(
   }
 
   if (input.completedJobCount === input.selectedJobCount) {
-    return "Every job in this historical run already reached a review-ready or terminal outcome. Recovery is available only if you want to start a completely fresh run another way.";
+    return "Every job in this run already reached a review-ready or final outcome.";
   }
 
   return "This run still has unfinished jobs. Review the per-job outcomes below before deciding whether to prepare the remaining work.";

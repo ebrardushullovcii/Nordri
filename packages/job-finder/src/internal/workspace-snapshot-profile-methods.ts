@@ -11,6 +11,7 @@ import {
   ResumeDocumentBundleSchema,
   ResumeSourceDocumentSchema,
   SourceDebugRunRecordSchema,
+  UpdateAiBehaviorInputSchema,
   UpdateApplicationDefaultsInputSchema,
   UpdateWorkspaceBehaviorInputSchema,
   type AppearanceTheme,
@@ -25,11 +26,13 @@ import {
   type JobSearchCampaign,
   type JobSearchPreferences,
   type JobSource,
+  isBlockingResumeClaimAssessment,
   isListableCompanyName,
   type ProfileSetupState,
   type ResumeApplicationMode,
   type ResumeTimelineRepairAction,
   type SavedJob,
+  type UpdateAiBehaviorInput,
   type UpdateApplicationDefaultsInput,
   type UpdateWorkspaceBehaviorInput,
   type UserActionRequest,
@@ -43,10 +46,14 @@ import {
   buildReviewQueue,
   compareDiscoveryJobs,
 } from "./matching";
-import { deriveAndPersistProfileSetupState } from "./profile-workspace-state";
+import {
+  deriveAndPersistProfileSetupState,
+  landProfileSetupAfterImport,
+} from "./profile-workspace-state";
 import { resolvePendingReviewItemsAfterExplicitSave } from "./profile-setup-review-items";
 import { normalizeProfileBeforeSave } from "./profile-merge";
 import { runResumeImportWorkflow } from "./resume-import-workflow";
+import { hasBlockingResumeIdentityMismatch } from "./resume-workspace-helpers";
 import { persistResumeTimelineRepairAction } from "./resume-timeline-repair";
 import {
   hasResumeAffectingProfileChange,
@@ -61,9 +68,13 @@ import {
   recoverInterruptedApplyRun,
   recoverInterruptedExactLineageProjections,
   refreshTerminalizedApplyRunCounters,
+  cancelInterruptedApplyJobResult,
+  isSafelyParkedApplyQueue,
 } from "./workspace-apply-run-recovery";
 import { persistAutomaticApplicationSafeguards } from "./automatic-safeguards";
+import { reconcileAutomaticBatchSampleReviews } from "./automatic-batch-review-recovery";
 import { reconcileStaleMissingResumeBlockers } from "./workspace-application-blocker-sync";
+import { terminalizeApplicationAfterPreparedPageLost } from "./workspace-application-user-action";
 import { recoverInterruptedDiscoveryRun } from "./workspace-discovery-run-helpers";
 import {
   deriveSourceAccessPrompts,
@@ -96,7 +107,10 @@ import {
   ensureCampaignState,
 } from "./campaign-dashboard";
 import { projectDiscoveryJobViews } from "./listing-activity";
-import { deriveGlobalDailyApplicationPreparationCapacity } from "./application-preparation-capacity";
+import {
+  deriveGlobalDailyApplicationPreparationCapacity,
+  MAX_BEGUN_EMPLOYER_APPLICATIONS_PER_LOCAL_DAY,
+} from "./application-preparation-capacity";
 
 const BOOTSTRAP_DEFERRED_COLLECTIONS = [
   "discovery_jobs",
@@ -309,6 +323,7 @@ export function createWorkspaceSnapshotProfileMethods(
   | "saveSettings"
   | "updateApplicationDefaults"
   | "updateWorkspaceBehavior"
+  | "updateAiBehavior"
   | "updateTrackerCrm"
   | "updateAppearanceTheme"
 > {
@@ -381,7 +396,8 @@ export function createWorkspaceSnapshotProfileMethods(
               // Plans own only the on/off choice. A source newly added in
               // Profile follows Profile's current setting in every plan until
               // the person changes that plan.
-              enabled: existingTargets.get(target.id)?.enabled ?? target.enabled,
+              enabled:
+                existingTargets.get(target.id)?.enabled ?? target.enabled,
             }),
           );
           const campaignPreferences =
@@ -427,9 +443,13 @@ export function createWorkspaceSnapshotProfileMethods(
     }
 
     const recoveryPromise = (async () => {
-      const [runs, allResults] = await Promise.all([
+      const [runs, allResults, savedJobs, activityControl] = await Promise.all([
         ctx.repository.listApplyRuns(),
         ctx.repository.listApplyJobResults(),
+        ctx.browserRuntime.hasApplicationPageBinding
+          ? ctx.repository.listSavedJobs()
+          : Promise.resolve([]),
+        ctx.repository.getActivityControl(),
       ]);
 
       if (
@@ -440,24 +460,78 @@ export function createWorkspaceSnapshotProfileMethods(
       }
 
       const resultsByRunId = groupApplyJobResultsByRunId(allResults);
-      const interruptedRuns = runs.filter((run) => run.state === "running");
+      const parkedRunIds = new Set(
+        runs
+          .filter((run) =>
+            isSafelyParkedApplyQueue({
+              run,
+              results: resultsByRunId.get(run.id) ?? [],
+              control: activityControl,
+            }),
+          )
+          .map((run) => run.id),
+      );
+      const interruptedRuns = runs.filter(
+        (run) => run.state === "running" && !parkedRunIds.has(run.id),
+      );
       // Runs already terminal BECAUSE a prior recovery pass terminalized them:
       // a crash between committing the failed run and sweeping its results
       // once stranded non-terminal rows under it forever, because only running
       // runs were swept. The recovery summary pins provenance, so user-owned
       // cancelled/completed runs keep their parked rows and counters untouched.
+      // Any terminal run, not only recovery-terminalized ones: a cancelled
+      // run whose in-flight rows were never stopped (older builds) would
+      // otherwise show "filling in the form" forever. Parked awaiting_review
+      // rows are not in-flight and are never touched here.
       const partiallyRecoveredRunIds = new Set(
+        runs
+          .filter(
+            (run) =>
+              isRecoveryTerminalizedApplyRun(run) || run.state !== "running",
+          )
+          .map((run) => run.id),
+      );
+      const recoveryTerminalizedRunIds = new Set(
         runs.filter(isRecoveryTerminalizedApplyRun).map((run) => run.id),
+      );
+      const cancelledRunIds = new Set(
+        runs.filter((run) => run.state === "cancelled").map((run) => run.id),
       );
       const hasPartiallyRecoveredOrphans =
         partiallyRecoveredRunIds.size > 0 &&
         allResults.some(
           (result) =>
             partiallyRecoveredRunIds.has(result.runId) &&
-            isInterruptedApplyJobState(result.state),
+            isInterruptedApplyJobState(result.state) &&
+            (recoveryTerminalizedRunIds.has(result.runId) ||
+              cancelledRunIds.has(result.runId) ||
+              result.state !== "planned"),
         );
 
-      if (interruptedRuns.length === 0 && !hasPartiallyRecoveredOrphans) {
+      const jobsById = new Map(savedJobs.map((job) => [job.id, job]));
+      const lostPreparedReviewCandidates = ctx.browserRuntime
+        .hasApplicationPageBinding
+        ? allResults.filter(
+            (result) =>
+              result.state === "awaiting_review" &&
+              result.applicationRecordId !== null &&
+              result.blockerReason === null &&
+              (result.reviewCard === null ||
+                result.reviewCard.waitingOnYou.length === 0) &&
+              result.privacyReceipt?.submissionOutcome?.outcome !==
+                "outcome_uncertain" &&
+              jobsById.has(result.jobId) &&
+              (runs.find((run) => run.id === result.runId)?.state !==
+                "running" ||
+                parkedRunIds.has(result.runId)),
+          )
+        : [];
+
+      if (
+        interruptedRuns.length === 0 &&
+        !hasPartiallyRecoveredOrphans &&
+        lostPreparedReviewCandidates.length === 0
+      ) {
         return;
       }
 
@@ -530,14 +604,28 @@ export function createWorkspaceSnapshotProfileMethods(
             if (!run) continue;
             const runResults = resultsByRunId.get(runId) ?? [];
             const orphanWrites: Promise<void>[] = [];
+            const recoveryTerminalized = isRecoveryTerminalizedApplyRun(run);
             for (const result of runResults) {
               if (!isInterruptedApplyJobState(result.state)) {
                 continue;
               }
-              const recoveredResult = recoverInterruptedApplyJobResult(
-                result,
-                completedAt,
-              );
+              // Completed runs retain their queued history. A cancelled
+              // run cannot still have a queued job waiting its turn.
+              if (
+                !recoveryTerminalized &&
+                run.state !== "cancelled" &&
+                result.state === "planned"
+              ) {
+                continue;
+              }
+              const recoveredResult = recoveryTerminalized
+                ? recoverInterruptedApplyJobResult(result, completedAt)
+                : run.state === "cancelled"
+                  ? cancelInterruptedApplyJobResult(
+                      result,
+                      run.completedAt ?? run.updatedAt,
+                    )
+                  : recoverInterruptedApplyJobResult(result, completedAt);
               if (!recoveredResult) {
                 continue;
               }
@@ -551,15 +639,29 @@ export function createWorkspaceSnapshotProfileMethods(
             // Deterministic orphan sweep: the repository exposes no central
             // multi-entity recovery transaction, so convergence comes from
             // idempotent per-row writes with deterministic event ids instead.
-            // Lineage projection covers every exact-lineage row of this run —
-            // not just the orphans being terminalized — so a prior pass that
-            // died between committing results and projecting attempts/records
-            // heals here too. Null/ambiguous lineage is never attributed.
+            // A queued job never started an attempt. Nor may an older
+            // cancelled run overwrite a later retry of the same record.
+            // Other exact-lineage rows remain eligible so partial recovery
+            // of an in-flight attempt can still converge.
             const sweptRecordIds = new Set<string>();
             for (const result of runResults) {
-              if (result.applicationRecordId) {
-                sweptRecordIds.add(result.applicationRecordId);
+              const recordId = result.applicationRecordId;
+              if (!recordId) continue;
+              if (run.state === "cancelled" && result.state === "planned") {
+                continue;
               }
+              if (
+                run.state === "cancelled" &&
+                allResults.some(
+                  (other) =>
+                    other.runId !== run.id &&
+                    other.applicationRecordId === recordId &&
+                    other.startedAt > (run.completedAt ?? run.updatedAt),
+                )
+              ) {
+                continue;
+              }
+              sweptRecordIds.add(recordId);
             }
             await recoverInterruptedExactLineageProjections({
               repository: ctx.repository,
@@ -585,6 +687,60 @@ export function createWorkspaceSnapshotProfileMethods(
           }
         })(),
       ]);
+
+      if (ctx.browserRuntime.hasApplicationPageBinding) {
+        for (const result of lostPreparedReviewCandidates) {
+          const job = jobsById.get(result.jobId);
+          if (!job || !result.applicationRecordId) continue;
+          const isResuming = (
+            await ctx.repository.listUserActionRequests({
+              states: ["verifying"],
+              scopeType: "application",
+            })
+          ).some(
+            (request) =>
+              request.scope.type === "application" &&
+              request.scope.resultId === result.id,
+          );
+          if (isResuming) continue;
+          const hasBinding = await ctx.browserRuntime.hasApplicationPageBinding(
+            job.source,
+            result.id,
+          );
+          if (hasBinding) continue;
+          // Binding checks are asynchronous. A continuation or send may have
+          // claimed this exact run while the runtime answered, so recheck the
+          // in-memory owners and the persisted request immediately before any
+          // terminal write.
+          if (
+            ctx.activeApplyRunAbortControllers.has(result.runId) ||
+            ctx.activeApplyRunPromises.has(result.runId)
+          ) {
+            continue;
+          }
+          const beganResuming = (
+            await ctx.repository.listUserActionRequests({
+              states: ["verifying"],
+              scopeType: "application",
+            })
+          ).some(
+            (request) =>
+              request.scope.type === "application" &&
+              request.scope.resultId === result.id,
+          );
+          if (beganResuming) continue;
+          await terminalizeApplicationAfterPreparedPageLost({
+            repository: ctx.repository,
+            runId: result.runId,
+            jobId: result.jobId,
+            applicationRecordId: result.applicationRecordId,
+            resultId: result.id,
+            occurredAt: completedAt,
+            eventId: `event_${result.id}_prepared_page_binding_lost`,
+            preserveRunningRun: parkedRunIds.has(result.runId),
+          });
+        }
+      }
     })();
 
     interruptedApplyRecoveryPromise = recoveryPromise;
@@ -714,6 +870,7 @@ export function createWorkspaceSnapshotProfileMethods(
       recoverInterruptedDiscoveryStateOnLoad(),
       recoverInterruptedApplyRunsOnLoad(),
     ]);
+    await reconcileAutomaticBatchSampleReviews(ctx);
 
     if (!ctx.activeSourceDebugExecutionIdRef.current) {
       const discoveryState = await ctx.repository.getDiscoveryState();
@@ -888,6 +1045,25 @@ export function createWorkspaceSnapshotProfileMethods(
         const projected = projectedJobById.get(job.id);
         return projected ? [projected] : [];
       });
+    // A draft not yet approved can hold lines the export gate refuses until
+    // the person decides them (a stretched line, or an Assistant edit kept
+    // with "Accept anyway"). The queue has to know, or it calls the resume
+    // ready and Apply's approval step refuses it with nothing on screen.
+    const linesToDecideByDraftId = new Map<string, number>();
+    for (const draft of normalizedResumeDrafts) {
+      if (draft.status !== "draft" && draft.status !== "needs_review") {
+        continue;
+      }
+      const latestValidation =
+        (await ctx.repository.listResumeValidationResults(draft.id))[0] ??
+        null;
+      if (!latestValidation) continue;
+      const count =
+        latestValidation.claimAssessments.filter((assessment) =>
+          isBlockingResumeClaimAssessment({ assessment, draft }),
+        ).length + (hasBlockingResumeIdentityMismatch(latestValidation) ? 1 : 0);
+      if (count > 0) linesToDecideByDraftId.set(draft.id, count);
+    }
     const reviewQueue = buildReviewQueue(
       savedJobs,
       tailoredAssets,
@@ -895,6 +1071,7 @@ export function createWorkspaceSnapshotProfileMethods(
       resumeExportArtifacts,
       setupContext.profile,
       settings,
+      linesToDecideByDraftId,
     );
     const reconciledApplicationRecords =
       await reconcileStaleMissingResumeBlockers(ctx.repository, {
@@ -1074,6 +1251,9 @@ export function createWorkspaceSnapshotProfileMethods(
       deriveGlobalDailyApplicationPreparationCapacity({
         applyRuns,
         applyJobResults,
+        limit:
+          settings.maxApplicationsPerLocalDay ??
+          MAX_BEGUN_EMPLOYER_APPLICATIONS_PER_LOCAL_DAY,
         // An application prepared outside an apply run leaves only its
         // record, and the day's counter has to see it.
         applicationRecords: orderedApplicationRecords,
@@ -1303,7 +1483,108 @@ export function createWorkspaceSnapshotProfileMethods(
     ctx,
     getCurrentSetupStateContext,
     getWorkspaceSnapshot,
+    // The same write Settings > AI behavior makes for the resume level.
+    commitResumeApplicationMode: (resumeApplicationMode) =>
+      commitApplicationDefaultFields({ resumeApplicationMode }),
   });
+
+  async function persistSearchPreferences(
+    searchPreferences: JobSearchPreferences,
+    options: { preserveAiBehaviorOwnedFields: boolean },
+  ) {
+    const currentProfile = await ctx.repository.getProfile();
+    const currentProfileSetupState =
+      await ctx.repository.getProfileSetupState();
+    const currentSearchPreferences = normalizeSearchPreferences(
+      await ctx.repository.getSearchPreferences(),
+    );
+    const parsedSearchPreferences = normalizeSearchPreferences(
+      JobSearchPreferencesSchema.parse(searchPreferences),
+    );
+    // Profile and guided-setup callers still send the complete preferences
+    // record. The resume approach and strict collection flag moved to
+    // Settings in ADR 0025, so an older Profile draft must never write its
+    // copies back over a newer Settings save. The AI-behavior save opts out
+    // because it is the sole owner allowed to change these two fields.
+    const ownedFieldsPreservedSearchPreferences =
+      options.preserveAiBehaviorOwnedFields
+        ? {
+            ...parsedSearchPreferences,
+            tailoringMode: currentSearchPreferences.tailoringMode,
+            discovery: {
+              ...parsedSearchPreferences.discovery,
+              collectOnlyHardCriteriaMatches:
+                currentSearchPreferences.discovery
+                  .collectOnlyHardCriteriaMatches ?? false,
+            },
+          }
+        : parsedSearchPreferences;
+    const nextSearchPreferences = invalidateChangedSourceGuidance(
+      currentSearchPreferences,
+      ownedFieldsPreservedSearchPreferences,
+    );
+    await ctx.repository.saveSearchPreferences(nextSearchPreferences);
+    await syncActiveCampaignPreferences(nextSearchPreferences);
+    await deriveAndPersistProfileSetupState(ctx, {
+      persistedState: currentProfileSetupState,
+      profile: currentProfile,
+      searchPreferences: nextSearchPreferences,
+      latestResumeImportRunId:
+        (await ctx.repository.getLatestResumeImportRun())?.id ?? null,
+    });
+    return getWorkspaceSnapshot();
+  }
+
+  async function saveSearchPreferences(
+    searchPreferences: JobSearchPreferences,
+  ) {
+    return persistSearchPreferences(searchPreferences, {
+      preserveAiBehaviorOwnedFields: true,
+    });
+  }
+
+  /**
+   * Merges the given application-default fields into the transaction-current
+   * settings. A resume-affecting change stales approved drafts first, and a
+   * change of the default resume mode pins the previous default onto active
+   * null-mode jobs in the same repository commit.
+   */
+  async function commitApplicationDefaultFields(
+    defaultsFields: Partial<JobFinderSettings>,
+  ): Promise<void> {
+    const availableResumeTemplates = ctx.documentManager.listResumeTemplates();
+    const mergeApplicationDefaults = (current: JobFinderSettings) =>
+      normalizeJobFinderSettings(
+        { ...current, ...defaultsFields },
+        availableResumeTemplates,
+      );
+
+    const currentSettings = normalizeJobFinderSettings(
+      await ctx.repository.getSettings(),
+      availableResumeTemplates,
+    );
+    const nextSettings = mergeApplicationDefaults(currentSettings);
+
+    if (hasResumeAffectingSettingsChange(currentSettings, nextSettings)) {
+      await ctx.staleApprovedResumeDrafts(RESUME_SETTINGS_STALE_REASON);
+    }
+
+    const previousResumeApplicationMode =
+      currentSettings.resumeApplicationMode ?? "tailored_per_job";
+    const nextResumeApplicationMode =
+      nextSettings.resumeApplicationMode ?? "tailored_per_job";
+
+    if (previousResumeApplicationMode === nextResumeApplicationMode) {
+      await ctx.repository.commitSettingsUpdate(mergeApplicationDefaults);
+    } else {
+      await ctx.repository.commitSavedJobDelta({
+        update: capturePreviousResumeApplicationMode(
+          previousResumeApplicationMode,
+        ),
+        updateSettings: mergeApplicationDefaults,
+      });
+    }
+  }
 
   return {
     getWorkspaceSnapshot,
@@ -1433,11 +1714,21 @@ export function createWorkspaceSnapshotProfileMethods(
       const currentSearchPreferences = normalizeSearchPreferences(
         await ctx.repository.getSearchPreferences(),
       );
+      const parsedSearchPreferences = normalizeSearchPreferences(
+        JobSearchPreferencesSchema.parse(searchPreferences),
+      );
       const nextSearchPreferences = invalidateChangedSourceGuidance(
         currentSearchPreferences,
-        normalizeSearchPreferences(
-          JobSearchPreferencesSchema.parse(searchPreferences),
-        ),
+        {
+          ...parsedSearchPreferences,
+          tailoringMode: currentSearchPreferences.tailoringMode,
+          discovery: {
+            ...parsedSearchPreferences.discovery,
+            collectOnlyHardCriteriaMatches:
+              currentSearchPreferences.discovery
+                .collectOnlyHardCriteriaMatches ?? false,
+          },
+        },
       );
       const nextProfileSetupState = resolvePendingReviewItemsAfterExplicitSave({
         currentProfile,
@@ -1518,6 +1809,7 @@ export function createWorkspaceSnapshotProfileMethods(
         return getWorkspaceSnapshot();
       }
 
+      const importStartedAt = new Date().toISOString();
       const workflowResult = await runResumeImportWorkflow(ctx, {
         profile: nextProfile,
         searchPreferences,
@@ -1531,6 +1823,7 @@ export function createWorkspaceSnapshotProfileMethods(
           ? { visionArtifact: input.visionArtifact }
           : {}),
       });
+      await landProfileSetupAfterImport(ctx, { importStartedAt });
 
       if (
         hasResumeAffectingProfileChange(currentProfile, workflowResult.profile)
@@ -1594,30 +1887,7 @@ export function createWorkspaceSnapshotProfileMethods(
 
       return getWorkspaceSnapshot();
     },
-    async saveSearchPreferences(searchPreferences: JobSearchPreferences) {
-      const currentProfile = await ctx.repository.getProfile();
-      const currentProfileSetupState =
-        await ctx.repository.getProfileSetupState();
-      const currentSearchPreferences = normalizeSearchPreferences(
-        await ctx.repository.getSearchPreferences(),
-      );
-      const nextSearchPreferences = invalidateChangedSourceGuidance(
-        currentSearchPreferences,
-        normalizeSearchPreferences(
-          JobSearchPreferencesSchema.parse(searchPreferences),
-        ),
-      );
-      await ctx.repository.saveSearchPreferences(nextSearchPreferences);
-      await syncActiveCampaignPreferences(nextSearchPreferences);
-      await deriveAndPersistProfileSetupState(ctx, {
-        persistedState: currentProfileSetupState,
-        profile: currentProfile,
-        searchPreferences: nextSearchPreferences,
-        latestResumeImportRunId:
-          (await ctx.repository.getLatestResumeImportRun())?.id ?? null,
-      });
-      return getWorkspaceSnapshot();
-    },
+    saveSearchPreferences,
     async saveProfileSetupState(profileSetupState: ProfileSetupState) {
       const [profile, searchPreferences] = await Promise.all([
         ctx.repository.getProfile(),
@@ -1703,44 +1973,84 @@ export function createWorkspaceSnapshotProfileMethods(
     },
     async updateApplicationDefaults(input: UpdateApplicationDefaultsInput) {
       const parsedInput = UpdateApplicationDefaultsInputSchema.parse(input);
-      const availableResumeTemplates =
-        ctx.documentManager.listResumeTemplates();
-      const defaultsFields = pickDefined({
-        resumeApplicationMode: parsedInput.resumeApplicationMode,
-        resumeTemplateId: parsedInput.resumeTemplateId,
-        fontPreset: parsedInput.fontPreset,
-        coverLetter: parsedInput.coverLetter,
-      });
-      const mergeApplicationDefaults = (current: JobFinderSettings) =>
-        normalizeJobFinderSettings(
-          { ...current, ...defaultsFields },
-          availableResumeTemplates,
-        );
-
-      const currentSettings = normalizeJobFinderSettings(
-        await ctx.repository.getSettings(),
-        availableResumeTemplates,
+      await commitApplicationDefaultFields(
+        pickDefined({
+          resumeApplicationMode: parsedInput.resumeApplicationMode,
+          resumeTemplateId: parsedInput.resumeTemplateId,
+          fontPreset: parsedInput.fontPreset,
+          coverLetter: parsedInput.coverLetter,
+          applicationAutomationMode: parsedInput.applicationAutomationMode,
+          maxApplicationsPerLocalDay: parsedInput.maxApplicationsPerLocalDay,
+        }),
       );
-      const nextSettings = mergeApplicationDefaults(currentSettings);
+      return getWorkspaceSnapshot();
+    },
+    async updateAiBehavior(input: UpdateAiBehaviorInput) {
+      const parsedInput = UpdateAiBehaviorInputSchema.parse(input);
+      const resumeApproach = parsedInput.resumeApproach;
 
-      if (hasResumeAffectingSettingsChange(currentSettings, nextSettings)) {
-        await ctx.staleApprovedResumeDrafts(RESUME_SETTINGS_STALE_REASON);
-      }
+      // Settings first: the behavior preference, the letter preference, and
+      // the original-versus-tailored half of the resume approach. A change of
+      // that default pins the previous default onto active null-mode jobs in
+      // the same commit, exactly as the older application-defaults save did.
+      await commitApplicationDefaultFields(
+        pickDefined({
+          aiBehavior: parsedInput.aiBehavior,
+          coverLetter: parsedInput.coverLetter,
+          resumeApplicationMode:
+            resumeApproach === undefined
+              ? undefined
+              : resumeApproach === "original_resume"
+                ? ("original_resume" as const)
+                : ("tailored_per_job" as const),
+        }),
+      );
 
-      const previousResumeApplicationMode =
-        currentSettings.resumeApplicationMode ?? "tailored_per_job";
-      const nextResumeApplicationMode =
-        nextSettings.resumeApplicationMode ?? "tailored_per_job";
-
-      if (previousResumeApplicationMode === nextResumeApplicationMode) {
-        await ctx.repository.commitSettingsUpdate(mergeApplicationDefaults);
-      } else {
-        await ctx.repository.commitSavedJobDelta({
-          update: capturePreviousResumeApplicationMode(
-            previousResumeApplicationMode,
-          ),
-          updateSettings: mergeApplicationDefaults,
-        });
+      // Then the two search-preference fields this section owns. They go
+      // through the ordinary preferences save so the active plan's copy of
+      // the preferences (which a search actually reads) stays in step.
+      const nextTailoringMode =
+        resumeApproach !== undefined && resumeApproach !== "original_resume"
+          ? resumeApproach
+          : undefined;
+      const nextCollectOnlyHardCriteriaMatches =
+        parsedInput.aiBehavior === undefined
+          ? undefined
+          : parsedInput.aiBehavior.jobSearch.selectivity === "best_matches";
+      if (
+        nextTailoringMode !== undefined ||
+        nextCollectOnlyHardCriteriaMatches !== undefined
+      ) {
+        const currentSearchPreferences = normalizeSearchPreferences(
+          await ctx.repository.getSearchPreferences(),
+        );
+        const changed =
+          (nextTailoringMode !== undefined &&
+            nextTailoringMode !== currentSearchPreferences.tailoringMode) ||
+          (nextCollectOnlyHardCriteriaMatches !== undefined &&
+            nextCollectOnlyHardCriteriaMatches !==
+              (currentSearchPreferences.discovery
+                .collectOnlyHardCriteriaMatches ?? false));
+        if (changed) {
+          await persistSearchPreferences(
+            {
+              ...currentSearchPreferences,
+              ...(nextTailoringMode !== undefined
+                ? { tailoringMode: nextTailoringMode }
+                : {}),
+              discovery: {
+                ...currentSearchPreferences.discovery,
+                ...(nextCollectOnlyHardCriteriaMatches !== undefined
+                  ? {
+                      collectOnlyHardCriteriaMatches:
+                        nextCollectOnlyHardCriteriaMatches,
+                    }
+                  : {}),
+              },
+            },
+            { preserveAiBehaviorOwnedFields: false },
+          );
+        }
       }
       return getWorkspaceSnapshot();
     },

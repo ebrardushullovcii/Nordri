@@ -107,7 +107,9 @@ interface JobFinderShellProps {
   onCancelDiscovery?: (runId: string) => Promise<boolean>;
   onDismissSavedStatus?: () => void;
   onNavigate?: (path: string) => void;
-  onPrepareRemainingJobs?: (jobIds: readonly string[]) => void | Promise<unknown>;
+  onPrepareRemainingJobs?: (
+    jobIds: readonly string[],
+  ) => void | Promise<unknown>;
   onRetrySave?: () => void;
   onStopTailoredDraftPreparation?: () => void;
   platform: "darwin" | "linux" | "win32";
@@ -131,7 +133,6 @@ const screenRouteMap: Record<
   campaigns: "/job-finder/campaigns",
   actions: "/job-finder/actions",
   analytics: "/job-finder/analytics",
-  documents: "/job-finder/documents",
   settings: "/job-finder/settings",
   companies: "/job-finder/companies",
 };
@@ -145,7 +146,6 @@ const screenLabelMap: Record<JobFinderScreen, string> = {
   campaigns: "Search plans",
   actions: "Needs you",
   analytics: "Outcomes",
-  documents: "Documents",
   settings: "Settings",
   "rapid-review": "Quick review",
   "resume-strategies": "Resume approaches",
@@ -235,8 +235,7 @@ type ScreenCountKind = "attention" | "inventory";
  * number — a plain "13" and a filled pill "13", one breakpoint apart; both now
  * render the one `<Count>` primitive, so they cannot drift again.
  */
-export const DESTINATION_COUNT_INLINE_LAYOUT_CLASS =
-  "mr-1 ml-auto shrink-0 text-current";
+export const DESTINATION_COUNT_INLINE_LAYOUT_CLASS = "mr-1 ml-auto shrink-0";
 /**
  * The attention state, and the one destination count `<Count>` cannot own: the
  * qualifying noun has to render visibly beside the figure ("2 to review", "1
@@ -245,15 +244,17 @@ export const DESTINATION_COUNT_INLINE_LAYOUT_CLASS =
  * reader can tell "work waiting on you" from inventory before reading the noun.
  */
 export const DESTINATION_COUNT_ATTENTION_CLASS =
-  "mr-1 ml-auto inline-flex h-5 shrink-0 items-center justify-center gap-1 rounded-full bg-primary px-1.5 text-(length:--text-tiny) font-semibold text-primary-foreground tabular-nums";
+  "mr-1 ml-auto inline-flex h-5 shrink-0 items-center justify-center gap-1 rounded-full bg-primary-fill px-1.5 text-(length:--text-tiny) font-semibold text-primary-fill-foreground tabular-nums";
 /**
  * The collapsed rail has no room for an inline number or a noun, so every
  * count moves to the shared `<Count variant="rail-marker">` corner marker —
- * still one treatment, a different state. This is only its placement in the
- * rail row; the accessible name still carries the qualifier.
+ * still one treatment, a different state. It is anchored to the icon, not
+ * the row, and lifted to the icon's top-right corner so it overlaps only the
+ * corner of the glyph the way a badge does. The accessible name still
+ * carries the qualifier.
  */
 export const DESTINATION_COUNT_RAIL_MARKER_LAYOUT_CLASS =
-  "absolute bottom-0 right-0 shrink-0";
+  "absolute -top-2.5 -right-3.5 shrink-0";
 
 /* ------------------------------------------------------------------------ *
  * Shell chrome.
@@ -293,9 +294,14 @@ export const SHELL_BRAND_ROW_CLASS = cn(
 export const SHELL_SIDEBAR_CLASS =
   "fixed bottom-0 left-0 top-14 z-40 hidden w-(--job-finder-side-width) overflow-hidden border-r border-(--surface-panel-shell-border) bg-(--shell-header-bg) min-[1440px]:block";
 export const SHELL_SIDEBAR_ROW_CLASS =
-  "inline-flex min-h-9 w-full min-w-0 max-w-full items-center gap-2 overflow-hidden rounded-(--radius-button) border-l-2 border-transparent px-2 py-1.5 text-left text-sm font-medium text-muted-foreground outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/40";
+  "job-finder-sidebar-row inline-flex min-h-9 w-full min-w-0 max-w-full items-center gap-2 overflow-hidden rounded-(--radius-button) border-l-2 border-transparent px-2 py-1.5 text-left text-sm font-medium text-muted-foreground outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/40";
 export const SHELL_SIDEBAR_ROW_COLLAPSED_CLASS =
-  "relative justify-center border-l-0 px-0 text-center";
+  "relative min-h-10 justify-center border-l-0 px-0 text-center";
+// The keyboard-shortcuts reference is one small square beside Settings at the
+// foot of the rail, not a destination row: it opens a dialog, so it gets a
+// row's hover and focus treatment in a 36px box rather than a full-width line.
+export const SHELL_SIDEBAR_SHORTCUTS_BUTTON_CLASS =
+  "inline-flex size-9 shrink-0 items-center justify-center rounded-(--radius-button) border-l-2 border-transparent text-muted-foreground outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/40";
 // Hover styling is scoped to inactive rows so it cannot wash the selected fill
 // back out. In the light theme a solid hover fill read as a second selection,
 // so hover is a translucent wash plus a border tick: exactly one row is ever
@@ -308,6 +314,34 @@ export const SHELL_SIDEBAR_ROW_INACTIVE_CLASS =
 // the accent bar keep the state legible without relying on colour.
 export const SHELL_SIDEBAR_ROW_ACTIVE_CLASS =
   "border-l-(--nav-active-bar) bg-(--nav-active-surface) font-semibold text-(--nav-active-foreground)";
+
+const sidebarDescriptions: Partial<Record<string, string>> = {
+  Home: "Your next step",
+  Profile: "Experience & documents",
+  "Find jobs": "Discover opportunities",
+  Shortlisted: "Review & prepare",
+  Applications: "Track your progress",
+};
+
+export function SidebarDestinationLabel({
+  label,
+  collapsed,
+}: {
+  label: string;
+  collapsed: boolean;
+}) {
+  const description = sidebarDescriptions[label];
+  return (
+    <span className={cn("min-w-0 truncate", collapsed && "sr-only")}>
+      <span className="block truncate">{label}</span>
+      {!collapsed && description ? (
+        <span aria-hidden="true" className="job-finder-sidebar-description">
+          {description}
+        </span>
+      ) : null}
+    </span>
+  );
+}
 export const SHELL_CONTENT_CLASS =
   "flex min-h-screen flex-col sm:h-full sm:min-h-0 sm:pt-[7.25rem] min-[1440px]:!pt-14 min-[1440px]:pl-(--job-finder-side-width)";
 export const SHELL_MAIN_SCROLLING_CLASS = cn(
@@ -392,7 +426,7 @@ function ScreenCountBadge({
           : DESTINATION_COUNT_INLINE_LAYOUT_CLASS
       }
       value={count}
-      variant={markerOnly ? "rail-marker" : "inline"}
+      variant={markerOnly ? "rail-marker" : "pill"}
     />
   );
 }
@@ -475,10 +509,6 @@ function getActiveScreen(pathname: string): JobFinderScreen {
     return "settings";
   }
 
-  if (pathname.endsWith("/documents")) {
-    return "documents";
-  }
-
   if (pathname.endsWith("/resume-strategies")) {
     return "resume-strategies";
   }
@@ -535,9 +565,8 @@ export function JobFinderShell({
   const [isMoreOpen, setIsMoreOpen] = useState(false);
   const [isShortcutsDialogOpen, setIsShortcutsDialogOpen] = useState(false);
   const [focusedMoreMenuItemIndex, setFocusedMoreMenuItemIndex] = useState(0);
-  // Only the compact top navigation owns a More trigger now: the expanded
-  // 17rem sidebar and the 4rem rail list every secondary destination inline,
-  // so there is no second trigger for the popover to anchor to.
+  // Only compact top navigation uses More; the sidebar pins Settings below
+  // its primary destinations.
   const moreButtonRef = useRef<HTMLButtonElement | null>(null);
   const moreMenuRef = useRef<HTMLDivElement | null>(null);
   const moreMenuScrollRef = useRef<HTMLDivElement | null>(null);
@@ -677,13 +706,6 @@ export function JobFinderShell({
         icon: ShieldCheck,
       },
       {
-        id: "documents",
-        label: "Documents",
-        count: null,
-        countKind: "inventory",
-        icon: FileText,
-      },
-      {
         id: "settings",
         label: "Settings",
         count: null,
@@ -702,26 +724,16 @@ export function JobFinderShell({
     ),
   );
   // Grouped by what each destination *is*, not by which part of the product
-  // introduced it. Documents holds the user's own files and used to sit under
-  // "Safety and setup"; Companies is a data browser and used to sit beside two
-  // settings pages.
+  // introduced it. The person's own files live under Profile › Files now, so
+  // the workspace group is Settings alone.
   // Order follows the declared id list rather than the order the definitions
   // happen to be built in, so the menu's reading order is the one written here.
   const selectMenuScreens = (ids: readonly JobFinderScreen[]) =>
     ids.flatMap((id) => screenDefinitions.filter((screen) => screen.id === id));
   const menuGroups = [
     {
-      label: "Your data",
-      screens: selectMenuScreens(["documents", "companies", "analytics"]),
-    },
-    {
-      label: "Setup and safety",
-      screens: selectMenuScreens([
-        "campaigns",
-        "resume-strategies",
-        "safeguards",
-        "settings",
-      ]),
+      label: "Workspace",
+      screens: selectMenuScreens(["settings", "safeguards"]),
     },
   ];
   const moreMenuItemCount = menuGroups.reduce(
@@ -733,17 +745,20 @@ export function JobFinderShell({
       .flatMap((group) => group.screens)
       .map((screen, index) => [screen.id, index] as const),
   );
-  const hiddenAttentionCount =
-    countUnreadCampaignNotifications(workspace.campaignNotifications) +
-    (screenDefinitions.find((screen) => screen.id === "companies")?.count ??
-      0) +
-    (screenDefinitions.find((screen) => screen.id === "safeguards")?.count ??
-      0);
-  // The sidebar leads with the journey. The reference and configuration
-  // surfaces follow it inline under "Everything else": the 17rem rail has the
-  // room, so hiding seven destinations behind a dropdown inside a persistent
-  // navigation column only added a click and a second mental model. The
-  // compact top navigation, which genuinely has no room, keeps its More menu.
+  const hiddenAttentionCount = 0;
+  // The sidebar's scrolling list is the journey alone. Settings is not a step
+  // of it, so it is pinned at the foot of the rail with the keyboard-shortcuts
+  // reference beside it, outside the scroll region. The compact top
+  // navigation, which genuinely has no room, keeps its More menu.
+  const settingsScreen = screenDefinitions.find(
+    (screen) => screen.id === "settings",
+  );
+  // Safeguards is not a step either, but the person must always be able to
+  // reach it (to look over the limits before anything is blocked), so it sits
+  // quietly just above Settings, counting only what it blocks.
+  const safeguardsScreen = screenDefinitions.find(
+    (screen) => screen.id === "safeguards",
+  );
   const sidebarGroups = [
     {
       label: "Your job search",
@@ -867,18 +882,25 @@ export function JobFinderShell({
 
   useLayoutEffect(() => {
     const main = mainRef.current;
+    // A destination section owns its focus and scroll position. Resetting the
+    // shell after it mounts would send an anchored Settings link back to top.
+    const hasDestinationAnchor = Boolean(location.hash);
     const usesNarrowShellReflow =
       window.matchMedia?.("(max-width: 639px)").matches ?? false;
     document.title = `${activeScreenLabel} | Job Finder | UnEmployed`;
     setRouteAnnouncement("");
-    main?.scrollTo({ top: 0 });
-    main?.focus({ preventScroll: true });
-    if (usesNarrowShellReflow) {
+    if (!hasDestinationAnchor) {
+      main?.scrollTo({ top: 0 });
+      main?.focus({ preventScroll: true });
+    }
+    if (usesNarrowShellReflow && !hasDestinationAnchor) {
       main?.scrollIntoView({ block: "start" });
     }
 
     const frame = window.requestAnimationFrame(() => {
-      main?.scrollTo({ top: 0 });
+      if (!hasDestinationAnchor) {
+        main?.scrollTo({ top: 0 });
+      }
       try {
         globalThis.performance?.mark?.(
           `job-finder:route:${location.pathname}:feedback-committed`,
@@ -892,7 +914,7 @@ export function JobFinderShell({
     return () => {
       window.cancelAnimationFrame(frame);
     };
-  }, [activeScreenLabel, location.pathname]);
+  }, [activeScreenLabel, location.hash, location.pathname]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1044,10 +1066,6 @@ export function JobFinderShell({
 
   // One row treatment for every sidebar destination, primary or secondary, so
   // the inline "Everything else" groups cannot drift from the journey rows.
-  const SIDEBAR_GROUP_EYEBROW_CLASS = cn(
-    "whitespace-nowrap px-2 text-(length:--text-eyebrow) uppercase tracking-(--tracking-caps) text-muted-foreground",
-    isSidebarCollapsed && "sr-only",
-  );
   function renderSidebarDestination(screen: ShellScreenDefinition) {
     const isActive = activeScreen === screen.id;
     return (
@@ -1070,20 +1088,30 @@ export function JobFinderShell({
             onClick={() => handleScreenChange(screen.id)}
             type="button"
           >
-            <screen.icon aria-hidden="true" className="size-4 shrink-0" />
-            <span
-              className={cn(
-                "min-w-0 truncate",
-                isSidebarCollapsed && "sr-only",
-              )}
-            >
-              {screen.label}
-            </span>
-            {screen.count !== null ? (
+            {isSidebarCollapsed && screen.count !== null ? (
+              // The marker is positioned against the icon, so the two share
+              // one relative box; a row without a count keeps the bare icon.
+              <span className="relative inline-flex shrink-0">
+                <screen.icon aria-hidden="true" className="size-4 shrink-0" />
+                <ScreenCountBadge
+                  count={screen.count}
+                  kind={screen.countKind}
+                  markerOnly
+                  noun={screen.countNoun}
+                />
+              </span>
+            ) : (
+              <screen.icon aria-hidden="true" className="size-4 shrink-0" />
+            )}
+            <SidebarDestinationLabel
+              collapsed={isSidebarCollapsed}
+              label={screen.label}
+            />
+            {!isSidebarCollapsed && screen.count !== null ? (
               <ScreenCountBadge
                 count={screen.count}
                 kind={screen.countKind}
-                markerOnly={isSidebarCollapsed}
+                markerOnly={false}
                 noun={screen.countNoun}
               />
             ) : null}
@@ -1231,7 +1259,7 @@ export function JobFinderShell({
                 </Button>
                 <Button
                   aria-label="Close window"
-                  className="h-full w-12 rounded-none border-0 bg-transparent p-0 text-muted-foreground shadow-none hover:bg-(--button-close-hover) hover:text-primary-foreground"
+                  className="h-full w-12 rounded-none border-0 bg-transparent p-0 text-muted-foreground shadow-none hover:bg-(--button-close-hover) hover:text-primary-fill-foreground"
                   disabled={!windowControlsState.isClosable}
                   onClick={closeWindow}
                   size="icon-xs"
@@ -1661,7 +1689,14 @@ export function JobFinderShell({
               tailoredDraftPreparation={tailoredDraftPreparation}
               workspace={workspace}
             />
-            <BrowserPeek hasUnresolvedAttention={countNeedsYou(workspace) > 0} />
+            <BrowserPeek
+              chromeInsetStart={
+                isMac && !windowControlsState.isFullScreen
+                  ? MACOS_TRAFFIC_LIGHT_INSET
+                  : undefined
+              }
+              hasUnresolvedAttention={countNeedsYou(workspace) > 0}
+            />
             {actionScreen ? (
               <button
                 aria-current={activeScreen === "actions" ? "page" : undefined}
@@ -1714,11 +1749,14 @@ export function JobFinderShell({
           <div
             className={cn(
               "mb-1 flex h-10 shrink-0 items-center",
-              isSidebarCollapsed ? "justify-center" : "justify-start",
+              isSidebarCollapsed ? "justify-center" : "justify-between",
             )}
             data-job-finder-sidebar-toggle
             style={{ ...noDragRegionStyle }}
           >
+            {!isSidebarCollapsed ? (
+              <span className="job-finder-sidebar-heading">Your job search</span>
+            ) : null}
             <Tooltip delayDuration={0}>
               <TooltipTrigger asChild>
                 <button
@@ -1759,99 +1797,85 @@ export function JobFinderShell({
                 className="grid min-w-0 gap-1"
                 role="group"
               >
-                <span
-                  className={cn(SIDEBAR_GROUP_EYEBROW_CLASS, "font-semibold")}
+                {/* The group name remains available to assistive technology. */}
+                <div
+                  className={cn(
+                    "grid min-w-0 overflow-hidden",
+                    isSidebarCollapsed ? "gap-1.5" : "gap-0.5",
+                  )}
                 >
-                  {group.label}
-                </span>
-                <div className="grid min-w-0 gap-0.5 overflow-hidden">
                   {group.screens.map((screen) =>
                     renderSidebarDestination(screen),
                   )}
                 </div>
               </section>
             ))}
-            <section
-              aria-label="Everything else"
-              className={cn(
-                "grid min-w-0",
-                isSidebarCollapsed ? "gap-2" : "gap-3",
-              )}
-              data-job-finder-sidebar-secondary
-              role="group"
-            >
-              {/* The section keeps its accessible name, but no visible
-                  label: painting "Everything else" directly above "Your data"
-                  stacked two eyebrows with nothing between them. A hairline
-                  separates the journey rows from these groups instead. */}
-              <span className="sr-only">Everything else</span>
-              <span
-                aria-hidden="true"
-                className="mx-3 border-t border-(--surface-panel-border)"
-              />
-              {menuGroups.map((group) => (
-                <div
-                  key={group.label}
-                  aria-label={group.label}
-                  className="grid min-w-0 gap-1"
-                  role="group"
-                >
-                  <span
-                    className={cn(SIDEBAR_GROUP_EYEBROW_CLASS, "font-medium")}
-                  >
-                    {group.label}
-                  </span>
-                  <div className="grid min-w-0 gap-0.5 overflow-hidden">
-                    {group.screens.map((screen) =>
-                      renderSidebarDestination(screen),
-                    )}
-                  </div>
-                </div>
-              ))}
-              <div className="grid min-w-0 gap-0.5 overflow-hidden">
-                <Tooltip delayDuration={0}>
-                  <TooltipTrigger asChild>
-                    <button
-                      aria-keyshortcuts={getJobFinderAriaKeyshortcuts(
-                        "?",
-                        platform,
-                      )}
-                      aria-label={JOB_FINDER_SHORTCUTS_DIALOG_LABEL}
-                      className={cn(
-                        SHELL_SIDEBAR_ROW_CLASS,
-                        isSidebarCollapsed && SHELL_SIDEBAR_ROW_COLLAPSED_CLASS,
-                        SHELL_SIDEBAR_ROW_INACTIVE_CLASS,
-                      )}
-                      data-job-finder-sidebar-shortcuts-entry
-                      onClick={openShortcutsDialog}
-                      type="button"
-                    >
-                      <Keyboard
-                        aria-hidden="true"
-                        className="size-4 shrink-0"
-                      />
-                      <span
-                        className={cn(
-                          "min-w-0 truncate",
-                          isSidebarCollapsed && "sr-only",
-                        )}
-                      >
-                        {JOB_FINDER_SHORTCUTS_DIALOG_LABEL}
-                      </span>
-                      {isSidebarCollapsed ? null : (
-                        <kbd className="mr-1 ml-auto inline-flex min-w-6 shrink-0 items-center justify-center rounded-(--radius-field) border border-(--surface-panel-border) bg-(--input) px-1.5 py-0.5 text-(length:--text-tiny) font-medium text-foreground">
-                          ?
-                        </kbd>
-                      )}
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent side="right">
-                    {JOB_FINDER_SHORTCUTS_DIALOG_LABEL}
-                  </TooltipContent>
-                </Tooltip>
-              </div>
-            </section>
           </nav>
+          <div
+            aria-label="Workspace"
+            className={cn(
+              "mt-2 flex min-w-0 shrink-0 border-t border-(--surface-panel-border) pt-2",
+              isSidebarCollapsed
+                ? "flex-col-reverse gap-0.5"
+                : "flex-wrap items-center gap-1",
+            )}
+            data-job-finder-sidebar-footer
+            role="group"
+          >
+            {/* Settings is the last thing on the rail, pinned under the
+                journey rather than scrolling with it, with the shortcuts
+                reference as one small control beside it (above it on the
+                collapsed rail, so the gear stays at the very bottom). */}
+            {/* Safeguards sits quietly above Settings (ordered last in the
+                collapsed column, which is reversed), so the person can always
+                reach it. It carries no count: what it blocks shows in
+                Activity. */}
+            {safeguardsScreen ? (
+              <div
+                className={cn(
+                  "min-w-0",
+                  isSidebarCollapsed ? "order-last" : "basis-full",
+                )}
+                data-job-finder-sidebar-safeguards-entry
+              >
+                {renderSidebarDestination({ ...safeguardsScreen, count: null })}
+              </div>
+            ) : null}
+            <div className={cn("min-w-0", !isSidebarCollapsed && "flex-1")}>
+              {settingsScreen ? renderSidebarDestination(settingsScreen) : null}
+            </div>
+            <Tooltip delayDuration={0}>
+              <TooltipTrigger asChild>
+                <button
+                  aria-keyshortcuts={getJobFinderAriaKeyshortcuts(
+                    "?",
+                    platform,
+                  )}
+                  aria-label={JOB_FINDER_SHORTCUTS_DIALOG_LABEL}
+                  className={cn(
+                    isSidebarCollapsed
+                      ? cn(
+                          SHELL_SIDEBAR_ROW_CLASS,
+                          SHELL_SIDEBAR_ROW_COLLAPSED_CLASS,
+                        )
+                      : SHELL_SIDEBAR_SHORTCUTS_BUTTON_CLASS,
+                    SHELL_SIDEBAR_ROW_INACTIVE_CLASS,
+                  )}
+                  data-job-finder-sidebar-shortcuts-entry
+                  onClick={openShortcutsDialog}
+                  type="button"
+                >
+                  <Keyboard aria-hidden="true" className="size-4 shrink-0" />
+                  <span className="sr-only">
+                    {JOB_FINDER_SHORTCUTS_DIALOG_LABEL}
+                  </span>
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="right">
+                {`${JOB_FINDER_SHORTCUTS_DIALOG_LABEL} · ?`}
+              </TooltipContent>
+            </Tooltip>
+          </div>
         </div>
       </aside>
 

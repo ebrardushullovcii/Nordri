@@ -5815,6 +5815,11 @@ assert(
   scaleJobTotal === 5_000 && scaleBoundaryTotal === 1_001,
   "Scale axis constants drifted from the accepted 5,000-job / 1,001-boundary contract.",
 );
+assert(
+  scaleSource.includes("jobs[counts.shortlisted + index]") &&
+    scaleBoundaryTotal * 2 <= scaleJobTotal,
+  "Scale Applications records must use the distinct post-Shortlisted job range and stay inside the generated job axis.",
+);
 const rapidReviewPageCount = Math.ceil(scaleJobTotal / 40);
 assert(
   rapidReviewPageCount === 125,
@@ -5829,11 +5834,9 @@ assert(
   ) === stableJson([1, 2, 125]),
   "The shipped rapid-review visit plan must yield head pages [1, 2] plus the boundary page 125.",
 );
-// Review-queue batch actions: eligibility strip, generation cap, remainder,
-// enabled-but-unclicked Prepare action, disabled per-row Select-for-batch
-// controls carrying the exact ready-resume reason, and no Select-all control.
-// The no-click invariant is enforced structurally inside the batch helper
-// slice instead of by a global token absence.
+// Shortlisted all-jobs actions: generation cap, remainder, enabled-but-
+// unclicked Create action, no Apply-to-all action without ready resumes, and
+// no removed disclosure or per-row batch controls.
 const batchActionsSlice = topLevelFunctionSlice(
   scaleSource,
   "assertReviewQueueBatchActions",
@@ -5845,37 +5848,20 @@ assert(
   reviewQueueLimitMatch !== null && Number(reviewQueueLimitMatch[1]) === 10,
   "Scale batch generation must keep the exact 10-draft preparation cap.",
 );
-const reviewQueueReasonMatch = scaleSource.match(
-  /REVIEW_QUEUE_READY_RESUME_REASON =\s*"([^"]+)"/,
-);
-assert(
-  reviewQueueReasonMatch !== null &&
-    reviewQueueReasonMatch[1] ===
-      "Batch preparation needs a ready resume file: an approved tailored PDF or unchanged original resume.",
-  "Scale batch gating lost the exact ready-resume reason string.",
-);
 for (const requiredToken of [
-  "`${counts.shortlisted} eligible · 0 ready to prepare`",
   "counts.shortlisted - REVIEW_QUEUE_DRAFT_PREPARATION_LIMIT",
-  "`Only the next ${REVIEW_QUEUE_DRAFT_PREPARATION_LIMIT} eligible jobs run now, in list order; ${draftRemainder} more remain.`",
-  "`Prepare up to ${REVIEW_QUEUE_DRAFT_PREPARATION_LIMIT} drafts (review required)`",
-  'details[data-testid="batch-actions"]',
-  '[data-testid="tailored-draft-preparation"]',
-  'normalize(label.textContent) === "Select for batch"',
-  'normalize(button.textContent) === "Select all ready jobs"',
-  "batchActionsEvidence.disclosureOpen",
-  'batchActionsEvidence.summaryExpanded === "true"',
+  "`Create ${REVIEW_QUEUE_DRAFT_PREPARATION_LIMIT} missing resumes`",
+  "`About a minute each, ${REVIEW_QUEUE_DRAFT_PREPARATION_LIMIT} at a time; ${draftRemainder} more after that.`",
+  '[data-testid="shortlisted-all-jobs"]',
+  '[data-testid="create-missing-resumes"]',
+  '[data-testid="apply-all-ready"]',
   "batchActionsEvidence.panelMounted",
-  "batchActionsEvidence.countsText === expectedCountsText",
-  "batchActionsEvidence.capNoteText === expectedCapNoteText",
-  "batchActionsEvidence.prepareButtonLabel === expectedPrepareLabel",
-  "batchActionsEvidence.prepareButtonDisabled === false",
-  "batchActionsEvidence.rowSelectionCount > 0",
-  "selection.disabled === true",
-  "selection.describedByReason",
-  "selection.reason === REVIEW_QUEUE_READY_RESUME_REASON",
-  "selection.visible",
-  "!batchActionsEvidence.selectAllReadyJobsPresent",
+  "batchActionsEvidence.helpText === expectedHelpText",
+  "batchActionsEvidence.createButtonLabel === expectedCreateLabel",
+  "batchActionsEvidence.createButtonDisabled === false",
+  "!batchActionsEvidence.applyButtonPresent",
+  "!batchActionsEvidence.removedBatchDisclosurePresent",
+  "batchActionsEvidence.removedBatchSelectionCount === 0",
   "...batchActionsEvidence,",
 ]) {
   assert(
@@ -5884,18 +5870,15 @@ for (const requiredToken of [
   );
 }
 assert(
-  `${scaleBoundaryTotal} eligible · 0 ready to prepare` ===
-    "1001 eligible · 0 ready to prepare" &&
-    scaleBoundaryTotal - Number(reviewQueueLimitMatch[1]) === 991,
-  "Batch eligibility accounting must read exactly 1001 eligible · 0 ready to prepare with a 10-job cap leaving 991 remaining.",
+  scaleBoundaryTotal - Number(reviewQueueLimitMatch[1]) === 991,
+  "Shortlisted generation accounting must keep a 10-job cap leaving 991 resumes after the first run.",
 );
 const batchClickReceivers = [
   ...batchActionsSlice.matchAll(/([A-Za-z_$][\w$]*)\.click\(/g),
 ].map((match) => match[1]);
 assert(
-  batchClickReceivers.length === 2 &&
-    batchClickReceivers.every((receiver) => receiver === "summary"),
-  `The batch-actions scenario must interact only with the disclosure summary; unexpected click receivers: ${JSON.stringify(batchClickReceivers)}.`,
+  batchClickReceivers.length === 0,
+  `The Shortlisted all-jobs scenario must not trigger Create or Apply; unexpected click receivers: ${JSON.stringify(batchClickReceivers)}.`,
 );
 assert(
   !/\.dispatchEvent\(|\.check\(|\.setChecked\(|keyboard\.press\(/.test(

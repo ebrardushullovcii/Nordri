@@ -97,14 +97,14 @@ describe("DiscoveryResultsPanel narrow search access", () => {
       />,
     );
 
-    const resultsPanel = screen.getByRole("region", { name: "Job results" });
+    const resultsPanel = screen.getByRole("region", { name: "Results" });
     expect(
       within(resultsPanel).getByText(
-        "1 matched your role, not scored yet · 6 also found",
+        "1 job",
       ),
     ).toBeTruthy();
     fireEvent.click(
-      within(resultsPanel).getByRole("button", { name: /Show also found/u }),
+      within(resultsPanel).getByRole("button", { name: /Show weaker matches/u }),
     );
     expect(onToggleAlsoFound).toHaveBeenCalledOnce();
   });
@@ -144,7 +144,7 @@ describe("DiscoveryResultsPanel narrow search access", () => {
       </>,
     );
 
-    expect(screen.getByRole("region", { name: "Job results" })).toBeTruthy();
+    expect(screen.getByRole("region", { name: "Results" })).toBeTruthy();
     const resultButton = screen.getByRole("button", {
       name: /Senior Product Designer/i,
     });
@@ -278,7 +278,7 @@ describe("DiscoveryResultsPanel narrow search access", () => {
       target: { value: "Northstar" },
     });
 
-    expect(screen.getByText("1 of 2 results")).toBeTruthy();
+    expect(screen.getByText("1 of 2 jobs")).toBeTruthy();
     expect(
       screen.getByRole("button", { name: /Backend Engineer/i }),
     ).toBeTruthy();

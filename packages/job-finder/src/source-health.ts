@@ -25,7 +25,6 @@ export type DiscoverySourceHealthFields = {
 /** Every concrete, truthful reason an enabled source needs attention. */
 export type SourceAttentionReason =
   | "failing"
-  | "returned_nothing"
   | "never_verified"
   | "guidance_stale"
   | "guidance_unsupported"
@@ -66,6 +65,10 @@ export type DiscoveryRunHealthFields = {
     completedAt: string | null;
     jobsFound?: number;
     duplicatesMerged?: number;
+    /** Listings skipped because an earlier unchanged search already kept them. */
+    jobsSkippedByLedger?: number;
+    /** The execution's own failure text, when it failed. */
+    warning?: string | null;
   }[];
 };
 
@@ -183,6 +186,9 @@ export type EnabledSourceHealthCounts = {
   total: number;
 };
 
+const RUN_SIDE_FAILURE_PATTERN =
+  /ERR_INTERNET_DISCONNECTED|ERR_NETWORK_CHANGED|ERR_NAME_NOT_RESOLVED|ERR_CONNECTION_RESET|did not answer in time|ran out of time|was stopped/iu;
+
 export function listSourceAttentionReasons(
   target: DiscoverySourceHealthFields,
   signals: SourceRuntimeSignals = {},
@@ -190,31 +196,23 @@ export function listSourceAttentionReasons(
   const reasons: SourceAttentionReason[] = [];
 
   const latestExecution = signals.latestExecutions?.get(target.id);
+  // A search that lost the network or ran out of time says nothing about
+  // the site itself; only a failure on the site counts against it.
+  const failedOnSite =
+    latestExecution?.state === "failed" &&
+    !RUN_SIDE_FAILURE_PATTERN.test(latestExecution.warning ?? "");
   if (
     target.staleReason ||
-    latestExecution?.state === "failed" ||
+    failedOnSite ||
     signals.repeatedlyFailingTargetIds?.has(target.id)
   ) {
     reasons.push("failing");
   }
-  // A source that ran to the end and brought back nothing is not healthy. It
-  // was reported as Healthy beside the sentence "Completed, 0 jobs found."
-  if (
-    latestExecution?.state === "completed" &&
-    latestExecution.jobsFound === 0 &&
-    (latestExecution.duplicatesMerged ?? 0) === 0
-  ) {
-    reasons.push("returned_nothing");
-  }
-  // Usage and guidance verification are separate facts. Missing bounded
-  // history cannot establish that a source has never been used.
-  if (
-    !target.lastVerifiedAt &&
-    !signals.usedTargetIds?.has(target.id) &&
-    !signals.succeededTargetIds?.has(target.id)
-  ) {
-    reasons.push("never_verified");
-  }
+  // A search that ran to the end and found no new jobs is not a problem with
+  // the source: it may have listed only jobs already saved, or the site had
+  // none today. The outcome sentence says which; Home stays neutral too.
+  // A source that was never checked is not a problem: checks are optional
+  // guidance (ADR 0024) and searches use unchecked sources as they are.
   if (target.instructionStatus === "stale") {
     reasons.push("guidance_stale");
   }
@@ -318,13 +316,27 @@ function describeAttentionReason(
       return "This source is waiting for you to sign in.";
     case "guidance_stale":
       return "Saved guidance for this source is out of date.";
-    case "returned_nothing":
-      return "The last search finished here but brought back no jobs.";
     case "guidance_unsupported":
       return "Job Finder could not read this site's job listings: its page layout is not one Job Finder recognises yet.";
     default:
       return "Earlier search usage is unknown. This source has not been verified yet.";
   }
+}
+
+/**
+ * The failed-search sentence, with the one fact the person can act on when
+ * the failure names an HTTP status: a missing page needs a corrected
+ * address, and searching again will not fix it.
+ */
+function describeFailedSearch(warning: string | null): string {
+  const status = Number(/\bHTTP (\d{3})\b/u.exec(warning ?? "")?.[1]);
+  if (status === 404 || status === 410) {
+    return `The latest search failed: this address answered HTTP ${status} (page not found). Check the address with Edit.`;
+  }
+  if (status >= 500 && status < 600) {
+    return `The latest search failed: the site answered HTTP ${status} (a server error). Search again later.`;
+  }
+  return "The latest search failed.";
 }
 
 export function describeEnabledSourceHealth(
@@ -341,7 +353,11 @@ export function describeEnabledSourceHealth(
 
   const reasons = listSourceAttentionReasons(target, signals);
   const latest = signals.latestExecutions?.get(target.id);
-  const alreadySavedCount = latest?.duplicatesMerged ?? 0;
+  // Listings a quiet re-run skipped because they are already kept are
+  // already saved too; leaving them out is what made that re-run read as
+  // "0 jobs found".
+  const alreadySavedCount =
+    (latest?.duplicatesMerged ?? 0) + (latest?.jobsSkippedByLedger ?? 0);
   const outcome = signals.loginRequiredTargetIds?.has(target.id)
     ? "Blocked: waiting for you to sign in."
     : latest?.state === "completed"
@@ -353,7 +369,7 @@ export function describeEnabledSourceHealth(
             ? "Completed, 0 jobs found."
             : `Readable · ${latest.jobsFound} job ${latest.jobsFound === 1 ? "card" : "cards"} found.`
       : latest?.state === "failed"
-        ? "The latest search failed."
+        ? describeFailedSearch(latest.warning ?? null)
         : latest?.state === "cancelled"
           ? "The latest search was stopped."
           : null;
@@ -362,9 +378,6 @@ export function describeEnabledSourceHealth(
       .filter(
         (reason) =>
           reason !== "login_required" &&
-          // The outcome sentence already said the count; repeating it as
-          // guidance would say the same thing twice.
-          reason !== "returned_nothing" &&
           !(reason === "failing" && !target.staleReason),
       )
       .map((reason) => describeAttentionReason(reason, target));
@@ -386,7 +399,9 @@ export function describeEnabledSourceHealth(
   return {
     reason: signals.succeededTargetIds?.has(target.id)
       ? "The latest search used this source successfully."
-      : "Checked and working.",
+      : target.lastVerifiedAt || signals.usedTargetIds?.has(target.id)
+        ? "Checked and working."
+        : "Not checked yet. Searches can still use it.",
     reasons,
     state: "healthy",
   };

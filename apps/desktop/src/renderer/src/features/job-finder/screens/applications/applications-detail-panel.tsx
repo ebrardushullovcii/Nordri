@@ -12,18 +12,25 @@ import type {
   JobFinderApplyRunActionInput,
   JobFinderApplyRunDetailsQuery,
   JobFinderExactApplicationTarget,
+  UserActionCommandInput,
+  UserActionRequest,
 } from "@unemployed/contracts";
+import type { ApplicationAnswerStep } from "./applications-answer-step";
 import { Mic } from "lucide-react";
 import { Button } from "@renderer/components/ui";
 import { StatusBadge } from "../../components/status-badge";
 import { ApplicationsDetailPanelActivitySections } from "./applications-detail-panel-activity-sections";
 import { getApplicationApplyPresentation } from "./applications-apply-state";
+import { resolveApplyStatePresentation } from "./apply-state";
+import type { ApplyRunContext } from "./applications-recovery-state";
+import type { ApplyMode } from "../../lib/apply-mode-contracts-stub";
 import { ApplicationsApplicationDocuments } from "./applications-application-documents";
 import { ApplicationsDetailPanelEmptyState } from "./applications-detail-panel-empty-state";
 import { ApplicationsDetailFactStrip } from "./applications-detail-fact-strip";
 import {
   buildQueueEntries,
   applicationNeedsPrimaryRecovery,
+  findActionableApplicationAnswerRequest,
 } from "./applications-detail-panel-helpers";
 import { ApplicationsDetailPanelOverviewSections } from "./applications-detail-panel-overview-sections";
 import type {
@@ -81,6 +88,10 @@ function buildInterviewHelperApplicationHref(input: {
 
 interface ApplicationsDetailPanelProps {
   activeFilter: ApplicationsViewFilter;
+  /** What each result's run is doing, so a planned job is never "Filling in". */
+  readApplyRunContext?: (
+    result: JobFinderWorkspaceSnapshot["applyJobResults"][number] | null,
+  ) => ApplyRunContext | null;
   applyRunDetails: ApplyRunDetails | null;
   applyRunDetailsTarget: {
     applicationRecordId: string;
@@ -133,8 +144,16 @@ interface ApplicationsDetailPanelProps {
   onSelectApplyRun: (runId: string) => void;
   onStartApplyCopilot: (input: JobFinderExactApplicationTarget) => void;
   onStartAutoApplyQueue: (jobIds: string[]) => void;
+  /** The mode chosen in Settings; decides what a finished fill means. */
+  applyMode?: ApplyMode;
   onOpenSafeguards?: () => void;
   onOpenNeedsYou?: () => void;
+  /** Open requests, so the question step can be answered on this panel. */
+  userActionRequests?: readonly UserActionRequest[];
+  onPerformUserAction?: (
+    command: UserActionCommandInput,
+  ) => void | Promise<void>;
+  isUserActionPending?: (requestId: string) => boolean;
   onAllowSiteSaves?: (host: string | null) => void;
   /**
    * Pass-through only. The declared return type has to match the leaf's, or
@@ -144,6 +163,7 @@ interface ApplicationsDetailPanelProps {
   onFinishInBrowser?: FinishInBrowserHandler;
   onConfirmFinishedInBrowser?: (input: FinishInBrowserInput) => void;
   canConfirmFinishedInBrowser?: boolean;
+  browserStepContinuesOnItsOwn?: boolean;
   confirmFinishedInBrowserStatus?: ConfirmFinishedInBrowserStatus;
   confirmFinishedInBrowserBlockerText?: string | null;
   selectedApplyRunId: string | null;
@@ -154,6 +174,7 @@ interface ApplicationsDetailPanelProps {
 
 export function ApplicationsDetailPanel({
   activeFilter,
+  readApplyRunContext,
   applyRunDetails,
   applyRunDetailsTarget,
   applyRunDetailsError,
@@ -182,10 +203,14 @@ export function ApplicationsDetailPanel({
   onStartAutoApplyQueue,
   onOpenSafeguards,
   onOpenNeedsYou,
+  userActionRequests,
+  onPerformUserAction,
+  isUserActionPending,
   onAllowSiteSaves,
   onFinishInBrowser,
   onConfirmFinishedInBrowser,
   canConfirmFinishedInBrowser,
+  browserStepContinuesOnItsOwn,
   confirmFinishedInBrowserStatus,
   confirmFinishedInBrowserBlockerText,
   selectedApplyRunId,
@@ -196,12 +221,38 @@ export function ApplicationsDetailPanel({
   onPrepareApplicationAgain,
 }: ApplicationsDetailPanelProps) {
   const visibleApplyResult = effectiveSelectedApplyResult;
-  const pendingQuestionCount = selectedRecord
+  const pendingQuestions = selectedRecord
     ? listPendingApplicationQuestions({
         applicationAttempts,
+        applicationRecordId: selectedRecord.id,
         jobId: selectedRecord.jobId,
-      }).length
-    : 0;
+      })
+    : [];
+  const pendingQuestionCount = pendingQuestions.length;
+  const answerRun = effectiveSelectedApplyResult
+    ? (applyRunHistory.find(
+        ({ result }) => result.runId === effectiveSelectedApplyResult.runId,
+      )?.run ?? null)
+    : null;
+  // The question step for this application, answerable right here.
+  const answerRequest =
+    selectedRecord && onPerformUserAction
+      ? findActionableApplicationAnswerRequest({
+          applicationRecordId: selectedRecord.id,
+          jobId: selectedRecord.jobId,
+          requests: userActionRequests,
+          run: answerRun,
+        })
+      : null;
+  const answerStep: ApplicationAnswerStep | null =
+    answerRequest && onPerformUserAction && pendingQuestions.length > 0
+      ? {
+          request: answerRequest,
+          questions: pendingQuestions,
+          isPending: isUserActionPending?.(answerRequest.id) ?? false,
+          onCommand: onPerformUserAction,
+        }
+      : null;
   // Where this application stands, in the one vocabulary the screen uses.
   const applyPresentation = selectedRecord
     ? getApplicationApplyPresentation({
@@ -264,9 +315,44 @@ export function ApplicationsDetailPanel({
   const canRestageQueueRun =
     selectedRun?.mode === "queue_auto" &&
     selectedQueueRecoveryJobIds.length > 0;
-  const selectedStage = selectedRecord
-    ? getApplicationStagePresentation(selectedRecord)
-    : null;
+  // The same five words the row uses (ADR 0022), read from the newest run;
+  // the older stage words only for a record no run has touched yet.
+  const selectedApplyState =
+    selectedRecord && visibleApplyResult
+      ? resolveApplyStatePresentation({
+          mode:
+            selectedRecord.automationMode === "autonomous_submit"
+              ? "apply_for_me"
+              : "fill_only",
+          result: visibleApplyResult,
+          run: readApplyRunContext?.(visibleApplyResult) ?? null,
+          pendingQuestionCount:
+            selectedRecord.questionSummary.total -
+            selectedRecord.questionSummary.answered,
+          recordFailure:
+            selectedRecord.lastAttemptState === "failed"
+              ? {
+                  lastActionLabel: selectedRecord.lastActionLabel,
+                  lastUpdatedAt: selectedRecord.lastUpdatedAt,
+                }
+              : null,
+        })
+      : null;
+  const selectedStage = selectedApplyState
+    ? {
+        label: selectedApplyState.title,
+        tone:
+          selectedApplyState.kind === "applied"
+            ? ("positive" as const)
+            : selectedApplyState.kind === "could_not_apply"
+              ? ("critical" as const)
+              : selectedApplyState.kind === "needs_you"
+                ? ("warning" as const)
+                : ("active" as const),
+      }
+    : selectedRecord
+      ? getApplicationStagePresentation(selectedRecord)
+      : null;
   const selectedRecordJob = selectedRecord
     ? (discoveryJobs.find((job) => job.id === selectedRecord.jobId) ?? null)
     : null;
@@ -296,7 +382,8 @@ export function ApplicationsDetailPanel({
     selectedApplyRunDetails,
   );
   const pinnedApproval =
-    selectedRecord && awaitingPreparationApproval &&
+    selectedRecord &&
+    awaitingPreparationApproval &&
     selectedApplyRunDetails?.submitApproval
       ? {
           approval: selectedApplyRunDetails.submitApproval,
@@ -326,10 +413,12 @@ export function ApplicationsDetailPanel({
       onStartAutoApplyQueue={onStartAutoApplyQueue}
       {...(onOpenSafeguards ? { onOpenSafeguards } : {})}
       {...(onOpenNeedsYou ? { onOpenNeedsYou } : {})}
+      answerStep={answerStep}
       {...(onAllowSiteSaves ? { onAllowSiteSaves } : {})}
       {...(onFinishInBrowser ? { onFinishInBrowser } : {})}
       {...(onConfirmFinishedInBrowser ? { onConfirmFinishedInBrowser } : {})}
       canConfirmFinishedInBrowser={canConfirmFinishedInBrowser ?? false}
+      browserStepContinuesOnItsOwn={browserStepContinuesOnItsOwn ?? false}
       confirmFinishedInBrowserStatus={confirmFinishedInBrowserStatus ?? "idle"}
       confirmFinishedInBrowserBlockerText={
         confirmFinishedInBrowserBlockerText ?? null
@@ -342,7 +431,11 @@ export function ApplicationsDetailPanel({
       pausedQuestionCount={pendingQuestionCount}
       selectedRecordJobId={selectedRecord.jobId}
       selectedApplicationRecordId={selectedRecord.id}
+      selectedRecordLatestBlockerCode={
+        selectedRecord.latestBlocker?.code ?? null
+      }
       selectedRun={selectedRun}
+      visibleApplyRunContext={readApplyRunContext?.(visibleApplyResult) ?? null}
       visibleApplyResult={visibleApplyResult}
     />
   ) : null;
@@ -453,7 +546,10 @@ export function ApplicationsDetailPanel({
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-2">
           {showNotSubmittedPill ? (
-            <StatusBadge data-testid="applications-not-submitted-pill" tone="muted">
+            <StatusBadge
+              data-testid="applications-not-submitted-pill"
+              tone="muted"
+            >
               Not submitted
             </StatusBadge>
           ) : null}
@@ -482,6 +578,7 @@ export function ApplicationsDetailPanel({
             selectedRecord={selectedRecord}
             visibleApplyResult={visibleApplyResult}
             visibleApplyRunId={visibleApplyRunId}
+            plannedStanding={selectedApplyState?.plannedStanding ?? null}
             showFactStrip={!needsPrimaryRecovery}
             waitingOnSafetyLimitReview={
               selectedRun?.state === "paused_for_user_review" &&
@@ -505,7 +602,9 @@ export function ApplicationsDetailPanel({
             }}
             selectedApplyRunDetails={selectedApplyRunDetails}
           />
-          {needsPrimaryRecovery ? recoverySection : documentsSection}
+          {/* Where the application stands and what it asks of you come
+              first; the optional cover letter follows, never above them. */}
+          {recoverySection}
           {needsPrimaryRecovery ? convenienceLinks : null}
           {needsPrimaryRecovery ? (
             <ApplicationsDetailFactStrip
@@ -513,13 +612,18 @@ export function ApplicationsDetailPanel({
               selectedRecord={selectedRecord}
               visibleApplyResult={visibleApplyResult}
               visibleApplyRunId={visibleApplyRunId}
+              plannedStanding={selectedApplyState?.plannedStanding ?? null}
               waitingOnSafetyLimitReview={
                 selectedRun?.state === "paused_for_user_review" &&
                 visibleApplyResult?.state === "planned"
               }
             />
           ) : null}
-          {needsPrimaryRecovery ? documentsSection : recoverySection}
+          {/* Under Ask before sending, the send card (inside the activity
+              sections) is the decision; the optional documents follow it. */}
+          {applyPresentation?.state === "awaiting_your_review"
+            ? null
+            : documentsSection}
           <ApplicationsDetailPanelActivitySections
             applyRunDetailsError={applyRunDetailsError}
             applyRunDetailsStatus={applyRunDetailsStatus}
@@ -551,6 +655,9 @@ export function ApplicationsDetailPanel({
             selectedRecord={selectedRecord}
             visibleApplyResult={visibleApplyResult}
           />
+          {applyPresentation?.state === "awaiting_your_review"
+            ? documentsSection
+            : null}
         </div>
       ) : (
         <ApplicationsDetailPanelEmptyState
@@ -565,11 +672,9 @@ export function ApplicationsDetailPanel({
           data-testid="applications-pinned-preparation-approval"
         >
           <p className="text-(length:--text-small) leading-6 text-foreground-soft">
-            Job Finder is waiting for you before it prepares{" "}
             {pinnedApproval.approval.jobIds.length === 1
-              ? "this job"
-              : `these ${pinnedApproval.approval.jobIds.length} jobs`}
-            . It never presses the final submit button on a job site.
+              ? "This application is waiting for you to start it."
+              : `These ${pinnedApproval.approval.jobIds.length} applications are waiting for you to start them.`}
           </p>
           <Button
             disabled={isApplyRunPending(pinnedApproval.approval.runId)}

@@ -185,6 +185,9 @@ export function normalizeJobFinderSettings(
 
   return JobFinderSettingsSchema.parse({
     ...settings,
+    applicationAutomationMode:
+      settings.applicationAutomationMode ?? "prepare_only",
+    maxApplicationsPerLocalDay: settings.maxApplicationsPerLocalDay ?? 20,
     resumeApplicationMode: settings.resumeApplicationMode ?? "tailored_per_job",
     resumeFormat: "pdf",
     resumeTemplateId: selectedTemplateAvailable

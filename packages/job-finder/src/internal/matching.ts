@@ -36,8 +36,15 @@ import {
 import {
   createJobIdentityDigest,
   createJobIdentityIndex,
+  hasEquivalentListingContentIdentity,
 } from "./job-identity";
 import { assessJobPostingDetailQuality } from "./job-posting-detail-quality";
+import {
+  attributeLegacySighting,
+  canSwitchCanonicalSighting,
+  isLikelyAccessGateListingUrl,
+  selectCanonicalSighting,
+} from "./listing-sightings";
 import {
   buildDiscoveryJobs as orderVisibleDiscoveryJobs,
   isLikelyEmptyNonDetailPosting,
@@ -341,9 +348,7 @@ const adjacentRoleFamilies: Readonly<
 };
 
 function occupationHeadStem(value: string): string | null {
-  const tokens = normalizeText(value)
-    .split(/\s+/u)
-    .filter(Boolean);
+  const tokens = normalizeText(value).split(/\s+/u).filter(Boolean);
   const head = tokens.at(-1);
   if (!head) return null;
   if (/^manag(?:e|er|ement|ing)$/u.test(head)) return "manag";
@@ -399,20 +404,8 @@ function hasRoleFamilyMismatch(
   if (candidateFamilies.size === 0 || targetFamilies.size === 0) {
     return false;
   }
-  // A shared occupational head (Manager/Management) or an adjacent family is
-  // useful recall, not positive evidence that the listing is unrelated.
-  if (
-    sharesTargetRoleHead(candidateTitle, targetRoles) ||
-    hasAdjacentRoleFamily(candidateFamilies, targetFamilies)
-  ) {
-    return false;
-  }
-  if (![...candidateFamilies].some((family) => targetFamilies.has(family))) {
-    return true;
-  }
-
-  // Generic targets such as "Senior Engineer" must not collapse vocationally
-  // distinct Sales Engineer or Support Engineer roles into software matches.
+  // Explicit occupations win over a shared head noun: Data Engineer and
+  // Software Engineer are different roles even though both say Engineer.
   const candidatePrimaryFamily = getPrimaryRoleFamily(candidateTitle);
   const targetPrimaryFamilies = new Set(
     targetRoles
@@ -426,6 +419,19 @@ function hasRoleFamilyMismatch(
   ) {
     return true;
   }
+
+  // A shared occupational head (Manager/Management) or an adjacent family is
+  // useful recall, not positive evidence that the listing is unrelated.
+  if (
+    sharesTargetRoleHead(candidateTitle, targetRoles) ||
+    hasAdjacentRoleFamily(candidateFamilies, targetFamilies)
+  ) {
+    return false;
+  }
+  if (![...candidateFamilies].some((family) => targetFamilies.has(family))) {
+    return true;
+  }
+
   // Match the occupational phrase, not a domain qualifier such as
   // "Software Engineer, Sales Platform".
   return engineeringVocationalTitlePatterns.some(
@@ -666,7 +672,7 @@ function readLocationGeographySignal(value: string): LocationGeographySignal {
   const workModeTokens = tokenize(normalizePhraseMatchInput(value, "location"));
 
   return {
-    rawText: value,
+    rawText: canonicalizeLocationAliases(value),
     tokens: tokenizePhraseMatchValue(value, "location"),
     genericTokens: tokenizePhraseMatchValue(value, "generic"),
     workModeTokens,
@@ -962,11 +968,12 @@ function buildScreeningHints(posting: JobPosting): SavedJob["screeningHints"] {
       normalizedText.includes("relocate")
         ? "Relocation support or requirements are mentioned in the listing."
         : null,
-    travelText: /(?:\b(?:requires?|must|expected|willing|ability|availability)\b[^.!?]{0,72}\btravel\b|\btravel\b[^.!?]{0,48}\b(?:required|expected|occasionally|regularly|up to\s+\d{1,3}%|\d{1,3}%)\b)/iu.test(
-      normalizedText,
-    )
-      ? "Travel expectations are mentioned in the listing."
-      : null,
+    travelText:
+      /(?:\b(?:requires?|must|expected|willing|ability|availability)\b[^.!?]{0,72}\btravel\b|\btravel\b[^.!?]{0,48}\b(?:required|expected|occasionally|regularly|up to\s+\d{1,3}%|\d{1,3}%)\b)/iu.test(
+        normalizedText,
+      )
+        ? "Travel expectations are mentioned in the listing."
+        : null,
     remoteGeographies: supportsRemoteGeographyHints
       ? uniqueStrings(
           remoteGeographyHints.flatMap((entry) =>
@@ -1084,6 +1091,13 @@ export function enrichDiscoveredPosting(
 
   const enrichedPosting: JobPosting = {
     ...posting,
+    title:
+      existingJob &&
+      hasEquivalentListingContentIdentity(posting, existingJob) &&
+      normalizeText(existingJob.title).length >
+        normalizeText(posting.title).length
+        ? existingJob.title
+        : posting.title,
     providerUpdatedAt: selectLatestProviderUpdate(
       posting.providerUpdatedAt,
       existingJob?.providerUpdatedAt,
@@ -1097,6 +1111,11 @@ export function enrichDiscoveredPosting(
     firstSeenAt:
       existingJob?.firstSeenAt ?? posting.firstSeenAt ?? posting.discoveredAt,
     lastSeenAt: posting.lastSeenAt ?? posting.discoveredAt,
+    // A re-sighting from a listing card has not read the page. Dropping the
+    // earlier read's record made every later search read every saved page
+    // again, which is also how a board that rate-limits got asked twice.
+    listingDetailFetch:
+      posting.listingDetailFetch ?? existingJob?.listingDetailFetch ?? null,
     lastVerifiedActiveAt: posting.lastVerifiedActiveAt ?? posting.discoveredAt,
     // Salary the listing stated, kept across re-sightings so a card-only
     // re-read does not silently drop what a detail page published.
@@ -1171,6 +1190,19 @@ export function enrichDiscoveredPosting(
         : buildKeywordSignals(posting),
     ),
   };
+
+  if (
+    existingJob &&
+    isLikelyAccessGateListingUrl(posting.canonicalUrl) &&
+    !isLikelyAccessGateListingUrl(existingJob.canonicalUrl)
+  ) {
+    return {
+      ...preserveRicherExistingDetail(enrichedPosting, existingJob),
+      title: existingJob.title,
+      canonicalUrl: existingJob.canonicalUrl,
+      applicationUrl: existingJob.applicationUrl,
+    };
+  }
 
   if (existingJob && hasWeakerIncomingDetailEvidence(posting, existingJob)) {
     return preserveRicherExistingDetail(enrichedPosting, existingJob);
@@ -1402,14 +1434,38 @@ function getSavedLocationConstraints(
   return desiredValues.filter((value) => !isAbsentFieldText(value));
 }
 
+/**
+ * How the person's "Count remote jobs as any location" setting reaches the
+ * location checks. On (the default), a remote listing for a region or the
+ * whole world that covers a saved place counts as a location match. Off, a
+ * remote listing is judged by the place it names alone: it matches only a
+ * saved place it names, or a saved "Remote"/"Worldwide" place.
+ */
+export interface LocationMatchOptions {
+  remoteCountsAsAnyLocation?: boolean;
+}
+
+/** Reads the run-time copy of the remote setting from search preferences. */
+export function readLocationMatchOptions(
+  searchPreferences: Pick<JobSearchPreferences, "discovery"> | null | undefined,
+): LocationMatchOptions {
+  return {
+    remoteCountsAsAnyLocation:
+      searchPreferences?.discovery?.remoteCountsAsAnyLocation !== false,
+  };
+}
+
 // Positive preference fit only. Work-mode noise ("Remote", "Hybrid") states
 // how a job is done, never where, so it cannot confirm geographic
 // compatibility; "worldwide"/"anywhere" coverage is the documented exception
-// because it includes every saved area.
+// because it includes every saved area, unless the person turned off
+// "Count remote jobs as any location".
 export function assessLocationCompatibility(
   candidate: string,
   desiredValues: readonly string[],
+  options: LocationMatchOptions = {},
 ): LocationCompatibilityState {
+  const remoteCountsAsAnyLocation = options.remoteCountsAsAnyLocation !== false;
   // An absence placeholder is not a place on either side. A saved preference
   // that reads "N/A" or "Location not stated" states no geographic constraint,
   // so tokenising it would fabricate a conflict against every real listing.
@@ -1437,6 +1493,10 @@ export function assessLocationCompatibility(
     return "unknown";
   }
 
+  const hasGeographicDesired = desiredSignals.some(
+    (signal) => !signal.noiseOnly,
+  );
+
   if (candidateSignal.noiseOnly) {
     if (desiredSignals.some((signal) => signal.noiseOnly)) {
       return "compatible";
@@ -1447,22 +1507,24 @@ export function assessLocationCompatibility(
         worldwideLocationNoiseTokens.has(token),
       )
     ) {
-      return "compatible";
+      // "Remote, Worldwide" names no saved place. With remote not counting as
+      // any location, it does not fit a person who listed only real places.
+      return remoteCountsAsAnyLocation || !hasGeographicDesired
+        ? "compatible"
+        : "incompatible";
     }
 
     return "unknown";
   }
 
   if (
+    remoteCountsAsAnyLocation &&
     broadRemoteGeographyPattern.test(candidateSignal.rawText) &&
     getBroadLocationCompatibility(candidate, desiredPlaces) === true
   ) {
     return "compatible";
   }
 
-  const hasGeographicDesired = desiredSignals.some(
-    (signal) => !signal.noiseOnly,
-  );
   const matched = desiredSignals.some((desiredSignal) =>
     matchesLocationPhrase(candidateSignal, desiredSignal),
   );
@@ -1498,10 +1560,21 @@ export interface PostingLocationCompatibility {
 export function assessPostingLocationCompatibility(
   posting: Pick<MatchAssessmentPostingInput, "location" | "workMode">,
   searchPreferences: Pick<JobSearchPreferences, "locations" | "workModes">,
+  options: LocationMatchOptions = {},
 ): PostingLocationCompatibility {
   const savedPlaces = getSavedLocationConstraints(searchPreferences.locations);
-  const state = assessLocationCompatibility(posting.location, savedPlaces);
-  if (state === "compatible" || savedPlaces.length === 0) {
+  const state = assessLocationCompatibility(
+    posting.location,
+    savedPlaces,
+    options,
+  );
+  if (
+    state === "compatible" ||
+    savedPlaces.length === 0 ||
+    // The person said a remote posting must still fit their places, so a
+    // remote work-mode preference does not stand in for the place.
+    options.remoteCountsAsAnyLocation === false
+  ) {
     return { state, remotePreferenceApplied: false };
   }
 
@@ -1573,7 +1646,9 @@ export function resolveMatchLocationReach(input: {
     return "unknown";
   }
   if (input.locationCompatibility === "compatible") {
-    return input.locationRemotePreferenceApplied ? "remote_preferred" : "in_area";
+    return input.locationRemotePreferenceApplied
+      ? "remote_preferred"
+      : "in_area";
   }
   if (input.locationCompatibility !== "incompatible") {
     return "unknown";
@@ -1975,6 +2050,7 @@ export function createMatchAssessment<
   const assessedLocation = assessPostingLocationCompatibility(
     posting,
     searchPreferences,
+    readLocationMatchOptions(searchPreferences),
   );
   const remoteGeographyRequirement = assessRemoteGeographyRequirement({
     profile,
@@ -2260,12 +2336,16 @@ export function createMatchAssessment<
       overlappingTechnologies.length / listingTechnologies.length < 0.34
     ) {
       score -= 8;
-      gaps.push("Most of the stated technology stack is not in the current profile.");
+      gaps.push(
+        "Most of the stated technology stack is not in the current profile.",
+      );
     }
   } else if (listingTechnologies.length >= 2) {
     score -= 18;
     scoreCeiling = Math.min(scoreCeiling, 58);
-    gaps.push("The stated technology stack does not overlap the current profile.");
+    gaps.push(
+      "The stated technology stack does not overlap the current profile.",
+    );
   } else if (overlappingSkills.length > 0) {
     score += Math.min(6, overlappingSkills.length * 2);
     reasons.push(
@@ -2400,13 +2480,13 @@ export function createMatchAssessment<
               "The listing employment type conflicts with the saved employment preferences.",
           }
         : compensationFit.state === "below_minimum" &&
-          evidenceRecommendation.recommendation !== "skip"
-        ? {
-            recommendation: "review_before_applying" as const,
-            rationale:
-              "The listing compensation is below the saved salary minimum.",
-          }
-        : evidenceRecommendation;
+            evidenceRecommendation.recommendation !== "skip"
+          ? {
+              recommendation: "review_before_applying" as const,
+              rationale:
+                "The listing compensation is below the saved salary minimum.",
+            }
+          : evidenceRecommendation;
 
   return {
     scorerVersion: MATCH_ASSESSMENT_SCORER_VERSION,
@@ -2558,7 +2638,10 @@ export function mergeDiscoveredPostings(
     throw new DOMException("Aborted", "AbortError");
   }
 
-  const identityIndex = createJobIdentityIndex(savedJobs, (job) => job);
+  const identityIndex = createJobIdentityIndex(
+    savedJobs,
+    toSightingIdentityInput,
+  );
   const previousJobsById = new Map(savedJobs.map((job) => [job.id, job]));
   const previousRankById = buildVisibleDiscoveryRankById(savedJobs);
   const newJobIds = new Set<string>();
@@ -2593,7 +2676,8 @@ export function mergeDiscoveredPostings(
     }
 
     validatedCount += 1;
-    const existingJob = identityIndex.find(posting) ?? undefined;
+    const existingJob =
+      identityIndex.find({ ...posting, matchAcrossSources: true }) ?? undefined;
 
     // Enrich before assessing so the stored assessment fingerprint describes
     // exactly the content this merge persists. Enrichment derives fields the
@@ -2601,11 +2685,34 @@ export function mergeDiscoveredPostings(
     // assessing the raw posting instead stamps a fingerprint that can never
     // match the persisted job, forcing a full re-score of every staged job on
     // the next discovery run.
-    const enrichedPosting = enrichDiscoveredPosting(posting, existingJob);
+    // The job's listing and application link come from one sighting chosen
+    // by a rule that ignores merge order (ADR 0030), not from whichever
+    // source reported last. Settle it before assessing, for the same reason.
+    const builtProvenance = provenanceBuilder(posting);
+    const provenance: SavedJobDiscoveryProvenance = {
+      ...builtProvenance,
+      listingUrl: builtProvenance.listingUrl ?? posting.canonicalUrl,
+      applicationUrl:
+        builtProvenance.applicationUrl ?? posting.applicationUrl ?? null,
+      sourceJobId: builtProvenance.sourceJobId ?? posting.sourceJobId,
+      applyPath: builtProvenance.applyPath ?? posting.applyPath,
+    };
+    const mergedProvenance = uniqueProvenance([
+      ...(existingJob
+        ? attributeLegacySighting(existingJob.provenance, existingJob)
+        : []),
+      provenance,
+    ]);
+    const enrichedPosting = existingJob
+      ? settleCanonicalRoute(
+          enrichDiscoveredPosting(posting, existingJob),
+          existingJob,
+          mergedProvenance,
+        )
+      : enrichDiscoveredPosting(posting, existingJob);
     const matchAssessment = assessPosting
       ? assessPosting(enrichedPosting)
       : createMatchAssessment(profile, searchPreferences, enrichedPosting);
-    const provenance = provenanceBuilder(posting);
     let mergedJob = SavedJobSchema.parse({
       ...assembleMergedDiscoveredJob({
         matchAssessment,
@@ -2613,10 +2720,7 @@ export function mergeDiscoveredPostings(
         posting,
         existingJob,
       }),
-      provenance: uniqueProvenance([
-        ...(existingJob?.provenance ?? []),
-        provenance,
-      ]),
+      provenance: mergedProvenance,
     });
 
     if (!existingJob && nextJobsById.has(mergedJob.id)) {
@@ -2678,17 +2782,122 @@ export function mergeDiscoveredPostings(
 export function uniqueProvenance(
   values: readonly SavedJobDiscoveryProvenance[],
 ): SavedJobDiscoveryProvenance[] {
-  const seen = new Set<string>();
+  const kept = new Map<string, SavedJobDiscoveryProvenance>();
 
-  return values.flatMap((value) => {
+  for (const value of values) {
     const parsed = SavedJobDiscoveryProvenanceSchema.parse(value);
     const key = `${parsed.targetId}:${parsed.adapterKind}:${parsed.resolvedAdapterKind ?? "none"}:${parsed.startingUrl}`;
-
-    if (seen.has(key)) {
-      return [];
+    const first = kept.get(key);
+    if (!first) {
+      kept.set(key, parsed);
+      continue;
     }
+    // The first sighting per source keeps its discovery time; a later one only
+    // fills in what the first did not record (older provenance had no links).
+    kept.set(key, {
+      ...first,
+      listingUrl: first.listingUrl ?? parsed.listingUrl ?? null,
+      applicationUrl: first.listingUrl
+        ? (first.applicationUrl ?? null)
+        : (parsed.applicationUrl ?? null),
+      sourceJobId: first.sourceJobId ?? parsed.sourceJobId ?? null,
+      applyPath: first.applyPath ?? parsed.applyPath ?? null,
+      pageApplyUrl: first.pageApplyUrl ?? parsed.pageApplyUrl ?? null,
+      routeReadAt: first.routeReadAt ?? parsed.routeReadAt ?? null,
+    });
+  }
 
-    seen.add(key);
-    return [parsed];
-  });
+  return [...kept.values()];
+}
+
+/**
+ * A saved job's identity for matching new sightings: its own fields plus the
+ * listing links its other sources showed.
+ */
+export function toSightingIdentityInput(job: SavedJob): SavedJob & {
+  alternateListingUrls: string[];
+  matchAcrossSources: true;
+} {
+  return {
+    ...job,
+    matchAcrossSources: true,
+    alternateListingUrls: job.provenance.flatMap((entry) =>
+      entry.listingUrl && entry.listingUrl !== job.canonicalUrl
+        ? [entry.listingUrl]
+        : [],
+    ),
+  };
+}
+
+const SIGHTING_ROUTE_FIELDS = [
+  "canonicalUrl",
+  "applicationUrl",
+  "applyPath",
+  "easyApplyEligible",
+  "source",
+  "sourceJobId",
+  "discoveryMethod",
+  "collectionMethod",
+  "providerKey",
+  "providerBoardToken",
+  "providerIdentifier",
+  "atsProvider",
+] as const satisfies readonly (keyof JobPosting)[];
+
+function copySightingRouteFields<T extends JobPosting>(
+  target: T,
+  from: JobPosting,
+): T {
+  const next = { ...target } as Record<string, unknown>;
+  for (const field of SIGHTING_ROUTE_FIELDS) {
+    next[field] = from[field];
+  }
+  return next as T;
+}
+
+/**
+ * Point a job at one of its own sightings: listing, application link, apply
+ * path and identity fields all come from that sighting, never half from
+ * another. Content (description, salary, skills) is left as it is.
+ */
+export function applySightingRoute<T extends JobPosting>(
+  job: T,
+  sighting: SavedJobDiscoveryProvenance,
+): T {
+  if (!sighting.listingUrl) return job;
+  const applyPath = sighting.applyPath ?? job.applyPath;
+  const sameProvider =
+    (sighting.providerKey ?? null) === (job.providerKey ?? null);
+  const routed = {
+    ...job,
+    canonicalUrl: sighting.listingUrl,
+    applicationUrl: sighting.applicationUrl ?? null,
+    applyPath,
+    easyApplyEligible: applyPath === "easy_apply",
+    sourceJobId: sighting.sourceJobId ?? job.sourceJobId,
+    collectionMethod: sighting.collectionMethod,
+    providerKey: sighting.providerKey ?? null,
+    providerBoardToken: sighting.providerBoardToken ?? null,
+    providerIdentifier: sameProvider ? job.providerIdentifier : null,
+  } as T;
+  return { ...routed, atsProvider: detectAtsProvider(routed) } as T;
+}
+
+function settleCanonicalRoute(
+  enrichedPosting: JobPosting,
+  existingJob: SavedJob,
+  provenance: readonly SavedJobDiscoveryProvenance[],
+): JobPosting {
+  // Work has started on this job: its listing and link stay where they are.
+  if (!canSwitchCanonicalSighting(existingJob)) {
+    return copySightingRouteFields(enrichedPosting, existingJob);
+  }
+  const winner = selectCanonicalSighting(provenance);
+  if (!winner || winner.listingUrl === existingJob.canonicalUrl) {
+    return copySightingRouteFields(enrichedPosting, existingJob);
+  }
+  if (winner.listingUrl === enrichedPosting.canonicalUrl) {
+    return enrichedPosting;
+  }
+  return applySightingRoute(enrichedPosting, winner);
 }

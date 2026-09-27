@@ -66,8 +66,8 @@ export function SettingsWorkspaceBehaviorSection({
           keepSessionAlive: draftKeepSessionAlive,
         }),
       failedMessage:
-        "Workspace behavior was not saved. Retry before leaving this page.",
-      savedMessage: "Workspace behavior saved.",
+        "Browser & saved jobs were not saved. Retry before leaving this page.",
+      savedMessage: "Browser & saved jobs saved.",
     });
   };
 
@@ -78,7 +78,7 @@ export function SettingsWorkspaceBehaviorSection({
     label: "Browser & saved jobs",
     onSave: saveWorkspaceBehavior,
     order: 3,
-    saveLabel: "Save workspace behavior",
+    saveLabel: "Save browser & saved jobs",
   });
 
   return (
@@ -100,7 +100,7 @@ export function SettingsWorkspaceBehaviorSection({
           hasUnsavedChanges={hasUnsavedChanges}
           onSave={saveWorkspaceBehavior}
           saveState={saveState}
-          subject="workspace behavior"
+          subject="browser & saved jobs"
           effect="Applies from your next search or application run."
         />
       </div>
@@ -110,7 +110,7 @@ export function SettingsWorkspaceBehaviorSection({
           checked={draftKeepSessionAlive}
           description="Keep the agent’s tabs open after searches and application steps so the next run starts where the last one left off."
           disabled={isSavePending}
-          hint="Off closes the tabs as soon as a run finishes and you are not looking at them. Sign-ins are kept either way."
+          hint="Off closes finished tabs when you are not looking at them. Unfinished applications and saved sign-ins are kept."
           label="Keep browser tabs after runs"
           onCheckedChange={(checked) =>
             updateStagedDrafts(() => setDraftKeepSessionAlive(checked))

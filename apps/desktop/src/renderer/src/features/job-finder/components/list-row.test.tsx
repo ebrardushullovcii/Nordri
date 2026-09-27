@@ -96,7 +96,7 @@ function createApplicationRecord(): ApplicationRecord {
     company: "Acme",
     status: "ready_for_review",
     lastActionLabel: "Resume approved",
-    nextActionLabel: "Fill it in",
+    nextActionLabel: "Apply",
     lastUpdatedAt: "2026-08-09T08:00:00.000Z",
     lastAttemptState: "paused",
     questionSummary: {
@@ -184,9 +184,7 @@ function renderReviewQueueRow(): Element {
       <ReviewQueueListPanel
         isJobPending={() => false}
         onSelectItem={vi.fn()}
-        onToggleQueueSelection={vi.fn()}
         queue={[createQueueItem()]}
-        queueSelection={[]}
         selectedItem={null}
       />
     </MemoryRouter>,

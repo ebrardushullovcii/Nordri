@@ -29,6 +29,8 @@ import { LockedScreenLayout } from "../../components/locked-screen-layout";
 import {
   ResumeClaimConfirmationPanel,
   buildResumeClaimConfirmationCommandInput,
+  isClaimIssueCoveredByDecisionList,
+  listDecidableClaimAssessments,
 } from "./resume-claim-confirmation-panel";
 import { ResumeWorkspaceEditorPanel } from "./resume-workspace-editor-panel";
 import { ResumeWorkspaceHeader } from "./resume-workspace-header";
@@ -50,6 +52,7 @@ import {
   describeResumeExportClaimBlock,
   describeResumeGenerationPath,
   findLatestAssistantEditRevisionId,
+  findUnansweredAssistantRequest,
   resumeExportClaimBlockActionLabel,
 } from "./resume-workspace-utils";
 import {
@@ -62,7 +65,10 @@ import {
   getAvailableExportToApprove,
   getSelectedTheme,
 } from "./resume-workspace-screen-helpers";
-import { buildResumeValidationAiPrompt } from "./resume-validation-issue-list";
+import {
+  buildResumeValidationAiPrompt,
+  getResumeValidationIssueTargetId,
+} from "./resume-validation-issue-list";
 import { findResumeValidationRestoreCandidate } from "./resume-validation-restore";
 import {
   listUnresolvedWorkHistoryOmissionSuggestions,
@@ -90,6 +96,40 @@ export function ResumeWorkspaceScreen(props: ResumeWorkspaceScreenProps) {
   const [mobileStudioTab, setMobileStudioTab] =
     useState<ResumeStudioMobileTab>("preview");
   const [assistantOpenRequestKey, setAssistantOpenRequestKey] = useState(0);
+  // Open, the Assistant docks as the studio's right-hand column, so the shell
+  // needs to know to make room for it.
+  const [isAssistantOpen, setIsAssistantOpen] = useState(false);
+  // The level an Original job is being moved to by the studio's one-press
+  // route. The job stops being Original as soon as the level is saved, but
+  // until the new resume is written the header keeps saying what is happening
+  // instead of offering approval of the old draft.
+  const [writingEditableLevel, setWritingEditableLevel] = useState<
+    string | null
+  >(null);
+  const writingEditableSawPending = useRef(false);
+  useEffect(() => {
+    if (writingEditableLevel === null) {
+      writingEditableSawPending.current = false;
+      return;
+    }
+    if (props.isWorkspacePending) {
+      writingEditableSawPending.current = true;
+      return;
+    }
+    if (writingEditableSawPending.current) {
+      setWritingEditableLevel(null);
+    }
+  }, [props.isWorkspacePending, writingEditableLevel]);
+  const startEditableResumeRoute = (pendingRequest: string | null) => {
+    if (!props.originalResumeRoute) {
+      return;
+    }
+    setWritingEditableLevel(props.originalResumeRoute.levelLabel);
+    props.originalResumeRoute.onWriteEditableResume(
+      props.jobId,
+      pendingRequest,
+    );
+  };
   // An approval freezes one exact artifact. A Guided edits proposal that is
   // still pending at that moment would silently invalidate the approval the
   // moment it were accepted, so approval sets it aside and says so.
@@ -259,8 +299,18 @@ export function ResumeWorkspaceScreen(props: ResumeWorkspaceScreenProps) {
         }),
       ) ?? [])
     : [];
-  const hasBlockingValidationIssues = Boolean(
-    props.workspace?.validation?.issues.some(isBlockingResumeValidationIssue),
+  // One list per decision. A line the person can keep or remove is decided
+  // in "Lines to confirm"; the validation list does not repeat it as a
+  // "Blocks approval" row with a different verb. Everything else (invented
+  // numbers, identity, dates, listing text bleed) stays in the issue list.
+  const claimAssessments = props.workspace?.validation?.claimAssessments ?? [];
+  const visibleValidationIssues = (
+    props.workspace?.validation?.issues ?? []
+  ).filter(
+    (issue) => !isClaimIssueCoveredByDecisionList(issue.id, claimAssessments),
+  );
+  const hasBlockingValidationIssues = visibleValidationIssues.some(
+    isBlockingResumeValidationIssue,
   );
   const exportBlockedReason =
     !hasUnsavedChanges && blockingClaimAssessments.length > 0
@@ -523,6 +573,28 @@ export function ResumeWorkspaceScreen(props: ResumeWorkspaceScreenProps) {
       props.workspace,
     ],
   );
+  // "Edit" on a line to confirm opens that line in the editor. The claim
+  // locator is the same shape a validation issue carries, so the issue
+  // target resolver does the work.
+  const editClaimWording = useCallback(
+    (assessment: {
+      sectionId: string;
+      entryId: string | null;
+      bulletId: string | null;
+    }) => {
+      const targetId = getResumeValidationIssueTargetId(assessment);
+      if (targetId) {
+        const targetContext = getResumePreviewTargetContext(targetId);
+        handlePreviewTargetSelect({
+          entryId: targetContext.entryId,
+          sectionId: targetContext.sectionId,
+          targetId,
+        });
+      }
+      setMobileStudioTab("editor");
+    },
+    [handlePreviewTargetSelect],
+  );
   const handleAskAiFix = useCallback(
     (issue: Parameters<typeof buildResumeValidationAiPrompt>[0]) => {
       // The Assistant is a floating panel, not a tab: opening it leaves the
@@ -756,13 +828,15 @@ export function ResumeWorkspaceScreen(props: ResumeWorkspaceScreenProps) {
   // Undo that restores the pre-edit wording.
   const acceptedAssistantEdits = describeAcceptedAssistantEdits(
     props.assistantMessages,
+    props.workspace.revisions,
   );
   const latestAssistantEditRevisionId = findLatestAssistantEditRevisionId(
     props.workspace.revisions,
   );
   // The editor panel owns the single provenance statement; the screen only
-  // supplies the accepted-edit facts and the Undo that restores the pre-edit
-  // wording.
+  // supplies the accepted-edit facts and the Undo that removes the newest AI
+  // edit. Undo keeps every edit made after it; restoring the whole earlier
+  // draft is Version history's job.
   const undoAiEditAction =
     acceptedAssistantEdits && latestAssistantEditRevisionId ? (
       <Button
@@ -771,10 +845,7 @@ export function ResumeWorkspaceScreen(props: ResumeWorkspaceScreenProps) {
         onClick={() =>
           runWithSavedDraftAsync(
             () =>
-              props.onRestoreRevision(
-                props.jobId,
-                latestAssistantEditRevisionId,
-              ),
+              props.onUndoAiEdit(props.jobId, latestAssistantEditRevisionId),
             "Saved your draft before undoing the AI edit.",
           )
         }
@@ -938,7 +1009,12 @@ export function ResumeWorkspaceScreen(props: ResumeWorkspaceScreenProps) {
   // content hash, so the panel reads the committed snapshot rather than the
   // live editing draft. The returned workspace snapshot flows back through
   // props and refreshes every row.
-  const claimConfirmationPanel = props.onSetResumeClaimConfirmation ? (
+  // Mounted only when it has rows: the shell treats its presence as "the
+  // list is the notice" and hides the banner that would otherwise say the
+  // same thing above it.
+  const claimConfirmationPanel =
+    props.onSetResumeClaimConfirmation &&
+    listDecidableClaimAssessments(claimAssessments).length > 0 ? (
     <ResumeClaimConfirmationPanel
       claimAssessments={props.workspace.validation?.claimAssessments ?? []}
       draft={props.workspace.draft}
@@ -963,6 +1039,7 @@ export function ResumeWorkspaceScreen(props: ResumeWorkspaceScreenProps) {
           "Removed a line you did not confirm",
         );
       }}
+      onEditClaim={editClaimWording}
       onSetResumeClaimConfirmation={props.onSetResumeClaimConfirmation}
     />
   ) : null;
@@ -1003,6 +1080,7 @@ export function ResumeWorkspaceScreen(props: ResumeWorkspaceScreenProps) {
         }
       >
         <ResumeWorkspaceStudioShell
+          assistantDocked={isAssistantOpen}
           approvalBlockedReason={approvalBlockedReason}
           approvalStateLabel={approvalStateLabel}
           approvedExportPageCount={approvedExport?.pageCount ?? null}
@@ -1030,6 +1108,9 @@ export function ResumeWorkspaceScreen(props: ResumeWorkspaceScreenProps) {
           {...(props.isExportPending === undefined
             ? {}
             : { isExportPending: props.isExportPending })}
+          {...(props.isApplyPending === undefined
+            ? {}
+            : { isApplyPending: props.isApplyPending })}
           isWorkspacePending={props.isWorkspacePending}
           mobileStudioTab={mobileStudioTab}
           onApproveCurrentPdf={() => {
@@ -1101,6 +1182,21 @@ export function ResumeWorkspaceScreen(props: ResumeWorkspaceScreenProps) {
           onSaveDraft={() => props.onSaveDraft(draft)}
           onSelectValidationIssue={handleValidationIssueSelection}
           onSetMobileStudioTab={setMobileStudioTab}
+          {...(props.originalResumeRoute || writingEditableLevel
+            ? {
+                originalResume: {
+                  levelLabel:
+                    writingEditableLevel ??
+                    props.originalResumeRoute?.levelLabel ??
+                    "",
+                  writing: writingEditableLevel !== null,
+                  onWriteEditableResume: () =>
+                    startEditableResumeRoute(
+                      findUnansweredAssistantRequest(props.assistantMessages),
+                    ),
+                },
+              }
+            : {})}
           previewPane={previewPane}
           selectedTemplateApprovalEligible={selectedTemplateApprovalEligible}
           supportingDetailsPanel={
@@ -1119,18 +1215,19 @@ export function ResumeWorkspaceScreen(props: ResumeWorkspaceScreenProps) {
           }
           studioStatusMessage={studioStatusMessage}
           templatePanel={templatePanel}
-          validationIssues={props.workspace.validation?.issues ?? []}
+          validationIssues={visibleValidationIssues}
         />
       </section>
-      {/* One Assistant, one placement: a floating panel over the studio at
-          every width. It never takes a studio column, so opening, minimizing
-          or closing it leaves the preview and tools panes exactly where they
-          were. */}
+      {/* One Assistant, one placement: open, it docks as the studio's
+          right-hand column at every width and the panes beside it narrow, so
+          it never rests over the controls the person is using; minimized, it
+          is a button in the studio's action row. */}
       <ResumeGuidedEditsPopup
         assistantMessages={props.assistantMessages}
         assistantPending={props.assistantPending}
         draft={draft}
         isWorkspacePending={props.isWorkspacePending}
+        onOpenChange={setIsAssistantOpen}
         openRequestKey={assistantOpenRequestKey}
         onSendAssistantMessage={(content) =>
           runWithSavedDraftAsync(
@@ -1145,10 +1242,14 @@ export function ResumeWorkspaceScreen(props: ResumeWorkspaceScreenProps) {
           )
         }
         onRegenerateDraft={() =>
-          runWithSavedDraft(
-            () => props.onRegenerateDraft(props.jobId),
-            "Saved your draft before writing a new AI draft.",
-          )
+          props.originalResumeRoute
+            ? // A new draft for an Original job would still not be sent; the
+              // one route that makes it count moves the job to the saved level.
+              startEditableResumeRoute(null)
+            : runWithSavedDraft(
+                () => props.onRegenerateDraft(props.jobId),
+                "Saved your draft before writing a new AI draft.",
+              )
         }
         onEditProposalWording={editProposalWording}
         onResolveProposal={resolveAssistantProposal}

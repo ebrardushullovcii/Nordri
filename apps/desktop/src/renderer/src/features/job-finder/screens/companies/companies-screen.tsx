@@ -13,7 +13,7 @@ import {
   CollectionPagination,
   COLLECTION_PAGE_SIZE,
 } from "../../components/collection-pagination";
-import { PageHeader } from "../../components/page-header";
+import { PageHeaderStack } from "../../components/page-header";
 import { StatusBadge } from "../../components/status-badge";
 import {
   CollectionNoMatches,
@@ -399,7 +399,7 @@ export function CompaniesScreen(props: CompaniesScreenProps) {
 
   return (
     <section className="grid gap-5 pb-8">
-      <PageHeader
+      <PageHeaderStack
         actions={
           listableCompanies.length > 0 ? (
             <Button

@@ -2,7 +2,10 @@ import type { Page } from "playwright";
 import { describe, expect, test, vi } from "vitest";
 
 import { createBrowserAgentRuntime } from "./playwright-browser-runtime";
-import { inspectSourceAccessPage } from "./source-access-probe";
+import {
+  inspectSourceAccessPage,
+  selectUniqueSourceAccessPage,
+} from "./source-access-probe";
 
 type Signals = {
   passwordControl: boolean;
@@ -34,6 +37,32 @@ function createPage(url: string, signals: Partial<Signals> = {}) {
 }
 
 describe("read-only source access probe", () => {
+  test("selects only a unique expected-origin tab among unrelated live pages", () => {
+    const unrelated = {
+      url: () => "https://other.example/apply",
+      isClosed: () => false,
+    };
+    const expected = {
+      url: () => "https://jobs.example.com/search",
+      isClosed: () => false,
+    };
+    expect(
+      selectUniqueSourceAccessPage(
+        [expected, unrelated],
+        "https://jobs.example.com/",
+      ),
+    ).toBe(expected);
+    expect(
+      selectUniqueSourceAccessPage(
+        [expected, expected, unrelated],
+        "https://jobs.example.com/",
+      ),
+    ).toBeNull();
+    expect(
+      selectUniqueSourceAccessPage([unrelated], "https://jobs.example.com/"),
+    ).toBeNull();
+  });
+
   test("does not launch a browser when no managed session is already open", async () => {
     const runtime = createBrowserAgentRuntime({
       userDataDir: "unused-source-access-probe-profile",
@@ -108,19 +137,25 @@ describe("read-only source access probe", () => {
     ["sign out", { signOutControl: true }, "sign_out_control"],
     ["account menu", { accountMenuControl: true }, "account_menu_control"],
     ["profile menu", { profileControl: true }, "profile_control"],
-  ])("accepts a same-origin strong %s marker", async (_label, signals, signal) => {
-    const { page } = createPage("https://jobs.example.com/search?query=engineer", signals);
+  ])(
+    "accepts a same-origin strong %s marker",
+    async (_label, signals, signal) => {
+      const { page } = createPage(
+        "https://jobs.example.com/search?query=engineer",
+        signals,
+      );
 
-    await expect(
-      inspectSourceAccessPage(page, {
-        expectedOrigin: "https://jobs.example.com/",
-      }),
-    ).resolves.toMatchObject({
-      state: "authenticated",
-      currentOrigin: "https://jobs.example.com/",
-      signals: [signal],
-    });
-  });
+      await expect(
+        inspectSourceAccessPage(page, {
+          expectedOrigin: "https://jobs.example.com/",
+        }),
+      ).resolves.toMatchObject({
+        state: "authenticated",
+        currentOrigin: "https://jobs.example.com/",
+        signals: [signal],
+      });
+    },
+  );
 
   test("lets an explicit blocker win over a simultaneous account marker", async () => {
     const { page } = createPage("https://jobs.example.com/search", {

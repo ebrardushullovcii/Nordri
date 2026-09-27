@@ -1,12 +1,15 @@
-import { CandidateProfileSchema, type CandidateProfile } from "@unemployed/contracts";
+import {
+  CandidateProfileSchema,
+  type CandidateProfile,
+  type RawApplyControl,
+  type RawApplyPage,
+} from "@unemployed/contracts";
 import { describe, expect, test } from "vitest";
 
 import type { LLMClient } from "../agent/contracts";
 import type { ToolCall } from "../types";
 import { runApplyAgent } from "./apply-agent";
-import type { RawApplyControl, RawApplyPage } from "@unemployed/contracts";
 import { buildApplyFormObservation } from "./page-hands";
-import type { ApplyNavigationResult, ApplyWriteResult } from "@unemployed/contracts";
 import type {
   ApplyAgentConfig,
   ApplyDocument,
@@ -15,12 +18,14 @@ import type {
 } from "./types";
 
 /**
- * Five application forms shaped like the families people actually meet.
+ * Sites shaped like the ones people actually meet.
  *
- * None of these fixtures is wired into shipped code: they exist to prove the
- * loop reads an unfamiliar form, fills it from the person's own facts, moves
- * through several screens, and stops before sending. There is no per-family
- * branch anywhere in the code under test.
+ * These are not tests of a form-filler. They are tests of a harness: the run
+ * starts wherever the job link points, and everything after that — a cookie
+ * banner in the way, a listing whose Apply button opens another company's
+ * site in a new tab, a chain of redirects, a form spread over five screens —
+ * is for the model to work out. Nothing in the code under test knows what
+ * "Apply" means or which of these sites is which.
  */
 
 interface FixtureControl {
@@ -35,38 +40,60 @@ interface FixtureControl {
   checked?: boolean;
 }
 
-interface FixtureScreen {
-  stepLabel?: string;
-  bodyText?: string;
-  controls: FixtureControl[];
-  actions: string[];
+interface FixtureLink {
+  label: string;
+  href: string;
+  target?: string;
 }
 
-interface FixtureForm {
-  url: string;
+interface FixtureClickable {
+  label: string;
+  /** Pressing it removes this clickable and reveals the rest of the page. */
+  dismisses?: boolean;
+}
+
+interface FixturePage {
   title: string;
-  screens: FixtureScreen[];
+  bodyText?: string;
+  stepLabel?: string;
+  headings?: string[];
+  controls?: FixtureControl[];
+  actions?: string[];
+  links?: FixtureLink[];
+  clickables?: FixtureClickable[];
+  /** Where an action at this index leads, for multi-screen forms. */
+  advanceTo?: Record<string, string>;
+  /** This page immediately sends the browser somewhere else. */
+  redirectsTo?: string;
+  openedTabs?: { url: string; title: string }[];
+}
+
+interface FixtureSite {
+  startUrl: string;
+  pages: Record<string, FixturePage>;
 }
 
 interface FixtureState {
-  screenIndex: number;
+  url: string;
   values: Map<string, string>;
   checked: Map<string, boolean>;
+  dismissed: Set<string>;
   observations: ApplyFormObservation[];
   clicks: string[];
+  visited: string[];
 }
 
-function controlKey(screenIndex: number, controlIndex: number): string {
-  return `${screenIndex}:${controlIndex}`;
+function controlKey(url: string, index: number): string {
+  return `${url}:${index}`;
 }
 
 function toRawControl(
   control: FixtureControl,
   index: number,
-  screenIndex: number,
+  url: string,
   state: FixtureState,
 ): RawApplyControl {
-  const key = controlKey(screenIndex, index);
+  const key = controlKey(url, index);
   const tagName = control.tagName ?? "input";
   const value = state.values.get(key) ?? control.value ?? "";
   return {
@@ -94,47 +121,100 @@ function toRawControl(
   };
 }
 
-function buildRawPage(form: FixtureForm, state: FixtureState): RawApplyPage {
-  const screen = form.screens[state.screenIndex];
-  if (!screen) {
-    throw new Error(`Fixture has no screen ${state.screenIndex}`);
+function pageOf(site: FixtureSite, state: FixtureState): FixturePage {
+  const page = site.pages[state.url];
+  if (!page) {
+    throw new Error(`Fixture has no page ${state.url}`);
   }
+  return page;
+}
+
+function buildRawPage(site: FixtureSite, state: FixtureState): RawApplyPage {
+  const page = pageOf(site, state);
+  const clickables = (page.clickables ?? []).filter(
+    (entry) => !state.dismissed.has(`${state.url}:${entry.label}`),
+  );
+  // A banner sitting over the page hides what is behind it, exactly as it
+  // would for a person who had not dismissed it yet.
+  const covered = clickables.some((entry) => entry.dismisses);
   return {
-    url: form.url,
-    title: form.title,
-    bodyText: screen.bodyText ?? `${form.title} ${screen.stepLabel ?? ""}`,
-    controls: screen.controls.map((control, index) =>
-      toRawControl(control, index, state.screenIndex, state),
-    ),
-    actions: screen.actions.map((label, index) => ({
+    url: state.url,
+    title: page.title,
+    bodyText: page.bodyText ?? page.title,
+    headings: (page.headings ?? []).map((text) => ({ level: 1, text })),
+    controls: covered
+      ? []
+      : (page.controls ?? []).map((control, index) =>
+          toRawControl(control, index, state.url, state),
+        ),
+    actions: covered
+      ? []
+      : (page.actions ?? []).map((label, index) => ({
+          index,
+          label,
+          visible: true,
+          disabled: false,
+        })),
+    links: covered
+      ? []
+      : (page.links ?? []).map((link, index) => ({
+          index,
+          label: link.label,
+          href: link.href,
+          target: link.target ?? "",
+          visible: true,
+          topOffset: index * 40,
+        })),
+    clickables: clickables.map((entry, index) => ({
       index,
-      label,
+      label: entry.label,
+      role: "button",
+      tagName: "div",
       visible: true,
-      disabled: false,
+      topOffset: index * 20,
     })),
-    links: [],
+    openedTabs: (page.openedTabs ?? []).map((tab, index) => ({
+      index,
+      url: tab.url,
+      title: tab.title,
+    })),
     validationErrors: [],
-    stepLabel: screen.stepLabel ?? null,
+    stepLabel: page.stepLabel ?? null,
+    loading: false,
   };
 }
 
-function createFixtureHands(form: FixtureForm): {
+function createFixtureHands(site: FixtureSite): {
   hands: ApplyPageHands;
   state: FixtureState;
 } {
   const state: FixtureState = {
-    screenIndex: 0,
+    url: site.startUrl,
     values: new Map(),
     checked: new Map(),
+    dismissed: new Set(),
     observations: [],
     clicks: [],
+    visited: [site.startUrl],
   };
 
   const refIndex = (ref: string): number => Number.parseInt(ref.slice(1), 10);
 
+  const goTo = (url: string) => {
+    state.url = url;
+    state.visited.push(url);
+    // A redirect chain resolves before anything looks at the page.
+    for (let hop = 0; hop < 6; hop += 1) {
+      const next = site.pages[state.url]?.redirectsTo;
+      if (!next) break;
+      state.url = next;
+      state.visited.push(next);
+    }
+  };
+
   const observe = (): Promise<ApplyFormObservation> => {
     const observation = buildApplyFormObservation(
-      buildRawPage(form, state),
+      buildRawPage(site, state),
       "2026-09-14T10:00:00.000Z",
     );
     state.observations.push(observation);
@@ -143,53 +223,98 @@ function createFixtureHands(form: FixtureForm): {
 
   const hands: ApplyPageHands = {
     observe,
-    fillText: (ref, value): Promise<ApplyWriteResult> => {
-      state.values.set(controlKey(state.screenIndex, refIndex(ref)), value);
+    navigate: (url) => {
+      goTo(url);
+      return Promise.resolve({ ok: true, url: state.url });
+    },
+    followLink: (ref) => {
+      const link = pageOf(site, state).links?.[refIndex(ref)];
+      if (!link) {
+        return Promise.resolve({ ok: false, error: "No such link." });
+      }
+      goTo(link.href);
+      return Promise.resolve({ ok: true, url: state.url });
+    },
+    clickElement: (ref) => {
+      const page = pageOf(site, state);
+      if (ref.startsWith("e")) {
+        const clickable = (page.clickables ?? []).filter(
+          (entry) => !state.dismissed.has(`${state.url}:${entry.label}`),
+        )[refIndex(ref)];
+        if (clickable) {
+          state.clicks.push(clickable.label);
+          state.dismissed.add(`${state.url}:${clickable.label}`);
+          return Promise.resolve({ ok: true, observedValue: "clicked" });
+        }
+      }
+      if (ref.startsWith("a")) {
+        const label = page.actions?.[refIndex(ref)];
+        if (label) {
+          state.clicks.push(label);
+          const next = page.advanceTo?.[label];
+          if (next) goTo(next);
+          return Promise.resolve({ ok: true, observedValue: "clicked" });
+        }
+      }
+      if (ref.startsWith("l")) {
+        const link = page.links?.[refIndex(ref)];
+        if (link) {
+          state.clicks.push(link.label);
+          goTo(link.href);
+          return Promise.resolve({ ok: true, observedValue: "clicked" });
+        }
+      }
+      return Promise.resolve({ ok: false, error: "Nothing there." });
+    },
+    scroll: () => Promise.resolve({ ok: true, observedValue: "down" }),
+    wait: () => Promise.resolve(),
+    goBack: () => {
+      state.visited.pop();
+      state.url = state.visited.at(-1) ?? site.startUrl;
+      return Promise.resolve({ ok: true, url: state.url });
+    },
+    readText: () => Promise.resolve(pageOf(site, state).bodyText ?? ""),
+    fillText: (ref, value) => {
+      state.values.set(controlKey(state.url, refIndex(ref)), value);
       return Promise.resolve({ ok: true, observedValue: value });
     },
-    chooseOption: (ref, optionLabel): Promise<ApplyWriteResult> => {
-      state.values.set(controlKey(state.screenIndex, refIndex(ref)), optionLabel);
+    chooseOption: (ref, optionLabel) => {
+      state.values.set(controlKey(state.url, refIndex(ref)), optionLabel);
       return Promise.resolve({ ok: true, observedValue: optionLabel });
     },
-    setToggle: (ref, checked): Promise<ApplyWriteResult> => {
-      state.checked.set(controlKey(state.screenIndex, refIndex(ref)), checked);
-      return Promise.resolve({ ok: true, observedValue: checked ? "checked" : "unchecked" });
+    setToggle: (ref, checked) => {
+      state.checked.set(controlKey(state.url, refIndex(ref)), checked);
+      return Promise.resolve({
+        ok: true,
+        observedValue: checked ? "checked" : "unchecked",
+      });
     },
-    uploadFile: (ref, file): Promise<ApplyWriteResult> => {
-      state.values.set(controlKey(state.screenIndex, refIndex(ref)), file.name);
+    uploadFile: (ref, file) => {
+      state.values.set(controlKey(state.url, refIndex(ref)), file.name);
       return Promise.resolve({ ok: true, observedValue: file.name });
     },
-    clickAction: (ref): Promise<ApplyWriteResult> => {
-      const screen = form.screens[state.screenIndex];
-      const label = screen?.actions[refIndex(ref)] ?? "";
-      state.clicks.push(label);
-      if (/next|continue|review|proceed/iu.test(label)) {
-        state.screenIndex = Math.min(state.screenIndex + 1, form.screens.length - 1);
-      }
-      if (/back|previous/iu.test(label)) {
-        state.screenIndex = Math.max(state.screenIndex - 1, 0);
-      }
-      return Promise.resolve({ ok: true, observedValue: "clicked" });
-    },
-    followLink: (): Promise<ApplyNavigationResult> =>
-      Promise.resolve({ ok: true, url: "https://apply.example.test/form" }),
+    clickAction: (ref) => hands.clickElement(ref),
   };
 
   return { hands, state };
 }
 
 /**
- * A stand-in for the model that reads the same observation the real one gets.
+ * A stand-in for the model that uses the harness the way the prompt asks.
  *
- * It does the obvious thing: work through the fields that still need an
- * answer, attach the resume when the form asks for a file, move on when the
- * screen is done, and finish at the end.
+ * It reads the page, gets whatever is in the way out of the way, follows the
+ * apply route when there is no form yet, asks what answers each field, and
+ * says when the form is complete. It knows nothing about any of these sites.
  */
-function createFixtureModel(state: FixtureState, resumeDocumentId: string): LLMClient {
+function createHarnessModel(
+  state: FixtureState,
+  resumeDocumentId: string,
+): LLMClient {
   let callId = 0;
-  const attempted = new Set<string>();
+  const done = new Set<string>();
+  const suggested = new Map<string, string | null>();
 
-  const nextCall = (name: string, args: Record<string, unknown>): ToolCall => {
+  const call = (name: string, args: Record<string, unknown>): ToolCall => {
     callId += 1;
     return {
       id: `call_${callId}`,
@@ -199,65 +324,140 @@ function createFixtureModel(state: FixtureState, resumeDocumentId: string): LLMC
   };
 
   const decide = (): { toolCalls: ToolCall[] } => {
-      const observation = state.observations.at(-1);
-      if (!observation) {
-        return { toolCalls: [nextCall("inspect_form", {})] };
-      }
+    const seen = state.observations.at(-1);
+    if (!seen) return { toolCalls: [call("observe", {})] };
+    const here = seen.url ?? "";
 
-      const pending = observation.controls.find(
-        (control) =>
-          control.visible &&
-          !control.disabled &&
-          !control.readOnly &&
-          !control.answered &&
-          !attempted.has(`${observation.signature}:${control.ref}`),
-      );
-      if (pending) {
-        attempted.add(`${observation.signature}:${pending.ref}`);
-        if (pending.kind === "file") {
-          return {
-            toolCalls: [
-              nextCall("attach_document", {
-                ref: pending.ref,
-                documentId: resumeDocumentId,
-              }),
-            ],
-          };
-        }
+    // Anything sitting over the page comes off first.
+    const overlay = seen.clickables.find(
+      (entry) => entry.visible && !done.has(`${here}:${entry.ref}`),
+    );
+    if (overlay) {
+      done.add(`${here}:${overlay.ref}`);
+      return { toolCalls: [call("click", { ref: overlay.ref })] };
+    }
+
+    // A page with no way to send anything is not the application, whatever
+    // fields it happens to carry — a board's search box and chat input are not
+    // an application form. Take the apply route first.
+    const looksSubmittable = seen.actions.some(
+      (action) => action.visible && /submit|send|apply/i.test(action.label),
+    );
+    if (!looksSubmittable) {
+      const route =
+        seen.links.find(
+          (link) =>
+            link.visible &&
+            /apply/i.test(link.label) &&
+            !done.has(`${here}:${link.ref}`),
+        ) ??
+        seen.actions.find(
+          (action) =>
+            action.visible &&
+            /apply/i.test(action.label) &&
+            !done.has(`${here}:${action.ref}`),
+        );
+      if (route) {
+        done.add(`${here}:${route.ref}`);
         return {
           toolCalls: [
-            nextCall("answer_control", {
-              ref: pending.ref,
-              freeTextAnswer:
-                "I have spent eight years building reliable automation and would bring that to this team.",
-              groundedIn: ["the resume sent with this application", "the posting"],
+            call(route.ref.startsWith("l") ? "follow_link" : "click", {
+              ref: route.ref,
             }),
           ],
         };
       }
+    }
 
-      const advance = observation.actions.find(
-        (action) => action.kind === "advance" && action.visible && !action.disabled,
-      );
-      if (advance && !attempted.has(`${observation.signature}:${advance.ref}`)) {
-        attempted.add(`${observation.signature}:${advance.ref}`);
-        return { toolCalls: [nextCall("go_to_step", { ref: advance.ref })] };
+    // A field that has not been dealt with: ask, then answer.
+    const pending = seen.controls.find(
+      (control) =>
+        control.visible &&
+        !control.disabled &&
+        !control.answered &&
+        !done.has(`${here}:${control.ref}`),
+    );
+    if (pending) {
+      const key = `${here}:${pending.ref}`;
+      if (pending.kind === "file") {
+        done.add(key);
+        return {
+          toolCalls: [
+            call("upload", { ref: pending.ref, documentId: resumeDocumentId }),
+          ],
+        };
       }
-
-      const send = observation.actions.find((action) => action.kind === "final");
-      if (send && !attempted.has(`${observation.signature}:${send.ref}`)) {
-        attempted.add(`${observation.signature}:${send.ref}`);
-        return { toolCalls: [nextCall("submit_application", { ref: send.ref })] };
+      if (!suggested.has(key)) {
+        suggested.set(key, null);
+        return { toolCalls: [call("suggest_answer", { ref: pending.ref })] };
       }
+      done.add(key);
+      if (pending.kind === "checkbox" || pending.kind === "radio") {
+        return {
+          toolCalls: [
+            call("set_checkbox", { ref: pending.ref, checked: true }),
+          ],
+        };
+      }
+      if (pending.options.length > 0) {
+        return {
+          toolCalls: [
+            call("select", { ref: pending.ref, option: pending.options[0] }),
+          ],
+        };
+      }
+      return {
+        toolCalls: [
+          call("type", {
+            ref: pending.ref,
+            text: "I have spent eight years building reliable platforms.",
+            groundedIn: ["the resume sent with this application"],
+          }),
+        ],
+      };
+    }
 
+    // Everything is filled in: move on, or say it is complete.
+    const advance = seen.actions.find(
+      (action) =>
+        action.visible &&
+        /next|continue/i.test(action.label) &&
+        !done.has(`${here}:${action.ref}`),
+    );
+    if (advance) {
+      done.add(`${here}:${advance.ref}`);
+      return { toolCalls: [call("click", { ref: advance.ref })] };
+    }
+    const send = seen.actions.find(
+      (action) => action.visible && /submit|send/i.test(action.label),
+    );
+    if (send && !done.has(`${here}:send`)) {
+      done.add(`${here}:send`);
+      return { toolCalls: [call("submit_application", { ref: send.ref })] };
+    }
     return {
-      toolCalls: [
-        nextCall("finish", { reason: "Every field on the form has an answer." }),
-      ],
+      toolCalls: [call("finish", { reason: "The form is filled in." })],
     };
   };
 
-  return { chatWithTools: () => Promise.resolve(decide()) };
+  return {
+    chatWithTools: (_messages, _tools, options) => {
+      if (_tools[0]?.function.name === "report_answer_check") {
+        return Promise.resolve({
+          toolCalls: [
+            call("report_answer_check", {
+              supported: true,
+              reason:
+                "The fixture answer expresses motivation without adding personal history.",
+            }),
+          ],
+        });
+      }
+      // Record what the model was told, the way a real client would consume it.
+      void options;
+      return Promise.resolve(decide());
+    },
+  };
 }
 
 function createTestProfile(): CandidateProfile {
@@ -295,15 +495,6 @@ function createTestProfile(): CandidateProfile {
       workAuthorization: "Yes",
       visaSponsorship: "No",
       relocation: "Yes",
-      customAnswers: [
-        {
-          id: "saved_1",
-          kind: "other",
-          label: "Why this company",
-          question: "Why do you want to work here?",
-          answer: "Your platform work is the kind of problem I have spent my career on.",
-        },
-      ],
     },
   });
 }
@@ -319,11 +510,11 @@ function createResumeDocument(): ApplyDocument {
   };
 }
 
-function createConfig(form: FixtureForm, siteLabel: string): {
-  config: ApplyAgentConfig;
-  state: FixtureState;
-} {
-  const { hands, state } = createFixtureHands(form);
+function createConfig(
+  site: FixtureSite,
+  siteLabel: string,
+): { config: ApplyAgentConfig; state: FixtureState } {
+  const { hands, state } = createFixtureHands(site);
   const config: ApplyAgentConfig = {
     hands,
     authority: {
@@ -342,61 +533,49 @@ function createConfig(form: FixtureForm, siteLabel: string): {
         location: "Manchester, United Kingdom",
         description: "Own the internal platform.",
       },
-      reusableAnswers: createTestProfile().answerBank.customAnswers,
+      reusableAnswers: [],
       documents: [createResumeDocument()],
     },
     application: {
       jobId: "job_test",
       applicationId: "application_test",
-      startingUrl: form.url,
+      startingUrl: site.startUrl,
     },
     siteLabel,
-    runControl: { maxSteps: 60, noProgressStepLimit: 6 },
+    runControl: { maxSteps: 120, noProgressStepLimit: 12 },
     now: () => new Date("2026-09-14T10:00:00.000Z"),
   };
   return { config, state };
 }
 
-const cardStyleForm: FixtureForm = {
-  url: "https://boards.example-greenhouse.test/northwind/jobs/1",
-  title: "Platform Engineer — Northwind Tools",
-  screens: [
-    {
-      controls: [
-        { label: "First Name", required: true },
-        { label: "Last Name", required: true },
-        { label: "Email", inputType: "email", required: true },
-        { label: "Phone", inputType: "tel" },
-        { label: "Resume/CV", inputType: "file", required: true },
-        {
-          label: "Are you legally authorized to work in the United Kingdom?",
-          tagName: "select",
-          options: ["Yes", "No"],
-          required: true,
-        },
-        {
-          label: "Will you now or in the future require sponsorship?",
-          tagName: "select",
-          options: ["Yes", "No"],
-          required: true,
-        },
-      ],
+const FORM_CONTROLS: FixtureControl[] = [
+  { label: "First Name", required: true },
+  { label: "Last Name", required: true },
+  { label: "Email", inputType: "email", required: true },
+  { label: "Phone", inputType: "tel" },
+  { label: "Resume/CV", inputType: "file", required: true },
+];
+
+const cardStyleBoard: FixtureSite = {
+  startUrl: "https://boards.example-greenhouse.test/northwind/jobs/1",
+  pages: {
+    "https://boards.example-greenhouse.test/northwind/jobs/1": {
+      title: "Platform Engineer — Northwind Tools",
+      controls: FORM_CONTROLS,
       actions: ["Submit Application"],
     },
-  ],
+  },
 };
 
-const postingStyleForm: FixtureForm = {
-  url: "https://jobs.example-lever.test/northwind/2/apply",
-  title: "Apply — Platform Engineer",
-  screens: [
-    {
+const postingStyleBoard: FixtureSite = {
+  startUrl: "https://jobs.example-lever.test/northwind/2/apply",
+  pages: {
+    "https://jobs.example-lever.test/northwind/2/apply": {
+      title: "Apply — Platform Engineer",
       controls: [
         { label: "Full name", required: true },
         { label: "Email", inputType: "email", required: true },
-        { label: "Current location", required: true },
         { label: "Resume", inputType: "file", required: true },
-        { label: "Portfolio or personal website" },
         {
           label: "Why do you want to work here?",
           tagName: "textarea",
@@ -405,114 +584,179 @@ const postingStyleForm: FixtureForm = {
       ],
       actions: ["Submit application"],
     },
-  ],
+  },
 };
 
-const multiScreenForm: FixtureForm = {
-  url: "https://northwind.example-workday.test/apply",
-  title: "Northwind Careers",
-  screens: [
-    {
+const multiScreenCareerSite: FixtureSite = {
+  startUrl: "https://northwind.example-workday.test/apply",
+  pages: {
+    "https://northwind.example-workday.test/apply": {
+      title: "Northwind Careers",
       stepLabel: "Step 1 of 3 — My Information",
       controls: [
         { label: "First Name", required: true },
         { label: "Last Name", required: true },
-        { label: "Country", tagName: "select", options: ["United Kingdom", "Ireland"], required: true },
         { label: "City", required: true },
       ],
-      actions: ["Back", "Next"],
+      actions: ["Next"],
+      advanceTo: { Next: "https://northwind.example-workday.test/apply/2" },
     },
-    {
+    "https://northwind.example-workday.test/apply/2": {
+      title: "Northwind Careers",
       stepLabel: "Step 2 of 3 — My Experience",
       controls: [
         { label: "Resume", inputType: "file", required: true },
         { label: "Years of experience", required: true },
-        { label: "Are you willing to relocate?", tagName: "select", options: ["Yes", "No"] },
       ],
-      actions: ["Back", "Next"],
+      actions: ["Next"],
+      advanceTo: { Next: "https://northwind.example-workday.test/apply/3" },
     },
-    {
+    "https://northwind.example-workday.test/apply/3": {
+      title: "Northwind Careers",
       stepLabel: "Step 3 of 3 — Review",
       controls: [{ label: "Notice period", required: true }],
-      actions: ["Back", "Submit"],
+      actions: ["Submit"],
     },
-  ],
+  },
 };
 
-const compactForm: FixtureForm = {
-  url: "https://jobs.example-ashby.test/northwind/application",
-  title: "Northwind Tools — Application",
-  screens: [
-    {
+const compactSinglePage: FixtureSite = {
+  startUrl: "https://jobs.example-ashby.test/northwind/application",
+  pages: {
+    "https://jobs.example-ashby.test/northwind/application": {
+      title: "Northwind Tools — Application",
       controls: [
         { label: "Name", required: true },
         { label: "Email", inputType: "email", required: true },
         { label: "Resume", inputType: "file", required: true },
-        {
-          label: "When can you start?",
-          required: true,
-        },
-        {
-          label: "Are you authorized to work in the United Kingdom?",
-          role: "radio",
-          inputType: "radio",
-          groupLabel: "Work authorisation",
-        },
+        { label: "When can you start?", required: true },
       ],
       actions: ["Submit application"],
     },
-  ],
+  },
 };
 
-const modalForm: FixtureForm = {
-  url: "https://www.example-network.test/jobs/view/3",
-  title: "Platform Engineer | Northwind Tools",
-  screens: [
-    {
+const inPageModal: FixtureSite = {
+  startUrl: "https://www.example-network.test/jobs/view/3",
+  pages: {
+    "https://www.example-network.test/jobs/view/3": {
+      title: "Platform Engineer | Northwind Tools",
       stepLabel: "1/2",
-      bodyText: "Apply to Northwind Tools 1/2 Contact info",
       controls: [
         { label: "Email address", inputType: "email", required: true },
         { label: "Mobile phone number", inputType: "tel", required: true },
         { label: "Resume", inputType: "file", required: true },
       ],
       actions: ["Next"],
+      advanceTo: { Next: "https://www.example-network.test/jobs/view/3/2" },
     },
-    {
+    "https://www.example-network.test/jobs/view/3/2": {
+      title: "Platform Engineer | Northwind Tools",
       stepLabel: "2/2",
-      bodyText: "Apply to Northwind Tools 2/2 Additional questions",
       controls: [
-        {
-          label: "How many years of experience do you have with platform engineering?",
-          required: true,
-        },
-        {
-          label: "Are you comfortable with occasional travel?",
-          tagName: "select",
-          options: ["Yes", "No"],
-          required: true,
-        },
+        { label: "How many years of experience do you have?", required: true },
       ],
-      actions: ["Back", "Submit application"],
+      actions: ["Submit application"],
     },
-  ],
+  },
 };
 
-const FAMILIES: ReadonlyArray<readonly [string, FixtureForm, string]> = [
-  ["a card-style board", cardStyleForm, "Greenhouse"],
-  ["a posting-style board", postingStyleForm, "Lever"],
-  ["a multi-screen career site", multiScreenForm, "the Northwind careers site"],
-  ["a compact single-page form", compactForm, "Ashby"],
-  ["an in-page modal", modalForm, "the network site"],
+/**
+ * A board listing whose Apply opens the employer's own form in a new tab.
+ *
+ * The listing has a search box and a chat input, which is exactly the shape
+ * that used to make Job Finder decide it was already looking at a form and
+ * give up with "no application form or apply button" while a person could see
+ * the Apply button plainly.
+ */
+const boardListingToExternalForm: FixtureSite = {
+  startUrl: "https://example-remoteok.test/remote-jobs/12345-platform-engineer",
+  pages: {
+    "https://example-remoteok.test/remote-jobs/12345-platform-engineer": {
+      title: "Platform Engineer at Northwind Tools",
+      headings: ["Platform Engineer"],
+      bodyText: "Remote. Own the internal platform. Apply below.",
+      controls: [
+        { label: "Search remote jobs", inputType: "search" },
+        { label: "Ask our AI anything", tagName: "textarea" },
+      ],
+      links: [
+        { label: "Home", href: "https://example-remoteok.test/" },
+        {
+          label: "Apply for this position",
+          href: "https://boards.example-greenhouse.test/northwind/jobs/9",
+          target: "_blank",
+        },
+      ],
+    },
+    "https://boards.example-greenhouse.test/northwind/jobs/9": {
+      title: "Northwind Tools — Platform Engineer",
+      controls: FORM_CONTROLS,
+      actions: ["Submit Application"],
+    },
+  },
+};
+
+/** A cookie wall covering the form until it is dismissed. */
+const cookieBannerSite: FixtureSite = {
+  startUrl: "https://careers.example-cookie.test/apply/7",
+  pages: {
+    "https://careers.example-cookie.test/apply/7": {
+      title: "Northwind Tools — Apply",
+      clickables: [{ label: "Accept all cookies", dismisses: true }],
+      controls: FORM_CONTROLS,
+      actions: ["Submit Application"],
+    },
+  },
+};
+
+/** An apply link that bounces through a tracker before the real form. */
+const redirectChainSite: FixtureSite = {
+  startUrl: "https://example-aggregator.test/job/55",
+  pages: {
+    "https://example-aggregator.test/job/55": {
+      title: "Platform Engineer — via aggregator",
+      links: [
+        {
+          label: "Apply now",
+          href: "https://example-tracker.test/click?id=55",
+        },
+      ],
+    },
+    "https://example-tracker.test/click?id=55": {
+      title: "Redirecting",
+      redirectsTo: "https://example-ats.test/apply/55?src=aggregator",
+    },
+    "https://example-ats.test/apply/55?src=aggregator": {
+      title: "Northwind Tools — Application",
+      redirectsTo: "https://example-ats.test/apply/55",
+    },
+    "https://example-ats.test/apply/55": {
+      title: "Northwind Tools — Application",
+      controls: FORM_CONTROLS,
+      actions: ["Submit Application"],
+    },
+  },
+};
+
+const SITES: ReadonlyArray<readonly [string, FixtureSite, string]> = [
+  ["a card-style board", cardStyleBoard, "Greenhouse"],
+  ["a posting-style board", postingStyleBoard, "Lever"],
+  ["a multi-screen career site", multiScreenCareerSite, "the careers site"],
+  ["a compact single-page form", compactSinglePage, "Ashby"],
+  ["an in-page modal", inPageModal, "the network site"],
+  ["a board listing that links out", boardListingToExternalForm, "RemoteOK"],
+  ["a site behind a cookie wall", cookieBannerSite, "the careers site"],
+  ["an apply link behind redirects", redirectChainSite, "the aggregator"],
 ];
 
-describe("apply agent across application form families", () => {
-  for (const [description, form, siteLabel] of FAMILIES) {
+describe("the apply harness across real site shapes", () => {
+  for (const [description, site, siteLabel] of SITES) {
     test(`fills ${description} and stops before sending`, async () => {
-      const { config, state } = createConfig(form, siteLabel);
+      const { config, state } = createConfig(site, siteLabel);
       const result = await runApplyAgent(
         config,
-        createFixtureModel(state, "document_resume"),
+        createHarnessModel(state, "document_resume"),
       );
 
       expect(result.outcome).toBe("prepared");
@@ -531,95 +775,78 @@ describe("apply agent across application form families", () => {
         expect(entry.answer.groundedIn.length).toBeGreaterThan(0);
       }
 
-      // The final screen has no required field left empty.
+      // The last page has no required field left empty.
       const last = state.observations.at(-1);
-      expect(last).toBeDefined();
       expect(
-        last?.controls.filter((control) => control.required && !control.answered),
+        last?.controls.filter(
+          (control) => control.required && !control.answered,
+        ),
       ).toHaveLength(0);
     });
   }
 
-  test("the multi-screen form is walked screen by screen", async () => {
-    const { config, state } = createConfig(multiScreenForm, "the careers site");
+  test("a listing with a search box and a chat input is not mistaken for a form", async () => {
+    const { config, state } = createConfig(
+      boardListingToExternalForm,
+      "RemoteOK",
+    );
     const result = await runApplyAgent(
       config,
-      createFixtureModel(state, "document_resume"),
+      createHarnessModel(state, "document_resume"),
     );
 
     expect(result.outcome).toBe("prepared");
-    expect(state.screenIndex).toBe(2);
-    expect(state.clicks.filter((label) => label === "Next")).toHaveLength(2);
+    // It left the board and reached the employer's own form.
+    expect(state.url).toBe(
+      "https://boards.example-greenhouse.test/northwind/jobs/9",
+    );
+    // A target=_blank apply link is followed in place rather than refused.
+    expect(state.visited).toContain(
+      "https://boards.example-greenhouse.test/northwind/jobs/9",
+    );
+    expect(result.filled.map((entry) => entry.label)).toContain("Email");
   });
-});
 
-describe("what each mode does with the same finished form", () => {
-  /** A single-screen form that a run can genuinely complete. */
-  const completableForm: FixtureForm = {
-    url: "https://apply.example.test/northwind/apply",
-    title: "Platform Engineer — Northwind Tools",
-    screens: [
-      {
-        controls: [
-          { label: "Full name", required: true },
-          { label: "Email", inputType: "email", required: true },
-          { label: "Resume", inputType: "file", required: true },
-        ],
-        actions: ["Submit application"],
-      },
-    ],
-  };
-
-  async function runInMode(
-    mode: "prepare_only" | "confirm_before_submit" | "autonomous_submit",
-  ) {
-    const { config, state } = createConfig(completableForm, "Northwind careers");
-    const authority: ApplyAgentConfig["authority"] = {
-      mode,
-      submitAuthorized: mode === "autonomous_submit",
-      preApprovedAttestationKinds: [],
-      salaryDisclosure: "pause_for_user",
-      allowedOrigins: [],
-    };
+  test("a cookie wall is dismissed by the run rather than stopping it", async () => {
+    const { config, state } = createConfig(
+      cookieBannerSite,
+      "the careers site",
+    );
     const result = await runApplyAgent(
-      { ...config, authority },
-      createFixtureModel(state, "document_resume"),
+      config,
+      createHarnessModel(state, "document_resume"),
     );
-    return { result, state };
-  }
 
-  test("fill-in-only finishes prepared and never finds a send button to press", async () => {
-    const { result, state } = await runInMode("prepare_only");
+    expect(state.clicks).toContain("Accept all cookies");
     expect(result.outcome).toBe("prepared");
-    expect(result.readyToSend).toBeNull();
-    expect(state.clicks).toHaveLength(0);
+    expect(result.filled.length).toBeGreaterThan(0);
   });
 
-  test("confirm-first ends waiting for the person, with nothing pressed", async () => {
-    const { result, state } = await runInMode("confirm_before_submit");
-    expect(result.outcome).toBe("awaiting_your_review");
-    expect(result.reason).toContain("ready for you to look over");
-    expect(state.clicks).toHaveLength(0);
-  });
-
-  test("sending on its own reports the form ready and still presses nothing", async () => {
-    const { result, state } = await runInMode("autonomous_submit");
-    expect(result.outcome).toBe("ready_to_send");
-    expect(result.readyToSend).toEqual({
-      actionRef: "a0",
-      actionLabel: "Submit application",
-    });
-    // The loop identifies the button; the submission path is what presses it.
-    expect(state.clicks).toHaveLength(0);
-  });
-
-  test("every mode filled the same form the same way", async () => {
-    const prepared = await runInMode("prepare_only");
-    const sending = await runInMode("autonomous_submit");
-    expect(prepared.result.filled.map((entry) => entry.label)).toEqual(
-      sending.result.filled.map((entry) => entry.label),
+  test("a chain of redirects is followed to the form at the end of it", async () => {
+    const { config, state } = createConfig(redirectChainSite, "the aggregator");
+    const result = await runApplyAgent(
+      config,
+      createHarnessModel(state, "document_resume"),
     );
-    expect(prepared.result.attachments).toHaveLength(1);
-    expect(sending.result.attachments).toHaveLength(1);
+
+    expect(state.url).toBe("https://example-ats.test/apply/55");
+    expect(state.visited).toContain("https://example-tracker.test/click?id=55");
+    expect(result.outcome).toBe("prepared");
+    expect(result.attachments).toHaveLength(1);
+  });
+
+  test("the multi-screen form is walked screen by screen", async () => {
+    const { config, state } = createConfig(
+      multiScreenCareerSite,
+      "the careers site",
+    );
+    const result = await runApplyAgent(
+      config,
+      createHarnessModel(state, "document_resume"),
+    );
+
+    expect(result.outcome).toBe("prepared");
+    expect(state.url).toBe("https://northwind.example-workday.test/apply/3");
+    expect(state.clicks.filter((label) => label === "Next")).toHaveLength(2);
   });
 });

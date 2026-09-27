@@ -3,6 +3,8 @@ import type {
   OpenBrowserSessionOptions,
 } from "@unemployed/browser-runtime";
 import { randomUUID } from "node:crypto";
+import { recordApplicationsSentByPerson } from "./internal/application-sent-by-person";
+import { refreshAutomaticApplicationFailurePauses } from "./internal/automatic-safeguards";
 import {
   ApplicationRecordSchema,
   JobFinderDiscoveryCancellationInputSchema,
@@ -13,6 +15,7 @@ import {
   SavedJobSchema,
   type ApplyJobResult,
   type ApplyRun,
+  type ApplicationAutomationMode,
   type JobFinderDiscoveryState,
   type JobFinderWorkspaceSnapshot,
   type JobDiscoveryTarget,
@@ -53,6 +56,7 @@ import {
   recoverInterruptedApplyJobResult,
   recoverInterruptedApplyRun,
   recoverInterruptedExactLineageProjections,
+  isSafelyParkedApplyQueue,
 } from "./internal/workspace-apply-run-recovery";
 import { createWorkspaceApplicationAnswerMethods } from "./internal/workspace-application-answer-methods";
 import { createWorkspaceGroupedAnswerMethods } from "./internal/workspace-grouped-answer-methods";
@@ -75,6 +79,72 @@ import {
   MAX_BEGUN_EMPLOYER_APPLICATIONS_PER_LOCAL_DAY,
   MAX_EMPLOYER_APPLICATION_JOBS_PER_RUN,
 } from "./internal/application-preparation-capacity";
+
+const applicationPageOwningStates = new Set<ApplyJobResult["state"]>([
+  "question_capture",
+  "filling",
+  "awaiting_review",
+  "submitting",
+  "blocked",
+]);
+
+/**
+ * Automatic workflow cleanup must not destroy a different application that is
+ * still waiting in its exact prepared tab. The person's explicit browser Close
+ * action and workspace shutdown bypass this guard and keep their normal
+ * semantics.
+ */
+export async function hasLiveUnresolvedApplicationPage(input: {
+  browserRuntime: BrowserSessionRuntime;
+  repository: WorkspaceServiceContext["repository"];
+  source: JobSource;
+}): Promise<boolean> {
+  if (!input.browserRuntime.hasApplicationPageBinding) return false;
+
+  try {
+    const [results, requests] = await Promise.all([
+      input.repository.listApplyJobResults(),
+      input.repository.listUserActionRequests({ scopeType: "application" }),
+    ]);
+    const bindingKeys = new Set(
+      results
+        .filter(
+          (result) =>
+            applicationPageOwningStates.has(result.state) ||
+            result.privacyReceipt?.submissionOutcome?.outcome ===
+              "outcome_uncertain",
+        )
+        .map((result) => result.id),
+    );
+    for (const request of requests) {
+      if (
+        request.scope.type === "application" &&
+        !["resolved", "skipped", "cancelled", "expired", "superseded"].includes(
+          request.state,
+        ) &&
+        request.scope.resultId
+      ) {
+        bindingKeys.add(request.scope.resultId);
+      }
+    }
+
+    for (const bindingKey of bindingKeys) {
+      if (
+        await input.browserRuntime.hasApplicationPageBinding(
+          input.source,
+          bindingKey,
+        )
+      ) {
+        return true;
+      }
+    }
+    return false;
+  } catch {
+    // If ownership cannot be read safely, preserve pages. A later snapshot can
+    // reconcile stale bindings; cleanup cannot recreate a destroyed form.
+    return true;
+  }
+}
 
 export {
   DEFAULT_DISCOVERY_HISTORY_LIMIT,
@@ -158,6 +228,9 @@ async function withPreparationCapacityTransition<T>(
   }
 }
 
+/** How long a workspace read waits for verifying steps to be picked up. */
+const SNAPSHOT_RECOVERY_WAIT_MS = 1_500;
+
 export function createJobFinderWorkspaceService(
   options: CreateJobFinderWorkspaceServiceOptions,
 ): JobFinderWorkspaceService {
@@ -172,6 +245,8 @@ export function createJobFinderWorkspaceService(
     researchAdapter,
     fetchListingHtml,
     onActivityControlChanged,
+    onDetachedApplyRunFinished,
+    onExplicitUserStart,
   } = options;
   const activeDiscoveryAbortControllerRef = {
     current: null as AbortController | null,
@@ -340,6 +415,8 @@ export function createJobFinderWorkspaceService(
     activeResumeVisionRunIds,
     getWorkspaceSnapshot: () =>
       Promise.reject(new Error("Workspace snapshot method not initialized.")),
+    readWorkspaceSnapshot: () =>
+      Promise.reject(new Error("Workspace snapshot reader not initialized.")),
     getActiveCampaignId: async () =>
       (await repository.getCampaignState())?.activeCampaignId ?? null,
     resumeApplicationUserAction: () =>
@@ -535,11 +612,23 @@ export function createJobFinderWorkspaceService(
       await context.persistBrowserSessionState(session);
     },
     async closeRunBrowserSession(source: JobSource): Promise<void> {
+      if (
+        await hasLiveUnresolvedApplicationPage({
+          browserRuntime,
+          repository,
+          source,
+        })
+      ) {
+        return;
+      }
       const session = await browserRuntime.closeSession(source);
       await context.persistBrowserSessionState(session);
     },
     async closeParkedBrowserTab(source, tab): Promise<void> {
       await browserRuntime.closeParkedTab?.(source, tab);
+    },
+    async resumeActivityForExplicitStart(): Promise<void> {
+      await requireActivityEnabled();
     },
     hasActiveBrowserWorkflow: () =>
       activeDiscoveryAbortControllerRef.current !== null ||
@@ -586,8 +675,11 @@ export function createJobFinderWorkspaceService(
 
   const snapshotProfileMethods = createWorkspaceSnapshotProfileMethods(context);
   const applicationMethods = createWorkspaceApplicationMethods(context);
-  context.resumeApplicationUserAction = (request) =>
-    applicationMethods.resumeApplicationUserAction(request);
+  context.resumeApplicationUserAction = (request, taskLocalCredentials) =>
+    applicationMethods.resumeApplicationUserAction(
+      request,
+      taskLocalCredentials,
+    );
   const userActionMethods = createWorkspaceUserActionMethods(context);
   let userActionRecoveryPromise: Promise<void> | null = null;
 
@@ -596,12 +688,14 @@ export function createJobFinderWorkspaceService(
       userActionRecoveryPromise =
         userActionMethods.resumeVerifyingUserActions();
     }
+    const recovery = userActionRecoveryPromise;
 
     try {
-      await userActionRecoveryPromise;
-    } catch (error) {
-      userActionRecoveryPromise = null;
-      throw error;
+      await recovery;
+    } finally {
+      if (userActionRecoveryPromise === recovery) {
+        userActionRecoveryPromise = null;
+      }
     }
   }
 
@@ -612,18 +706,39 @@ export function createJobFinderWorkspaceService(
     // callers share this single in-flight recovery run, and a crash between
     // the grouped commit and this resume still recovers on the next restart
     // because the recovery promise is only ever held in memory.
-    userActionRecoveryPromise = userActionMethods.resumeVerifyingUserActions();
-
+    const recovery = userActionMethods.resumeVerifyingUserActions();
+    userActionRecoveryPromise = recovery;
     try {
-      await userActionRecoveryPromise;
-    } catch (error) {
-      userActionRecoveryPromise = null;
-      throw error;
+      await recovery;
+    } finally {
+      if (userActionRecoveryPromise === recovery) {
+        userActionRecoveryPromise = null;
+      }
     }
   }
 
   async function getWorkspaceSnapshot() {
-    await resumeVerifyingUserActions();
+    // Recovery starts or joins the continuation of every verifying step, and
+    // a continuation drives the browser for minutes. Quick verifications
+    // still land in this snapshot; a long continuation carries on in the
+    // background instead of holding every read (the app showed "Loading your
+    // workspace" for as long as the agent worked).
+    const recovery = resumeVerifyingUserActions();
+    recovery.catch((error: unknown) => {
+      console.error(
+        "[user-actions] recovery of a verifying step failed",
+        error,
+      );
+    });
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    await Promise.race([
+      recovery,
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, SNAPSHOT_RECOVERY_WAIT_MS);
+      }),
+    ]).finally(() => {
+      if (timer) clearTimeout(timer);
+    });
     return snapshotProfileMethods.getWorkspaceSnapshot();
   }
 
@@ -632,6 +747,8 @@ export function createJobFinderWorkspaceService(
   }
 
   context.getWorkspaceSnapshot = getWorkspaceSnapshot;
+  context.readWorkspaceSnapshot = () =>
+    snapshotProfileMethods.getWorkspaceSnapshot();
   const crmMethods = createWorkspaceCrmMethods({
     ctx: context,
     getWorkspaceSnapshot,
@@ -664,13 +781,45 @@ export function createJobFinderWorkspaceService(
     getWorkspaceSnapshot,
   });
   context.requireApplicationSafeguardClearance = async (jobIds, savedJobs) => {
+    await refreshAutomaticApplicationFailurePauses({
+      ctx: context,
+      now: new Date().toISOString(),
+    });
     const blockers =
       await safeguardMethods.evaluateApplicationPreparationBlockers(
         jobIds,
         savedJobs,
       );
-    safeguardMethods.requireNoBlockers(blockers);
+    // The failure-rate pause asks the person to look at the failed attempts
+    // and retry them. Their Try again for exactly those jobs is that retry,
+    // so the pause must not refuse it (it pointed back at Applications in a
+    // loop); new jobs still wait until the pause lifts or is dismissed.
+    const retriesFailedJobsOnly = await startRetriesOnlyFailedJobs(jobIds);
+    safeguardMethods.requireNoBlockers(
+      retriesFailedJobsOnly
+        ? blockers.filter(
+            (blocker) => blocker.kind !== "abnormal_failure_pause",
+          )
+        : blockers,
+    );
   };
+  async function startRetriesOnlyFailedJobs(
+    jobIds: readonly string[],
+  ): Promise<boolean> {
+    if (jobIds.length === 0) return false;
+    const results = await context.repository.listApplyJobResults();
+    // The retry's own queued placeholder is not an attempt yet; read the
+    // last attempt that actually ran.
+    return jobIds.every((jobId) => {
+      const latest = results
+        .filter(
+          (result) => result.jobId === jobId && result.state !== "planned",
+        )
+        .sort((left, right) => right.startedAt.localeCompare(left.startedAt))
+        .at(0);
+      return latest?.state === "failed";
+    });
+  }
 
   const sourceDebugMethods = createWorkspaceSourceDebugMethods(context);
   context.runSourceDebugWorkflow = sourceDebugMethods.runSourceDebugWorkflow;
@@ -690,6 +839,7 @@ export function createJobFinderWorkspaceService(
       campaign: CampaignRunContext,
     ) => Promise<JobFinderWorkspaceSnapshot>,
     requestedCampaignId?: string,
+    options: { nestedUserActionRecovery?: boolean } = {},
   ) {
     await requireDiscoverySafeguardClearance();
     let [campaignState, savedJobs, discoveryState] = await Promise.all([
@@ -732,6 +882,7 @@ export function createJobFinderWorkspaceService(
     assertCampaignCanRun(campaign);
     await executor({
       campaignId: campaign.id,
+      mode: campaign.mode,
       searchPreferences: campaign.searchPreferences,
       runJobBudget: campaign.limits.discoveryRunJobBudget ?? null,
     });
@@ -746,6 +897,10 @@ export function createJobFinderWorkspaceService(
         ]),
       ),
     });
+    if (options.nestedUserActionRecovery) {
+      await intelligenceMethods.refreshCompanyIntelligenceState();
+      return context.readWorkspaceSnapshot();
+    }
     return intelligenceMethods.refreshCompanyIntelligence();
   }
 
@@ -779,6 +934,7 @@ export function createJobFinderWorkspaceService(
         (campaign) =>
           discoveryMethods.runCampaignDiscoveryForTarget(campaign, targetId),
         originatingRun.campaignId,
+        { nestedUserActionRecovery: true },
       );
       return { status: "continued" };
     } catch (error) {
@@ -804,6 +960,7 @@ export function createJobFinderWorkspaceService(
     if ((await repository.getActivityControl()).paused) {
       await setActivityControl({ paused: false });
     }
+    await onExplicitUserStart?.();
   }
 
   async function resolvePreparationCampaign(
@@ -870,15 +1027,21 @@ export function createJobFinderWorkspaceService(
     if (uniqueProspectiveJobIds.length === 0) {
       return;
     }
-    const [applyRuns, applyJobResults, applicationRecords] = await Promise.all([
-      repository.listApplyRuns(),
-      repository.listApplyJobResults(),
-      repository.listApplicationRecords(),
-    ]);
+    const [applyRuns, applyJobResults, applicationRecords, settings] =
+      await Promise.all([
+        repository.listApplyRuns(),
+        repository.listApplyJobResults(),
+        repository.listApplicationRecords(),
+        repository.getSettings(),
+      ]);
+    const dailyLimit =
+      settings.maxApplicationsPerLocalDay ??
+      MAX_BEGUN_EMPLOYER_APPLICATIONS_PER_LOCAL_DAY;
     const capacity = deriveGlobalDailyApplicationPreparationCapacity({
       applyRuns,
       applyJobResults,
       applicationRecords,
+      limit: dailyLimit,
       // Reserved jobs are already charged through `reservedJobs` below.
       reservedJobIds: [...reservedJobIds, ...uniqueProspectiveJobIds],
     });
@@ -887,10 +1050,10 @@ export function createJobFinderWorkspaceService(
         capacity.legacyUncertain +
         reservedJobs +
         uniqueProspectiveJobIds.length >
-      MAX_BEGUN_EMPLOYER_APPLICATIONS_PER_LOCAL_DAY
+      dailyLimit
     ) {
       throw new Error(
-        `The global daily preparation safeguard allows at most ${MAX_BEGUN_EMPLOYER_APPLICATIONS_PER_LOCAL_DAY} begun employer applications per local day.`,
+        `The global daily preparation safeguard allows at most ${dailyLimit} begun employer ${dailyLimit === 1 ? "application" : "applications"} per local day.`,
       );
     }
   }
@@ -1113,15 +1276,22 @@ export function createJobFinderWorkspaceService(
     rawInput: SetJobFinderActivityControlInput,
   ) {
     const input = SetJobFinderActivityControlInputSchema.parse(rawInput);
+    const previousControl = await repository.getActivityControl();
     const now = new Date().toISOString();
     const control = JobFinderActivityControlSchema.parse({
       paused: input.paused,
       pausedAt: input.paused ? now : null,
       reason: input.paused ? (input.reason ?? null) : null,
+      ...(input.paused && input.pauseBehavior
+        ? { pauseBehavior: input.pauseBehavior }
+        : {}),
     });
     await repository.saveActivityControl(control);
     await onActivityControlChanged?.(control);
-    if (input.paused) {
+    // Home's Pause new work lets the current application reach a safe
+    // boundary. The queue waits between jobs and Resume continues that same
+    // run. Browser takeover and shutdown still abort immediately.
+    if (input.paused && input.pauseBehavior !== "finish_current") {
       const activeRunIds = [...activeApplyRunAbortControllers.keys()];
       activeDiscoveryAbortControllerRef.current?.abort();
       activeSourceDebugAbortControllerRef.current?.abort();
@@ -1138,6 +1308,19 @@ export function createJobFinderWorkspaceService(
       await Promise.allSettled(
         activeRunIds.map((runId) => applicationMethods.cancelApplyRun(runId)),
       );
+    } else if (previousControl.paused) {
+      // Startup may have checked verifying actions while the workspace was
+      // paused and cached that completed no-op recovery promise. An explicit
+      // Resume is a new recovery boundary: clear the cached startup pass so
+      // the snapshot below immediately processes the already-persisted
+      // verifying actions instead of waiting for another app restart.
+      userActionRecoveryPromise = null;
+      if (previousControl.pauseBehavior === "finish_current") {
+        await applicationMethods.resumeParkedApplyRuns(
+          previousControl,
+          onDetachedApplyRunFinished,
+        );
+      }
     }
     return getWorkspaceSnapshot();
   }
@@ -1145,6 +1328,10 @@ export function createJobFinderWorkspaceService(
   const applicationAnswerMethods = createWorkspaceApplicationAnswerMethods(
     context,
     applyRunStoreMethods.getApplyRunDetails,
+    (command) =>
+      trackWorkspaceOperation("application answer continuation", () =>
+        userActionMethods.performUserAction(command),
+      ),
   );
   const groupedAnswerMethods = createWorkspaceGroupedAnswerMethods({
     ctx: context,
@@ -1183,16 +1370,37 @@ export function createJobFinderWorkspaceService(
 
       if (activeApplyRunIds.length > 0) {
         const activeApplyRunIdSet = new Set(activeApplyRunIds);
-        const [applyRuns, applyResults] = await Promise.all([
+        const [applyRuns, applyResults, activityControl] = await Promise.all([
           repository.listApplyRuns().catch(() => []),
           repository.listApplyJobResults().catch(() => []),
+          repository.getActivityControl(),
         ]);
         const completedAt = new Date().toISOString();
-        const activeRunningRuns = applyRuns.filter(
-          (run) => activeApplyRunIdSet.has(run.id) && run.state === "running",
+        const parkedRunIds = new Set(
+          applyRuns
+            .filter(
+              (run) =>
+                activeApplyRunIdSet.has(run.id) &&
+                isSafelyParkedApplyQueue({
+                  run,
+                  results: applyResults.filter(
+                    (result) => result.runId === run.id,
+                  ),
+                  control: activityControl,
+                }),
+            )
+            .map((run) => run.id),
         );
-        const activeResults = applyResults.filter((result) =>
-          activeApplyRunIdSet.has(result.runId),
+        const activeRunningRuns = applyRuns.filter(
+          (run) =>
+            activeApplyRunIdSet.has(run.id) &&
+            run.state === "running" &&
+            !parkedRunIds.has(run.id),
+        );
+        const activeResults = applyResults.filter(
+          (result) =>
+            activeApplyRunIdSet.has(result.runId) &&
+            !parkedRunIds.has(result.runId),
         );
         const recoveredRuns = activeRunningRuns.map((run) =>
           recoverInterruptedApplyRun(
@@ -1331,11 +1539,16 @@ export function createJobFinderWorkspaceService(
           discoveryMethods.runDiscovery(targetId),
         );
       }),
-    runAgentDiscovery: (onActivity, signal, targetId) =>
+    runAgentDiscovery: (onActivity, signal, targetId, searchRequest) =>
       trackWorkspaceOperation("discovery", async () => {
         await requireActivityEnabled();
         return runCampaignScopedDiscovery(() =>
-          discoveryMethods.runAgentDiscovery(onActivity, signal, targetId),
+          discoveryMethods.runAgentDiscovery(
+            onActivity,
+            signal,
+            targetId,
+            searchRequest,
+          ),
         );
       }),
     runDiscoveryForTarget: (targetId, onActivity, signal) =>
@@ -1402,6 +1615,8 @@ export function createJobFinderWorkspaceService(
         userActionMethods.performUserAction(command),
       ),
     ...applicationMethods,
+    recordApplicationsSentByPerson: () =>
+      recordApplicationsSentByPerson(context),
     generateResume: (jobId) =>
       trackWorkspaceOperation("resume generation", () =>
         applicationMethods.generateResume(jobId),
@@ -1457,7 +1672,10 @@ export function createJobFinderWorkspaceService(
           },
         );
       }),
-    startAutoApplyQueueRun: (jobIds) =>
+    startAutoApplyQueueRun: (
+      jobIds,
+      applicationAutomationMode?: ApplicationAutomationMode,
+    ) =>
       trackWorkspaceOperation("application preparation", async () => {
         return withApplicationPreparationReservation(
           () => ({ jobIds, run: null }),
@@ -1465,7 +1683,12 @@ export function createJobFinderWorkspaceService(
           // every job in it. Without the token each job the batch begins is
           // charged a second time, so the daily safeguard refuses partway
           // through and the batch stalls with nothing on screen.
-          (token) => applicationMethods.startAutoApplyQueueRun(jobIds, token),
+          (token) =>
+            applicationMethods.startAutoApplyQueueRun(
+              jobIds,
+              token,
+              applicationAutomationMode,
+            ),
         );
       }),
     approveApplyRun: (runId) =>

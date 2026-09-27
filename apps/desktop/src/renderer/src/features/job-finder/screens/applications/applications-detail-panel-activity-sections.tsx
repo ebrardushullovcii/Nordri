@@ -93,11 +93,14 @@ export function ApplicationsDetailPanelActivitySections(props: {
   // What the run that filled this in actually recorded, rather than a later
   // reconstruction from the individual records.
   const reviewCard = selectedApplyRunDetails?.reviewCard ?? null;
+  const reviewCardMatchesVisibleResult =
+    selectedApplyRunDetails?.result?.id === visibleApplyResult?.id;
 
   return (
     <>
       {awaitsYourReview &&
       reviewCard &&
+      reviewCardMatchesVisibleResult &&
       onSubmitPreparedApplication &&
       visibleApplyResult ? (
         <ApplicationsReviewCard

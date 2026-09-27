@@ -55,9 +55,9 @@ export const resumeTailoringStrengthLabels: Record<TailoringMode, string> = {
   // Same names the setup screen uses; "Conservative" and "Aggressive" were a
   // second vocabulary for one setting. The names say what happens to the
   // person's own words rather than grading an invisible effort.
-  conservative: "Light edits that keep every fact",
-  balanced: "A fuller rewrite that keeps every fact",
-  aggressive: "A fuller rewrite that may stretch, with your say-so",
+  conservative: "Light: small edits, every fact kept",
+  balanced: "Tailored: a fuller rewrite, every fact kept",
+  aggressive: "Aggressive: may stretch, with your say-so",
 };
 
 /**
@@ -73,7 +73,7 @@ export const resumeApproachLabels: Record<
   ResumeApplicationMode | TailoringMode,
   string
 > = {
-  original_resume: "Keep my resume as it is",
+  original_resume: "Original: keep my resume as it is",
   tailored_per_job: "Tailor a resume for each job",
   ...resumeTailoringStrengthLabels,
 };

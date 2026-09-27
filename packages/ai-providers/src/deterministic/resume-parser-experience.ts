@@ -738,6 +738,22 @@ function parseStackedExperienceHeader(
   });
 }
 
+// "Lisbon, Portugal", "Remote", "Berlin, Germany · Hybrid": a line that names
+// only a place. Under a role's dates it is the role's location, never its
+// summary; as a summary it reached the tailored resume as "Lisbon, Portugal".
+const LOCATION_ONLY_LINE_PATTERN =
+  /^(?:(?:remote|hybrid|on-?site)|[\p{L}][\p{L}\s.'’-]{1,30}(?:,\s*[\p{L}][\p{L}\s.'’-]{1,30}){1,2}(?:\s*(?:[·|/•-]|\(|,)\s*(?:remote|hybrid|on-?site)\)?)?)$/iu;
+
+export function isLocationOnlyLine(line: string): boolean {
+  const trimmed = stripBulletPrefix(cleanLine(line));
+  return (
+    trimmed.length > 0 &&
+    trimmed.length <= 60 &&
+    trimmed.split(/\s+/u).length <= 6 &&
+    LOCATION_ONLY_LINE_PATTERN.test(trimmed)
+  );
+}
+
 function inferUndatedExperienceEntries(
   lines: readonly string[],
   resumeText: string,
@@ -813,7 +829,10 @@ function inferUndatedExperienceEntries(
       startDate: null,
       endDate: null,
       isCurrent: false,
-      summary: detailLines[0] ?? null,
+      summary:
+        detailLines[0] !== undefined && !isLocationOnlyLine(detailLines[0])
+          ? detailLines[0]
+          : null,
       achievements: uniqueStrings(
         detailLines
           .slice(1)
@@ -903,17 +922,26 @@ export function inferExperienceEntries(resumeText: string) {
         .filter((line) => line.length > 0 && !isCompanyMarkerLine(line));
       const detailLines = mergeWrappedDetailLines(rawDetailLines);
       const firstDetailIsBullet = isBulletLine(rawDetailLines[0] ?? "");
-      const summaryLine = !firstDetailIsBullet
-        ? (detailLines[0] ?? null)
-        : null;
-      const achievementLines = summaryLine ? detailLines.slice(1) : detailLines;
+      const firstDetail = detailLines[0] ?? null;
+      const firstDetailIsLocation =
+        firstDetail !== null &&
+        !firstDetailIsBullet &&
+        isLocationOnlyLine(firstDetail);
+      const summaryLine =
+        !firstDetailIsBullet && !firstDetailIsLocation ? firstDetail : null;
+      const achievementLines =
+        summaryLine || firstDetailIsLocation
+          ? detailLines.slice(1)
+          : detailLines;
 
       return {
         companyName: cleanCompanyName(header.companyName) || null,
         companyUrl: null,
         title: header.title,
         employmentType: null,
-        location: header.location,
+        location:
+          header.location ??
+          (firstDetailIsLocation ? normalizeLocationLabel(firstDetail) : null),
         workMode: header.workMode,
         startDate: header.dateRange.startDate,
         endDate: header.dateRange.endDate,

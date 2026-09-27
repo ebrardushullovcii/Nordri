@@ -1,6 +1,8 @@
 import {
   PROFILE_SETUP_PLACEHOLDER_HEADLINE,
   PROFILE_SETUP_PLACEHOLDER_SUMMARY,
+  isInterruptedResumeImportRun,
+  RESUME_IMPORT_INTERRUPTED_MESSAGE,
   type AssetStatus,
   type CandidateProfile,
   type ResumeExtractionStatus,
@@ -102,6 +104,8 @@ interface ProfileResumePanelProps {
     action: ResumeTimelineRepairAction,
   ) => Promise<void>;
   onImportResume: () => void;
+  /** Imports again the file a stopped import saved; no file picker. */
+  onRetryInterruptedImport?: () => void;
   onReviewImportSuggestion?: (
     candidate: ResumeImportFieldCandidateSummary,
   ) => void;
@@ -179,6 +183,25 @@ export function getResumeImportStageFallbackNotes(
 ): string[] {
   return warnings.filter((warning) =>
     RESUME_IMPORT_STAGE_FALLBACK_PATTERN.test(warning.trim().toLowerCase()),
+  );
+}
+
+/**
+ * The notes Job Finder itself writes for the person after an import. The
+ * stored list also carries the import model's own working notes ("No target
+ * roles or salary statements; search_preferences omitted.", "Per
+ * instructions, do not create…") and parser diagnostics; those are for
+ * debugging and never shown under Import notes.
+ */
+const PERSON_FACING_IMPORT_NOTE_PATTERNS: readonly RegExp[] = [
+  /^\d+ optional proof suggestions? (?:is|are) available to review\b/u,
+  /^paste plain-text resume content\b/u,
+];
+
+export function isPersonFacingImportNote(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  return PERSON_FACING_IMPORT_NOTE_PATTERNS.some((pattern) =>
+    pattern.test(normalized),
   );
 }
 
@@ -281,7 +304,7 @@ function getResumePanelCopy(input: {
     return {
       headline: "Your resume is ready to reuse",
       description:
-        "Refresh profile suggestions after you update the file, then review the changes below.",
+        "Replace the file to import a newer resume, or refresh to read this one again.",
     };
   }
 
@@ -320,6 +343,7 @@ export function ProfileResumePanel({
   onAnalyzeProfileFromResume,
   onApplyTimelineRepairAction,
   onImportResume,
+  onRetryInterruptedImport,
   onReviewImportSuggestion,
   profileForm,
   profile,
@@ -418,6 +442,7 @@ export function ProfileResumePanel({
   );
   const visibleAnalysisWarnings = profile.baseResume.analysisWarnings.filter(
     (warning) =>
+      isPersonFacingImportNote(warning) &&
       !shouldHideAnalysisWarning(warning) &&
       !pendingReviewLabels.has(warning.trim().toLowerCase()),
   );
@@ -428,6 +453,11 @@ export function ProfileResumePanel({
     latestResumeImportRun,
   );
   const resumeStatusTone = resumeStripStatus.tone;
+  // An import cut off by the app closing: its file is kept, so importing it
+  // again is one press instead of finding the file in a picker.
+  const interruptedImport =
+    isInterruptedResumeImportRun(latestResumeImportRun ?? null) &&
+    !isImportResumePending;
   /* The strip that owns the READY badge owns its qualifier. The detailed
      per-stage prose lives in the full panel below the whole Basics editor,
      thousands of pixels down the column, so an import where every AI stage
@@ -483,9 +513,30 @@ export function ProfileResumePanel({
               Replace it before using the original file for an application.
             </p>
           ) : null}
+          {interruptedImport ? (
+            <p
+              className="text-sm leading-5 text-(--warning-text)"
+              data-profile-resume-import-interrupted
+              role="status"
+            >
+              {RESUME_IMPORT_INTERRUPTED_MESSAGE}
+            </p>
+          ) : null}
         </div>
 
         <div className="flex flex-wrap gap-2 sm:justify-end">
+          {interruptedImport && onRetryInterruptedImport ? (
+            <Button
+              disabled={Boolean(importDisabledReason)}
+              pending={isImportResumePending}
+              onClick={onRetryInterruptedImport}
+              size="compact"
+              type="button"
+              variant="secondary"
+            >
+              Import {latestResumeImportRun?.sourceResumeFileName} again
+            </Button>
+          ) : null}
           <Button
             disabled={Boolean(importDisabledReason)}
             pending={isImportResumePending}

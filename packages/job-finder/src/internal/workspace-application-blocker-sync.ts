@@ -16,19 +16,26 @@ function buildMissingResumeBlockerClearance(
   record: ApplicationRecord,
   detectedAt: string,
 ): ApplicationRecord {
+  const wasResumeReview = record.latestBlocker?.code === "requires_manual_review";
   return ApplicationRecordSchema.parse({
     ...record,
     latestBlocker: null,
-    lastActionLabel: "Approved tailored resume is ready for this job.",
+    lastActionLabel: wasResumeReview
+      ? "Resume review completed and the approved resume is ready."
+      : "Approved tailored resume is ready for this job.",
     nextActionLabel: "Retry preparation when you are ready.",
     lastUpdatedAt: detectedAt,
     events: mergeEvents(record.events, [
       {
         id: `event_${record.id}_missing_resume_cleared`,
         at: detectedAt,
-        title: "Tailored resume approved",
+        title: wasResumeReview
+          ? "Resume review completed"
+          : "Tailored resume approved",
         detail:
-          "The missing-resume blocker cleared after resume approval became ready for apply.",
+          wasResumeReview
+            ? "The resume-review blocker cleared after the reviewed resume was approved and became ready for apply."
+            : "The missing-resume blocker cleared after resume approval became ready for apply.",
         emphasis: "positive",
       },
     ]),
@@ -59,17 +66,30 @@ export function listStaleMissingResumeBlockerClearances(input: {
   const clearances: ApplicationRecord[] = [];
 
   for (const record of input.applicationRecords) {
-    if (record.latestBlocker?.code !== "missing_resume") {
+    if (
+      record.latestBlocker?.code !== "missing_resume" &&
+      record.latestBlocker?.code !== "requires_manual_review"
+    ) {
       continue;
     }
 
+    const draft = draftsByJobId.get(record.jobId) ?? null;
     const ready = isApprovedTailoredResumeReadyForApply({
-      draft: draftsByJobId.get(record.jobId) ?? null,
+      draft,
       exports: exportsByJobId.get(record.jobId) ?? [],
       asset: assetsByJobId.get(record.jobId) ?? null,
     }).ready;
 
     if (!ready) {
+      continue;
+    }
+    // A completed review clears only an older review blocker. If a new
+    // blocker was recorded after approval, the draft has drifted and the
+    // current decision still needs attention.
+    if (
+      record.latestBlocker.code === "requires_manual_review" &&
+      (!draft?.approvedAt || draft.approvedAt < record.lastUpdatedAt)
+    ) {
       continue;
     }
 

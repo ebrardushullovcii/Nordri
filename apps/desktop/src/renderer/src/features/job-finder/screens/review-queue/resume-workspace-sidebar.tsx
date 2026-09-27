@@ -1,5 +1,6 @@
 import type { JobFinderResumeWorkspace } from "@unemployed/contracts";
 import { formatStatedNormalizedCompensation } from "../../lib/normalized-compensation";
+import { ExternalUrlLink } from "../../components/open-outside-links";
 import { ResumeClaimTrustPanel } from "./resume-claim-trust-panel";
 import { formatOptionalDate } from "./resume-workspace-utils";
 
@@ -196,7 +197,11 @@ export function ResumeWorkspaceSidebar({
           {leadResearch ? (
             <div className="grid gap-1 text-sm text-foreground-soft">
               <strong className="break-words text-foreground">
-                {leadResearch.pageTitle ?? leadResearch.sourceUrl}
+                <ExternalUrlLink
+                  className="break-words"
+                  label={leadResearch.pageTitle ?? leadResearch.sourceUrl}
+                  url={leadResearch.sourceUrl}
+                />
               </strong>
               <span className="break-words">
                 {formatHostLabel(leadResearch.sourceUrl)}
@@ -209,11 +214,25 @@ export function ResumeWorkspaceSidebar({
               {job.atsProvider ? (
                 <p className="break-words">Provider: {job.atsProvider}</p>
               ) : null}
-              {employerHost ? (
-                <p className="break-words">Employer site: {employerHost}</p>
+              {employerHost && job.employerWebsiteUrl ? (
+                <p className="break-words">
+                  Employer site:{" "}
+                  <ExternalUrlLink
+                  className="break-words"
+                    label={employerHost}
+                    url={job.employerWebsiteUrl}
+                  />
+                </p>
               ) : null}
-              {applicationHost ? (
-                <p className="break-words">Apply route: {applicationHost}</p>
+              {applicationHost && job.applicationUrl ? (
+                <p className="break-words">
+                  Apply route:{" "}
+                  <ExternalUrlLink
+                  className="break-words"
+                    label={applicationHost}
+                    url={job.applicationUrl}
+                  />
+                </p>
               ) : null}
             </div>
           ) : null}

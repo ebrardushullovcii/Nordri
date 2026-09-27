@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { DiscoveryRunRecordSchema } from "@unemployed/contracts";
 
-import { completeTargetExecution } from "./workspace-discovery-run-helpers";
+import {
+  buildDiscoveryRunReport,
+  completeTargetExecution,
+} from "./workspace-discovery-run-helpers";
 
 describe("discovery run change digest", () => {
   it("aggregates source changes, health, warnings, and duration into the persisted summary", () => {
@@ -129,5 +132,44 @@ describe("discovery run change digest", () => {
         ],
       }),
     ]);
+  });
+
+  it("marks only an empty listing; a re-run that met only saved jobs stays healthy", () => {
+    const run = DiscoveryRunRecordSchema.parse({
+      id: "run-known-only",
+      state: "running",
+      startedAt: "2026-07-31T10:00:00.000Z",
+      targetIds: ["known-only", "empty"],
+      targetExecutions: [
+        { targetId: "known-only", adapterKind: "auto", state: "running" },
+        { targetId: "empty", adapterKind: "auto", state: "running" },
+      ],
+    });
+    const knownOnly = completeTargetExecution(
+      run,
+      "known-only",
+      "2026-07-31T10:00:03.000Z",
+      { state: "completed", jobsFound: 0, jobsSkippedByLedger: 10 },
+    );
+    const both = completeTargetExecution(
+      knownOnly,
+      "empty",
+      "2026-07-31T10:00:04.000Z",
+      { state: "completed", jobsFound: 0 },
+    );
+    expect(
+      both.summary.sourceHealth.map(({ targetId, health }) => ({
+        targetId,
+        health,
+      })),
+    ).toEqual([
+      { targetId: "known-only", health: "healthy" },
+      { targetId: "empty", health: "warning" },
+    ]);
+    // The frozen report counts the saved listings it met as found, so the
+    // banner reads "10 found · 0 new · 10 already here", never "0 found".
+    expect(
+      buildDiscoveryRunReport(both, "2026-07-31T10:00:05.000Z"),
+    ).toMatchObject({ found: 10, new: 0 });
   });
 });

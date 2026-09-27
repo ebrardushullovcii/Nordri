@@ -75,13 +75,13 @@ export function evaluateSourceInstructionQuality(input: {
 
   if (entryPathSignals.length === 0) {
     qualityWarnings.push(
-      "The best repeatable entry path is still missing; keep this source in draft until the debug run proves where future agents should start, including any jobs route, homepage path, or reusable recommendation list.",
+      "The check did not find a repeatable way to the job list yet. Check the source again, or open it in the Job Finder browser and see where the jobs are.",
     );
   }
 
   if (searchProbeCoverageSignals.length === 0) {
     qualityWarnings.push(
-      "Search and filter coverage is still missing; keep this source in draft until the debug run proves a real control, recommendation/show-all route, pagination behavior, or explicitly records that those probes were tried and not reusable.",
+      "The check has not yet shown a search, filter, or paging control that changes the results, or said clearly that there is none. Check the source again to complete it.",
     );
   }
 
@@ -91,19 +91,19 @@ export function evaluateSourceInstructionQuality(input: {
     isConclusiveDisproof
   ) {
     qualityWarnings.push(
-      "No positive search or filter control was confirmed; the run recorded explicit disproof, which satisfies coverage but future runs should still watch for newly added controls.",
+      "No search or filter control changed the results on this site; the check said so explicitly. A future check will still look for new controls.",
     );
   }
 
   if (highSignalDetailOrApply.length === 0) {
     qualityWarnings.push(
-      "Reusable detail or apply guidance is still missing; keep this source in draft until the debug run proves stable detail-page behavior or a safe apply-entry pattern.",
+      "The check has not yet shown how job pages are laid out or how applying starts. Check the source again to complete it.",
     );
   }
 
   if (totalReusableSignals.length < 4) {
     qualityWarnings.push(
-      "The learned guidance is still too thin to validate; capture at least four distinct reusable findings across entry path, search or filter coverage, detail navigation, and apply behavior.",
+      "The guidance is still thin: a validated source needs at least four distinct findings across the way to the jobs, search or filters, job pages, and applying.",
     );
   }
 

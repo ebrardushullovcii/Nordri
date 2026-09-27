@@ -228,8 +228,8 @@ export function ApplicationsDetailPanelPrivacyReceiptSection(props: {
             </p>
             <p className="text-(length:--text-small) leading-6 text-foreground-soft">
               {hasExactLineage
-                ? "This record shows what Job Finder stored during preparation. Job Finder never submits applications — only the employer site can confirm the outcome."
-                : "This older record predates exact application linking. Job Finder never submits applications — only the employer site can confirm the outcome."}
+                ? "This record shows what Job Finder stored for this application. A submission is confirmed only when the employer site reports receipt."
+                : "This older record predates exact application linking. Check the employer site to confirm the outcome."}
             </p>
           </div>
           <Button
@@ -348,8 +348,8 @@ export function ApplicationsDetailPanelPrivacyReceiptSection(props: {
                 {receipt.finalSubmitOccurred
                   ? "This receipt records a final-submit action for this run."
                   : "No final-submit action was recorded."}{" "}
-                These fields are not proof of the site's outcome and do not
-                represent a capability in the current product.
+                The employer-site outcome above is the record of whether that
+                action was confirmed.
               </>
             ) : (
               <>
@@ -370,8 +370,11 @@ export function ApplicationsDetailPanelPrivacyReceiptSection(props: {
         </div>
 
         <p className="text-(length:--text-small) leading-6 text-foreground-soft">
-          Job Finder prepares application data only. You review and submit on
-          the employer site yourself.
+          {receipt.finalSubmitOccurred
+            ? "This receipt records a final-submit action. The employer-site confirmation determines whether the application was sent."
+            : receipt.finalSubmitAuthorized
+              ? "Job Finder had permission to send this application, but this receipt records no final-submit action."
+              : "Job Finder prepared this application without permission to send it."}
         </p>
       </div>
     </details>

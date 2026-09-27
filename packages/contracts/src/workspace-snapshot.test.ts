@@ -684,10 +684,22 @@ describe("contracts workspace snapshot schema", () => {
       JobFinderAgentDiscoveryActionInputSchema.parse({
         requestId: "agent_discovery_2",
         targetId: "target_linkedin_default",
+        searchRequest: {
+          intent: "Around engineering",
+          breadth: "wide",
+          freshness: "recent",
+          sourceIds: ["target_linkedin_default"],
+        },
       }),
     ).toEqual({
       requestId: "agent_discovery_2",
       targetId: "target_linkedin_default",
+      searchRequest: {
+        intent: "Around engineering",
+        breadth: "wide",
+        freshness: "recent",
+        sourceIds: ["target_linkedin_default"],
+      },
     });
   });
 
@@ -796,9 +808,11 @@ describe("contracts workspace snapshot schema", () => {
     expect(
       JobFinderApplyQueueActionInputSchema.parse({
         jobIds: ["job_1", "job_2"],
+        applicationAutomationMode: "confirm_before_submit",
       }),
     ).toEqual({
       jobIds: ["job_1", "job_2"],
+      applicationAutomationMode: "confirm_before_submit",
     });
   });
 

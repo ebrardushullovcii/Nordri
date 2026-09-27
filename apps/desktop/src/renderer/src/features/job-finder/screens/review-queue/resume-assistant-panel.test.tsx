@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import type {
   ResumeAssistantMessage,
   ResumeClaimAssessment,
@@ -219,6 +219,205 @@ describe("ResumeAssistantPanel", () => {
         .querySelector<HTMLElement>("[data-resume-guided-edits-composer]")
         ?.className.includes("pb-[1.375rem]"),
     ).toBe(false);
+  });
+
+  it("applies the latest safe proposal when the person says do it", () => {
+    const resolveProposal = vi.fn();
+    const sendMessage = vi.fn();
+    render(
+      <ResumeAssistantPanel
+        assistantMessages={[buildMessage()]}
+        assistantPending={false}
+        draft={buildDraft()}
+        isWorkspacePending={false}
+        onSendAssistantMessage={sendMessage}
+        onResolveProposal={resolveProposal}
+        validation={buildValidation()}
+      />,
+    );
+
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "Message the Assistant" }),
+      { target: { value: "do it" } },
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+
+    expect(resolveProposal).toHaveBeenCalledWith("assistant one", "accept", [
+      "patch one",
+    ]);
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  it.each(["yes", "Yes please!", "go ahead", "ok, do it", "sounds good"])(
+    "applies the latest safe proposal on a typed yes: %s",
+    (reply) => {
+      const resolveProposal = vi.fn();
+      const sendMessage = vi.fn();
+      render(
+        <ResumeAssistantPanel
+          assistantMessages={[buildMessage()]}
+          assistantPending={false}
+          draft={buildDraft()}
+          isWorkspacePending={false}
+          onSendAssistantMessage={sendMessage}
+          onResolveProposal={resolveProposal}
+          validation={buildValidation()}
+        />,
+      );
+
+      fireEvent.change(
+        screen.getByRole("textbox", { name: "Message the Assistant" }),
+        { target: { value: reply } },
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+
+      expect(resolveProposal).toHaveBeenCalledWith("assistant one", "accept", [
+        "patch one",
+      ]);
+      expect(sendMessage).not.toHaveBeenCalled();
+    },
+  );
+
+  it("applies a proposal whose only flag is a line to confirm on a typed yes", () => {
+    const resolveProposal = vi.fn();
+    const confirmMessage = {
+      ...buildMessage(),
+      approvalBlockers: [
+        {
+          patchId: "patch one",
+          sectionId: "sec summary",
+          entryId: null,
+          bulletId: null,
+          flaggedText: proposedSummaryText,
+          message: "This wording stretches past your saved evidence.",
+          kind: "needs_confirmation" as const,
+        },
+      ],
+    } satisfies ResumeAssistantMessage;
+    render(
+      <ResumeAssistantPanel
+        assistantMessages={[confirmMessage]}
+        assistantPending={false}
+        draft={buildDraft()}
+        isWorkspacePending={false}
+        onSendAssistantMessage={vi.fn()}
+        onResolveProposal={resolveProposal}
+        validation={buildValidation()}
+      />,
+    );
+
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "Message the Assistant" }),
+      { target: { value: "yes" } },
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+
+    expect(resolveProposal).toHaveBeenCalledWith("assistant one", "accept", [
+      "patch one",
+    ]);
+  });
+
+  it("sends a pick among proposed changes to the Assistant instead of accepting everything", () => {
+    const resolveProposal = vi.fn();
+    const sendMessage = vi.fn();
+    render(
+      <ResumeAssistantPanel
+        assistantMessages={[buildMessage()]}
+        assistantPending={false}
+        draft={buildDraft()}
+        isWorkspacePending={false}
+        onSendAssistantMessage={sendMessage}
+        onResolveProposal={resolveProposal}
+        validation={buildValidation()}
+      />,
+    );
+
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "Message the Assistant" }),
+      { target: { value: "the second one" } },
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+
+    expect(resolveProposal).not.toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenCalledWith("the second one");
+  });
+
+  it("does not apply a blocked proposal when the person says do it", () => {
+    const resolveProposal = vi.fn();
+    const sendMessage = vi.fn();
+    const blockedMessage = {
+      ...buildMessage(),
+      approvalBlockers: [
+        {
+          patchId: "patch one",
+          sectionId: "sec summary",
+          entryId: null,
+          bulletId: null,
+          flaggedText: proposedSummaryText,
+          message: "This wording is not supported by saved evidence.",
+        },
+      ],
+    } satisfies ResumeAssistantMessage;
+    render(
+      <ResumeAssistantPanel
+        assistantMessages={[blockedMessage]}
+        assistantPending={false}
+        draft={buildDraft()}
+        isWorkspacePending={false}
+        onSendAssistantMessage={sendMessage}
+        onResolveProposal={resolveProposal}
+        validation={buildValidation()}
+      />,
+    );
+
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "Message the Assistant" }),
+      { target: { value: "do it" } },
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+
+    expect(resolveProposal).not.toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenCalledWith("do it");
+  });
+
+  it("does not skip a newer blocked response to apply an older safe proposal", () => {
+    const resolveProposal = vi.fn();
+    const sendMessage = vi.fn();
+    const blockedMessage = {
+      ...buildMessage(),
+      id: "assistant newer blocked",
+      createdAt: "2026-04-27T00:50:00.000Z",
+      approvalBlockers: [
+        {
+          patchId: "patch one",
+          sectionId: "sec summary",
+          entryId: null,
+          bulletId: null,
+          flaggedText: proposedSummaryText,
+          message: "This wording is not supported by saved evidence.",
+        },
+      ],
+    } satisfies ResumeAssistantMessage;
+    render(
+      <ResumeAssistantPanel
+        assistantMessages={[buildMessage(), blockedMessage]}
+        assistantPending={false}
+        draft={buildDraft()}
+        isWorkspacePending={false}
+        onSendAssistantMessage={sendMessage}
+        onResolveProposal={resolveProposal}
+        validation={buildValidation()}
+      />,
+    );
+
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "Message the Assistant" }),
+      { target: { value: "do it" } },
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+
+    expect(resolveProposal).not.toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenCalledWith("do it");
   });
 });
 

@@ -8,19 +8,30 @@ Applications were prepared by a fixed script: eight passes over the page, determ
 
 ## Decision
 
-An application form is worked by an agent loop rather than a fixed number of passes, in `packages/browser-agent/src/apply/`.
+Applying for a job is done by a harness, not by a script with an agent bolted on. The agent gets the ordinary powers a person has in a browser and is trusted to work out how a particular site wants to be used.
 
-The agent never touches the page. It proposes one bounded action — inspect the form, answer this field, attach this file, move to the next step, send it, or finish — and a deterministic executor binds that proposal to the page as it is at that moment, to the exact application the run belongs to, and to the saved authority document before anything is written. A proposal made against a page that has since changed is refused rather than applied to whatever now sits in that slot.
+It can look at the whole page, read it in full, click anything, follow a link, go to an address, type, choose, tick, upload, scroll, wait, and go back. Nothing it observes is filtered: every visible control, every button, every link with its address and its text, every other clickable thing, the headings, the tabs the page opened, and an excerpt of the text all reach it with a stable handle. A page that shows an Apply button shows it, whatever that button is made of and whatever it is called.
 
-Answers are sourced in a fixed order: a fact the person already stated in their profile, then the resume going out with this application, then an answer they saved before, then free text written for the question and grounded in those three. Only the last of those comes from the model, and only for a genuinely free-text field with nothing stored for it; every written answer records what it was grounded in. A question none of those can answer is not guessed at — it pauses into Needs you with the exact wording from the page and a suggestion when one is plausible.
+The run starts wherever the job link points — a listing, a board, an aggregator, a form — with one goal: reach the application form for this job and fill it completely from the person's profile and resume. If the site sends it somewhere else, it follows. Cookie banners and chat overlays are things to close, not reasons to stop. A wrong turn is something to come back from. It stops when the form is done, when only the person can go further, or when it is genuinely stuck, and it says which in its own words — the person reads exactly what it wrote.
 
-Anything the person declares about themselves — equal-opportunity self-identification, background-check consent, certifying that answers are true, accepting terms, privacy and marketing consent — is answered only when the saved authority document names that exact kind in `preApprovedAttestationKinds`. An empty list, the default, means every declaration pauses. Pay is the same: `salaryDisclosure` defaults to leaving it to the person.
+Deterministic code is kept only where it is about safety, and it is deliberately small:
 
-There is no step quota. Safety ceilings on steps and elapsed time exist and sit far above what an honest application needs. What is bounded is going nowhere: the same warn-then-stop stall rule discovery uses, and a `stuck: true` finish the agent can call itself. Every ending is one plain sentence the person reads as-is.
+- an answer about the person comes from their own profile, resume and saved answers, never from the model's memory of them; `suggest_answer` is how the agent asks
+- a declaration the person makes about themselves is only made when they approved that exact kind in advance
+- a write proposed against a page that has moved on is retried against the page as it is, rather than landing in the wrong field
+- the person never has an account created, credentials entered, or a security challenge worked around
+- sending an application goes through its own preflight, the saved authority, and one idempotency key
+- origins the person named are enforced; a hop to a site they did not name is reported to the agent as a fact and allowed, because a listing on one site whose form lives on another is the ordinary shape of job applications
 
-Sending stays behind its own deterministic preflight: authority for this exact application, a final control that really is one, every required answer present, every required file attached, no visible problem on the page, and this really being the last screen. Then exactly one click, then verification from the employer's own page. An uncertain outcome is recorded as uncertain and never retried.
+Stall handling is warn-then-stop with a generous window — twelve steps that fill nothing in, because reading, scrolling, closing a banner and trying a link are all reasonable. There are no step quotas, only safety ceilings: two hundred steps and fifteen minutes.
 
-Nothing per-site exists anywhere in this path. The agent reads the form (ADR 0007).
+### What was removed, and why
+
+- **`resolveApplyEntry` / `findApplyEntry` and the pre-loop gate.** They decided, before the agent was consulted, whether a page was already a form and which link was the way in. On a board listing carrying a search box and an AI chat input they concluded the page *was* the form and reported "no application form or apply button" while a person could see the Apply button plainly. The same code refused `target="_blank"` links as a hand-off, which is how a large share of boards link to the employer's form.
+- **The deterministic pre-fill pass.** Filling every field the sources answered before the agent had looked made the agent's picture of the page wrong from the first turn, and made the run unable to explain what it had done.
+- **Phrase lists in the observation.** Deciding what counted as an action, an apply link, or a form control by matching words is what made the harness blind to buttons a person could see.
+
+Nothing above changes the discovery and source-check loops, which already work this way.
 
 ## Consequences
 

@@ -161,6 +161,8 @@ describe("profile copilot commit concurrency", () => {
       snapshotProfileSetupState: seed.profileSetupState,
       snapshotProfileAfter: null,
       snapshotSearchPreferencesAfter: null,
+      snapshotResumeApplicationMode: null,
+      snapshotResumeApplicationModeAfter: null,
     };
     await base.upsertProfileRevision(undoTarget);
     await base.saveProfile({
@@ -245,12 +247,14 @@ describe("resume import finalize concurrency", () => {
     const run = await base.getLatestResumeImportRun();
 
     expect(racedOnce).toBe(true);
+    // The concurrent edit wins the compare-and-swap; the import then
+    // re-reads the profile and lands on top of it, so the reusable answer and
+    // the imported identity both survive instead of the whole import waiting
+    // for review because a field was saved meanwhile.
     expect(profile.answerBank.customAnswers).toEqual([REUSABLE_ANSWER]);
-    // The concurrent edit wins the compare-and-swap, so the imported identity
-    // waits for review instead of silently replacing the current profile.
-    expect(profile.fullName).toBeNull();
-    expect(run?.status).toBe("review_ready");
-    expect(run?.warnings).toContain(RESUME_IMPORT_SUPERSEDED_MESSAGE);
+    expect(profile.fullName).toBe("Jamie Rivers");
+    expect(run?.status).toBe("applied");
+    expect(run?.warnings).not.toContain(RESUME_IMPORT_SUPERSEDED_MESSAGE);
   });
 
   test("a reusable answer committed after import finalization survives", async () => {
@@ -369,6 +373,8 @@ describe("profile copilot preference and sibling-flag races", () => {
       snapshotProfileSetupState: seed.profileSetupState,
       snapshotProfileAfter: null,
       snapshotSearchPreferencesAfter: null,
+      snapshotResumeApplicationMode: null,
+      snapshotResumeApplicationModeAfter: null,
     };
     await base.upsertProfileRevision(undoTarget);
 

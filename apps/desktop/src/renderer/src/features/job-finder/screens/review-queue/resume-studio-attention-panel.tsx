@@ -121,7 +121,10 @@ export function ResumeStudioAttentionPanel(
         </div>
       ) : null}
 
-      {props.exportBlockedReason ? (
+      {/* When the "Lines to confirm" list is mounted below, it is the
+          notice; a banner above it repeating the count with a button that
+          scrolls to the list was one more thing to read. */}
+      {props.exportBlockedReason && !props.claimConfirmationPanel ? (
         <div
           className="flex flex-wrap items-start justify-between gap-2 rounded-(--radius-field) border border-(--warning-border) bg-(--warning-surface) px-3 py-2 text-(length:--text-small) leading-5 text-(--warning-text)"
           role="alert"

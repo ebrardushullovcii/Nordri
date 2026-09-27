@@ -18,6 +18,7 @@ import {
   DiscoveryTimingSummarySchema,
   isCardOnlyDiscoveryEvidence,
   JobDiscoveryPreferencesSchema,
+  SavedJobDiscoveryProvenanceSchema,
   JobPostingSchema,
   MatchAssessmentSchema,
   SavedJobSchema,
@@ -612,6 +613,25 @@ describe("discovery contracts", () => {
     expect(persistedActivity.activity.at(-1)?.id).toBe("history_510");
   });
 
+  test("persists the exact request used to start a discovery run", () => {
+    const run = DiscoveryRunRecordSchema.parse({
+      id: "run_retry_request",
+      state: "running",
+      startedAt: "2026-09-21T10:00:00.000Z",
+      targetIds: ["source_one"],
+      searchIntent: "Staff frontend roles in climate software",
+      searchBreadth: "wide",
+      searchFreshness: "recent",
+    });
+
+    expect(run).toMatchObject({
+      targetIds: ["source_one"],
+      searchIntent: "Staff frontend roles in climate software",
+      searchBreadth: "wide",
+      searchFreshness: "recent",
+    });
+  });
+
   test("keeps the discovery run budget optional and hard-capped", () => {
     const preferences = JobDiscoveryPreferencesSchema.parse({});
 
@@ -771,5 +791,34 @@ describe("paused background work names a control that exists", () => {
     expect(ACTIVITY_PAUSED_MESSAGE).toContain("Resume background work");
     expect(ACTIVITY_PAUSED_MESSAGE).toContain("Home");
     expect(ACTIVITY_PAUSED_MESSAGE).not.toContain("command center");
+  });
+});
+
+describe("SavedJobDiscoveryProvenanceSchema sightings", () => {
+  const base = {
+    targetId: "target_a",
+    adapterKind: "auto",
+    startingUrl: "https://jobs.example.com/",
+    discoveredAt: "2026-09-23T10:00:00.000Z",
+  };
+
+  test("provenance written before sightings kept their own links still parses", () => {
+    const parsed = SavedJobDiscoveryProvenanceSchema.parse(base);
+    expect(parsed.listingUrl).toBeUndefined();
+    expect(parsed.pageApplyUrl).toBeUndefined();
+  });
+
+  test("a sighting keeps its own listing, application and page apply links", () => {
+    const parsed = SavedJobDiscoveryProvenanceSchema.parse({
+      ...base,
+      listingUrl: "https://jobs.example.com/jobs/9",
+      applicationUrl: "https://jobs.example.com/jobs/9",
+      pageApplyUrl: "https://jobs.example.com/apply/9",
+      routeReadAt: "2026-09-23T10:05:00.000Z",
+      sourceJobId: "9",
+      applyPath: "unknown",
+    });
+    expect(parsed.pageApplyUrl).toBe("https://jobs.example.com/apply/9");
+    expect(parsed.applyPath).toBe("unknown");
   });
 });

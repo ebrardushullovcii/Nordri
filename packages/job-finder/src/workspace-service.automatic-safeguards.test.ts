@@ -49,6 +49,14 @@ function createAutomaticFailureRuntime(): BrowserSessionRuntime {
         startedAt: now,
         completedAt: now,
         warning: "Agent runtime failed while probing the source.",
+        agentMetadata: result.agentMetadata
+          ? {
+              ...result.agentMetadata,
+              phaseCompletionMode: "runtime_failed",
+              phaseCompletionReason:
+                "Agent runtime failed while probing the source.",
+            }
+          : null,
       };
     },
   };
@@ -183,10 +191,10 @@ describe("workspace service automatic safeguard persistence", () => {
       );
     expect(firstPause).toMatchObject({
       failuresInWindow: 1,
-      sampleSize: 6,
+      sampleSize: 2,
       failureRateThresholdPercent: 10,
     });
-    expect(firstPause?.failureRatePercent).toBeCloseTo(16.667, 3);
+    expect(firstPause?.failureRatePercent).toBeCloseTo(50, 3);
     expect(saveIntelligenceState).toHaveBeenCalledTimes(1);
 
     const secondSnapshot = await service.getWorkspaceSnapshot();
@@ -306,5 +314,66 @@ describe("workspace service automatic safeguard persistence", () => {
       (await repository.getIntelligenceState()).safeguards
         .abnormalFailurePauses,
     ).toEqual([]);
+  });
+});
+
+describe("application failure pause at the next start", () => {
+  test("is measured again from the evidence on record, so sent applications lift a stale 100% pause", async () => {
+    const repository = createInMemoryJobFinderRepository(createSeed());
+    const setupService = createService(repository);
+    const campaignId = await configureAutomaticFailureThreshold(
+      setupService,
+      repository,
+      60,
+    );
+    await seedInterruptedApplyEvidence(repository, campaignId);
+    const service = createService(repository);
+    const paused = (
+      await service.getWorkspaceSnapshot()
+    ).intelligence.safeguards.abnormalFailurePauses.find(
+      (pause) => pause.id === `automatic_application_failures:${campaignId}`,
+    );
+    expect(paused).toMatchObject({ paused: true, sampleSize: 1 });
+
+    const now = new Date().toISOString();
+    await repository.upsertApplyRun(
+      ApplyRunSchema.parse({
+        id: "apply_run_sent",
+        campaignId,
+        mode: "queue_auto",
+        state: "completed",
+        jobIds: ["job_sent"],
+        createdAt: now,
+        updatedAt: now,
+        completedAt: now,
+        summary: "Application submitted",
+        detail: "Application submitted",
+        totalJobs: 1,
+        pendingJobs: 0,
+      }),
+    );
+    await repository.upsertApplyJobResult(
+      ApplyJobResultSchema.parse({
+        id: "apply_result_sent",
+        runId: "apply_run_sent",
+        jobId: "job_sent",
+        state: "submitted",
+        summary: "Application submitted",
+        detail: "The employer site confirmed that it received the application.",
+        startedAt: now,
+        updatedAt: now,
+        completedAt: now,
+      }),
+    );
+
+    await service.startApplyCopilotRun("job_ready").catch(() => undefined);
+
+    const pause = (
+      await repository.getIntelligenceState()
+    ).safeguards.abnormalFailurePauses.find(
+      (entry) => entry.id === `automatic_application_failures:${campaignId}`,
+    );
+    expect(pause).toMatchObject({ sampleSize: 2, paused: false });
+    expect(pause?.failureRatePercent).toBeCloseTo(50, 3);
   });
 });

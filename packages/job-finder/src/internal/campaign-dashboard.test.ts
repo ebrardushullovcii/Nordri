@@ -258,9 +258,10 @@ describe("dashboard summary recommendations", () => {
       },
     });
 
+    // Never checked is not a problem: checks are optional (ADR 0024).
     expect(beforeRun.sourceHealth).toMatchObject({
-      healthy: 0,
-      needsAttention: 1,
+      healthy: 1,
+      needsAttention: 0,
     });
     expect(afterRun.sourceHealth).toMatchObject({
       healthy: 1,

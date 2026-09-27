@@ -82,7 +82,7 @@ describe("ApplicationsDetailPanelSubmitApprovalSection", () => {
     );
 
     fireEvent.click(
-      screen.getByRole("button", { name: "Start preparing this job" }),
+      screen.getByRole("button", { name: "Apply now" }),
     );
     expect(onApproveApplyRun).toHaveBeenCalledWith({
       runId: "run_1",

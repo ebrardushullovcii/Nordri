@@ -7,7 +7,10 @@ import {
   useState,
   type KeyboardEvent,
 } from "react";
-import type { ApplicationRecord } from "@unemployed/contracts";
+import type { ApplicationRecord, ApplyJobResult } from "@unemployed/contracts";
+import type { ApplyMode } from "../../lib/apply-mode-contracts-stub";
+import { resolveApplyStatePresentation } from "./apply-state";
+import type { ApplyRunContext } from "./applications-recovery-state";
 import { Badge } from "@renderer/components/ui/badge";
 import { Button } from "@renderer/components/ui/button";
 import {
@@ -63,6 +66,24 @@ interface ApplicationsRecordsPanelProps {
   }>;
   filterCounts: Record<ApplicationsViewFilter, number>;
   hasAnyApplications: boolean;
+  /**
+   * What a run is doing right now for a job, by job id. A row whose
+   * application is being filled in says so, instead of repeating the saved
+   * "prepare when you are ready" next step from before the run started.
+   */
+  liveRunLinesByJobId?: ReadonlyMap<string, string>;
+  /**
+   * The newest run result per record, so a row reads one of the five apply
+   * states (ADR 0022) from what the run recorded rather than the older
+   * "Needs recovery" / "Waiting on consent" vocabulary.
+   */
+  latestApplyResultByRecordId?: ReadonlyMap<string, ApplyJobResult>;
+  /** What each result's run is doing, so a planned job is never "Filling in". */
+  readApplyRunContext?: (
+    result: ApplyJobResult | null,
+  ) => ApplyRunContext | null;
+  /** The mode chosen in Settings; decides what a finished fill means. */
+  applyMode?: ApplyMode;
   onFilterChange: (filter: ApplicationsViewFilter) => void;
   onSelectRecord: (recordId: string) => void;
   selectedRecord: ApplicationRecord | null;
@@ -74,6 +95,9 @@ export function ApplicationsRecordsPanel({
   discoveryJobs = [],
   filterCounts,
   hasAnyApplications,
+  liveRunLinesByJobId,
+  latestApplyResultByRecordId,
+  readApplyRunContext,
   onFilterChange,
   onSelectRecord,
   selectedRecord,
@@ -173,7 +197,7 @@ export function ApplicationsRecordsPanel({
           {/* A panel title, not an eyebrow: the base heading scale already
               gives it 19px/600, and the previous bold uppercase primary
               treatment made it heavier than the page's own H1. */}
-          <h2 className="min-w-0">Preparation</h2>
+          <h2 className="min-w-0">All applications</h2>
           <Badge variant="section">
             {recordCount} {recordCount === 1 ? "application" : "applications"}
           </Badge>
@@ -228,8 +252,8 @@ export function ApplicationsRecordsPanel({
             // under it: a dashed box with nothing in it read as the end of the
             // panel, and its actions read as unrelated page furniture.
             <EmptyState
-              title="No application started yet"
-              description="Shortlisting a job or tailoring its resume does not create an application record. Open Shortlisted, select a job, and choose Fill it in to start the prepare-only flow."
+              title="Nothing applied to yet"
+              description="Press Apply on a shortlisted job and it shows up here, with what Job Finder did and what it needs from you."
             >
               <div className="flex flex-wrap items-center justify-center gap-3">
                 <Button asChild size="sm" type="button" variant="primary">
@@ -261,17 +285,62 @@ export function ApplicationsRecordsPanel({
           ref={recordsRegionRef}
         >
           {pagedRecords.map((record) => {
-            const stage = getApplicationStagePresentation(record);
+            // One of the five apply states when a run has recorded one; the
+            // older stage words only for a record no run has touched yet.
+            const latestResult =
+              latestApplyResultByRecordId?.get(record.id) ?? null;
+            const applyState = latestResult
+              ? resolveApplyStatePresentation({
+                  mode:
+                    record.automationMode === "autonomous_submit"
+                      ? "apply_for_me"
+                      : "fill_only",
+                  result: latestResult,
+                  run: readApplyRunContext?.(latestResult) ?? null,
+                  pendingQuestionCount:
+                    record.questionSummary.total -
+                    record.questionSummary.answered,
+                  recordFailure:
+                    record.lastAttemptState === "failed"
+                      ? {
+                          lastActionLabel: record.lastActionLabel,
+                          lastUpdatedAt: record.lastUpdatedAt,
+                        }
+                      : null,
+                })
+              : null;
+            const stage = applyState
+              ? {
+                  label: applyState.title,
+                  tone:
+                    applyState.kind === "applied"
+                      ? ("positive" as const)
+                      : applyState.kind === "could_not_apply"
+                        ? ("critical" as const)
+                        : applyState.kind === "needs_you"
+                          ? ("warning" as const)
+                          : ("active" as const),
+                }
+              : getApplicationStagePresentation(record);
             // One status word per row. The stage badge is it; a second badge
             // restating the same state a different way ("Needs follow-up"
             // beside "Needs you") is the duplicate pill that made every row
             // read as two conflicting states. The attempt detail stays in the
             // panel and in the row's assistive description.
-            const attemptLabel = getAttemptLabel(record.lastAttemptState);
+            const attemptLabel =
+              applyState?.title ?? getAttemptLabel(record.lastAttemptState);
+            const liveLine = liveRunLinesByJobId?.get(record.jobId) ?? null;
+            // A job its batch never reached has one next step; the record's
+            // own label still named the approval that batch started from.
             const nextStepLabel =
+              (applyState?.plannedStanding === "not_started"
+                ? applyState.actionLabel
+                : null) ??
+              applyState?.questionsLeftLabel ??
               getApplicationReadableNextStepLabel(
                 getApplicationNextStepLabel(record),
-              ) ?? getApplicationNextStepLabel(record);
+              ) ??
+              getApplicationNextStepLabel(record);
             const recordStateDescriptionId = `applications-record-${record.id}-state-description`;
             const relatedJob = relatedJobsById.get(record.jobId);
             const employerLine = formatApplicationEmployerLine({
@@ -317,8 +386,16 @@ export function ApplicationsRecordsPanel({
                         {record.title}
                       </strong>
                       <div className={jobFinderListRowBadgeSlotClassName}>
-                        <StatusBadge tone={stage.tone}>
-                          {stage.label}
+                        <StatusBadge
+                          tone={
+                            liveLine && !applyState?.plannedStanding
+                              ? "active"
+                              : stage.tone
+                          }
+                        >
+                          {liveLine && !applyState?.plannedStanding
+                            ? "Filling in"
+                            : stage.label}
                         </StatusBadge>
                       </div>
                     </div>
@@ -336,7 +413,11 @@ export function ApplicationsRecordsPanel({
                         "font-medium text-primary",
                       )}
                     >
-                      {nextStepLabel ? `Next: ${nextStepLabel}` : null}
+                      {liveLine
+                        ? `Now: ${liveLine}`
+                        : nextStepLabel
+                          ? `Next: ${nextStepLabel}`
+                          : null}
                     </SelectableRowLine>
                   </div>
                   <span className="sr-only" id={recordStateDescriptionId}>

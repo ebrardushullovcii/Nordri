@@ -1,30 +1,28 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   BrowserSessionState,
+  ApplicationAutomationMode,
   ApplicationRecord,
   CandidateProfile,
   GlobalDailyApplicationPreparationCapacity,
   JobFinderApplicationStartTarget,
   JobFinderWorkspaceSnapshot,
   ResumeApplicationMode,
+  TailoringMode,
   ResumeSourceDocument,
-  ResumeStrategy,
-  ResumeStrategyRecommendation,
-  ResumeStrategySelection,
   ReviewQueueItem,
   SavedJob,
-  SelectResumeStrategyInput,
-  SetCampaignResumeStrategyDefaultInput,
   TailoredAsset,
 } from "@unemployed/contracts";
 import {
   APPLICATION_PREPARATION_BATCH_LIMIT,
+  collectInProgressApplicationJobIds,
   getReviewQueueWorkflowStatus,
   isQueueStageReady,
   isResumeGenerationInProgress,
 } from "./review-queue-status";
 import { LockedScreenLayout } from "../../components/locked-screen-layout";
-import { PageHeader } from "../../components/page-header";
+import { PageHeaderStack } from "../../components/page-header";
 import { Button } from "@renderer/components/ui/button";
 import { EmptyState } from "../../components/empty-state";
 import { StatusBadge } from "../../components/status-badge";
@@ -36,58 +34,24 @@ import {
 } from "../../lib/job-employer-location-display";
 import { getMatchAssessmentPresentation } from "../../lib/match-assessment-presentation";
 import { RESUME_OPERATION_LONG_RUNNING_MS } from "./review-queue-progress";
-import {
-  readReviewQueueBatchSelection,
-  writeReviewQueueBatchSelection,
-} from "./review-queue-batch-selection";
 import type { JobFinderAutoApplyQueueStartOutcome } from "../../lib/job-finder-types";
 import { useStableCallback } from "../../hooks/use-stable-callback";
 import { ReviewQueueListPanel } from "./review-queue-list-panel";
 import { collectPreparedApplicationJobIds } from "./review-queue-status";
 import { ReviewQueueMissionPanel } from "./review-queue-mission-panel";
+import { describeApplyAllOutcome } from "./review-queue-mission-panel-helpers";
 import { ReviewQueuePreviewPanel } from "./review-queue-preview-panel";
 import type { TailoredDraftPreparationViewState } from "./review-queue-status";
 
 const workspacePanelId = "review-queue-workspace-panel";
 
-/**
- * Restores a persisted batch curation only for jobs that are still in the
- * current queue and still eligible for batch preparation, deduplicated and
- * capped at the application batch limit. Disappeared or ineligible ids are
- * dropped instead of being restored as ghost selections.
- */
-function selectRestorableQueueSelection(
-  storedJobIds: readonly string[],
-  queue: readonly ReviewQueueItem[],
-): readonly string[] {
-  const restorableJobIds: string[] = [];
-  for (const storedJobId of storedJobIds) {
-    if (restorableJobIds.length >= APPLICATION_PREPARATION_BATCH_LIMIT) {
-      break;
-    }
-
-    if (restorableJobIds.includes(storedJobId)) {
-      continue;
-    }
-
-    const queuedItem = queue.find((item) => item.jobId === storedJobId);
-    if (!queuedItem || !isQueueStageReady(queuedItem)) {
-      continue;
-    }
-
-    restorableJobIds.push(storedJobId);
-  }
-
-  return restorableJobIds;
-}
-
 export function ReviewQueueScreen(props: {
   resumeOperationStarts?: Readonly<Record<string, number>> | undefined;
   actionState: { message: string | null };
   applicationRecords: readonly ApplicationRecord[];
+  applicationAutomationMode?: ApplicationAutomationMode;
   browserSession: BrowserSessionState;
   campaignId: string;
-  campaignDefaultResumeStrategyId?: string | null | undefined;
   draftPreparation: TailoredDraftPreparationViewState;
   globalDailyApplicationPreparationCapacity: GlobalDailyApplicationPreparationCapacity | null;
   isApplyPending: boolean;
@@ -98,14 +62,15 @@ export function ReviewQueueScreen(props: {
    */
   applyJobResults?: JobFinderWorkspaceSnapshot["applyJobResults"];
   isJobPending: (jobId: string) => boolean;
-  isResumeStrategyPending: (jobId: string) => boolean;
-  onPrepareTailoredDrafts: () => void;
+  onPrepareTailoredDrafts: (jobIds?: readonly string[]) => void;
   onStopTailoredDraftPreparation: () => void;
   onStartAutoApplyQueue: (
     jobIds: string[],
+    applicationAutomationMode?: ApplicationAutomationMode,
   ) => Promise<JobFinderAutoApplyQueueStartOutcome>;
   onStartApplyCopilot: (input: JobFinderApplicationStartTarget) => void;
   onEditResumeWorkspace: (jobId: string) => void;
+  onApproveResumeAndApply?: (jobId: string) => void;
   onGenerateResume: (
     jobId: string,
     options?: { selectAfter?: boolean },
@@ -118,24 +83,16 @@ export function ReviewQueueScreen(props: {
   safeguardBlocker?: string | null;
   onClaimResumeIdentity?: () => void;
   onKeepResumeIdentity?: () => void;
-  onRecommendResumeStrategy: (input: {
-    jobId: string;
-  }) => Promise<ResumeStrategyRecommendation | null>;
   onRemoveReviewJob: (jobId: string) => void;
-  onSelectResumeStrategy: (input: SelectResumeStrategyInput) => void;
-  onSetCampaignResumeStrategyDefault?:
-    | ((input: SetCampaignResumeStrategyDefaultInput) => void)
-    | undefined;
   onSetJobResumeApplicationMode: (
     jobId: string,
     resumeApplicationMode: ResumeApplicationMode,
+    resumeTailoringMode?: TailoringMode | null,
   ) => void;
   onSelectItem: (jobId: string) => void;
   originalResume: ResumeSourceDocument;
   profile?: CandidateProfile;
   queue: readonly ReviewQueueItem[];
-  resumeStrategies: readonly ResumeStrategy[];
-  resumeStrategySelections: readonly ResumeStrategySelection[];
   selectedAsset: TailoredAsset | null;
   selectedItem: ReviewQueueItem | null;
   selectedJob: SavedJob | null;
@@ -145,20 +102,19 @@ export function ReviewQueueScreen(props: {
     resumeOperationStarts,
     actionState,
     applicationRecords,
+    applicationAutomationMode = "prepare_only",
     browserSession,
-    campaignId,
-    campaignDefaultResumeStrategyId,
     draftPreparation,
     globalDailyApplicationPreparationCapacity,
     isApplyPending,
     applyJobResults,
     isJobPending,
-    isResumeStrategyPending,
     onPrepareTailoredDrafts,
     onStopTailoredDraftPreparation,
     onStartAutoApplyQueue,
     onStartApplyCopilot,
     onEditResumeWorkspace,
+    onApproveResumeAndApply,
     onGenerateResume,
     onOpenBrowserSession,
     onOpenJobDetails,
@@ -168,17 +124,12 @@ export function ReviewQueueScreen(props: {
     safeguardBlocker,
     onClaimResumeIdentity,
     onKeepResumeIdentity,
-    onRecommendResumeStrategy,
     onRemoveReviewJob,
-    onSelectResumeStrategy,
-    onSetCampaignResumeStrategyDefault,
     onSetJobResumeApplicationMode,
     onSelectItem,
     originalResume,
     profile,
     queue,
-    resumeStrategies,
-    resumeStrategySelections,
     selectedAsset,
     selectedItem,
     selectedJob,
@@ -191,25 +142,6 @@ export function ReviewQueueScreen(props: {
     selectedItem.assetStatus === "ready"
       ? "missing"
       : null;
-  // The curated batch selection survives route remounts per active campaign:
-  // it is restored from durable renderer storage, then kept pruned to jobs
-  // that are still current and eligible for batch preparation.
-  const [selectionCampaignId, setSelectionCampaignId] = useState(campaignId);
-  const [queueSelection, setQueueSelection] = useState<readonly string[]>(() =>
-    selectRestorableQueueSelection(
-      readReviewQueueBatchSelection(campaignId),
-      queue,
-    ),
-  );
-  if (selectionCampaignId !== campaignId) {
-    setSelectionCampaignId(campaignId);
-    setQueueSelection(
-      selectRestorableQueueSelection(
-        readReviewQueueBatchSelection(campaignId),
-        queue,
-      ),
-    );
-  }
   const selectedJobPending = selectedItem
     ? isJobPending(selectedItem.jobId)
     : false;
@@ -233,20 +165,15 @@ export function ReviewQueueScreen(props: {
     actionMessageScopeRef.current.jobId === (selectedItem?.jobId ?? null)
       ? actionState.message
       : null;
-  // Jobs that already have an application record are prepared; they stop
-  // counting as ready to prepare and stop being offered for a new batch.
+  // Jobs that already have an application record are in Applications; they
+  // stop counting as ready to apply here.
   const preparedJobIds = useMemo(
     () => collectPreparedApplicationJobIds(applicationRecords),
     [applicationRecords],
   );
-  const eligibleQueueJobIds = useMemo(
-    () =>
-      new Set(
-        queue
-          .filter((item) => isQueueStageReady(item, preparedJobIds))
-          .map((item) => item.jobId),
-      ),
-    [queue, preparedJobIds],
+  const applicationPreparingJobIds = useMemo(
+    () => collectInProgressApplicationJobIds(applicationRecords),
+    [applicationRecords],
   );
   const selectedWorkflowStatus = getReviewQueueWorkflowStatus(
     selectedItem,
@@ -255,6 +182,7 @@ export function ReviewQueueScreen(props: {
     // Same set the Shortlisted rows read. Leaving it out gave the header its
     // own second verdict for the job already selected in the list.
     preparedJobIds,
+    applicationPreparingJobIds,
   );
   const selectedJobEmployerLocationLine = selectedJob
     ? formatJobEmployerLocationLine({
@@ -310,9 +238,9 @@ export function ReviewQueueScreen(props: {
   }, [selectedJobId, selectedJobPending, operationStartedAt]);
 
   // The draft reports no real progress, so the honest thing to move is the
-  // clock, not a fabricated percentage. Same shape the resume import and the
-  // Assistant already use. Keyed to the same condition the panels use to show
-  // the indicator, so the bar never appears beside a stopped clock.
+  // clock, not a fabricated percentage. Keyed to the same condition the
+  // panels use to show the indicator, so the bar never appears beside a
+  // stopped clock.
   useEffect(() => {
     if (!isSelectedJobPreparing || selectedJobId === null) {
       setPendingElapsedSeconds(0);
@@ -328,98 +256,52 @@ export function ReviewQueueScreen(props: {
     return () => window.clearInterval(timer);
   }, [isSelectedJobPreparing, selectedJobId, operationStartedAt]);
 
-  useEffect(() => {
-    // A queue that has not hydrated yet has no rows to validate a stored
-    // curation against, so restoring yields nothing — and persisting that
-    // nothing would erase what the user ticked. Clearing the search box
-    // remounted this screen and lost the whole selection exactly this way.
-    if (queue.length === 0 && queueSelection.length === 0) {
+  // "Apply to all ready jobs": every job whose resume is ready, in list
+  // order, up to the per-run cap. Jobs already in Applications and jobs whose
+  // application is running are left alone (ADR 0022's "Apply to all").
+  const [applyAllPending, setApplyAllPending] = useState(false);
+  const applicationBatchLimit = Math.min(
+    APPLICATION_PREPARATION_BATCH_LIMIT,
+    Math.max(
+      0,
+      globalDailyApplicationPreparationCapacity?.remaining ??
+        Number.POSITIVE_INFINITY,
+    ),
+  );
+  const handleApplyToAllReady = useCallback(() => {
+    const unavailable = new Set([
+      ...preparedJobIds,
+      ...applicationPreparingJobIds,
+    ]);
+    const readyJobIds = queue
+      .filter((item) => isQueueStageReady(item, unavailable))
+      .map((item) => item.jobId)
+      .slice(0, applicationBatchLimit);
+    if (readyJobIds.length === 0) {
       return;
     }
-    writeReviewQueueBatchSelection(campaignId, queueSelection);
-  }, [campaignId, queue.length, queueSelection]);
+    setApplyAllPending(true);
+    void onStartAutoApplyQueue(readyJobIds, applicationAutomationMode).finally(
+      () => {
+        setApplyAllPending(false);
+      },
+    );
+  }, [
+    applicationBatchLimit,
+    applicationPreparingJobIds,
+    applicationAutomationMode,
+    onStartAutoApplyQueue,
+    preparedJobIds,
+    queue,
+  ]);
 
-  useEffect(() => {
-    // Once rows arrive, a stored curation becomes restorable. Only an empty
-    // live selection is filled in, so clearing the selection on purpose is
-    // never undone.
-    if (queue.length === 0) {
-      return;
-    }
-    setQueueSelection((current) => {
-      if (current.length > 0) {
-        return current;
-      }
-      const restored = selectRestorableQueueSelection(
-        readReviewQueueBatchSelection(campaignId),
-        queue,
-      );
-      return restored.length > 0 ? restored : current;
-    });
-  }, [campaignId, queue]);
-
-  useEffect(() => {
-    setQueueSelection((current) => {
-      const nextSelection = current.filter((jobId) =>
-        eligibleQueueJobIds.has(jobId),
-      );
-
-      return nextSelection.length === current.length ? current : nextSelection;
-    });
-  }, [eligibleQueueJobIds]);
-
-  const handleToggleQueueSelection = useCallback(
-    (jobId: string, checked: boolean) => {
-      setQueueSelection((current) => {
-        if (checked) {
-          return current.includes(jobId) ? current : [...current, jobId];
-        }
-
-        return current.filter((entry) => entry !== jobId);
-      });
-    },
-    [],
-  );
-  const handleClearQueueSelection = useCallback(() => {
-    setQueueSelection([]);
-  }, []);
-  const handleStartAutoApplyQueue = useCallback(
-    (jobIds: string[]) => {
-      void onStartAutoApplyQueue(jobIds).then((outcome) => {
-        // Staging the batch consumes its curated selection only when the
-        // queue run creation is confirmed. A capacity refusal, a handled
-        // backend failure, or any unknown ending preserves the exact staged
-        // selection (and the panel) so the curation is never silently lost;
-        // visible feedback for those endings is owned by the controller.
-        if (outcome.status !== "confirmed") {
-          return;
-        }
-
-        setQueueSelection((current) => {
-          const stagedJobIds = new Set(jobIds);
-          const nextSelection = current.filter(
-            (jobId) => !stagedJobIds.has(jobId),
-          );
-
-          return nextSelection.length === current.length
-            ? current
-            : nextSelection;
-        });
-      });
-    },
-    [onStartAutoApplyQueue],
-  );
-  // Below the `xl` two-pane breakpoint the job workspace stacks under the queue
-  // list, so selecting a job moved the one next action (`Review and approve
-  // resume` / `Fill it in`) below the fold with nothing saying so.
-  // Find jobs and Applications both reveal their stacked detail region on
-  // pointer selection; Shortlisted now uses the same mechanism, against the
-  // same 1280px boundary as its own `xl:` grid.
+  // Below the `xl` two-pane breakpoint the job column stacks under the list,
+  // so selecting a job moved the one next action below the fold with nothing
+  // saying so. Find jobs and Applications both reveal their stacked detail
+  // region on pointer selection; Shortlisted uses the same mechanism.
   //
-  // Stable for the life of the screen: the Shortlisted rows are memoised, and
-  // this handler reaches every one of them. Its own `onSelectItem` is written
-  // inline by the route, so a `useCallback` on it changed identity on every
-  // render of the page and re-rendered all forty rows for one job's update.
+  // Stable for the life of the screen: the rows are memoised, and this
+  // handler reaches every one of them.
   const selectItemAndRevealWorkspace = useStableCallback((jobId: string) => {
     onSelectItem(jobId);
 
@@ -441,31 +323,30 @@ export function ReviewQueueScreen(props: {
       contentClassName="xl:overflow-hidden"
       lockContentHeight
       topContent={
-        <PageHeader
-          compact
-          eyebrow="Shortlisted"
-          title="Shortlisted jobs"
-          description={
-            selectedItem?.resumeApplicationMode === "original_resume"
-              ? "Review your imported resume and choose whether to use it unchanged."
-              : "Review saved jobs, approve a resume, and prepare applications."
-          }
+        <PageHeaderStack
+          title="Shortlisted"
+          description="The jobs you want. Pick a resume level for each, get the resume ready, then press Apply."
         />
       }
     >
       <div className="grid min-w-0 items-stretch gap-4 xl:h-full xl:min-h-0 xl:grid-cols-[minmax(24rem,0.72fr)_minmax(34rem,1fr)] xl:overflow-hidden">
         <ReviewQueueListPanel
+          key={props.campaignId}
+          campaignId={props.campaignId}
           draftPreparation={draftPreparation}
+          isApplyToAllPending={applyAllPending || isApplyPending}
+          applicationBatchLimit={applicationBatchLimit}
           isJobPending={isJobPending}
+          onApplyToAllReady={handleApplyToAllReady}
+          applyAllOutcome={describeApplyAllOutcome(applicationAutomationMode)}
           onPrepareTailoredDrafts={onPrepareTailoredDrafts}
           {...(onOpenSafeguards ? { onOpenSafeguards } : {})}
           safeguardBlocker={safeguardBlocker ?? null}
           onSelectItem={selectItemAndRevealWorkspace}
           onStopTailoredDraftPreparation={onStopTailoredDraftPreparation}
-          onToggleQueueSelection={handleToggleQueueSelection}
           preparedJobIds={preparedJobIds}
+          applicationPreparingJobIds={applicationPreparingJobIds}
           queue={queue}
-          queueSelection={queueSelection}
           selectedItem={selectedItem}
           tailoredAssets={tailoredAssets}
         />
@@ -476,7 +357,7 @@ export function ReviewQueueScreen(props: {
             <div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
               <div className="min-w-0">
                 <h2 className="truncate text-(--text-headline)">
-                  {selectedJob?.title ?? "Job workspace"}
+                  {selectedJob?.title ?? "Job"}
                 </h2>
                 {selectedJob ? (
                   selectedJobEmployerLocationLine ? (
@@ -486,7 +367,7 @@ export function ReviewQueueScreen(props: {
                   ) : null
                 ) : (
                   <p className="mt-1 truncate text-(length:--text-small) text-foreground-muted">
-                    Choose a shortlisted job to review it.
+                    Choose a shortlisted job.
                   </p>
                 )}
               </div>
@@ -497,10 +378,9 @@ export function ReviewQueueScreen(props: {
               ) : null}
             </div>
           </header>
-          {/* One column, in the order the work happens: what state this job is
-              in and its one next action, then the resume once it exists, then
-              the job facts. The three tabs split a strictly sequential job
-              across three destinations, two of which were nearly empty. */}
+          {/* One column, in the order the work happens: the resume level and
+              the one next action, then the resume once it exists, then the
+              job facts. */}
           <div
             className="grid min-h-0 min-w-0 flex-1 content-start gap-4 overflow-x-hidden overflow-y-auto pb-6"
             data-locked-pane-scroll-region
@@ -510,26 +390,22 @@ export function ReviewQueueScreen(props: {
             {selectedItem ? (
               <ReviewQueueMissionPanel
                 actionMessage={scopedActionMessage}
+                applicationAutomationMode={applicationAutomationMode}
                 applicationRecords={applicationRecords}
                 browserSession={browserSession}
-                campaignId={campaignId}
-                campaignDefaultResumeStrategyId={
-                  campaignDefaultResumeStrategyId
-                }
                 pendingElapsedSeconds={pendingElapsedSeconds}
                 globalDailyApplicationPreparationCapacity={
                   globalDailyApplicationPreparationCapacity
                 }
-                embedded
                 applyJobResults={applyJobResults ?? []}
                 isApplyPending={isApplyPending}
                 isJobPending={isJobPending}
                 isSelectedJobPendingTooLong={selectedJobPendingTooLong}
-                isResumeStrategyPending={isResumeStrategyPending}
-                onClearQueueSelection={handleClearQueueSelection}
-                onStartAutoApplyQueue={handleStartAutoApplyQueue}
                 onStartApplyCopilot={onStartApplyCopilot}
                 onEditResumeWorkspace={onEditResumeWorkspace}
+                {...(onApproveResumeAndApply
+                  ? { onApproveResumeAndApply }
+                  : {})}
                 onGenerateResume={onGenerateResume}
                 onOpenBrowserSession={onOpenBrowserSession}
                 onOpenJobDetails={onOpenJobDetails}
@@ -537,32 +413,19 @@ export function ReviewQueueScreen(props: {
                 onOpenProfile={onOpenProfile}
                 {...(onOpenSafeguards ? { onOpenSafeguards } : {})}
                 safeguardBlocker={safeguardBlocker ?? null}
-                {...(onClaimResumeIdentity
-                  ? { onClaimResumeIdentity }
-                  : {})}
+                {...(onClaimResumeIdentity ? { onClaimResumeIdentity } : {})}
                 {...(onKeepResumeIdentity ? { onKeepResumeIdentity } : {})}
-                onRecommendResumeStrategy={onRecommendResumeStrategy}
                 onRemoveReviewJob={onRemoveReviewJob}
-                onSelectResumeStrategy={onSelectResumeStrategy}
-                onSetCampaignResumeStrategyDefault={
-                  onSetCampaignResumeStrategyDefault
-                }
                 onSetJobResumeApplicationMode={onSetJobResumeApplicationMode}
                 originalResume={originalResume}
                 {...(profile ? { profile } : {})}
-                queue={queue}
-                queueSelection={queueSelection}
-                resumeStrategies={resumeStrategies}
-                resumeStrategySelections={resumeStrategySelections}
                 selectedAsset={selectedAsset}
                 selectedItem={selectedItem}
                 selectedJob={selectedJob}
-                stacked
               />
             ) : null}
             {selectedItem && (selectedAsset || previewState === "missing") ? (
-              // The resume appears in place once one exists; before that the
-              // tab was a ~600px empty box duplicating the primary above it.
+              // The resume appears in place once one exists.
               <ReviewQueuePreviewPanel
                 pendingElapsedSeconds={pendingElapsedSeconds}
                 embedded
@@ -572,6 +435,7 @@ export function ReviewQueueScreen(props: {
                 onGenerateResume={onGenerateResume}
                 originalResume={originalResume}
                 preparedJobIds={preparedJobIds}
+                applicationPreparingJobIds={applicationPreparingJobIds}
                 previewState={previewState}
                 queue={queue}
                 selectedAsset={selectedAsset}
@@ -584,9 +448,9 @@ export function ReviewQueueScreen(props: {
               <div className="min-w-0 px-6 pt-2">
                 {/* Every level down to the listing text resets its minimum
                     width, and the text may break inside a word: a listing
-                    with one long unbroken token (a URL, a hashtag run)
-                    otherwise sets the column's minimum content width and
-                    pushes the whole workspace past the pane's right edge. */}
+                    with one long unbroken token otherwise sets the column's
+                    minimum content width and pushes the whole column past
+                    the pane's right edge. */}
                 <div className="grid min-w-0 max-w-3xl gap-6">
                   <section className="grid min-w-0 gap-2 border-t border-(--surface-panel-border) pt-5">
                     <span className="label-mono-xs text-foreground-muted">
@@ -612,10 +476,6 @@ export function ReviewQueueScreen(props: {
                         className="text-(length:--text-body) text-(--text-headline)"
                         data-testid="review-queue-fit-score"
                       >
-                        {/* One shared rule decides whether a percentage was
-                            earned. A withheld score reads as what it is
-                            instead of a confident number above five
-                            "we don't know" rows. */}
                         {selectedJobAssessment?.headlineScoreLabel}
                       </strong>
                       <span className="min-w-0 text-(length:--text-small) leading-6 text-foreground-soft">
@@ -633,9 +493,6 @@ export function ReviewQueueScreen(props: {
                       Open full job details
                     </Button>
                   </section>
-                  {/* One honest line above, the full reasoning behind a
-                      disclosure: five UNKNOWN cards cost ~900px to say the
-                      listing title was all that could be read. */}
                   <details className="min-w-0 rounded-(--radius-field) border border-(--surface-panel-border)">
                     <summary className="cursor-pointer px-4 py-3 text-(length:--text-small) font-medium text-foreground-soft">
                       How this was scored
@@ -646,9 +503,6 @@ export function ReviewQueueScreen(props: {
                         listingCapture={
                           selectedJob.listingDetailCapture?.state ?? null
                         }
-                        // Always authoritative, including the null case: an
-                        // unbound assessment must print no number at all
-                        // rather than fall back to the matrix's own default.
                         scoreLabel={
                           selectedJobAssessment?.breakdownScoreLabel ?? null
                         }
@@ -661,7 +515,7 @@ export function ReviewQueueScreen(props: {
             {!selectedItem ? (
               <div className="grid place-items-center p-8">
                 <EmptyState
-                  description="Select a shortlisted job to review its details."
+                  description="Select a shortlisted job to get its resume ready and apply."
                   title="Choose a job"
                 />
               </div>

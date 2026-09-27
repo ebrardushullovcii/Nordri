@@ -1,4 +1,5 @@
 import {
+  DISCOVERY_RUN_ALREADY_ACTIVE_MESSAGE,
   ApplicationAnswerRecordSchema,
   type ApplicationAnswerRecord,
   type SubmitUserActionManualAnswerCommand,
@@ -6,7 +7,12 @@ import {
   type UserActionCommand,
   type UserActionRequest,
   JobFinderActivityControlSchema,
+  type ApplicationQuestionRecord,
 } from "@unemployed/contracts";
+import {
+  buildApplyFormObservation,
+  selectObservedSignInAction,
+} from "@unemployed/browser-agent";
 
 import {
   isUserActionTerminal,
@@ -20,10 +26,14 @@ import {
   isApplicationAuthenticationUserActionKind,
   isApplicationPrepareOnlyUserAction,
   releaseApplicationRecordAfterDismissedUserAction,
+  retireCancelledApplicationUserActions,
 } from "./workspace-application-user-action";
 import type { JobFinderRepository } from "@unemployed/db";
 
-import type { WorkspaceServiceContext } from "./workspace-service-context";
+import type {
+  TaskLocalApplicationCredentials,
+  WorkspaceServiceContext,
+} from "./workspace-service-context";
 import type { JobFinderWorkspaceService } from "./workspace-service-contracts";
 import {
   getUserActionVerificationFlightKey,
@@ -127,12 +137,20 @@ function isApplicationResumptionAction(request: UserActionRequest): boolean {
   if (request.scope.type !== "application") return false;
 
   return (
-    (request.state === "resolved" &&
+    ((request.state === "verifying" || request.state === "resolved") &&
       isApplicationAuthenticationUserActionKind(request.kind) &&
       request.verification.type === "source_access") ||
     (isApplicationPrepareOnlyUserAction(request) &&
       (request.state === "verifying" || request.state === "resolved"))
   );
+}
+
+function describeContinuationError(error: unknown): string {
+  const message =
+    error instanceof Error && error.message.trim()
+      ? error.message.trim().slice(0, 240)
+      : "the search could not start";
+  return /[.!?]$/u.test(message) ? message : `${message}.`;
 }
 
 function getApplicationResumptionFlightKey(request: UserActionRequest): string {
@@ -203,7 +221,7 @@ async function persistManualAnswer(input: {
   ctx: WorkspaceServiceContext;
   request: UserActionRequest;
   resultingRevision: number;
-}): Promise<void> {
+}): Promise<{ prompt: string; answer: string }[]> {
   if (input.request.scope.type !== "application") {
     throw new Error("Manual answers require an application action.");
   }
@@ -227,16 +245,191 @@ async function persistManualAnswer(input: {
       applicationRecordId: scope.applicationRecordId,
     })
   ).filter((question) => question.status === "detected");
-  if (questions.length !== 1) {
-    throw new Error(
-      "This action does not identify exactly one reviewable question. Answer it in the browser, then save it from Profile if you want to reuse it.",
+
+  // A multi-question step arrives as one command with every answer tied to
+  // its question; a single-question step still arrives as one bare answer.
+  const pairs: { question: (typeof questions)[number]; answer: string }[] = [];
+  if (input.command.answers && input.command.answers.length > 0) {
+    for (const entry of input.command.answers) {
+      const question = questions.find(
+        (candidate) =>
+          candidate.id === entry.questionId ||
+          candidate.id ===
+            `apply_question_${scope.applicationRecordId}_${entry.questionId}`,
+      );
+      if (!question) {
+        throw new Error(
+          "One of these answers does not match a question Job Finder is waiting on. Reload Needs you and try again.",
+        );
+      }
+      pairs.push({ question, answer: entry.answer.trim() });
+    }
+  } else {
+    // Questions the person already answered on this application stay on
+    // record as detected; only the ones still waiting decide whether a bare
+    // answer is unambiguous.
+    const answeredQuestionIds = new Set(
+      (questions.length === 1
+        ? []
+        : await input.ctx.repository.listApplicationAnswerRecords({
+            runId: scope.runId,
+            jobId: scope.jobId,
+            resultId: scope.resultId,
+            applicationRecordId: scope.applicationRecordId,
+          })
+      )
+        .filter((record) => record.sourceKind === "user")
+        .map((record) => record.questionId),
     );
+    const waiting =
+      questions.length === 1
+        ? questions
+        : questions.filter((question) => !answeredQuestionIds.has(question.id));
+    if (waiting.length !== 1) {
+      throw new Error(
+        "This step has several questions; answer them together from Needs you.",
+      );
+    }
+    const question = waiting[0];
+    if (!question) return [];
+    pairs.push({ question, answer: input.command.answer.trim() });
   }
 
-  const question = questions[0];
-  if (!question) return;
+  let pairIndex = 0;
+  for (const pair of pairs) {
+    pairIndex += 1;
+    await persistOneManualAnswer({
+      ...input,
+      question: pair.question,
+      answer: pair.answer,
+      // Several answers in one command each need their own record id.
+      recordSuffix: pairs.length === 1 ? "" : `_${pairIndex}`,
+    });
+  }
+  return pairs.map((pair) => ({
+    prompt: pair.question.prompt,
+    answer: pair.answer,
+  }));
+}
+
+const SAME_ANSWER_COMMAND_PREFIX = "same_answer_";
+
+const OPEN_MANUAL_ANSWER_STATES = [
+  "pending",
+  "page_opened",
+  "awaiting_user",
+  "still_blocked",
+] as const;
+
+/**
+ * Other open question steps a just-given answer covers completely: every
+ * question they still wait on (every required one at least) is the same
+ * question, by its normalized wording. Within the same batch always; across
+ * batches only when the person saved the answer for next time.
+ */
+export async function findManualAnswerStepsCoveredBy(input: {
+  ctx: Pick<WorkspaceServiceContext, "repository">;
+  answered: readonly { prompt: string; answer: string }[];
+  /** The step just answered; null when reading answers already saved. */
+  request: UserActionRequest | null;
+  savedForFuture: boolean;
+  states?: readonly (typeof OPEN_MANUAL_ANSWER_STATES)[number][];
+}): Promise<
+  {
+    request: UserActionRequest;
+    answers: { questionId: string; answer: string }[];
+  }[]
+> {
+  const { ctx, request } = input;
+  if (
+    (request && request.scope.type !== "application") ||
+    input.answered.length === 0
+  ) {
+    return [];
+  }
+  const runId =
+    request?.scope.type === "application" ? request.scope.runId : null;
+  const answerByPrompt = new Map(
+    input.answered.map((entry) => [
+      normalizeAnswerQuestion(entry.prompt),
+      entry.answer,
+    ]),
+  );
+  const candidates = (
+    await ctx.repository.listUserActionRequests({
+      scopeType: "application",
+      states: [...(input.states ?? OPEN_MANUAL_ANSWER_STATES)],
+    })
+  ).filter(
+    (candidate) =>
+      candidate.id !== request?.id &&
+      candidate.kind === "manual_answer" &&
+      candidate.scope.type === "application" &&
+      Boolean(candidate.scope.resultId) &&
+      Boolean(candidate.scope.applicationRecordId) &&
+      (input.savedForFuture || candidate.scope.runId === runId),
+  );
+  const covered: {
+    request: UserActionRequest;
+    answers: { questionId: string; answer: string }[];
+  }[] = [];
+  for (const candidate of candidates) {
+    if (candidate.scope.type !== "application") continue;
+    const scope = {
+      runId: candidate.scope.runId,
+      jobId: candidate.scope.jobId,
+      resultId: candidate.scope.resultId ?? "",
+      applicationRecordId: candidate.scope.applicationRecordId ?? "",
+    };
+    const [questions, answerRecords] = await Promise.all([
+      ctx.repository.listApplicationQuestionRecords(scope),
+      ctx.repository.listApplicationAnswerRecords(scope),
+    ]);
+    const answeredIds = new Set(
+      answerRecords
+        .filter((record) => record.sourceKind === "user")
+        .map((record) => record.questionId),
+    );
+    const waiting = questions.filter(
+      (question) =>
+        question.status === "detected" && !answeredIds.has(question.id),
+    );
+    const answers = waiting.flatMap((question) => {
+      const answer = answerByPrompt.get(
+        normalizeAnswerQuestion(question.prompt),
+      );
+      return answer ? [{ questionId: question.id, answer }] : [];
+    });
+    const everyRequiredCovered = waiting.every(
+      (question) =>
+        question.isRequired === false ||
+        answers.some((entry) => entry.questionId === question.id),
+    );
+    if (answers.length > 0 && everyRequiredCovered) {
+      covered.push({ request: candidate, answers });
+    }
+  }
+  return covered;
+}
+
+async function persistOneManualAnswer(input: {
+  command: SubmitUserActionManualAnswerCommand;
+  ctx: WorkspaceServiceContext;
+  request: UserActionRequest;
+  resultingRevision: number;
+  question: ApplicationQuestionRecord;
+  answer: string;
+  recordSuffix: string;
+}): Promise<void> {
+  if (input.request.scope.type !== "application") {
+    throw new Error("Manual answers require an application action.");
+  }
+  const scope = input.request.scope;
+  if (!scope.applicationRecordId || !scope.resultId) {
+    throw new Error("This manual answer is missing its application scope.");
+  }
+  const { question, answer } = input;
   const now = new Date().toISOString();
-  const answer = input.command.answer.trim();
 
   if (input.command.saveForFuture) {
     const profile = await input.ctx.repository.getProfile();
@@ -272,7 +465,7 @@ async function persistManualAnswer(input: {
     }
   }
 
-  const recordId = `manual_answer_${input.request.id}_${input.resultingRevision}`;
+  const recordId = `manual_answer_${input.request.id}_${input.resultingRevision}${input.recordSuffix}`;
   const records = await input.ctx.repository.listApplicationAnswerRecords({
     runId: scope.runId,
     jobId: scope.jobId,
@@ -302,7 +495,7 @@ async function persistManualAnswer(input: {
     confidenceLabel: "User-provided for this exact question",
     provenance: [
       {
-        id: `manual_answer_provenance_${input.request.id}_${input.resultingRevision}`,
+        id: `manual_answer_provenance_${input.request.id}_${input.resultingRevision}${input.recordSuffix}`,
         sourceKind: "user",
         sourceId: input.request.id,
         label: input.command.saveForFuture
@@ -332,6 +525,80 @@ async function persistManualAnswer(input: {
 
   await input.ctx.repository.upsertApplicationAnswerRecord(record);
 }
+/**
+ * A hand-off made when the browser refused a new tab. Before that error was
+ * mapped to a plain failure, it became a "complete the browser step" card
+ * showing the raw protocol text, although no page had opened and there was
+ * nothing for the person to do.
+ */
+const TAB_LIMIT_HANDOFF_PATTERN =
+  /Protocol error \(Target\.createTarget\)|Close a browser tab before opening another/i;
+
+export function isStaleTabLimitHandoff(request: UserActionRequest): boolean {
+  return (
+    request.scope.type === "application" &&
+    !isUserActionTerminal(request.state) &&
+    request.state !== "verifying" &&
+    TAB_LIMIT_HANDOFF_PATTERN.test(request.summary)
+  );
+}
+
+const TAB_LIMIT_CLOSURE = {
+  lastActionLabel:
+    "The application never opened: the Job Finder browser had too many tabs open.",
+  eventTitle: "Application never opened",
+  eventDetail:
+    "The Job Finder browser had as many tabs as it allows, so this application never opened and nothing was sent. Try again to prepare it.",
+  resultSummary: "The Job Finder browser had too many tabs open",
+  resultDetail:
+    "Job Finder could not open this application because its browser already had as many tabs as it allows. Nothing was sent. Choose Try again to prepare it.",
+};
+
+/**
+ * Closes the tab-limit hand-offs older builds left in Needs you and marks
+ * their applications as not applied, so they show a Try again instead of a
+ * step the person cannot do. Runs once per app session.
+ */
+async function retireStaleTabLimitHandoffs(
+  repository: JobFinderRepository,
+): Promise<void> {
+  const requests = await repository.listUserActionRequests({
+    scopeType: "application",
+  });
+  for (const request of requests.filter(isStaleTabLimitHandoff)) {
+    const occurredAt = new Date().toISOString();
+    const cancelled = reduceUserActionCommand(
+      request,
+      {
+        requestId: request.id,
+        commandId: `${request.id}_tab_limit_retired`,
+        expectedRevision: request.revision,
+        action: "cancel",
+        reason:
+          "The application never opened because the browser had too many tabs; this was not a step for the person.",
+        credentialsPolicy: "browser_only",
+        submitAuthorized: false,
+        accountCreationAuthorized: false,
+      },
+      occurredAt,
+    );
+    if (cancelled.status !== "applied") continue;
+    const commit = await repository.commitUserActionTransition({
+      request: cancelled.request,
+      event: cancelled.event,
+    });
+    if (commit.status === "stale") continue;
+    await releaseApplicationRecordAfterDismissedUserAction({
+      repository,
+      request: commit.request,
+      occurredAt,
+      eventId: `event_tab_limit_retired_${request.id}`,
+      dismissal: "cancelled",
+      closedBecause: TAB_LIMIT_CLOSURE,
+    });
+  }
+}
+
 export function createWorkspaceUserActionMethods(
   ctx: WorkspaceServiceContext,
 ): WorkspaceUserActionMethods {
@@ -340,6 +607,7 @@ export function createWorkspaceUserActionMethods(
     Promise<Awaited<ReturnType<JobFinderWorkspaceService["performUserAction"]>>>
   >();
   const requestTransitionTails = new Map<string, Promise<void>>();
+  const manualAnswersBeingStored = new Set<string>();
   const verificationFlights = new Map<string, Promise<void>>();
   const applicationResumptionFlights = new Map<string, Promise<void>>();
   const discoveryContinuationFlights = new Map<
@@ -384,8 +652,13 @@ export function createWorkspaceUserActionMethods(
 
   function resumeApplicationSingleFlight(
     request: UserActionRequest,
+    taskLocalCredentials?: TaskLocalApplicationCredentials,
   ): Promise<void> {
     if (!isApplicationResumptionAction(request)) {
+      return Promise.resolve();
+    }
+    // Its answer is still being stored; the answering command resumes it.
+    if (manualAnswersBeingStored.has(request.id)) {
       return Promise.resolve();
     }
 
@@ -394,11 +667,15 @@ export function createWorkspaceUserActionMethods(
     if (existing) return existing;
 
     const flight = (async () => {
+      // The page is locked again by the resumer itself, only once it knows
+      // it will work on it. Locking here, for every resolved step every
+      // snapshot re-checks, took a filled-in form back from the person the
+      // moment they opened it to send it themselves.
       // Fail-closed activity gate immediately before any application flow
       // work: a paused or unreadable workspace must not launch flows. The
       // skipped action keeps its persisted state and stays resumable.
       if (await isWorkspaceActivityPaused(ctx.repository)) return;
-      await ctx.resumeApplicationUserAction(request);
+      await ctx.resumeApplicationUserAction(request, taskLocalCredentials);
     })().finally(() => {
       if (applicationResumptionFlights.get(key) === flight) {
         applicationResumptionFlights.delete(key);
@@ -433,19 +710,57 @@ export function createWorkspaceUserActionMethods(
     const existing = discoveryContinuationFlights.get(key);
     if (existing) return existing;
 
-    const flight = (async () => {
+    const flight = (async (): Promise<
+      { status: "continued" } | { status: "blocked"; message: string }
+    > => {
       // Same fail-closed gate as the other resumption paths: nothing drives
       // the browser while global activity is paused or unreadable.
       if (await isWorkspaceActivityPaused(ctx.repository)) {
         return { status: "continued" } as const;
       }
-      const continuation = await ctx.continueDiscoveryForSource(
-        targetId,
-        discoveryRunId,
-      );
-      return continuation.status === "origin_removed"
-        ? ({ status: "blocked", message: continuation.message } as const)
-        : ({ status: "continued" } as const);
+      const continuedAt = new Date().toISOString();
+      for (let attempt = 0; ; attempt += 1) {
+        try {
+          const continuation = await ctx.continueDiscoveryForSource(
+            targetId,
+            discoveryRunId,
+          );
+          if (continuation.status === "origin_removed")
+            return { status: "blocked", message: continuation.message };
+          return await describeSourceContinuation(targetId, continuedAt);
+        } catch (error) {
+          // A sign-in finished while another search was still running. That
+          // error used to be swallowed: the card closed and the source was
+          // never searched. This source's search now waits its turn and runs
+          // as soon as the running one ends.
+          if (
+            error instanceof Error &&
+            error.message === DISCOVERY_RUN_ALREADY_ACTIVE_MESSAGE &&
+            attempt < 5
+          ) {
+            // Wait while the running search holds the pipeline (the same
+            // guard that refused this one), up to half an hour.
+            const waitUntil = Date.now() + 30 * 60_000;
+            do {
+              const running = ctx.activeDiscoveryPromiseRef.current;
+              if (running) await running.catch(() => undefined);
+              else await new Promise((resolve) => setTimeout(resolve, 2_000));
+            } while (
+              ctx.activeDiscoveryAbortControllerRef.current &&
+              Date.now() < waitUntil
+            );
+            continue;
+          }
+          console.warn(
+            "[discovery] Could not search a source after its sign-in.",
+            error,
+          );
+          return {
+            status: "blocked",
+            message: `You are signed in, but searching this source did not start: ${describeContinuationError(error)} Press "Check whether this step is done" to search it.`,
+          };
+        }
+      }
     })()
       .catch(() => ({ status: "continued" }) as const)
       .finally(() => {
@@ -457,12 +772,46 @@ export function createWorkspaceUserActionMethods(
     return flight;
   }
 
+  /**
+   * What the continued search of one source did. A failure there (for
+   * example the browser profile could not be opened) used to close the card
+   * as if the source had been searched.
+   */
+  async function describeSourceContinuation(
+    targetId: string,
+    continuedAt: string,
+  ): Promise<{ status: "continued" } | { status: "blocked"; message: string }> {
+    const discoveryState = await ctx.repository.getDiscoveryState();
+    const execution = [discoveryState.activeRun, ...discoveryState.recentRuns]
+      .flatMap((run) => run?.targetExecutions ?? [])
+      .filter(
+        (candidate) =>
+          candidate.targetId === targetId &&
+          (candidate.startedAt ?? "") >= continuedAt,
+      )
+      .sort((left, right) =>
+        (right.startedAt ?? "").localeCompare(left.startedAt ?? ""),
+      )[0];
+    if (execution?.state !== "failed") return { status: "continued" };
+    const why = execution.warning?.trim();
+    return {
+      status: "blocked",
+      message: `You are signed in, but searching this source failed${why ? `: ${why.replace(/[.\s]+$/u, "")}` : ""}. Press "Check whether this step is done" to search it.`,
+    };
+  }
+
   function verifySingleFlight(request: UserActionRequest): Promise<void> {
     const key = getUserActionVerificationFlightKey(request);
     const existing = verificationFlights.get(key);
     if (existing) return existing;
 
     const flight = (async () => {
+      if (request.scope.type === "application" && request.scope.resultId) {
+        await ctx.browserRuntime.closeApplicationFormAction?.(
+          request.scope.source,
+          request.scope.resultId,
+        );
+      }
       // Same fail-closed gate as application resumption: source-access
       // verification drives the browser, so it must not start while global
       // activity is paused or unreadable.
@@ -485,25 +834,108 @@ export function createWorkspaceUserActionMethods(
     return flight;
   }
 
+  let tabLimitHandoffsRetired = false;
+
+  /**
+   * A question step that a saved answer now covers completely goes on by
+   * itself: an application that was already filling in when the person saved
+   * the answer asked it a moment later all the same.
+   */
+  async function answerStepsFromSavedAnswers(): Promise<void> {
+    const profile = await ctx.repository.getProfile();
+    const answered = profile.answerBank.customAnswers.flatMap((saved) => {
+      const answer = saved.answer.trim();
+      return answer
+        ? [saved.question, saved.label]
+            .filter((prompt): prompt is string => Boolean(prompt?.trim()))
+            .map((prompt) => ({ prompt, answer }))
+        : [];
+    });
+    const covered = await findManualAnswerStepsCoveredBy({
+      ctx,
+      answered,
+      request: null,
+      savedForFuture: true,
+      states: ["pending"],
+    });
+    for (const step of covered) {
+      dispatchSameAnswer(step);
+    }
+  }
+
+  function dispatchSameAnswer(step: {
+    request: UserActionRequest;
+    answers: { questionId: string; answer: string }[];
+  }): void {
+    const first = step.answers[0];
+    if (!first) return;
+    void performUserAction({
+      action: "submit_manual_answer",
+      requestId: step.request.id,
+      expectedRevision: step.request.revision,
+      commandId: `${SAME_ANSWER_COMMAND_PREFIX}${step.request.id}_r${step.request.revision}`,
+      answer: first.answer,
+      answers: step.answers,
+      saveForFuture: false,
+      credentialsPolicy: "browser_only",
+      submitAuthorized: false,
+      accountCreationAuthorized: false,
+    }).catch((error: unknown) => {
+      console.error(
+        "Job Finder could not reuse an answer on another application.",
+        error,
+      );
+    });
+  }
+
   async function resumeVerifyingUserActions(): Promise<void> {
     // Fail closed before listing or launching anything: while global activity
     // is paused (or unreadable) no verification probe or application flow may
     // start, and every action below simply stays resumable.
     if (await isWorkspaceActivityPaused(ctx.repository)) return;
 
-    const verifyingRequests = await ctx.repository.listUserActionRequests({
-      states: ["verifying"],
+    if (!tabLimitHandoffsRetired) {
+      tabLimitHandoffsRetired = true;
+      // Housekeeping only: a failure here must never block the snapshot or
+      // the resumptions below.
+      await retireStaleTabLimitHandoffs(ctx.repository).catch(() => {});
+    }
+
+    // Also repairs older records and a hand-off committed just after cancellation.
+    await retireCancelledApplicationUserActions(ctx.repository);
+
+    const verifyingRequests = (
+      await ctx.repository.listUserActionRequests({
+        states: ["verifying"],
+      })
+    ).filter((request) => !manualAnswersBeingStored.has(request.id));
+    // After the list above: a step answered here resumes through its own
+    // command, once its answer is stored. Listed as verifying before the
+    // answer landed, it was handed back as still blocked.
+    await answerStepsFromSavedAnswers().catch((error: unknown) => {
+      console.error(
+        "Job Finder could not answer a step from your saved answers.",
+        error,
+      );
     });
+
     await runBounded(
       verifyingRequests,
       USER_ACTION_RESUMPTION_CONCURRENCY,
       (request) => {
-        if (isSourceAccessUserAction(request)) {
-          return verifySingleFlight(request);
+        // An active application continuation owns the retained page and its
+        // request revision. Join it before considering a source-access probe.
+        // Unclaimed sign-in confirmations still need that probe, including
+        // confirmations deferred by Pause or an app restart.
+        if (isApplicationResumptionAction(request)) {
+          const activeFlight = applicationResumptionFlights.get(
+            getApplicationResumptionFlightKey(request),
+          );
+          if (activeFlight) return activeFlight;
         }
-        return isApplicationResumptionAction(request)
-          ? resumeApplicationSingleFlight(request)
-          : Promise.resolve();
+        return isSourceAccessUserAction(request)
+          ? verifySingleFlight(request)
+          : resumeApplicationSingleFlight(request);
       },
     );
 
@@ -542,6 +974,29 @@ export function createWorkspaceUserActionMethods(
     );
 
     if (reduction.status === "stale") {
+      if (
+        command.action === "submit_task_local_credentials" &&
+        request.state === "verifying" &&
+        request.revision === command.expectedRevision + 1
+      ) {
+        const events = await ctx.repository.listUserActionEvents({
+          requestId: request.id,
+        });
+        if (
+          events.some(
+            (event) =>
+              event.id === command.commandId &&
+              event.operation === "submit_task_local_credentials" &&
+              event.resultingRevision === request.revision,
+          )
+        ) {
+          await resumeApplicationSingleFlight(request, {
+            reference: command.commandId,
+            identifier: command.identifier,
+            password: command.password,
+          });
+        }
+      }
       if (
         command.action === "submit_manual_answer" &&
         request.state === "verifying" &&
@@ -591,15 +1046,146 @@ export function createWorkspaceUserActionMethods(
         );
       }
 
-      await ctx.openRunBrowserSession(request.scope.source, {
-        targetUrl: request.actionUrl,
-        // A page blocked before preparation still carries automation guards.
-        // Explicit manual handoff needs a fresh page; preserve the old tab.
-        ...(isApplicationPrepareOnlyUserAction(request) &&
-        /blocked a background page request/i.test(request.summary)
-          ? { reuseExistingPage: false }
-          : {}),
-      });
+      if (request.scope.type === "application") {
+        const requiresFreshManualPage =
+          isApplicationPrepareOnlyUserAction(request) &&
+          /blocked a background page request/i.test(request.summary);
+        if (requiresFreshManualPage) {
+          await ctx.openRunBrowserSession(request.scope.source, {
+            targetUrl: request.actionUrl,
+            reuseExistingPage: false,
+          });
+        } else {
+          const focused = request.scope.resultId
+            ? await ctx.browserRuntime.focusApplicationPageBinding?.(
+                request.scope.source,
+                request.scope.resultId,
+              )
+            : false;
+          if (!focused) {
+            const occurredAt = new Date().toISOString();
+            const cancelled = reduceUserActionCommand(
+              request,
+              {
+                requestId: request.id,
+                commandId: `${command.commandId}_missing_prepared_page`,
+                expectedRevision: request.revision,
+                action: "cancel",
+                reason:
+                  "The exact prepared application page is no longer open.",
+                credentialsPolicy: "browser_only",
+                submitAuthorized: false,
+                accountCreationAuthorized: false,
+              },
+              occurredAt,
+            );
+            if (cancelled.status === "applied") {
+              const cancellationCommit =
+                await ctx.repository.commitUserActionTransition({
+                  request: cancelled.request,
+                  event: cancelled.event,
+                });
+              if (cancellationCommit.status !== "stale") {
+                await releaseApplicationRecordAfterDismissedUserAction({
+                  repository: ctx.repository,
+                  request: cancellationCommit.request,
+                  occurredAt,
+                  eventId: `event_missing_prepared_page_${request.id}`,
+                  dismissal: "cancelled",
+                  unavailablePreparedPage: true,
+                });
+              }
+            }
+            return ctx.getWorkspaceSnapshot();
+          }
+          if (request.scope.resultId) {
+            await ctx.browserRuntime.closeApplicationFormAction?.(
+              request.scope.source,
+              request.scope.resultId,
+            );
+            // A sign-in or account step is the person's: the kept page takes
+            // their own posts (creating the account, signing in) until the
+            // next continuation locks it again.
+            if (isApplicationAuthenticationUserActionKind(request.kind)) {
+              await ctx.browserRuntime
+                .handApplicationPageToPerson?.(
+                  request.scope.source,
+                  request.scope.resultId,
+                )
+                .catch(() => {});
+            }
+          }
+          if (
+            request.kind === "login" &&
+            request.scope.resultId &&
+            ctx.browserRuntime.readApplicationPageBinding &&
+            ctx.browserRuntime.armApplicationFormAction
+          ) {
+            const raw = await ctx.browserRuntime.readApplicationPageBinding(
+              request.scope.source,
+              request.scope.resultId,
+            );
+            const observation = buildApplyFormObservation(
+              raw,
+              new Date().toISOString(),
+            );
+            const signIn = selectObservedSignInAction(observation);
+            if (signIn && observation.url) {
+              // Observation may await a page read while a newer result
+              // supersedes this request. Never arm from that stale read.
+              const current = await ctx.repository.getUserActionRequest(
+                request.id,
+              );
+              if (
+                current?.revision === request.revision &&
+                current.state === request.state
+              ) {
+                await ctx.browserRuntime.armApplicationFormAction(
+                  request.scope.source,
+                  {
+                    pageBindingKey: request.scope.resultId,
+                    pageUrl: observation.url,
+                    ...signIn,
+                  },
+                );
+                const afterArm = await ctx.repository.getUserActionRequest(
+                  request.id,
+                );
+                if (
+                  afterArm?.revision !== request.revision ||
+                  afterArm.state !== request.state
+                ) {
+                  await ctx.browserRuntime.closeApplicationFormAction?.(
+                    request.scope.source,
+                    request.scope.resultId,
+                  );
+                }
+              }
+            }
+          }
+        }
+      } else {
+        await ctx.openRunBrowserSession(request.scope.source, {
+          targetUrl: request.actionUrl,
+          // The parked tab itself, when the browser still has it: its
+          // address may have moved on since it was parked.
+          ...(request.scope.type === "discovery_source" &&
+          request.scope.parkedTab?.tabId
+            ? { tabId: request.scope.parkedTab.tabId }
+            : {}),
+          // When that tab is gone, the host opens the address again as the
+          // parked tab for this request instead of failing.
+          ...(request.scope.type === "discovery_source" &&
+          request.scope.parkedTab
+            ? {
+                parkedFor:
+                  request.kind === "login"
+                    ? ("sign_in" as const)
+                    : ("challenge" as const),
+              }
+            : {}),
+        });
+      }
     }
 
     const commandCommit = await ctx.repository.commitUserActionTransition({
@@ -608,6 +1194,16 @@ export function createWorkspaceUserActionMethods(
     });
 
     if (commandCommit.status === "stale") {
+      if (
+        command.action === "open_page" &&
+        request.scope.type === "application" &&
+        request.scope.resultId
+      ) {
+        await ctx.browserRuntime.closeApplicationFormAction?.(
+          request.scope.source,
+          request.scope.resultId,
+        );
+      }
       // The reducer saw the current revision but a concurrent writer advanced
       // the request before this commit, so the caller's transition did not
       // apply and the answer must not be persisted. Only "applied" and
@@ -632,13 +1228,58 @@ export function createWorkspaceUserActionMethods(
       return ctx.getWorkspaceSnapshot();
     }
 
+    // Between the step moving to verifying and its answer being stored, no
+    // other path may resume it: the missing answer read as a failed write
+    // and the question went back to the person.
     if (command.action === "submit_manual_answer") {
-      await persistManualAnswer({
-        command,
-        ctx,
-        request: commandCommit.request,
-        resultingRevision: commandCommit.request.revision,
-      });
+      manualAnswersBeingStored.add(command.requestId);
+    }
+
+    if (
+      command.action !== "open_page" &&
+      commandCommit.request.scope.type === "application" &&
+      commandCommit.request.scope.resultId
+    ) {
+      await ctx.browserRuntime
+        .closeApplicationFormAction?.(
+          commandCommit.request.scope.source,
+          commandCommit.request.scope.resultId,
+        )
+        .catch((error: unknown) => {
+          manualAnswersBeingStored.delete(command.requestId);
+          throw error;
+        });
+    }
+
+    if (command.action === "submit_manual_answer") {
+      let answered: Awaited<ReturnType<typeof persistManualAnswer>>;
+      try {
+        answered = await persistManualAnswer({
+          command,
+          ctx,
+          request: commandCommit.request,
+          resultingRevision: commandCommit.request.revision,
+        });
+      } finally {
+        manualAnswersBeingStored.delete(command.requestId);
+      }
+      // One answer covers the same question on the other applications of the
+      // batch (and, once saved for next time, on any application waiting on
+      // it), so a batch never asks the person the same thing three times.
+      // Each one continues exactly as if the person had answered it there.
+      // Only the person's own answer fans out; a reused one never does, so
+      // no step is answered twice.
+      const covered = command.commandId.startsWith(SAME_ANSWER_COMMAND_PREFIX)
+        ? []
+        : await findManualAnswerStepsCoveredBy({
+            ctx,
+            answered,
+            request: commandCommit.request,
+            savedForFuture: command.saveForFuture,
+          }).catch(() => []);
+      for (const sibling of covered) {
+        dispatchSameAnswer(sibling);
+      }
     }
 
     if (
@@ -653,6 +1294,23 @@ export function createWorkspaceUserActionMethods(
       } else if (isApplicationResumptionAction(commandCommit.request)) {
         await resumeApplicationSingleFlight(commandCommit.request);
       }
+    }
+
+    if (command.action === "submit_task_local_credentials") {
+      const taskLocalCredentials = {
+        reference: command.commandId,
+        identifier: command.identifier,
+        password: command.password,
+      };
+      // The resumer owns the only copy after this point and clears it as soon
+      // as the exact sign-in callback returns, before form preparation keeps
+      // working. The parsed command must not retain another copy meanwhile.
+      command.identifier = "";
+      command.password = "";
+      await resumeApplicationSingleFlight(
+        commandCommit.request,
+        taskLocalCredentials,
+      );
     }
 
     // R4: cancelling a step said it was closed while the application it
@@ -678,42 +1336,48 @@ export function createWorkspaceUserActionMethods(
     return ctx.getWorkspaceSnapshot();
   }
 
+  function performUserAction(
+    commandInput: Parameters<
+      WorkspaceUserActionMethods["performUserAction"]
+    >[0],
+  ): ReturnType<WorkspaceUserActionMethods["performUserAction"]> {
+    const command = UserActionCommandSchema.parse(commandInput);
+    const existing = commandFlights.get(command.commandId);
+    if (existing) return existing;
+
+    // Different commands for the same card must not overlap. In particular,
+    // a renderer timeout may re-enable a button while the first browser
+    // hand-off is still settling. Queue the retry so it re-reads the latest
+    // revision before any external browser work and becomes a safe stale
+    // no-op instead of opening the same page twice.
+    const previous = requestTransitionTails.get(command.requestId);
+    const flight = (
+      previous
+        ? previous
+            .catch(() => undefined)
+            .then(() => performUserActionOnce(command))
+        : performUserActionOnce(command)
+    ).finally(() => {
+      if (commandFlights.get(command.commandId) === flight) {
+        commandFlights.delete(command.commandId);
+      }
+    });
+    const tail = flight.then(
+      () => undefined,
+      () => undefined,
+    );
+    requestTransitionTails.set(command.requestId, tail);
+    void tail.finally(() => {
+      if (requestTransitionTails.get(command.requestId) === tail) {
+        requestTransitionTails.delete(command.requestId);
+      }
+    });
+    commandFlights.set(command.commandId, flight);
+    return flight;
+  }
+
   return {
     resumeVerifyingUserActions,
-    performUserAction(commandInput) {
-      const command = UserActionCommandSchema.parse(commandInput);
-      const existing = commandFlights.get(command.commandId);
-      if (existing) return existing;
-
-      // Different commands for the same card must not overlap. In particular,
-      // a renderer timeout may re-enable a button while the first browser
-      // hand-off is still settling. Queue the retry so it re-reads the latest
-      // revision before any external browser work and becomes a safe stale
-      // no-op instead of opening the same page twice.
-      const previous = requestTransitionTails.get(command.requestId);
-      const flight = (
-        previous
-          ? previous
-              .catch(() => undefined)
-              .then(() => performUserActionOnce(command))
-          : performUserActionOnce(command)
-      ).finally(() => {
-        if (commandFlights.get(command.commandId) === flight) {
-          commandFlights.delete(command.commandId);
-        }
-      });
-      const tail = flight.then(
-        () => undefined,
-        () => undefined,
-      );
-      requestTransitionTails.set(command.requestId, tail);
-      void tail.finally(() => {
-        if (requestTransitionTails.get(command.requestId) === tail) {
-          requestTransitionTails.delete(command.requestId);
-        }
-      });
-      commandFlights.set(command.commandId, flight);
-      return flight;
-    },
+    performUserAction,
   };
 }

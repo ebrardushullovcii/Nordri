@@ -19,6 +19,8 @@ export interface ResumeWorkspaceScreenProps {
   isWorkspacePending: boolean;
   /** Native PDF export is pending without invalidating a ready workspace. */
   isExportPending?: boolean;
+  /** An application run is starting; the Apply button shows it. */
+  isApplyPending?: boolean;
   workspace: JobFinderResumeWorkspace | null;
   availableResumeTemplates: readonly ResumeTemplateDefinition[];
   assistantMessages: readonly ResumeAssistantMessage[];
@@ -64,6 +66,17 @@ export interface ResumeWorkspaceScreenProps {
   ) => Promise<JobFinderWorkspaceSnapshot>;
   onRegenerateDraft: (jobId: string) => void;
   onRestoreRevision: (jobId: string, revisionId: string) => void;
+  /** Removes one accepted AI edit and keeps later edits. */
+  onUndoAiEdit: (jobId: string, revisionId: string) => void;
+  /**
+   * Set when the job sends the imported file unchanged. The studio says the
+   * draft is not used and offers one press that writes an editable resume at
+   * the saved level, then sends the Assistant request it could not act on.
+   */
+  originalResumeRoute?: {
+    levelLabel: string;
+    onWriteEditableResume: (jobId: string, pendingRequest: string | null) => void;
+  } | null;
   onApplyPatch: (
     patch: ResumeDraftPatch,
     revisionReason?: string | null,

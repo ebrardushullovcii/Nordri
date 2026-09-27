@@ -361,6 +361,85 @@ describe("workspace resume strategies end to end", () => {
     expect(workspace.strategyContext).not.toHaveProperty("approvedAt");
   });
 
+  test("automatic template recommendations stay editable while explicit choices stay locked", async () => {
+    type DraftInput = Parameters<
+      ReturnType<typeof createAiClient>["createResumeDraft"]
+    >[0];
+    const recommendedBaseClient = createAiClient();
+    let recommendedInput!: DraftInput;
+    const recommendedHarness = createWorkspaceServiceHarness({
+      aiClient: {
+        ...recommendedBaseClient,
+        createResumeDraft(input) {
+          recommendedInput = input;
+          return recommendedBaseClient.createResumeDraft(input);
+        },
+      },
+    });
+    await withDefaultCampaign(recommendedHarness);
+    await recommendedHarness.workspaceService.saveResumeStrategy(
+      strategyInput({ templateId: "modern_split" }),
+    );
+    await recommendedHarness.workspaceService.generateResume("job_ready");
+
+    expect(recommendedInput.selectedTemplateId).toBe("modern_split");
+    expect(recommendedInput.templateSelectionLocked).toBe(false);
+
+    const selectedBaseClient = createAiClient();
+    let selectedInput!: DraftInput;
+    const selectedHarness = createWorkspaceServiceHarness({
+      aiClient: {
+        ...selectedBaseClient,
+        createResumeDraft(input) {
+          selectedInput = input;
+          return selectedBaseClient.createResumeDraft(input);
+        },
+      },
+    });
+    await withDefaultCampaign(selectedHarness);
+    const created = await selectedHarness.workspaceService.saveResumeStrategy(
+      strategyInput({ templateId: "technical_matrix" }),
+    );
+    await selectedHarness.workspaceService.selectResumeStrategy({
+      jobId: "job_ready",
+      campaignId: "campaign_default",
+      strategyId: created.intelligence.resumeStrategies[0]!.id,
+      source: "manual",
+      reason: "Keep the selected technical layout.",
+    });
+    await selectedHarness.workspaceService.generateResume("job_ready");
+
+    expect(selectedInput.selectedTemplateId).toBe("technical_matrix");
+    expect(selectedInput.templateSelectionLocked).toBe(true);
+  });
+
+  test("a template the person changed on the draft stays locked on regeneration", async () => {
+    const baseClient = createAiClient();
+    type DraftInput = Parameters<typeof baseClient.createResumeDraft>[0];
+    const capturedInputs: DraftInput[] = [];
+    const harness = createWorkspaceServiceHarness({
+      aiClient: {
+        ...baseClient,
+        createResumeDraft(input) {
+          capturedInputs.push(input);
+          return baseClient.createResumeDraft(input);
+        },
+      },
+    });
+
+    await harness.workspaceService.generateResume("job_ready");
+    const workspace =
+      await harness.workspaceService.getResumeWorkspace("job_ready");
+    await harness.workspaceService.saveResumeDraft({
+      ...workspace.draft,
+      templateId: "technical_matrix",
+    });
+    await harness.workspaceService.generateResume("job_ready");
+
+    expect(capturedInputs.at(-1)?.selectedTemplateId).toBe("technical_matrix");
+    expect(capturedInputs.at(-1)?.templateSelectionLocked).toBe(true);
+  });
+
   test("generation uses the selected base document content", async () => {
     async function generateFromBaseDocument(
       documentId: string,

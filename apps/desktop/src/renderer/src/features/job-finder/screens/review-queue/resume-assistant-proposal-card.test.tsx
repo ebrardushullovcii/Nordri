@@ -296,7 +296,7 @@ describe("ResumeAssistantProposalCard grounding", () => {
         "[data-resume-proposal-grounding-outcome]",
       )?.textContent,
     ).toBe(
-      "Blocks approval: the new wording is not supported by your saved evidence.",
+      "Blocks approval: your saved evidence does not back the new wording. Accept it only if it is true, then approve it as accurate in the resume checks.",
     );
   });
 
@@ -484,7 +484,7 @@ describe("ResumeAssistantProposalCard export-gate warnings", () => {
         "[data-resume-proposal-approval-warning]",
       )?.textContent,
     ).toContain(
-      "1 proposed change would block approval because its new wording is not supported by your saved evidence.",
+      "1 proposed change would block approval because your saved evidence does not back its new wording.",
     );
     expect(
       renderResult.container.querySelector(
@@ -496,8 +496,51 @@ describe("ResumeAssistantProposalCard export-gate warnings", () => {
         "[data-resume-proposal-grounding-outcome]",
       )?.textContent,
     ).toBe(
-      "Blocks approval: the new wording is not supported by your saved evidence.",
+      "Blocks approval: your saved evidence does not back the new wording. Accept it only if it is true, then approve it as accurate in the resume checks.",
     );
+  });
+
+  it("names a stretch that goes to Lines to confirm without calling it a blocker", () => {
+    const message = buildBlockedMessage();
+    const renderResult = renderCard({
+      message: {
+        ...message,
+        approvalBlockers: message.approvalBlockers!.map((blocker) => ({
+          ...blocker,
+          message:
+            "This wording stretches past your saved evidence. After you accept, it is listed under Lines to confirm, where you keep it or remove it.",
+          kind: "needs_confirmation" as const,
+        })),
+      },
+    });
+
+    const blockerBox = renderResult.container.querySelector(
+      '[data-resume-proposal-approval-blocker="patch summary"]',
+    );
+    expect(blockerBox?.getAttribute("data-resume-proposal-approval-blocker-kind")).toBe(
+      "needs_confirmation",
+    );
+    expect(blockerBox?.textContent).toContain("Goes to Lines to confirm");
+    expect(blockerBox?.textContent).not.toContain("Would block approval");
+    expect(
+      renderResult.container.querySelector(
+        "[data-resume-proposal-grounding-outcome]",
+      )?.textContent,
+    ).toBe(
+      "Stretches past your saved evidence. After you accept, it is listed under Lines to confirm, where you keep it or remove it.",
+    );
+    expect(
+      renderResult.container.querySelector(
+        "[data-resume-proposal-approval-warning]",
+      )?.textContent,
+    ).toContain(
+      "1 change stretches past your saved evidence; after you accept, it is listed under Lines to confirm for you to keep or remove.",
+    );
+    // Accept stays the primary action: this is decided under Lines to confirm.
+    expect(
+      screen.getByRole("button", { name: "Accept selected (1)" }),
+    ).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Accept anyway/ })).toBeNull();
   });
 
   it("counts approval blockers the resume already carries so the panel cannot promise approval", () => {
@@ -529,6 +572,52 @@ describe("ResumeAssistantProposalCard export-gate warnings", () => {
     ).toContain(
       "The resume already has 1 approval blocker, and accepting this proposal does not clear it.",
     );
+  });
+
+  it("names undecided Lines to confirm as decisions, not approval blockers", () => {
+    const draft = buildDraft();
+    const renderResult = renderCard({
+      draft,
+      message: buildMessage({ approvalBlockers: [] }),
+      validation: {
+        ...buildValidation([
+          {
+            id: "claim_stretch",
+            field: "section_bullet",
+            sectionId: "sec skills",
+            entryId: null,
+            bulletId: "bul graphql",
+            claimText: "GraphQL",
+            claimOrigin: "ai_generated",
+            contentHash: "fnv1a32:22222222",
+            status: "confirm_needed",
+            evidenceRefs: [],
+            verifier: "deterministic_candidate_evidence_v2",
+            assessedAt: "2026-04-27T01:00:00.000Z",
+          },
+        ]),
+        issues: [
+          {
+            id: "issue_claim_grounding_claim_stretch",
+            severity: "error",
+            category: "unsupported_claim",
+            message: "Your saved evidence does not back this generated claim.",
+            sectionId: "sec skills",
+            entryId: null,
+            bulletId: "bul graphql",
+            flaggedText: "GraphQL",
+          },
+        ],
+      },
+    });
+
+    const warning = renderResult.container.querySelector(
+      "[data-resume-proposal-approval-warning]",
+    )?.textContent;
+    expect(warning).toContain(
+      "1 line is still waiting for your Keep or Remove under Lines to confirm.",
+    );
+    expect(warning).not.toContain("approval blocker");
   });
 
   it("demotes accept-anyway and offers the edit route the block text asks for", () => {
@@ -566,7 +655,7 @@ describe("ResumeAssistantProposalCard export-gate warnings", () => {
     expect(rejectButton.className).not.toBe(acceptButton.className);
     expect(
       screen.getByText(
-        "Accepting a blocked change keeps approval disabled until you rewrite the flagged wording.",
+        "Accepting a blocked change keeps approval disabled until you rewrite the flagged wording or approve it as accurate in the resume checks.",
       ),
     ).toBeTruthy();
     expect(
@@ -614,6 +703,39 @@ describe("ResumeAssistantProposalCard export-gate warnings", () => {
     ).toBe(
       "Not applied — this proposal was rejected and your draft is unchanged.",
     );
+  });
+
+  it("names a whole-draft blocker as the draft's, not as the proposed wording's", () => {
+    const draftLevelMessage =
+      "This preview-derived resume contains untraceable candidate content and needs factual review before approval.";
+    const renderResult = renderCard({
+      message: buildMessage({
+        approvalBlockers: [
+          {
+            patchId: null,
+            sectionId: null,
+            entryId: null,
+            bulletId: null,
+            flaggedText: null,
+            message: draftLevelMessage,
+          },
+        ],
+      }),
+    });
+
+    const warning = renderResult.container.querySelector(
+      "[data-resume-proposal-approval-warning]",
+    )?.textContent;
+    expect(warning).toContain(
+      "No proposed change adds wording that would block approval.",
+    );
+    expect(warning).toContain(
+      `Approval stays blocked for the whole resume, not because of this change: ${draftLevelMessage}`,
+    );
+    expect(warning).not.toContain("1 proposed change would block approval");
+    expect(
+      screen.getByText("Adds no new wording that would block approval."),
+    ).toBeTruthy();
   });
 
   it("keeps the clear wording when the export gate reported no blockers", () => {

@@ -119,6 +119,8 @@ export function mergeSavedJobs(
       ...job,
       resumeApplicationMode:
         currentJob?.resumeApplicationMode ?? job.resumeApplicationMode,
+      resumeTailoringMode:
+        currentJob?.resumeTailoringMode ?? job.resumeTailoringMode ?? null,
       latestMatchAssessmentAudit:
         job.latestMatchAssessmentAudit ??
         currentJob?.latestMatchAssessmentAudit ??

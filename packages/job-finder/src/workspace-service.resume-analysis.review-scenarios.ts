@@ -491,34 +491,30 @@ describe("createJobFinderWorkspaceService", () => {
       "https://www.linkedin.com/in/jamie-rivers",
     );
     expect(snapshot.profile.id).toBe("candidate_review_existing_profile");
-    expect(snapshot.profile.experiences).toEqual([]);
-    expect(snapshot.latestResumeImportRun?.candidateCounts.autoApplied).toBe(3);
+    // The profile had no work history yet, so the record fills the empty
+    // section instead of waiting in review; a placeholder headline is
+    // replaced the same way.
+    expect(snapshot.profile.experiences).toHaveLength(1);
     expect(
-      snapshot.latestResumeImportRun?.candidateCounts.needsReview,
-    ).toBeGreaterThanOrEqual(1);
-    expect(
-      snapshot.latestResumeImportReviewCandidates.map(
-        (candidate) => candidate.label,
-      ),
-    ).toContain("Staff Frontend Engineer at Signal Labs");
+      snapshot.latestResumeImportRun?.candidateCounts.autoApplied,
+    ).toBeGreaterThanOrEqual(4);
     expect(
       snapshot.latestResumeImportReviewCandidates.map(
         (candidate) => candidate.label,
       ),
-    ).toContain("Headline");
+    ).not.toContain("Staff Frontend Engineer at Signal Labs");
 
     const run = await repository.getLatestResumeImportRun();
-    const reviewCandidates = await repository.listResumeImportFieldCandidates({
+    const appliedCandidates = await repository.listResumeImportFieldCandidates({
       runId: run?.id ?? "",
-      resolutions: ["needs_review", "abstained"],
+      resolutions: ["auto_applied"],
     });
 
     expect(
-      reviewCandidates.some(
+      appliedCandidates.some(
         (candidate) =>
           candidate.target.section === "experience" &&
-          candidate.resolution === "needs_review" &&
-          candidate.resolutionReason === "record_candidates_require_review",
+          candidate.resolutionReason === "applied_into_empty_profile",
       ),
     ).toBe(true);
   });

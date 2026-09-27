@@ -5,6 +5,7 @@ import {
   createJobFinderAiClientFromEnvironment,
   createOpenAiCompatibleJobFinderAiClient,
 } from "./index";
+import { NO_AI_PROVIDER_REASON } from "./openai-compatible";
 import { ResumeGenerationStrategyPolicySchema } from "./shared";
 import {
   createEnvironment,
@@ -104,6 +105,49 @@ describe("ai provider config and fallback behavior", () => {
     expect(client.getStatus().kind).toBe("deterministic");
   });
 
+  test("reports every model stage and the Assistant as an outage when no model is configured", async () => {
+    // The model ships with the product. With no key the built-in reader and
+    // editor still answer, but they must say the AI was never asked: an
+    // import used to finish "Ready" and the Assistant replied as if it were
+    // the model.
+    const client = createJobFinderAiClientFromEnvironment(
+      createEnvironment({ UNEMPLOYED_AI_API_KEY: undefined }),
+    );
+
+    const stage = await client.extractResumeImportStage({
+      stage: "experience",
+      existingProfile: createProfile(),
+      existingSearchPreferences: createPreferences(),
+      documentBundle: createFastPathResumeBundle(),
+    });
+    expect(stage.fallback).toEqual({
+      kind: "provider_error",
+      reason: NO_AI_PROVIDER_REASON,
+    });
+
+    const sharedMemory = await client.extractResumeImportStage({
+      stage: "shared_memory",
+      existingProfile: createProfile(),
+      existingSearchPreferences: createPreferences(),
+      documentBundle: createFastPathResumeBundle(),
+    });
+    // Deterministic by design; it never had a model call to lose.
+    expect(sharedMemory.fallback ?? null).toBeNull();
+
+    const reply = await client.reviseCandidateProfile({
+      profile: createProfile(),
+      searchPreferences: createPreferences(),
+      context: { surface: "profile", section: "basics" },
+      relevantReviewItems: [],
+      request: "What is weak in my profile?",
+    });
+    expect(reply.executionReceipt).toMatchObject({
+      fallbackUsed: true,
+      stopReason: "permanent_failure",
+      providerCalls: 0,
+    });
+  });
+
   test("configures the AI provider when the API key is present", () => {
     const client = createJobFinderAiClientFromEnvironment(createEnvironment());
 
@@ -177,7 +221,7 @@ describe("ai provider config and fallback behavior", () => {
       const prompt = (aggressiveBody.messages ?? [])
         .map((message) => message.content ?? "")
         .join("\n");
-      expect(prompt).toContain("Do not return {}");
+      expect(prompt).toContain("Do not compose {}");
       expect(prompt).toContain("listingRequestedSkills");
       expect(prompt).not.toContain(
         "Return {} when the cited evidence is already",
@@ -1392,6 +1436,66 @@ describe("ai provider config and fallback behavior", () => {
         "[truncated",
       );
     } finally {
+      capture.restore();
+    }
+  });
+
+  test("says the Assistant ran out of time instead of blaming the request", async () => {
+    const capture = mockCapturingJsonFetch({
+      choices: [
+        {
+          message: {
+            tool_calls: [
+              {
+                id: "read",
+                type: "function",
+                function: { name: "read_resume_context", arguments: "{}" },
+              },
+            ],
+          },
+        },
+      ],
+    });
+    // Every clock read is a minute later: the 180 s budget runs out while
+    // the model is still reading, as a slow provider did live.
+    let now = Date.parse("2026-09-24T12:00:00.000Z");
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => {
+      now += 60_000;
+      return now;
+    });
+
+    try {
+      const client = createJobFinderAiClientFromEnvironment({
+        UNEMPLOYED_AI_API_KEY: "test-key",
+        UNEMPLOYED_AI_MODEL: "ordinary-model",
+      });
+
+      const reply = await client.reviseResumeDraft({
+        draft: ResumeDraftSchema.parse({
+          id: "draft_1",
+          jobId: "job_1",
+          templateId: "classic_ats",
+          status: "draft",
+          identity: null,
+          sections: [],
+          targetPageCount: 1,
+          generationMethod: null,
+          createdAt: "2026-08-12T12:00:00.000Z",
+          updatedAt: "2026-08-12T12:00:00.000Z",
+          approvedAt: null,
+          approvedExportId: null,
+          staleReason: null,
+        }),
+        job: createJobPosting(),
+        request: "the second one",
+      });
+
+      expect(reply.patches).toEqual([]);
+      expect(reply.content).toBe(
+        "The AI took too long to answer this time, so nothing was changed. Send the request again.",
+      );
+    } finally {
+      clock.mockRestore();
       capture.restore();
     }
   });

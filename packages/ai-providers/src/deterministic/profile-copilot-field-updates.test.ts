@@ -46,7 +46,8 @@ function collectReplacementKeys(
 
   for (const group of groups) {
     for (const operation of group.operations) {
-      if (!("value" in operation)) {
+      // A resume level carries a plain value, not fields.
+      if (!("value" in operation) || typeof operation.value !== "object") {
         continue;
       }
 
@@ -68,7 +69,11 @@ function findFieldOperation(
 ): { groupSummary: string; operation: ReplacementPatchOperation } | null {
   for (const group of groups) {
     for (const operation of group.operations) {
-      if ("value" in operation && field in operation.value) {
+      if (
+        "value" in operation &&
+        typeof operation.value === "object" &&
+        field in operation.value
+      ) {
         return { groupSummary: group.summary, operation };
       }
     }

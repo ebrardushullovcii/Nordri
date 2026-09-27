@@ -5,6 +5,7 @@ import type {
   DiscoveryRunRecord,
   SourceAccessPrompt,
   JobSearchPreferences,
+  JobSearchSelectivity,
 } from "@unemployed/contracts";
 import { AppWindow, Ban, CircleCheck, KeyRound } from "lucide-react";
 import {
@@ -44,6 +45,12 @@ interface DiscoveryFiltersPanelProps {
   onRunDiscoveryForTarget?: (targetId: string) => void;
   onViewProgress: () => void;
   searchPreferences: JobSearchPreferences;
+  /**
+   * How picky the search is, saved under Settings, AI behavior (ADR 0025).
+   * Shown here read-only so the one place that edits it stays the one place,
+   * while the person can still see what the next search will do.
+   */
+  searchSelectivity?: JobSearchSelectivity | null;
   sourceAccessPrompts: readonly SourceAccessPrompt[];
   /**
    * A running or most-recently completed run proves the browser runtime
@@ -51,6 +58,12 @@ interface DiscoveryFiltersPanelProps {
    */
   trustRecentRun?: boolean;
 }
+
+const SEARCH_SELECTIVITY_LABELS: Record<JobSearchSelectivity, string> = {
+  best_matches: "Best matches only",
+  balanced: "Balanced",
+  wide_net: "Cast a wide net",
+};
 
 type SectionValue =
   | string
@@ -198,13 +211,14 @@ export function DiscoveryFiltersPanel({
   isBrowserSessionPendingForTarget,
   isDiscoveryAllPending,
   isTargetPending,
-  planEditorHref = JOB_FINDER_ROUTE_PATHS.campaigns,
+  planEditorHref = JOB_FINDER_ROUTE_PATHS.profileWorkModes,
   onOpenBrowserSession,
   onOpenBrowserSessionForTarget,
   onRunAgentDiscovery,
   onRunDiscoveryForTarget,
   onViewProgress,
   searchPreferences,
+  searchSelectivity = null,
   sourceAccessPrompts,
   trustRecentRun = false,
 }: DiscoveryFiltersPanelProps) {
@@ -254,8 +268,8 @@ export function DiscoveryFiltersPanel({
           ? {}
           : {
               editAction: {
-                label: "Edit this plan's places",
-                filledLabel: "Edit this plan's places",
+                label: "Edit your places",
+                filledLabel: "Edit your places",
                 href: planEditorHref,
                 variant: "primary" as const,
               },
@@ -310,8 +324,32 @@ export function DiscoveryFiltersPanel({
           variant: "primary",
         },
       },
+      // The one AI knob that shapes a search lives in Settings with the
+      // other AI choices (ADR 0025). Naming it here answers "why did I get so
+      // few / so many results" without moving the control.
+      ...(searchSelectivity
+        ? [
+            {
+              label: "How picky",
+              values: [SEARCH_SELECTIVITY_LABELS[searchSelectivity]],
+              empty: "",
+              editAction: {
+                label: "Change in Settings",
+                filledLabel: "Change in Settings",
+                href: JOB_FINDER_ROUTE_PATHS.settings,
+                variant: "secondary" as const,
+              },
+            },
+          ]
+        : []),
     ],
-    [isRemoteOnlySearch, planEditorHref, searchPreferences, totalSourceCount],
+    [
+      isRemoteOnlySearch,
+      planEditorHref,
+      searchPreferences,
+      searchSelectivity,
+      totalSourceCount,
+    ],
   );
   // One primary at a time: on a blank workspace every section is empty, and
   // four primary buttons in a column read as four competing starts. The first
@@ -412,7 +450,7 @@ export function DiscoveryFiltersPanel({
         className="border-b border-(--surface-panel-border) px-4 py-3 text-(--text-headline)"
         id={searchControlsHeadingId}
       >
-        Search setup
+        What this search looks for
       </h2>
 
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden xl:min-h-0">

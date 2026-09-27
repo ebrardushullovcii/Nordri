@@ -149,7 +149,7 @@ describe("DiscoveryFiltersPanel", () => {
     ).not.toBeNull();
     expect(queryByText(/^Other active criteria/)).toBeNull();
 
-    fireEvent.click(getByRole("button", { name: "Edit this plan's places" }));
+    fireEvent.click(getByRole("button", { name: "Edit your places" }));
     expect(getByText("/job-finder/campaigns?campaignId=plan-a")).toBeTruthy();
   });
 
@@ -643,7 +643,7 @@ describe("DiscoveryFiltersPanel", () => {
       getByRole("button", { name: "Add roles" }).getAttribute("data-variant"),
     ).toBe("primary");
     expect(
-      getByRole("button", { name: "Edit this plan's places" }).getAttribute(
+      getByRole("button", { name: "Edit your places" }).getAttribute(
         "data-variant",
       ),
     ).toBe("secondary");
@@ -653,7 +653,7 @@ describe("DiscoveryFiltersPanel", () => {
       ),
     ).toBe("secondary");
     expect(
-      getByRole("button", { name: "Edit this plan's places" }),
+      getByRole("button", { name: "Edit your places" }),
     ).toBeTruthy();
     expect(getByRole("button", { name: "Set work modes" })).toBeTruthy();
     expect(
@@ -1395,7 +1395,7 @@ describe("DiscoveryFiltersPanel", () => {
     );
 
     expect(getByText("No matches from this search")).toBeTruthy();
-    expect(getByRole("link", { name: "Edit this plan's places" })).toBeTruthy();
+    expect(getByRole("link", { name: "Edit your places" })).toBeTruthy();
     expect(queryByText("Ready for your first search")).toBeNull();
   });
 
@@ -1498,7 +1498,7 @@ describe("DiscoveryFiltersPanel", () => {
       },
     } as unknown as SavedJob;
 
-    const { getAllByRole, getAllByText, getByText, queryByText } = render(
+    const { getAllByRole, getAllByText, queryByText } = render(
       <MemoryRouter>
         <DiscoveryResultsPanel
           browserSession={{
@@ -1529,7 +1529,7 @@ describe("DiscoveryFiltersPanel", () => {
     expect(offlineCatalogStatus?.parentElement?.className).toContain("py-4");
     expect(getAllByText("Source unavailable").length).toBeGreaterThan(0);
     expect(getAllByText("Unknown").length).toBeGreaterThan(0);
-    expect(getByText("Provisional assessment")).toBeTruthy();
+    expect(getAllByText("Fit not assessed").length).toBeGreaterThan(0);
     expect(queryByText("92% fit")).toBeNull();
   });
 

@@ -570,12 +570,9 @@ describe("ProfileSetupImportStep", () => {
       );
     });
 
-    expect(container?.textContent).toContain(
-      "Nothing to confirm on this step.",
-    );
-    // The queue never restates the stepper's count: the phrase "review queue"
-    // is gone from setup entirely.
-    expect(container?.textContent).not.toContain("review queue");
+    // An empty queue renders nothing at all: a card that only says "nothing
+    // to confirm" is a box that says nothing.
+    expect(container?.textContent).toBe("");
   });
 
   it("lets users confirm a specific text-vs-vision conflict choice", () => {

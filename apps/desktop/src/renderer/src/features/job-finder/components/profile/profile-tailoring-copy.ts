@@ -21,25 +21,25 @@ export const RESUME_APPROACH_OPTIONS = [
   {
     description:
       "Job Finder uses the exact file you imported. Nothing is rewritten and no tailored copy is made; you still review each job before any prepare-only application work.",
-    label: "Keep my resume as it is",
+    label: "Original: keep my resume as it is",
     value: "original_resume",
   },
   {
     description:
       "Small wording changes for the job. Every fact you wrote stays exactly as you wrote it.",
-    label: "Light edits that keep every fact",
+    label: "Light: small edits, every fact kept",
     value: "conservative",
   },
   {
     description:
       "More of your wording is rewritten for the job. Every fact you wrote still stays exactly as you wrote it.",
-    label: "A fuller rewrite that keeps every fact",
+    label: "Tailored: a fuller rewrite, every fact kept",
     value: "balanced",
   },
   {
     description:
       "A fuller rewrite that may also go a little past what you wrote: it can state a number of years you have evidence for one year higher when the job asks for that figure, and name technologies the job asks for — including ones named only in the qualifications — when your own experience makes them credible. Every one of those lines is shown to you to confirm before the resume can be used.",
-    label: "A fuller rewrite that may stretch, with your say-so",
+    label: "Aggressive: may stretch, with your say-so",
     value: "aggressive",
   },
 ] as const satisfies readonly {

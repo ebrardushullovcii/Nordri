@@ -350,6 +350,9 @@ describe("application question answer review", () => {
 
   it("makes the saved answer retry path explicit without widening authority", () => {
     const details = createDetails(true);
+    if (!details.result) throw new Error("Expected a prepared result.");
+    details.result.state = "blocked";
+    details.result.blockerReason = "required_human_input";
 
     render(
       <MemoryRouter>
@@ -371,9 +374,32 @@ describe("application question answer review", () => {
     ).toBe("/job-finder/actions");
     expect(
       screen.getByText(
-        /final submission and account creation remain disabled/i,
+        /When all required answers are saved, this application continues in its chosen apply mode/i,
       ),
     ).toBeTruthy();
+  });
+
+  it("does not send an already prepared application back to Needs you for its saved answer", () => {
+    const details = createDetails(true);
+    render(
+      <MemoryRouter>
+        <ApplicationsDetailPanelReviewDataSection
+          applyRunDetailsError={null}
+          applyRunDetailsStatus="ready"
+          isApplyRequestPending={() => false}
+          onClearApplicationAnswer={vi.fn(() => Promise.resolve())}
+          onResolveApplyConsentRequest={vi.fn()}
+          onSaveApplicationAnswer={vi.fn(() => Promise.resolve())}
+          selectedApplyRunDetails={details}
+          visibleApplyResult={details.result}
+        />
+      </MemoryRouter>,
+    );
+    expect(
+      screen.getByText(/Answer saved for this exact application/),
+    ).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "Needs you" })).toBeNull();
+    expect(screen.queryByText(/choose Done/)).toBeNull();
   });
 
   function renderManualFollowUp(input: {

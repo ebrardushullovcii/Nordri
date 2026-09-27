@@ -1,6 +1,15 @@
 import {
+  AiBehaviorPreferenceSchema,
   applyCompensationPreferenceChange,
+  CandidateCertificationSchema,
+  CandidateEducationSchema,
+  CandidateExperienceSchema,
+  CandidateLanguageSchema,
+  CandidateLinkSchema,
   CandidateProfileSchema,
+  CandidateProjectSchema,
+  CandidateProofBankEntrySchema,
+  CandidateReusableAnswerSchema,
   JobSearchPreferencesSchema,
   ProfileCopilotPatchGroupSchema,
   ProfileSetupStateSchema,
@@ -12,7 +21,13 @@ import {
   type ProfileCopilotPatchGroup,
   type ProfileRevision,
   type ProfileSetupState,
+  type ProfileCopilotPatchOperation,
+  type ResumeApplicationMode,
+  type ResumeApproach,
+  type TailoringMode,
 } from "@unemployed/contracts";
+
+import type { ReviseCandidateProfileConversationTurn } from "@unemployed/ai-providers";
 
 import { resolvePendingReviewItemsAfterExplicitSave } from "./profile-setup-review-items";
 import { deriveAndPersistProfileSetupState } from "./profile-workspace-state";
@@ -20,7 +35,18 @@ import {
   commitProfileCopilotStateWithStaleRetry,
   type CommitProfileCopilotStateInput,
 } from "./profile-commit-stale-conflict";
+import { followPrimaryContacts } from "./profile-merge";
+import {
+  MIRRORED_PROFILE_LIST_FIELDS,
+  mergeMirroredListHalves,
+  mirrorProfileListEdits,
+  type MirroredProfileListField,
+} from "./profile-copilot-mirrored-lists";
 import { hasResumeAffectingProfileChange } from "./resume-workspace-staleness";
+import {
+  areEquivalentEducationRecords,
+  areEquivalentExperienceRecords,
+} from "./resume-record-identity";
 import { createUniqueId } from "./shared";
 import { normalizeSearchPreferences } from "./workspace-helpers";
 import type { WorkspaceServiceContext } from "./workspace-service-context";
@@ -31,10 +57,12 @@ function isSearchPreferencesPatchSafeForAutoApply(
     { operation: "replace_search_preferences_fields" }
   >["value"],
 ): boolean {
+  // `tailoringMode` is not here: it is half of the resume level, which also
+  // moves a person off Original in Settings, so it waits for review exactly
+  // like `set_resume_approach`.
   const safeScalarFields = new Set([
     "minimumSalaryUsd",
     "salaryCurrency",
-    "tailoringMode",
     "targetSalaryUsd",
   ]);
 
@@ -188,17 +216,110 @@ function findUniqueProfileCopilotPatchGroup(
   return match;
 }
 
+/** JSON with object keys sorted, so key order never makes two equal values differ. */
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(stableStringify).join(",")}]`;
+  }
+  if (value !== null && typeof value === "object") {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .filter(([, entry]) => entry !== undefined)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entry]) => `${JSON.stringify(key)}:${stableStringify(entry)}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+}
+
+/**
+ * A tailoring strength inside a preferences change is the resume level,
+ * which Settings owns together with Original. The model often repeats the
+ * saved strength beside an unrelated edit ("add Staff Designer" plus
+ * `tailoringMode: balanced`); applied as written, that moved a person off
+ * Original with no word on the card. An unchanged strength is dropped. A
+ * changed one becomes the explicit `set_resume_approach`, so its card names
+ * the level and it waits for review. An explicit level in the same group wins.
+ */
+export function routeTailoringModeThroughResumeApproach(
+  operations: readonly ProfileCopilotPatchOperation[],
+  savedTailoringMode: TailoringMode,
+): ProfileCopilotPatchOperation[] {
+  const hasExplicitLevel = operations.some(
+    (operation) => operation.operation === "set_resume_approach",
+  );
+  const routed: ProfileCopilotPatchOperation[] = [];
+  let requestedStrength: TailoringMode | null = null;
+  for (const operation of operations) {
+    if (
+      operation.operation !== "replace_search_preferences_fields" ||
+      operation.value.tailoringMode === undefined
+    ) {
+      routed.push(operation);
+      continue;
+    }
+    const { tailoringMode, ...otherFields } = operation.value;
+    if (tailoringMode !== savedTailoringMode) {
+      requestedStrength = tailoringMode;
+    }
+    if (
+      Object.values(otherFields).some((fieldValue) => fieldValue !== undefined)
+    ) {
+      routed.push({ ...operation, value: otherFields });
+    }
+  }
+  if (requestedStrength && !hasExplicitLevel) {
+    routed.push({ operation: "set_resume_approach", value: requestedStrength });
+  }
+  return routed;
+}
+
 function normalizeAssistantPatchGroups(input: {
   patchGroups: readonly ProfileCopilotPatchGroup[];
   context: ProfileCopilotContext;
   content: string;
   assistantMessageId: string;
+  savedTailoringMode: TailoringMode;
+  /** The saved copies of target roles and locations the reply edits. */
+  lists: {
+    profile: Pick<CandidateProfile, MirroredProfileListField>;
+    searchPreferences: Pick<JobSearchPreferences, MirroredProfileListField>;
+  };
 }): {
   patchGroups: ProfileCopilotPatchGroup[];
   content: string;
 } {
-  const normalizedPatchGroups = input.patchGroups.map((patchGroup, index) => {
-    const parsedPatchGroup = ProfileCopilotPatchGroupSchema.parse(patchGroup);
+  // Groups left with nothing to change (only a repeated strength) are gone,
+  // and so is a group that repeats an earlier one in the same reply: the
+  // model sometimes calls the same tool twice, and a built-app run showed
+  // five cards for "add a target role", two of them exact copies.
+  const seenOperations = new Set<string>();
+  const routedPatchGroups = input.patchGroups.flatMap((patchGroup) => {
+    const operations = routeTailoringModeThroughResumeApproach(
+      patchGroup.operations,
+      input.savedTailoringMode,
+    );
+    const operationsKey = stableStringify(operations);
+    if (operations.length === 0 || seenOperations.has(operationsKey)) {
+      return [];
+    }
+    seenOperations.add(operationsKey);
+    return [{ original: patchGroup, routed: { ...patchGroup, operations } }];
+  });
+  // The same target-role or location change proposed once per stored copy
+  // is one card; the other copy follows when it is applied.
+  const mergedPatchGroups = mergeMirroredListHalves(
+    routedPatchGroups.map((entry) => ({
+      operations: entry.routed.operations,
+      summary: entry.routed.summary,
+      entry,
+    })),
+    input.lists,
+  ).map(({ summary, entry }) => ({
+    original: entry.original,
+    routed: { ...entry.routed, summary },
+  }));
+  const normalizedPatchGroups = mergedPatchGroups.map(({ routed }, index) => {
+    const parsedPatchGroup = ProfileCopilotPatchGroupSchema.parse(routed);
     const normalizedPatchGroup = ProfileCopilotPatchGroupSchema.parse({
       ...parsedPatchGroup,
       // Provider-generated IDs are only proposal-local and may repeat on a
@@ -222,7 +343,7 @@ function normalizeAssistantPatchGroups(input: {
 
   const downgradedPatchGroups = normalizedPatchGroups.filter(
     (patchGroup, index) => {
-      const originalPatchGroup = input.patchGroups[index];
+      const originalPatchGroup = mergedPatchGroups[index]?.original;
       return (
         originalPatchGroup?.applyMode === "applied" &&
         patchGroup.applyMode === "needs_review"
@@ -341,12 +462,72 @@ function filterRelevantReviewItemsForContext(input: {
   return reviewItems.filter((item) => item.status === "pending");
 }
 
+/** The resume level Settings shows, from its two stored halves. */
+export function resolveSavedResumeApproach(input: {
+  resumeApplicationMode: ResumeApplicationMode | null | undefined;
+  tailoringMode: JobSearchPreferences["tailoringMode"];
+}): ResumeApproach {
+  return input.resumeApplicationMode === "original_resume"
+    ? "original_resume"
+    : input.tailoringMode;
+}
+
+const RESUME_APPROACH_FACT: Record<ResumeApproach, string> = {
+  original_resume:
+    "Resume level for new jobs (Settings): Original. Applications send the imported resume file unchanged; nothing in it can be edited.",
+  conservative:
+    "Resume level for new jobs (Settings): Light. Job Finder writes an editable resume for each job with small edits.",
+  balanced:
+    "Resume level for new jobs (Settings): Tailored. Job Finder writes an editable resume for each job with a fuller rewrite.",
+  aggressive:
+    "Resume level for new jobs (Settings): Aggressive. Job Finder writes an editable resume for each job that may stretch, with the person's confirmation.",
+};
+
+/**
+ * The Settings half of the resume level a patch group leaves behind, or null
+ * when it leaves `settings.resumeApplicationMode` alone. A tailoring strength
+ * chosen while the person is on Original moves them off it: asking for Light
+ * means a written resume, and changing only the strength left Settings on
+ * Original while the Assistant said the change was made. The saved strength
+ * repeated beside another edit is not a choice and keeps Original; new
+ * replies drop it before they are stored, and this covers cards saved
+ * earlier.
+ */
+export function resolveResumeApplicationModeAfterPatchGroup(
+  patchGroup: Pick<ProfileCopilotPatchGroup, "operations">,
+  current: ResumeApplicationMode,
+  savedTailoringMode: TailoringMode,
+): ResumeApplicationMode | null {
+  let next: ResumeApplicationMode = current;
+  for (const operation of patchGroup.operations) {
+    if (operation.operation === "set_resume_approach") {
+      next =
+        operation.value === "original_resume"
+          ? "original_resume"
+          : "tailored_per_job";
+    } else if (
+      operation.operation === "replace_search_preferences_fields" &&
+      operation.value.tailoringMode !== undefined &&
+      operation.value.tailoringMode !== savedTailoringMode &&
+      next === "original_resume"
+    ) {
+      next = "tailored_per_job";
+    }
+  }
+  return next === current ? null : next;
+}
+
 function buildConversationFacts(input: {
   profile: CandidateProfile;
   searchPreferences: JobSearchPreferences;
   relevantReviewItems: readonly ProfileCopilotRelevantReviewItem[];
+  resumeApproach?: ResumeApproach;
 }): string[] {
   const facts: string[] = [];
+
+  if (input.resumeApproach) {
+    facts.push(RESUME_APPROACH_FACT[input.resumeApproach]);
+  }
 
   if (input.profile.headline?.trim()) {
     facts.push(`Headline: ${input.profile.headline.trim()}`);
@@ -396,6 +577,9 @@ function buildProfileRevision(input: {
   /** State the change left behind; see `snapshotProfileAfter`. */
   profileAfter?: CandidateProfile | null;
   searchPreferencesAfter?: JobSearchPreferences | null;
+  /** `settings.resumeApplicationMode` around this change, when it moved. */
+  resumeApplicationMode?: ResumeApplicationMode | null;
+  resumeApplicationModeAfter?: ResumeApplicationMode | null;
   /** Monotonic position in the log; see `sequence`. */
   sequence: number;
   reason?: string | null;
@@ -425,6 +609,9 @@ function buildProfileRevision(input: {
     snapshotSearchPreferencesAfter: input.searchPreferencesAfter
       ? JobSearchPreferencesSchema.parse(input.searchPreferencesAfter)
       : null,
+    snapshotResumeApplicationMode: input.resumeApplicationMode ?? null,
+    snapshotResumeApplicationModeAfter:
+      input.resumeApplicationModeAfter ?? null,
   };
 }
 
@@ -524,19 +711,104 @@ function collectManualEditsAfterRevision(input: {
   return [...labels].sort();
 }
 
+type RecordPatch<TRecord extends { id: string }> = {
+  [TKey in keyof Omit<TRecord, "id">]?: TRecord[TKey] | undefined;
+} & { id: string };
+
+/**
+ * A role the Assistant adds goes where it belongs in time. Appended, the
+ * newest job from a split ("Senior Backend Engineer from 2023") sat below a
+ * 2015 internship. Only a list that already runs newest first is reordered,
+ * and only the new card moves.
+ */
+export function placeNewExperiencesByDate<
+  TRecord extends { id: string; startDate?: string | null },
+>(before: readonly TRecord[], after: readonly TRecord[]): TRecord[] {
+  const beforeIds = new Set(before.map((entry) => entry.id));
+  const added = after.filter((entry) => !beforeIds.has(entry.id));
+  const kept = after.filter((entry) => beforeIds.has(entry.id));
+  if (added.length === 0) {
+    return [...after];
+  }
+  const startOf = (entry: TRecord) => entry.startDate?.trim() || null;
+  const datedKept = kept.map(startOf).filter((date): date is string => !!date);
+  const newestFirst = datedKept.every(
+    (date, index) => index === 0 || (datedKept[index - 1] ?? "") >= date,
+  );
+  if (!newestFirst) {
+    return [...after];
+  }
+  const next = [...kept];
+  for (const entry of added) {
+    const start = startOf(entry);
+    const index = start
+      ? next.findIndex((existing) => {
+          const existingStart = startOf(existing);
+          return existingStart !== null && existingStart < start;
+        })
+      : -1;
+    if (index === -1) {
+      next.push(entry);
+    } else {
+      next.splice(index, 0, entry);
+    }
+  }
+  return next;
+}
+
 function replaceOrInsertRecord<TRecord extends { id: string }>(
   records: readonly TRecord[],
-  record: TRecord,
+  record: RecordPatch<TRecord>,
+  materializeRecord: (incoming: RecordPatch<TRecord>) => TRecord,
+  isSameRecord?: (existing: TRecord, incoming: RecordPatch<TRecord>) => boolean,
 ): TRecord[] {
   const existingIndex = records.findIndex((entry) => entry.id === record.id);
 
   if (existingIndex >= 0) {
+    const existing = records[existingIndex] as TRecord;
     const next = [...records];
-    next[existingIndex] = record;
+    next[existingIndex] = mergeRecordIntoExisting(existing, record);
     return next;
   }
 
-  return [...records, record];
+  // The assistant usually describes the record it means ("my Marketing
+  // Manager role") instead of quoting its id. Matching on identity fields
+  // turns "add the company to that role" into an edit of the existing card
+  // rather than a second card beside it.
+  const equivalentIndex = isSameRecord
+    ? records.findIndex((entry) => isSameRecord(entry, record))
+    : -1;
+  if (equivalentIndex >= 0) {
+    const existing = records[equivalentIndex] as TRecord;
+    const next = [...records];
+    next[equivalentIndex] = mergeRecordIntoExisting(existing, record);
+    return next;
+  }
+
+  return [...records, materializeRecord(record)];
+}
+
+/**
+ * Omitted fields keep the value already on the card. Explicit nulls, empty
+ * lists, and booleans win, so the assistant can clear a location or remove
+ * the final bullet without disturbing unrelated fields.
+ */
+function mergeRecordIntoExisting<TRecord extends { id: string }>(
+  existing: TRecord,
+  incoming: RecordPatch<TRecord>,
+): TRecord {
+  const merged: Record<string, unknown> = { ...existing };
+  for (const [key, value] of Object.entries(
+    incoming as Record<string, unknown>,
+  )) {
+    if (key === "id") {
+      continue;
+    }
+    if (value !== undefined) {
+      merged[key] = value;
+    }
+  }
+  return merged as TRecord;
 }
 
 function removeRecord<TRecord extends { id: string }>(
@@ -544,6 +816,136 @@ function removeRecord<TRecord extends { id: string }>(
   recordId: string,
 ): TRecord[] {
   return records.filter((entry) => entry.id !== recordId);
+}
+
+function reorderRecords<TRecord extends { id: string }>(
+  records: readonly TRecord[],
+  orderedRecordIds: readonly string[],
+): TRecord[] {
+  const recordsById = new Map(records.map((record) => [record.id, record]));
+  if (
+    orderedRecordIds.length !== records.length ||
+    orderedRecordIds.some((recordId) => !recordsById.has(recordId))
+  ) {
+    throw new Error(
+      "The education order must name every saved education card once.",
+    );
+  }
+  return orderedRecordIds.map((recordId) => recordsById.get(recordId)!);
+}
+
+export const PROFILE_ASSISTANT_UNAVAILABLE_MESSAGE =
+  "The Assistant's AI provider is unavailable right now, so nothing was changed. Your question is kept; ask it again in a moment.";
+
+/** Placeholder the agent runtime starts from before the model writes anything. */
+const UNWRITTEN_ASSISTANT_CONTENT =
+  /^I need to inspect the saved profile before proposing a change\.?$/i;
+
+/**
+ * The words shown with a reply.
+ *
+ * What the model wrote is kept: it is where the Assistant asks for a fact it
+ * needs or says what it could not do. Replacing it with the list of proposal
+ * titles (already on the cards below the reply) hid exactly that, so a reply
+ * could drop half of what was asked without a word.
+ *
+ * Text the model did not write is not trusted to describe a proposal: the
+ * built-in editor says "I applied one safe change" in its own mode, which is
+ * false while the change waits for Apply & save. Such a reply, or one with no
+ * words at all, is described from the proposals themselves.
+ */
+export function buildAssistantReplyContent(input: {
+  content: string;
+  patchGroups: readonly ProfileCopilotPatchGroup[];
+  proposalsWaitForReview: boolean;
+  modelUnavailable: boolean;
+  /** The model wrote `content`; false for the built-in editor or a stub. */
+  writtenByModel: boolean;
+  /**
+   * The model's run stopped before it finished (it circled or ran out of
+   * turns), and the cards are what it had prepared by then.
+   */
+  stoppedBeforeFinishing?: boolean;
+}): string {
+  const written = input.content.trim();
+  const hasWrittenContent =
+    written.length > 0 && !UNWRITTEN_ASSISTANT_CONTENT.test(written);
+  const proposalCount = input.patchGroups.length;
+  const waitsForReview = input.proposalsWaitForReview && proposalCount > 0;
+  const outageNote = input.modelUnavailable
+    ? "The AI did not answer, so Job Finder's built-in editor prepared this."
+    : null;
+  const describedProposals =
+    proposalCount > 0
+      ? `I prepared ${proposalCount === 1 ? "this change" : `${proposalCount} changes`}${waitsForReview ? " for your review" : ""}: ${input.patchGroups.map((patchGroup) => patchGroup.summary).join("; ")}.`
+      : null;
+  const keepWritten =
+    hasWrittenContent && (input.writtenByModel || !waitsForReview);
+  const body = keepWritten ? written : (describedProposals ?? written);
+  // The proposal card carries Apply & save; the Profile chat hides this
+  // sentence whenever the cards are shown, and every other reader of the
+  // message still learns that nothing changed.
+  const reviewNote =
+    waitsForReview && !/nothing changed yet/i.test(body)
+      ? "Nothing changed yet."
+      : null;
+  // Kept cards from a run that stopped early may cover only part of what
+  // was asked; the person hears that instead of assuming it is all there.
+  const unfinishedNote =
+    input.stoppedBeforeFinishing && proposalCount > 0
+      ? "I stopped before finishing every step, so check that these cards cover all of your request."
+      : null;
+  return [outageNote, body, unfinishedNote, reviewNote]
+    .filter((part): part is string => Boolean(part && part.trim()))
+    .join(" ");
+}
+
+/**
+ * Changes the person already applied or turned down, from the whole chat.
+ * Asked "what is weak here" after removing a skill, the Assistant offered to
+ * add that skill back: the removal had scrolled out of the recent turns.
+ */
+export function buildPersonDecisionFacts(
+  messages: readonly ProfileCopilotMessage[],
+  limit = 20,
+): string[] {
+  return messages
+    .flatMap((message) => message.patchGroups)
+    .filter(
+      (patchGroup) =>
+        patchGroup.applyMode === "applied" ||
+        patchGroup.applyMode === "rejected",
+    )
+    .slice(-limit)
+    .map((patchGroup) =>
+      patchGroup.applyMode === "applied"
+        ? `The person applied: ${patchGroup.summary}. Do not propose undoing it unless they ask.`
+        : `The person turned down: ${patchGroup.summary}. Do not propose it again unless they ask.`,
+    );
+}
+
+/**
+ * The last few turns in this conversation, so "fix it", "do the second one",
+ * or "yes" refer to what the Assistant just said or proposed. The model sees
+ * no transcript otherwise; each turn used to start from nothing.
+ */
+export function buildRecentConversation(
+  messages: readonly ProfileCopilotMessage[],
+  limit = 8,
+): ReviseCandidateProfileConversationTurn[] {
+  return messages.slice(-limit).map((message) => ({
+    role: message.role,
+    content: message.content.slice(0, 2_000),
+    proposals: message.patchGroups.map((patchGroup) => ({
+      summary: patchGroup.summary,
+      status:
+        patchGroup.applyMode === "applied"
+          ? "applied"
+          : patchGroup.applyMode === "rejected"
+            ? "rejected"
+            : "waiting_for_review",
+    })),
+  }));
 }
 
 export function createWorkspaceProfileCopilotMethods(input: {
@@ -566,8 +968,18 @@ export function createWorkspaceProfileCopilotMethods(input: {
   getWorkspaceSnapshot: () => Promise<
     Awaited<ReturnType<WorkspaceServiceContext["getWorkspaceSnapshot"]>>
   >;
+  /**
+   * Writes the Settings half of the resume level exactly as Settings does,
+   * so a job already on Shortlisted keeps the level it was given.
+   */
+  commitResumeApplicationMode: (mode: ResumeApplicationMode) => Promise<void>;
 }) {
-  const { ctx, getCurrentSetupStateContext, getWorkspaceSnapshot } = input;
+  const {
+    commitResumeApplicationMode,
+    ctx,
+    getCurrentSetupStateContext,
+    getWorkspaceSnapshot,
+  } = input;
 
   async function persistProfileCopilotMessage(
     content: string,
@@ -576,7 +988,21 @@ export function createWorkspaceProfileCopilotMethods(input: {
   ) {
     const { profile, searchPreferences, profileSetupState } =
       await getCurrentSetupStateContext();
-    const userMessage: ProfileCopilotMessage = {
+    const existingMessages = await ctx.repository.listProfileCopilotMessages();
+    const contextKey = JSON.stringify(context);
+    const messagesInContext = existingMessages.filter(
+      (message) => JSON.stringify(message.context) === contextKey,
+    );
+    const lastInContext = messagesInContext.at(-1) ?? null;
+    // Asking again after the app closed mid-answer, or after the AI did not
+    // answer, answers the question already on screen instead of adding it a
+    // second time.
+    const unansweredRepeat =
+      lastInContext?.role === "user" &&
+      lastInContext.content.trim() === content.trim()
+        ? lastInContext
+        : null;
+    const userMessage: ProfileCopilotMessage = unansweredRepeat ?? {
       id: createUniqueId("profile_copilot_user_message"),
       role: "user",
       content,
@@ -584,9 +1010,22 @@ export function createWorkspaceProfileCopilotMethods(input: {
       patchGroups: [],
       createdAt: new Date().toISOString(),
     };
+    // Saved before the model is asked, so closing the app mid-answer keeps
+    // the question and the Assistant can offer to ask it again.
+    if (!unansweredRepeat) {
+      await ctx.repository.upsertProfileCopilotMessage(userMessage);
+    }
     const relevantReviewItems = filterRelevantReviewItemsForContext({
       context,
       reviewItems: profileSetupState.reviewItems,
+    });
+    const settings = await ctx.repository.getSettings();
+    // Original lives in Settings, not in the preferences the Assistant reads.
+    // Without it the Assistant told a person on Original "you're already on
+    // Light" and could not move them either way.
+    const resumeApproach = resolveSavedResumeApproach({
+      resumeApplicationMode: settings.resumeApplicationMode,
+      tailoringMode: searchPreferences.tailoringMode,
     });
     const assistantReply = await ctx.aiClient.reviseCandidateProfile({
       profile,
@@ -594,12 +1033,38 @@ export function createWorkspaceProfileCopilotMethods(input: {
       context,
       relevantReviewItems,
       request: content,
-      conversationFacts: buildConversationFacts({
-        profile,
-        searchPreferences,
-        relevantReviewItems,
-      }),
+      assistantBehavior: AiBehaviorPreferenceSchema.parse(
+        settings.aiBehavior ?? {},
+      ).profileAssistant,
+      resumeApproach,
+      conversationFacts: [
+        ...buildConversationFacts({
+          profile,
+          searchPreferences,
+          relevantReviewItems,
+          resumeApproach,
+        }),
+        ...buildPersonDecisionFacts(existingMessages),
+      ],
+      // One chat panel shows every step or tab of its surface, so "fix it"
+      // on Work history can refer to what was said on Basics.
+      recentConversation: buildRecentConversation(
+        existingMessages.filter(
+          (message) =>
+            message.context.surface === context.surface &&
+            message.id !== userMessage.id,
+        ),
+      ),
     });
+    const modelUnavailable =
+      assistantReply.executionReceipt?.fallbackUsed === true &&
+      assistantReply.executionReceipt.stopReason === "permanent_failure";
+    if (modelUnavailable && assistantReply.patchGroups.length === 0) {
+      // Nothing useful came back, so nothing is recorded as an answer: the
+      // question stays on screen unanswered with Ask again under it. The
+      // renderer states the outage in plain words.
+      throw new Error(PROFILE_ASSISTANT_UNAVAILABLE_MESSAGE);
+    }
     const assistantMessageId = createUniqueId(
       "profile_copilot_assistant_message",
     );
@@ -608,11 +1073,22 @@ export function createWorkspaceProfileCopilotMethods(input: {
       context,
       content: assistantReply.content,
       assistantMessageId,
+      savedTailoringMode: searchPreferences.tailoringMode,
+      lists: { profile, searchPreferences },
     });
-    const assistantContent =
-      !autoApplySafeGroups && normalizedAssistantReply.patchGroups.length > 0
-        ? `I prepared ${normalizedAssistantReply.patchGroups.length === 1 ? "this change" : `${normalizedAssistantReply.patchGroups.length} changes`} for your review: ${normalizedAssistantReply.patchGroups.map((patchGroup) => patchGroup.summary).join("; ")}. Nothing changed yet.`
-        : normalizedAssistantReply.content;
+    const assistantContent = buildAssistantReplyContent({
+      content: normalizedAssistantReply.content,
+      patchGroups: normalizedAssistantReply.patchGroups,
+      proposalsWaitForReview: !autoApplySafeGroups,
+      modelUnavailable,
+      writtenByModel:
+        assistantReply.executionReceipt !== null &&
+        assistantReply.executionReceipt !== undefined &&
+        assistantReply.executionReceipt.fallbackUsed === false,
+      stoppedBeforeFinishing:
+        assistantReply.executionReceipt?.fallbackUsed === false &&
+        assistantReply.executionReceipt.stopReason !== "completed",
+    });
     const assistantMessage: ProfileCopilotMessage = {
       id: assistantMessageId,
       role: "assistant",
@@ -626,10 +1102,14 @@ export function createWorkspaceProfileCopilotMethods(input: {
         );
       }),
       executionAttribution: assistantReply.executionReceipt ?? null,
-      createdAt: new Date().toISOString(),
+      // Always after the question, even when a built-in reply lands in the
+      // same millisecond: the list sorts by time, then by id, and the
+      // assistant's id sorted ahead of the person's.
+      createdAt: new Date(
+        Math.max(Date.now(), Date.parse(userMessage.createdAt) + 1),
+      ).toISOString(),
     };
 
-    await ctx.repository.upsertProfileCopilotMessage(userMessage);
     await ctx.repository.upsertProfileCopilotMessage(assistantMessage);
 
     for (const patchGroup of normalizedAssistantReply.patchGroups) {
@@ -677,12 +1157,25 @@ export function createWorkspaceProfileCopilotMethods(input: {
 
     for (const operation of patchGroup.operations) {
       switch (operation.operation) {
-        case "replace_identity_fields":
-          nextProfile = CandidateProfileSchema.parse({
-            ...nextProfile,
-            ...operation.value,
-          });
+        case "replace_identity_fields": {
+          const previousProfile = nextProfile;
+          nextProfile = followPrimaryContacts(
+            previousProfile,
+            CandidateProfileSchema.parse({
+              ...previousProfile,
+              ...operation.value,
+              ...(Object.hasOwn(operation.value, "summary")
+                ? {
+                    professionalSummary: {
+                      ...previousProfile.professionalSummary,
+                      fullSummary: operation.value.summary,
+                    },
+                  }
+                : {}),
+            }),
+          );
           break;
+        }
         case "replace_work_eligibility_fields":
           nextProfile = CandidateProfileSchema.parse({
             ...nextProfile,
@@ -701,6 +1194,9 @@ export function createWorkspaceProfileCopilotMethods(input: {
         case "replace_professional_summary_fields":
           nextProfile = CandidateProfileSchema.parse({
             ...nextProfile,
+            ...(Object.hasOwn(operation.value, "fullSummary")
+              ? { summary: operation.value.fullSummary }
+              : {}),
             professionalSummary: {
               ...nextProfile.professionalSummary,
               ...operation.value,
@@ -760,6 +1256,21 @@ export function createWorkspaceProfileCopilotMethods(input: {
                 ? { skills: nextProfile.skills.filter(keep) }
                 : { targetRoles: nextProfile.targetRoles.filter(keep) }),
           });
+          // Target roles and locations are one list to the person: a named
+          // entry leaves the copy Preferences shows too, even when the
+          // profile copy had already lost it.
+          const mirroredField = MIRRORED_PROFILE_LIST_FIELDS.find(
+            (field) => field === operation.field,
+          );
+          if (mirroredField) {
+            nextSearchPreferences = normalizeSearchPreferences(
+              JobSearchPreferencesSchema.parse({
+                ...nextSearchPreferences,
+                [mirroredField]:
+                  nextSearchPreferences[mirroredField].filter(keep),
+              }),
+            );
+          }
           break;
         }
         case "replace_search_preferences_fields": {
@@ -821,10 +1332,18 @@ export function createWorkspaceProfileCopilotMethods(input: {
         case "upsert_experience_record":
           nextProfile = CandidateProfileSchema.parse({
             ...nextProfile,
-            experiences: replaceOrInsertRecord(nextProfile.experiences, {
-              ...operation.record,
-              id: operation.record.id ?? createUniqueId("experience"),
-            }),
+            experiences: placeNewExperiencesByDate(
+              nextProfile.experiences,
+              replaceOrInsertRecord(
+                nextProfile.experiences,
+                {
+                  ...operation.record,
+                  id: operation.record.id ?? createUniqueId("experience"),
+                },
+                (record) => CandidateExperienceSchema.parse(record),
+                areEquivalentExperienceRecords,
+              ),
+            ),
           });
           break;
         case "remove_experience_record":
@@ -839,10 +1358,15 @@ export function createWorkspaceProfileCopilotMethods(input: {
         case "upsert_education_record":
           nextProfile = CandidateProfileSchema.parse({
             ...nextProfile,
-            education: replaceOrInsertRecord(nextProfile.education, {
-              ...operation.record,
-              id: operation.record.id ?? createUniqueId("education"),
-            }),
+            education: replaceOrInsertRecord(
+              nextProfile.education,
+              {
+                ...operation.record,
+                id: operation.record.id ?? createUniqueId("education"),
+              },
+              (record) => CandidateEducationSchema.parse(record),
+              areEquivalentEducationRecords,
+            ),
           });
           break;
         case "remove_education_record":
@@ -851,13 +1375,26 @@ export function createWorkspaceProfileCopilotMethods(input: {
             education: removeRecord(nextProfile.education, operation.recordId),
           });
           break;
+        case "reorder_education_records":
+          nextProfile = CandidateProfileSchema.parse({
+            ...nextProfile,
+            education: reorderRecords(
+              nextProfile.education,
+              operation.orderedRecordIds,
+            ),
+          });
+          break;
         case "upsert_certification_record":
           nextProfile = CandidateProfileSchema.parse({
             ...nextProfile,
-            certifications: replaceOrInsertRecord(nextProfile.certifications, {
-              ...operation.record,
-              id: operation.record.id ?? createUniqueId("certification"),
-            }),
+            certifications: replaceOrInsertRecord(
+              nextProfile.certifications,
+              {
+                ...operation.record,
+                id: operation.record.id ?? createUniqueId("certification"),
+              },
+              (record) => CandidateCertificationSchema.parse(record),
+            ),
           });
           break;
         case "remove_certification_record":
@@ -872,10 +1409,14 @@ export function createWorkspaceProfileCopilotMethods(input: {
         case "upsert_project_record":
           nextProfile = CandidateProfileSchema.parse({
             ...nextProfile,
-            projects: replaceOrInsertRecord(nextProfile.projects, {
-              ...operation.record,
-              id: operation.record.id ?? createUniqueId("project"),
-            }),
+            projects: replaceOrInsertRecord(
+              nextProfile.projects,
+              {
+                ...operation.record,
+                id: operation.record.id ?? createUniqueId("project"),
+              },
+              (record) => CandidateProjectSchema.parse(record),
+            ),
           });
           break;
         case "remove_project_record":
@@ -887,10 +1428,14 @@ export function createWorkspaceProfileCopilotMethods(input: {
         case "upsert_link_record":
           nextProfile = CandidateProfileSchema.parse({
             ...nextProfile,
-            links: replaceOrInsertRecord(nextProfile.links, {
-              ...operation.record,
-              id: operation.record.id ?? createUniqueId("link"),
-            }),
+            links: replaceOrInsertRecord(
+              nextProfile.links,
+              {
+                ...operation.record,
+                id: operation.record.id ?? createUniqueId("link"),
+              },
+              (record) => CandidateLinkSchema.parse(record),
+            ),
           });
           break;
         case "remove_link_record":
@@ -908,6 +1453,7 @@ export function createWorkspaceProfileCopilotMethods(input: {
                 ...operation.record,
                 id: operation.record.id ?? createUniqueId("language"),
               },
+              (record) => CandidateLanguageSchema.parse(record),
             ),
           });
           break;
@@ -923,10 +1469,14 @@ export function createWorkspaceProfileCopilotMethods(input: {
         case "upsert_proof_point":
           nextProfile = CandidateProfileSchema.parse({
             ...nextProfile,
-            proofBank: replaceOrInsertRecord(nextProfile.proofBank, {
-              ...operation.record,
-              id: operation.record.id ?? createUniqueId("proof"),
-            }),
+            proofBank: replaceOrInsertRecord(
+              nextProfile.proofBank,
+              {
+                ...operation.record,
+                id: operation.record.id ?? createUniqueId("proof"),
+              },
+              (record) => CandidateProofBankEntrySchema.parse(record),
+            ),
           });
           break;
         case "remove_proof_point":
@@ -946,6 +1496,7 @@ export function createWorkspaceProfileCopilotMethods(input: {
                   ...operation.record,
                   id: operation.record.id ?? createUniqueId("answer"),
                 },
+                (record) => CandidateReusableAnswerSchema.parse(record),
               ),
             },
           });
@@ -961,6 +1512,18 @@ export function createWorkspaceProfileCopilotMethods(input: {
               ),
             },
           });
+          break;
+        case "set_resume_approach":
+          // The strength half lives with the preferences; the Original half
+          // is Settings and is written after this commit.
+          if (operation.value !== "original_resume") {
+            nextSearchPreferences = normalizeSearchPreferences(
+              JobSearchPreferencesSchema.parse({
+                ...nextSearchPreferences,
+                tailoringMode: operation.value,
+              }),
+            );
+          }
           break;
         case "resolve_review_items":
           nextProfileSetupState = ProfileSetupStateSchema.parse({
@@ -979,9 +1542,27 @@ export function createWorkspaceProfileCopilotMethods(input: {
       }
     }
 
+    // A card that changed one copy of target roles or locations carries the
+    // same additions and removals to the other copy.
+    const mirrored = mirrorProfileListEdits({
+      before: {
+        profile: workspace.profile,
+        searchPreferences: workspace.searchPreferences,
+      },
+      after: { profile: nextProfile, searchPreferences: nextSearchPreferences },
+    });
+
     return {
-      profile: nextProfile,
-      searchPreferences: nextSearchPreferences,
+      profile:
+        mirrored.profile === nextProfile
+          ? nextProfile
+          : CandidateProfileSchema.parse(mirrored.profile),
+      searchPreferences:
+        mirrored.searchPreferences === nextSearchPreferences
+          ? nextSearchPreferences
+          : normalizeSearchPreferences(
+              JobSearchPreferencesSchema.parse(mirrored.searchPreferences),
+            ),
       profileSetupState: nextProfileSetupState,
     };
   }
@@ -993,14 +1574,18 @@ export function createWorkspaceProfileCopilotMethods(input: {
       patchGroup?: ProfileCopilotPatchGroup;
     },
   ) {
+    // The Settings half of a resume-level change, from the attempt that
+    // committed. Written once the profile commit has landed.
+    let pendingResumeApplicationMode: ResumeApplicationMode | null = null;
     const prepareAttempt =
       async (): Promise<CommitProfileCopilotStateInput> => {
-        const [messages, currentSetupContext, existingRevisions] =
+        const [messages, currentSetupContext, existingRevisions, settings] =
           await Promise.all([
-          ctx.repository.listProfileCopilotMessages(),
-          getCurrentSetupStateContext(),
-          ctx.repository.listProfileRevisions(),
-        ]);
+            ctx.repository.listProfileCopilotMessages(),
+            getCurrentSetupStateContext(),
+            ctx.repository.listProfileRevisions(),
+            ctx.repository.getSettings(),
+          ]);
         const captured = await ctx.repository.getProfileWithRevision();
         const now = new Date().toISOString();
         const persistedMatch = findUniqueProfileCopilotPatchGroup(
@@ -1043,6 +1628,14 @@ export function createWorkspaceProfileCopilotMethods(input: {
           patchGroup,
           now,
         );
+        const currentResumeApplicationMode =
+          settings.resumeApplicationMode ?? "tailored_per_job";
+        pendingResumeApplicationMode =
+          resolveResumeApplicationModeAfterPatchGroup(
+            patchGroup,
+            currentResumeApplicationMode,
+            currentSetupContext.searchPreferences.tailoringMode,
+          );
 
         const nextProfileSetupState =
           resolvePendingReviewItemsAfterExplicitSave({
@@ -1108,6 +1701,12 @@ export function createWorkspaceProfileCopilotMethods(input: {
               // this change apart from the person's own edits.
               profileAfter: patched.profile,
               searchPreferencesAfter: patched.searchPreferences,
+              ...(pendingResumeApplicationMode
+                ? {
+                    resumeApplicationMode: currentResumeApplicationMode,
+                    resumeApplicationModeAfter: pendingResumeApplicationMode,
+                  }
+                : {}),
               sequence: nextProfileRevisionSequence(existingRevisions),
               reason: `Assistant patch: ${patchGroup.summary}`,
               messageId: options?.messageId ?? sourceMessage?.id ?? null,
@@ -1122,6 +1721,9 @@ export function createWorkspaceProfileCopilotMethods(input: {
       ctx.repository,
       prepareAttempt,
     );
+    if (pendingResumeApplicationMode) {
+      await commitResumeApplicationMode(pendingResumeApplicationMode);
+    }
   }
 
   async function applyProfileCopilotPatchGroup(patchGroupId: string) {
@@ -1195,6 +1797,33 @@ export function createWorkspaceProfileCopilotMethods(input: {
       );
     }
 
+    // Original lives in Settings, so the profile snapshot cannot put it back.
+    // The assistant changes being undone recorded the Settings half; undo
+    // restores the first one's "before" unless the person has chosen a level
+    // in Settings since, which is theirs to keep.
+    const resumeLevelChanges = revisions
+      .filter(
+        (revision) =>
+          revision.sequence >= targetRevision.sequence &&
+          revision.trigger === "assistant_patch" &&
+          revision.snapshotResumeApplicationMode !== null &&
+          revision.snapshotResumeApplicationModeAfter !== null,
+      )
+      .sort((left, right) => left.sequence - right.sequence);
+    const currentResumeApplicationMode =
+      (await ctx.repository.getSettings()).resumeApplicationMode ??
+      "tailored_per_job";
+    const firstResumeLevelChange = resumeLevelChanges[0] ?? null;
+    const lastResumeLevelChange = resumeLevelChanges.at(-1) ?? null;
+    const restoredResumeApplicationMode =
+      firstResumeLevelChange?.snapshotResumeApplicationMode &&
+      lastResumeLevelChange?.snapshotResumeApplicationModeAfter ===
+        currentResumeApplicationMode &&
+      firstResumeLevelChange.snapshotResumeApplicationMode !==
+        currentResumeApplicationMode
+        ? firstResumeLevelChange.snapshotResumeApplicationMode
+        : null;
+
     const undoReason = targetRevision.reason
       ? `Undo: ${targetRevision.reason}`
       : "Undo profile revision";
@@ -1205,6 +1834,12 @@ export function createWorkspaceProfileCopilotMethods(input: {
       profileSetupState: currentSetupContext.profileSetupState,
       profileAfter: targetRevision.snapshotProfile,
       searchPreferencesAfter: targetRevision.snapshotSearchPreferences,
+      ...(restoredResumeApplicationMode
+        ? {
+            resumeApplicationMode: currentResumeApplicationMode,
+            resumeApplicationModeAfter: restoredResumeApplicationMode,
+          }
+        : {}),
       sequence: nextProfileRevisionSequence(revisions),
       reason:
         laterAssistantRevisionCount > 0
@@ -1236,6 +1871,9 @@ export function createWorkspaceProfileCopilotMethods(input: {
         expectedProfileRevision: captured.revision,
       };
     });
+    if (restoredResumeApplicationMode) {
+      await commitResumeApplicationMode(restoredResumeApplicationMode);
+    }
 
     return getWorkspaceSnapshot();
   }

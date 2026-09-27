@@ -223,8 +223,69 @@ describe("application CRM service", () => {
       getApplicationCrmData(
         record({ status: "ready_for_review", lastAttemptState: "paused" }),
       ).stage,
-    ).toBe("ready_for_approval");
+    ).toBe("preparing");
   });
+
+  test("saving tracking details preserves the stage of an application waiting on the person", async () => {
+    const repo = repository([
+      record({
+        status: "ready_for_review",
+        lastAttemptState: "paused",
+        latestBlocker: {
+          code: "missing_candidate_answer",
+          summary: "Answer the required certification question.",
+        },
+      }),
+    ]);
+
+    const updated = await mutateCrm(repo, 0, {
+      type: "set_tags",
+      tags: ["Follow up"],
+    });
+
+    expect(updated.crm).toMatchObject({
+      stage: "preparing",
+      tags: ["Follow up"],
+    });
+    expect(updated.lastAttemptState).toBe("paused");
+    expect(updated.latestBlocker?.code).toBe("missing_candidate_answer");
+    expect(getApplicationCrmData(repo.read()[0]!).stage).toBe("preparing");
+    expect(
+      exportApplicationCrm({
+        records: repo.read(),
+        request: { format: "csv", applicationRecordIds: [] },
+      }).content,
+    ).toContain(",preparing,");
+  });
+
+  test.each([
+    "submitted",
+    "interview",
+    "offer",
+    "rejected",
+    "withdrawn",
+  ] as const)(
+    "tracking details preserve %s despite an older preparation blocker",
+    async (status) => {
+      const repo = repository([
+        record({
+          status,
+          lastAttemptState: "paused",
+          latestBlocker: {
+            code: "requires_manual_review",
+            summary: "Old preparation handoff.",
+          },
+        }),
+      ]);
+      const updated = await mutateCrm(repo, 0, {
+        type: "set_tags",
+        tags: ["Follow up"],
+      });
+      expect(updated.crm?.stage).toBe(
+        status === "submitted" ? "applied" : status,
+      );
+    },
+  );
 
   test("persists manual stage changes without granting submit authority", async () => {
     const repo = repository();
@@ -253,6 +314,126 @@ describe("application CRM service", () => {
     expect(updated).not.toHaveProperty("submitAuthorized");
     expect(updated.lastAttemptState).toBeNull();
     expect(repo.read()[0]?.crm?.events[0]?.source).toBe("user");
+  });
+
+  test("tags and notes keep following later application progress", async () => {
+    const repo = repository([
+      record({ status: "ready_for_review", lastAttemptState: "paused" }),
+    ]);
+    const tagged = await mutateCrm(repo, 0, {
+      type: "set_tags",
+      tags: ["Priority"],
+    });
+    expect(tagged.crm).toMatchObject({
+      stage: "preparing",
+      stageSource: "activity",
+    });
+    await repo.upsertApplicationRecord(
+      record({
+        ...tagged,
+        status: "submitted",
+        lastAttemptState: "submitted",
+        latestBlocker: null,
+      }),
+    );
+    expect(getApplicationCrmData(repo.read()[0]!).stage).toBe("applied");
+    const noted = await mutateCrm(repo, 1, {
+      type: "add_note",
+      note: {
+        id: "note_progress",
+        body: "Waiting for a reply.",
+        createdAt: "2026-08-15T12:00:00.000Z",
+        updatedAt: "2026-08-15T12:00:00.000Z",
+      },
+    });
+    expect(noted.crm).toMatchObject({
+      stage: "applied",
+      stageSource: "activity",
+    });
+    const interviewing = record({ ...noted, status: "interview" });
+    await repo.upsertApplicationRecord(interviewing);
+    expect(getApplicationCrmData(interviewing).stage).toBe("interview");
+    const removed = await mutateCrm(repo, 2, {
+      type: "remove_note",
+      noteId: "note_progress",
+    });
+    expect(removed.crm).toMatchObject({
+      stage: "interview",
+      stageSource: "activity",
+    });
+    expect(
+      exportApplicationCrm({
+        records: repo.read(),
+        request: { format: "csv", applicationRecordIds: [] },
+      }).content,
+    ).toContain(",interview,local_historical_inference,");
+  });
+
+  test("explicitly choosing the inferred stage prevents future automatic stage changes", async () => {
+    const repo = repository([record()]);
+    const selected = await mutateCrm(repo, 0, {
+      type: "set_stage",
+      stage: "applied",
+      customStageId: null,
+      note: null,
+    });
+    expect(selected.crm).toMatchObject({
+      stage: "applied",
+      stageSource: "user",
+      revision: 1,
+    });
+    expect(selected.crm?.events[0]).toMatchObject({
+      kind: "stage_changed",
+      fromStage: "applied",
+      toStage: "applied",
+      source: "user",
+    });
+    const interviewing = record({ ...selected, status: "interview" });
+    expect(getApplicationCrmData(interviewing).stage).toBe("applied");
+    await repo.upsertApplicationRecord(interviewing);
+    const tagged = await mutateCrm(repo, 1, {
+      type: "set_tags",
+      tags: ["Keep stage"],
+    });
+    expect(getApplicationCrmData(tagged)).toMatchObject({
+      stage: "applied",
+      stageSource: "user",
+    });
+  });
+
+  test("migrates complete metadata-only histories on write while keeping ambiguous legacy stages", async () => {
+    const legacy = record({
+      status: "interview",
+      crm: {
+        stage: "preparing",
+        revision: 1,
+        stageChangedAt: "2026-08-01T10:00:00.000Z",
+        events: [
+          {
+            id: "tag_legacy",
+            at: "2026-08-01T10:00:00.000Z",
+            kind: "tags_changed",
+            source: "user",
+            title: "Tags saved",
+          },
+        ],
+      },
+    });
+    const repo = repository([legacy]);
+    expect(getApplicationCrmData(legacy)).toMatchObject({
+      stage: "interview",
+      stageSource: "activity",
+    });
+    const migrated = await mutateCrm(repo, 1, { type: "set_tags", tags: [] });
+    expect(migrated.crm).toMatchObject({
+      stage: "interview",
+      stageSource: "activity",
+    });
+    expect(
+      getApplicationCrmData(
+        record({ ...legacy, crm: { ...legacy.crm, revision: 3 } }),
+      ),
+    ).toMatchObject({ stage: "preparing", stageSource: "user" });
   });
 
   test("commits a bulk stage change once and updates every selected record", async () => {
@@ -616,6 +797,30 @@ describe("application CRM service", () => {
     expect(updated?.status).toBe("approved");
     expect(updated?.crm?.stage).toBe("no_response");
     expect(updated).not.toHaveProperty("submittedAt");
+  });
+
+  test("automatic no-response tracking follows a later interview without freezing metadata", async () => {
+    const repo = repository([record()]);
+    await mutateCrm(repo, 0, { type: "set_tags", tags: ["Follow up"] });
+    const [followUp] = await runApplicationNoResponseAutomation({
+      repository: repo,
+      settings: {
+        noResponseAutomation: { enabled: true, afterDays: 14 },
+        customStages: [],
+      },
+      now: () => "2026-08-16T12:00:00.000Z",
+    });
+    expect(followUp?.crm).toMatchObject({
+      stage: "no_response",
+      stageSource: "activity",
+    });
+    expect(getApplicationCrmData(followUp!).stage).toBe("no_response");
+    const interviewing = record({ ...followUp, status: "interview" });
+    expect(getApplicationCrmData(interviewing)).toMatchObject({
+      stage: "interview",
+      stageSource: "activity",
+      tags: ["Follow up"],
+    });
   });
 
   test("projects calendar work, duplicate hints, and one recommended action", () => {

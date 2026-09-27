@@ -5,7 +5,6 @@ import {
   fireEvent,
   render,
   screen,
-  within,
 } from "@testing-library/react";
 import {
   JobDiscoveryTargetSchema,
@@ -205,7 +204,7 @@ describe("DiscoveryResultsPanel triage filters", () => {
     first.focus();
     fireEvent.keyDown(first, { key: " " });
     fireEvent.click(first);
-    fireEvent.click(screen.getByRole("button", { name: "Shortlist selected" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Shortlist \d+ selected$/u }));
     expect(onShortlistJobs).toHaveBeenCalledWith(["one"]);
 
     unmount();
@@ -249,7 +248,7 @@ describe("DiscoveryResultsPanel triage filters", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: "Remote" }));
 
     expect(screen.getByLabelText("4 active filters")).toBeTruthy();
-    expect(screen.getByText("2 of 3 results")).toBeTruthy();
+    expect(screen.getByText("2 of 3 jobs")).toBeTruthy();
     expect(
       Array.from(
         container.querySelectorAll<HTMLButtonElement>(
@@ -271,7 +270,7 @@ describe("DiscoveryResultsPanel triage filters", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: "Primary board" }));
     fireEvent.click(screen.getByRole("checkbox", { name: "Hybrid" }));
 
-    expect(screen.getByText("0 of 2 results")).toBeTruthy();
+    expect(screen.getByText("0 of 2 jobs")).toBeTruthy();
     expect(screen.getByText("No jobs match these filters")).toBeTruthy();
     expect(
       container.querySelectorAll("button[data-job-result-id]"),
@@ -290,7 +289,11 @@ describe("DiscoveryResultsPanel triage filters", () => {
 
   it("keeps long source labels complete and filterable", () => {
     const job = createJob("specialist", "strong_fit", ["remote"], longSource);
-    renderResults([job]);
+    // A second source, or the facet has nothing to narrow and is not offered.
+    renderResults([
+      job,
+      createJob("generalist", "strong_fit", ["remote"], primarySource),
+    ]);
     openFilters();
 
     const sourceCheckbox = screen.getByRole("checkbox", {
@@ -303,7 +306,23 @@ describe("DiscoveryResultsPanel triage filters", () => {
       "break-words",
     );
     fireEvent.click(sourceCheckbox);
-    expect(screen.getByText("1 of 1 results")).toBeTruthy();
+    expect(screen.getByText("1 of 2 jobs")).toBeTruthy();
+  });
+
+  it("sizes filter columns to the groups shown, so a lone Source group gets the row", () => {
+    // Same fit and work mode: only the Source facet has more than one value.
+    renderResults([
+      createJob("specialist", "strong_fit", ["remote"], longSource),
+      createJob("generalist", "strong_fit", ["remote"], primarySource),
+    ]);
+    openFilters();
+
+    const groups = screen.getByTestId("discovery-results-filter-groups");
+    expect(groups.querySelectorAll("fieldset")).toHaveLength(1);
+    expect(groups.className).toContain(
+      "grid-cols-[repeat(auto-fit,minmax(15rem,1fr))]",
+    );
+    expect(groups.className).not.toContain("xl:grid-cols-4");
   });
 
   it("resets pagination and retains a selected job that matches the filter", () => {
@@ -394,7 +413,7 @@ describe("DiscoveryResultsPanel triage filters", () => {
     }
     fireEvent.click(screen.getByRole("checkbox", { name: "Inactive" }));
     fireEvent.click(screen.getByRole("checkbox", { name: "Stale" }));
-    expect(screen.getByText("2 of 5 results")).toBeTruthy();
+    expect(screen.getByText("2 of 5 jobs")).toBeTruthy();
     expect(
       Array.from(
         container.querySelectorAll<HTMLButtonElement>(
@@ -446,8 +465,9 @@ describe("DiscoveryResultsPanel facet target size", () => {
     ]);
     openFilters();
 
+    // Every row shares one listing status, so that facet is not offered.
     const fieldsets = container.querySelectorAll("fieldset");
-    expect(fieldsets).toHaveLength(4);
+    expect(fieldsets).toHaveLength(3);
 
     let checkboxCount = 0;
     for (const fieldset of fieldsets) {
@@ -460,7 +480,7 @@ describe("DiscoveryResultsPanel facet target size", () => {
         expect(input.className).toContain("size-6");
       }
     }
-    expect(checkboxCount).toBeGreaterThan(8);
+    expect(checkboxCount).toBe(6);
   });
 });
 
@@ -498,7 +518,7 @@ describe("DiscoveryResultsPanel facet persistence", () => {
     openFilters();
     fireEvent.click(screen.getByRole("checkbox", { name: "Strong fit" }));
     fireEvent.click(screen.getByRole("checkbox", { name: "Remote" }));
-    expect(screen.getByText("1 of 2 results")).toBeTruthy();
+    expect(screen.getByText("1 of 2 jobs")).toBeTruthy();
 
     expect(readFacetScopesById()["plan-a"]).toEqual({
       id: "plan-a",
@@ -511,7 +531,7 @@ describe("DiscoveryResultsPanel facet persistence", () => {
     cleanup();
     renderResults(persistenceJobs, { facetScopeId: "plan-a" });
     expect(screen.getByLabelText("2 active filters")).toBeTruthy();
-    expect(screen.getByText("1 of 2 results")).toBeTruthy();
+    expect(screen.getByText("1 of 2 jobs")).toBeTruthy();
     openFilters();
     expect(
       screen.getByRole<HTMLInputElement>("checkbox", { name: "Strong fit" })
@@ -535,12 +555,7 @@ describe("DiscoveryResultsPanel facet persistence", () => {
     });
     expect(screen.queryByLabelText(/active filters?/u)).toBeNull();
     // With no query or filters left, the header returns to the plain count.
-    // Neither fixture row carries a bound, evidenced assessment, so both sit
-    // in the not-yet-scored band, which the headline leads with instead of
-    // opening on a zero.
-    expect(
-      screen.getByText("2 matched your role, not scored yet · 0 also found"),
-    ).toBeTruthy();
+    expect(screen.getByText("2 jobs")).toBeTruthy();
   });
 
   it("restores only facets still valid and present, dropping the rest everywhere", () => {
@@ -586,7 +601,7 @@ describe("DiscoveryResultsPanel facet persistence", () => {
       screen.getByRole<HTMLInputElement>("checkbox", { name: "Hybrid" })
         .checked,
     ).toBe(false);
-    expect(screen.getByText("1 of 2 results")).toBeTruthy();
+    expect(screen.getByText("1 of 2 jobs")).toBeTruthy();
 
     expect(readFacetScopesById()["plan-seed"]).toEqual({
       id: "plan-seed",
@@ -687,7 +702,7 @@ describe("DiscoveryResultsPanel facet persistence", () => {
     // zero-result state instead of being silently erased.
     fireEvent.click(screen.getByRole("checkbox", { name: "Primary board" }));
     fireEvent.click(screen.getByRole("checkbox", { name: "Hybrid" }));
-    expect(screen.getByText("0 of 2 results")).toBeTruthy();
+    expect(screen.getByText("0 of 2 jobs")).toBeTruthy();
     expect(
       screen.getByRole<HTMLInputElement>("checkbox", { name: "Primary board" })
         .checked,
@@ -704,17 +719,12 @@ describe("DiscoveryResultsPanel facet persistence", () => {
 });
 
 describe("DiscoveryResultsPanel toolbar", () => {
-  it("offers two densities because the rows have two shapes", () => {
+  it("offers no density switch: one row shape, one less decision", () => {
     renderResults([
       createJob("strong-remote", "strong_fit", ["remote"], primarySource),
     ]);
 
-    const densityGroup = screen.getByRole("group", { name: "List density" });
-    expect(
-      within(densityGroup)
-        .getAllByRole("button")
-        .map((button) => button.textContent),
-    ).toEqual(["Compact", "Comfortable"]);
+    expect(screen.queryByRole("group", { name: "List density" })).toBeNull();
   });
 });
 
@@ -735,7 +745,7 @@ describe("DiscoveryResultsPanel facet saved views", () => {
     openFilters();
     fireEvent.click(screen.getByRole("checkbox", { name: "Strong fit" }));
     fireEvent.click(screen.getByRole("checkbox", { name: "Primary board" }));
-    expect(screen.getByText("1 of 2 results")).toBeTruthy();
+    expect(screen.getByText("1 of 2 jobs")).toBeTruthy();
 
     // Named views were list-management chrome on a handful of rows; the
     // per-plan facet snapshot that actually survives navigation stays.

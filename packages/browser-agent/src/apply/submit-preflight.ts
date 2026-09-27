@@ -52,6 +52,14 @@ function looksLikeTheLastScreen(observation: ApplyFormObservation): boolean {
   );
 }
 
+function canonicalOrigin(value: string): string | null {
+  try {
+    return new URL(value).origin;
+  } catch {
+    return null;
+  }
+}
+
 export function runSubmitPreflight(input: {
   observation: ApplyFormObservation;
   proposedActionRef: string;
@@ -64,6 +72,19 @@ export function runSubmitPreflight(input: {
       ok: false,
       reason:
         "This application is set to fill in only, so Job Finder stopped before sending it.",
+    };
+  }
+
+  const pageOrigin = observation.origin;
+  const allowedOrigins = authority.allowedOrigins
+    .map(canonicalOrigin)
+    .filter((value): value is string => value !== null);
+  if (!pageOrigin || !allowedOrigins.includes(pageOrigin)) {
+    return {
+      ok: false,
+      reason: pageOrigin
+        ? `Job Finder is not authorized to send an application on ${pageOrigin}. The form is still available for review.`
+        : "Job Finder could not verify which site would receive this application, so it stopped before sending.",
     };
   }
 

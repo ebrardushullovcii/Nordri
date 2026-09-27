@@ -95,6 +95,129 @@ describe("contracts profile copilot schemas", () => {
     expect(patchGroup.applyMode).toBe("needs_review");
   });
 
+  test("keeps omitted experience fields omitted and explicit false values", () => {
+    const base = {
+      id: "profile_patch_group_experience_partial",
+      summary: "Update one role",
+      applyMode: "needs_review" as const,
+      createdAt: "2026-04-12T10:05:00.000Z",
+    };
+    const locationPatch = ProfileCopilotPatchGroupSchema.parse({
+      ...base,
+      operations: [
+        {
+          operation: "upsert_experience_record",
+          record: { id: "experience_1", location: "Hamburg, Germany" },
+        },
+      ],
+    });
+    const endingPatch = ProfileCopilotPatchGroupSchema.parse({
+      ...base,
+      id: "profile_patch_group_experience_ending",
+      operations: [
+        {
+          operation: "upsert_experience_record",
+          record: { id: "experience_1", isCurrent: false },
+        },
+      ],
+    });
+
+    expect(locationPatch.operations[0]).toEqual({
+      operation: "upsert_experience_record",
+      record: { id: "experience_1", location: "Hamburg, Germany" },
+    });
+    expect(endingPatch.operations[0]).toEqual({
+      operation: "upsert_experience_record",
+      record: { id: "experience_1", isCurrent: false },
+    });
+  });
+
+  test("keeps record upserts partial and accepts explicit clears", () => {
+    const patchGroup = ProfileCopilotPatchGroupSchema.parse({
+      id: "profile_patch_group_partial_records",
+      summary: "Update existing cards",
+      applyMode: "needs_review",
+      operations: [
+        {
+          operation: "upsert_experience_record",
+          record: {
+            id: "experience_1",
+            location: null,
+            achievements: [],
+          },
+        },
+        {
+          operation: "upsert_education_record",
+          record: { id: "education_1", summary: "Updated focus" },
+        },
+      ],
+      createdAt: "2026-04-12T10:05:00.000Z",
+    });
+
+    expect(patchGroup.operations).toEqual([
+      {
+        operation: "upsert_experience_record",
+        record: {
+          id: "experience_1",
+          location: null,
+          achievements: [],
+        },
+      },
+      {
+        operation: "upsert_education_record",
+        record: { id: "education_1", summary: "Updated focus" },
+      },
+    ]);
+  });
+
+  test("rejects record upserts with no changed fields", () => {
+    const result = ProfileCopilotPatchGroupSchema.safeParse({
+      id: "profile_patch_group_empty_record",
+      summary: "No actual update",
+      applyMode: "needs_review",
+      operations: [
+        {
+          operation: "upsert_education_record",
+          record: { id: "education_1" },
+        },
+      ],
+      createdAt: "2026-04-12T10:05:00.000Z",
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  test("parses a complete duplicate-free education order", () => {
+    const patchGroup = ProfileCopilotPatchGroupSchema.parse({
+      id: "profile_patch_group_reorder_education",
+      summary: "Reorder education",
+      applyMode: "needs_review",
+      operations: [
+        {
+          operation: "reorder_education_records",
+          orderedRecordIds: ["education_2", "education_1"],
+        },
+      ],
+      createdAt: "2026-04-12T10:05:00.000Z",
+    });
+
+    expect(patchGroup.operations[0]).toEqual({
+      operation: "reorder_education_records",
+      orderedRecordIds: ["education_2", "education_1"],
+    });
+    expect(
+      ProfileCopilotPatchGroupSchema.safeParse({
+        ...patchGroup,
+        operations: [
+          {
+            operation: "reorder_education_records",
+            orderedRecordIds: ["education_1", "education_1"],
+          },
+        ],
+      }).success,
+    ).toBe(false);
+  });
+
   test("parses newly supported top-level profile list field patch groups", () => {
     const patchGroup = ProfileCopilotPatchGroupSchema.parse({
       id: "profile_patch_group_lists",

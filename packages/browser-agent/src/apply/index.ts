@@ -33,17 +33,6 @@ export {
   looksLikeSignInPage,
   siteLoginRequiredBlocker,
 } from "./blockers";
-export { planSourceAnsweredFills } from "./apply-plan";
-export {
-  findApplyEntry,
-  hasApplicationFormControls,
-  looksLikeApplyEntryText,
-  resolveApplyEntry,
-  type ApplyEntryCandidate,
-  type ApplyEntryFinding,
-  type ApplyEntryOutcome,
-  type ApplyEntryResolution,
-} from "./apply-entry";
 export {
   buildCoverLetterRequest,
   coverLetterDeliveryFor,
@@ -83,6 +72,11 @@ export {
   runSubmitPreflight,
   type ApplySubmitPreflightResult,
 } from "./submit-preflight";
+export {
+  completeTaskLocalSignIn,
+  selectObservedSignInAction,
+  type TaskLocalCredentialReference,
+} from "./task-local-credentials";
 export type {
   ApplyActionKind,
   ApplyAgentConfig,

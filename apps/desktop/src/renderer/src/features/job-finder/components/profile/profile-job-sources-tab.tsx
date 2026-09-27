@@ -30,7 +30,9 @@ import type { SearchPreferencesEditorValues } from "../../lib/profile-editor";
 import { PROFILE_DEEP_LINK_SCROLL_MARGIN_CLASSES } from "./profile-deep-link-focus";
 import { ProfileDiscoveryTargetRow } from "./profile-discovery-target-row";
 import { ProfileInput } from "./profile-form-primitives";
+import { ProfileTextarea } from "./profile-form-primitives";
 import { ProfileSectionHeader } from "./profile-section-header";
+import { deriveJobSourceLabel } from "../../lib/job-source-display-name";
 
 type DiscoveryTarget =
   SearchPreferencesEditorValues["discoveryTargets"][number];
@@ -50,11 +52,51 @@ const sourceFilterOptions: ReadonlyArray<{
 ];
 
 function getSourceHost(startingUrl: string): string {
+  return deriveJobSourceLabel(startingUrl);
+}
+
+function canonicalSourceUrl(value: string): string | null {
+  const candidate = /^[a-z][a-z\d+.-]*:/iu.test(value)
+    ? value
+    : `https://${value}`;
   try {
-    return new URL(startingUrl).hostname.replace(/^www\./, "");
+    const url = new URL(candidate);
+    if (
+      (url.protocol !== "https:" && url.protocol !== "http:") ||
+      /\s|%20|%09|%0a|%0d/iu.test(url.hostname)
+    ) {
+      return null;
+    }
+    url.hash = "";
+    return url.toString();
   } catch {
-    return startingUrl.trim() || "URL not set";
+    return null;
   }
+}
+
+export function parseJobSourceUrls(input: string): {
+  urls: string[];
+  invalid: string[];
+} {
+  const urls: string[] = [];
+  const invalid: string[] = [];
+  const seen = new Set<string>();
+
+  for (const rawValue of input.split(/[\n,]+/u)) {
+    const value = rawValue.trim();
+    if (!value) continue;
+    const url = canonicalSourceUrl(value);
+    if (!url) {
+      invalid.push(value);
+      continue;
+    }
+    const key = url;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    urls.push(url);
+  }
+
+  return { urls, invalid };
 }
 
 /**
@@ -157,6 +199,8 @@ interface ProfileJobSourcesTabProps {
   onOpenBrowserSessionForTarget: (targetId: string) => void;
   onRunDiscoveryForTarget?: (targetId: string) => void;
   onRunSourceDebug: (targetId: string) => void;
+  /** Saves the profile form at once, so adding sources needs no Save press. */
+  onSaveNow?: () => void;
   onSaveSourceInstructionArtifact: (
     targetId: string,
     artifact: EditableSourceInstructionArtifact,
@@ -183,6 +227,9 @@ export function ProfileJobSourcesTab(props: ProfileJobSourcesTabProps) {
   const [filter, setFilter] = useState<SourceFilter>("all");
   const [page, setPage] = useState(0);
   const [expandedTargetId, setExpandedTargetId] = useState<string | null>(null);
+  const [sourceUrlDraft, setSourceUrlDraft] = useState("");
+  const [isAddOpen, setIsAddOpen] = useState(false);
+  const [sourceAddMessage, setSourceAddMessage] = useState<string | null>(null);
   const discoveryTargets = props.preferencesForm.watch("discoveryTargets");
   const listFieldOptions = {
     shouldDirty: true,
@@ -283,32 +330,46 @@ export function ProfileJobSourcesTab(props: ProfileJobSourcesTabProps) {
     return `target_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
   };
 
-  const addDiscoveryTarget = () => {
-    const targetId = createDiscoveryTargetId();
-    updateDiscoveryTargets([
-      ...discoveryTargets,
-      {
-        id: targetId,
-        label: "",
-        startingUrl: "",
-        // Adding a site is already the act of choosing it. Saving it switched
-        // off produced workspaces whose only saved site was turned off, with
-        // nothing to search; the row keeps its own control for turning it off.
-        enabled: true,
-        adapterKind: "auto",
-        customInstructions: "",
-        instructionStatus: "missing",
-        validatedInstructionId: null,
-        draftInstructionId: null,
-        lastDebugRunId: null,
-        lastVerifiedAt: null,
-        staleReason: null,
-      },
-    ]);
-    setFilter("all");
-    setQuery("");
+  const parsedSourceDraft = parseJobSourceUrls(sourceUrlDraft);
+  const existingSourceUrls = new Set(
+    discoveryTargets
+      .map((target) =>
+        canonicalSourceUrl(target.startingUrl),
+      )
+      .filter((value): value is string => Boolean(value)),
+  );
+  const newSourceUrls = parsedSourceDraft.urls.filter(
+    (url) => !existingSourceUrls.has(url),
+  );
+
+  const addSourceUrls = () => {
+    if (newSourceUrls.length === 0) return;
+    const additions = newSourceUrls.map((startingUrl) => ({
+      id: createDiscoveryTargetId(),
+      label: getSourceHost(startingUrl),
+      startingUrl,
+      enabled: true,
+      adapterKind: "auto" as const,
+      customInstructions: "",
+      instructionStatus: "missing" as const,
+      validatedInstructionId: null,
+      draftInstructionId: null,
+      lastDebugRunId: null,
+      lastVerifiedAt: null,
+      staleReason: null,
+    }));
+    updateDiscoveryTargets([...discoveryTargets, ...additions]);
+    setLibraryView("all", "");
     setPage(Math.floor(discoveryTargets.length / JOB_SOURCES_PAGE_SIZE));
-    setExpandedTargetId(targetId);
+    setSourceUrlDraft("");
+    setSourceAddMessage(
+      `Added and turned on ${additions.length} source${additions.length === 1 ? "" : "s"}.`,
+    );
+    // Adding is the whole act: the person should not have to find Save.
+    if (props.onSaveNow) {
+      const saveNow = props.onSaveNow;
+      window.setTimeout(() => saveNow(), 0);
+    }
   };
 
   const toggleTarget = (targetId: string, enabled: boolean) => {
@@ -338,11 +399,12 @@ export function ProfileJobSourcesTab(props: ProfileJobSourcesTabProps) {
       <ProfileSectionHeader
         action={
           <Button
-            onClick={addDiscoveryTarget}
+            aria-expanded={isAddOpen}
+            onClick={() => setIsAddOpen((open) => !open)}
             type="button"
-            variant="secondary"
+            variant={isAddOpen ? "secondary" : "primary"}
           >
-            Add and turn on
+            {isAddOpen ? "Close" : "Add sources"}
           </Button>
         }
         description="Manage every public careers page or job board Job Finder can check. A site you add is turned on for search straight away; turn one off in its row to leave it out."
@@ -352,6 +414,51 @@ export function ProfileJobSourcesTab(props: ProfileJobSourcesTabProps) {
       />
 
       <article className="surface-card-tint grid gap-4 rounded-(--radius-panel) border border-(--surface-panel-border) p-4">
+        {isAddOpen ? (
+          <div className="grid gap-2 rounded-(--radius-field) border border-(--surface-panel-border) bg-background/35 p-3">
+            <div className="grid gap-1">
+              <FieldLabel htmlFor={`${searchInputId}-add-sources`}>
+                Add sources
+              </FieldLabel>
+              <p className="text-sm leading-5 text-foreground-soft">
+                Paste one or many careers pages or job boards, one per line or
+                separated by commas. They are saved and turned on straight away.
+              </p>
+            </div>
+            <ProfileTextarea
+              id={`${searchInputId}-add-sources`}
+              onChange={(event) => {
+                setSourceUrlDraft(event.target.value);
+                setSourceAddMessage(null);
+              }}
+              placeholder={
+                "https://company.example/careers\nhttps://jobs.example/your-team"
+              }
+              value={sourceUrlDraft}
+            />
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <Button
+                disabled={newSourceUrls.length === 0}
+                onClick={addSourceUrls}
+                size="sm"
+                type="button"
+                variant="secondary"
+              >
+                {`Add ${newSourceUrls.length} source${newSourceUrls.length === 1 ? "" : "s"}`}
+              </Button>
+              {parsedSourceDraft.invalid.length > 0 ? (
+                <p className="text-sm text-destructive" role="alert">
+                  {`${parsedSourceDraft.invalid.length} entr${parsedSourceDraft.invalid.length === 1 ? "y is" : "ies are"} not a web address.`}
+                </p>
+              ) : sourceAddMessage ? (
+                <p className="text-sm text-foreground-soft" role="status">
+                  {sourceAddMessage}
+                </p>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
+
         <div className="grid gap-3 lg:grid-cols-[minmax(16rem,1fr)_auto] lg:items-end">
           <div className="grid gap-(--gap-field)">
             <FieldLabel htmlFor={searchInputId}>Find a source</FieldLabel>
@@ -411,11 +518,13 @@ export function ProfileJobSourcesTab(props: ProfileJobSourcesTabProps) {
                   )
                 }
                 size="sm"
-                title="Runs Check source on every enabled source in the current filter, one after another. Each check can take several minutes."
+                title="Runs Check source on every enabled source in the current filter, one after another. Each check takes about five minutes, so ten sources is most of an hour."
                 type="button"
                 variant="outline"
               >
-                {`Check these ${checkableFilteredSources.length} source${checkableFilteredSources.length === 1 ? "" : "s"}`}
+                {checkableFilteredSources.length === 1
+                  ? "Check this source"
+                  : `Check all ${checkableFilteredSources.length} sources`}
               </Button>
             )}
           </div>
@@ -452,7 +561,7 @@ export function ProfileJobSourcesTab(props: ProfileJobSourcesTabProps) {
               role="status"
             >
               {filteredSources.length === discoveryTargets.length
-                ? `${discoveryTargets.length} sources`
+                ? `${discoveryTargets.length} ${discoveryTargets.length === 1 ? "source" : "sources"}`
                 : `${filteredSources.length} of ${discoveryTargets.length} sources`}
             </p>
           </div>
@@ -462,9 +571,8 @@ export function ProfileJobSourcesTab(props: ProfileJobSourcesTabProps) {
           <div className="rounded-(--radius-field) border border-(--info-border) bg-(--info-surface) px-4 py-3 text-[0.9rem] leading-6 text-(--info-text)">
             <p className="font-medium">Add your first public job source</p>
             <p className="mt-1">
-              Add the careers page or job board you would normally browse. Save
-              it, check it, then enable it when you want it included in
-              searches.
+              Add the careers page or job board you would normally browse. It is
+              saved and turned on for searches straight away.
             </p>
           </div>
         ) : null}
@@ -607,7 +715,7 @@ export function ProfileJobSourcesTab(props: ProfileJobSourcesTabProps) {
                           className="mt-1 truncate text-sm text-foreground-muted"
                           title={target.startingUrl}
                         >
-                          {getSourceHost(target.startingUrl)}
+                          {target.startingUrl}
                         </p>
                         {target.enabled ? (
                           <p className="mt-1 text-xs text-foreground-soft">
@@ -643,14 +751,50 @@ export function ProfileJobSourcesTab(props: ProfileJobSourcesTabProps) {
                           </span>
                         </label>
                         <Button
+                          aria-label={`Check ${displayName}`}
+                          disabled={
+                            props.isBrowserSessionPending(target.id) ||
+                            props.isTargetDiscoveryPending(target.id)
+                          }
+                          onClick={() => props.onRunSourceDebug(target.id)}
+                          pending={props.isSourceDebugPending(target.id)}
+                          size="sm"
+                          type="button"
+                          variant="secondary"
+                        >
+                          {props.isSourceDebugPending(target.id)
+                            ? "Checking"
+                            : "Check source"}
+                        </Button>
+                        {props.onRunDiscoveryForTarget && target.enabled ? (
+                          <Button
+                            aria-label={`Search ${displayName} now`}
+                            disabled={
+                              props.isBrowserSessionPending(target.id) ||
+                              props.isSourceDebugPending(target.id)
+                            }
+                            onClick={() =>
+                              props.onRunDiscoveryForTarget?.(target.id)
+                            }
+                            pending={props.isTargetDiscoveryPending(target.id)}
+                            size="sm"
+                            type="button"
+                            variant="secondary"
+                          >
+                            {props.isTargetDiscoveryPending(target.id)
+                              ? "Searching"
+                              : "Search now"}
+                          </Button>
+                        ) : null}
+                        <Button
                           aria-expanded={false}
                           aria-label={`Edit ${displayName}`}
                           onClick={() => setExpandedTargetId(target.id)}
                           size="sm"
                           type="button"
-                          variant="secondary"
+                          variant="ghost"
                         >
-                          Edit source
+                          Edit
                         </Button>
                       </div>
                     </article>

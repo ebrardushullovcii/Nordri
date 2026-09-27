@@ -347,6 +347,8 @@ describe("ResumeClaimConfirmationPanel", () => {
     onSetResumeClaimConfirmation?: (
       input: JobFinderSetResumeClaimConfirmationInput,
     ) => Promise<unknown>;
+    onEditClaim?: (assessment: ResumeClaimAssessment) => void;
+    onRejectClaim?: (assessment: ResumeClaimAssessment) => void;
   }) {
     return render(
       <ResumeClaimConfirmationPanel
@@ -355,6 +357,10 @@ describe("ResumeClaimConfirmationPanel", () => {
         hasUnsavedChanges={options?.hasUnsavedChanges ?? false}
         isWorkspacePending={false}
         jobId="job_ready"
+        {...(options?.onEditClaim ? { onEditClaim: options.onEditClaim } : {})}
+        {...(options?.onRejectClaim
+          ? { onRejectClaim: options.onRejectClaim }
+          : {})}
         onSetResumeClaimConfirmation={
           options?.onSetResumeClaimConfirmation ?? vi.fn()
         }
@@ -362,7 +368,7 @@ describe("ResumeClaimConfirmationPanel", () => {
     );
   }
 
-  it("renders nothing when no claim needs confirmation", () => {
+  it("renders nothing when no line needs a decision", () => {
     const { container } = render(
       <ResumeClaimConfirmationPanel
         claimAssessments={[
@@ -384,31 +390,39 @@ describe("ResumeClaimConfirmationPanel", () => {
     expect(container.querySelector("section")).toBeNull();
   });
 
-  it("shows the human target label, claim text, explanation, and exact ownership statement without raw ids", () => {
-    const { container } = renderPanel();
+  it("shows one plain list: where the line is, the line, Keep and Remove, and the statement once", () => {
+    const onRejectClaim = vi.fn();
+    const onEditClaim = vi.fn();
+    const { container } = renderPanel({ onEditClaim, onRejectClaim });
 
+    expect(screen.getByText("Lines to confirm")).toBeTruthy();
+    expect(screen.getByText("1 to decide")).toBeTruthy();
     expect(screen.getByText(bulletTargetLabel)).toBeTruthy();
     expect(screen.getByText(confirmNeededBullet.claimText)).toBeTruthy();
     expect(
-      screen.getByText(
-        `Required confirmation: “${resumeClaimOwnershipStatement}”`,
-      ),
+      screen.getByText(`Keep records: “${resumeClaimOwnershipStatement}”`),
     ).toBeTruthy();
-    expect(screen.getByText("Needs your confirmation")).toBeTruthy();
+    // The statement is printed once for the list, not once per row.
     expect(
-      screen.getByText(
-        "1 of 1 still need your confirmation before this resume can be exported.",
-      ),
-    ).toBeTruthy();
-    expect(container.textContent).toMatch(/first interview/);
+      container.textContent?.split(resumeClaimOwnershipStatement).length,
+    ).toBe(2);
     expect(container.textContent).not.toMatch(
       /\b(lie|lies|lying|liar|dishonest|unethical|fraud)\b/i,
     );
     expect(container.textContent).not.toContain("claim_assessment_bullet");
     expect(container.textContent).not.toContain("fnv1a32");
+
+    fireEvent.click(
+      screen.getByRole("button", { name: `Remove “${confirmNeededBullet.claimText}” · ${bulletTargetLabel}` }),
+    );
+    expect(onRejectClaim).toHaveBeenCalledWith(confirmNeededBullet);
+    fireEvent.click(
+      screen.getByRole("button", { name: `Edit “${confirmNeededBullet.claimText}” · ${bulletTargetLabel}` }),
+    );
+    expect(onEditClaim).toHaveBeenCalledWith(confirmNeededBullet);
   });
 
-  it("gives unsupported and verified-evidence rows no confirm controls", () => {
+  it("lists only lines that need a decision, never unsupported or verified ones", () => {
     render(
       <ResumeClaimConfirmationPanel
         claimAssessments={[
@@ -460,11 +474,11 @@ describe("ResumeClaimConfirmationPanel", () => {
       />,
     );
 
-    const confirmButton = screen.getByRole("button", {
-      name: `Confirm this wording · ${bulletTargetLabel}`,
+    const keepButton = screen.getByRole("button", {
+      name: `Keep “${confirmNeededBullet.claimText}” · ${bulletTargetLabel}`,
     });
 
-    fireEvent.click(confirmButton);
+    fireEvent.click(keepButton);
     expect(onSetResumeClaimConfirmation).toHaveBeenCalledTimes(1);
     expect(onSetResumeClaimConfirmation).toHaveBeenCalledWith({
       intent: "add",
@@ -481,18 +495,18 @@ describe("ResumeClaimConfirmationPanel", () => {
 
     // Pending keeps the control exposed but inert, so focus stays put and a
     // second activation cannot submit twice.
-    expect(confirmButton.getAttribute("aria-disabled")).toBe("true");
-    fireEvent.click(confirmButton);
+    expect(keepButton.getAttribute("aria-disabled")).toBe("true");
+    fireEvent.click(keepButton);
     expect(onSetResumeClaimConfirmation).toHaveBeenCalledTimes(1);
 
     await actAndFlush(() => {
       resolveCommand(undefined);
     });
-    expect(confirmButton.getAttribute("aria-disabled")).toBeNull();
+    expect(keepButton.getAttribute("aria-disabled")).toBeNull();
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
-  it("derives the confirmed state from the returned snapshot and undoes by confirmation id", async () => {
+  it("derives the kept state from the returned snapshot and undoes by confirmation id", async () => {
     const onSetResumeClaimConfirmation = vi
       .fn<
         (input: JobFinderSetResumeClaimConfirmationInput) => Promise<unknown>
@@ -503,9 +517,7 @@ describe("ResumeClaimConfirmationPanel", () => {
     const { rerender } = renderPanel({ onSetResumeClaimConfirmation });
 
     await actAndFlush(() => {
-      fireEvent.click(
-        screen.getByRole("button", { name: /Confirm this wording/ }),
-      );
+      fireEvent.click(screen.getByRole("button", { name: /^Keep “/ }));
     });
 
     // The committed workspace snapshot comes back through props: same
@@ -521,13 +533,12 @@ describe("ResumeClaimConfirmationPanel", () => {
       />,
     );
 
-    expect(screen.getByText("Confirmed by you")).toBeTruthy();
-    expect(
-      screen.queryByRole("button", { name: /Confirm this wording/ }),
-    ).toBeNull();
+    expect(screen.getByText("Kept")).toBeTruthy();
+    expect(screen.getByText("All decided")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /^Keep “/ })).toBeNull();
 
     const undoButton = screen.getByRole("button", {
-      name: `Undo confirmation · ${bulletTargetLabel}`,
+      name: `Undo keeping “${confirmNeededBullet.claimText}” · ${bulletTargetLabel}`,
     });
     await actAndFlush(() => {
       fireEvent.click(undoButton);
@@ -541,6 +552,30 @@ describe("ResumeClaimConfirmationPanel", () => {
       expectedDraftUpdatedAt: buildWorkspace([confirmation]).draft.updatedAt,
       confirmationId: confirmation.id,
     });
+  });
+
+  it("does not ask for approval again after all kept lines are approved", () => {
+    const savedDraftId = buildWorkspace().draft.id;
+    const draft = buildWorkspace([
+      buildConfirmation({ draftId: savedDraftId }),
+    ]).draft;
+    render(
+      <ResumeClaimConfirmationPanel
+        claimAssessments={[confirmNeededBullet]}
+        draft={{ ...draft, status: "approved" }}
+        hasUnsavedChanges={false}
+        isWorkspacePending={false}
+        jobId="job_ready"
+        onSetResumeClaimConfirmation={vi.fn().mockResolvedValue({})}
+      />,
+    );
+    expect(screen.getByText("All decided")).toBeTruthy();
+    expect(
+      screen.getByText("Every line is decided. This resume is approved."),
+    ).toBeTruthy();
+    expect(
+      screen.queryByText(/Approve the resume when you are ready/),
+    ).toBeNull();
   });
 
   it("keeps stale rejections visible with truthful retry copy and allows retrying", async () => {
@@ -557,9 +592,7 @@ describe("ResumeClaimConfirmationPanel", () => {
     const { container } = renderPanel({ onSetResumeClaimConfirmation });
 
     await actAndFlush(() => {
-      fireEvent.click(
-        screen.getByRole("button", { name: /Confirm this wording/ }),
-      );
+      fireEvent.click(screen.getByRole("button", { name: /^Keep “/ }));
     });
 
     expect(screen.getByRole("alert").textContent).toBe(
@@ -568,24 +601,22 @@ describe("ResumeClaimConfirmationPanel", () => {
     expect(container.querySelector("[data-pending]")).toBeNull();
 
     await actAndFlush(() => {
-      fireEvent.click(
-        screen.getByRole("button", { name: /Confirm this wording/ }),
-      );
+      fireEvent.click(screen.getByRole("button", { name: /^Keep “/ }));
     });
     expect(onSetResumeClaimConfirmation).toHaveBeenCalledTimes(2);
   });
 
-  it("notes that checks describe the last saved draft while edits are unsaved", () => {
+  it("notes that the list describes the last saved version while edits are unsaved", () => {
     renderPanel({ hasUnsavedChanges: true });
 
     expect(
       screen.getByText(
-        "These checks describe the last saved draft. Save your edits to refresh claim evidence.",
+        "This list describes the last saved version. Save your edits to refresh it.",
       ),
     ).toBeTruthy();
   });
 
-  it("groups listing-asked skills, offers bulk confirm for two or more, and keeps wording one-by-one", async () => {
+  it("groups listing-asked skills, offers Keep all for two or more, and keeps wording one-by-one", async () => {
     const terraform: ResumeClaimAssessment = {
       ...confirmNeededBullet,
       id: "claim_terraform",
@@ -661,23 +692,19 @@ describe("ResumeClaimConfirmationPanel", () => {
       />,
     );
 
-    expect(screen.getByText("Skills the job asked for · 2")).toBeTruthy();
+    expect(screen.getByText("Skills the job asked for")).toBeTruthy();
     expect(
-      screen.getByText("Wording that stretches saved evidence"),
+      screen.getByText("Wording that stretches your evidence"),
     ).toBeTruthy();
+    expect(screen.getByText("3 to decide")).toBeTruthy();
     expect(
-      screen.queryByRole("button", { name: /Confirm all 2 skills/ }),
+      screen.getByRole("button", { name: "Keep all 2 skills" }),
     ).toBeTruthy();
-    expect(
-      screen.getAllByRole("button", { name: /Confirm this skill/ }),
-    ).toHaveLength(2);
-    expect(
-      screen.getByRole("button", { name: /Confirm this wording · / }),
-    ).toBeTruthy();
+    expect(screen.getAllByRole("button", { name: /^Keep “/ })).toHaveLength(3);
 
     await actAndFlush(() => {
       fireEvent.click(
-        screen.getByRole("button", { name: /Confirm all 2 skills/ }),
+        screen.getByRole("button", { name: "Keep all 2 skills" }),
       );
     });
     expect(onSetResumeClaimConfirmation).toHaveBeenCalledWith(
@@ -691,7 +718,7 @@ describe("ResumeClaimConfirmationPanel", () => {
     );
   });
 
-  it("does not offer bulk confirm for a single skill", () => {
+  it("does not offer Keep all for a single skill", () => {
     const terraform: ResumeClaimAssessment = {
       ...confirmNeededBullet,
       id: "claim_terraform",
@@ -750,9 +777,7 @@ describe("ResumeClaimConfirmationPanel", () => {
       />,
     );
 
-    expect(screen.queryByRole("button", { name: /Confirm all / })).toBeNull();
-    expect(
-      screen.getByRole("button", { name: /Confirm this skill/ }),
-    ).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Keep all / })).toBeNull();
+    expect(screen.getByRole("button", { name: /^Keep “/ })).toBeTruthy();
   });
 });

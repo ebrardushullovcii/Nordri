@@ -303,14 +303,16 @@ describe("applications status helpers", () => {
     });
 
     expect(getApplicationStagePresentation(record)).toEqual({
-      label: "Manual apply only",
+      label: "Needs you on the site",
       tone: "warning",
     });
-    expect(getApplicationLatestActivityLabel(record)).toBe("Manual apply only");
-    expect(getApplicationNextStepLabel(record)).toBe("Manual apply only");
+    expect(getApplicationLatestActivityLabel(record)).toBe(
+      "Needs you on the site",
+    );
+    expect(getApplicationNextStepLabel(record)).toBe("Needs you on the site");
     expect(
       getApplicationReadableNextStepLabel(getApplicationNextStepLabel(record)),
-    ).toBe("Manual apply only");
+    ).toBe("Needs you on the site");
   });
 
   it("uses terminal failed copy ahead of consent-approved fallback copy", () => {
@@ -507,7 +509,7 @@ describe("sign-in walls in the list row", () => {
     const record = createRecord({
       company: "Acme",
       lastAttemptState: "paused",
-      nextActionLabel: "Fill it in",
+      nextActionLabel: "Apply",
     });
 
     expect(getApplicationNextStepLabel(record)).not.toMatch(/sign in on/i);
@@ -675,4 +677,97 @@ describe("one pending-question list for both screens", () => {
       }),
     ).toEqual([]);
   });
+
+  it("does not reuse questions from another application record for the same job", () => {
+    const attempts = [
+      {
+        id: "attempt_old",
+        jobId: "job_1",
+        applicationRecordId: "record_old",
+        updatedAt: "2026-09-01T11:00:00.000Z",
+        blocker: { code: "missing_candidate_answer" },
+        questions: [{ id: "q_old", status: "detected" }],
+      },
+      {
+        id: "attempt_current",
+        jobId: "job_1",
+        applicationRecordId: "record_current",
+        updatedAt: "2026-09-01T10:00:00.000Z",
+        blocker: null,
+        questions: [],
+      },
+    ] as unknown as Parameters<
+      typeof listPendingApplicationQuestions
+    >[0]["applicationAttempts"];
+
+    expect(
+      listPendingApplicationQuestions({
+        applicationAttempts: attempts,
+        applicationRecordId: "record_current",
+        jobId: "job_1",
+      }),
+    ).toEqual([]);
+  });
+
+  it("does not reuse an older missing answer after a newer attempt reached a different outcome", () => {
+    const attempts = [
+      {
+        id: "attempt_question",
+        jobId: "job_1",
+        applicationRecordId: "record_current",
+        updatedAt: "2026-09-01T10:00:00.000Z",
+        blocker: { code: "missing_candidate_answer" },
+        questions: [{ id: "q_old", status: "detected" }],
+      },
+      {
+        id: "attempt_captcha",
+        jobId: "job_1",
+        applicationRecordId: "record_current",
+        updatedAt: "2026-09-01T11:00:00.000Z",
+        blocker: { code: "requires_manual_review" },
+        questions: [],
+      },
+    ] as unknown as Parameters<
+      typeof listPendingApplicationQuestions
+    >[0]["applicationAttempts"];
+
+    expect(
+      listPendingApplicationQuestions({
+        applicationAttempts: attempts,
+        applicationRecordId: "record_current",
+        jobId: "job_1",
+      }),
+    ).toEqual([]);
+
+    const laterAttempts = [
+      ...attempts,
+      {
+        id: "attempt_new_question",
+        jobId: "job_1",
+        applicationRecordId: "record_current",
+        updatedAt: "2026-09-01T12:00:00.000Z",
+        blocker: { code: "missing_candidate_answer" },
+        questions: [{ id: "q_current", status: "detected" }],
+      },
+    ] as unknown as Parameters<
+      typeof listPendingApplicationQuestions
+    >[0]["applicationAttempts"];
+    expect(
+      listPendingApplicationQuestions({
+        applicationAttempts: laterAttempts,
+        applicationRecordId: "record_current",
+        jobId: "job_1",
+      }).map((question) => question.id),
+    ).toEqual(["q_current"]);
+  });
+
+it("reads View application on a sent application with no saved next step", () => {
+  // Sent during a batch run, the record carries no label of its own.
+  const record = createRecord({
+    status: "submitted",
+    lastAttemptState: "submitted",
+    nextActionLabel: null,
+  });
+  expect(getApplicationNextStepLabel(record)).toBe("View application");
+});
 });

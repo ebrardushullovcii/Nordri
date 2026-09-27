@@ -201,8 +201,10 @@ export function getAttemptLabel(
   switch (value) {
     case "paused":
       return "Needs follow-up";
+    case "ready":
+      return "Ready to send";
     case "unsupported":
-      return "Manual apply only";
+      return "Needs you on the site";
     case "failed":
       return "Attempt failed";
     case "submitted":

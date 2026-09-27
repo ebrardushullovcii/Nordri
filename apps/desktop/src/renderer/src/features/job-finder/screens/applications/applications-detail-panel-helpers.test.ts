@@ -11,6 +11,7 @@ import {
   applicationRecordLooksSiteBlocked,
   FIELD_SAVE_PAUSE_GUIDANCE,
   FIELD_SAVE_PAUSE_NEXT_STEP,
+  findActionableApplicationAnswerRequest,
   formatApplyRunModeLabel,
   formatApplyRunStateLabel,
   getApplyBlockedAttemptDetail,
@@ -30,6 +31,58 @@ import {
   SITE_BLOCKED_AUTOMATIC_PREP_LIST_NEXT_STEP,
   SITE_BLOCKED_AUTOMATIC_PREP_NEXT_STEP,
 } from "./applications-detail-panel-helpers";
+
+describe("findActionableApplicationAnswerRequest", () => {
+  const request = {
+    id: "request_current",
+    kind: "manual_answer",
+    state: "pending",
+    scope: {
+      type: "application",
+      runId: "run_current",
+      jobId: "job_1",
+      applicationRecordId: "record_1",
+    },
+  } as unknown as NonNullable<
+    JobFinderWorkspaceSnapshot["userActionRequests"]
+  >[number];
+
+  const run = (
+    state: JobFinderWorkspaceSnapshot["applyRuns"][number]["state"],
+  ) =>
+    ({
+      id: "run_current",
+      state,
+    }) as JobFinderWorkspaceSnapshot["applyRuns"][number];
+
+  it("keeps a cancelled run's stale answer request out of Applications", () => {
+    expect(
+      findActionableApplicationAnswerRequest({
+        applicationRecordId: "record_1",
+        jobId: "job_1",
+        requests: [request],
+        run: run("cancelled"),
+      }),
+    ).toBeNull();
+  });
+
+  it("returns only the live request for the visible run and record", () => {
+    const stale = {
+      ...request,
+      id: "request_old",
+      scope: { ...request.scope, runId: "run_old" },
+    };
+
+    expect(
+      findActionableApplicationAnswerRequest({
+        applicationRecordId: "record_1",
+        jobId: "job_1",
+        requests: [stale, request],
+        run: run("paused_for_user_review"),
+      })?.id,
+    ).toBe("request_current");
+  });
+});
 
 function createReceipt(
   externalWrites: ApplicationPrivacyReceipt["externalWrites"],
@@ -253,6 +306,18 @@ describe("getQueueStateExplanation", () => {
     unfinishedJobCount: 3,
   };
 
+  it("keeps an active queue framed as running even after an earlier job failed", () => {
+    expect(
+      getQueueStateExplanation({
+        ...baseInput,
+        runState: "running",
+        failedJobCount: 1,
+      }),
+    ).toBe(
+      "This run is still working through its jobs. Progress and outcomes update here as each application finishes.",
+    );
+  });
+
   it("says a stop-rule pause will not continue and needs a fresh Prepare remaining jobs run", () => {
     const explanation = getQueueStateExplanation({
       ...baseInput,
@@ -348,7 +413,7 @@ describe("service-worker site block helpers", () => {
       artifactCount: 0,
       latestCheckpointId: null,
       privacyReceipt: null,
-    reviewCard: null,
+      reviewCard: null,
     };
 
     expect(applyResultIsServiceWorkerBlocked(result)).toBe(true);
@@ -375,7 +440,7 @@ describe("service-worker site block helpers", () => {
     ).toBe(true);
     expect(
       applicationRecordLooksSiteBlocked({
-        nextActionLabel: "Fill it in",
+        nextActionLabel: "Apply",
         lastActionLabel: "Resume approved",
         latestBlocker: null,
       }),
@@ -417,7 +482,7 @@ describe("manual field-finish helpers", () => {
       artifactCount: 0,
       latestCheckpointId: null,
       privacyReceipt: null,
-    reviewCard: null,
+      reviewCard: null,
     };
   }
 

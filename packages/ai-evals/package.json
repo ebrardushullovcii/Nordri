@@ -12,6 +12,7 @@
   "dependencies": {
     "@unemployed/ai-providers": "workspace:*",
     "@unemployed/browser-agent": "workspace:*",
+    "@unemployed/browser-runtime": "workspace:*",
     "@unemployed/contracts": "workspace:*",
     "@unemployed/job-finder": "workspace:*",
     "playwright": "^1.63.0",

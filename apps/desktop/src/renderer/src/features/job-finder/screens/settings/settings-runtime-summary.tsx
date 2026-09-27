@@ -33,12 +33,12 @@ export function getApplySafeguardCopy(usesOriginalResume: boolean): {
     ? {
         title: "Original resume required",
         description:
-          "Job Finder uses the exact imported resume only while that file is still available and unchanged. It stops before final submit and never performs it; authorized steps may fill fields or attach this resume, and the site controls its own behavior.",
+          "Job Finder uses the exact imported resume only while that file is still available and unchanged. Sending follows the mode you choose under Applying.",
       }
     : {
-        title: "Approved job PDF required",
+        title: "Resume checked before applying",
         description:
-          "Each supported application needs a fresh approved PDF for the current job. Job Finder stops before final submit and never performs it; authorized steps may fill fields or attach the approved PDF, and the site controls its own behavior.",
+          "Job Finder checks the resume selected for each job. Original files keep their format; generated resumes use the approved version. Sending follows the mode you choose under Applying.",
       };
 }
 

@@ -8,6 +8,7 @@ import type {
 } from "@unemployed/contracts";
 import {
   isActiveApplicationAuthorityEnvelope,
+  describeBrowserError,
   SubmissionFinalControlIdentitySchema,
   SubmissionObservationIdentitySchema,
 } from "@unemployed/contracts";
@@ -68,6 +69,8 @@ export interface ApplicationSubmissionRuntimeInput {
   readonly currentPolicyFacts: CurrentApplicationSubmissionPolicyFacts;
   readonly now: SubmissionPreflightRecord["createdAt"];
   readonly executionGrantId?: string | null;
+  /** The person pressed Send on an "Ask before sending" application. */
+  readonly personConfirmation?: { grantedAt: string; expiresAt: string } | null;
   readonly signal?: AbortSignal;
 }
 
@@ -114,10 +117,45 @@ function mapNotSubmittedRetry(input: {
 function mapBrowserActionResult(input: {
   result: ApplicationFinalActionResult;
   authorityVetoed: boolean;
+  preflightId: string;
 }): SyntheticSubmissionExecutorResult {
+  const browserAction = {
+    reason: input.result.reason,
+    actionAttempted: input.result.facts.actionAttempted,
+    actionIssued: input.result.facts.actionIssued,
+    actionCompleted: input.result.facts.actionCompleted,
+    requestsObservedDuringAction:
+      input.result.facts.requestsObservedDuringAction,
+  };
+  if (input.result.outcome === "submitted") {
+    const { destination, observedAt, summary } = input.result.confirmation;
+    if (destination.origin && destination.safePath) {
+      return {
+        outcome: "submitted",
+        browserAction,
+        verifiedAt: observedAt,
+        evidence: [
+          {
+            id: `evidence_${input.preflightId}_employer_confirmation`,
+            kind: "employer_site_state",
+            observedAt,
+            destination: {
+              origin: destination.origin,
+              safePath: destination.safePath,
+            },
+            artifactRefId: null,
+            summary,
+          },
+        ],
+      };
+    }
+    return { outcome: "outcome_uncertain", evidence: [], browserAction };
+  }
+
   if (input.result.outcome === "not_submitted") {
     return {
       outcome: "not_submitted",
+      browserAction,
       evidence: [],
       retry: mapNotSubmittedRetry({
         authorityVetoed: input.authorityVetoed,
@@ -125,9 +163,8 @@ function mapBrowserActionResult(input: {
     };
   }
 
-  // Browser-local click, URL, and request facts never establish a submitted
-  // outcome. The synthetic orchestrator accepts only these two safe values.
-  return { outcome: "outcome_uncertain", evidence: [] };
+  // Click, URL, and request facts alone never establish a submitted outcome.
+  return { outcome: "outcome_uncertain", evidence: [], browserAction };
 }
 
 function hasExactOneFinalControl(
@@ -217,6 +254,7 @@ export async function runApplicationSubmissionRuntime(
   try {
     observation = await input.browserRuntime.observeApplicationForm(
       input.source,
+      { pageBindingKey: input.lineage.resultId },
     );
   } catch {
     return blockedResult(
@@ -326,6 +364,7 @@ export async function runApplicationSubmissionRuntime(
     }
 
     const actionInput: ExecuteExactlyOneFinalActionInput = {
+      pageBindingKey: input.lineage.resultId,
       expectedObservation: executorInput.preflight.formObservation,
       expectedControl: executorInput.preflight.finalControl,
       expectedPageOrigin: preflightOrigin,
@@ -343,12 +382,30 @@ export async function runApplicationSubmissionRuntime(
       return mapBrowserActionResult({
         result: browserResult,
         authorityVetoed,
+        preflightId: executorInput.preflight.id,
       });
-    } catch {
+    } catch (error) {
       // Once the durable marker is armed, a browser hand failure is always
       // uncertain. The orchestrator records that state and permanently blocks
       // an automatic retry for this idempotency key.
-      return { outcome: "outcome_uncertain", evidence: [] };
+      const detail = describeBrowserError(
+        error,
+        "The final browser action failed.",
+      )
+        .replace(/https?:\/\/[^\s)]+/gu, (url) => {
+          try {
+            const parsed = new URL(url);
+            return `${parsed.origin}${parsed.pathname}`;
+          } catch {
+            return "the employer page";
+          }
+        })
+        .slice(0, 500);
+      return {
+        outcome: "outcome_uncertain",
+        evidence: [],
+        browserAction: { reason: "runtime_exception", detail },
+      };
     }
   };
 
@@ -371,6 +428,9 @@ export async function runApplicationSubmissionRuntime(
     now: input.now,
     ...(input.executionGrantId !== undefined
       ? { executionGrantId: input.executionGrantId }
+      : {}),
+    ...(input.personConfirmation
+      ? { personConfirmation: input.personConfirmation }
       : {}),
     executor: {
       execute: async () => execute({ preflight }),

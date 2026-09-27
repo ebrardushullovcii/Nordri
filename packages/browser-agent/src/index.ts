@@ -1,7 +1,4 @@
 export * from './types'
-export * from './tools'
-export * from './agent'
-export * from './prompts'
 
 // Re-export commonly used types
 export type {
@@ -11,25 +8,15 @@ export type {
   AgentMessage,
   ToolCall,
   Tool,
-  ToolContext,
-  ToolExecutor,
-  ToolResult,
-  ToolDefinition,
   AgentProgress,
   OnProgressCallback
 } from './types'
 
 export {
-  getToolDefinitions,
-  getToolExecutor,
-  browserTools
-} from './tools'
-
-export {
-  runAgentDiscovery,
+  type AgentExtractorPageType,
   type LLMClient,
   type JobExtractor
-} from './agent'
+} from './agent/contracts'
 
 export {
   createCatalogSessionAgent,
@@ -40,13 +27,13 @@ export {
 } from './catalog-session-agent'
 
 export {
-  createSystemPrompt
-} from './prompts'
-
-export {
   captureCompactDiscoveryObservation,
   type CaptureCompactDiscoveryObservationInput,
   type CompactDiscoveryObserverOptions,
 } from './compact-discovery-observer'
 
 export * from './apply'
+export { createPageTools, type PageTools, type PageToolPolicy } from './page-tools'
+export { runJobSearchAgent, type JobSearchAgentInput } from './search/job-search-agent'
+export { createJobSearchPrompts } from './search/job-search-prompts'
+export { createMoveReviewer, describeSearchGoal, type MoveReview } from './search/move-reviewer'

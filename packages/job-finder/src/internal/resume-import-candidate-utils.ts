@@ -94,7 +94,18 @@ function isBlockingReviewCandidate(candidate: ResumeImportFieldCandidate): boole
     return false;
   }
 
-  return candidate.target.section !== "proof_point";
+  // Proof points and search targeting are suggestions the person may take or
+  // leave; they never keep an import from counting as applied.
+  return (
+    candidate.target.section !== "proof_point" &&
+    candidate.target.section !== "search_preferences" &&
+    // A first-person "About me" held back from the resume summary is a
+    // suggestion on Basics, not a reason to call the import unfinished.
+    !(
+      candidate.target.section === "identity" &&
+      candidate.target.key === "summary"
+    )
+  );
 }
 
 function isOptionalProofCandidate(candidate: ResumeImportFieldCandidate): boolean {

@@ -140,6 +140,10 @@ export function detectSalaryCurrency(request: string): string | null {
   if (/US\$|\$/.test(request)) return "USD";
   if (request.includes("€")) return "EUR";
   if (request.includes("£")) return "GBP";
+  if (/\beuros?\b/i.test(request)) return "EUR";
+  if (/\b(?:us\s+)?dollars?\b/i.test(request)) return "USD";
+  if (/\b(?:british\s+)?pounds?\b/i.test(request)) return "GBP";
+  if (/\bswiss\s+francs?\b/i.test(request)) return "CHF";
 
   return null;
 }
@@ -205,6 +209,30 @@ function extractMinimumIntent(
 }
 
 function parseSalaryAmounts(normalizedRequest: string): ParsedSalaryAmounts | null {
+  const conversationalRange = normalizedRequest.match(
+    /\b(?:might\s+)?consider\s+(?:US\$|[$€£])?\s*([\d,.]+)\s*(k|m)?(?:\s+(?:per|a|each)\s+(?:hour|day|week|month|year))?\s*,?\s*(?:but\s+)?(?:really\s+)?(?:i\s+)?(?:want|target|expect)\s+(?:US\$|[$€£])?\s*([\d,.]+)\s*(k|m)?\b/,
+  );
+  if (conversationalRange) {
+    const sharedScale =
+      conversationalRange[2]?.toLowerCase() ??
+      conversationalRange[4]?.toLowerCase();
+    const acceptable = parseAmountToken(
+      conversationalRange[1] ?? "",
+      sharedScale,
+    );
+    const target = parseAmountToken(
+      conversationalRange[3] ?? "",
+      conversationalRange[4]?.toLowerCase() ?? sharedScale,
+    );
+    if (acceptable !== null && target !== null) {
+      return {
+        intent: "range",
+        minimum: acceptable,
+        maximum: target,
+      };
+    }
+  }
+
   if (
     !/\b(salary|compensation|pay|wage|expect(?:ed|ing|ations?)?|minimum|min|maximum|max|target|range|floor)\b/.test(
       normalizedRequest,
@@ -384,13 +412,6 @@ function resolveCurrencyFields(
   // The user stated a currency: record it as explicit even when it matches the
   // saved one, because this request re-confirms it.
   if (command.currency) {
-    if (
-      command.currency === savedCompensation.currency &&
-      savedCompensation.currencyStatus === "explicit"
-    ) {
-      return {};
-    }
-
     return { currency: command.currency, currencyStatus: "explicit" };
   }
 

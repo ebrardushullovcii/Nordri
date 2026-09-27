@@ -7,7 +7,7 @@ import {
 } from "@unemployed/contracts";
 import type { Page } from "playwright";
 
-type VisibleAccessSignals = {
+export type VisibleAccessSignals = {
   passwordControl: boolean;
   loginControl: boolean;
   captchaChallenge: boolean;
@@ -23,6 +23,20 @@ function normalizeOrigin(value: string): string | null {
   } catch {
     return null;
   }
+}
+
+/** A source access check must never borrow another open tab's account marker. */
+export function selectUniqueSourceAccessPage<
+  TPage extends Pick<Page, "url" | "isClosed">,
+>(pages: readonly TPage[], expectedOrigin: string): TPage | null {
+  const normalizedExpectedOrigin = normalizeOrigin(expectedOrigin);
+  if (!normalizedExpectedOrigin) return null;
+  const matches = pages.filter(
+    (page) =>
+      !page.isClosed() &&
+      normalizeOrigin(page.url()) === normalizedExpectedOrigin,
+  );
+  return matches.length === 1 ? matches[0]! : null;
 }
 
 function isAuthRoute(value: string): boolean {
@@ -60,97 +74,121 @@ export function createInconclusiveSourceAccessProbeResult(
   });
 }
 
+/**
+ * Reads what the page shows about signing in. Runs inside the page and is
+ * self-contained, so a host that reads a tab without Playwright (the desktop
+ * app's embedded browser) can run the same function in that exact tab.
+ */
+export function collectVisibleAccessSignals(): VisibleAccessSignals {
+  const isVisible = (element: Element): boolean => {
+    if (!(element instanceof HTMLElement)) return false;
+    const style = window.getComputedStyle(element);
+    const rect = element.getBoundingClientRect();
+    return (
+      style.display !== "none" &&
+      style.visibility !== "hidden" &&
+      Number(style.opacity || "1") > 0 &&
+      rect.width > 0 &&
+      rect.height > 0
+    );
+  };
+  const labelFor = (element: Element): string =>
+    [
+      element.getAttribute("aria-label"),
+      element.getAttribute("title"),
+      element.getAttribute("name"),
+      element.getAttribute("placeholder"),
+      element.getAttribute("alt"),
+      element.textContent,
+    ]
+      .filter((value): value is string => typeof value === "string")
+      .join(" ")
+      .replace(/\s+/gu, " ")
+      .trim()
+      .toLowerCase();
+  const controls = Array.from(
+    document.querySelectorAll(
+      'input, button, a, [role="button"], [role="link"], [role="menuitem"], iframe, [data-sitekey]',
+    ),
+  )
+    .filter(isVisible)
+    .slice(0, 1_000);
+  const labels = controls.map((element) => ({
+    element,
+    label: labelFor(element),
+  }));
+  const hasLabel = (pattern: RegExp): boolean =>
+    labels.some(({ label }) => pattern.test(label));
+  const hasMenuLabel = (pattern: RegExp): boolean =>
+    labels.some(
+      ({ element, label }) =>
+        pattern.test(label) &&
+        (element.getAttribute("aria-haspopup") === "menu" ||
+          element.getAttribute("role") === "menuitem" ||
+          element.tagName === "BUTTON"),
+    );
+
+  return {
+    passwordControl: controls.some(
+      (element) =>
+        element instanceof HTMLInputElement &&
+        element.type.toLowerCase() === "password",
+    ),
+    loginControl: hasLabel(/\b(?:log[ -]?in|sign[ -]?in)\b/iu),
+    captchaChallenge:
+      controls.some((element) => {
+        const source = element.getAttribute("src") ?? "";
+        return /captcha|recaptcha|hcaptcha|turnstile/iu.test(source);
+      }) ||
+      hasLabel(/\b(?:captcha|verify you are human|human verification)\b/iu),
+    mfaChallenge:
+      controls.some(
+        (element) =>
+          element instanceof HTMLInputElement &&
+          element.autocomplete === "one-time-code",
+      ) ||
+      hasLabel(
+        /\b(?:verification code|security code|two-factor|2fa|one-time code)\b/iu,
+      ),
+    signOutControl: hasLabel(/\b(?:log[ -]?out|sign[ -]?out)\b/iu),
+    accountMenuControl: hasMenuLabel(
+      /\b(?:account menu|user menu|profile menu|my account)\b/iu,
+    ),
+    profileControl:
+      hasLabel(/\b(?:my profile|view profile)\b/iu) ||
+      hasMenuLabel(/\b(?:profile|user avatar|account avatar)\b/iu),
+  };
+}
+
 async function inspectVisibleAccessSignals(
   page: Page,
 ): Promise<VisibleAccessSignals> {
-  return page.evaluate(() => {
-    const isVisible = (element: Element): boolean => {
-      if (!(element instanceof HTMLElement)) return false;
-      const style = window.getComputedStyle(element);
-      const rect = element.getBoundingClientRect();
-      return (
-        style.display !== "none" &&
-        style.visibility !== "hidden" &&
-        Number(style.opacity || "1") > 0 &&
-        rect.width > 0 &&
-        rect.height > 0
-      );
-    };
-    const labelFor = (element: Element): string =>
-      [
-        element.getAttribute("aria-label"),
-        element.getAttribute("title"),
-        element.getAttribute("name"),
-        element.getAttribute("placeholder"),
-        element.getAttribute("alt"),
-        element.textContent,
-      ]
-        .filter((value): value is string => typeof value === "string")
-        .join(" ")
-        .replace(/\s+/gu, " ")
-        .trim()
-        .toLowerCase();
-    const controls = Array.from(
-      document.querySelectorAll(
-        'input, button, a, [role="button"], [role="link"], [role="menuitem"], iframe, [data-sitekey]',
-      ),
-    )
-      .filter(isVisible)
-      .slice(0, 1_000);
-    const labels = controls.map((element) => ({
-      element,
-      label: labelFor(element),
-    }));
-    const hasLabel = (pattern: RegExp): boolean =>
-      labels.some(({ label }) => pattern.test(label));
-    const hasMenuLabel = (pattern: RegExp): boolean =>
-      labels.some(
-        ({ element, label }) =>
-          pattern.test(label) &&
-          (element.getAttribute("aria-haspopup") === "menu" ||
-            element.getAttribute("role") === "menuitem" ||
-            element.tagName === "BUTTON"),
-      );
-
-    return {
-      passwordControl: controls.some(
-        (element) =>
-          element instanceof HTMLInputElement &&
-          element.type.toLowerCase() === "password",
-      ),
-      loginControl: hasLabel(/\b(?:log[ -]?in|sign[ -]?in)\b/iu),
-      captchaChallenge:
-        controls.some((element) => {
-          const source = element.getAttribute("src") ?? "";
-          return /captcha|recaptcha|hcaptcha|turnstile/iu.test(source);
-        }) || hasLabel(/\b(?:captcha|verify you are human|human verification)\b/iu),
-      mfaChallenge:
-        controls.some(
-          (element) =>
-            element instanceof HTMLInputElement &&
-            element.autocomplete === "one-time-code",
-        ) ||
-        hasLabel(
-          /\b(?:verification code|security code|two-factor|2fa|one-time code)\b/iu,
-        ),
-      signOutControl: hasLabel(/\b(?:log[ -]?out|sign[ -]?out)\b/iu),
-      accountMenuControl: hasMenuLabel(
-        /\b(?:account menu|user menu|profile menu|my account)\b/iu,
-      ),
-      profileControl:
-        hasLabel(/\b(?:my profile|view profile)\b/iu) ||
-        hasMenuLabel(/\b(?:profile|user avatar|account avatar)\b/iu),
-    };
-  });
+  return page.evaluate(collectVisibleAccessSignals);
 }
 
 export async function inspectSourceAccessPage(
   page: Page,
   inputValue: BrowserSourceAccessProbeInput,
 ): Promise<BrowserSourceAccessProbeResult> {
-  const input = BrowserSourceAccessProbeInputSchema.parse(inputValue);
+  return classifySourceAccess({
+    currentUrl: page.url(),
+    input: inputValue,
+    readSignals: () => inspectVisibleAccessSignals(page),
+  });
+}
+
+/**
+ * Classifies one page's access state from its address and what it shows.
+ * `readSignals` is only called when the page is on the expected origin.
+ */
+export async function classifySourceAccess(options: {
+  currentUrl: string;
+  input: BrowserSourceAccessProbeInput;
+  readSignals: () => Promise<VisibleAccessSignals>;
+}): Promise<BrowserSourceAccessProbeResult> {
+  const input = BrowserSourceAccessProbeInputSchema.parse(options.input);
   const expectedOrigin = normalizeOrigin(input.expectedOrigin);
-  const currentUrl = page.url();
+  const currentUrl = options.currentUrl;
   const currentOrigin = normalizeOrigin(currentUrl);
 
   if (expectedOrigin === null || currentOrigin !== expectedOrigin) {
@@ -163,7 +201,7 @@ export async function inspectSourceAccessPage(
 
   let visibleSignals: VisibleAccessSignals;
   try {
-    visibleSignals = await inspectVisibleAccessSignals(page);
+    visibleSignals = await options.readSignals();
   } catch {
     return createResult({
       state: "inconclusive",

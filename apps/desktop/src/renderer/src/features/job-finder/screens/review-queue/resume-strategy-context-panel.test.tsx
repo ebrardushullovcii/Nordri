@@ -21,7 +21,7 @@ describe("ResumeStrategyContextPanel", () => {
     );
 
     expect(markup).toContain("Your default:");
-    expect(markup).toContain("A fuller rewrite that may stretch, with your say-so");
+    expect(markup).toContain("Aggressive: may stretch, with your say-so");
     expect(markup).toContain("clear screening for a first interview");
   });
 
@@ -78,7 +78,7 @@ describe("ResumeStrategyContextPanel", () => {
 
     expect(markup).toContain("Your default:");
     expect(markup).toContain(
-      "A fuller rewrite that may stretch, with your say-so",
+      "Aggressive: may stretch, with your say-so",
     );
   });
 });

@@ -156,8 +156,8 @@ describe("match assessment session", () => {
       scorerVersion: MATCH_ASSESSMENT_SCORER_VERSION,
       contextFingerprint: session.contextFingerprint,
     });
-    expect(first.postingFingerprint).toMatch(/^match_posting_v4_logic10_/u);
-    expect(session.contextFingerprint).toMatch(/^match_context_v4_logic10_/u);
+    expect(first.postingFingerprint).toMatch(/^match_posting_v4_logic12_/u);
+    expect(session.contextFingerprint).toMatch(/^match_context_v4_logic12_/u);
   });
 
   test("does not reuse an assessment persisted under the previous scoring logic", () => {
@@ -356,7 +356,7 @@ describe("match assessment session", () => {
     const current = session.assessPersisted(seed.savedJobs[0]!, stale);
 
     expect(current).not.toBe(stale);
-    expect(current.scorerVersion).toBe(11);
+    expect(current.scorerVersion).toBe(MATCH_ASSESSMENT_SCORER_VERSION);
     expect(calculate).toHaveBeenCalledTimes(1);
   });
 

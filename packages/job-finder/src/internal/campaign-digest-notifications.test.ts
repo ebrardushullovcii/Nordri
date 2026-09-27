@@ -400,6 +400,37 @@ describe("listFailedSources", () => {
     expect(listFailedSources(createRun({ completedAt: null }))).toEqual([]);
   });
 
+  test("says a source stopped at a sign-in plainly, not in the agent's words", () => {
+    const [source] = listFailedSources(
+      createRun({
+        targetExecutions: [
+          {
+            targetId: "source-sign-in",
+            adapterKind: "auto",
+            state: "failed",
+            completedAt: "2026-07-31T10:12:00.000Z",
+            accessBlockerReason: "auth_required",
+          },
+        ],
+        summary: {
+          sourceHealth: [
+            {
+              targetId: "source-sign-in",
+              health: "failed",
+              durationMs: 0,
+              warnings: [
+                "I did not enter credentials because signing in is not allowed in this run.",
+              ],
+            },
+          ],
+        },
+      }),
+    );
+    expect(source?.reason).toBe(
+      "This site asks you to sign in before Job Finder can read its jobs. Sign in from Needs you; the search carries on by itself.",
+    );
+  });
+
   test("lists only failed health entries with a truthful failure time", () => {
     const sources = listFailedSources(
       createRun({

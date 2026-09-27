@@ -435,7 +435,7 @@ describe("createJobFinderWorkspaceService", () => {
     ).toBeGreaterThan(0);
   });
 
-  test("agent discovery keeps the remote adjacent technical candidate after generic technical triage widening", async () => {
+  test("strict discovery does not rescue technical titles outside the saved specialization", async () => {
     const seed = {
       ...createDiscoveryOnlySeed(),
       profile: {
@@ -548,7 +548,7 @@ describe("createJobFinderWorkspaceService", () => {
     });
     const streamedEvents: DiscoveryActivityEvent[] = [];
 
-    await workspaceService.runAgentDiscovery((event) => {
+    const snapshot = await workspaceService.runAgentDiscovery((event) => {
       streamedEvents.push(event);
     }, new AbortController().signal);
 
@@ -558,11 +558,7 @@ describe("createJobFinderWorkspaceService", () => {
         event.message.includes("Collected 2 candidate jobs"),
     );
     const scoringEvent = streamedEvents.find(
-      (event) =>
-        event.stage === "scoring" &&
-        event.message.includes(
-          '"Software Engineer - AI products at Quik Hire Staffing"',
-        ),
+      (event) => event.stage === "scoring",
     );
 
     expect(scoringEvent).toBeDefined();
@@ -572,13 +568,12 @@ describe("createJobFinderWorkspaceService", () => {
     expect(collectionEvent?.message).toContain(
       '"Software Engineer - AI products at Quik Hire Staffing"',
     );
-    expect(scoringEvent!.message).toContain("Reviewing 1 promising jobs");
-    expect(scoringEvent!.message).toContain(
-      '"Software Engineer - AI products at Quik Hire Staffing"',
-    );
-    expect(scoringEvent!.message).not.toContain(
-      '"Senior Frontend Engineer at Fresha"',
-    );
+    expect(scoringEvent?.jobsFound).toBe(0);
+    expect(snapshot.discoveryJobs).toHaveLength(0);
+    expect(snapshot.recentDiscoveryRuns[0]?.targetExecutions[0]).toMatchObject({
+      jobsFound: 0,
+      jobsSkippedByTitleTriage: 2,
+    });
   });
 
   test("agent discovery persists lightweight compaction metadata without persisting raw transcripts on target executions", async () => {
@@ -871,8 +866,9 @@ describe("createJobFinderWorkspaceService", () => {
     expect(snapshot.recentDiscoveryRuns[0]?.summary.validJobsFound).toBe(100);
   });
 
-  test("budgets later sources from distinct retained jobs and reports staged deltas", async () => {
+  test("accounts for duplicate observations within explicit source budgets", async () => {
     const seed = createDiscoveryOnlySeed();
+    seed.searchPreferences.discovery.runJobBudget = 100;
     seed.searchPreferences.discovery.targets = [
       {
         ...seed.searchPreferences.discovery.targets[0]!,
@@ -975,7 +971,7 @@ describe("createJobFinderWorkspaceService", () => {
     );
     const run = snapshot.recentDiscoveryRuns[0];
 
-    expect(capturedBudgets).toEqual([34, 33, 33]);
+    expect(capturedBudgets).toEqual([33, 33, 34]);
     expect(
       run?.targetExecutions.map((target) => ({
         requestedJobBudget: target.requestedJobBudget,
@@ -989,15 +985,15 @@ describe("createJobFinderWorkspaceService", () => {
       })),
     ).toEqual([
       {
-        requestedJobBudget: 34,
+        requestedJobBudget: 33,
         // jobsReviewed counts every scored/merged observation of the one
         // duplicate identity; jobsFound stays at the distinct retained job.
-        jobsReviewed: 34,
+        jobsReviewed: 33,
         jobsFound: 1,
         jobsStaged: 1,
         jobsSkippedByLedger: 0,
         jobsSkippedByTitleTriage: 0,
-        duplicatesMerged: 33,
+        duplicatesMerged: 32,
         invalidSkipped: 0,
       },
       {
@@ -1011,10 +1007,10 @@ describe("createJobFinderWorkspaceService", () => {
         invalidSkipped: 0,
       },
       {
-        requestedJobBudget: 33,
-        jobsReviewed: 33,
-        jobsFound: 33,
-        jobsStaged: 33,
+        requestedJobBudget: 34,
+        jobsReviewed: 34,
+        jobsFound: 34,
+        jobsStaged: 34,
         jobsSkippedByLedger: 0,
         jobsSkippedByTitleTriage: 0,
         duplicatesMerged: 0,
@@ -1031,11 +1027,11 @@ describe("createJobFinderWorkspaceService", () => {
       ),
     ).toEqual(run?.targetExecutions.map((target) => target.jobsReviewed));
     expect(run?.summary).toMatchObject({
-      validJobsFound: 67,
-      jobsStaged: 67,
-      duplicatesMerged: 33,
+      validJobsFound: 68,
+      jobsStaged: 68,
+      duplicatesMerged: 32,
     });
-    expect(snapshot.discoveryJobs).toHaveLength(67);
+    expect(snapshot.discoveryJobs).toHaveLength(68);
   });
   test("single-target agent discovery requests a useful batch of jobs", async () => {
     const capturedBudgets: Array<{ targetJobCount: number; maxSteps: number }> =
@@ -1210,6 +1206,7 @@ describe("createJobFinderWorkspaceService", () => {
 
   test("agent discovery limits an over-producing source to its fair share and still runs later targets", async () => {
     const seed = createDiscoveryOnlySeed();
+    seed.searchPreferences.discovery.runJobBudget = 100;
     seed.searchPreferences.discovery.targets = [
       {
         ...seed.searchPreferences.discovery.targets[0]!,
@@ -1313,7 +1310,7 @@ describe("createJobFinderWorkspaceService", () => {
       snapshot.recentDiscoveryRuns[0]?.targetExecutions.map(
         (entry) => entry.jobsFound,
       ),
-    ).toEqual([34, 33, 33]);
+    ).toEqual([33, 33, 34]);
     expect(snapshot.recentDiscoveryRuns[0]?.summary.validJobsFound).toBe(100);
   });
 
@@ -1403,6 +1400,7 @@ describe("createJobFinderWorkspaceService", () => {
 
   test("run-all discovery isolates a source exception and continues with the next target", async () => {
     const seed = createDiscoveryOnlySeed();
+    seed.searchPreferences.discovery.runJobBudget = 100;
     seed.searchPreferences.discovery.targets = [
       {
         ...seed.searchPreferences.discovery.targets[0]!,

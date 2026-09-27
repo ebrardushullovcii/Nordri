@@ -82,19 +82,19 @@ describe("guided setup readiness, stated once", () => {
       draftSearchPreferences: buildSearchPreferences(),
     });
 
+    // Finishing needs a name with a contact, one job source, and the two
+    // answers every application form asks; the rest are hints, not gates.
     expect(presentation.blockers.map((blocker) => blocker.id)).toEqual([
       "identity_contact",
-      "background",
-      "eligibility_preferences",
-      "work_mode_preference",
       "discovery_source",
+      "work_eligibility_answers",
     ]);
     expect(text).toBe(
-      "Still needed to finish: Add your name and an email or phone · Add work history · Answer one work or location detail · Pick where you want to work (remote, hybrid, onsite, or flexible) · Enable a job source (on the Job targets step).",
+      "Still needed to finish: Add your name and an email or phone · Add a job source · Say where you can work and whether you need visa sponsorship.",
     );
   });
 
-  it("never claims setup can finish while the work mode is missing", () => {
+  it("finishes with a name, a contact and a source even before a work mode is chosen", () => {
     // Regression for first-run QA: target role + runnable source used to read
     // "Ready to search" while the ready check still required a work mode.
     const profile = CandidateProfileSchema.parse({
@@ -125,6 +125,10 @@ describe("guided setup readiness, stated once", () => {
           isCurrent: true,
         },
       ],
+      workEligibility: {
+        authorizedWorkCountries: ["United Kingdom"],
+        requiresVisaSponsorship: false,
+      },
     });
     const searchPreferencesWithoutWorkMode = buildSearchPreferences({
       targetRoles: ["Principal Designer"],
@@ -154,8 +158,44 @@ describe("guided setup readiness, stated once", () => {
       draftProfile: profile,
       draftSearchPreferences: searchPreferencesWithoutWorkMode,
     });
-    expect(blocked.text).toBe(
-      "Still needed to finish: Pick where you want to work (remote, hybrid, onsite, or flexible).",
+    // The work mode is a hint on Job targets, no longer a gate.
+    expect(blocked.text).toBe("Everything required is in. You can finish setup.");
+
+    // The two eligibility answers are: without them the first application
+    // stopped on "Are you authorized to work here?".
+    const withoutEligibility = buildReadinessLine({
+      draftProfile: CandidateProfileSchema.parse({
+        ...profile,
+        workEligibility: {
+          ...profile.workEligibility,
+          authorizedWorkCountries: [],
+          requiresVisaSponsorship: null,
+        },
+      }),
+      draftSearchPreferences: searchPreferencesWithoutWorkMode,
+    });
+    expect(withoutEligibility.text).toBe(
+      "Still needed to finish: Say where you can work and whether you need visa sponsorship.",
+    );
+    // A saved answer-bank sentence answers the question too.
+    const answeredInWords = buildReadinessLine({
+      draftProfile: CandidateProfileSchema.parse({
+        ...profile,
+        workEligibility: {
+          ...profile.workEligibility,
+          authorizedWorkCountries: [],
+          requiresVisaSponsorship: null,
+        },
+        answerBank: {
+          ...profile.answerBank,
+          workAuthorization: "Yes, I hold a UK work permit.",
+          visaSponsorship: "No",
+        },
+      }),
+      draftSearchPreferences: searchPreferencesWithoutWorkMode,
+    });
+    expect(answeredInWords.text).toBe(
+      "Everything required is in. You can finish setup.",
     );
 
     const ready = buildReadinessLine({
@@ -211,11 +251,11 @@ describe("guided setup readiness, stated once", () => {
     // Mina has a name and an email; her zero years of experience is a true
     // answer and no longer counts against the essentials.
     expect(presentation.blockers.map((blocker) => blocker.id)).toEqual([
-      "work_mode_preference",
       "discovery_source",
+      "work_eligibility_answers",
     ]);
     expect(text).toBe(
-      "Still needed to finish: Pick where you want to work (remote, hybrid, onsite, or flexible) · Enable a job source (on the Job targets step).",
+      "Still needed to finish: Add a job source · Say where you can work and whether you need visa sponsorship.",
     );
     // One readiness system: the footer primary is gated by the same
     // presentation the line above is written from.

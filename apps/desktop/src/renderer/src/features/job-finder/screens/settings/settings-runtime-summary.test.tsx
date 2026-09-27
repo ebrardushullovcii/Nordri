@@ -28,13 +28,15 @@ const settings = {
 } as JobFinderSettings;
 
 describe("getApplySafeguardCopy", () => {
-  it("states prepare-only authority without claiming site outcomes", () => {
+  it("describes resume checks without overriding the chosen apply mode", () => {
     for (const usesOriginalResume of [true, false]) {
       const copy = getApplySafeguardCopy(usesOriginalResume);
-      expect(copy.description).toContain("stops before final submit");
-      expect(copy.description).toMatch(/never performs it/);
-      expect(copy.description).toMatch(/authorized steps may fill fields/i);
-      expect(copy.description).toMatch(/the site controls its own behavior/i);
+      expect(copy.description).toContain(
+        "Sending follows the mode you choose under Applying.",
+      );
+      expect(copy.description).not.toMatch(
+        /never performs|stops before final submit/i,
+      );
       expect(copy.description).not.toMatch(/no application was submitted/i);
     }
   });
@@ -51,7 +53,7 @@ describe("SettingsRuntimeSummary", () => {
 
     expect(screen.getByText("Original resume required")).not.toBeNull();
     expect(
-      screen.getByText(/never performs it; authorized steps may fill fields/),
+      screen.getByText(/Sending follows the mode you choose under Applying/),
     ).not.toBeNull();
   });
 });

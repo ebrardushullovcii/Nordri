@@ -26,10 +26,15 @@ const REQUEST = {
   language: null,
 };
 
-function provider(overrides: {
-  writeLetter?: () => Promise<string | null>;
-  renderLetter?: ReturnType<typeof vi.fn>;
-} = {}) {
+function provider(
+  overrides: {
+    writeLetter?: (input: {
+      prompt: string;
+      priorText: string | null;
+    }) => Promise<string | null>;
+    renderLetter?: ReturnType<typeof vi.fn>;
+  } = {},
+) {
   const writeLetter =
     overrides.writeLetter ??
     (() => Promise.resolve("Dear hiring team, I build platforms."));
@@ -103,6 +108,73 @@ describe("the letter provider", () => {
     if (first.ok && second.ok) {
       expect(first.document?.id).toBe(second.document?.id);
     }
+  });
+
+  test("keeps different purposes and revised instructions as distinct stable versions", async () => {
+    const writeLetter = vi.fn(({ prompt }: { prompt: string }) =>
+      Promise.resolve(`Written from: ${prompt}`),
+    );
+    const renderLetter = vi.fn(({ text }: { text: string }) =>
+      Promise.resolve({
+        ok: true as const,
+        fileName: `${text.length}.pdf`,
+        mimeType: "application/pdf",
+        loadBytes: () => Promise.resolve(new TextEncoder().encode(text)),
+      }),
+    );
+    const letters = provider({ writeLetter, renderLetter });
+
+    const cover = await letters.provide({
+      ...REQUEST,
+      purpose: "cover_letter",
+      delivery: "file",
+      fileType: "pdf",
+    });
+    const motivation = await letters.provide({
+      ...REQUEST,
+      purpose: "motivation_letter",
+      prompt: "Explain why this mission matters.",
+      delivery: "file",
+      fileType: "pdf",
+    });
+    const revised = await letters.provide({
+      ...REQUEST,
+      purpose: "cover_letter",
+      prompt: "Revise the cover letter to be shorter.",
+      delivery: "file",
+      fileType: "pdf",
+    });
+    const repeatedRevision = await letters.provide({
+      ...REQUEST,
+      purpose: "cover_letter",
+      prompt: "Revise the cover letter to be shorter.",
+      delivery: "file",
+      fileType: "pdf",
+    });
+
+    expect(writeLetter).toHaveBeenCalledTimes(3);
+    expect(renderLetter).toHaveBeenCalledTimes(3);
+    if (cover.ok && motivation.ok && revised.ok && repeatedRevision.ok) {
+      expect(
+        new Set([
+          cover.document?.id,
+          motivation.document?.id,
+          revised.document?.id,
+        ]).size,
+      ).toBe(3);
+      expect(revised.document?.id).toBe(repeatedRevision.document?.id);
+      expect(revised.text).toBe(repeatedRevision.text);
+      expect(cover.text).not.toBe(motivation.text);
+      expect(cover.text).not.toBe(revised.text);
+    }
+    expect(writeLetter).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({
+        purpose: "cover_letter",
+        groundedIn: ["your profile"],
+        priorText: "Written from: Write a cover letter.",
+      }),
+    );
   });
 
   test("a file type that cannot be produced leaves the file to the person", async () => {
@@ -189,8 +261,8 @@ describe("the saved letter preference", () => {
       keepSessionAlive: false,
       discoveryOnly: false,
     });
-    expect(CoverLetterPreferenceSchema.parse(older.coverLetter ?? {}).tone).toBe(
-      "plain_professional",
-    );
+    expect(
+      CoverLetterPreferenceSchema.parse(older.coverLetter ?? {}).tone,
+    ).toBe("plain_professional");
   });
 });

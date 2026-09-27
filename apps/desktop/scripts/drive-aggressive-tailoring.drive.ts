@@ -474,7 +474,7 @@ async function main(): Promise<void> {
     await captureStudio(window, "03-confirmations-open.png");
 
     const reviewBlockedExport = window.getByRole("button", {
-      name: /Review confirmations|Review blocked claims/i,
+      name: /Review \d+ lines?|Review blocked claims|Review lines/i,
     });
     assert(
       await reviewBlockedExport.first().isVisible(),
@@ -610,7 +610,7 @@ async function expectExportBlocked(window: Page): Promise<void> {
   }, JOB_ID);
   assert(failed, "Export must stay blocked while stretches are unconfirmed.");
   assert(
-    /blocking candidate-claim validation issues|confirmation/i.test(failed),
+    /still need your decision|confirmation/i.test(failed),
     `Unexpected export error: ${failed}`,
   );
 }

@@ -126,7 +126,9 @@ describe("guided edits proposals share the export grounding rule", () => {
     await workspaceService.generateResume("job_ready");
     const before = await workspaceService.getResumeWorkspace("job_ready");
     const section = findEditableTextSection(before.draft.sections);
-    const groundedRewrite = `${section.text} `.trim();
+    // A real change (the same words without the closing period): a proposal
+    // that sets exactly what the resume already has is no longer offered.
+    const groundedRewrite = `${section.text}`.trim().replace(/\.$/u, "");
 
     const { workspaceService: groundedService } =
       createSummaryRewriteHarness(groundedRewrite);

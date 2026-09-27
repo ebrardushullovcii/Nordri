@@ -3,33 +3,305 @@ import {
   ApplicationRecordSchema,
   ApplyJobResultSchema,
   ApplyRunSchema,
+  ApplySubmitApprovalSchema,
+  UserActionRequestSchema,
 } from "@unemployed/contracts";
 import { createInMemoryJobFinderRepository } from "@unemployed/db";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { createJobFinderWorkspaceService } from "./index";
+import { terminalizeApplicationAfterPreparedPageLost } from "./internal/workspace-application-user-action";
 import {
   createAiClient,
   createBrowserRuntime,
+  createSavedJob,
   createDocumentManager,
   createSeed,
 } from "./workspace-service.test-support";
 afterEach(() => {
   vi.useRealTimers();
+  vi.unstubAllEnvs();
 });
 
 function createService(
   repository: ReturnType<typeof createInMemoryJobFinderRepository>,
+  browserRuntime = createBrowserRuntime(),
 ) {
   return createJobFinderWorkspaceService({
     repository,
-    browserRuntime: createBrowserRuntime(),
+    browserRuntime,
     aiClient: createAiClient(),
     documentManager: createDocumentManager(),
   });
 }
 
 describe("apply restart recovery", () => {
+  test("shutdown preserves a live Home queue after its first result commits while paused", async () => {
+    // Exercise a deliberately parked queue with one unfinished job.
+    vi.stubEnv("UNEMPLOYED_APPLICATION_PREPARATION_CONCURRENCY", "1");
+    const seed = createSeed();
+    const now = "2026-03-20T10:05:00.000Z";
+    seed.settings.resumeApplicationMode = "original_resume";
+    seed.profile.baseResume.storagePath = "/tmp/alex-vanguard.pdf";
+    seed.savedJobs.push(
+      createSavedJob({
+        ...seed.savedJobs[0]!,
+        id: "job_second",
+        sourceJobId: "linkedin_pause_case",
+        canonicalUrl: "https://www.linkedin.com/jobs/view/linkedin_pause_case",
+        applicationUrl:
+          "https://www.linkedin.com/jobs/view/linkedin_pause_case/apply",
+        title: "Principal UX Engineer",
+      }),
+    );
+    seed.activityControl = {
+      paused: true,
+      pausedAt: now,
+      reason: "Paused by you.",
+      pauseBehavior: "finish_current",
+    };
+    seed.applyRuns = [
+      ApplyRunSchema.parse({
+        id: "apply_run_live_park",
+        mode: "queue_auto",
+        state: "running",
+        jobIds: ["job_ready", "job_second"],
+        submitApprovalId: "approval_live_park",
+        createdAt: now,
+        updatedAt: now,
+        totalJobs: 2,
+        pendingJobs: 2,
+        summary: "Automatic apply queue is running.",
+        detail: "Two jobs are waiting.",
+      }),
+    ];
+    seed.applySubmitApprovals = [
+      ApplySubmitApprovalSchema.parse({
+        id: "approval_live_park",
+        runId: "apply_run_live_park",
+        mode: "queue_auto",
+        jobIds: ["job_ready", "job_second"],
+        status: "approved",
+        createdAt: now,
+        approvedAt: now,
+      }),
+    ];
+    seed.applyJobResults = ["job_ready", "job_second"].map((jobId, index) =>
+      ApplyJobResultSchema.parse({
+        id: `result_live_${index}`,
+        runId: "apply_run_live_park",
+        jobId,
+        applicationRecordId: `application_${jobId}`,
+        queuePosition: index,
+        state: "planned",
+        summary: "Not started.",
+        detail: "Waiting for Resume.",
+        startedAt: now,
+        updatedAt: now,
+      }),
+    );
+    seed.applicationRecords = ["job_ready", "job_second"].map((jobId) =>
+      ApplicationRecordSchema.parse({
+        id: `application_${jobId}`,
+        jobId,
+        title:
+          jobId === "job_ready"
+            ? "Senior Product Designer"
+            : "Principal UX Engineer",
+        company: "Signal Systems",
+        status: "approved",
+        lastActionLabel: "Waiting for Resume.",
+        nextActionLabel: null,
+        lastUpdatedAt: now,
+      }),
+    );
+    const repository = createInMemoryJobFinderRepository(seed);
+    const baseRuntime = createBrowserRuntime();
+    let flowCount = 0;
+    let releaseFirst: (() => void) | undefined;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const service = createService(repository, {
+      ...baseRuntime,
+      async executeApplicationFlow(...args) {
+        flowCount += 1;
+        if (flowCount === 1) await firstGate;
+        return baseRuntime.executeApplicationFlow(...args);
+      },
+    });
+    await service.getWorkspaceSnapshot();
+    await service.setActivityControl({ paused: false });
+    await vi.waitFor(() => expect(flowCount).toBe(1));
+    await service.setActivityControl({
+      paused: true,
+      pauseBehavior: "finish_current",
+      reason: "Paused by you.",
+    });
+    releaseFirst?.();
+    await vi.waitFor(async () =>
+      expect(
+        (await repository.listApplyJobResults()).find(
+          (result) => result.id === "result_live_0",
+        )?.state,
+      ).toBe("awaiting_review"),
+    );
+    expect(
+      (await repository.listApplyJobResults()).find(
+        (result) => result.id === "result_live_1",
+      )?.state,
+    ).toBe("planned");
+    expect(flowCount).toBe(1);
+    await service.shutdown();
+    expect((await repository.listApplyRuns())[0]).toMatchObject({
+      id: "apply_run_live_park",
+      state: "running",
+    });
+    expect(
+      (await repository.listApplyJobResults()).map((result) => result.state),
+    ).toEqual(["awaiting_review", "planned"]);
+  });
+
+  test("reopens a safely parked Home queue and resumes its same run only once", async () => {
+    const seed = createSeed();
+    const now = "2026-03-20T10:05:00.000Z";
+    seed.settings.resumeApplicationMode = "original_resume";
+    seed.profile.baseResume.storagePath = "/tmp/alex-vanguard.pdf";
+    seed.activityControl = {
+      paused: true,
+      pausedAt: now,
+      reason: "Paused by you.",
+      pauseBehavior: "finish_current",
+    };
+    seed.applyRuns = [
+      ApplyRunSchema.parse({
+        id: "apply_run_parked",
+        mode: "queue_auto",
+        state: "running",
+        jobIds: ["job_settled", "job_ready"],
+        currentJobId: "job_settled",
+        submitApprovalId: "approval_parked",
+        createdAt: now,
+        updatedAt: now,
+        totalJobs: 2,
+        pendingJobs: 1,
+        failedJobs: 1,
+        summary: "Paused before the next application.",
+        detail: "The first result was committed before pausing.",
+      }),
+    ];
+    seed.applySubmitApprovals = [
+      ApplySubmitApprovalSchema.parse({
+        id: "approval_parked",
+        runId: "apply_run_parked",
+        mode: "queue_auto",
+        jobIds: ["job_settled", "job_ready"],
+        status: "approved",
+        createdAt: now,
+        approvedAt: now,
+      }),
+    ];
+    seed.applyJobResults = [
+      ApplyJobResultSchema.parse({
+        id: "result_settled",
+        runId: "apply_run_parked",
+        jobId: "job_settled",
+        applicationRecordId: "application_settled",
+        queuePosition: 0,
+        state: "failed",
+        summary: "Could not prepare this application.",
+        detail: "The first result was committed.",
+        startedAt: now,
+        updatedAt: now,
+        completedAt: now,
+      }),
+      ApplyJobResultSchema.parse({
+        id: "result_planned",
+        runId: "apply_run_parked",
+        jobId: "job_ready",
+        applicationRecordId: "application_ready",
+        queuePosition: 1,
+        state: "planned",
+        summary: "Not started.",
+        detail: "Waiting for Resume.",
+        startedAt: now,
+        updatedAt: now,
+      }),
+    ];
+    seed.applicationRecords = [
+      ApplicationRecordSchema.parse({
+        id: "application_ready",
+        jobId: "job_ready",
+        title: "Senior Product Designer",
+        company: "Signal Systems",
+        status: "approved",
+        lastActionLabel: "Waiting for Resume.",
+        nextActionLabel: null,
+        lastUpdatedAt: now,
+      }),
+    ];
+    const repository = createInMemoryJobFinderRepository(seed);
+    const beforeClose = createService(repository);
+    expect(
+      (await beforeClose.getWorkspaceSnapshot()).applyRuns.find(
+        (run) => run.id === "apply_run_parked",
+      )?.state,
+    ).toBe("running");
+    await beforeClose.shutdown();
+
+    const baseRuntime = createBrowserRuntime();
+    let flowCount = 0;
+    let releaseFlow: (() => void) | undefined;
+    const flowGate = new Promise<void>((resolve) => {
+      releaseFlow = resolve;
+    });
+    const reopened = createService(repository, {
+      ...baseRuntime,
+      async executeApplicationFlow(...args) {
+        flowCount += 1;
+        await flowGate;
+        return baseRuntime.executeApplicationFlow(...args);
+      },
+    });
+    const reopenedSnapshot = await reopened.getWorkspaceSnapshot();
+    expect(reopenedSnapshot.activityControl.paused).toBe(true);
+    expect(
+      reopenedSnapshot.applyRuns.find((run) => run.id === "apply_run_parked")
+        ?.state,
+    ).toBe("running");
+    expect(
+      reopenedSnapshot.applyJobResults.find(
+        (result) => result.id === "result_settled",
+      )?.state,
+    ).toBe("failed");
+    expect(
+      reopenedSnapshot.applyJobResults.find(
+        (result) => result.id === "result_planned",
+      )?.state,
+    ).toBe("planned");
+
+    await Promise.all([
+      reopened.setActivityControl({ paused: false }),
+      reopened.setActivityControl({ paused: false }),
+    ]);
+    await vi.waitFor(() => expect(flowCount).toBe(1));
+    expect((await repository.listApplyRuns())[0]?.id).toBe("apply_run_parked");
+    releaseFlow?.();
+    await vi.waitFor(async () =>
+      expect((await repository.listApplyRuns())[0]?.state).not.toBe("running"),
+    );
+    expect(flowCount).toBe(1);
+    expect(
+      (await repository.listApplyJobResults()).find(
+        (result) => result.id === "result_planned",
+      )?.state,
+    ).not.toBe("planned");
+    expect(
+      (await repository.listApplyJobResults()).find(
+        (result) => result.id === "result_settled",
+      )?.state,
+    ).toBe("failed");
+  });
   test("marks a hard-interrupted running apply as failed when the workspace reopens", async () => {
     const seed = createSeed();
     seed.applyRuns = [
@@ -579,6 +851,349 @@ describe("apply restart recovery", () => {
     });
   });
 
+  test.each(["present", "missing"] as const)(
+    "makes a blocker-free review retryable on reopen when its exact prepared page binding is gone (%s review card)",
+    async (reviewCardState) => {
+      const seed = createSeed();
+      const startedAt = "2026-03-20T10:00:30.000Z";
+      seed.applyRuns = [
+        ApplyRunSchema.parse({
+          id: "apply_run_review_page_lost",
+          mode: "copilot",
+          state: "paused_for_user_review",
+          jobIds: ["job_ready"],
+          currentJobId: null,
+          visualCheckpointsEnabled: false,
+          createdAt: startedAt,
+          updatedAt: startedAt,
+          completedAt: null,
+          summary: "Application is ready for review.",
+          detail: "The prepared form is waiting for the person.",
+          totalJobs: 1,
+          pendingJobs: 1,
+        }),
+      ];
+      seed.applyJobResults = [
+        ApplyJobResultSchema.parse({
+          id: "apply_result_review_page_lost",
+          runId: "apply_run_review_page_lost",
+          jobId: "job_ready",
+          applicationRecordId: "application_job_ready",
+          state: "awaiting_review",
+          summary: "Application preparation is ready for review.",
+          detail: "Stopped at the user-owned review checkpoint.",
+          startedAt,
+          updatedAt: startedAt,
+          completedAt: startedAt,
+          reviewCard:
+            reviewCardState === "missing"
+              ? null
+              : {
+                  siteLabel: "Test careers",
+                  pageUrl: "https://signalsystems.example.com/apply",
+                  answers: [],
+                  attachments: [],
+                  letter: null,
+                  waitingOnYou: [],
+                  preparedAt: startedAt,
+                },
+        }),
+      ];
+      seed.applicationRecords = [
+        ApplicationRecordSchema.parse({
+          id: "application_job_ready",
+          jobId: "job_ready",
+          title: "Senior Product Designer",
+          company: "Signal Systems",
+          status: "approved",
+          lastActionLabel: "Paused for user review.",
+          nextActionLabel: "Review and send the prepared application.",
+          lastUpdatedAt: startedAt,
+          lastAttemptState: "paused",
+          automationMode: "confirm_before_submit",
+        }),
+      ];
+      const liveBindingSeed = structuredClone(seed);
+      const repository = createInMemoryJobFinderRepository(seed);
+      const baseRuntime = createBrowserRuntime();
+      const hasApplicationPageBinding = vi.fn().mockResolvedValue(false);
+      const service = createJobFinderWorkspaceService({
+        repository,
+        browserRuntime: {
+          ...baseRuntime,
+          hasApplicationPageBinding,
+        },
+        aiClient: createAiClient(),
+        documentManager: createDocumentManager(),
+      });
+
+      const snapshot = await service.getWorkspaceSnapshot();
+
+      expect(hasApplicationPageBinding).toHaveBeenCalledWith(
+        "target_site",
+        "apply_result_review_page_lost",
+      );
+      expect(
+        snapshot.applyJobResults.find(
+          (result) => result.id === "apply_result_review_page_lost",
+        ),
+      ).toMatchObject({
+        state: "failed",
+        summary: "The prepared application page is no longer open.",
+        blockerReason: "unexpected_navigation",
+      });
+      expect(
+        snapshot.applicationRecords.find(
+          (record) => record.id === "application_job_ready",
+        ),
+      ).toMatchObject({
+        lastAttemptState: "failed",
+        nextActionLabel: "Try again, or finish it yourself on the job site.",
+      });
+      expect(
+        snapshot.applyRuns.find(
+          (run) => run.id === "apply_run_review_page_lost",
+        ),
+      ).toMatchObject({
+        state: "completed",
+        pendingJobs: 0,
+        failedJobs: 1,
+      });
+
+      const liveBindingRepository =
+        createInMemoryJobFinderRepository(liveBindingSeed);
+      const liveBindingCheck = vi.fn().mockResolvedValue(true);
+      const liveBindingSnapshot = await createJobFinderWorkspaceService({
+        repository: liveBindingRepository,
+        browserRuntime: {
+          ...createBrowserRuntime(),
+          hasApplicationPageBinding: liveBindingCheck,
+        },
+        aiClient: createAiClient(),
+        documentManager: createDocumentManager(),
+      }).getWorkspaceSnapshot();
+
+      expect(liveBindingCheck).toHaveBeenCalledWith(
+        "target_site",
+        "apply_result_review_page_lost",
+      );
+      expect(
+        liveBindingSnapshot.applyJobResults.find(
+          (result) => result.id === "apply_result_review_page_lost",
+        ),
+      ).toMatchObject({
+        state: "awaiting_review",
+        summary: "Application preparation is ready for review.",
+      });
+      expect(
+        liveBindingSnapshot.applicationRecords.find(
+          (record) => record.id === "application_job_ready",
+        ),
+      ).toMatchObject({
+        lastAttemptState: "paused",
+        nextActionLabel: "Review and send the prepared application.",
+      });
+    },
+  );
+
+  test.each(["present", "missing"] as const)(
+    "does not mark a blocker-free review lost while its exact continuation is verifying (%s review card)",
+    async (reviewCardState) => {
+      const seed = createSeed();
+      const startedAt = "2026-03-20T10:00:30.000Z";
+      seed.applyRuns = [
+        ApplyRunSchema.parse({
+          id: "apply_run_review_page_live",
+          mode: "copilot",
+          state: "paused_for_user_review",
+          jobIds: ["job_ready"],
+          currentJobId: null,
+          visualCheckpointsEnabled: false,
+          createdAt: startedAt,
+          updatedAt: startedAt,
+          completedAt: null,
+          summary: "Application is ready for review.",
+          detail: "The prepared form is waiting for the person.",
+          totalJobs: 1,
+          pendingJobs: 1,
+        }),
+      ];
+      seed.applyJobResults = [
+        ApplyJobResultSchema.parse({
+          id: "apply_result_review_page_live",
+          runId: "apply_run_review_page_live",
+          jobId: "job_ready",
+          applicationRecordId: "application_job_ready",
+          state: "awaiting_review",
+          summary: "Application preparation is ready for review.",
+          detail: "Stopped at the user-owned review checkpoint.",
+          startedAt,
+          updatedAt: startedAt,
+          completedAt: startedAt,
+          reviewCard:
+            reviewCardState === "missing"
+              ? null
+              : {
+                  siteLabel: "Test careers",
+                  pageUrl: "https://signalsystems.example.com/apply",
+                  answers: [],
+                  attachments: [],
+                  letter: null,
+                  waitingOnYou: [],
+                  preparedAt: startedAt,
+                },
+        }),
+      ];
+      seed.applicationRecords = [
+        ApplicationRecordSchema.parse({
+          id: "application_job_ready",
+          jobId: "job_ready",
+          title: "Senior Product Designer",
+          company: "Signal Systems",
+          status: "approved",
+          lastActionLabel: "Paused for user review.",
+          nextActionLabel: "Review and send the prepared application.",
+          lastUpdatedAt: startedAt,
+          lastAttemptState: "paused",
+          automationMode: "confirm_before_submit",
+        }),
+      ];
+      seed.activityControl = {
+        paused: true,
+        pausedAt: startedAt,
+        reason: "Keep the verifying continuation parked during this snapshot.",
+      };
+      seed.userActionRequests = [
+        UserActionRequestSchema.parse({
+          id: "request_review_page_live",
+          dedupeKey: "request_review_page_live",
+          revision: 2,
+          kind: "manual_answer",
+          state: "verifying",
+          requirement: "required",
+          scope: {
+            type: "application",
+            runId: "apply_run_review_page_live",
+            jobId: "job_ready",
+            applicationRecordId: "application_job_ready",
+            resultId: "apply_result_review_page_live",
+            replayCheckpointId: null,
+            source: "target_site",
+          },
+          verification: {
+            type: "page_blocker_absent",
+            blockerFingerprint: "manual-answer:blocker",
+            expectedPageFingerprint: null,
+          },
+          title: "Continue the prepared application",
+          summary: "The exact continuation is still being verified.",
+          createdAt: startedAt,
+          updatedAt: startedAt,
+        }),
+      ];
+      const repository = createInMemoryJobFinderRepository(seed);
+      const baseRuntime = createBrowserRuntime();
+      const hasApplicationPageBinding = vi.fn().mockResolvedValue(false);
+      const service = createJobFinderWorkspaceService({
+        repository,
+        browserRuntime: {
+          ...baseRuntime,
+          hasApplicationPageBinding,
+        },
+        aiClient: createAiClient(),
+        documentManager: createDocumentManager(),
+      });
+
+      const snapshot = await service.getWorkspaceSnapshot();
+
+      expect(hasApplicationPageBinding).not.toHaveBeenCalled();
+      expect(
+        snapshot.applyJobResults.find(
+          (result) => result.id === "apply_result_review_page_live",
+        ),
+      ).toMatchObject({
+        state: "awaiting_review",
+        summary: "Application preparation is ready for review.",
+      });
+      expect(
+        snapshot.applicationRecords.find(
+          (record) => record.id === "application_job_ready",
+        ),
+      ).toMatchObject({
+        lastAttemptState: "paused",
+        nextActionLabel: "Review and send the prepared application.",
+      });
+    },
+  );
+
+  test("does not overwrite a submitting result when a stale binding check finishes", async () => {
+    const seed = createSeed();
+    const startedAt = "2026-03-20T10:00:30.000Z";
+    seed.applyRuns = [
+      ApplyRunSchema.parse({
+        id: "apply_run_submit_race",
+        mode: "copilot",
+        state: "running",
+        jobIds: ["job_ready"],
+        currentJobId: "job_ready",
+        visualCheckpointsEnabled: false,
+        createdAt: startedAt,
+        updatedAt: startedAt,
+        summary: "Submitting the prepared application.",
+        detail: "The final action owns this result now.",
+        totalJobs: 1,
+        pendingJobs: 1,
+      }),
+    ];
+    seed.applyJobResults = [
+      ApplyJobResultSchema.parse({
+        id: "apply_result_submit_race",
+        runId: "apply_run_submit_race",
+        jobId: "job_ready",
+        applicationRecordId: "application_job_ready",
+        state: "submitting",
+        summary: "Submitting the prepared application.",
+        detail: "Waiting for a durable employer outcome.",
+        startedAt,
+        updatedAt: startedAt,
+      }),
+    ];
+    seed.applicationRecords = [
+      ApplicationRecordSchema.parse({
+        id: "application_job_ready",
+        jobId: "job_ready",
+        title: "Senior Product Designer",
+        company: "Signal Systems",
+        status: "approved",
+        lastActionLabel: "Submitting the prepared application.",
+        nextActionLabel: null,
+        lastUpdatedAt: startedAt,
+        lastAttemptState: "ready",
+        automationMode: "confirm_before_submit",
+      }),
+    ];
+    const repository = createInMemoryJobFinderRepository(seed);
+
+    await terminalizeApplicationAfterPreparedPageLost({
+      repository,
+      runId: "apply_run_submit_race",
+      jobId: "job_ready",
+      applicationRecordId: "application_job_ready",
+      resultId: "apply_result_submit_race",
+      occurredAt: "2026-03-20T10:01:00.000Z",
+      eventId: "event_stale_binding_check",
+    });
+
+    expect((await repository.listApplyJobResults())[0]).toMatchObject({
+      state: "submitting",
+      summary: "Submitting the prepared application.",
+    });
+    expect((await repository.listApplicationRecords())[0]).toMatchObject({
+      lastAttemptState: "ready",
+      lastActionLabel: "Submitting the prepared application.",
+    });
+  });
+
   test("keeps legacy null-lineage results fail-closed without attributing them to a record", async () => {
     const seed = createSeed();
     const startedAt = "2026-03-20T10:00:30.000Z";
@@ -856,9 +1471,9 @@ describe("apply restart recovery", () => {
     // Reopening again is a no-op: every sweep write is idempotent.
     const secondSnapshot =
       await createService(repository).getWorkspaceSnapshot();
-    expect(secondSnapshot.applyRuns.find((r) => r.id === persistedRun.id)).toEqual(
-      persistedRun,
-    );
+    expect(
+      secondSnapshot.applyRuns.find((r) => r.id === persistedRun.id),
+    ).toEqual(persistedRun);
     expect(
       secondSnapshot.applyJobResults.find(
         (r) => r.id === "apply_result_orphan_filling",
@@ -877,6 +1492,211 @@ describe("apply restart recovery", () => {
         (r) => r.id === "application_job_generating",
       ),
     );
+  });
+
+  test("stops filling and queued results under a run the person cancelled", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 2, 20, 12));
+    const seed = createSeed();
+    const startedAt = "2026-03-20T10:00:30.000Z";
+    const cancelledAt = "2026-03-20T10:05:00.000Z";
+    seed.applyRuns = [
+      ApplyRunSchema.parse({
+        id: "apply_run_user_cancelled",
+        mode: "queue_auto",
+        state: "cancelled",
+        jobIds: ["job_ready", "job_generating"],
+        currentJobId: "job_ready",
+        visualCheckpointsEnabled: false,
+        createdAt: "2026-03-20T10:00:00.000Z",
+        updatedAt: cancelledAt,
+        completedAt: cancelledAt,
+        summary: "Automatic apply run cancelled.",
+        detail:
+          "The queued run was cancelled before final submit. Any completed preparation artifacts remain available for review.",
+        totalJobs: 2,
+        pendingJobs: 2,
+      }),
+    ];
+    seed.applyJobResults = [
+      // The worker never got to write its own stop, so this row kept saying
+      // "filling" for hours beside "run cancelled".
+      ApplyJobResultSchema.parse({
+        id: "apply_result_cancelled_but_filling",
+        runId: "apply_run_user_cancelled",
+        jobId: "job_ready",
+        applicationRecordId: "application_job_ready",
+        queuePosition: 0,
+        state: "filling",
+        summary: "Filling prepared answers safely.",
+        detail: "The browser application flow was underway.",
+        startedAt: "2026-03-20T10:00:00.000Z",
+        updatedAt: startedAt,
+        completedAt: null,
+        applicationPreparationStartedAt: startedAt,
+        applicationPreparationStartedLocalDate: "2026-03-20",
+      }),
+      ApplyJobResultSchema.parse({
+        id: "apply_result_cancelled_planned",
+        runId: "apply_run_user_cancelled",
+        jobId: "job_generating",
+        applicationRecordId: "application_job_generating",
+        queuePosition: 1,
+        state: "planned",
+        summary: "Queued.",
+        detail: "Waiting for its turn.",
+        startedAt: "2026-03-20T10:00:00.000Z",
+        updatedAt: "2026-03-20T10:00:00.000Z",
+        completedAt: null,
+      }),
+    ];
+    seed.applicationRecords = [
+      ApplicationRecordSchema.parse({
+        id: "application_job_ready",
+        jobId: "job_ready",
+        title: "Senior Product Designer",
+        company: "Signal Systems",
+        status: "approved",
+        lastActionLabel: "Filling prepared answers safely.",
+        nextActionLabel: null,
+        lastUpdatedAt: startedAt,
+        lastAttemptState: "in_progress",
+      }),
+      ApplicationRecordSchema.parse({
+        id: "application_job_generating",
+        jobId: "job_generating",
+        title: "Staff Engineer",
+        company: "Signal Systems",
+        status: "approved",
+        lastActionLabel: "Queued.",
+        nextActionLabel: null,
+        lastUpdatedAt: "2026-03-20T10:00:00.000Z",
+        lastAttemptState: null,
+      }),
+    ];
+    const repository = createInMemoryJobFinderRepository(seed);
+
+    const reopenedService = createService(repository);
+    await reopenedService.getWorkspaceSnapshot();
+
+    const results = await repository.listApplyJobResults();
+    expect(
+      results.find(
+        (result) => result.id === "apply_result_cancelled_but_filling",
+      ),
+    ).toMatchObject({
+      state: "failed",
+      summary: "Application preparation was cancelled.",
+    });
+    expect(
+      results.find((result) => result.id === "apply_result_cancelled_planned"),
+    ).toMatchObject({
+      state: "failed",
+      summary: "Application preparation was cancelled.",
+      updatedAt: cancelledAt,
+      completedAt: cancelledAt,
+    });
+    const run = (await repository.listApplyRuns()).find(
+      (candidate) => candidate.id === "apply_run_user_cancelled",
+    );
+    expect(run?.state).toBe("cancelled");
+  });
+
+  test("cancelled queued history cannot overtake or overwrite a newer submitted retry", async () => {
+    const seed = createSeed();
+    const cancelledAt = "2026-03-20T10:05:00.000Z";
+    const submittedAt = "2026-03-20T11:00:00.000Z";
+    seed.applyRuns = [
+      ApplyRunSchema.parse({
+        id: "apply_run_old_cancelled",
+        mode: "queue_auto",
+        state: "cancelled",
+        jobIds: ["job_ready"],
+        createdAt: "2026-03-20T10:00:00.000Z",
+        updatedAt: cancelledAt,
+        completedAt: cancelledAt,
+        summary: "Automatic apply run cancelled.",
+        detail: "Stopped before this job began.",
+        totalJobs: 1,
+      }),
+      ApplyRunSchema.parse({
+        id: "apply_run_new_submitted",
+        mode: "queue_auto",
+        state: "completed",
+        jobIds: ["job_ready"],
+        createdAt: "2026-03-20T10:30:00.000Z",
+        updatedAt: submittedAt,
+        completedAt: submittedAt,
+        summary: "Application submitted.",
+        detail: "Submission confirmed.",
+        totalJobs: 1,
+        submittedJobs: 1,
+      }),
+    ];
+    seed.applyJobResults = [
+      ApplyJobResultSchema.parse({
+        id: "apply_result_old_planned",
+        runId: "apply_run_old_cancelled",
+        jobId: "job_ready",
+        applicationRecordId: "application_job_ready",
+        state: "planned",
+        summary: "Queued.",
+        detail: "Waiting its turn.",
+        startedAt: "2026-03-20T10:00:00.000Z",
+        updatedAt: "2026-03-20T10:00:00.000Z",
+      }),
+      ApplyJobResultSchema.parse({
+        id: "apply_result_new_submitted",
+        runId: "apply_run_new_submitted",
+        jobId: "job_ready",
+        applicationRecordId: "application_job_ready",
+        state: "submitted",
+        summary: "Application sent.",
+        detail: "Submission confirmed.",
+        startedAt: "2026-03-20T10:30:00.000Z",
+        updatedAt: submittedAt,
+        completedAt: submittedAt,
+      }),
+    ];
+    seed.applicationRecords = [
+      ApplicationRecordSchema.parse({
+        id: "application_job_ready",
+        jobId: "job_ready",
+        title: "Senior Product Designer",
+        company: "Signal Systems",
+        status: "submitted",
+        lastActionLabel: "Application sent.",
+        nextActionLabel: null,
+        lastUpdatedAt: submittedAt,
+        lastAttemptState: "submitted",
+      }),
+    ];
+    const repository = createInMemoryJobFinderRepository(seed);
+    const service = createService(repository);
+
+    await service.getWorkspaceSnapshot();
+
+    const results = await repository.listApplyJobResults();
+    expect(
+      results.find((result) => result.id === "apply_result_old_planned"),
+    ).toMatchObject({
+      state: "failed",
+      updatedAt: cancelledAt,
+    });
+    expect(
+      results.find((result) => result.id === "apply_result_new_submitted"),
+    ).toMatchObject({
+      state: "submitted",
+      updatedAt: submittedAt,
+    });
+    expect(
+      (await repository.listApplicationRecords()).find(
+        (record) => record.id === "application_job_ready",
+      ),
+    ).toMatchObject({
+      status: "submitted",
+      lastAttemptState: "submitted",
+    });
   });
 
   test("terminalizes an interrupted submitting result without claiming submission and recomputes run counters", async () => {

@@ -577,8 +577,17 @@ export function createDiscoveryProvenance(input: {
   providerKey: SavedJob["providerKey"];
   providerBoardToken: SavedJob["providerBoardToken"];
   titleTriageOutcome: DiscoveryTitleTriageOutcome;
+  /** This source's own listing link and the application link it carried. */
+  listingUrl?: string | null;
+  applicationUrl?: string | null;
+  sourceJobId?: string | null;
+  applyPath?: SavedJobDiscoveryProvenance["applyPath"];
 }): SavedJobDiscoveryProvenance {
   return {
+    listingUrl: input.listingUrl ?? null,
+    applicationUrl: input.applicationUrl ?? null,
+    sourceJobId: input.sourceJobId ?? null,
+    applyPath: input.applyPath ?? null,
     targetId: input.targetId,
     adapterKind: input.adapterKind,
     resolvedAdapterKind: input.resolvedAdapterKind,

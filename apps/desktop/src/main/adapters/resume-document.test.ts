@@ -8,15 +8,44 @@ import {
   extractResumeDocument,
   shouldFallbackToEmbeddedDocxResponse,
 } from "./resume-document";
+import { buildBundleFromText } from "./resume-document-utils";
 
 const tempDirectories: string[] = [];
 
 async function createTempResumeFile(fileName: string, contents: string) {
-  const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "unemployed-resume-parser-"));
+  const tempDirectory = await mkdtemp(
+    path.join(os.tmpdir(), "unemployed-resume-parser-"),
+  );
   tempDirectories.push(tempDirectory);
   const filePath = path.join(tempDirectory, fileName);
   await writeFile(filePath, contents, "utf8");
   return filePath;
+}
+
+async function mockEmbeddedPdfExtraction() {
+  const pdfModule = await import("./resume-document/pdf");
+  const extractBundle = (
+    _filePath: string,
+    input: { bundleId: string; runId: string; sourceResumeId: string },
+  ) =>
+    Promise.resolve(
+      buildBundleFromText({
+        ...input,
+        sourceFileKind: "pdf",
+        parserKind: "pdfjs_text",
+        text: "Jamie Rivers\njamie@example.com\nBerlin, Germany",
+        routeKind: "native_first",
+      }),
+    );
+
+  const macOsSpy = vi
+    .spyOn(pdfModule, "extractMacOsPdfDocumentBundle")
+    .mockImplementation(extractBundle);
+  const pdfJsSpy = vi
+    .spyOn(pdfModule, "extractPdfDocumentBundleWithPdfJs")
+    .mockImplementation(extractBundle);
+
+  return { macOsSpy, pdfJsSpy };
 }
 
 afterEach(async () => {
@@ -26,7 +55,9 @@ afterEach(async () => {
   delete process.env.UNEMPLOYED_RESUME_PARSER_SIDECAR_PATH;
 
   await Promise.all(
-    tempDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })),
+    tempDirectories
+      .splice(0)
+      .map((directory) => rm(directory, { recursive: true, force: true })),
   );
 });
 
@@ -143,7 +174,10 @@ describe("resume document parser worker orchestration", () => {
         errorMessage: null,
       });
 
-    const docxPath = await createTempResumeFile("resume.docx", "fake-docx-content");
+    const docxPath = await createTempResumeFile(
+      "resume.docx",
+      "fake-docx-content",
+    );
     const extracted = await extractResumeDocument(docxPath, {
       bundleId: "bundle_docx",
       runId: "run_docx",
@@ -194,21 +228,23 @@ describe("resume document parser worker orchestration", () => {
           qualityWarnings: [],
           warnings: [],
           pages: [],
-          blocks: [{
-            id: "page_1_block_1",
-            pageNumber: 1,
-            readingOrder: 0,
-            text: "Jamie Rivers",
-            kind: "heading",
-            sectionHint: "identity",
-            bbox: null,
-            sourceParserKinds: ["local_docx"],
-            sourceConfidence: 0.9,
-            lineIds: ["page_1_line_1"],
-            parserLineage: ["local_docx"],
-            readingOrderConfidence: 0.95,
-            textSpan: null,
-          }],
+          blocks: [
+            {
+              id: "page_1_block_1",
+              pageNumber: 1,
+              readingOrder: 0,
+              text: "Jamie Rivers",
+              kind: "heading",
+              sectionHint: "identity",
+              bbox: null,
+              sourceParserKinds: ["local_docx"],
+              sourceConfidence: 0.9,
+              lineIds: ["page_1_line_1"],
+              parserLineage: ["local_docx"],
+              readingOrderConfidence: 0.95,
+              textSpan: null,
+            },
+          ],
           fullText: "Jamie Rivers\nSenior Engineer",
           errorMessage: null,
         },
@@ -337,11 +373,24 @@ describe("resume document parser worker orchestration", () => {
         errorMessage: null,
       });
 
-    process.env.UNEMPLOYED_RESUME_PARSER_SIDECAR_BINARY_PATH = path.join(os.tmpdir(), 'resume_parser_sidecar.exe');
-    process.env.UNEMPLOYED_RESUME_PARSER_SIDECAR_PATH = path.join(os.tmpdir(), 'missing_resume_parser_sidecar.py');
-    await writeFile(process.env.UNEMPLOYED_RESUME_PARSER_SIDECAR_BINARY_PATH, 'binary', 'utf8');
+    process.env.UNEMPLOYED_RESUME_PARSER_SIDECAR_BINARY_PATH = path.join(
+      os.tmpdir(),
+      "resume_parser_sidecar.exe",
+    );
+    process.env.UNEMPLOYED_RESUME_PARSER_SIDECAR_PATH = path.join(
+      os.tmpdir(),
+      "missing_resume_parser_sidecar.py",
+    );
+    await writeFile(
+      process.env.UNEMPLOYED_RESUME_PARSER_SIDECAR_BINARY_PATH,
+      "binary",
+      "utf8",
+    );
 
-    const pdfPath = await createTempResumeFile("bundled-binary.pdf", "fake-pdf-content");
+    const pdfPath = await createTempResumeFile(
+      "bundled-binary.pdf",
+      "fake-pdf-content",
+    );
     const extracted = await extractResumeDocument(pdfPath, {
       bundleId: "bundle_binary_pdf",
       runId: "run_binary_pdf",
@@ -354,6 +403,7 @@ describe("resume document parser worker orchestration", () => {
   });
 
   test("merges sidecar failure warnings into embedded fallback results", async () => {
+    const embeddedParser = await mockEmbeddedPdfExtraction();
     const sidecarModule = await import("./resume-document-sidecar");
     vi.spyOn(sidecarModule, "runResumeParserSidecar").mockResolvedValue({
       requestId: "request_pdf_test",
@@ -401,15 +451,21 @@ describe("resume document parser worker orchestration", () => {
     });
 
     expect(extracted.bundle.parserManifest?.workerKind).toBe("embedded_node");
+    expect(extracted.textContent).toContain("Jamie Rivers");
+    expect(
+      embeddedParser.macOsSpy.mock.calls.length +
+        embeddedParser.pdfJsSpy.mock.calls.length,
+    ).toBe(1);
     expect(extracted.bundle.warnings).toEqual(
       expect.arrayContaining([
         "Python sidecar could not start.",
         "Python resume parser sidecar fallback: Python sidecar unavailable",
       ]),
     );
-  }, 15000);
+  });
 
   test("falls back when sidecar collapses multiple pages into one page number", async () => {
+    const embeddedParser = await mockEmbeddedPdfExtraction();
     const sidecarModule = await import("./resume-document-sidecar");
     vi.spyOn(sidecarModule, "runResumeParserSidecar").mockResolvedValue({
       requestId: "request_pdf_multipage_test",
@@ -542,6 +598,11 @@ describe("resume document parser worker orchestration", () => {
     });
 
     expect(extracted.bundle.parserManifest?.workerKind).toBe("embedded_node");
+    expect(extracted.textContent).toContain("Jamie Rivers");
+    expect(
+      embeddedParser.macOsSpy.mock.calls.length +
+        embeddedParser.pdfJsSpy.mock.calls.length,
+    ).toBe(1);
     expect(extracted.bundle.warnings).toEqual(
       expect.arrayContaining([
         "Python resume parser sidecar returned no usable parse, so the desktop importer used the embedded parser.",

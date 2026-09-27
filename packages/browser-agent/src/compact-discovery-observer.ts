@@ -19,6 +19,7 @@ import {
 
 import {
   buildGenericJobId,
+  isLikelyAccessGateUrl,
   isLikelySiteUtilityJob,
 } from "./agent/job-extraction";
 
@@ -2487,7 +2488,16 @@ export async function captureCompactDiscoveryObservation(
     string,
     { label: string; stablePart: string }
   >();
-  for (const candidate of keptCandidates) {
+  // Access-gate cards remain openable controls, but never cross the posting
+  // boundary. The agent can follow them, wait for the transient page to
+  // resolve, and save only the listing URL and detail it actually observes.
+  const openableCandidates = [
+    ...keptCandidates,
+    ...uniqueCandidates.filter((candidate) =>
+      isLikelyAccessGateUrl(candidate.canonicalUrl),
+    ),
+  ];
+  for (const candidate of openableCandidates) {
     if (candidate.origin !== "dom_card") {
       continue;
     }

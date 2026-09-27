@@ -385,13 +385,13 @@ export function RapidReviewScreen(props: {
         <div className="max-w-lg space-y-2">
           <h1 className="font-semibold">Quick review</h1>
           <p className="text-foreground-soft">
-            {props.campaignName} has no discovered jobs to review yet. Run the
-            search plan first; no browser or application work starts here.
+            Nothing has been found to review yet. Run a search on Find jobs
+            first; no browser or application work starts here.
           </p>
           <div className="flex justify-center pt-2">
             <Button asChild type="button">
-              <Link to={JOB_FINDER_ROUTE_PATHS.campaigns}>
-                Open Search plans
+              <Link to={JOB_FINDER_ROUTE_PATHS.discovery}>
+                Open Find jobs
               </Link>
             </Button>
           </div>

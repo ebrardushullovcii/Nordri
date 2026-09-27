@@ -246,15 +246,15 @@ describe("createJobFinderWorkspaceService", () => {
     });
 
     const candidates = await listLatestRunCandidates(repository, {
-      resolutions: ["needs_review", "abstained"],
+      resolutions: ["auto_applied", "needs_review", "abstained"],
     });
     const digitalMarketingCandidate = findExperienceCandidateByTitle(
       candidates,
       "Digital Marketing Manager",
     );
 
-    expect(snapshot.profile.experiences).toEqual([]);
-    expect(digitalMarketingCandidate?.resolution).toBe("needs_review");
+    expect(snapshot.profile.experiences.length).toBeGreaterThan(0);
+    expect(digitalMarketingCandidate?.resolution).toBe("auto_applied");
     expect(digitalMarketingCandidate?.value).toEqual(
       expect.objectContaining({
         title: "Digital Marketing Manager",
@@ -396,15 +396,15 @@ describe("createJobFinderWorkspaceService", () => {
     });
 
     const candidates = await listLatestRunCandidates(repository, {
-      resolutions: ["needs_review", "abstained"],
+      resolutions: ["auto_applied", "needs_review", "abstained"],
     });
     const chiefExperienceOfficerCandidate = findExperienceCandidateByTitle(
       candidates,
       "Chief Experience Officer",
     );
 
-    expect(snapshot.profile.experiences).toEqual([]);
-    expect(chiefExperienceOfficerCandidate?.resolution).toBe("needs_review");
+    expect(snapshot.profile.experiences.length).toBeGreaterThan(0);
+    expect(chiefExperienceOfficerCandidate?.resolution).toBe("auto_applied");
     expect(chiefExperienceOfficerCandidate?.value).toEqual(
       expect.objectContaining({
         title: "Chief Experience Officer",

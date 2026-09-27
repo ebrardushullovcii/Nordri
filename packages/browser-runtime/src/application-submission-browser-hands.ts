@@ -6,7 +6,30 @@ import {
   type SubmissionFinalControlIdentity,
   type SubmissionObservationIdentity,
 } from "@unemployed/contracts";
-import type { Page } from "playwright";
+import type { Page, Request } from "playwright";
+
+import {
+  closePrepareOnlyFinalActionWindow,
+  openPrepareOnlyFinalActionWindow,
+} from "./playwright-application-flow";
+
+const SUBMISSION_CONFIRMATION_SIGNALS = [
+  "application submitted",
+  "thank you for applying",
+  "thanks for applying",
+  "we have received your application",
+  "your application has been received",
+  "application received",
+  "successfully applied",
+  "application complete",
+] as const;
+
+function hasEmployerSubmissionConfirmation(pageText: string): boolean {
+  const normalized = pageText.toLowerCase().replace(/\s+/gu, " ").trim();
+  return SUBMISSION_CONFIRMATION_SIGNALS.some((signal) =>
+    normalized.includes(signal),
+  );
+}
 
 /**
  * Generic final-control discovery deliberately knows nothing about a provider
@@ -55,7 +78,12 @@ export type ApplicationFinalActionBlockReason =
   | "origin_drift"
   | "stale_control"
   | "stale_observation"
-  | "vetoed";
+  | "vetoed"
+  /**
+   * The click went out, but the site refused the connection (or could not be
+   * found) and no response of any kind came back: nothing reached it.
+   */
+  | "site_unreachable";
 
 export interface ApplicationExternalActionFacts {
   /** True once the one-shot action boundary was attempted, even if Playwright
@@ -90,14 +118,31 @@ export type ApplicationFinalActionResult =
       readonly observation: ApplicationFormObservation;
       readonly control: ApplicationFinalControl;
       readonly facts: ApplicationExternalActionFacts;
+    }
+  | {
+      /** The employer page visibly confirmed receipt after the one action. */
+      readonly outcome: "submitted";
+      readonly reason: "employer_confirmation";
+      readonly observation: ApplicationFormObservation;
+      readonly control: ApplicationFinalControl;
+      readonly confirmation: {
+        readonly observedAt: string;
+        readonly destination: ApplicationSafePageUrl;
+        readonly summary: string;
+      };
+      readonly facts: ApplicationExternalActionFacts;
     };
 
 export interface ObserveApplicationFormOptions {
   /** Optional cap against pathological pages; the default is intentionally bounded. */
   readonly maxControls?: number;
+  /** Exact opaque preparation identity retained by the owning browser runtime. */
+  readonly pageBindingKey?: string;
 }
 
 export interface ExecuteExactlyOneFinalActionInput {
+  /** Exact opaque preparation identity retained by the owning browser runtime. */
+  readonly pageBindingKey?: string;
   readonly expectedObservation: SubmissionObservationIdentity;
   readonly expectedControl: SubmissionFinalControlIdentity;
   /** Current page origin captured by the preflight; origin scope is separate. */
@@ -415,6 +460,37 @@ function sameControlIdentity(
   return left.ref === right.ref && left.signature === right.signature;
 }
 
+/**
+ * True only when Playwright's click timed out during its actionability
+ * waits: its call log never reached "performing click action", the point at
+ * which it dispatches input to the page. Any other failure may have clicked.
+ */
+function clickWasNeverDispatched(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const isTimeout =
+    error.name === "TimeoutError" ||
+    /Timeout \d+ms exceeded/.test(error.message);
+  return (
+    isTimeout &&
+    !/performing click action|click action done/i.test(error.message)
+  );
+}
+
+/**
+ * Network errors raised before a connection to the site existed. A request
+ * that failed this way never delivered a byte, so the site cannot have
+ * received the application. A reset, a timeout or an empty response are not
+ * here: the site may have read the form before they happened.
+ */
+const SITE_UNREACHABLE_ERROR =
+  /ERR_(?:CONNECTION_REFUSED|NAME_NOT_RESOLVED|NAME_RESOLUTION_FAILED|ADDRESS_UNREACHABLE|INTERNET_DISCONNECTED|NETWORK_CHANGED)\b/;
+
+export function isSiteUnreachableError(errorText: string | undefined): boolean {
+  return (
+    typeof errorText === "string" && SITE_UNREACHABLE_ERROR.test(errorText)
+  );
+}
+
 function blockedResult(input: {
   reason: ApplicationFinalActionBlockReason;
   observation: ApplicationFormObservation | null;
@@ -448,6 +524,15 @@ function rememberIssuedAction(page: Page, key: string): void {
   const keys = pageActionKeys.get(page) ?? new Set<string>();
   keys.add(key);
   pageActionKeys.set(page, keys);
+}
+
+/**
+ * A click Playwright never dispatched reached nothing, so the tuple is free
+ * again: the person's Send after "the send button could not be pressed" must
+ * press it, not come back "stale observation" for ever.
+ */
+function forgetIssuedAction(page: Page, key: string): void {
+  pageActionKeys.get(page)?.delete(key);
 }
 
 async function withPageExecutionLock<TValue>(
@@ -494,8 +579,8 @@ export async function observeApplicationForm(
 
 /**
  * Re-observe, validate exact identity/origin, run the immediate veto, and
- * issue at most one final-control click. A click never becomes `submitted`:
- * this boundary returns uncertainty until an external verifier supplies proof.
+ * issue at most one final-control click. A click is uncertain unless the
+ * employer page then visibly confirms that it received the application.
  */
 export async function executeExactlyOneFinalAction(
   page: Page,
@@ -934,16 +1019,71 @@ export async function executeExactlyOneFinalAction(
       requestsObservedDuringAction += 1;
     };
     page.on("request", requestListener);
+    // Kept through the confirmation wait: the form's own post starts after
+    // the click returns. Any response means something reached a server; a
+    // post that failed before connecting, with no response at all, did not.
+    let responsesAfterAction = 0;
+    let unreachableError: string | null = null;
+    const responseListener = (): void => {
+      responsesAfterAction += 1;
+    };
+    const requestFailedListener = (request: Request): void => {
+      const errorText = request.failure()?.errorText;
+      if (
+        isSiteUnreachableError(errorText) &&
+        (request.isNavigationRequest() || request.method() !== "GET")
+      )
+        unreachableError ??= errorText ?? null;
+    };
+    page.on("response", responseListener);
+    page.on("requestfailed", requestFailedListener);
+    const stopWatchingNetwork = (): void => {
+      page.off("response", responseListener);
+      page.off("requestfailed", requestFailedListener);
+    };
+    const siteNeverReached = (): boolean =>
+      unreachableError !== null && responsesAfterAction === 0;
     let actionCompleted = false;
+    // The prepare-only guard stays on the page from preparation; this is the
+    // one press it is opened for.
+    await openPrepareOnlyFinalActionWindow(page);
     try {
       await postVetoLocator.click({
         noWaitAfter: true,
         timeout: input.clickTimeoutMs ?? DEFAULT_CLICK_TIMEOUT_MS,
       });
       actionCompleted = true;
-    } catch {
+    } catch (clickError) {
       const pageAfterError = readSafePageUrl(page.url());
       page.off("request", requestListener);
+      stopWatchingNetwork();
+      if (
+        clickWasNeverDispatched(clickError) &&
+        requestsObservedDuringAction === 0 &&
+        pageAfterError.origin === pageBefore.origin &&
+        pageAfterError.safePath === pageBefore.safePath
+      ) {
+        // Playwright gave up while waiting for the control to be clickable
+        // (for example a cookie banner over it), so no click reached the
+        // page. Nothing was sent; the prepared form stays for another try
+        // instead of an "uncertain" outcome that blocks every retry.
+        forgetIssuedAction(page, key);
+        await closePrepareOnlyFinalActionWindow(page).catch(() => undefined);
+        return blockedResult({
+          reason: "action_error",
+          observation: finalObservation,
+          control: finalControl,
+          facts: {
+            actionAttempted: true,
+            actionIssued: false,
+            actionCompleted: false,
+            pageBefore,
+            pageAfter: pageAfterError,
+            urlChanged: false,
+            requestsObservedDuringAction,
+          },
+        });
+      }
       return {
         outcome: "outcome_uncertain",
         reason: "action_error",
@@ -964,22 +1104,65 @@ export async function executeExactlyOneFinalAction(
     }
     page.off("request", requestListener);
     const pageAfter = readSafePageUrl(page.url());
+    const facts: ApplicationExternalActionFacts = {
+      actionAttempted: true,
+      actionIssued: true,
+      actionCompleted,
+      pageBefore,
+      pageAfter,
+      urlChanged:
+        pageBefore.origin !== pageAfter.origin ||
+        pageBefore.safePath !== pageAfter.safePath,
+      requestsObservedDuringAction,
+    };
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      if (input.signal?.aborted) break;
+      if (siteNeverReached()) break;
+      try {
+        const bodyText = await page.locator("body").innerText({ timeout: 250 });
+        if (hasEmployerSubmissionConfirmation(bodyText)) {
+          stopWatchingNetwork();
+          return {
+            outcome: "submitted",
+            reason: "employer_confirmation",
+            observation: finalObservation,
+            control: finalControl,
+            confirmation: {
+              observedAt: new Date().toISOString(),
+              destination: readSafePageUrl(page.url()),
+              summary:
+                "The employer site showed an application-received confirmation after the final action.",
+            },
+            facts: {
+              ...facts,
+              pageAfter: readSafePageUrl(page.url()),
+              urlChanged:
+                pageBefore.origin !== readSafePageUrl(page.url()).origin ||
+                pageBefore.safePath !== readSafePageUrl(page.url()).safePath,
+            },
+          };
+        }
+      } catch {
+        // Navigation can briefly replace the body. Keep the bounded check.
+      }
+      await page.waitForTimeout(100);
+    }
+    stopWatchingNetwork();
+    await closePrepareOnlyFinalActionWindow(page);
+    if (siteNeverReached()) {
+      return blockedResult({
+        reason: "site_unreachable",
+        observation: finalObservation,
+        control: finalControl,
+        facts: { ...facts, pageAfter: readSafePageUrl(page.url()) },
+      });
+    }
     return {
       outcome: "outcome_uncertain",
       reason: "action_issued",
       observation: finalObservation,
       control: finalControl,
-      facts: {
-        actionAttempted: true,
-        actionIssued: true,
-        actionCompleted,
-        pageBefore,
-        pageAfter,
-        urlChanged:
-          pageBefore.origin !== pageAfter.origin ||
-          pageBefore.safePath !== pageAfter.safePath,
-        requestsObservedDuringAction,
-      },
+      facts,
     };
   });
 }

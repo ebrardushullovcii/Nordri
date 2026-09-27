@@ -11,6 +11,8 @@
  */
 
 export interface RawApplyControl {
+  /** Stable handle supplied by the browser when the control is inside a frame. */
+  ref?: string;
   /** Position among the form controls on the page. Refs are built from this. */
   index: number;
   tagName: string;
@@ -18,6 +20,8 @@ export interface RawApplyControl {
   role: string;
   id: string;
   name: string;
+  /** Transient identity of the containing form/root within this page read. */
+  scopeKey?: string;
   label: string;
   groupLabel: string;
   placeholder: string;
@@ -36,10 +40,15 @@ export interface RawApplyControl {
 }
 
 export interface RawApplyAction {
+  ref?: string;
   index: number;
   label: string;
   visible: boolean;
   disabled: boolean;
+  /** Resolved destination of the form this action would submit, if any. */
+  formAction?: string;
+  /** HTTP method of the form this action would submit, if any. */
+  formMethod?: string;
 }
 
 /**
@@ -50,6 +59,7 @@ export interface RawApplyAction {
  * which link matters; that is a reading of the words, and it happens above.
  */
 export interface RawApplyLink {
+  ref?: string;
   /** Position among the page's links. Refs are built from this. */
   index: number;
   label: string;
@@ -62,15 +72,63 @@ export interface RawApplyLink {
   topOffset: number;
 }
 
+/**
+ * Anything on the page a person could click that is not a form control, a
+ * button, or a link.
+ *
+ * Sites are built out of divs with click handlers, cards, tiles, and custom
+ * widgets. A harness that can only press `<button>` cannot use the web, so
+ * everything clickable is reported and the model decides what it is.
+ */
+export interface RawApplyClickable {
+  ref?: string;
+  index: number;
+  /** The element's visible text, trimmed and bounded. */
+  label: string;
+  role: string;
+  tagName: string;
+  visible: boolean;
+  topOffset: number;
+}
+
+/** One heading, so the model can see how the page is organised. */
+export interface RawApplyHeading {
+  level: number;
+  text: string;
+}
+
+/** A tab or window the page opened for itself. */
+export interface RawApplyOpenedTab {
+  index: number;
+  url: string;
+  title: string;
+}
+
 export interface RawApplyPage {
   url: string | null;
   title: string | null;
   bodyText: string;
+  headings: RawApplyHeading[];
   controls: RawApplyControl[];
   actions: RawApplyAction[];
   links: RawApplyLink[];
+  clickables: RawApplyClickable[];
+  /** Tabs or windows the page opened while the run was on it. */
+  openedTabs: RawApplyOpenedTab[];
   validationErrors: string[];
   stepLabel: string | null;
+  /** True when the page is still loading; the model may wait and look again. */
+  loading: boolean;
+}
+
+/** Exact retained form control chosen by browser-agent for a human handoff. */
+export interface ApplicationFormActionHandoff {
+  pageBindingKey: string;
+  pageUrl: string;
+  ref: string;
+  label: string;
+  formAction: string;
+  formMethod: "POST";
 }
 
 export type ApplyWriteResult =
@@ -107,10 +165,32 @@ export interface ApplyRawPageHands {
    * Opens what one of the page's links points at, in the same tab.
    *
    * Following a link is a read: it asks the site for a page it already
-   * publishes and writes nothing. It exists because the page that carries the
-   * application form is very often not the page a listing links to.
+   * publishes and writes nothing. A link that would normally open a new tab
+   * is followed in place, because a harness that loses the page it was working
+   * on cannot finish the job.
    */
   followLink: (ref: string) => Promise<ApplyNavigationResult>;
+  /** Goes to an address directly. */
+  navigate: (url: string) => Promise<ApplyNavigationResult>;
+  /** Presses anything on the page, whatever it is made of. */
+  clickElement: (ref: string) => Promise<ApplyWriteResult>;
+  /** Presses a keyboard key on one element, or on the active page. */
+  pressKey: (ref: string | undefined, key: string) => Promise<ApplyWriteResult>;
+  /** Moves the page, so content that loads on scroll can be seen. */
+  scroll: (
+    direction: "down" | "up" | "top" | "bottom",
+  ) => Promise<ApplyWriteResult>;
+  /** Waits, for a page that is still settling. */
+  wait: (milliseconds: number) => Promise<void>;
+  goBack: () => Promise<ApplyNavigationResult>;
+  /** Reads one element's text, or the page's, in full rather than excerpted. */
+  readText: (ref?: string) => Promise<string>;
+  /**
+   * Brings a tab the page opened into this one: the working tab goes to the
+   * tab's address and the extra tab is closed. A run works in one tab; a
+   * site that opens the form in a new one has moved the work, not blocked it.
+   */
+  adoptOpenedTab?: (index: number) => Promise<ApplyNavigationResult>;
 }
 
 /**
@@ -185,6 +265,13 @@ export interface ApplyPageSession extends ApplyRawPageHands {
    */
   openIntermediateWriteWindow: () => Promise<void>;
   closeIntermediateWriteWindow: () => Promise<void>;
+  /**
+   * Presses one exact form action through a short, single-request guard
+   * window. The workflow layer must first prove that the action is an
+   * explicitly authorized non-application action, such as signing in with
+   * credentials the person supplied for this task.
+   */
+  clickAuthorizedFormAction: (ref: string) => Promise<ApplyWriteResult>;
   /** How many intermediate writes the guard has let through so far. */
   readIntermediateWriteCount: () => number;
   /**

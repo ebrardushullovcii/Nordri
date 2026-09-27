@@ -3,7 +3,9 @@ import path from "node:path";
 import { JobFinderWorkspaceSnapshotSchema } from "@unemployed/contracts";
 import {
   createApplyQueueDemoState,
+  createAgentOwnedBrowserDriveState,
   createResumeWorkspaceDemoState,
+  createWorkHistoryReviewDriveState,
 } from "../../adapters/job-finder-demo-state";
 import {
   JOB_FINDER_DEMO_EXPORT_RESUME_CONTENT,
@@ -28,14 +30,12 @@ export async function ensureDemoResumeFiles(
   sourceFilePath: string | null | undefined,
   exportFilePaths: readonly (string | null | undefined)[],
 ) {
-  await Promise.all(
-    [
-      writeDemoFile(sourceFilePath, JOB_FINDER_DEMO_SOURCE_RESUME_CONTENT),
-      ...exportFilePaths.map((filePath) =>
-        writeDemoFile(filePath, JOB_FINDER_DEMO_EXPORT_RESUME_CONTENT),
-      ),
-    ],
-  );
+  await Promise.all([
+    writeDemoFile(sourceFilePath, JOB_FINDER_DEMO_SOURCE_RESUME_CONTENT),
+    ...exportFilePaths.map((filePath) =>
+      writeDemoFile(filePath, JOB_FINDER_DEMO_EXPORT_RESUME_CONTENT),
+    ),
+  ]);
 }
 
 export async function loadResumeWorkspaceDemoState() {
@@ -45,9 +45,7 @@ export async function loadResumeWorkspaceDemoState() {
     state.resumeExportArtifacts.map((artifact) => artifact.filePath),
   );
   const jobFinderWorkspaceService = await getJobFinderWorkspaceService();
-  const snapshot = await jobFinderWorkspaceService.resetWorkspace(
-    state,
-  );
+  const snapshot = await jobFinderWorkspaceService.resetWorkspace(state);
 
   return JobFinderWorkspaceSnapshotSchema.parse(snapshot);
 }
@@ -59,9 +57,34 @@ export async function loadApplyQueueDemoState() {
     state.resumeExportArtifacts.map((artifact) => artifact.filePath),
   );
   const jobFinderWorkspaceService = await getJobFinderWorkspaceService();
-  const snapshot = await jobFinderWorkspaceService.resetWorkspace(
-    state,
-  );
+  const snapshot = await jobFinderWorkspaceService.resetWorkspace(state);
 
+  return JobFinderWorkspaceSnapshotSchema.parse(snapshot);
+}
+
+export async function loadWorkHistoryReviewDriveState() {
+  const state = createWorkHistoryReviewDriveState();
+  await ensureDemoResumeFiles(
+    state.profile.baseResume.storagePath,
+    state.resumeExportArtifacts.map((artifact) => artifact.filePath),
+  );
+  const jobFinderWorkspaceService = await getJobFinderWorkspaceService();
+  const snapshot = await jobFinderWorkspaceService.resetWorkspace(state);
+
+  return JobFinderWorkspaceSnapshotSchema.parse(snapshot);
+}
+
+export async function loadAgentOwnedBrowserDriveState(input: {
+  sourceUrl: string;
+  applicationUrl: string;
+  secondaryApplicationUrl?: string;
+}) {
+  const state = createAgentOwnedBrowserDriveState(input);
+  await ensureDemoResumeFiles(
+    state.profile.baseResume.storagePath,
+    state.resumeExportArtifacts.map((artifact) => artifact.filePath),
+  );
+  const jobFinderWorkspaceService = await getJobFinderWorkspaceService();
+  const snapshot = await jobFinderWorkspaceService.resetWorkspace(state);
   return JobFinderWorkspaceSnapshotSchema.parse(snapshot);
 }

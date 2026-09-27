@@ -167,6 +167,12 @@ export function resetProfileSectionScroll(
   }
 
   resetScroll(sectionScroller, 0);
+  const routeScroller = sectionScroller.closest<HTMLElement>(
+    "[data-locked-screen-scroll-area]",
+  );
+  if (routeScroller) {
+    resetScroll(routeScroller, 0);
+  }
   return true;
 }
 

@@ -1,5 +1,8 @@
-export const INTERMEDIATE_MUTATION_WINDOW_MAX_REQUESTS = 8;
-export const INTERMEDIATE_MUTATION_WINDOW_DURATION_MS = 3_000;
+// One field change on a real form fans out into validation, autosave and
+// analytics calls, and a slow site answers late; the window is sized for
+// that, not for one request.
+export const INTERMEDIATE_MUTATION_WINDOW_MAX_REQUESTS = 40;
+export const INTERMEDIATE_MUTATION_WINDOW_DURATION_MS = 10_000;
 
 export type IntermediateMutationResourceKind =
   | "fetch"
@@ -113,7 +116,11 @@ export function classifyIntermediateMutationRequest(
   } catch {
     return { allowed: false, reason: "invalid_url" };
   }
-  if (parsedUrl.origin !== input.window.expectedOrigin) {
+  // "*" is the default window: the form's own origin (an embedded ATS
+  // answers from its own host) is fine, and any write that is not a final
+  // send goes through. A pinned origin keeps the narrower rule.
+  const anyOrigin = input.window.expectedOrigin === "*";
+  if (!anyOrigin && parsedUrl.origin !== input.window.expectedOrigin) {
     return { allowed: false, reason: "cross_origin" };
   }
 
@@ -124,7 +131,7 @@ export function classifyIntermediateMutationRequest(
   if (FINAL_ACTION_SIGNAL.test(signal)) {
     return { allowed: false, reason: "final_action_signal" };
   }
-  if (!INTERMEDIATE_ACTION_SIGNAL.test(signal)) {
+  if (!anyOrigin && !INTERMEDIATE_ACTION_SIGNAL.test(signal)) {
     return { allowed: false, reason: "ambiguous_mutation" };
   }
 

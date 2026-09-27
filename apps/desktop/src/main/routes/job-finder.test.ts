@@ -23,6 +23,7 @@ import {
   SaveCampaignRuleRouteInputSchema,
   UpdateApplicationDefaultsInputSchema,
   UpdateWorkspaceBehaviorInputSchema,
+  UpdateAiBehaviorInputSchema,
   resumeClaimOwnershipStatement,
 } from "@unemployed/contracts";
 import { createEmptyJobFinderRepositoryState } from "../adapters/job-finder-initial-state";
@@ -38,12 +39,16 @@ const {
   mockBuildApplicationPacket,
   mockDeleteCampaignRule,
   mockExportResumePdf,
+  mockFocusPreparedApplicationPage,
   mockGetResumeWorkspace,
   mockPreviewResumeDraft,
   mockGetWorkspaceBootstrap,
   mockGetWorkspaceSnapshot,
   mockGetJobFinderWorkspaceService,
+  mockGetJobFinderRepositoryForWorkspaceService,
+  mockGetJobFinderApplicationAuthorityService,
   mockImportResumeFromSourcePath,
+  mockRetryInterruptedResumeImport,
   mockIsDesktopTestApiEnabled,
   mockMarkAllCampaignNotificationsRead,
   mockMarkCampaignNotificationRead,
@@ -68,6 +73,7 @@ const {
   mockUpdateApplicationDefaults,
   mockUpdateTrackerCrm,
   mockUpdateWorkspaceBehavior,
+  mockUpdateAiBehavior,
 } = vi.hoisted(() => ({
   mockApplyGroupedManualAnswer: vi.fn(),
   mockBrowserWindowFromWebContents: vi.fn(
@@ -81,12 +87,16 @@ const {
   mockBuildApplicationPacket: vi.fn(),
   mockDeleteCampaignRule: vi.fn(),
   mockExportResumePdf: vi.fn(),
+  mockFocusPreparedApplicationPage: vi.fn(),
   mockGetResumeWorkspace: vi.fn(),
   mockPreviewResumeDraft: vi.fn(),
   mockGetWorkspaceBootstrap: vi.fn(),
   mockGetWorkspaceSnapshot: vi.fn(),
   mockGetJobFinderWorkspaceService: vi.fn(),
+  mockGetJobFinderRepositoryForWorkspaceService: vi.fn(() => null),
+  mockGetJobFinderApplicationAuthorityService: vi.fn(),
   mockImportResumeFromSourcePath: vi.fn(),
+  mockRetryInterruptedResumeImport: vi.fn(),
   mockIsDesktopTestApiEnabled: vi.fn(() => false),
   mockMarkAllCampaignNotificationsRead: vi.fn(),
   mockMarkCampaignNotificationRead: vi.fn(),
@@ -111,6 +121,7 @@ const {
   mockUpdateApplicationDefaults: vi.fn(),
   mockUpdateTrackerCrm: vi.fn(),
   mockUpdateWorkspaceBehavior: vi.fn(),
+  mockUpdateAiBehavior: vi.fn(),
 }));
 
 vi.mock("electron", () => ({
@@ -129,6 +140,10 @@ vi.mock("electron", () => ({
 vi.mock("../services/job-finder", () => ({
   defaultBenchmarkCases: [],
   getDesktopTestDelayMs: vi.fn(() => 0),
+  getJobFinderApplicationAuthorityService:
+    mockGetJobFinderApplicationAuthorityService,
+  getJobFinderRepositoryForWorkspaceService:
+    mockGetJobFinderRepositoryForWorkspaceService,
   getJobFinderWorkspaceService: mockGetJobFinderWorkspaceService,
   importResumeFromSourcePath: mockImportResumeFromSourcePath,
   isDesktopTestApiEnabled: mockIsDesktopTestApiEnabled,
@@ -136,6 +151,7 @@ vi.mock("../services/job-finder", () => ({
   loadResumeWorkspaceDemoState: vi.fn(),
   parseResumeImportPathPayload: vi.fn(),
   resetJobFinderWorkspace: vi.fn(),
+  retryInterruptedResumeImport: mockRetryInterruptedResumeImport,
   runDesktopResumeImportBenchmark: vi.fn(),
   runDesktopResumeQualityBenchmark: mockRunDesktopResumeQualityBenchmark,
   setJobFinderWorkspaceServiceTestEnv: vi.fn(),
@@ -466,6 +482,107 @@ function createEmptyWorkspace(generatedAt: string) {
   });
 }
 
+describe("job-finder Apply to all workspace updates", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.clearAllMocks();
+  });
+
+  it.each(["completed", "failed"] as const)(
+    "publishes a workspace update when background approval %s",
+    async (outcome) => {
+      const generatedAt = "2026-09-23T22:28:49.000Z";
+      const staged = JobFinderWorkspaceSnapshotSchema.parse({
+        ...createEmptyWorkspace(generatedAt),
+        applyRuns: [
+          {
+            id: "run-1",
+            mode: "queue_auto",
+            state: "awaiting_submit_approval",
+            jobIds: ["job-1"],
+            createdAt: generatedAt,
+            updatedAt: generatedAt,
+            summary: "Waiting to start",
+            detail: "Waiting to start",
+          },
+        ],
+      });
+      const repository = {
+        listSavedJobs: vi
+          .fn()
+          .mockResolvedValue([
+            { id: "job-1", resumeApplicationMode: "original_resume" },
+          ]),
+        getSettings: vi.fn().mockResolvedValue({
+          applicationAutomationMode: "prepare_only",
+          resumeApplicationMode: "original_resume",
+        }),
+        getSearchPreferences: vi.fn().mockResolvedValue({
+          tailoringMode: "balanced",
+        }),
+        listApplyRuns: vi.fn(() => Promise.resolve(runs.map((run) => ({ ...run })))),
+      };
+      // The press waits until the approved batch is running, then returns;
+      // the rest of the batch finishes in the background.
+      let runs: Array<(typeof staged.applyRuns)[number]> = [];
+      mockGetJobFinderRepositoryForWorkspaceService.mockReturnValue(
+        repository as never,
+      );
+      mockGetJobFinderApplicationAuthorityService.mockReturnValue({
+        list: vi.fn().mockResolvedValue([]),
+      });
+
+      let finishApproval!: (error?: Error) => void;
+      const approval = new Promise<unknown>((resolve, reject) => {
+        finishApproval = (error) => (error ? reject(error) : resolve(staged));
+      });
+      const approveApplyRun = vi.fn(() => {
+        runs = runs.map((run) => ({ ...run, state: "running" as const }));
+        return approval;
+      });
+      mockGetJobFinderWorkspaceService.mockResolvedValue({
+        startAutoApplyQueueRun: vi.fn(() => {
+          runs = [...staged.applyRuns];
+          return Promise.resolve(staged);
+        }),
+        approveApplyRun,
+        cancelApplyRun: vi.fn().mockResolvedValue(staged),
+        getWorkspaceSnapshot: vi.fn().mockResolvedValue(staged),
+      });
+      const consoleError = vi
+        .spyOn(console, "error")
+        .mockImplementation(() => {});
+
+      const handlers = new Map<string, RegisteredHandler>();
+      registerJobFinderRouteHandlers({
+        handle: vi.fn((channel: string, handler: RegisteredHandler) => {
+          handlers.set(channel, handler);
+        }),
+      } as unknown as IpcMain);
+      const handler = handlers.get("job-finder:start-auto-apply-queue-run");
+      if (!handler) throw new Error("Apply to all route was not registered.");
+      const sender = { send: vi.fn(), isDestroyed: vi.fn(() => false) };
+
+      await handler(
+        { sender },
+        { jobIds: ["job-1"], applicationAutomationMode: "prepare_only" },
+      );
+      expect(approveApplyRun).toHaveBeenCalledWith("run-1");
+      expect(sender.send).not.toHaveBeenCalled();
+
+      finishApproval(
+        outcome === "failed" ? new Error("Approval failed") : undefined,
+      );
+      await vi.waitFor(() => {
+        expect(sender.send).toHaveBeenCalledExactlyOnceWith(
+          JOB_FINDER_WORKSPACE_UPDATED_CHANNEL,
+        );
+      });
+      expect(consoleError).toHaveBeenCalledTimes(outcome === "failed" ? 1 : 0);
+    },
+  );
+});
+
 describe("job-finder resume import picker route", () => {
   let cancelImportResume: ((event: unknown, payload: unknown) => void) | null =
     null;
@@ -563,6 +680,38 @@ describe("job-finder resume import picker route", () => {
     expect(result).toEqual(snapshot);
   });
 
+  it("parses the request with its contract: a retry reads the stopped run, with no picker", async () => {
+    const snapshot = createEmptyWorkspace("2026-08-30T10:00:30.000Z");
+    const latestResumeImportRun = { id: "resume_import_cut_off" };
+    mockGetJobFinderWorkspaceService.mockResolvedValue({
+      getWorkspaceSnapshot: vi
+        .fn()
+        .mockResolvedValue({ ...snapshot, latestResumeImportRun }),
+    });
+    mockRetryInterruptedResumeImport.mockResolvedValue(snapshot);
+    const sender = { isDestroyed: vi.fn(() => false), send: vi.fn() };
+    const handler = registerAndFindHandler();
+
+    await expect(
+      handler(
+        { sender },
+        { requestId: "resume_import_retry", retryInterrupted: true },
+      ),
+    ).resolves.toEqual(snapshot);
+    expect(mockRetryInterruptedResumeImport).toHaveBeenCalledWith(
+      latestResumeImportRun,
+      expect.objectContaining({ onProgress: expect.any(Function) as unknown }),
+    );
+    expect(mockShowOpenDialog).not.toHaveBeenCalled();
+
+    // An untyped flag is refused before anything runs.
+    await expect(
+      handler({ sender }, { requestId: "resume_import_bad", retryInterrupted: "yes" }),
+    ).rejects.toThrow();
+    expect(mockRetryInterruptedResumeImport).toHaveBeenCalledOnce();
+    expect(mockShowOpenDialog).not.toHaveBeenCalled();
+  });
+
   it("does not let a destroyed renderer abort persistence progress", async () => {
     const snapshot = createEmptyWorkspace("2026-08-30T10:01:00.000Z");
     const sender = {
@@ -631,6 +780,707 @@ describe("job-finder resume import picker route", () => {
 
     await expect(importPromise).resolves.toEqual(snapshot);
     expect(mockImportResumeFromSourcePath).not.toHaveBeenCalled();
+  });
+});
+
+describe("single application live workspace updates", () => {
+  beforeEach(() => {
+    mockGetJobFinderApplicationAuthorityService.mockReturnValue({
+      list: vi.fn().mockResolvedValue([]),
+      revoke: vi.fn(),
+    });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.clearAllMocks();
+    mockGetJobFinderRepositoryForWorkspaceService.mockReturnValue(null);
+  });
+
+  it.each([
+    ["job-finder:start-apply-copilot-run", "startApplyCopilotRun"],
+    ["job-finder:start-auto-apply-run", "startAutoApplyRun"],
+  ])(
+    "publishes progress while %s waits and stops after completion",
+    async (channel, method) => {
+      vi.useFakeTimers();
+      let complete!: (value: ReturnType<typeof createEmptyWorkspace>) => void;
+      const operation = new Promise<ReturnType<typeof createEmptyWorkspace>>(
+        (resolve) => {
+          complete = resolve;
+        },
+      );
+      const start = vi.fn(() => operation);
+      mockGetJobFinderRepositoryForWorkspaceService.mockReturnValue({
+        listSavedJobs: vi
+          .fn()
+          .mockResolvedValue([
+            { id: "job-1", resumeApplicationMode: "original_resume" },
+          ]),
+        getSettings: vi
+          .fn()
+          .mockResolvedValue({ applicationAutomationMode: "prepare_only" }),
+        getSearchPreferences: vi
+          .fn()
+          .mockResolvedValue({ tailoringMode: "balanced" }),
+      } as never);
+      mockGetJobFinderWorkspaceService.mockResolvedValue({ [method]: start });
+      const handlers = new Map<string, RegisteredHandler>();
+      registerJobFinderRouteHandlers({
+        handle: vi.fn((key: string, handler: RegisteredHandler) => {
+          handlers.set(key, handler);
+        }),
+      } as unknown as IpcMain);
+      const send = vi.fn();
+      const response = handlers.get(channel)!(
+        { sender: { send } },
+        { jobId: "job-1" },
+      );
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(start).toHaveBeenCalledTimes(1);
+      expect(send).toHaveBeenCalledWith(JOB_FINDER_WORKSPACE_UPDATED_CHANNEL);
+      complete(createEmptyWorkspace("2026-09-26T10:00:00.000Z"));
+      await response;
+      // One push within a second of the start, one beat at 3 s, one at the end.
+      expect(send).toHaveBeenCalledTimes(3);
+      await vi.advanceTimersByTimeAsync(9_000);
+      expect(send).toHaveBeenCalledTimes(3);
+    },
+  );
+
+  it.each([false, true])(
+    "cleans up a rejected preparation with destroyed sender=%s",
+    async (destroyed) => {
+      vi.useFakeTimers();
+      let fail!: (error: Error) => void;
+      const operation = new Promise<never>((_resolve, reject) => {
+        fail = reject;
+      });
+      mockGetJobFinderRepositoryForWorkspaceService.mockReturnValue({
+        listSavedJobs: vi
+          .fn()
+          .mockResolvedValue([
+            { id: "job-1", resumeApplicationMode: "original_resume" },
+          ]),
+        getSettings: vi
+          .fn()
+          .mockResolvedValue({ applicationAutomationMode: "prepare_only" }),
+        getSearchPreferences: vi
+          .fn()
+          .mockResolvedValue({ tailoringMode: "balanced" }),
+      } as never);
+      mockGetJobFinderWorkspaceService.mockResolvedValue({
+        startApplyCopilotRun: () => operation,
+      });
+      const handlers = new Map<string, RegisteredHandler>();
+      registerJobFinderRouteHandlers({
+        handle: vi.fn((key: string, handler: RegisteredHandler) => {
+          handlers.set(key, handler);
+        }),
+      } as unknown as IpcMain);
+      const send = vi.fn();
+      const response = handlers.get("job-finder:start-apply-copilot-run")!(
+        { sender: { send, isDestroyed: () => destroyed } },
+        { jobId: "job-1" },
+      );
+      const rejected = expect(response).rejects.toThrow("Preparation failed");
+      await vi.advanceTimersByTimeAsync(3_000);
+      fail(new Error("Preparation failed"));
+      await rejected;
+      expect(send).toHaveBeenCalledTimes(destroyed ? 0 : 3);
+      await vi.advanceTimersByTimeAsync(9_000);
+      expect(send).toHaveBeenCalledTimes(destroyed ? 0 : 3);
+    },
+  );
+});
+
+describe("job-finder apply entry-point resume approval and authority", () => {
+  afterEach(() => {
+    mockGetJobFinderRepositoryForWorkspaceService.mockReturnValue(null);
+    mockGetJobFinderApplicationAuthorityService.mockReset();
+  });
+
+  it.each(
+    (
+      ["prepare_only", "confirm_before_submit", "autonomous_submit"] as const
+    ).flatMap((mode) =>
+      (["queue", "retry", "resume_consent"] as const).map(
+        (entryPoint) => [mode, entryPoint] as const,
+      ),
+    ),
+  )(
+    "exports and approves a fresh tailored resume before starting %s via %s",
+    async (applicationAutomationMode, entryPoint) => {
+      const callOrder: string[] = [];
+      let exportCreated = false;
+      let approved = false;
+      const job = {
+        id: "job_batch",
+        title: "Batch Engineer",
+        company: "Example",
+        source: "target_site",
+        canonicalUrl: "https://jobs.example.test/jobs/1",
+        applicationUrl: "https://apply.example.test/apply/1",
+        resumeApplicationMode: "tailored_per_job",
+        resumeTailoringMode: "balanced",
+      };
+      const exportArtifact = {
+        id: "export_batch",
+        jobId: job.id,
+        draftId: "draft_batch",
+        exportedAt: "2026-09-22T16:00:00.000Z",
+        filePath: path.resolve("package.json"),
+        isApproved: false,
+        sha256: "a".repeat(64),
+      };
+      const repository = {
+        getProfileWithRevision: vi.fn().mockResolvedValue({
+          profile: {
+            baseResume: { sha256: "b".repeat(64) },
+          },
+          revision: 1,
+        }),
+        getSearchPreferences: vi.fn().mockResolvedValue({
+          tailoringMode: "balanced",
+        }),
+        getSettings: vi.fn().mockResolvedValue({
+          applicationAutomationMode:
+            entryPoint === "resume_consent"
+              ? applicationAutomationMode === "prepare_only"
+                ? "autonomous_submit"
+                : "prepare_only"
+              : applicationAutomationMode,
+          maxApplicationsPerLocalDay: 20,
+          resumeApplicationMode: "tailored_per_job",
+        }),
+        listResumeExportArtifacts: vi
+          .fn()
+          .mockImplementation(() =>
+            Promise.resolve(
+              approved ? [{ ...exportArtifact, isApproved: true }] : [],
+            ),
+          ),
+        listSavedJobs: vi.fn().mockResolvedValue([job]),
+        listApplicationRecords: vi.fn().mockResolvedValue([
+          {
+            id: "existing_application",
+            jobId: job.id,
+            automationMode: applicationAutomationMode,
+          },
+        ]),
+        listApplyRuns: vi.fn().mockResolvedValue([]),
+      };
+      const workspace = () => ({
+        draft: {
+          id: "draft_batch",
+          jobId: job.id,
+          status: approved ? "approved" : "needs_review",
+          approvedExportId: approved ? exportArtifact.id : null,
+        },
+        exports: exportCreated
+          ? [{ ...exportArtifact, isApproved: approved }]
+          : [],
+        job,
+      });
+      const startAutoApplyQueueRun = vi.fn().mockImplementation(() => {
+        callOrder.push("start");
+        return Promise.resolve(
+          createEmptyWorkspace("2026-09-22T16:01:00.000Z"),
+        );
+      });
+      const workspaceService = {
+        approveResume: vi.fn().mockImplementation(() => {
+          callOrder.push("approve");
+          approved = true;
+          return Promise.resolve(
+            createEmptyWorkspace("2026-09-22T16:00:30.000Z"),
+          );
+        }),
+        exportResumePdf: vi.fn().mockImplementation(() => {
+          callOrder.push("export");
+          exportCreated = true;
+          return Promise.resolve(
+            createEmptyWorkspace("2026-09-22T16:00:15.000Z"),
+          );
+        }),
+        getResumeWorkspace: vi
+          .fn()
+          .mockImplementation(() => Promise.resolve(workspace())),
+        getWorkspaceSnapshot: vi
+          .fn()
+          .mockResolvedValue(createEmptyWorkspace("2026-09-22T16:01:01.000Z")),
+        startAutoApplyQueueRun,
+        startApplyCopilotRun: startAutoApplyQueueRun,
+        resolveApplyConsentRequest: vi.fn().mockImplementation(() => {
+          callOrder.push("resolve");
+          return Promise.resolve(
+            createEmptyWorkspace("2026-09-22T16:01:00.000Z"),
+          );
+        }),
+        getApplyRunDetails: vi.fn().mockResolvedValue({
+          run: { mode: "copilot" },
+          consentRequests: [
+            { id: "resume_consent", kind: "resume_use", status: "pending" },
+          ],
+        }),
+      };
+      const authorityService = {
+        approveCurrentAnswers: vi.fn().mockImplementation(() => {
+          callOrder.push("answers");
+          return Promise.resolve({ status: "created" });
+        }),
+        create: vi.fn().mockImplementation(() => {
+          callOrder.push("authority");
+          return Promise.resolve({ status: "applied" });
+        }),
+        list: vi.fn().mockResolvedValue([]),
+        revoke: vi.fn(),
+        update: vi.fn(),
+      };
+      mockGetJobFinderRepositoryForWorkspaceService.mockReturnValue(
+        repository as never,
+      );
+      mockGetJobFinderApplicationAuthorityService.mockReturnValue(
+        authorityService,
+      );
+      mockGetJobFinderWorkspaceService.mockResolvedValue(workspaceService);
+
+      const handlers = new Map<string, RegisteredHandler>();
+      registerJobFinderRouteHandlers({
+        handle: vi.fn((channel: string, handler: RegisteredHandler) => {
+          handlers.set(channel, handler);
+        }),
+      } as unknown as IpcMain);
+      const handler = handlers.get(
+        entryPoint === "queue"
+          ? "job-finder:start-auto-apply-queue-run"
+          : entryPoint === "retry"
+            ? "job-finder:start-apply-copilot-run"
+            : "job-finder:resolve-apply-consent-request",
+      );
+      if (!handler) throw new Error("Apply to all route was not registered.");
+
+      const payload =
+        entryPoint === "queue"
+          ? { jobIds: [job.id], applicationAutomationMode }
+          : entryPoint === "retry"
+            ? { jobId: job.id, applicationRecordId: "existing_application" }
+            : {
+                jobId: job.id,
+                applicationRecordId: "existing_application",
+                runId: "existing_run",
+                requestId: "resume_consent",
+                action: "approve",
+              };
+      await handler({ sender: {} }, payload);
+
+      expect(callOrder.slice(0, 2)).toEqual(["export", "approve"]);
+      if (entryPoint === "queue") {
+        expect(startAutoApplyQueueRun).toHaveBeenCalledWith(
+          [job.id],
+          applicationAutomationMode,
+        );
+      } else if (entryPoint === "retry") {
+        expect(startAutoApplyQueueRun).toHaveBeenCalledWith(
+          job.id,
+          { visualCheckpointsEnabled: false },
+          "existing_application",
+        );
+      } else {
+        expect(
+          workspaceService.resolveApplyConsentRequest,
+        ).toHaveBeenCalledWith("resume_consent", "approve");
+        expect(startAutoApplyQueueRun).toHaveBeenCalledWith(
+          job.id,
+          undefined,
+          "existing_application",
+        );
+      }
+      expect(callOrder.at(-1)).toBe("start");
+      // A press approves Light/Tailored only. An unreviewed Aggressive draft
+      // must not be exported or started through any of these entry points.
+      approved = false;
+      job.resumeTailoringMode = "aggressive";
+      await expect(handler({ sender: {} }, payload)).rejects.toThrow(
+        "Read and approve the Aggressive resume",
+      );
+      expect(startAutoApplyQueueRun).toHaveBeenCalledTimes(1);
+      expect(workspaceService.exportResumePdf).toHaveBeenCalledTimes(1);
+      approved = true;
+      job.resumeTailoringMode = "balanced";
+      if (applicationAutomationMode === "prepare_only") {
+        expect(authorityService.create).not.toHaveBeenCalled();
+      } else {
+        expect(authorityService.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            mode: applicationAutomationMode,
+            scope: { campaignId: null, jobIds: [job.id] },
+            allowedResumeSha256: [exportArtifact.sha256],
+          }),
+        );
+        expect(callOrder).toEqual([
+          "export",
+          "approve",
+          "answers",
+          "authority",
+          ...(entryPoint === "resume_consent" ? ["resolve"] : []),
+          "start",
+        ]);
+        if (applicationAutomationMode === "autonomous_submit") {
+          job.applicationUrl = "not-an-application-url";
+          job.canonicalUrl = "not-a-listing-url";
+          await expect(handler({ sender: {} }, payload)).rejects.toThrow(
+            "application site",
+          );
+          expect(startAutoApplyQueueRun).toHaveBeenCalledTimes(1);
+        }
+      }
+
+      // A deleted PDF must be rebuilt from the already-approved draft,
+      // including approved Aggressive content, rather than looping through
+      // the same missing-resume handoff on every retry or consent approval.
+      job.applicationUrl = "https://apply.example.test/apply/1";
+      job.canonicalUrl = "https://jobs.example.test/jobs/1";
+      job.resumeTailoringMode = "aggressive";
+      exportArtifact.filePath = path.join(
+        os.tmpdir(),
+        "unemployed-missing-approved-pdf",
+        `${applicationAutomationMode}-${entryPoint}.pdf`,
+      );
+      callOrder.length = 0;
+      await handler({ sender: {} }, payload);
+      expect(callOrder.slice(0, 2)).toEqual(["export", "approve"]);
+      expect(workspaceService.exportResumePdf).toHaveBeenCalledTimes(2);
+      expect(workspaceService.approveResume).toHaveBeenCalledTimes(2);
+      expect(startAutoApplyQueueRun).toHaveBeenCalledTimes(2);
+    },
+  );
+});
+
+describe("job-finder Apply to all with a resume that waits on the person", () => {
+  function setup(undecidedJobIds: readonly string[]) {
+    const jobs = ["job_cedar", "job_dusk"].map((id) => ({
+      id,
+      title: id === "job_cedar" ? "Cedar Engineer" : "Dusk Engineer",
+      company: "Example",
+      source: "target_site",
+      canonicalUrl: `https://jobs.example.test/${id}`,
+      applicationUrl: `https://apply.example.test/${id}`,
+      resumeApplicationMode: "tailored_per_job",
+      resumeTailoringMode: "balanced",
+    }));
+    const exported = new Set<string>();
+    const repository = {
+      getProfileWithRevision: vi.fn().mockResolvedValue({
+        profile: { baseResume: { sha256: "b".repeat(64) } },
+        revision: 1,
+      }),
+      getSearchPreferences: vi
+        .fn()
+        .mockResolvedValue({ tailoringMode: "balanced" }),
+      getSettings: vi.fn().mockResolvedValue({
+        applicationAutomationMode: "prepare_only",
+        maxApplicationsPerLocalDay: 20,
+        resumeApplicationMode: "tailored_per_job",
+      }),
+      listResumeExportArtifacts: vi.fn().mockResolvedValue([]),
+      listSavedJobs: vi.fn().mockResolvedValue(jobs),
+      listApplicationRecords: vi.fn().mockResolvedValue([]),
+      listApplyRuns: vi.fn().mockResolvedValue([]),
+    };
+    const startAutoApplyQueueRun = vi
+      .fn()
+      .mockResolvedValue(createEmptyWorkspace("2026-09-22T16:01:00.000Z"));
+    const workspaceService = {
+      approveResume: vi
+        .fn()
+        .mockResolvedValue(createEmptyWorkspace("2026-09-22T16:00:30.000Z")),
+      exportResumePdf: vi.fn().mockImplementation((jobId: string) => {
+        if (undecidedJobIds.includes(jobId)) {
+          return Promise.reject(
+            new Error(
+              "Some lines in this resume still need your decision before it can be exported. Open the resume: they are listed under Lines to confirm.",
+            ),
+          );
+        }
+        exported.add(jobId);
+        return Promise.resolve(
+          createEmptyWorkspace("2026-09-22T16:00:15.000Z"),
+        );
+      }),
+      getResumeWorkspace: vi.fn().mockImplementation((jobId: string) =>
+        Promise.resolve({
+          draft: {
+            id: `draft_${jobId}`,
+            jobId,
+            status: "needs_review",
+            approvedExportId: null,
+          },
+          exports: exported.has(jobId)
+            ? [
+                {
+                  id: `export_${jobId}`,
+                  jobId,
+                  draftId: `draft_${jobId}`,
+                  exportedAt: "2026-09-22T16:00:00.000Z",
+                  filePath: path.resolve("package.json"),
+                  isApproved: false,
+                  sha256: "a".repeat(64),
+                },
+              ]
+            : [],
+        }),
+      ),
+      getWorkspaceSnapshot: vi
+        .fn()
+        .mockResolvedValue(createEmptyWorkspace("2026-09-22T16:01:01.000Z")),
+      startAutoApplyQueueRun,
+    };
+    mockGetJobFinderRepositoryForWorkspaceService.mockReturnValue(
+      repository as never,
+    );
+    mockGetJobFinderApplicationAuthorityService.mockReturnValue({
+      approveCurrentAnswers: vi.fn(),
+      create: vi.fn(),
+      list: vi.fn().mockResolvedValue([]),
+      revoke: vi.fn(),
+      update: vi.fn(),
+    });
+    mockGetJobFinderWorkspaceService.mockResolvedValue(workspaceService);
+    const handlers = new Map<string, RegisteredHandler>();
+    registerJobFinderRouteHandlers({
+      handle: vi.fn((channel: string, handler: RegisteredHandler) => {
+        handlers.set(channel, handler);
+      }),
+    } as unknown as IpcMain);
+    const handler = handlers.get("job-finder:start-auto-apply-queue-run");
+    if (!handler) throw new Error("Apply to all route was not registered.");
+    return { handler, startAutoApplyQueueRun };
+  }
+
+  it("starts the ready job and holds back only the one with a line to decide", async () => {
+    const { handler, startAutoApplyQueueRun } = setup(["job_cedar"]);
+    await handler(
+      { sender: {} },
+      {
+        jobIds: ["job_cedar", "job_dusk"],
+        applicationAutomationMode: "prepare_only",
+      },
+    );
+    expect(startAutoApplyQueueRun).toHaveBeenCalledWith(
+      ["job_dusk"],
+      "prepare_only",
+    );
+  });
+
+  it("refuses with a sentence naming the job when every resume waits on the person", async () => {
+    const { handler, startAutoApplyQueueRun } = setup(["job_cedar"]);
+    await expect(
+      handler(
+        { sender: {} },
+        { jobIds: ["job_cedar"], applicationAutomationMode: "prepare_only" },
+      ),
+    ).rejects.toThrow(
+      "Nothing was started. The resume for 'Cedar Engineer' has a line waiting for your decision.",
+    );
+    expect(startAutoApplyQueueRun).not.toHaveBeenCalled();
+  });
+});
+
+describe("job-finder resume Assistant edits", () => {
+  it("tells the screens to catch up after an edit is accepted, so Shortlisted and Home see a line left to decide", async () => {
+    mockGetJobFinderWorkspaceService.mockResolvedValue({
+      resolveResumeAssistantProposal: vi.fn().mockResolvedValue([]),
+      sendResumeAssistantMessage: vi.fn().mockResolvedValue([]),
+    });
+    const handlers = new Map<string, RegisteredHandler>();
+    registerJobFinderRouteHandlers({
+      handle: vi.fn((channel: string, handler: RegisteredHandler) => {
+        handlers.set(channel, handler);
+      }),
+    } as unknown as IpcMain);
+    const sender = { send: vi.fn(), isDestroyed: () => false };
+    await handlers.get("job-finder:resolve-resume-assistant-proposal")!(
+      { sender },
+      {
+        jobId: "job_paper",
+        proposalId: "proposal_1",
+        action: "accept",
+        patchIds: ["patch_1"],
+      },
+    );
+    expect(sender.send).toHaveBeenCalledWith("job-finder:workspace-updated");
+    sender.send.mockClear();
+    await handlers.get("job-finder:send-resume-assistant-message")!(
+      { sender },
+      { jobId: "job_paper", content: "Tighten the summary." },
+    );
+    expect(sender.send).toHaveBeenCalledWith("job-finder:workspace-updated");
+  });
+});
+
+describe("job-finder sending a form prepared earlier", () => {
+  it.each(["autonomous_submit", "prepare_only"] as const)(
+    "under %s, scopes one permission to the pressed jobs before sending each",
+    async (applicationAutomationMode) => {
+      const callOrder: string[] = [];
+      const job = {
+        id: "job_ready",
+        title: "Ready Engineer",
+        company: "Example",
+        source: "target_site",
+        canonicalUrl: "https://jobs.example.test/jobs/1",
+        applicationUrl: "https://apply.example.test/apply/1",
+        resumeApplicationMode: "tailored_per_job",
+        resumeTailoringMode: "balanced",
+      };
+      const repository = {
+        getProfileWithRevision: vi.fn().mockResolvedValue({
+          profile: { baseResume: { sha256: "b".repeat(64) } },
+          revision: 1,
+        }),
+        getSettings: vi.fn().mockResolvedValue({
+          applicationAutomationMode,
+          maxApplicationsPerLocalDay: 20,
+          resumeApplicationMode: "tailored_per_job",
+        }),
+        listResumeExportArtifacts: vi.fn().mockResolvedValue([
+          {
+            id: "export_ready",
+            jobId: job.id,
+            exportedAt: "2026-09-22T16:00:00.000Z",
+            isApproved: true,
+            sha256: "a".repeat(64),
+          },
+        ]),
+        listSavedJobs: vi.fn().mockResolvedValue([job, { ...job, id: "job_other" }]),
+        // Both forms were filled in by one run of three jobs.
+        listApplyRuns: vi
+          .fn()
+          .mockResolvedValue([
+            { id: "run_prepared", jobIds: [job.id, "job_other", "job_third"] },
+          ]),
+        listApplyJobResults: vi.fn().mockResolvedValue([
+          {
+            id: "result_a",
+            runId: "run_prepared",
+            jobId: job.id,
+            state: "awaiting_review",
+            updatedAt: "2026-09-22T16:00:00.000Z",
+          },
+          {
+            id: "result_b",
+            runId: "run_prepared",
+            jobId: "job_other",
+            state: "awaiting_review",
+            updatedAt: "2026-09-22T16:00:00.000Z",
+          },
+        ]),
+      };
+      const workspaceService = {
+        submitPreparedApplication: vi.fn().mockImplementation(() => {
+          callOrder.push("send");
+          return Promise.resolve(
+            createEmptyWorkspace("2026-09-22T16:01:00.000Z"),
+          );
+        }),
+      };
+      const authorityService = {
+        approveCurrentAnswers: vi.fn().mockResolvedValue({ status: "created" }),
+        create: vi.fn().mockImplementation(() => {
+          callOrder.push("authority");
+          return Promise.resolve({ status: "applied" });
+        }),
+        list: vi.fn().mockResolvedValue([]),
+        revoke: vi.fn(),
+        update: vi.fn(),
+      };
+      mockGetJobFinderRepositoryForWorkspaceService.mockReturnValue(
+        repository as never,
+      );
+      mockGetJobFinderApplicationAuthorityService.mockReturnValue(
+        authorityService,
+      );
+      mockGetJobFinderWorkspaceService.mockResolvedValue(workspaceService);
+      const handlers = new Map<string, RegisteredHandler>();
+      registerJobFinderRouteHandlers({
+        handle: vi.fn((channel: string, handler: RegisteredHandler) => {
+          handlers.set(channel, handler);
+        }),
+      } as unknown as IpcMain);
+
+      await handlers.get("job-finder:send-prepared-applications")!(
+        { sender: {} },
+        { jobIds: [job.id, "job_other"] },
+      );
+
+      expect(callOrder).toEqual(
+        applicationAutomationMode === "prepare_only"
+          ? ["send", "send"]
+          : ["authority", "send", "send"],
+      );
+      expect(workspaceService.submitPreparedApplication).toHaveBeenCalledWith(
+        "job_other",
+      );
+      if (applicationAutomationMode !== "prepare_only") {
+        // One permission for the press, sized for the run the forms came
+        // from: a permission for one send stopped the second one with
+        // "Remaining per-run capacity is exhausted".
+        expect(authorityService.create).toHaveBeenCalledTimes(1);
+        expect(authorityService.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            mode: "autonomous_submit",
+            scope: { campaignId: null, jobIds: [job.id, "job_other"] },
+            maxApplicationsPerRun: 3,
+          }),
+        );
+      }
+    },
+  );
+});
+
+describe("job-finder sending forms that already went out", () => {
+  it("says there is nothing left to send instead of sending again", async () => {
+    const repository = {
+      getSettings: vi.fn().mockResolvedValue({
+        applicationAutomationMode: "autonomous_submit",
+      }),
+      listApplyJobResults: vi.fn().mockResolvedValue([
+        {
+          id: "result_old",
+          runId: "run_prepared",
+          jobId: "job_sent",
+          state: "awaiting_review",
+          updatedAt: "2026-09-22T16:00:00.000Z",
+        },
+        {
+          id: "result_new",
+          runId: "run_prepared",
+          jobId: "job_sent",
+          state: "submitted",
+          updatedAt: "2026-09-22T16:05:00.000Z",
+        },
+      ]),
+    };
+    const workspaceService = { submitPreparedApplication: vi.fn() };
+    mockGetJobFinderRepositoryForWorkspaceService.mockReturnValueOnce(
+      repository as never,
+    );
+    mockGetJobFinderWorkspaceService.mockResolvedValue(workspaceService);
+    const handlers = new Map<string, RegisteredHandler>();
+    registerJobFinderRouteHandlers({
+      handle: vi.fn((channel: string, handler: RegisteredHandler) => {
+        handlers.set(channel, handler);
+      }),
+    } as unknown as IpcMain);
+
+    await expect(
+      handlers.get("job-finder:send-prepared-applications")!(
+        { sender: {} },
+        { jobIds: ["job_sent"] },
+      ),
+    ).rejects.toThrow(/Nothing left to send/);
+    expect(workspaceService.submitPreparedApplication).not.toHaveBeenCalled();
   });
 });
 
@@ -986,6 +1836,7 @@ describe("job-finder exact application lineage routes", () => {
     mockStartApplyCopilotRun.mockResolvedValue(snapshot);
     mockCancelApplyRun.mockResolvedValue(snapshot);
     mockResolveApplyConsentRequest.mockResolvedValue(snapshot);
+    mockFocusPreparedApplicationPage.mockResolvedValue(snapshot);
     mockGetApplyRunDetails.mockResolvedValue({
       run: {
         id: "run-1",
@@ -1005,6 +1856,7 @@ describe("job-finder exact application lineage routes", () => {
       cancelApplyRun: mockCancelApplyRun,
       getApplyRunDetails: mockGetApplyRunDetails,
       resolveApplyConsentRequest: mockResolveApplyConsentRequest,
+      focusPreparedApplicationPage: mockFocusPreparedApplicationPage,
     });
     const handlers = new Map<string, RegisteredHandler>();
     registerJobFinderRouteHandlers({
@@ -1020,6 +1872,19 @@ describe("job-finder exact application lineage routes", () => {
       ),
     ).rejects.toThrow();
 
+    mockGetJobFinderRepositoryForWorkspaceService.mockReturnValueOnce({
+      listSavedJobs: vi
+        .fn()
+        .mockResolvedValue([
+          { id: "job-1", resumeApplicationMode: "original_resume" },
+        ]),
+      getSettings: vi
+        .fn()
+        .mockResolvedValue({ applicationAutomationMode: "prepare_only" }),
+      getSearchPreferences: vi
+        .fn()
+        .mockResolvedValue({ tailoringMode: "balanced" }),
+    } as never);
     await handlers.get("job-finder:start-apply-copilot-run")?.(
       { sender: {} },
       {
@@ -1033,6 +1898,26 @@ describe("job-finder exact application lineage routes", () => {
       { visualCheckpointsEnabled: true },
       "application-1",
     );
+
+    const preparedPageTarget = {
+      runId: "run-1",
+      jobId: "job-1",
+      resultId: "result-1",
+      applicationRecordId: "application-1",
+    };
+    await handlers.get("job-finder:focus-prepared-application-page")?.(
+      { sender: {} },
+      preparedPageTarget,
+    );
+    expect(mockFocusPreparedApplicationPage).toHaveBeenCalledWith(
+      preparedPageTarget,
+    );
+    await expect(
+      handlers.get("job-finder:focus-prepared-application-page")?.(
+        { sender: {} },
+        { ...preparedPageTarget, resultId: "" },
+      ),
+    ).rejects.toThrow();
 
     const exactRunTarget = {
       runId: "run-1",
@@ -1445,6 +2330,30 @@ describe("job-finder scoped settings routes", () => {
     )({ sender: {} }, input);
 
     expect(mockUpdateWorkspaceBehavior).toHaveBeenCalledWith(input);
+    expect(result).toEqual(snapshot);
+  });
+
+  it("routes AI-behavior payloads to updateAiBehavior", async () => {
+    const snapshot = createEmptyWorkspace("2026-08-22T10:02:30.000Z");
+    mockUpdateAiBehavior.mockResolvedValue(snapshot);
+    mockGetJobFinderWorkspaceService.mockResolvedValue({
+      updateAiBehavior: mockUpdateAiBehavior,
+    });
+
+    const input = UpdateAiBehaviorInputSchema.parse({
+      aiBehavior: {
+        profileAssistant: { initiative: "proactive", replyStyle: "brief" },
+        jobSearch: { selectivity: "wide_net", remoteCountsAsAnyLocation: false },
+        applying: { coverLetterPolicy: "never", writtenAnswerLength: "full" },
+      },
+      resumeApproach: "aggressive",
+    });
+    const result = await registerAndFindHandler("job-finder:update-ai-behavior")(
+      { sender: {} },
+      input,
+    );
+
+    expect(mockUpdateAiBehavior).toHaveBeenCalledWith(input);
     expect(result).toEqual(snapshot);
   });
 
@@ -2675,6 +3584,41 @@ describe("job-finder agent discovery outcome routes", () => {
     expect(mockGetWorkspaceSnapshot).not.toHaveBeenCalled();
   });
 
+  it("passes the person's search request to the discovery service", async () => {
+    const snapshot = workspaceWithRunState(
+      "2026-08-26T10:07:00.000Z",
+      "completed",
+      12,
+    );
+    mockRunAgentDiscovery.mockResolvedValue(snapshot);
+    mockGetJobFinderWorkspaceService.mockResolvedValue({
+      runAgentDiscovery: mockRunAgentDiscovery,
+      getWorkspaceSnapshot: mockGetWorkspaceSnapshot,
+    });
+    const searchRequest = {
+      intent: "around engineering",
+      breadth: "wide" as const,
+      freshness: "recent" as const,
+      sourceIds: ["target_example"],
+    };
+
+    await registerAndFindDiscoveryHandler()(
+      { sender },
+      {
+        requestId: "agent_discovery_goal",
+        targetId: null,
+        searchRequest,
+      },
+    );
+
+    expect(mockRunAgentDiscovery).toHaveBeenCalledWith(
+      expect.any(Function),
+      undefined,
+      undefined,
+      searchRequest,
+    );
+  });
+
   it("rethrows non-abort discovery failures instead of inventing an outcome", async () => {
     mockRunAgentDiscovery.mockRejectedValue(new Error("fetch failed"));
     mockGetJobFinderWorkspaceService.mockResolvedValue({
@@ -2760,6 +3704,27 @@ describe("job-finder synthetic save failure route", () => {
         "profile",
       ),
     ).toThrow(/Desktop test API is disabled/);
+  });
+
+  it("fails one campaign save before persistence and allows retry", async () => {
+    process.env.UNEMPLOYED_ENABLE_TEST_API = "1";
+    mockIsDesktopTestApiEnabled.mockReturnValue(true);
+    const snapshot = createEmptyWorkspace("2026-09-26T10:00:00.000Z");
+    const saveCampaign = vi.fn().mockResolvedValue(snapshot);
+    mockGetJobFinderWorkspaceService.mockResolvedValue({ saveCampaign });
+    const handlers = registerHandlers();
+    requireHandler(handlers, "job-finder:test-fail-next-save")(
+      { sender: {} },
+      "campaign",
+    );
+    const save = requireHandler(handlers, "job-finder:save-campaign");
+    const campaign = snapshot.campaigns[0];
+    await expect(save({ sender: {} }, campaign)).rejects.toThrow(
+      /could not write the campaign change/,
+    );
+    expect(saveCampaign).not.toHaveBeenCalled();
+    await expect(save({ sender: {} }, campaign)).resolves.toEqual(snapshot);
+    expect(saveCampaign).toHaveBeenCalledTimes(1);
   });
 
   it("fails exactly one save on the armed surface and leaves other surfaces alone", async () => {

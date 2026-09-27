@@ -145,6 +145,35 @@ function readErrorMessage(payload: unknown): string | null {
   return null;
 }
 
+function rejectIncompleteOutput(payload: unknown, apiMode: ModelApiMode): void {
+  if (!isRecord(payload)) return;
+  if (apiMode === "responses" && payload.status === "incomplete") {
+    const details = isRecord(payload.incomplete_details)
+      ? payload.incomplete_details
+      : null;
+    const reason =
+      typeof details?.reason === "string"
+        ? details.reason
+        : "unspecified reason";
+    throw new Error(
+      `The AI service returned an incomplete response: ${reason}`,
+    );
+  }
+  const choice: unknown = Array.isArray(payload.choices)
+    ? payload.choices[0]
+    : null;
+  if (
+    apiMode === "chat_completions" &&
+    isRecord(choice) &&
+    (choice.finish_reason === "length" ||
+      choice.finish_reason === "content_filter")
+  ) {
+    throw new Error(
+      `The AI service returned an incomplete response: ${choice.finish_reason}`,
+    );
+  }
+}
+
 export function parseRetryAfterMs(value: string | null): number | null {
   if (!value) {
     return null;
@@ -229,6 +258,7 @@ function foldChatCompletionsChunk(
   if (!isRecord(chunk)) {
     return;
   }
+  rejectIncompleteOutput(chunk, "chat_completions");
   const choices: unknown[] = Array.isArray(chunk.choices)
     ? (chunk.choices as unknown[])
     : [];
@@ -395,6 +425,16 @@ async function readStreamedPayload(
       type === "response.done" ||
       type === "response.incomplete"
     ) {
+      if (type === "response.incomplete") {
+        rejectIncompleteOutput(
+          {
+            ...(isRecord(parsed.response) ? parsed.response : {}),
+            status: "incomplete",
+          },
+          "responses",
+        );
+      }
+      rejectIncompleteOutput(parsed.response, "responses");
       if (isRecord(parsed.response)) {
         responses.completed = parsed.response as ResponsesPayload;
       }
@@ -483,13 +523,10 @@ async function readStreamedPayload(
   }
 
   if (apiMode === "chat_completions") {
-    if (
-      !sawDone &&
-      !chat.finished &&
-      !chat.content &&
-      chat.toolCalls.size === 0
-    ) {
-      throw new ModelStreamIncompleteError("no completion arrived");
+    if (!sawDone && !chat.finished) {
+      // Partial text can be valid JSON too. Require completion before
+      // releasing either text or tool calls (ADR 0020).
+      throw new ModelStreamIncompleteError("no completion marker arrived");
     }
     return buildChatPayloadFromStream(chat);
   }
@@ -497,7 +534,7 @@ async function readStreamedPayload(
   if (responses.completed) {
     return normalizeModelPayload(responses.completed, "responses");
   }
-  if (responses.text || responses.toolCalls.length > 0) {
+  if (sawDone && (responses.text || responses.toolCalls.length > 0)) {
     return normalizeModelPayload(
       {
         output_text: responses.text,
@@ -709,6 +746,7 @@ export async function performModelRequest(
       if (payloadError) {
         throw new Error(payloadError);
       }
+      rejectIncompleteOutput(rawPayload, input.apiMode);
       return normalizeModelPayload(
         rawPayload as ChatCompletionsPayload | ResponsesPayload,
         input.apiMode,

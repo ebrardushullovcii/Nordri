@@ -8,8 +8,8 @@ import type {
   JobSearchPreferences,
   ProfileCopilotContext,
   ProfileSetupState,
+  ProfileSetupReviewActionOptions,
   ProfileSetupStep,
-  ResumeApplicationMode,
   ResumeImportFieldCandidateSummary,
   ResumeImportProgressEvent,
   ResumeImportRun,
@@ -44,16 +44,27 @@ import {
   getProfileImportSuggestionDestination,
 } from "../components/profile/profile-import-suggestion-navigation";
 import { ProfileSaveFooter } from "../components/profile/profile-save-footer";
+import { ProfileSetupReviewQueueCard } from "../components/profile/setup/profile-setup-screen-sections";
+import { formatProfileSetupReviewValue } from "../components/profile/setup/profile-setup-screen-helpers";
+import {
+  areEquivalentExperienceRecords,
+  areEquivalentEducationRecords,
+} from "@unemployed/job-finder/resume-record-identity";
+import { getJobFinderScrollBehavior } from "../lib/job-finder-scroll-behavior";
+
 import { ResumeIdentityChoiceNotice } from "../components/profile/resume-identity-choice-notice";
 import { ProfileSectionTabs } from "../components/profile/profile-section-tabs";
 import { ProfileSetupReminder } from "../components/profile/profile-setup-reminder";
-import { PageHeader } from "../components/page-header";
+import { PageHeaderStack } from "../components/page-header";
 import {
   buildProfilePayload,
   buildSearchPreferencesPayload,
 } from "../lib/profile-editor";
 import type { ProfileSection } from "../lib/profile-screen-progress";
-import { useProfileScreenForms } from "./profile-screen-hooks";
+import {
+  buildCanonicalAwareProfilePayload,
+  useProfileScreenForms,
+} from "./profile-screen-hooks";
 
 const unsavedProfileCopilotMessage =
   "Save this page before asking the Assistant to edit it so your current profile draft does not get overwritten.";
@@ -71,6 +82,7 @@ function parseProfileSection(value: string | null): ProfileSection | null {
     case "background":
     case "preferences":
     case "sources":
+    case "files":
       return value;
     default:
       return null;
@@ -84,6 +96,7 @@ type ProfileScreenPendingActions = {
   profileCopilotBusy: boolean;
   profileMutation: boolean;
   profileSetup: boolean;
+  profileReviewItem: (reviewItemId: string) => boolean;
   sourceDebug: (targetId: string) => boolean;
   sourceInstruction: (targetId: string) => boolean;
   sourceInstructionVerify: (instructionId: string) => boolean;
@@ -96,9 +109,16 @@ export function ProfileScreen(props: {
   importResumeGuardMessage: string | null;
   pendingActions: ProfileScreenPendingActions;
   onApplyProfileCopilotPatchGroup: (patchGroupId: string) => void;
+  onApplyProfileSetupReviewAction: (
+    reviewItemId: string,
+    action: "confirm" | "dismiss" | "clear_value",
+    options?: ProfileSetupReviewActionOptions,
+  ) => void;
   onAnalyzeProfileFromResume: () => void;
   onGetSourceDebugRunDetails: (runId: string) => Promise<SourceDebugRunDetails>;
   onImportResume: () => void;
+  /** Imports again the file a stopped import saved; no file picker. */
+  onRetryInterruptedImport?: () => void;
   onApplyResumeTimelineRepairAction: (
     runId: string,
     proposalId: string,
@@ -148,12 +168,6 @@ export function ProfileScreen(props: {
   discoveryRuns?: readonly DiscoveryRunRecord[];
   recentSourceDebugRuns: readonly SourceDebugRunRecord[];
   searchPreferences: JobSearchPreferences;
-  /**
-   * The saved application default. Preferences edits the same stored choice
-   * Settings does, so "Use original resume unchanged" is reachable from both.
-   */
-  resumeApplicationMode?: ResumeApplicationMode;
-  onSelectResumeApplicationMode?: (mode: ResumeApplicationMode) => void;
   sourceAccessPrompts: JobFinderWorkspaceSnapshot["sourceAccessPrompts"];
   sourceInstructionArtifacts: readonly SourceInstructionArtifact[];
 }) {
@@ -203,10 +217,6 @@ export function ProfileScreen(props: {
   const pendingImportSuggestionRef =
     useRef<ResumeImportFieldCandidateSummary | null>(null);
   const [importSuggestionFocusRequest, setImportSuggestionFocusRequest] =
-    useState(0);
-  // Width the field column gives up while the assistant panel is open on a
-  // window too narrow to hold both side by side.
-  const [copilotReservedColumnWidth, setCopilotReservedColumnWidth] =
     useState(0);
   const {
     backgroundArrays,
@@ -258,6 +268,18 @@ export function ProfileScreen(props: {
     let focusFrame = 0;
     let attemptsRemaining = 12;
     const focusWhenReady = () => {
+      const review = document.getElementById(
+        `profile-import-review-${candidate.id}`,
+      );
+      if (review) {
+        review.scrollIntoView?.({
+          behavior: getJobFinderScrollBehavior(window),
+          block: "center",
+        });
+        review.focus({ preventScroll: true });
+        pendingImportSuggestionRef.current = null;
+        return;
+      }
       if (focusProfileImportSuggestion(candidate)) {
         pendingImportSuggestionRef.current = null;
         return;
@@ -326,6 +348,28 @@ export function ProfileScreen(props: {
   const pendingSetupItems = profileSetupState.reviewItems.filter(
     (item) => item.status === "pending",
   );
+  const importCandidateById = new Map(
+    latestResumeImportReviewCandidates.map((candidate) => [
+      candidate.id,
+      candidate,
+    ]),
+  );
+  const sectionReviewItems = pendingSetupItems
+    .filter((item) => {
+      const candidate = item.sourceCandidateId
+        ? importCandidateById.get(item.sourceCandidateId)
+        : null;
+      return (
+        candidate &&
+        getProfileImportSuggestionDestination(candidate).section ===
+          activeSection
+      );
+    })
+    .map((item) => ({
+      ...item,
+      savedStatus: item.status,
+      statusSource: "saved" as const,
+    }));
   // The renderer receives no progress event until a native picker has
   // returned a file. Treat that picker-only phase as recoverable rather than
   // freezing every profile field behind an unresolved local pending flag.
@@ -333,9 +377,15 @@ export function ProfileScreen(props: {
     pendingActions.importResume && resumeImportProgress !== null;
   const resumeAnalysisPending =
     isResumeImportProcessing || pendingActions.analyzeProfile;
+  // Job sources and Files hold no profile facts, so the assistant talks about
+  // preferences while either tab is open.
+  const copilotSection =
+    activeSection === "sources" || activeSection === "files"
+      ? "preferences"
+      : activeSection;
   const profileCopilotContext: ProfileCopilotContext = {
     surface: "profile",
-    section: activeSection === "sources" ? "preferences" : activeSection,
+    section: copilotSection,
   };
 
   // Keep one durable profile conversation visible while the section changes;
@@ -345,7 +395,7 @@ export function ProfileScreen(props: {
   );
   const starterQuestion = buildProfileSectionStarterQuestion(
     profileSetupState.reviewItems,
-    activeSection === "sources" ? "preferences" : activeSection,
+    copilotSection,
   );
 
   const savedTargetsById = new Map(
@@ -434,7 +484,12 @@ export function ProfileScreen(props: {
       : null;
 
   function handleSaveAll() {
-    const profileResult = buildProfilePayload(profile, profileForm.getValues());
+    const profileResult = buildCanonicalAwareProfilePayload({
+      draftValues: profileForm.getValues(),
+      dirtyFields: profileForm.formState.dirtyFields,
+      latestResumeImportReviewCandidates,
+      profile,
+    });
 
     if (!profileResult.payload) {
       setValidationMessage(
@@ -461,7 +516,12 @@ export function ProfileScreen(props: {
   }
 
   function handleResumeIdentityChoice(choice: "profile_name" | "resume_name") {
-    const profileResult = buildProfilePayload(profile, profileForm.getValues());
+    const profileResult = buildCanonicalAwareProfilePayload({
+      draftValues: profileForm.getValues(),
+      dirtyFields: profileForm.formState.dirtyFields,
+      latestResumeImportReviewCandidates,
+      profile,
+    });
     const preferencesResult = buildSearchPreferencesPayload(
       searchPreferences,
       preferencesForm.getValues(),
@@ -537,6 +597,7 @@ export function ProfileScreen(props: {
             // outcome so invalid input cannot look successfully saved.
             actionMessage={validationMessage ? null : props.actionState.message}
             hasUnsavedChanges={hasUnsavedChanges}
+            hasUserEdits={hasUserDraftChanges}
             isSavePending={
               pendingActions.profileMutation || resumeAnalysisPending
             }
@@ -545,14 +606,13 @@ export function ProfileScreen(props: {
           />
         </>
       }
-      contentClassName="grid min-h-0 grid-rows-[minmax(0,1fr)_auto] gap-2 pb-1 xl:overflow-hidden"
+      contentClassName="grid min-h-0 grid-rows-[minmax(0,1fr)_auto] gap-2 pb-1 xl:overflow-clip"
       topClassName="grid gap-2 pb-1"
       topContent={
         <>
-          <PageHeader
-            eyebrow="Profile"
+          <PageHeaderStack
             title="Your profile"
-            description="Import your resume and confirm the details that matter."
+            description="Everything Job Finder knows about you. Edit any field, or ask the Assistant to change it for you."
           />
 
           {profileSetupState.status !== "completed" ? (
@@ -581,20 +641,11 @@ export function ProfileScreen(props: {
         </>
       }
     >
-      <section
-        className="grid min-h-124 min-w-0 gap-(--gap-content) xl:h-full xl:min-h-0"
-        // Room held open for the assistant panel. Sizing the panel into the
-        // space that happens to be free left it covering the very fields it
-        // names on a window with no space to spare; the column gives up the
-        // pixels instead, so the panel always docks beside the form.
-        style={
-          copilotReservedColumnWidth > 0
-            ? { paddingRight: `${copilotReservedColumnWidth}px` }
-            : undefined
-        }
-      >
+      <section className="grid min-h-124 min-w-0 gap-(--gap-content) xl:h-full xl:min-h-0">
         <div className="grid min-h-0 min-w-0 gap-2 xl:grid-rows-[auto_minmax(0,1fr)]">
-          <div className="sticky top-0 z-20 bg-(--surface-canvas)">
+          {/* Clip without creating a scroll owner between the tabs and the
+              route scroller, so the tabs stay pinned as the profile moves. */}
+          <div className="sticky top-0 z-30 bg-(--background) shadow-[0_6px_16px_rgba(0,0,0,0.12)]">
             <ProfileSectionTabs
               activeSection={activeSection}
               onSectionChange={handleSectionChange}
@@ -650,6 +701,12 @@ export function ProfileScreen(props: {
                       );
                     }}
                     onImportResume={onImportResume}
+                    {...(props.onRetryInterruptedImport
+                      ? {
+                          onRetryInterruptedImport:
+                            props.onRetryInterruptedImport,
+                        }
+                      : {})}
                     onReviewImportSuggestion={handleReviewImportSuggestion}
                     profileForm={profileForm}
                     profile={overviewProfile}
@@ -662,6 +719,76 @@ export function ProfileScreen(props: {
                 id={activeSectionPanelId}
                 role="tabpanel"
               >
+                {sectionReviewItems.length > 0 ? (
+                  <div className="mb-4">
+                    <ProfileSetupReviewQueueCard
+                      compact
+                      title="Review imported suggestions"
+                      description="Compare the resume details with your saved profile, then confirm or dismiss each suggestion."
+                      actionsDisabledReason={
+                        hasUserDraftChanges
+                          ? "Save your profile changes before reviewing imported suggestions."
+                          : pendingActions.profileMutation ||
+                              pendingActions.profileSetup ||
+                              resumeAnalysisPending
+                            ? "Wait for the current profile update to finish."
+                            : null
+                      }
+                      isReviewItemPending={pendingActions.profileReviewItem}
+                      items={sectionReviewItems}
+                      latestResumeImportReviewCandidates={
+                        latestResumeImportReviewCandidates
+                      }
+                      onApplyReviewAction={
+                        props.onApplyProfileSetupReviewAction
+                      }
+                      getSavedValue={(item) => {
+                        const candidate = item.sourceCandidateId
+                          ? importCandidateById.get(item.sourceCandidateId)
+                          : null;
+                        if (candidate?.target.section === "experience") {
+                          const saved = profile.experiences.find(
+                            (record) =>
+                              record.id === candidate.target.recordId ||
+                              areEquivalentExperienceRecords(
+                                record,
+                                candidate.value,
+                              ),
+                          );
+                          return saved
+                            ? formatProfileSetupReviewValue({
+                                ...saved,
+                                isDraft: null,
+                              })
+                            : "No saved role matches this suggestion.";
+                        }
+                        if (candidate?.target.section === "education") {
+                          const saved = profile.education.find(
+                            (record) =>
+                              record.id === candidate.target.recordId ||
+                              areEquivalentEducationRecords(
+                                record,
+                                candidate.value,
+                              ),
+                          );
+                          return saved
+                            ? formatProfileSetupReviewValue({
+                                ...saved,
+                                isDraft: null,
+                              })
+                            : "No saved education matches this suggestion.";
+                        }
+                        return null;
+                      }}
+                      onEditReviewItem={(item) => {
+                        const candidate = item.sourceCandidateId
+                          ? importCandidateById.get(item.sourceCandidateId)
+                          : null;
+                        if (candidate) focusProfileImportSuggestion(candidate);
+                      }}
+                    />
+                  </div>
+                ) : null}
                 {visibleSourceRowFeedback && sourceRowFeedbackTargetId ? (
                   <div className="mb-3">
                     <DiscoveryRunFeedbackCallout
@@ -697,7 +824,9 @@ export function ProfileScreen(props: {
                 >
                   <ProfileActiveSectionContent
                     activeSection={activeSection}
+                    requestedFileKind={searchParams.get("kind")}
                     activeDiscoveryRun={activeDiscoveryRun}
+                    onSaveNow={handleSaveAll}
                     backgroundArrays={backgroundArrays}
                     discoveryRuns={discoveryRuns}
                     experienceArray={experienceArray}
@@ -725,15 +854,6 @@ export function ProfileScreen(props: {
                     onVerifySourceInstructions={onVerifySourceInstructions}
                     preferencesForm={preferencesForm}
                     profileForm={profileForm}
-                    {...(props.resumeApplicationMode
-                      ? { resumeApplicationMode: props.resumeApplicationMode }
-                      : {})}
-                    {...(props.onSelectResumeApplicationMode
-                      ? {
-                          onSelectResumeApplicationMode:
-                            props.onSelectResumeApplicationMode,
-                        }
-                      : {})}
                     recentSourceDebugRuns={recentSourceDebugRuns}
                     sourceAccessPrompts={sourceAccessPrompts}
                     sourceInstructionArtifacts={sourceInstructionArtifacts}
@@ -801,7 +921,6 @@ export function ProfileScreen(props: {
           starterQuestion={starterQuestion}
           showProactivePrompt={false}
           minBottomOffset={COPILOT_BOTTOM_OFFSET}
-          onReserveColumnWidth={setCopilotReservedColumnWidth}
         />
       ) : null}
     </LockedScreenLayout>

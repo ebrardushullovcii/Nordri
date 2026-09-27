@@ -149,7 +149,7 @@ describe("summarizeDiscoveryRunSourceProblems", () => {
       { category: "no_results", count: 4, label: "found nothing" },
     ]);
     expect(formatDiscoveryRunSourceProblemSummary(run(sources))).toBe(
-      "You stopped the last search, so 3 sources did not finish. 22 sources had a problem in the last search · 18 couldn't be read · 4 found nothing",
+      "You stopped the last search, so 3 sources did not finish. 18 sources had a problem in the last search · 18 couldn't be read. 4 sources found nothing in the last search.",
     );
   });
 
@@ -278,5 +278,13 @@ describe("summarizeDiscoveryRunSourceProblems", () => {
     ).toBe(
       "1 source had a problem in the last search · 1 finished with a problem",
     );
+  });
+
+  it("does not call a valid empty listing a source problem", () => {
+    expect(
+      formatDiscoveryRunSourceProblemSummary(
+        run([{ health: "warning", targetId: "empty", jobsFound: 0 }]),
+      ),
+    ).toBe("1 source found nothing in the last search.");
   });
 });

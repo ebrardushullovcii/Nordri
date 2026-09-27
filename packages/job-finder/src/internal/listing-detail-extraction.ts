@@ -9,12 +9,83 @@
  * reader falls back to the visible text of the page and says so.
  */
 
-import { looksLikeApplyEntryText } from "@unemployed/browser-agent";
+/**
+ * Whether a link's text reads as the one that starts an application.
+ *
+ * This is discovery, not the apply harness: it records a likely apply URL from
+ * a listing's HTML before any run begins, so a later run has somewhere to
+ * start. Nothing here gates what the harness may click — the harness reads the
+ * page itself and decides (ADR 0021).
+ */
+const APPLY_ENTRY_PHRASES: readonly string[] = [
+  "apply",
+  "apply now",
+  "apply here",
+  "apply today",
+  "apply for this job",
+  "apply for this role",
+  "apply for this position",
+  "apply to this job",
+  "easy apply",
+  "quick apply",
+  "one click apply",
+  "apply on company site",
+  "apply on company website",
+  "apply on employer site",
+  "apply externally",
+  "apply with your resume",
+  "apply for job",
+  "start your application",
+  "start application",
+  "begin application",
+  "i m interested",
+  "im interested",
+  "i am interested",
+  "view job and apply",
+  "see job and apply",
+];
+
+const NOT_AN_ENTRY_PHRASES: readonly string[] = [
+  "apply filter",
+  "apply filters",
+  "apply changes",
+  "applied",
+  "how to apply",
+  "jobs you applied",
+  "why apply",
+  "apply for other",
+  "apply to other",
+  "similar jobs",
+  "back to",
+  "apply for a different",
+];
+
+function normalizeApplyEntrySignal(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/gu, " ")
+    .trim();
+}
+
+function looksLikeApplyEntryText(text: string): boolean {
+  const signal = normalizeApplyEntrySignal(text);
+  if (!signal || signal.length > 60) {
+    return false;
+  }
+  if (NOT_AN_ENTRY_PHRASES.some((phrase) => signal.includes(phrase))) {
+    return false;
+  }
+  return APPLY_ENTRY_PHRASES.some((phrase) => signal.includes(phrase));
+}
 
 const MAX_HTML_LENGTH = 1_500_000;
 const MAX_DESCRIPTION_LENGTH = 24_000;
 const MAX_PAGE_TEXT_LENGTH = 12_000;
-const MIN_PAGE_TEXT_WORDS = 120;
+// Some real small-company listings are concise. The compact allowance below
+// is used only when the page names the exact card title and carries listing
+// cue words; otherwise the original 120-word floor still applies.
+const MIN_PAGE_TEXT_WORDS = 50;
+const MIN_WEAKLY_IDENTIFIED_PAGE_TEXT_WORDS = 120;
 const MAX_JSON_LD_NODES = 200;
 
 export type ListingDetailExtractionMethod = "json_ld" | "page_text";
@@ -352,8 +423,7 @@ function readDirectApplyUrl(node: JsonRecord): string | null {
   return directApply === true && url ? url : null;
 }
 
-const ANCHOR_PATTERN =
-  /<a\b([^>]*?)>([\s\S]*?)<\/a\s*>/giu;
+const ANCHOR_PATTERN = /<a\b([^>]*?)>([\s\S]*?)<\/a\s*>/giu;
 const HREF_PATTERN = /\bhref\s*=\s*["']([^"']+)["']/iu;
 const ARIA_LABEL_PATTERN = /\baria-label\s*=\s*["']([^"']+)["']/iu;
 
@@ -367,7 +437,10 @@ const ARIA_LABEL_PATTERN = /\baria-label\s*=\s*["']([^"']+)["']/iu;
  * control in script has none of this in its HTML, and the run walks the page
  * itself instead.
  */
-export function findApplyLinkInHtml(html: string, baseUrl: string): string | null {
+export function findApplyLinkInHtml(
+  html: string,
+  baseUrl: string,
+): string | null {
   ANCHOR_PATTERN.lastIndex = 0;
   let match: RegExpExecArray | null;
   while ((match = ANCHOR_PATTERN.exec(html)) !== null) {
@@ -585,7 +658,10 @@ function extractListingDetailFromPageText(
   html: string,
   input: ExtractListingDetailInput,
 ): ExtractedListingDetail | null {
-  const bodyHtml = selectMainContentHtml(html);
+  const bodyHtml = startAtTitleHeading(
+    selectMainContentHtml(html),
+    input.expectedTitle,
+  );
   const fullText = trimLeadingChromeBeforeTitle(
     htmlToPlainText(bodyHtml),
     input.expectedTitle,
@@ -600,6 +676,9 @@ function extractListingDetailFromPageText(
   const titleNamed =
     Boolean(input.expectedTitle) &&
     text.split("\n").some((line) => lineNamesTitle(line, input.expectedTitle));
+  if (!titleNamed && wordCount < MIN_WEAKLY_IDENTIFIED_PAGE_TEXT_WORDS) {
+    return null;
+  }
   if (
     !LISTING_BODY_SIGNAL.test(text) &&
     !(titleNamed && wordCount >= MIN_UNCUED_PAGE_TEXT_WORDS)
@@ -636,6 +715,31 @@ function extractListingDetailFromPageText(
     workModeHints: detectWorkModeHints(text),
     directApplyUrl: findApplyLinkInHtml(html, input.url),
   };
+}
+
+/**
+ * A page whose main content heads the posting with an `<h1>` naming the job
+ * starts the listing there. What sits above that heading inside the content
+ * (a banner, breadcrumbs, a "Company · Place · Posted" line) is page chrome;
+ * those facts are read into their own fields, not the listing text.
+ */
+function startAtTitleHeading(
+  contentHtml: string,
+  expectedTitle: string | null | undefined,
+): string {
+  if (!expectedTitle) {
+    return contentHtml;
+  }
+  const heading = contentHtml.match(/<h1\b[^>]*>([\s\S]*?)<\/h1\s*>/iu);
+  if (!heading || heading.index === undefined || heading.index === 0) {
+    return contentHtml;
+  }
+  const headingText = collapseWhitespace(
+    decodeHtmlEntities(heading[1]?.replace(/<[^>]+>/gu, " ") ?? ""),
+  );
+  return lineNamesTitle(headingText, expectedTitle)
+    ? contentHtml.slice(heading.index)
+    : contentHtml;
 }
 
 function selectMainContentHtml(html: string): string {

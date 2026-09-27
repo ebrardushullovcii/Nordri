@@ -49,9 +49,11 @@ export type ApprovedApplicationAnswerSnapshotEntry = z.infer<
 const approvedApplicationAnswerSnapshotContentShape = {
   schemaVersion: z.literal(approvedApplicationAnswerSnapshotVersion),
   profileId: NonEmptyStringSchema,
+  // A profile with no saved answers yet is still a profile the person can
+  // approve: an empty snapshot says "nothing on file", which lets sending
+  // start and hand any eligibility question back at the form.
   entries: z
     .array(ApprovedApplicationAnswerSnapshotEntrySchema)
-    .min(1)
     .max(approvedApplicationAnswerSnapshotMaxEntries),
 } as const;
 
@@ -210,14 +212,11 @@ export function deriveApprovedApplicationAnswerSnapshotContent(
     });
   }
 
-  const content =
-    entries.length === 0
-      ? null
-      : ApprovedApplicationAnswerSnapshotContentSchema.parse({
-          schemaVersion: approvedApplicationAnswerSnapshotVersion,
-          profileId: profile.id,
-          entries,
-        });
+  const content = ApprovedApplicationAnswerSnapshotContentSchema.parse({
+    schemaVersion: approvedApplicationAnswerSnapshotVersion,
+    profileId: profile.id,
+    entries,
+  });
   const kinds = [...new Set(entries.map((entry) => entry.kind))];
   return {
     content,

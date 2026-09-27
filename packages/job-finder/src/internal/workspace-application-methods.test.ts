@@ -4,6 +4,7 @@ import {
   type JobFinderRepositorySeed,
 } from "@unemployed/db";
 import { describe, expect, test, vi } from "vitest";
+import { CandidateAssetSchema } from "@unemployed/contracts";
 
 import { createJobFinderWorkspaceService } from "../workspace-service";
 import { createSeed } from "../workspace-service.test-fixtures";
@@ -14,6 +15,7 @@ import {
   createResearchAdapter,
 } from "../workspace-service.test-runtimes";
 import type { ResumeExportFileVerifier } from "./workspace-service-context";
+import type { CandidateAssetResolver } from "./workspace-service-contracts";
 
 type ExecuteFlow = BrowserSessionRuntime["executeApplicationFlow"];
 
@@ -153,6 +155,7 @@ function createService(input: {
   seed: JobFinderRepositorySeed;
   exportFileVerifier: ResumeExportFileVerifier;
   browserRuntime: BrowserSessionRuntime;
+  candidateAssetResolver?: CandidateAssetResolver;
 }) {
   const repository = createInMemoryJobFinderRepository(input.seed);
   return createJobFinderWorkspaceService({
@@ -161,11 +164,61 @@ function createService(input: {
     aiClient: createAiClient(),
     documentManager: createDocumentManager(),
     exportFileVerifier: input.exportFileVerifier,
+    ...(input.candidateAssetResolver
+      ? { candidateAssetResolver: input.candidateAssetResolver }
+      : {}),
     researchAdapter: createResearchAdapter(),
   });
 }
 
 describe("apply prerequisites resolve the resume path the verifier actually read", () => {
+  test("keeps the durable run and result start times after preparation completes", async () => {
+    const seed = createSeed();
+    stageApprovedTailoredExport(seed, RECOVERED_EXPORT_PATH, EXPORT_SHA256);
+    const { browserRuntime } = createDiskAwareBrowserRuntime(
+      new Set([RECOVERED_EXPORT_PATH]),
+    );
+    const runFlow = browserRuntime.executeApplicationFlow;
+    if (!runFlow) throw new Error("Expected application flow support.");
+    const repository = createInMemoryJobFinderRepository(seed);
+    const runWrites = vi.spyOn(repository, "upsertApplyRun");
+    const resultWrites = vi.spyOn(repository, "upsertApplyJobResult");
+    const workspaceService = createJobFinderWorkspaceService({
+      repository,
+      browserRuntime: {
+        ...browserRuntime,
+        executeApplicationFlow: async (source, input, options) => {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          return runFlow(source, input, options);
+        },
+      },
+      aiClient: createAiClient(),
+      documentManager: createDocumentManager(),
+      exportFileVerifier: createRecoveringExportFileVerifier(
+        new Map([[RECOVERED_EXPORT_PATH, EXPORT_SHA256]]),
+      ),
+      researchAdapter: createResearchAdapter(),
+    });
+
+    const snapshot = await workspaceService.startApplyCopilotRun("job_ready");
+    const run = snapshot.applyRuns.at(-1);
+    const result = snapshot.applyJobResults.find(
+      (candidate) => candidate.runId === run?.id,
+    );
+    const firstRunWrite = runWrites.mock.calls.find(
+      ([candidate]) => candidate.id === run?.id,
+    )?.[0];
+    const firstResultWrite = resultWrites.mock.calls.find(
+      ([candidate]) => candidate.id === result?.id,
+    )?.[0];
+
+    expect(run?.createdAt).toBe(firstRunWrite?.createdAt);
+    expect(result?.startedAt).toBe(firstResultWrite?.startedAt);
+    expect(Date.parse(run?.createdAt ?? "")).toBeLessThan(
+      Date.parse(run?.updatedAt ?? ""),
+    );
+  });
+
   test("uses a ready tailored draft in prepare-only execution without requiring a separate approval", async () => {
     const seed = createSeed();
     const draftPath = `${CURRENT_USER_DATA_ROOT}/job-ready-draft.pdf`;
@@ -218,6 +271,123 @@ describe("apply prerequisites resolve the resume path the verifier actually read
         sha256: EXPORT_SHA256,
       },
     });
+  });
+
+  test("requires an approved tailored resume for a sending mode before opening the browser", async () => {
+    const draftPath = `${CURRENT_USER_DATA_ROOT}/job-ready-draft.pdf`;
+    const unapprovedSeed = createSeed();
+    unapprovedSeed.settings = {
+      ...unapprovedSeed.settings,
+      applicationAutomationMode: "autonomous_submit",
+    };
+    unapprovedSeed.tailoredAssets = unapprovedSeed.tailoredAssets.map((asset) =>
+      asset.jobId === "job_ready"
+        ? { ...asset, status: "ready", storagePath: draftPath }
+        : asset,
+    );
+    unapprovedSeed.resumeDrafts = [
+      {
+        id: "resume_draft_job_ready",
+        jobId: "job_ready",
+        status: "needs_review",
+        templateId: "classic_ats",
+        identity: null,
+        sections: [],
+        targetPageCount: 2,
+        generationMethod: "deterministic",
+        workHistoryReviewAcknowledgments: [],
+        claimConfirmations: [],
+        issueApprovals: [],
+        approvedAt: null,
+        approvedExportId: null,
+        staleReason: null,
+        createdAt: "2026-03-20T10:00:00.000Z",
+        updatedAt: "2026-03-20T10:04:00.000Z",
+      },
+    ];
+    unapprovedSeed.resumeExportArtifacts = [];
+    const disk = new Map([[draftPath, EXPORT_SHA256]]);
+    const unapprovedRuntime = createDiskAwareBrowserRuntime(
+      new Set(disk.keys()),
+    );
+    const unapprovedService = createService({
+      seed: unapprovedSeed,
+      exportFileVerifier: createRecoveringExportFileVerifier(disk),
+      browserRuntime: unapprovedRuntime.browserRuntime,
+    });
+
+    await expect(
+      unapprovedService.startApplyCopilotRun("job_ready"),
+    ).rejects.toThrow("Approve the tailored resume");
+    expect(unapprovedRuntime.executeApplicationFlow).not.toHaveBeenCalled();
+
+    const approvedSeed = createSeed();
+    approvedSeed.settings = {
+      ...approvedSeed.settings,
+      applicationAutomationMode: "autonomous_submit",
+    };
+    stageApprovedTailoredExport(approvedSeed, draftPath, EXPORT_SHA256);
+    const approvedRuntime = createDiskAwareBrowserRuntime(new Set(disk.keys()));
+    const approvedService = createService({
+      seed: approvedSeed,
+      exportFileVerifier: createRecoveringExportFileVerifier(disk),
+      browserRuntime: approvedRuntime.browserRuntime,
+    });
+
+    await approvedService.startApplyCopilotRun("job_ready");
+    expect(approvedRuntime.executeApplicationFlow).toHaveBeenCalledTimes(1);
+  });
+
+  test("offers allowed supporting Documents to an initial application run", async () => {
+    const seed = createSeed();
+    const draftPath = `${CURRENT_USER_DATA_ROOT}/job-ready-draft.pdf`;
+    stageApprovedTailoredExport(seed, draftPath, EXPORT_SHA256);
+    const asset = CandidateAssetSchema.parse({
+      id: "asset-portfolio",
+      kind: "portfolio",
+      originalName: "portfolio.txt",
+      mime: "text/plain",
+      byteSize: 9,
+      sha256: "c".repeat(64),
+      createdAt: "2026-03-20T09:00:00.000Z",
+      sensitivity: "sensitive",
+      consentScope: "job_application_attachment",
+      retention: "until_deleted",
+    });
+    const loadVerifiedBytes = vi.fn(() =>
+      Promise.resolve(new TextEncoder().encode("portfolio")),
+    );
+    const disk = new Map([[draftPath, EXPORT_SHA256]]);
+    const { browserRuntime, executeApplicationFlow } =
+      createDiskAwareBrowserRuntime(new Set(disk.keys()));
+    const listAssets = vi.fn(() => Promise.resolve({ assets: [asset] }));
+    const workspaceService = createService({
+      seed,
+      exportFileVerifier: createRecoveringExportFileVerifier(disk),
+      browserRuntime,
+      candidateAssetResolver: {
+        list: listAssets,
+        resolveForApplication: () =>
+          Promise.resolve({ asset, loadVerifiedBytes }),
+      },
+    });
+
+    await workspaceService.startApplyCopilotRun("job_ready");
+
+    expect(listAssets).toHaveBeenCalledWith({ includeDeleted: false });
+    expect(executeApplicationFlow.mock.calls[0]?.[1].applicationAttachments).toEqual([
+      {
+        assetId: asset.id,
+        assetKind: "portfolio",
+        questionId: null,
+        prompt: "Portfolio from the person's files",
+        questionKind: "portfolio",
+        fileName: asset.originalName,
+        mime: asset.mime,
+        sha256: asset.sha256,
+        loadVerifiedBytes,
+      },
+    ]);
   });
 
   test("hands the recovered tailored export path to the runtime instead of the stale recorded one", async () => {

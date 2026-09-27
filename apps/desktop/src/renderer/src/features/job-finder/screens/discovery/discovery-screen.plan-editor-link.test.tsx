@@ -1,12 +1,12 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from "@testing-library/react";
+import { fireEvent, cleanup, render, screen } from "@testing-library/react";
 import type { JobSearchPreferences, SavedJob } from "@unemployed/contracts";
 import type { ReactNode } from "react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { campaignPlanEditorHref } from "../../lib/job-finder-route-hrefs";
+import { JOB_FINDER_ROUTE_PATHS } from "../../lib/job-finder-route-hrefs";
 
 vi.mock(
   "@renderer/features/job-finder/components/locked-screen-layout",
@@ -35,7 +35,7 @@ vi.mock("./discovery-filters-panel", () => ({
   DiscoveryFiltersPanel: ({ planEditorHref }: { planEditorHref?: string }) => (
     <section aria-label="Current search">
       <a data-testid="filters-plan-editor-link" href={planEditorHref}>
-        Edit this plan&apos;s places
+        Edit your places
       </a>
     </section>
   ),
@@ -50,7 +50,7 @@ vi.mock("./discovery-results-panel", () => ({
   }) => (
     <section aria-label="Job results">
       <a data-testid="results-plan-editor-link" href={editPlanHref ?? ""}>
-        Edit this plan&apos;s places
+        Edit your places
       </a>
     </section>
   ),
@@ -137,19 +137,22 @@ describe("Find jobs links to the selected plan's editor", () => {
     );
   }
 
-  it("points the search-setup panel's places link at that plan's editor", () => {
+  // Search plans are no longer a person-facing surface: places and work
+  // modes live on Profile, so both links land there.
+  it("points the search-setup panel's places link at Profile preferences", () => {
     renderScreen([]);
+    fireEvent.click(screen.getByRole("button", { name: "Roles, places & sources" }));
 
     expect(
       screen.getByTestId("filters-plan-editor-link").getAttribute("href"),
-    ).toBe(campaignPlanEditorHref("plan_chicago"));
+    ).toBe(JOB_FINDER_ROUTE_PATHS.profileWorkModes);
   });
 
-  it("points the results panel's places link at that plan's editor", () => {
+  it("points the results panel's places link at Profile preferences", () => {
     renderScreen([job]);
 
     expect(
       screen.getByTestId("results-plan-editor-link").getAttribute("href"),
-    ).toBe(campaignPlanEditorHref("plan_chicago"));
+    ).toBe(JOB_FINDER_ROUTE_PATHS.profileWorkModes);
   });
 });

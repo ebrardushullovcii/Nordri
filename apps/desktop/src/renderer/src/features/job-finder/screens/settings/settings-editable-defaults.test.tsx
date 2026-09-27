@@ -503,6 +503,8 @@ describe("SettingsEditableDefaults", () => {
     const copy = getApplySafeguardCopy(true);
     expect(copy.title).toBe("Original resume required");
     expect(copy.description).toContain("exact imported resume");
-    expect(copy.description).toContain("stops before final submit");
+    expect(copy.description).toContain(
+      "Sending follows the mode you choose under Applying.",
+    );
   });
 });

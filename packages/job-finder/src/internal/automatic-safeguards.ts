@@ -35,6 +35,11 @@ import {
   type ListingSignalInput,
 } from "./safeguard-operations";
 import type { WorkspaceServiceContext } from "./workspace-service-context";
+import {
+  PERSON_TOOK_OVER_SUMMARY,
+  PREPARED_PAGE_CLOSED_SUMMARY,
+  SITE_UNREACHABLE_SUMMARY,
+} from "./workspace-application-user-action";
 
 /** The replay window used for automatically-derived source/discovery pauses. */
 export const AUTOMATIC_FAILURE_WINDOW_DAYS = 7;
@@ -379,6 +384,7 @@ async function persistAutomaticFailurePause(input: {
   /** Overrides the plan's own rule when a safeguard sets its own floor. */
   minimumSample?: number;
   failureRateThresholdPercent?: number;
+  workKind?: "application";
   now: string;
 }): Promise<void> {
   if (typeof input.ctx.withIntelligenceTransition !== "function") return;
@@ -408,9 +414,13 @@ async function persistAutomaticFailurePause(input: {
           input.minimumSample ??
           input.campaign.stopRules.failureRateMinimumSample,
         explanation:
-          "Too many searches or source checks failed in a row, so this search plan paused itself.",
+          input.workKind === "application"
+            ? "Too many application attempts failed, so this search plan paused further application preparation."
+            : "Too many searches or source checks failed in a row, so this search plan paused itself.",
         recoveryGuidance:
-          "Open Search history to see which source failed and why. Fix or disable that source, then retry.",
+          input.workKind === "application"
+            ? "Open Applications to review the failed attempts, resolve the cause, then retry."
+            : "Open Search history to see which source failed and why. Fix or disable that source, then retry.",
       },
     });
     if (!result.ok) return;
@@ -574,6 +584,11 @@ function applicationResultIsUserOwnedBlocker(result: ApplyJobResult): boolean {
   );
 }
 
+/** How a result cut short by the app closing starts its detail. */
+const APP_CLOSED_DETAIL_PREFIX = "The app closed ";
+/** A check taken over after a restart whose prepared page was gone. */
+const RETRY_STOPPED_SAFELY_SUMMARY = "Application retry stopped safely";
+
 /** Returns true only for a submitted result with a matching final-submit receipt. */
 export function isVerifiedApplicationSubmission(
   result: ApplyJobResult,
@@ -603,12 +618,48 @@ export function deriveApplicationFailureEvidence(input: {
     if (run) runsById.set(run.id, run);
   }
 
+  // A job that was sent later is not a failure any more: the failure-rate
+  // pause measured on its earlier attempt lifts once the retries went out.
+  const lastSentAt = new Map<string, string>();
+  for (const rawResult of input.results) {
+    const result = parseApplyJobResult(rawResult);
+    if (!result || result.state !== "submitted") continue;
+    const at = result.completedAt ?? result.updatedAt;
+    const previous = lastSentAt.get(result.jobId);
+    if (!previous || previous < at) lastSentAt.set(result.jobId, at);
+  }
   const evidence: FailureAttemptEvidence[] = [];
   for (const rawResult of input.results) {
     const result = parseApplyJobResult(rawResult);
     if (!result || result.completedAt === null) continue;
-    if (result.state !== "failed" && result.state !== "blocked") continue;
-    if (applicationResultIsUserOwnedBlocker(result)) continue;
+    // A failure rate needs the attempts that worked in its sample too;
+    // counting only failures made every sample 100% failed, so a handful of
+    // failures in the window paused applying however many had been sent.
+    const succeeded =
+      result.state === "submitted" ||
+      (result.state === "awaiting_review" && !result.blockerReason);
+    if (!succeeded && result.state !== "failed" && result.state !== "blocked") {
+      continue;
+    }
+    if (!succeeded && applicationResultIsUserOwnedBlocker(result)) continue;
+    // A filled form whose page closed on restart did not fail on the site.
+    if (result.blockerSummary === PREPARED_PAGE_CLOSED_SUMMARY) continue;
+    // Nor did an application the person stepped into.
+    if (result.summary === PERSON_TOOK_OVER_SUMMARY) continue;
+    // Nor a send the site refused before anything reached it.
+    if (result.blockerSummary === SITE_UNREACHABLE_SUMMARY) continue;
+    // Nor work the app closing cut short (its pages close with it): a person
+    // restarting mid-batch paused all application work as "too many failed".
+    if (
+      result.detail.startsWith(APP_CLOSED_DETAIL_PREFIX) ||
+      result.summary === RETRY_STOPPED_SAFELY_SUMMARY
+    )
+      continue;
+    if (!succeeded) {
+      const sentAt = lastSentAt.get(result.jobId);
+      if (sentAt && sentAt >= (result.completedAt ?? result.updatedAt))
+        continue;
+    }
 
     const run = runsById.get(result.runId);
     if (
@@ -621,7 +672,7 @@ export function deriveApplicationFailureEvidence(input: {
     if (run?.state === "cancelled") continue;
     evidence.push({
       attemptId: `apply:${result.id}`,
-      failed: true,
+      failed: !succeeded,
       occurredAt: result.completedAt ?? result.updatedAt,
     });
   }
@@ -666,6 +717,16 @@ type PreparedBatchSampleInput = {
   requiredSampleRatio: number;
 };
 
+/** A sample must be a form the person can actually inspect, not a question or access handoff. */
+export function isReviewablePreparedResult(result: ApplyJobResult): boolean {
+  return (
+    result.state === "awaiting_review" &&
+    result.reviewCard != null &&
+    result.blockerReason == null &&
+    (result.pendingConsentRequestCount ?? 0) === 0
+  );
+}
+
 /**
  * Selects a completed automatic queue's prepared results for quality review.
  * `awaiting_review` is the only prepare-only state counted; submitted results
@@ -693,7 +754,7 @@ export function derivePreparedBatchSampleInput(input: {
       (result) =>
         result.runId === run.id &&
         run.jobIds.includes(result.jobId) &&
-        result.state === "awaiting_review",
+        isReviewablePreparedResult(result),
     )
     .map((result) => ({ id: result.id }));
 
@@ -1122,7 +1183,7 @@ async function persistAutomaticPreparedBatchReview(input: {
       prepared: sample.prepared,
       requiredSampleRatio: sample.requiredSampleRatio,
       explanation:
-        "A deterministic sample of this prepared queue must be reviewed before more automatic preparation continues.",
+        "Look over a few of these prepared applications before Job Finder prepares more on its own.",
       recoveryGuidance:
         "Review every selected prepared application, then mark the sample complete from Safeguards before continuing the queue.",
       now: input.now,
@@ -1190,6 +1251,46 @@ async function persistAutomaticSimultaneousConflicts(input: {
   });
 }
 
+/**
+ * Re-measures every standing application failure pause from the evidence on
+ * record. A pause is otherwise only re-measured when a run ends, and a pause
+ * stops runs from starting, so one measured on stale evidence could never
+ * lift by itself.
+ */
+export async function refreshAutomaticApplicationFailurePauses(input: {
+  ctx: WorkspaceServiceContext;
+  now: string;
+}): Promise<void> {
+  const [intelligence, campaignState, runs, results] = await Promise.all([
+    input.ctx.repository.getIntelligenceState(),
+    input.ctx.repository.getCampaignState(),
+    input.ctx.repository.listApplyRuns(),
+    input.ctx.repository.listApplyJobResults(),
+  ]);
+  for (const campaign of campaignState?.campaigns ?? []) {
+    const pauseId = `${AUTOMATIC_APPLICATION_FAILURE_PAUSE_ID}:${campaign.id}`;
+    if (
+      !intelligence.safeguards.abnormalFailurePauses.some(
+        (pause) => pause.id === pauseId,
+      )
+    ) {
+      continue;
+    }
+    await persistAutomaticFailurePause({
+      ctx: input.ctx,
+      campaign,
+      pauseId,
+      evidence: deriveApplicationFailureEvidence({
+        runs,
+        results,
+        campaignId: campaign.id,
+      }),
+      workKind: "application",
+      now: input.now,
+    });
+  }
+}
+
 /** Applies cap/failure evidence and campaign notifications after terminal apply persistence. */
 export async function persistAutomaticApplicationSafeguards(input: {
   ctx: WorkspaceServiceContext;
@@ -1236,6 +1337,7 @@ export async function persistAutomaticApplicationSafeguards(input: {
       campaign,
       pauseId: `${AUTOMATIC_APPLICATION_FAILURE_PAUSE_ID}:${campaign.id}`,
       evidence,
+      workKind: "application",
       now: input.now,
     });
   }

@@ -13,6 +13,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const state = vi.hoisted(() => ({
   latestRunVerdicts: [] as unknown[],
+  alsoFoundShown: [] as unknown[],
 }));
 
 vi.mock(
@@ -48,8 +49,12 @@ vi.mock("./discovery-filters-panel", () => ({
   ),
 }));
 vi.mock("./discovery-results-panel", () => ({
-  DiscoveryResultsPanel: (props: { latestRunVerdict?: unknown }) => {
+  DiscoveryResultsPanel: (props: {
+    latestRunVerdict?: unknown;
+    areAlsoFoundShown?: unknown;
+  }) => {
     state.latestRunVerdicts.push(props.latestRunVerdict);
+    state.alsoFoundShown.push(props.areAlsoFoundShown);
     return <section aria-label="Job results">Job results</section>;
   },
 }));
@@ -112,6 +117,7 @@ function createJob(id: string): SavedJob {
 interface ScreenOverrides {
   jobs?: readonly SavedJob[];
   recentRuns?: readonly DiscoveryRunRecord[];
+  searchSelectivity?: "best_matches" | "balanced" | "wide_net";
 }
 
 function buildScreen(overrides?: ScreenOverrides) {
@@ -140,6 +146,9 @@ function buildScreen(overrides?: ScreenOverrides) {
         onSelectJob={vi.fn()}
         recentRuns={overrides?.recentRuns ?? []}
         searchPreferences={searchPreferences}
+        {...(overrides?.searchSelectivity
+          ? { searchSelectivity: overrides.searchSelectivity }
+          : {})}
         selectedJob={null}
         sourceAccessPrompts={[]}
       />
@@ -162,20 +171,18 @@ afterEach(() => {
 });
 
 describe("DiscoveryScreen first-result reveal", () => {
-  it("reveals the Results view exactly once when the first saved results arrive", () => {
+  it("opens on Results even when empty, and stays there when the first results arrive", () => {
     const view = render(buildScreen({ jobs: [] }));
-    expectSetupView();
+    // The goal box and Search now are the setup; the defaults panel is one
+    // click away, never the landing view.
+    expectResultsView();
 
-    // First empty→nonempty transition flips to Results automatically.
     view.rerender(buildScreen({ jobs: [createJob("first")] }));
     expectResultsView();
   });
 
   it("settles the route header when results arrive after Results was selected", () => {
     const view = render(buildScreen({ jobs: [] }));
-    fireEvent.click(
-      screen.getByRole("button", { name: /^Close search setup$/u }),
-    );
     expectResultsView();
 
     const scrollArea = document.querySelector<HTMLElement>(
@@ -201,7 +208,7 @@ describe("DiscoveryScreen first-result reveal", () => {
 
   it("never yanks the user back after they navigate away again", () => {
     const view = render(buildScreen({ jobs: [] }));
-    expectSetupView();
+    expectResultsView();
 
     view.rerender(buildScreen({ jobs: [createJob("reveal")] }));
     expectResultsView();
@@ -235,6 +242,19 @@ describe("DiscoveryScreen first-result reveal", () => {
     cleanup();
 
     state.latestRunVerdicts.length = 0;
+  });
+
+  it("opens with the weaker matches shown only under Cast a wide net", () => {
+    for (const [searchSelectivity, expected] of [
+      ["wide_net", true],
+      ["balanced", false],
+      ["best_matches", false],
+    ] as const) {
+      state.alsoFoundShown.length = 0;
+      render(buildScreen({ jobs: [createJob("one")], searchSelectivity }));
+      expect(state.alsoFoundShown.at(-1)).toBe(expected);
+      cleanup();
+    }
   });
 
   it("passes the newest-run verdict down so failed runs cannot read as no-matches", () => {

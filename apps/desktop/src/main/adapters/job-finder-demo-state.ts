@@ -1053,6 +1053,226 @@ export function createApplyQueueDemoState(): JobFinderRepositoryState {
 }
 
 /**
+ * Test-only seed for the real Apply prerequisite journey. The approved resume
+ * intentionally leaves one synthetic, unrelated role out so Apply must pause
+ * until the user acknowledges that omission in Resume Studio.
+ */
+export function createWorkHistoryReviewDriveState(): JobFinderRepositoryState {
+  const base = createApplyQueueDemoState();
+
+  return JobFinderRepositoryStateSchema.parse({
+    ...base,
+    profile: {
+      ...base.profile,
+      experiences: [
+        ...base.profile.experiences,
+        {
+          id: "experience_synthetic_sales_omission",
+          companyName: "Synthetic Market",
+          companyUrl: null,
+          title: "Sales Operations Associate",
+          employmentType: "Full-time",
+          location: "Remote",
+          workMode: ["remote"],
+          startDate: "2015-01",
+          endDate: "2015-12",
+          isCurrent: false,
+          isDraft: false,
+          summary: "Maintained synthetic customer operations reporting.",
+          achievements: [
+            "Prepared weekly pipeline reporting for account teams.",
+          ],
+          skills: [],
+          domainTags: [],
+          peopleManagementScope: null,
+          ownershipScope: null,
+        },
+      ],
+    },
+    resumeDrafts: base.resumeDrafts.map((draft) =>
+      draft.jobId === "job_ready"
+        ? {
+            ...draft,
+            sections: draft.sections.map((section) =>
+              section.id === "section_summary"
+                ? {
+                    ...section,
+                    text: base.profile.summary,
+                    origin: "imported" as const,
+                  }
+                : section.id === "section_experience"
+                  ? {
+                      ...section,
+                      entries: [
+                        ...section.entries.map((entry) =>
+                          entry.id === "entry_signal_systems"
+                            ? {
+                                ...entry,
+                                summary: base.profile.experiences[0]!.summary,
+                                bullets: entry.bullets.map((bullet) => ({
+                                  ...bullet,
+                                  text: base.profile.experiences[0]!
+                                    .achievements[0]!,
+                                })),
+                              }
+                            : entry,
+                        ),
+                        {
+                          id: "entry_synthetic_sales_omission",
+                          entryType: "experience",
+                          title: "Sales Operations Associate",
+                          subtitle: "Synthetic Market",
+                          location: "Remote",
+                          dateRange: "2015",
+                          summary:
+                            "Maintained synthetic customer operations reporting.",
+                          bullets: [],
+                          origin: "deterministic_fallback",
+                          locked: false,
+                          included: false,
+                          sortOrder: 3,
+                          profileRecordId:
+                            "experience_synthetic_sales_omission",
+                          sourceRefs: [],
+                          updatedAt: "2026-03-20T10:04:00.000Z",
+                        },
+                      ],
+                    }
+                  : section,
+            ),
+          }
+        : draft,
+    ),
+    resumeValidationResults: [
+      ...base.resumeValidationResults.filter(
+        (validation) => validation.draftId !== "resume_draft_job_ready",
+      ),
+      {
+        id: "resume_validation_job_ready_work_history",
+        draftId: "resume_draft_job_ready",
+        issues: [
+          {
+            id: "issue_work_history_review_experience_synthetic_sales_omission",
+            severity: "info",
+            category: "work_history_review",
+            sectionId: "section_experience",
+            entryId: "entry_synthetic_sales_omission",
+            bulletId: null,
+            message:
+              "Hidden by default for review: this role has a weaker career-family fit for the target job.",
+          },
+        ],
+        draftContentHash: null,
+        claimAssessments: [],
+        coverageComparison: null,
+        pageCount: 1,
+        validatedAt: "2026-03-20T10:04:00.000Z",
+      },
+    ],
+  });
+}
+
+/** Test-only state for driving the real search/apply agents against a local synthetic site. */
+export function createAgentOwnedBrowserDriveState(input: {
+  sourceUrl: string;
+  applicationUrl: string;
+  secondaryApplicationUrl?: string;
+}): JobFinderRepositoryState {
+  // This seed drives the real Apply pipeline, so it must carry the same
+  // approved, on-disk resume lineage as the apply-queue demo. Starting from
+  // the resume-workspace seed left every live drive blocked before browser
+  // launch because that seed intentionally has no generated assets.
+  const base = createApplyQueueDemoState();
+  return JobFinderRepositoryStateSchema.parse({
+    ...base,
+    searchPreferences: {
+      ...base.searchPreferences,
+      discovery: {
+        ...base.searchPreferences.discovery,
+        runJobBudget: 2,
+        targets: base.searchPreferences.discovery.targets.map((target) => ({
+          ...target,
+          startingUrl: input.sourceUrl,
+        })),
+      },
+    },
+    savedJobs: base.savedJobs.map((job) =>
+      job.id === "job_ready"
+        ? {
+            ...job,
+            title: "Platform Engineer",
+            company: "Northwind Tools",
+            summary:
+              "Own a dependable internal platform spanning TypeScript, React, workflow automation, and design systems.",
+            description:
+              "Own dependable internal platforms used by product, engineering, and operations. Build TypeScript and React workflow tools, improve design-system foundations, automate operational work, and make production services easier to run. The team values measurable adoption, reliable incident recovery, and clear cross-functional leadership.",
+            keySkills: [
+              "TypeScript",
+              "React",
+              "Workflow Automation",
+              "Design Systems",
+              "Platform Reliability",
+            ],
+            responsibilities: [
+              "Own the internal platform roadmap.",
+              "Build workflow automation for product and operations teams.",
+              "Improve the reliability and adoption of shared design-system infrastructure.",
+            ],
+            minimumQualifications: [
+              "Experience building TypeScript and React platforms.",
+              "Evidence of workflow automation and production reliability work.",
+            ],
+            preferredQualifications: [
+              "Experience leading cross-functional platform initiatives.",
+            ],
+            canonicalUrl: `${input.sourceUrl.replace(/\/$/u, "")}/jobs/platform-engineer`,
+            applicationUrl: input.applicationUrl,
+            employerWebsiteUrl: input.applicationUrl,
+            employerDomain: new URL(input.applicationUrl).hostname,
+          }
+        : job.id === "job_consent_queue" && input.secondaryApplicationUrl
+          ? {
+              ...job,
+              title: "Staff Product Designer",
+              company: "Contoso Labs",
+              canonicalUrl: `${input.sourceUrl.replace(/\/$/u, "")}/jobs/staff-product-designer`,
+              applicationUrl: input.secondaryApplicationUrl,
+              employerWebsiteUrl: input.secondaryApplicationUrl,
+              employerDomain: new URL(input.secondaryApplicationUrl).hostname,
+              screeningHints: {
+                ...job.screeningHints,
+                requiresConsentInterrupt: false,
+                requiresConsentInterruptKind: null,
+              },
+            }
+        : job,
+    ),
+    // Browser-drive fixtures start from approved resume lineage, not from the
+    // apply-queue demo's historical runs. Carrying those old run ids into a
+    // fresh Electron drive made startup recovery log "Unknown apply run" and
+    // polluted Needs you with tasks the harness never created.
+    applyRuns: [],
+    applyJobResults: [],
+    applySubmitApprovals: [],
+    applicationAuthorityEnvelopes: [],
+    submissionPreflights: [],
+    submissionExecutionGrants: [],
+    submissionIdempotencyRecords: [],
+    submissionArmedMarkers: [],
+    submissionOutcomeRecords: [],
+    applicationQuestionRecords: [],
+    applicationAnswerRecords: [],
+    applicationArtifactRefs: [],
+    applicationReplayCheckpoints: [],
+    applicationConsentRequests: [],
+    applicationRecords: [],
+    applicationAttempts: [],
+    userActionRequests: [],
+    userActionEvents: [],
+  });
+}
+
+/**
  * Isolated Electron drive seed for aggressive tailoring. Same synthetic Alex
  * Vanguard workspace as the apply-queue demo, with listing-asked skills and
  * wording stretches already on the ready draft so the studio can be driven

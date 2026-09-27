@@ -44,7 +44,6 @@ const WIDE_SIDEBAR_DESTINATIONS = Object.freeze([
   "Find jobs",
   "Shortlisted",
   "Applications",
-  "Documents",
   "Companies",
   "Outcomes",
   "Search plans",

@@ -13,6 +13,7 @@ import type {
   ProofBankEntryFormEntry,
   ReusableAnswerFormEntry,
 } from "./job-finder-types";
+import { deriveJobSourceLabel } from "./job-source-display-name";
 import {
   booleanToSelect,
   buildFullName,
@@ -151,11 +152,16 @@ function toDiscoveryTargets(
     const startingUrlChanged =
       persistedTarget !== undefined &&
       persistedTarget.startingUrl.trim() !== startingUrl;
+    const label = target.label.trim();
+    const keptGeneratedLabel =
+      startingUrlChanged &&
+      persistedTarget?.label.trim() ===
+        deriveJobSourceLabel(persistedTarget.startingUrl);
 
     return {
       instructionStatus: startingUrlChanged ? "missing" : instructionStatus,
       id: target.id,
-      label: target.label.trim(),
+      label: keptGeneratedLabel ? deriveJobSourceLabel(startingUrl) : label,
       startingUrl,
       enabled: target.enabled,
       adapterKind: "auto",
@@ -937,12 +943,17 @@ export function buildSearchPreferencesPayload(
           currency: compensationCurrency,
           currencyStatus,
         },
-    tailoringMode: values.tailoringMode,
+    // The resume approach and the strict collection filter are saved from
+    // Settings (AI behavior), not from this form. A profile save carries the
+    // saved values through unchanged so it can never write back a stale copy
+    // over a choice made in Settings while this form was open.
+    tailoringMode: searchPreferences.tailoringMode,
     companyBlacklist: parseListInput(values.companyBlacklist),
     companyWhitelist: parseListInput(values.companyWhitelist),
     discovery: {
       ...searchPreferences.discovery,
-      collectOnlyHardCriteriaMatches: values.collectOnlyHardCriteriaMatches,
+      collectOnlyHardCriteriaMatches:
+        searchPreferences.discovery.collectOnlyHardCriteriaMatches ?? false,
       targets: toDiscoveryTargets(
         meaningfulDiscoveryTargets,
         searchPreferences.discovery.targets,

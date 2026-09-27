@@ -6,6 +6,7 @@ import type {
   ApplicationCrmSettings,
   BrowserSessionState,
   JobFinderSettings,
+  UpdateAiBehaviorInput,
   UpdateApplicationDefaultsInput,
   UpdateWorkspaceBehaviorInput,
 } from "@unemployed/contracts";
@@ -82,6 +83,9 @@ function createCallbacks() {
     onUpdateWorkspaceBehavior: vi.fn<
       (input: UpdateWorkspaceBehaviorInput) => Promise<boolean>
     >(() => Promise.resolve(true)),
+    onUpdateAiBehavior: vi.fn<
+      (input: UpdateAiBehaviorInput) => Promise<boolean>
+    >(() => Promise.resolve(true)),
   };
 }
 
@@ -96,6 +100,7 @@ function renderScreen(settings: JobFinderSettings, callbacks: Callbacks) {
         isWorkspaceResetPending={false}
         onResetWorkspace={callbacks.onResetWorkspace}
         onSettingsDraftEdited={callbacks.onSettingsDraftEdited}
+        onUpdateAiBehavior={(input) => callbacks.onUpdateAiBehavior(input)}
         onUpdateAppearanceTheme={(theme) =>
           callbacks.onUpdateAppearanceTheme(theme)
         }
@@ -106,6 +111,7 @@ function renderScreen(settings: JobFinderSettings, callbacks: Callbacks) {
         onUpdateWorkspaceBehavior={(input) =>
           callbacks.onUpdateWorkspaceBehavior(input)
         }
+        searchPreferences={{ tailoringMode: "balanced" }}
         settings={settings}
       />
     </MemoryRouter>,
@@ -168,7 +174,7 @@ describe("Settings section nav is real navigation", () => {
     }
   });
 
-  it("names the sections in plain language without changing the prepare-only boundary", () => {
+  it("names the sections in plain language and keeps account access person-owned", () => {
     renderScreen(parseSettings(), createCallbacks());
 
     const nav = screen.getByRole("navigation", { name: "Settings sections" });
@@ -182,9 +188,11 @@ describe("Settings section nav is real navigation", () => {
     const authority = screen.getByRole("region", {
       name: APPLICATION_AUTHORITY_LABEL,
     });
-    // The renamed tab still describes exactly the same boundary.
     expect(
-      within(authority).getByText(/never creates an account/i),
+      within(authority).getByText(/account creation pause for you/i),
+    ).toBeTruthy();
+    expect(
+      within(authority).getByText(/never stores a password/i),
     ).toBeTruthy();
     expect(
       within(authority).queryByRole("button", { name: /submit/i }),
@@ -203,7 +211,8 @@ describe("Settings save ownership", () => {
 
     for (const label of [
       "App & device",
-      "Application defaults",
+      "AI behavior",
+      "Resume look",
       WORKSPACE_BEHAVIOR_LABEL,
     ]) {
       const region = screen.getByRole("region", { name: label });
@@ -220,7 +229,7 @@ describe("Settings save ownership", () => {
       name: WORKSPACE_BEHAVIOR_LABEL,
     });
     const save = within(region).getByRole<HTMLButtonElement>("button", {
-      name: "Save workspace behavior",
+      name: "Save browser & saved jobs",
     });
 
     expect(save.disabled).toBe(true);
@@ -256,7 +265,7 @@ describe("Settings save ownership", () => {
 
     fireEvent.click(
       within(bar as HTMLElement).getByRole("button", {
-        name: "Save workspace behavior",
+        name: "Save browser & saved jobs",
       }),
     );
 
@@ -274,7 +283,7 @@ describe("Settings save ownership", () => {
     // The section that committed reports its own confirmation, so "saved"
     // and "never touched" are no longer the same quiet state.
     expect(
-      within(workspace).getByText("Workspace behavior saved."),
+      within(workspace).getByText("Browser & saved jobs saved."),
     ).toBeTruthy();
   });
 
@@ -311,6 +320,45 @@ describe("Settings save ownership", () => {
 
     await waitFor(() => expect(unsavedBar()).toBeNull());
     expect(within(tracker).getByText("Tracker settings saved.")).toBeTruthy();
+  });
+
+  it("saves the apply mode on press and names a typed daily limit in the bar", async () => {
+    const callbacks = createCallbacks();
+    renderScreen(parseSettings(), callbacks);
+
+    const applying = screen.getByRole("region", {
+      name: APPLICATION_AUTHORITY_LABEL,
+    });
+    // The mode is the one switch: nothing is left outstanding, so leaving
+    // Settings can no longer drop a chosen Send for me.
+    fireEvent.click(
+      within(applying).getByRole("radio", { name: /Send for me/ }),
+    );
+    await waitFor(() =>
+      expect(callbacks.onUpdateApplicationDefaults).toHaveBeenCalledWith({
+        applicationAutomationMode: "autonomous_submit",
+        maxApplicationsPerLocalDay: 20,
+      }),
+    );
+    expect(unsavedBar()).toBeNull();
+
+    fireEvent.change(
+      within(applying).getByLabelText("Most applications in one day"),
+      { target: { value: "5" } },
+    );
+    const bar = unsavedBar();
+    expect(bar?.textContent).toContain("Unsaved changes in Applying.");
+    fireEvent.click(
+      within(bar as HTMLElement).getByRole("button", {
+        name: "Save daily limit",
+      }),
+    );
+    await waitFor(() =>
+      expect(callbacks.onUpdateApplicationDefaults).toHaveBeenLastCalledWith({
+        applicationAutomationMode: "autonomous_submit",
+        maxApplicationsPerLocalDay: 5,
+      }),
+    );
   });
 
   it("names every dirty section and offers no save when more than one is outstanding", () => {
@@ -354,14 +402,14 @@ describe("Settings save ownership", () => {
     fireEvent.click(within(workspace).getAllByRole("switch")[0]!);
     fireEvent.click(
       within(workspace).getByRole("button", {
-        name: "Save workspace behavior",
+        name: "Save browser & saved jobs",
       }),
     );
 
     await waitFor(() =>
       expect(
         within(workspace).getByText(
-          "Workspace behavior was not saved. Retry before leaving this page.",
+          "Browser & saved jobs were not saved. Retry before leaving this page.",
         ),
       ).toBeTruthy(),
     );

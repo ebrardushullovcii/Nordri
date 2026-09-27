@@ -1093,6 +1093,11 @@ export const ResumeProposalApprovalBlockerSchema = z.object({
   bulletId: NonEmptyStringSchema.nullable().default(null),
   flaggedText: NonEmptyStringSchema.nullable().default(null),
   message: NonEmptyStringSchema,
+  // `needs_confirmation`: a stretch the person keeps or removes under Lines to
+  // confirm after accepting. `unsupported` (and absent, on older messages):
+  // the saved evidence does not back the wording, so it blocks approval until
+  // it is rewritten or approved as accurate.
+  kind: z.enum(["needs_confirmation", "unsupported"]).optional(),
 });
 export type ResumeProposalApprovalBlocker = z.infer<
   typeof ResumeProposalApprovalBlockerSchema

@@ -831,7 +831,7 @@ export function InterviewHelperPage() {
                 </Button>
                 <Button
                   aria-label="Close window"
-                  className="h-full w-12 rounded-none border-0 bg-transparent p-0 text-muted-foreground shadow-none hover:bg-(--button-close-hover) hover:text-primary-foreground"
+                  className="h-full w-12 rounded-none border-0 bg-transparent p-0 text-muted-foreground shadow-none hover:bg-(--button-close-hover) hover:text-primary-fill-foreground"
                   disabled={!windowControlsState.isClosable}
                   onClick={closeWindow}
                   size="icon-xs"

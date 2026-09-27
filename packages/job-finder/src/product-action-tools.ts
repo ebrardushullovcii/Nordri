@@ -19,6 +19,7 @@ import {
   type StrictObjectJsonSchema,
 } from "@unemployed/contracts";
 
+import { PROFILE_ASSISTANT_UNAVAILABLE_MESSAGE } from "./internal/workspace-profile-copilot-methods";
 import type { JobFinderWorkspaceService } from "./internal/workspace-service-contracts";
 
 type ProductActionCapabilities = Pick<
@@ -294,6 +295,15 @@ function failure(
 }
 
 function toSafeFailure(tool: JobFinderProductActionToolName, error: unknown) {
+  // The Assistant's outage sentence is written for the person and says the
+  // question was kept. Replacing it with the generic failure turned "the AI
+  // did not answer" into "something went wrong".
+  if (
+    error instanceof Error &&
+    error.message === PROFILE_ASSISTANT_UNAVAILABLE_MESSAGE
+  ) {
+    return failure(tool, "execution_failed", error.message, true);
+  }
   const message = error instanceof Error ? error.message.toLowerCase() : "";
   if (message.includes("unknown") || message.includes("not found")) {
     return failure(

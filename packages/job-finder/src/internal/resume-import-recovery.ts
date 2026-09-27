@@ -1,5 +1,6 @@
 import {
   CandidateProfileSchema,
+  RESUME_IMPORT_INTERRUPTED_MESSAGE,
   ResumeImportModelRoleStateSchema,
   ResumeImportRunSchema,
   type CandidateProfile,
@@ -48,6 +49,64 @@ export function recoverInterruptedDeferredVisionRun(input: {
         errorMessage: interruptedVisionMessage,
       },
     },
+  });
+}
+
+export const interruptedTextImportMessage = RESUME_IMPORT_INTERRUPTED_MESSAGE;
+
+const inProgressImportStatuses = new Set<ResumeImportRun["status"]>([
+  "queued",
+  "parsing",
+  "extracting",
+  "reconciling",
+]);
+
+/**
+ * A text import still marked in progress when no import runs in this process
+ * was cut off by the app closing. Left alone it read "Importing" forever on
+ * Profile and gave no hint on guided setup that anything had happened.
+ *
+ * A run whose visual scan is still running here is live, and a run the text
+ * stage already finalized (`completedAt` set) was not cut off mid-text: older
+ * builds marked it in progress again while the visual scan ran. Such a run
+ * goes back to the settled status its candidates imply; it is never reported
+ * as stopped, because its text import was applied.
+ */
+export function recoverInterruptedTextImportRun(input: {
+  run: ResumeImportRun;
+  isImportActiveInCurrentProcess: boolean;
+  isVisionActiveInCurrentProcess?: boolean;
+  now?: string;
+}): ResumeImportRun {
+  const run = ResumeImportRunSchema.parse(input.run);
+  if (
+    !inProgressImportStatuses.has(run.status) ||
+    input.isImportActiveInCurrentProcess ||
+    input.isVisionActiveInCurrentProcess
+  ) {
+    return run;
+  }
+  if (run.completedAt !== null) {
+    const pendingReview =
+      run.candidateCounts.needsReview + (run.candidateCounts.abstained ?? 0);
+    return ResumeImportRunSchema.parse({
+      ...run,
+      status: pendingReview > 0 ? "review_ready" : "applied",
+    });
+  }
+  const now = input.now ?? new Date().toISOString();
+  return ResumeImportRunSchema.parse({
+    ...run,
+    status: "failed",
+    completedAt: now,
+    errorMessage: interruptedTextImportMessage,
+    failureKind: "interrupted",
+    warnings: [
+      ...run.warnings.filter(
+        (warning) => warning !== interruptedTextImportMessage,
+      ),
+      interruptedTextImportMessage,
+    ],
   });
 }
 

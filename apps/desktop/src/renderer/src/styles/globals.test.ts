@@ -174,6 +174,24 @@ const LIGHT_THEME = themeScope(':root[data-theme="light"]');
 const DARK_THEME = themeScope(':root,\n:root[data-theme="dark"]');
 const ROOT_SCOPE = themeScope(":root {");
 
+/**
+ * The dark surface ladder, read from the stylesheet instead of copied as hex
+ * literals, so every contrast assertion below measures the palette that
+ * actually ships. The ladder itself is pinned in "dark surface ladder".
+ */
+const DK = {
+  rail: readToken(DARK_THEME, "--sidebar-bg"),
+  background: readToken(DARK_THEME, "--background"),
+  surface: readToken(DARK_THEME, "--surface"),
+  field: readToken(DARK_THEME, "--field"),
+  card: readToken(DARK_THEME, "--card"),
+  popover: readToken(DARK_THEME, "--popover"),
+  secondary: readToken(DARK_THEME, "--secondary"),
+  strong: readToken(DARK_THEME, "--surface-strong"),
+  accent: readToken(DARK_THEME, "--accent"),
+  navActive: readToken(DARK_THEME, "--nav-active-surface"),
+};
+
 // Interior surfaces where status text, badges, and chips actually render.
 const LIGHT_SURFACES = {
   canvas: "#e6e8eb",
@@ -187,26 +205,26 @@ const LIGHT_SURFACES = {
 // Surfaces a focus indicator can sit against, including outer chrome.
 const RING_ADJACENT_LIGHT = ["#dfe2e6", ...Object.values(LIGHT_SURFACES)];
 const RING_ADJACENT_DARK = [
-  "#111315",
-  "#151719",
-  "#1b1e21",
-  "#202429",
-  "#22262b",
-  "#29313a",
+  DK.background,
+  DK.surface,
+  DK.card,
+  DK.popover,
+  DK.secondary,
+  DK.accent,
 ];
 
 describe("global color tokens", () => {
   it("keeps dark muted text at AA contrast on every shared solid surface", () => {
     const mutedForeground = readToken(DARK_THEME, "--muted-foreground");
     const sharedDarkSurfaces = [
-      "#111315", // --background
-      "#151719", // --surface / shell
-      "#171a1d", // --surface-muted / field
-      "#1b1e21", // --card / panel
-      "#202429", // --popover / muted
-      "#22262b", // --secondary
-      "#242a31", // --surface-strong
-      "#29313a", // --accent
+      DK.background, // --background
+      DK.surface, // --surface / shell
+      DK.field, // --surface-muted / field
+      DK.card, // --card / panel
+      DK.popover, // --popover / muted
+      DK.secondary, // --secondary
+      DK.strong, // --surface-strong
+      DK.accent, // --accent
     ];
 
     for (const background of sharedDarkSurfaces) {
@@ -231,6 +249,7 @@ describe("global color tokens", () => {
   it("keeps light solid-fill foregrounds at AA contrast, including /90 hovers", () => {
     const fills: Array<[string, string]> = [
       ["--primary", "--primary-foreground"],
+      ["--primary-fill", "--primary-fill-foreground"],
       ["--active", "--active-foreground"],
       ["--positive", "--positive-foreground"],
       ["--destructive", "--destructive-foreground"],
@@ -256,6 +275,7 @@ describe("global color tokens", () => {
   it("keeps dark solid-fill foregrounds at AA contrast, including /90 hovers", () => {
     const fills: Array<[string, string]> = [
       ["--primary", "--primary-foreground"],
+      ["--primary-fill", "--primary-fill-foreground"],
       ["--active", "--active-foreground"],
       ["--positive", "--positive-foreground"],
       ["--destructive", "--destructive-foreground"],
@@ -265,7 +285,7 @@ describe("global color tokens", () => {
     for (const [fillToken, foregroundToken] of fills) {
       const fill = readToken(DARK_THEME, fillToken);
       const foreground = readToken(DARK_THEME, foregroundToken);
-      const hovered = alphaBlend(fill, 0.9, "#1b1e21");
+      const hovered = alphaBlend(fill, 0.9, DK.card);
 
       expect(
         contrastRatio(foreground, fill),
@@ -281,44 +301,59 @@ describe("global color tokens", () => {
   it("keeps the dark filled primary readable as a filled control, not a disabled chip", () => {
     // Dogfood round two: the dark "primary" CTA sat close enough to the
     // panels and to --secondary that reviewers read Approve resume /
-    // Fill it in / Finish in the open browser as disabled.
-    // The fill itself must therefore clear the AA text floor against the
-    // surfaces it renders on, and stay clearly separated from the
-    // secondary chip that sits beside it.
-    const primary = readToken(DARK_THEME, "--primary");
+    // Apply / Finish in the open browser as disabled. That was fixed by a
+    // pale #8fa6c6 slab at ~7:1 against the panels, which then read as the
+    // glare the person called "too much". The filled action now lives on
+    // --primary-fill: a mid steel-blue behind white text. It is identified
+    // as the one filled control by hue plus a 3:1 fill boundary against
+    // every surface it renders on, including --secondary beside it.
+    const fill = readToken(DARK_THEME, "--primary-fill");
+    const foreground = readToken(DARK_THEME, "--primary-fill-foreground");
     const secondary = readToken(DARK_THEME, "--secondary");
     const carrierSurfaces = [
-      "#1b1e21", // --card / --surface-panel
-      "#151719", // --surface
-      "#202429", // --popover
-      "#22262b", // --secondary
-      "#242a31", // --surface-strong (studio next-step bar)
+      DK.card, // --card / --surface-panel
+      DK.surface, // --surface
+      DK.popover, // --popover
+      DK.secondary, // --secondary
+      DK.strong, // --surface-strong (studio next-step bar)
     ];
 
     for (const background of carrierSurfaces) {
       expect(
-        contrastRatio(primary, background),
-        `dark --primary fill on ${background}`,
-      ).toBeGreaterThanOrEqual(4.5);
+        contrastRatio(fill, background),
+        `dark --primary-fill on ${background}`,
+      ).toBeGreaterThanOrEqual(3);
     }
 
     expect(
-      contrastRatio(primary, secondary),
-      "dark --primary must not read as the secondary chip",
-    ).toBeGreaterThanOrEqual(4.5);
+      contrastRatio(fill, secondary),
+      "dark --primary-fill must not read as the secondary chip",
+    ).toBeGreaterThanOrEqual(3);
+
+    for (const [label, backing] of [
+      ["fill", fill],
+      ["/90 hover over card", alphaBlend(fill, 0.9, DK.card)],
+    ] as const) {
+      expect(
+        contrastRatio(foreground, backing),
+        `dark --primary-fill-foreground on the ${label}`,
+      ).toBeGreaterThanOrEqual(4.5);
+    }
 
     // Restrained steel family: keep the blue channel leading without
     // drifting into a saturated neon accent.
-    const [red, green, blue] = [1, 3, 5].map((offset) =>
-      Number.parseInt(primary.slice(offset, offset + 2), 16),
-    ) as [number, number, number];
+    for (const color of [fill, readToken(DARK_THEME, "--primary")]) {
+      const [red, green, blue] = [1, 3, 5].map((offset) =>
+        Number.parseInt(color.slice(offset, offset + 2), 16),
+      ) as [number, number, number];
 
-    expect(blue, "primary stays blue-led").toBeGreaterThan(green);
-    expect(green, "primary stays blue-led").toBeGreaterThan(red);
-    expect(
-      blue - red,
-      "primary stays a restrained steel, not neon",
-    ).toBeLessThanOrEqual(70);
+      expect(blue, `${color} stays blue-led`).toBeGreaterThan(green);
+      expect(green, `${color} stays blue-led`).toBeGreaterThan(red);
+      expect(
+        blue - red,
+        `${color} stays a restrained steel, not neon`,
+      ).toBeLessThanOrEqual(100);
+    }
   });
 
   it("keeps light status text tokens at AA contrast on interior surfaces and tinted chips", () => {
@@ -372,10 +407,15 @@ describe("global color tokens", () => {
   it("keeps the selected sidebar destination distinguishable from the rail in both themes", () => {
     // Round-three review measured the light active row at rgb(227,229,233)
     // against a rgb(230,233,235) rail: a ~1% delta, so only a 2px bar told the
-    // user which page they were on. The selected fill now owns the state.
-    for (const [themeName, scope, canvas] of [
-      ["light", LIGHT_THEME, "#e6e8eb"],
-      ["dark", DARK_THEME, "#111315"],
+    // user which page they were on. In light the selected fill owns the state
+    // at >= 3:1. In dark a 3:1 fill against a near-black rail has to be a
+    // mid-grey slab (#5a6878 was), which was the loudest shape on screen; the
+    // dark state is carried by the accent bar (>= 3:1 against both the rail
+    // and the fill), the accent icon and the bolder label, over a fill that is
+    // a visible step but not a slab.
+    for (const [themeName, scope, canvas, fillFloor] of [
+      ["light", LIGHT_THEME, "#e6e8eb", 3],
+      ["dark", DARK_THEME, DK.background, 1.2],
     ] as const) {
       const rail = composite(
         readColorToken(scope, "--shell-header-bg"),
@@ -388,7 +428,15 @@ describe("global color tokens", () => {
       expect(
         contrastRatio(surface, rail),
         `${themeName} --nav-active-surface against the sidebar rail`,
-      ).toBeGreaterThanOrEqual(3);
+      ).toBeGreaterThanOrEqual(fillFloor);
+      if (themeName === "dark") {
+        // Dark only: the bar is the state carrier there. The light bar is
+        // drawn on its dark fill and never touches the rail.
+        expect(
+          contrastRatio(bar, rail),
+          `${themeName} --nav-active-bar against the sidebar rail`,
+        ).toBeGreaterThanOrEqual(3);
+      }
       expect(
         contrastRatio(foreground, surface),
         `${themeName} --nav-active-foreground on the selected fill`,
@@ -437,14 +485,14 @@ describe("global color tokens", () => {
 
   it("keeps dark status tokens at AA contrast so light fixes never regress dark", () => {
     const darkSurfaces = Object.values({
-      background: "#111315",
-      surface: "#151719",
-      field: "#171a1d",
-      card: "#1b1e21",
-      popover: "#202429",
-      secondary: "#22262b",
-      strong: "#242a31",
-      accent: "#29313a",
+      background: DK.background,
+      surface: DK.surface,
+      field: DK.field,
+      card: DK.card,
+      popover: DK.popover,
+      secondary: DK.secondary,
+      strong: DK.strong,
+      accent: DK.accent,
     });
     const statusScopes: Array<[string, ReadonlySet<string>]> = [
       ["--muted-foreground", new Set()],
@@ -453,7 +501,7 @@ describe("global color tokens", () => {
       ["--positive", new Set()],
       // Accent and surface-strong are transient hover fills; static
       // text-primary never renders on them.
-      ["--primary", new Set(["#29313a", "#242a31"])],
+      ["--primary", new Set([DK.accent, DK.strong])],
     ];
 
     for (const [token, excluded] of statusScopes) {
@@ -481,7 +529,7 @@ describe("global color tokens", () => {
       const foreground = readToken(DARK_THEME, textToken);
       const tintedSurface = readColorToken(DARK_THEME, surfaceToken);
 
-      for (const background of ["#1b1e21", "#202429"]) {
+      for (const background of [DK.card, DK.popover]) {
         expect(
           contrastRatio(foreground, composite(tintedSurface, background)),
           `dark ${textToken} on ${surfaceToken} over ${background}`,
@@ -526,14 +574,14 @@ describe("semantic status token separation", () => {
   }
 
   const STATUS_SURFACES_DARK = [
-    "#111315",
-    "#151719",
-    "#171a1d",
-    "#1b1e21",
-    "#202429",
-    "#22262b",
-    "#242a31",
-    "#29313a",
+    DK.background,
+    DK.surface,
+    DK.field,
+    DK.card,
+    DK.popover,
+    DK.secondary,
+    DK.strong,
+    DK.accent,
   ];
 
   it("never lets success duplicate the info family in either theme", () => {
@@ -552,10 +600,10 @@ describe("semantic status token separation", () => {
     // Exact pins guard the agreed restrained palette (sage green, no neon).
     expect(readToken(DARK_THEME, "--success-text")).toBe("#96c4a0");
     expect(readColorToken(DARK_THEME, "--success-surface")).toBe(
-      "rgba(150, 196, 160, 0.12)",
+      "rgba(150, 196, 160, 0.1)",
     );
     expect(readColorToken(DARK_THEME, "--success-border")).toBe(
-      "rgba(150, 196, 160, 0.4)",
+      "rgba(150, 196, 160, 0.28)",
     );
     expect(readToken(LIGHT_THEME, "--success-text")).toBe("#28563a");
     expect(readColorToken(LIGHT_THEME, "--success-surface")).toBe(
@@ -710,25 +758,27 @@ describe("keyboard focus ring discipline", () => {
 
 describe("editable field versus read-only well tokens", () => {
   it("preserves the read-only well colors exactly in both themes", () => {
-    expect(readToken(DARK_THEME, "--surface-well")).toBe("#171a1d");
-    expect(readToken(DARK_THEME, "--surface-well-border")).toBe("#3a4148");
+    expect(readToken(DARK_THEME, "--surface-well")).toBe("#191c20");
+    expect(readToken(DARK_THEME, "--surface-well-border")).toBe("#32373e");
     expect(readToken(LIGHT_THEME, "--surface-well")).toBe("#eef0f2");
     expect(readToken(LIGHT_THEME, "--surface-well-border")).toBe("#b1b8bf");
   });
 
-  it("keeps the editable field fill while raising its resting boundary", () => {
-    expect(readToken(DARK_THEME, "--field")).toBe("#171a1d");
+  it("keeps the editable field fill with a softened resting boundary that hover restores", () => {
+    expect(readToken(DARK_THEME, "--field")).toBe("#17191d");
     expect(readToken(LIGHT_THEME, "--field")).toBe("#fcfcfd");
-    expect(readToken(DARK_THEME, "--field-border")).toBe("#677480");
-    // Raised from #8a939c by the r15 contrast review: that value measured
-    // 2.91:1 on the light card and 2.54:1 on the light canvas, below the 3:1
-    // non-text floor, with only a 1.05:1 field-vs-card fill to fall back on.
-    // Dark already cleared it at 3.50/3.89 and is unchanged.
-    expect(readToken(LIGHT_THEME, "--field-border")).toBe("#7a828b");
+    // The resting border was softened from the r15 values (#677480 dark,
+    // #7a828b light, both >=3:1) because fields read as heavy outlined boxes.
+    // It now sits one step above the inert panel band (2.74:1 dark, 2.79:1
+    // light on the card) so the ladder panel < field < control holds, and the
+    // former values return on hover, so every interacted state clears 3:1.
+    expect(readToken(DARK_THEME, "--field-border")).toBe("#58606a");
+    expect(readToken(LIGHT_THEME, "--field-border")).toBe("#8e969f");
+    expect(readToken(DARK_THEME, "--field-border-hover")).toBe("#6a737d");
+    expect(readToken(LIGHT_THEME, "--field-border-hover")).toBe("#7a828b");
 
-    // The stronger resting boundary must stay quieter than the focus
-    // indicator so focus remains the strongest field state.
-    expect(readToken(DARK_THEME, "--field-focus-border")).toBe("#8aa0bf");
+    // Focus remains the strongest field state.
+    expect(readToken(DARK_THEME, "--field-focus-border")).toBe("#8aa6d6");
     expect(readToken(LIGHT_THEME, "--field-focus-border")).toBe("#3a5274");
   });
 
@@ -743,7 +793,7 @@ describe("editable field versus read-only well tokens", () => {
       ).toBeGreaterThanOrEqual(4.5);
     }
 
-    expect(readToken(DARK_THEME, "--field-strong")).toBe("#242a31");
+    expect(readToken(DARK_THEME, "--field-strong")).toBe("#20242a");
     expect(readToken(LIGHT_THEME, "--field-strong")).toBe("#ffffff");
   });
 });
@@ -1158,7 +1208,13 @@ describe("published type scale", () => {
  * 2.15:1 on the light canvas and 2.90:1 in dark.
  */
 describe("control boundary contrast", () => {
-  const DARK_INTERIOR = ["#1b1e21", "#111315", "#22262b", "#202429", "#151719"];
+  const DARK_INTERIOR = [
+    DK.card,
+    DK.background,
+    DK.secondary,
+    DK.popover,
+    DK.surface,
+  ];
   const LIGHT_INTERIOR = [
     "#f6f7f8",
     "#e6e8eb",
@@ -1206,7 +1262,7 @@ describe("control boundary contrast", () => {
 
   it("keeps inert chrome quieter than the control boundary", () => {
     for (const [theme, surface] of [
-      [DARK_THEME, "#1b1e21"],
+      [DARK_THEME, DK.card],
       [LIGHT_THEME, "#f6f7f8"],
     ] as const) {
       const control = contrastRatio(
@@ -1253,7 +1309,7 @@ describe("disabled control state", () => {
 
   it("keeps the disabled label legible on the surfaces it renders on", () => {
     for (const [theme, surfaces] of [
-      [DARK_THEME, ["#1b1e21", "#111315", "#202429"]],
+      [DARK_THEME, [DK.card, DK.background, DK.popover]],
       [LIGHT_THEME, ["#f6f7f8", "#e6e8eb", "#fbfbfc"]],
     ] as const) {
       const disabled = readToken(theme, "--disabled-foreground");
@@ -1305,7 +1361,7 @@ describe("link affordance", () => {
 
   it("keeps link text at AA on the surfaces it renders on", () => {
     for (const [theme, surfaces] of [
-      [DARK_THEME, ["#1b1e21", "#111315", "#202429"]],
+      [DARK_THEME, [DK.card, DK.background, DK.popover]],
       [LIGHT_THEME, ["#f6f7f8", "#e6e8eb", "#fbfbfc"]],
     ] as const) {
       for (const token of ["--link", "--link-hover"]) {
@@ -1329,7 +1385,7 @@ describe("link affordance", () => {
 describe("scrollbar visibility", () => {
   it("keeps the thumb at 3:1 against the surfaces it scrolls over", () => {
     for (const [theme, surfaces] of [
-      [DARK_THEME, ["#111315", "#1b1e21", "#202429"]],
+      [DARK_THEME, [DK.background, DK.card, DK.popover]],
       [LIGHT_THEME, ["#e6e8eb", "#f6f7f8", "#fbfbfc"]],
     ] as const) {
       const thumb = readColorToken(theme, "--scrollbar-thumb");
@@ -1350,15 +1406,19 @@ describe("scrollbar visibility", () => {
  */
 describe("divider visibility", () => {
   it("raises the divider tokens above the level they were invisible at", () => {
-    for (const [theme, surface] of [
-      [DARK_THEME, "#1b1e21"],
-      [LIGHT_THEME, "#f6f7f8"],
+    // Dark dividers sit lower than light ones on purpose: on a near-black
+    // card a 1.7:1 grey line reads as a bright rule (every list row and panel
+    // edge outlined), and the dark surface ladder already separates panels by
+    // fill. 1.35:1 is still a visible hairline on the card.
+    for (const [theme, surface, floor] of [
+      [DARK_THEME, DK.card, 1.35],
+      [LIGHT_THEME, "#f6f7f8", 1.7],
     ] as const) {
       for (const token of ["--border-subtle", "--border"]) {
         expect(
           contrastRatio(readToken(theme, token), surface),
           `${token} on ${surface}`,
-        ).toBeGreaterThanOrEqual(1.7);
+        ).toBeGreaterThanOrEqual(floor);
       }
     }
   });
@@ -1403,13 +1463,13 @@ describe("non-text boundary and state contrast (r15)", () => {
   // `bg-secondary`, `bg-(--surface-overlay-strong)`, `bg-background/NN`),
   // plus the selected-row fill a panel box can nest in.
   const DARK_CONTAINER_SURFACES = {
-    canvas: "#111315",
-    shell: "#151719",
-    card: "#1b1e21",
-    popover: "#202429",
-    secondary: "#22262b",
-    "surface-strong": "#242a31",
-    "overlay-strong over card": composite("rgba(0, 0, 0, 0.24)", "#1b1e21"),
+    canvas: DK.background,
+    shell: DK.surface,
+    card: DK.card,
+    popover: DK.popover,
+    secondary: DK.secondary,
+    "surface-strong": DK.strong,
+    "overlay-strong over card": composite("rgba(0, 0, 0, 0.24)", DK.card),
   };
   const LIGHT_CONTAINER_SURFACES = {
     canvas: "#e6e8eb",
@@ -1431,6 +1491,16 @@ describe("non-text boundary and state contrast (r15)", () => {
    */
   const PANEL_BOUNDARY_FLOOR = 2;
   /**
+   * The dark floor is lower than light's. Dark panels are separated by the
+   * surface ladder (canvas < card < popover), so their edge only has to be
+   * findable; at the former 2:1 floor every panel, card and row divider on a
+   * near-black canvas was a bright outline, the "too much contrast" the
+   * person reported. 1.25:1 against the lightest surface a panel box nests in
+   * (--surface-strong) keeps the edge visible there, and it is ~1.5-1.7:1
+   * against the card and canvas where most panels sit.
+   */
+  const PANEL_BOUNDARY_FLOOR_DARK = 1.25;
+  /**
    * The hard ceiling. 3:1 is the control-boundary floor, so an inert panel
    * edge must stay strictly under it: reaching 3:1 is definitionally
    * reclassifying this token as a component boundary, which is the exact
@@ -1439,10 +1509,10 @@ describe("non-text boundary and state contrast (r15)", () => {
   const PANEL_BOUNDARY_CEILING = 3;
 
   const DARK_FIELD_SURFACES = {
-    canvas: "#111315",
-    card: "#1b1e21",
-    field: "#171a1d",
-    input: "#202429",
+    canvas: DK.background,
+    card: DK.card,
+    field: DK.field,
+    input: DK.popover,
   };
   const LIGHT_FIELD_SURFACES = {
     canvas: "#e6e8eb",
@@ -1515,7 +1585,7 @@ describe("non-text boundary and state contrast (r15)", () => {
     for (const [themeName, theme, unselected] of [
       // The unselected segment is a ghost button: the surface behind the
       // group shows through.
-      ["dark", DARK_THEME, "#1b1e21"],
+      ["dark", DARK_THEME, DK.card],
       ["light", LIGHT_THEME, "#f6f7f8"],
     ] as const) {
       const selectedBar = readToken(theme, "--primary");
@@ -1543,7 +1613,7 @@ describe("non-text boundary and state contrast (r15)", () => {
       ["light", LIGHT_THEME, LIGHT_CONTAINER_SURFACES],
     ] as const) {
       const border = readToken(theme, "--surface-panel-border");
-      const card = themeName === "dark" ? "#1b1e21" : "#f6f7f8";
+      const card = themeName === "dark" ? DK.card : "#f6f7f8";
       const fieldBoundary = contrastRatio(
         readToken(theme, "--field-border"),
         card,
@@ -1555,7 +1625,11 @@ describe("non-text boundary and state contrast (r15)", () => {
         expect(
           ratio,
           `${themeName} --surface-panel-border on ${surfaceName} (band floor)`,
-        ).toBeGreaterThanOrEqual(PANEL_BOUNDARY_FLOOR);
+        ).toBeGreaterThanOrEqual(
+          themeName === "dark"
+            ? PANEL_BOUNDARY_FLOOR_DARK
+            : PANEL_BOUNDARY_FLOOR,
+        );
         // The ceiling, asserted on every surface rather than only the card:
         // this is what stops the token being raised back to control strength.
         expect(
@@ -1573,20 +1647,33 @@ describe("non-text boundary and state contrast (r15)", () => {
     }
   });
 
-  it("clears 3:1 for the editable field boundary on every surface a field sits on", () => {
-    // The field fill is within 1.05:1 of the card in light and 1.2:1 in dark,
-    // so this border has no fill fallback to lean on.
+  it("clears 3:1 for the hovered and focused field boundary on every surface a field sits on", () => {
+    // The resting border is deliberately softened below 3:1 (see globals.css)
+    // and carries a shadow and a lighter fill instead; the boundary the
+    // person interacts with, hover and focus, must still clear the 3:1
+    // non-text floor everywhere a field sits, and the resting border must
+    // not drift into invisibility.
     for (const [themeName, theme, surfaces] of [
       ["dark", DARK_THEME, DARK_FIELD_SURFACES],
       ["light", LIGHT_THEME, LIGHT_FIELD_SURFACES],
     ] as const) {
-      const border = readToken(theme, "--field-border");
+      const hoverBorder = readToken(theme, "--field-border-hover");
+      const focusBorder = readToken(theme, "--field-focus-border");
+      const restingBorder = readToken(theme, "--field-border");
 
       for (const [surfaceName, surface] of Object.entries(surfaces)) {
         expect(
-          contrastRatio(border, surface),
-          `${themeName} --field-border on ${surfaceName}`,
+          contrastRatio(hoverBorder, surface),
+          `${themeName} --field-border-hover on ${surfaceName}`,
         ).toBeGreaterThanOrEqual(3);
+        expect(
+          contrastRatio(focusBorder, surface),
+          `${themeName} --field-focus-border on ${surfaceName}`,
+        ).toBeGreaterThanOrEqual(3);
+        expect(
+          contrastRatio(restingBorder, surface),
+          `${themeName} resting --field-border on ${surfaceName} (softened, never invisible)`,
+        ).toBeGreaterThanOrEqual(2.3);
       }
     }
   });
@@ -1605,7 +1692,7 @@ describe("non-text boundary and state contrast (r15)", () => {
     ).not.toContain("var(--nav-active-bar)");
 
     for (const [themeName, theme, neighbour] of [
-      ["dark", DARK_THEME, "#1b1e21"],
+      ["dark", DARK_THEME, DK.card],
       ["light", LIGHT_THEME, "#f6f7f8"],
     ] as const) {
       const bar = readToken(theme, "--row-selected-bar");
@@ -1635,7 +1722,7 @@ describe("non-text boundary and state contrast (r15)", () => {
     ).not.toContain("bg-background/40");
 
     for (const [themeName, theme, canvas] of [
-      ["dark", DARK_THEME, "#111315"],
+      ["dark", DARK_THEME, DK.background],
       ["light", LIGHT_THEME, "#e6e8eb"],
     ] as const) {
       const border = readToken(theme, "--surface-panel-border");
@@ -1650,7 +1737,9 @@ describe("non-text boundary and state contrast (r15)", () => {
       expect(
         contrastRatio(border, canvas),
         `${themeName} boundary-card edge against the page canvas`,
-      ).toBeGreaterThanOrEqual(PANEL_BOUNDARY_FLOOR);
+      ).toBeGreaterThanOrEqual(
+        themeName === "dark" ? PANEL_BOUNDARY_FLOOR_DARK : PANEL_BOUNDARY_FLOOR,
+      );
       expect(
         contrastRatio(card, canvas),
         `${themeName} boundary-card fill against the page canvas`,
@@ -1663,7 +1752,7 @@ describe("non-text boundary and state contrast (r15)", () => {
     // overtake --border-strong, which "keeps inert chrome quieter than the
     // control boundary" also pins.
     for (const [themeName, theme, card] of [
-      ["dark", DARK_THEME, "#1b1e21"],
+      ["dark", DARK_THEME, DK.card],
       ["light", LIGHT_THEME, "#f6f7f8"],
     ] as const) {
       const panel = contrastRatio(
@@ -1684,13 +1773,16 @@ describe("non-text boundary and state contrast (r15)", () => {
     const floors: ReadonlyArray<
       readonly [string, string, string, string, number]
     > = [
-      ["dark --primary on card", DARK_THEME, "--primary", "#1b1e21", 6.69],
+      ["dark --primary on card", DARK_THEME, "--primary", DK.card, 6.69],
       ["light --primary on card", LIGHT_THEME, "--primary", "#f6f7f8", 6.5],
+      // Dark carries the selected destination on the bar (see "keeps the
+      // selected sidebar destination distinguishable"), so the rail floor
+      // moves to the bar and the fill keeps only a visible step.
       [
-        "dark --nav-active-surface on rail",
+        "dark --nav-active-bar on rail",
         DARK_THEME,
-        "--nav-active-surface",
-        "#151719",
+        "--nav-active-bar",
+        DK.rail,
         3,
       ],
       [
@@ -1704,7 +1796,7 @@ describe("non-text boundary and state contrast (r15)", () => {
         "dark --nav-active-bar on the selected fill",
         DARK_THEME,
         "--nav-active-bar",
-        "#5a6878",
+        DK.navActive,
         3,
       ],
       [
@@ -1718,8 +1810,11 @@ describe("non-text boundary and state contrast (r15)", () => {
         "dark --border-strong on card",
         DARK_THEME,
         "--border-strong",
-        "#1b1e21",
-        3.99,
+        DK.card,
+        // Lowered from 3.99 on purpose: outline controls read as bright boxes
+        // on the dark card. 3.7 on the card keeps >= 3:1 on every interior
+        // surface, which "clears 3:1 for the control boundary" enforces.
+        3.7,
       ],
       [
         "light --border-strong on card",
@@ -1728,7 +1823,7 @@ describe("non-text boundary and state contrast (r15)", () => {
         "#f6f7f8",
         3.88,
       ],
-      ["dark --link on card", DARK_THEME, "--link", "#1b1e21", 6.5],
+      ["dark --link on card", DARK_THEME, "--link", DK.card, 6.5],
       ["light --link on card", LIGHT_THEME, "--link", "#f6f7f8", 6.5],
     ];
 
@@ -1760,12 +1855,12 @@ describe("non-text boundary and state contrast (r15)", () => {
  * the groups above rather than redefined per test.
  */
 const DARK_CONTROL_SURFACES = {
-  canvas: "#111315",
-  surface: "#151719",
-  card: "#1b1e21",
-  popover: "#202429",
-  secondary: "#22262b",
-  "surface-strong": "#242a31",
+  canvas: DK.background,
+  surface: DK.surface,
+  card: DK.card,
+  popover: DK.popover,
+  secondary: DK.secondary,
+  "surface-strong": DK.strong,
 };
 const LIGHT_CONTROL_SURFACES = {
   canvas: "#e6e8eb",
@@ -1776,9 +1871,9 @@ const LIGHT_CONTROL_SURFACES = {
   "surface-strong": "#d3dde9",
 };
 const DARK_FIELD_FILLS = {
-  field: "#171a1d",
-  "field-strong": "#242a31",
-  input: "#202429",
+  field: DK.field,
+  "field-strong": DK.strong,
+  input: DK.popover,
 };
 const LIGHT_FIELD_FILLS = {
   field: "#fcfcfd",
@@ -1987,7 +2082,7 @@ describe("switch track and thumb (LEG-05, LEG-06)", () => {
     ).not.toContain("data-[state=unchecked]:bg-border");
     expect(switchSource).toContain("data-[state=unchecked]:bg-input");
     expect(switchSource).toContain(
-      "data-[state=checked]:bg-primary-foreground",
+      "data-[state=checked]:bg-primary-fill-foreground",
     );
     // --border stays exactly what it was: the Separator fill.
     expect(separatorSource).toContain("bg-border");
@@ -2004,9 +2099,9 @@ describe("switch track and thumb (LEG-05, LEG-06)", () => {
       // The thumb takes the foreground of the fill under it, because no one
       // thumb colour clears 3:1 against both an --input track and a --primary
       // one: in dark the two requirements have no overlapping solution.
-      const checkedThumb = readToken(theme, "--primary-foreground");
+      const checkedThumb = readToken(theme, "--primary-fill-foreground");
       const uncheckedThumb = readToken(theme, "--foreground-soft");
-      const checkedTrack = readToken(theme, "--primary");
+      const checkedTrack = readToken(theme, "--primary-fill");
       const uncheckedTrack = readToken(theme, "--input");
 
       expect(
@@ -2031,7 +2126,7 @@ describe("switch track and thumb (LEG-05, LEG-06)", () => {
     );
 
     for (const [themeName, theme, card] of [
-      ["dark", DARK_THEME, "#1b1e21"],
+      ["dark", DARK_THEME, DK.card],
       ["light", LIGHT_THEME, "#f6f7f8"],
     ] as const) {
       expect(
@@ -2053,7 +2148,7 @@ describe("progress meter and tab indicators", () => {
     );
 
     for (const [themeName, theme, card] of [
-      ["dark", DARK_THEME, "#1b1e21"],
+      ["dark", DARK_THEME, DK.card],
       ["light", LIGHT_THEME, "#f6f7f8"],
     ] as const) {
       const boundary = readToken(theme, "--border-strong");
@@ -2072,10 +2167,12 @@ describe("progress meter and tab indicators", () => {
       ).toBeGreaterThanOrEqual(3);
       // Recorded, not required: the data channel keeps its separation from
       // the track, which is what raising the track fill would have cost.
+      // The meter paints --primary-fill (progress-bar.tsx), a non-text data
+      // channel, so it carries the 3:1 non-text floor against its track.
       expect(
-        contrastRatio(readToken(theme, "--primary"), track),
+        contrastRatio(readToken(theme, "--primary-fill"), track),
         `${themeName} progress fill against its track`,
-      ).toBeGreaterThanOrEqual(4.5);
+      ).toBeGreaterThanOrEqual(3);
     }
   });
 
@@ -2097,13 +2194,14 @@ describe("progress meter and tab indicators", () => {
     ] as const) {
       const indicator = readToken(theme, "--primary");
 
-      // Recorded: this is the ratio that forced the weight step. If a later
-      // palette move lifts it past 3:1 the step can be reconsidered, and this
-      // number is the evidence for that decision.
+      // Recorded: this is the ratio that forced the weight step. The calmer
+      // dark palette dropped the panel edge, which lifted the dark indicator
+      // past 3:1 (light still sits under it), so the 2px step stays for light
+      // and is harmless in dark.
       expect(
         contrastRatio(indicator, readToken(theme, "--surface-panel-border")),
         `${themeName} line indicator on the list edge`,
-      ).toBeLessThan(3);
+      )[themeName === "light" ? "toBeLessThan" : "toBeGreaterThanOrEqual"](3);
       // The `default` variant draws its indicator on the list fill, where it
       // does clear the floor without a weight step of its own.
       expect(
@@ -2129,32 +2227,49 @@ describe("token/NN derived colours", () => {
     ["positive", "--positive"],
   ] as const;
 
-  function borderAlpha(source: string, tone: string): number {
-    const match = source.match(new RegExp(`border-${tone}\\/(\\d+)`));
-
-    if (!match?.[1]) {
-      throw new Error(`Missing border-${tone}/NN in the badge sources`);
+  // Tinted badge borders take their alpha from --badge-border-alpha, a
+  // per-theme percentage, so the same class renders 75% in light and 40% in
+  // dark.
+  function borderAlpha(source: string, tone: string, theme: string): number {
+    if (!source.includes(`border-${tone}/(--badge-border-alpha)`)) {
+      throw new Error(
+        `Missing border-${tone}/(--badge-border-alpha) in the badge sources`,
+      );
     }
 
-    return Number(match[1]) / 100;
+    const value = theme.match(/--badge-border-alpha\s*:\s*(\d+)%/)?.[1];
+
+    if (!value) {
+      throw new Error("Missing --badge-border-alpha in theme scope");
+    }
+
+    return Number(value) / 100;
   }
 
-  it("clears 3:1 for every tinted badge boundary against its own tint", () => {
+  it("keeps every tinted badge boundary visible on its own tint, at 3:1 in light", () => {
+    // A badge is an inert label: its text (>= 4.5:1 below) carries the
+    // status. Light keeps the 3:1 edge that stopped its chips reading as
+    // tinted text runs. Dark only needs a findable edge: at 3:1 every row of
+    // a dark list wore a bright coloured outline.
     const sources = `${badgeSource}\n${statusBadgeSource}`;
 
-    for (const [themeName, theme, card] of [
-      ["dark", DARK_THEME, "#1b1e21"],
-      ["light", LIGHT_THEME, "#f6f7f8"],
+    for (const [themeName, theme, card, edgeFloor] of [
+      ["dark", DARK_THEME, DK.card, 1.5],
+      ["light", LIGHT_THEME, "#f6f7f8", 3],
     ] as const) {
       for (const [tone, token] of TINTED_TONES) {
         const color = readToken(theme, token);
         const tint = alphaBlend(color, 0.15, card);
-        const border = alphaBlend(color, borderAlpha(sources, tone), tint);
+        const border = alphaBlend(
+          color,
+          borderAlpha(sources, tone, theme),
+          tint,
+        );
 
         expect(
           contrastRatio(border, tint),
           `${themeName} border-${tone} on its own /15 tint`,
-        ).toBeGreaterThanOrEqual(3);
+        ).toBeGreaterThanOrEqual(edgeFloor);
         expect(
           contrastRatio(color, tint),
           `${themeName} ${tone} label on its own /15 tint`,
@@ -2170,14 +2285,14 @@ describe("token/NN derived colours", () => {
       );
       const warningBorder = alphaBlend(
         warningText,
-        borderAlpha(statusBadgeSource, "warning"),
+        borderAlpha(statusBadgeSource, "warning", theme),
         warningTint,
       );
 
       expect(
         contrastRatio(warningBorder, warningTint),
         `${themeName} border-warning on the warning chip fill`,
-      ).toBeGreaterThanOrEqual(3);
+      ).toBeGreaterThanOrEqual(edgeFloor);
     }
   });
 
@@ -2186,7 +2301,8 @@ describe("token/NN derived colours", () => {
     // tinted chip passed `tintAlpha: null` above, so it had no tint assertion
     // at all. It passes at 6.27 / 6.23 - recorded rather than left uncovered.
     for (const [themeName, theme, card, floor] of [
-      ["dark", DARK_THEME, "#1b1e21", 6.2],
+      // Dark re-recorded at 6.0 after the card moved to #1d2025.
+      ["dark", DARK_THEME, DK.card, 6.0],
       ["light", LIGHT_THEME, "#f6f7f8", 6.2],
     ] as const) {
       const positive = readToken(theme, "--positive");
@@ -2203,7 +2319,7 @@ describe("token/NN derived colours", () => {
     // the surface behind them. They are legitimate as a tint under a border
     // or ring; this records that they can never BE the state channel.
     for (const [themeName, theme, card] of [
-      ["dark", DARK_THEME, "#1b1e21"],
+      ["dark", DARK_THEME, DK.card],
       ["light", LIGHT_THEME, "#f6f7f8"],
     ] as const) {
       const primary = readToken(theme, "--primary");
@@ -2236,7 +2352,7 @@ describe("scrim and sticky-edge separation (LEG-08)", () => {
     // the overlay packages inherit the measurement rather than re-deriving it.
     const darkDimmed = composite(
       readColorToken(DARK_THEME, "--modal-scrim"),
-      "#111315",
+      DK.background,
     );
     const lightDimmed = composite(
       readColorToken(LIGHT_THEME, "--modal-scrim"),
@@ -2276,7 +2392,7 @@ describe("scrim and sticky-edge separation (LEG-08)", () => {
     // the spelling the shell files reach for, composites BELOW even the inert
     // band, while the inert token itself clears it.
     for (const [themeName, theme, canvas] of [
-      ["dark", DARK_THEME, "#111315"],
+      ["dark", DARK_THEME, DK.background],
       ["light", LIGHT_THEME, "#e6e8eb"],
     ] as const) {
       const headerFill = composite(
@@ -2295,10 +2411,12 @@ describe("scrim and sticky-edge separation (LEG-08)", () => {
         ),
         `${themeName} border-border/15 is not a usable sticky edge`,
       ).toBeLessThan(2);
+      // Dark: the header and rail are now one step darker than the canvas,
+      // so the fill helps a little and the inert edge sits at ~1.66:1.
       expect(
         contrastRatio(readToken(theme, "--surface-panel-border"), canvas),
         `${themeName} --surface-panel-border is a usable sticky edge`,
-      ).toBeGreaterThanOrEqual(2);
+      ).toBeGreaterThanOrEqual(themeName === "dark" ? 1.6 : 2);
     }
   });
 });
@@ -2317,7 +2435,7 @@ describe("read-only well as a published primitive", () => {
     // readable, since the fill itself is deliberately a small step from the
     // panel. `bg-background/NN` supplies neither.
     for (const [themeName, theme, card] of [
-      ["dark", DARK_THEME, "#1b1e21"],
+      ["dark", DARK_THEME, DK.card],
       ["light", LIGHT_THEME, "#f6f7f8"],
     ] as const) {
       expect(
@@ -2346,5 +2464,51 @@ describe("interview overlay token scope", () => {
       (scope?.groups?.body ?? "").replace(/\/\*[\s\S]*?\*\//g, "").trim(),
       "the scope must declare nothing until the overlay package fills it",
     ).toBe("");
+  });
+});
+
+describe("dark surface ladder", () => {
+  it("keeps chrome at or below the canvas, and content rising above it", () => {
+    // The person's report: "darker color on main containers compared to the
+    // sidebar". The rail was mixed 9% toward --primary and was the lightest
+    // large surface on screen. The rule now: rail (chrome) <= canvas < card
+    // < popover, so the eye lands on the main column and raised surfaces
+    // read as raised.
+    const header = composite(
+      readColorToken(DARK_THEME, "--shell-header-bg"),
+      DK.background,
+    );
+
+    expect(relativeLuminance(DK.rail)).toBeLessThanOrEqual(
+      relativeLuminance(DK.background),
+    );
+    expect(relativeLuminance(header)).toBeLessThanOrEqual(
+      relativeLuminance(DK.background),
+    );
+    expect(relativeLuminance(DK.background)).toBeLessThan(
+      relativeLuminance(DK.card),
+    );
+    expect(relativeLuminance(DK.card)).toBeLessThan(
+      relativeLuminance(DK.popover),
+    );
+    // A visible step between the canvas and a panel, so panels do not need a
+    // bright outline to be found.
+    expect(contrastRatio(DK.card, DK.background)).toBeGreaterThanOrEqual(1.1);
+  });
+
+  it("paints the rail from a token instead of tinting it toward the accent", () => {
+    expect(globalsCss).toMatch(
+      /\[data-job-finder-sidebar\]\s*\{\s*background:\s*var\(--sidebar-bg\);/,
+    );
+    expect(readDeclaration(DARK_THEME, "--sidebar-bg")).not.toContain(
+      "--primary",
+    );
+    // Rail icons are neutral in dark; only the selected row spends the accent.
+    expect(readDeclaration(DARK_THEME, "--sidebar-icon-fg")).toBe(
+      "var(--muted-foreground)",
+    );
+    expect(readDeclaration(DARK_THEME, "--sidebar-icon-fg-active")).toBe(
+      "var(--primary)",
+    );
   });
 });

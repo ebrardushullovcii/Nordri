@@ -145,7 +145,7 @@ describe("createJobFinderWorkspaceService", () => {
       snapshot.searchPreferences.discovery.targets[0]?.draftInstructionId,
     ).toBeNull();
     expect(runs).toHaveLength(1);
-    expect(attempts).toHaveLength(6);
+    expect(attempts).toHaveLength(2);
     expect(attempts.every((attempt) => attempt.runId === runs[0]?.id)).toBe(
       true,
     );
@@ -326,7 +326,7 @@ describe("createJobFinderWorkspaceService", () => {
     expect(latestArtifact?.status).toBe("draft");
     expect(
       latestArtifact?.warnings.some((warning) =>
-        /still too thin|still missing/i.test(warning),
+        /still thin|not yet shown/i.test(warning),
       ),
     ).toBe(true);
     expect((latestArtifact?.searchGuidance ?? []).length).toBe(0);
@@ -413,7 +413,7 @@ describe("createJobFinderWorkspaceService", () => {
     expect(latestArtifact?.status).toBe("draft");
     expect(
       latestArtifact?.warnings.some((warning) =>
-        /still unproven/i.test(warning),
+        /did not confirm/i.test(warning),
       ),
     ).toBe(true);
   });

@@ -135,17 +135,37 @@ export function buildApplyFormObservation(
 ): ApplyFormObservation {
   const controls: ApplyFormControl[] = raw.controls.map((rawControl) => {
     const kind = toControlKind(rawControl);
+    const inputType = rawControl.inputType.toLowerCase();
+    const credentialRole =
+      inputType === "password"
+        ? ("password" as const)
+        : inputType === "email" ||
+            /\b(?:email|e-mail|username|user name|user id)\b/iu.test(
+              `${rawControl.label} ${rawControl.placeholder} ${rawControl.autocomplete}`,
+            )
+          ? ("identifier" as const)
+          : null;
     const base = {
-      ref: `c${rawControl.index}`,
+      ref: rawControl.ref ?? `c${rawControl.index}`,
       kind,
       label: rawControl.label.trim(),
       groupLabel: rawControl.groupLabel.trim(),
+      ...(kind === "radio"
+        ? {
+            choiceGroupKey: rawControl.name.trim()
+              ? `${rawControl.scopeKey ?? "root"}:name:${rawControl.name.trim()}`
+              : `ref:${rawControl.ref ?? `c${rawControl.index}`}`,
+          }
+        : {}),
       placeholder: rawControl.placeholder.trim(),
       required: rawControl.required,
       disabled: rawControl.disabled,
       readOnly: rawControl.readOnly,
       visible: rawControl.visible,
-      value: rawControl.value,
+      // A task-local password can be present long enough to submit a sign-in
+      // form, but it must never enter the observation/model/tool trace.
+      value: credentialRole === "password" ? "" : rawControl.value,
+      credentialRole,
       checked: rawControl.checked,
       options: rawControl.options,
       selectedOptionLabel: rawControl.selectedOptionLabel,
@@ -159,24 +179,53 @@ export function buildApplyFormObservation(
       attestationKind: inferAttestationKind(base),
       answered: false,
     };
-    return { ...control, answered: isControlAnswered(control) };
+    return {
+      ...control,
+      answered:
+        credentialRole === "password"
+          ? rawControl.value.length > 0
+          : isControlAnswered(control),
+    };
   });
+
+  // A radio group is one question. Once one option is selected, every option
+  // in that group belongs to an answered question; `checked` still identifies
+  // the chosen value. Treating each unselected option as a separate empty
+  // required field makes an agent overwrite a valid Yes with No (and vice
+  // versa) while trying to satisfy an impossible form state.
+  for (const control of controls) {
+    if (control.kind !== "radio") continue;
+    const groupKey = control.choiceGroupKey;
+    if (!groupKey) continue;
+    const group = controls.filter(
+      (candidate) =>
+        candidate.kind === "radio" && candidate.choiceGroupKey === groupKey,
+    );
+    control.answered = group.some((candidate) => candidate.checked);
+    // Radio choices must pass through the same saved-answer matching as a
+    // select. Otherwise a saved prose answer appears usable until every
+    // individual radio is refused, without a question for the person.
+    control.options = group.map(
+      (candidate) => candidate.label || candidate.value,
+    );
+  }
 
   // A phone field sitting next to a country picker must not repeat the code
   // the picker already shows, so each phone field is told what that is.
-  const shownCallingCode = controls
-    .filter((control) => isPhoneCountryControl(control))
-    .flatMap((control) => {
-      const shown = control.selectedOptionLabel || control.value;
-      const fromOption = optionCallingCodes(shown);
-      const explicit = explicitCallingCode(shown);
-      return fromOption.length === 1 && fromOption[0]
-        ? [fromOption[0]]
-        : explicit
-          ? [explicit]
-          : [];
-    })
-    .at(0) ?? null;
+  const shownCallingCode =
+    controls
+      .filter((control) => isPhoneCountryControl(control))
+      .flatMap((control) => {
+        const shown = control.selectedOptionLabel || control.value;
+        const fromOption = optionCallingCodes(shown);
+        const explicit = explicitCallingCode(shown);
+        return fromOption.length === 1 && fromOption[0]
+          ? [fromOption[0]]
+          : explicit
+            ? [explicit]
+            : [];
+      })
+      .at(0) ?? null;
   if (shownCallingCode) {
     for (const control of controls) {
       if (
@@ -192,11 +241,13 @@ export function buildApplyFormObservation(
   }
 
   const actions: ApplyFormAction[] = raw.actions.map((rawAction) => ({
-    ref: `a${rawAction.index}`,
+    ref: rawAction.ref ?? `a${rawAction.index}`,
     label: rawAction.label.trim(),
     kind: inferActionKind(rawAction.label),
     visible: rawAction.visible,
     disabled: rawAction.disabled,
+    ...(rawAction.formAction ? { formAction: rawAction.formAction } : {}),
+    ...(rawAction.formMethod ? { formMethod: rawAction.formMethod } : {}),
   }));
 
   const links: ApplyPageLink[] = raw.links.map((rawLink) => {
@@ -207,11 +258,12 @@ export function buildApplyFormObservation(
       resolved = null;
     }
     return {
-      ref: `l${rawLink.index}`,
+      ref: rawLink.ref ?? `l${rawLink.index}`,
       label: rawLink.label.trim(),
       href: resolved ? resolved.toString() : rawLink.href,
       origin:
-        resolved && (resolved.protocol === "https:" || resolved.protocol === "http:")
+        resolved &&
+        (resolved.protocol === "https:" || resolved.protocol === "http:")
           ? resolved.origin
           : null,
       destination: readLinkDestination(resolved),
@@ -238,7 +290,8 @@ export function buildApplyFormObservation(
           `${control.ref}|${control.kind}|${normalizeSignal(control.label)}|${control.required}|${control.answered}`,
       ),
       ...actions.map(
-        (action) => `${action.ref}|${action.kind}|${normalizeSignal(action.label)}`,
+        (action) =>
+          `${action.ref}|${action.kind}|${normalizeSignal(action.label)}`,
       ),
       ...links.map((link) => `${link.ref}|${normalizeSignal(link.label)}`),
     ]),
@@ -246,15 +299,33 @@ export function buildApplyFormObservation(
     origin,
     title: raw.title,
     step: readStepPosition(raw.stepLabel, raw.bodyText),
-    bodyTextExcerpt: raw.bodyText.slice(0, 4_000),
+    bodyTextExcerpt: raw.bodyText.slice(0, 6_000),
+    headings: raw.headings.map((heading) => ({
+      level: heading.level,
+      text: heading.text,
+    })),
     controls,
     actions,
     links,
+    clickables: raw.clickables.map((clickable) => ({
+      ref: clickable.ref ?? `e${clickable.index}`,
+      label: clickable.label,
+      role: clickable.role,
+      tagName: clickable.tagName,
+      visible: clickable.visible,
+    })),
+    openedTabs: raw.openedTabs.map((tab) => ({
+      index: tab.index,
+      url: tab.url,
+      title: tab.title,
+    })),
+    loading: raw.loading,
     validationErrors: raw.validationErrors,
     blocker: detectApplyBlocker({
       bodyText: raw.bodyText,
       controls,
       actions,
+      links,
     }),
   };
 }
@@ -270,12 +341,26 @@ export function createApplyPageHands(
 ): ApplyPageHands {
   return {
     observe: async () =>
-      buildApplyFormObservation(await mechanics.readPage(), now().toISOString()),
+      buildApplyFormObservation(
+        await mechanics.readPage(),
+        now().toISOString(),
+      ),
+    navigate: (url) => mechanics.navigate(url),
+    clickElement: (ref) => mechanics.clickElement(ref),
+    pressKey: (ref, key) => mechanics.pressKey(ref, key),
+    scroll: (direction) => mechanics.scroll(direction),
+    wait: (milliseconds) => mechanics.wait(milliseconds),
+    goBack: () => mechanics.goBack(),
+    readText: (ref) => mechanics.readText(ref),
     fillText: (ref, value) => mechanics.fillText(ref, value),
-    chooseOption: (ref, optionLabel) => mechanics.chooseOption(ref, optionLabel),
+    chooseOption: (ref, optionLabel) =>
+      mechanics.chooseOption(ref, optionLabel),
     setToggle: (ref, checked) => mechanics.setToggle(ref, checked),
     uploadFile: (ref, file) => mechanics.uploadFile(ref, file),
     clickAction: (ref) => mechanics.clickAction(ref),
     followLink: (ref) => mechanics.followLink(ref),
+    ...(mechanics.adoptOpenedTab
+      ? { adoptOpenedTab: (index) => mechanics.adoptOpenedTab!(index) }
+      : {}),
   };
 }

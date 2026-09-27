@@ -1,4 +1,3 @@
-import type { ResumeApplicationMode } from "@unemployed/contracts";
 import type { UseFieldArrayReturn, UseFormReturn } from "react-hook-form";
 import type {
   ProfileEditorValues,
@@ -17,8 +16,6 @@ interface ProfilePreferencesTabProps {
   >;
   preferencesForm: UseFormReturn<SearchPreferencesEditorValues>;
   profileForm: UseFormReturn<ProfileEditorValues>;
-  resumeApplicationMode?: ResumeApplicationMode;
-  onSelectResumeApplicationMode?: (mode: ResumeApplicationMode) => void;
 }
 
 export function ProfilePreferencesTab({
@@ -26,8 +23,6 @@ export function ProfilePreferencesTab({
   customAnswerArray,
   preferencesForm,
   profileForm,
-  resumeApplicationMode,
-  onSelectResumeApplicationMode,
 }: ProfilePreferencesTabProps) {
   return (
     <div className="grid gap-6">
@@ -36,13 +31,7 @@ export function ProfilePreferencesTab({
         customAnswerArray={customAnswerArray}
         profileForm={profileForm}
       />
-      <ProfilePreferencesTargetingSection
-        preferencesForm={preferencesForm}
-        {...(resumeApplicationMode ? { resumeApplicationMode } : {})}
-        {...(onSelectResumeApplicationMode
-          ? { onSelectResumeApplicationMode }
-          : {})}
-      />
+      <ProfilePreferencesTargetingSection preferencesForm={preferencesForm} />
     </div>
   );
 }

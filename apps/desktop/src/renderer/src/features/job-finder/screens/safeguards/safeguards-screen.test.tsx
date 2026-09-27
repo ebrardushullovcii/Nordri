@@ -157,7 +157,9 @@ describe("SafeguardsScreen", () => {
     expect(
       screen.getByText(/only when one of its limits is actually reached/i),
     ).toBeTruthy();
-    expect(screen.getByText(/Nothing is being held back right now/i)).toBeTruthy();
+    expect(
+      screen.getByText(/Nothing is being held back right now/i),
+    ).toBeTruthy();
   });
 
   it("hides the search and category filters when there is nothing to filter", () => {
@@ -248,7 +250,9 @@ describe("SafeguardsScreen", () => {
     );
     expect(advisory?.getAttribute("data-safeguard-blocked")).toBe("false");
     expect(screen.getByText("Advisory")).toBeTruthy();
-    expect(screen.getByText(/Nothing is being held back right now/i)).toBeTruthy();
+    expect(
+      screen.getByText(/Nothing is being held back right now/i),
+    ).toBeTruthy();
   });
 
   it("shows a conflict row and resolves it through the typed mutation", async () => {
@@ -586,7 +590,7 @@ describe("SafeguardsScreen", () => {
     // The sentence a job seeker can hold the product to, verbatim.
     expect(
       screen.getByText(
-        "Job Finder fills applications for your review and never submits them, never creates an account, never enters a password, and never answers a security check.",
+        "Job Finder fills applications and sends them only with your permission. It never asks for your password or solves CAPTCHA or MFA.",
       ),
     ).toBeTruthy();
 

@@ -12,6 +12,29 @@ import type { JobDiscoveryTarget, JobSource } from "@unemployed/contracts";
 export const UNNAMED_JOB_SOURCE_NAME = "A job source";
 
 /**
+ * Derives a useful label when the person pastes only a URL. Local replica
+ * sites share one host, so include their first path segment to keep sources
+ * distinguishable in the source library and search picker.
+ */
+export function deriveJobSourceLabel(startingUrl: string): string {
+  try {
+    const url = new URL(startingUrl.trim());
+    const hostname = url.hostname.replace(/^www\./, "");
+    const isLoopback =
+      hostname === "localhost" ||
+      hostname === "127.0.0.1" ||
+      hostname === "[::1]";
+    const firstPathSegment = url.pathname.split("/").filter(Boolean)[0];
+    if (isLoopback && firstPathSegment) {
+      return `${url.host}/${firstPathSegment}`;
+    }
+    return hostname || startingUrl.trim() || "URL not set";
+  } catch {
+    return startingUrl.trim() || "URL not set";
+  }
+}
+
+/**
  * Plain names for the recorded source value on a saved job. The record is
  * exhaustive so a new source kind cannot silently leak its enum name.
  */

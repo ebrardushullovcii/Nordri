@@ -10,17 +10,23 @@ import {
 import {
   applyResultBlockedBySiteSaves,
   applyResultIsStillRunning,
+  applyResultHasQuestionForPerson,
+  applyResultNeedsSecurityCheck,
   applyResultStoppedStructurally,
+  describeNotStartedApplication,
   formatElapsedMinutes,
   getApplicationStopReasonSentence,
   looksLikeAccountWall,
   looksLikeSignInWall,
+  PAUSED_BEFORE_APPLICATION_SENTENCE,
+  resolvePlannedApplyStanding,
   TRY_AGAIN_ACTION,
+  WAITING_FOR_BROWSER_TAB_SUMMARY,
+  type ApplyRunContext,
+  type PlannedApplyStanding,
 } from "./applications-recovery-state";
 
-type ApplyResult =
-  | JobFinderWorkspaceSnapshot["applyJobResults"][number]
-  | null;
+type ApplyResult = JobFinderWorkspaceSnapshot["applyJobResults"][number] | null;
 
 /** The only button an apply state is ever allowed to draw. */
 export type ApplyStateAction = "none" | "open_browser" | "try_again";
@@ -51,6 +57,11 @@ export interface ApplyStatePresentation {
   actionLabel: string | null;
   /** "1 question left for you", when the run handed one back. */
   questionsLeftLabel: string | null;
+  /**
+   * For a job its batch has not started yet: waiting its turn, held by the
+   * person's pause, or left behind by a batch that stopped. Null otherwise.
+   */
+  plannedStanding?: PlannedApplyStanding | null;
 }
 
 function formatQuestionsLeft(count: number): string | null {
@@ -61,6 +72,22 @@ function formatQuestionsLeft(count: number): string | null {
   return count === 1
     ? "1 question left for you"
     : `${count} questions left for you`;
+}
+
+export { WAITING_FOR_BROWSER_TAB_SUMMARY };
+
+/** What the service writes on a prepared result whose send was refused. */
+export const NOT_SENT_RESULT_PREFIX = "Not sent";
+
+/** "Not sent: <reason>. <detail>" for a refused send, else null. */
+export function describeNotSentResult(
+  result: { summary: string; detail?: string | null } | null | undefined,
+): string | null {
+  // Older and partial results can lack a summary; they were never refused.
+  if (typeof result?.summary !== "string") return null;
+  if (!result.summary.startsWith(NOT_SENT_RESULT_PREFIX)) return null;
+  const detail = result.detail?.trim() ?? "";
+  return detail ? `${result.summary}. ${detail}` : `${result.summary}.`;
 }
 
 /**
@@ -75,18 +102,68 @@ export function resolveApplyStatePresentation(input: {
   mode: ApplyMode;
   now?: number;
   pendingQuestionCount?: number;
+  recordFailure?: {
+    lastActionLabel: string;
+    lastUpdatedAt: string;
+  } | null;
   result: ApplyResult;
+  /**
+   * What the result's run is doing. Without it a planned job of a stopped
+   * batch read "Filling in (N min)" for ever.
+   */
+  run?: ApplyRunContext | null;
 }): ApplyStatePresentation {
-  const {
-    mode,
-    now = Date.now(),
-    pendingQuestionCount = 0,
-    result,
-  } = input;
+  const { mode, now = Date.now(), pendingQuestionCount = 0, result } = input;
   const questionsLeftLabel = formatQuestionsLeft(pendingQuestionCount);
   const reason = getApplicationStopReasonSentence(result);
 
-  if (applyResultIsStillRunning(result)) {
+  const plannedStanding = resolvePlannedApplyStanding(result, input.run);
+  if (plannedStanding === "not_started") {
+    return {
+      kind: "could_not_apply",
+      title: "Not started",
+      sentence: describeNotStartedApplication(input.run),
+      action: "try_again",
+      actionLabel: TRY_AGAIN_ACTION,
+      questionsLeftLabel: null,
+      plannedStanding,
+    };
+  }
+  if (plannedStanding === "paused") {
+    return {
+      kind: "filling_in",
+      title: "Paused",
+      sentence: PAUSED_BEFORE_APPLICATION_SENTENCE,
+      action: "none",
+      actionLabel: null,
+      questionsLeftLabel: null,
+      plannedStanding,
+    };
+  }
+  if (plannedStanding === "waiting_turn") {
+    return {
+      kind: "filling_in",
+      title: "Waiting its turn",
+      sentence: null,
+      action: "none",
+      actionLabel: null,
+      questionsLeftLabel: null,
+      plannedStanding,
+    };
+  }
+
+  if (applyResultIsStillRunning(result, input.run)) {
+    // The browser is full: say that it waits, and what frees a tab.
+    if (result?.summary === WAITING_FOR_BROWSER_TAB_SUMMARY) {
+      return {
+        kind: "filling_in",
+        title: "Waiting for a browser tab",
+        sentence: result.detail ?? null,
+        action: "none",
+        actionLabel: null,
+        questionsLeftLabel: null,
+      };
+    }
     const elapsed = formatElapsedMinutes(result?.startedAt, now);
     return {
       kind: "filling_in",
@@ -113,7 +190,40 @@ export function resolveApplyStatePresentation(input: {
     };
   }
 
+  if (
+    submissionOutcome === "outcome_uncertain" ||
+    result?.blockerReason === "submission_outcome_uncertain"
+  ) {
+    return {
+      kind: "needs_you",
+      title: "Needs you",
+      sentence:
+        "Job Finder could not confirm whether this application was sent. Check the employer site before trying to send it again.",
+      action: "open_browser",
+      actionLabel: OPEN_THE_BROWSER_ACTION,
+      questionsLeftLabel: null,
+    };
+  }
+
+  const recordFailureIsLatest =
+    input.recordFailure !== null &&
+    input.recordFailure !== undefined &&
+    (!result ||
+      Date.parse(input.recordFailure.lastUpdatedAt) >=
+        Date.parse(result.updatedAt));
+  if (recordFailureIsLatest) {
+    return {
+      kind: "could_not_apply",
+      title: "Could not apply",
+      sentence: input.recordFailure?.lastActionLabel ?? null,
+      action: "try_again",
+      actionLabel: TRY_AGAIN_ACTION,
+      questionsLeftLabel: null,
+    };
+  }
+
   const needsPerson =
+    applyResultNeedsSecurityCheck(result) ||
     looksLikeSignInWall({
       blockerCode: result?.blockerReason ?? null,
       text: `${result?.blockerSummary ?? ""} ${result?.detail ?? ""}`,
@@ -136,14 +246,34 @@ export function resolveApplyStatePresentation(input: {
     };
   }
 
-  if (result?.state === "awaiting_review" || submissionOutcome !== null) {
+  // The run worked the form to the end and handed back what only the
+  // person can answer: a declaration, a question nothing on file covers.
+  // That is theirs to finish, not a failure.
+  if (applyResultHasQuestionForPerson(result, pendingQuestionCount)) {
+    return {
+      kind: "needs_you",
+      title: "Needs you",
+      sentence:
+        reason ??
+        "The form asks something only you can answer. Answer it here, or finish it in the browser.",
+      action: "open_browser",
+      actionLabel: OPEN_THE_BROWSER_ACTION,
+      questionsLeftLabel,
+    };
+  }
+
+  if (result?.state === "awaiting_review") {
+    // A send that was asked for and refused says why (the service writes
+    // "Not sent: ..." on the result); the old row said nothing at all.
+    const notSent = describeNotSentResult(result);
     return {
       kind: "ready_to_send",
       title: "Ready to send",
       sentence:
-        mode === "apply_for_me"
+        notSent ??
+        (mode === "apply_for_me"
           ? "Job Finder filled it in but did not send it. Read it over and click Apply on the site."
-          : "Job Finder filled it in. Read it over and click Apply on the site.",
+          : "Job Finder filled it in. Read it over and click Apply on the site."),
       action: "open_browser",
       actionLabel: OPEN_THE_BROWSER_ACTION,
       questionsLeftLabel,
@@ -165,10 +295,24 @@ export function resolveApplyStatePresentation(input: {
     };
   }
 
+  // A job its batch stopped around (or one the person skipped) was never
+  // filled in; it read "Ready to send" with nothing to send.
+  if (result?.state === "skipped") {
+    return {
+      kind: "could_not_apply",
+      title: "Could not apply",
+      sentence: reason ?? "Job Finder did not get to this application.",
+      action: "try_again",
+      actionLabel: TRY_AGAIN_ACTION,
+      questionsLeftLabel: null,
+    };
+  }
+
   return {
     kind: "ready_to_send",
     title: "Ready to send",
-    sentence: "Job Finder filled it in. Read it over and click Apply on the site.",
+    sentence:
+      "Job Finder filled it in. Read it over and click Apply on the site.",
     action: "open_browser",
     actionLabel: OPEN_THE_BROWSER_ACTION,
     questionsLeftLabel,
@@ -177,7 +321,7 @@ export function resolveApplyStatePresentation(input: {
 
 /** The one per-job control in Shortlisted, named for what the mode does. */
 export function applyActionLabel(mode: ApplyMode): string {
-  return mode === "apply_for_me" ? "Apply" : "Fill it in";
+  return mode === "apply_for_me" ? "Apply" : "Apply";
 }
 
 /** The one list-level control in Shortlisted. */

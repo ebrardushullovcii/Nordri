@@ -7,6 +7,7 @@ import {
 
 import {
   createAggressiveTailoringDriveState,
+  createAgentOwnedBrowserDriveState,
   createApplyQueueDemoState,
   createResumeWorkspaceDemoState,
 } from "./job-finder-demo-state";
@@ -55,6 +56,46 @@ describe("job finder demo state", () => {
         (target) => target.enabled,
       ),
     ).toBe(true);
+  });
+
+  test("agent-owned browser drive can reach Apply with an approved resume", () => {
+    const applicationUrl = "http://127.0.0.1:43210/apply";
+    const secondaryApplicationUrl = "http://127.0.0.1:43210/apply-second";
+    const state = createAgentOwnedBrowserDriveState({
+      sourceUrl: "http://127.0.0.1:43210",
+      applicationUrl,
+      secondaryApplicationUrl,
+    });
+
+    const job = state.savedJobs.find((entry) => entry.id === "job_ready");
+    const draft = state.resumeDrafts.find(
+      (entry) => entry.jobId === "job_ready",
+    );
+    const approvedExport = state.resumeExportArtifacts.find(
+      (entry) => entry.id === draft?.approvedExportId,
+    );
+
+    expect(job?.applicationUrl).toBe(applicationUrl);
+    expect(
+      state.savedJobs.find((entry) => entry.id === "job_consent_queue"),
+    ).toMatchObject({
+      applicationUrl: secondaryApplicationUrl,
+      company: "Contoso Labs",
+      screeningHints: {
+        requiresConsentInterrupt: false,
+        requiresConsentInterruptKind: null,
+      },
+    });
+    expect(draft).toMatchObject({ status: "approved" });
+    expect(approvedExport).toMatchObject({
+      jobId: "job_ready",
+      isApproved: true,
+    });
+    expect(state.applyRuns).toEqual([]);
+    expect(state.applicationRecords).toEqual([]);
+    expect(state.applicationAttempts).toEqual([]);
+    expect(state.userActionRequests).toEqual([]);
+    expect(JobFinderRepositoryStateSchema.safeParse(state).success).toBe(true);
   });
 
   test("apply-queue seed jobs pin historical provenance to the configured target", () => {

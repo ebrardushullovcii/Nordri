@@ -417,7 +417,7 @@ async function loadResumeWorkspaceDemo(window, previewMode = "ok") {
 async function openResumeWorkspace(window) {
   await window
     .getByRole("button", {
-      name: /Open resume workspace|Review and approve resume/i,
+      name: /Edit resume|Open the resume|Review the resume/i,
     })
     .first()
     .click();

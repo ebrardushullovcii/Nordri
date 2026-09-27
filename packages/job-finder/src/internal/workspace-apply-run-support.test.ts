@@ -1,5 +1,9 @@
 import {
   ApplyExecutionResultSchema,
+  ApplicationAttemptBlockerSchema,
+  ApplyJobResultSchema,
+  ApplyRunSchema,
+  ApplicationReviewCardSchema,
   ApplicationResumeArtifactSchema,
 } from "@unemployed/contracts";
 import { describe, expect, it } from "vitest";
@@ -8,7 +12,143 @@ import {
   buildApplicationPrivacyReceipt,
   buildApplyCopilotArtifacts,
   enforcePrepareOnlyExecutionResult,
+  mapExecutionResultToApplyBlockerReason,
+  reconcileApplyRunAfterConfirmedSubmission,
+  summarizeApplyJobResultStates,
 } from "./workspace-apply-run-support";
+
+it("preserves a CAPTCHA handoff as site protection instead of an unanswered question", () => {
+  const blocker = ApplicationAttemptBlockerSchema.parse({
+    code: "requires_manual_review",
+    userActionKind: "captcha",
+    summary: "The site asks you to complete a CAPTCHA.",
+  });
+  expect(mapExecutionResultToApplyBlockerReason(blocker)).toBe(
+    "site_protection",
+  );
+  expect(
+    mapExecutionResultToApplyBlockerReason({
+      ...blocker,
+      userActionKind: null,
+    }),
+  ).toBe("required_human_input");
+});
+
+describe("reconcileApplyRunAfterConfirmedSubmission", () => {
+  const at = "2026-07-30T10:00:00.000Z";
+  const later = "2026-07-30T10:05:00.000Z";
+  const result = (jobId: string, state: "awaiting_review" | "submitted") =>
+    ApplyJobResultSchema.parse({
+      id: `result_${jobId}`,
+      runId: "run_two_ask",
+      jobId,
+      applicationRecordId: `application_${jobId}`,
+      state,
+      summary: state === "submitted" ? "Application submitted" : "Ready",
+      detail: state === "submitted" ? "Confirmed." : "Review it.",
+      startedAt: at,
+      updatedAt: state === "submitted" ? later : at,
+      completedAt: state === "submitted" ? later : null,
+    });
+
+  it("keeps the second Ask application pending after the first is sent", () => {
+    const run = ApplyRunSchema.parse({
+      id: "run_two_ask",
+      state: "paused_for_user_review",
+      jobIds: ["job_a", "job_b"],
+      currentJobId: "job_a",
+      createdAt: at,
+      updatedAt: at,
+      completedAt: null,
+      summary: "Two applications are ready",
+      detail: "Review each one.",
+      totalJobs: 2,
+      pendingJobs: 2,
+    });
+    const afterFirst = reconcileApplyRunAfterConfirmedSubmission({
+      run,
+      results: [
+        result("job_a", "submitted"),
+        result("job_b", "awaiting_review"),
+      ],
+      submittedAt: later,
+      submittedSummary: "Application submitted",
+      submittedDetail: "Confirmed.",
+    });
+    expect(afterFirst).toMatchObject({
+      state: "paused_for_user_review",
+      currentJobId: "job_b",
+      completedAt: null,
+      pendingJobs: 1,
+      submittedJobs: 1,
+      totalJobs: 2,
+    });
+
+    const afterSecond = reconcileApplyRunAfterConfirmedSubmission({
+      run: afterFirst,
+      results: [result("job_a", "submitted"), result("job_b", "submitted")],
+      submittedAt: later,
+      submittedSummary: "Application submitted",
+      submittedDetail: "Confirmed.",
+    });
+    expect(afterSecond).toMatchObject({
+      state: "completed",
+      currentJobId: null,
+      completedAt: later,
+      pendingJobs: 0,
+      submittedJobs: 2,
+      totalJobs: 2,
+    });
+  });
+});
+
+describe("summarizeApplyJobResultStates", () => {
+  it("uses the durable post-send result instead of an earlier prepared row", () => {
+    const base = {
+      runId: "run_send_queue",
+      applicationRecordId: "application_job_a",
+      summary: "Ready",
+      detail: "Prepared for review.",
+      startedAt: "2026-07-30T10:00:00.000Z",
+      completedAt: null,
+    };
+    const prepared = ApplyJobResultSchema.parse({
+      ...base,
+      id: "result_job_a_prepared",
+      jobId: "job_a",
+      state: "awaiting_review",
+      updatedAt: "2026-07-30T10:01:00.000Z",
+    });
+    const submitted = ApplyJobResultSchema.parse({
+      ...base,
+      id: "result_job_a_submitted",
+      jobId: "job_a",
+      state: "submitted",
+      summary: "Application submitted",
+      detail: "Confirmed.",
+      updatedAt: "2026-07-30T10:02:00.000Z",
+      completedAt: "2026-07-30T10:02:00.000Z",
+    });
+    const blocked = ApplyJobResultSchema.parse({
+      ...base,
+      id: "result_job_b",
+      jobId: "job_b",
+      applicationRecordId: "application_job_b",
+      state: "blocked",
+      updatedAt: "2026-07-30T10:03:00.000Z",
+    });
+
+    expect(
+      summarizeApplyJobResultStates([prepared, submitted, blocked]),
+    ).toEqual({
+      submittedJobs: 1,
+      awaitingReviewJobs: 0,
+      blockedJobs: 1,
+      failedJobs: 0,
+      skippedJobs: 0,
+    });
+  });
+});
 
 describe("buildApplicationPrivacyReceipt", () => {
   it("redacts destination secrets and records verified preparation writes", () => {
@@ -202,6 +342,74 @@ describe("buildApplicationPrivacyReceipt", () => {
       finalSubmitAuthorized: false,
       finalSubmitOccurred: false,
     });
+  });
+});
+
+describe("buildApplyCopilotArtifacts", () => {
+  it("keeps the exact one-off application review card on the result", () => {
+    const job = createSeed().savedJobs[0]!;
+    const detectedAt = "2026-07-30T10:00:00.000Z";
+    const reviewCard = ApplicationReviewCardSchema.parse({
+      siteLabel: "Replica board",
+      pageUrl: job.applicationUrl,
+      answers: [
+        {
+          question: "Full name",
+          answer: "Alex Vanguard",
+          source: "Saved profile",
+          written: false,
+          groundedIn: [],
+        },
+      ],
+      attachments: [
+        {
+          label: "Your CV",
+          fileName: "Original CV.pdf",
+          field: "Resume",
+        },
+      ],
+      letter: null,
+      waitingOnYou: [],
+      preparedAt: detectedAt,
+    });
+    const artifacts = buildApplyCopilotArtifacts({
+      applicationRecordId: "application-review-card",
+      job,
+      detectedAt,
+      reviewCard,
+      runId: "run-review-card",
+      resultId: "result-review-card",
+      resumeArtifact: ApplicationResumeArtifactSchema.parse({
+        id: "resume-review-card",
+        jobId: job.id,
+        source: "original_upload",
+        sourceDocumentId: "document-review-card",
+        exportArtifactId: null,
+        fileName: "Original CV.pdf",
+        filePath: "/tmp/Original CV.pdf",
+        sha256: "a".repeat(64),
+        approvedAt: detectedAt,
+      }),
+      executionResult: ApplyExecutionResultSchema.parse({
+        state: "ready",
+        summary: "Prepared",
+        detail: "Ready for review.",
+        submittedAt: null,
+        outcome: null,
+        checkpoints: [],
+        questions: [],
+        blocker: null,
+        consentDecisions: [],
+        replay: {},
+        visualEvidence: [],
+        visualObservationSets: [],
+        visualCheckpoints: [],
+        nextActionLabel: "Review it and send it",
+        executionTimings: [],
+      }),
+    });
+
+    expect(artifacts.result.reviewCard).toEqual(reviewCard);
   });
 });
 

@@ -142,11 +142,28 @@ describe("ActionsScreen", () => {
 
   it("shows safeguard recovery instead of an empty state and clears after dismissal", () => {
     const onNavigate = vi.fn();
-    const props = { discoveryJobs: [], requests: [], isPending: () => false, onCommand: vi.fn(), onNavigate };
-    const { rerender } = render(<ActionsScreen {...props} safeguardPauses={[{
-      id: "pause", campaignId: "plan", planName: "My search", title: "Paused after repeated failures (37.5% failed)",
-      explanation: "Review the failed searches.", route: "/job-finder/safeguards",
-    }]} />);
+    const props = {
+      discoveryJobs: [],
+      requests: [],
+      isPending: () => false,
+      onCommand: vi.fn(),
+      onNavigate,
+    };
+    const { rerender } = render(
+      <ActionsScreen
+        {...props}
+        safeguardPauses={[
+          {
+            id: "pause",
+            campaignId: "plan",
+            planName: "My search",
+            title: "Paused after repeated failures (37.5% failed)",
+            explanation: "Review the failed searches.",
+            route: "/job-finder/safeguards",
+          },
+        ]}
+      />,
+    );
     expect(screen.queryByText("Nothing needs you right now")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Open Safeguards" }));
     expect(onNavigate).toHaveBeenCalledWith("/job-finder/safeguards");
@@ -234,7 +251,11 @@ describe("ActionsScreen", () => {
     // "Skip" and "Cancel" were peers with the same outcome and no stated
     // difference, so one named dismissal is offered.
     expect(queryAllByRole("button", { name: /^Skip$/ })).toHaveLength(0);
-    for (const name of ["Open the Job Finder browser", "Check whether this step is done", "Cancel this step"]) {
+    for (const name of [
+      "Open the Job Finder browser",
+      "Check whether this step is done",
+      "Cancel this step",
+    ]) {
       const button = getByRole("button", { name: new RegExp(name, "i") });
       expect(button.getAttribute("tabindex")).not.toBe("-1");
       fireEvent.click(button);
@@ -252,6 +273,66 @@ describe("ActionsScreen", () => {
         accountCreationAuthorized: false,
       });
     }
+  });
+
+  it("offers an explicit one-task credential command only for an exact application login", () => {
+    const onCommand = vi.fn<(command: UserActionCommandInput) => void>();
+    const exactApplicationLogin = UserActionRequestSchema.parse({
+      ...createRequest({ id: "application-login", scope: "application" }),
+      scope: {
+        type: "application",
+        runId: "run_1",
+        jobId: "job_1",
+        applicationRecordId: "application_1",
+        resultId: "result_1",
+        replayCheckpointId: "checkpoint_1",
+        source: "target_site",
+      },
+    });
+    const { getByLabelText, getByRole, rerender } = render(
+      <ActionsScreen
+        discoveryJobs={[]}
+        isPending={() => false}
+        onCommand={onCommand}
+        onNavigate={vi.fn()}
+        requests={[exactApplicationLogin]}
+      />,
+    );
+
+    fireEvent.change(getByLabelText("Account email or username"), {
+      target: { value: " fixture-person@example.test " },
+    });
+    const passwordInput = getByLabelText("Password") as HTMLInputElement;
+    fireEvent.change(passwordInput, { target: { value: "test-password" } });
+    fireEvent.click(getByRole("button", { name: "Sign in once and continue" }));
+
+    expect(onCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "submit_task_local_credentials",
+        requestId: exactApplicationLogin.id,
+        expectedRevision: exactApplicationLogin.revision,
+        identifier: "fixture-person@example.test",
+        password: "test-password",
+        taskLocalUseAuthorized: true,
+        credentialsPolicy: "browser_only",
+        submitAuthorized: false,
+        accountCreationAuthorized: false,
+      }),
+    );
+    expect(passwordInput.value).toBe("");
+
+    rerender(
+      <ActionsScreen
+        discoveryJobs={[]}
+        isPending={() => false}
+        onCommand={onCommand}
+        onNavigate={vi.fn()}
+        requests={[
+          createRequest({ id: "source-login", scope: "discovery_source" }),
+        ]}
+      />,
+    );
+    expect(screen.queryByText("Use credentials for this task")).toBeNull();
   });
 
   it("keeps a blocked action retryable until the bounded attempt cap", () => {
@@ -273,7 +354,9 @@ describe("ActionsScreen", () => {
       />,
     );
 
-    fireEvent.click(getByRole("button", { name: "Check whether this step is done" }));
+    fireEvent.click(
+      getByRole("button", { name: "Check whether this step is done" }),
+    );
     expect(onCommand).toHaveBeenCalledWith(
       expect.objectContaining({ action: "confirm_done" }),
     );
@@ -302,10 +385,9 @@ describe("ActionsScreen", () => {
     expect(getByRole("status").textContent).toContain(
       "Job Finder checked 3 times and still saw the same page",
     );
-    expect(getByRole("button", { name: "Open the Job Finder browser" })).toHaveProperty(
-      "disabled",
-      false,
-    );
+    expect(
+      getByRole("button", { name: "Open the Job Finder browser" }),
+    ).toHaveProperty("disabled", false);
     expect(getByRole("button", { name: "Cancel this step" })).toHaveProperty(
       "disabled",
       false,
@@ -350,6 +432,93 @@ describe("ActionsScreen", () => {
     );
   });
 
+  it("says Job Finder is checking a step, not that the person should go do it", () => {
+    const { getByText, queryByText } = render(
+      <ActionsScreen
+        discoveryJobs={[]}
+        isPending={() => false}
+        onCommand={vi.fn()}
+        onNavigate={vi.fn()}
+        requests={[
+          {
+            ...createRequest({
+              id: "checking",
+              scope: "application",
+              state: "verifying",
+            }),
+            updatedAt: new Date().toISOString(),
+            instructions: [
+              "Return to Needs you and confirm completion only after the browser step is complete.",
+            ],
+          },
+        ]}
+      />,
+    );
+
+    expect(
+      getByText(/Job Finder is checking this step and carries on by itself/),
+    ).toBeTruthy();
+    expect(
+      queryByText("Use the Job Finder browser, then return here."),
+    ).toBeNull();
+    expect(queryByText(/confirm completion only after/)).toBeNull();
+  });
+
+  it("a check that never finished says so and offers one press to prepare it again", () => {
+    const onStartOver = vi.fn();
+    const startedAt = new Date(Date.now() - 20 * 60_000).toISOString();
+    const request = {
+      ...createRequest({
+        id: "lost-check",
+        scope: "application",
+        state: "verifying",
+        applicationRecordId: "application_1",
+      }),
+      updatedAt: startedAt,
+    };
+    const { getByTestId, getByText } = render(
+      <ActionsScreen
+        discoveryJobs={[]}
+        isPending={() => false}
+        onCommand={vi.fn()}
+        onNavigate={vi.fn()}
+        onStartOver={onStartOver}
+        requests={[request]}
+      />,
+    );
+
+    expect(getByText(/has not finished after 20 minutes/)).toBeTruthy();
+    fireEvent.click(getByTestId("needs-you-start-over"));
+    expect(onStartOver).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "lost-check" }),
+      expect.objectContaining({ action: "cancel", requestId: "lost-check" }),
+    );
+  });
+
+  it("a check still waiting its turn says why, without a start-over press", () => {
+    const request = {
+      ...createRequest({
+        id: "slow-check",
+        scope: "application",
+        state: "verifying",
+      }),
+      updatedAt: new Date(Date.now() - 5 * 60_000).toISOString(),
+    };
+    const { getByText, queryByTestId } = render(
+      <ActionsScreen
+        discoveryJobs={[]}
+        isPending={() => false}
+        onCommand={vi.fn()}
+        onNavigate={vi.fn()}
+        onStartOver={vi.fn()}
+        requests={[request]}
+      />,
+    );
+
+    expect(getByText(/Still checking after 5 minutes/)).toBeTruthy();
+    expect(queryByTestId("needs-you-start-over")).toBeNull();
+  });
+
   it("gives the empty inbox one clear next action toward discovery", () => {
     const onNavigate = vi.fn();
     const { getByRole } = render(
@@ -388,7 +557,9 @@ describe("ActionsScreen", () => {
       />,
     );
 
-    expect(queryByRole("button", { name: "Open the Job Finder browser" })).toBeNull();
+    expect(
+      queryByRole("button", { name: "Open the Job Finder browser" }),
+    ).toBeNull();
     expect(getByText(/saved browser link is unavailable/i)).toBeTruthy();
     const recoveryButton = getByRole("button", {
       name: "Review application",
@@ -621,9 +792,13 @@ describe("ActionsScreen", () => {
       />,
     );
 
-    expect(countNeedsYouItems({ applicationRecords: [record], requests: [] })).toBe(1);
+    expect(
+      countNeedsYouItems({ applicationRecords: [record], requests: [] }),
+    ).toBe(1);
     expect(screen.queryByText("Nothing needs you right now")).toBeNull();
-    expect(screen.getByText("Applications waiting on you")).toBeTruthy();
+    // One Applications group holds live steps and paused applications alike.
+    expect(screen.getByRole("heading", { name: "Applications" })).toBeTruthy();
+    expect(screen.queryByText("Applications waiting on you")).toBeNull();
     fireEvent.click(
       screen.getByRole("button", { name: /Open this application/ }),
     );

@@ -247,6 +247,8 @@ function createStateSliceFixtures(phase: ResetConformancePhase) {
         sequence: 1,
         snapshotProfileAfter: null,
         snapshotSearchPreferencesAfter: null,
+        snapshotResumeApplicationMode: null,
+        snapshotResumeApplicationModeAfter: null,
         trigger: "assistant_patch" as const,
         messageId: `profile_message_${phase}`,
         patchGroupId: null,

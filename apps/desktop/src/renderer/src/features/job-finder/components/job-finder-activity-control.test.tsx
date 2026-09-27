@@ -20,7 +20,7 @@ describe("JobFinderActivityControl", () => {
     );
     expect(screen.getByText(/3 background operations running/i)).toBeTruthy();
     fireEvent.click(
-      screen.getByRole("button", { name: "Pause background work" }),
+      screen.getByRole("button", { name: "Pause" }),
     );
     expect(onPause).toHaveBeenCalledOnce();
   });
@@ -42,7 +42,7 @@ describe("JobFinderActivityControl", () => {
     );
     expect(screen.getByText(/local edits still work/i)).toBeTruthy();
     fireEvent.click(
-      screen.getByRole("button", { name: "Resume background work" }),
+      screen.getByRole("button", { name: "Resume" }),
     );
     expect(onResume).toHaveBeenCalledOnce();
   });

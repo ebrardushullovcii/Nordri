@@ -15,10 +15,9 @@ import {
 import {
   assessLocationCompatibility,
   getBroadLocationCompatibility,
-  matchesAnyPhrase,
   matchesExcludedLocation,
-  matchesLocationPreference,
   matchesTitlePreference,
+  readLocationMatchOptions,
 } from "./matching";
 import { isExplicitSearchProbeDisproof } from "./source-instruction-evidence";
 import { normalizeText, uniqueStrings } from "./shared";
@@ -1745,6 +1744,12 @@ function inferWorkModes(
   if (normalized.includes("hybrid")) {
     return ["hybrid"];
   }
+  if (
+    /\bon[\s-]?site\b/u.test(normalized) &&
+    !/\b(?:not|no|without)\s+(?:an?\s+)?on[\s-]?site\b/u.test(normalized)
+  ) {
+    return ["onsite"];
+  }
   return [];
 }
 
@@ -1770,15 +1775,25 @@ function resolveProviderCompanyLabel(input: {
     .replace(/\s+/gu, " ")
     .trim();
 
-  if (cleanedTargetLabel) {
+  const normalizedTargetLabel = normalizeText(cleanedTargetLabel);
+  const isGenericTargetLabel = [
+    "primary target",
+    "target site",
+    "job source",
+    "careers source",
+  ].includes(normalizedTargetLabel);
+  if (cleanedTargetLabel && !isGenericTargetLabel) {
     return cleanedTargetLabel;
   }
 
-  return (input.providerIdentifier ?? input.targetLabel)
+  const providerCompany = (input.providerIdentifier ?? input.targetLabel)
     .replace(/[._-]+/gu, " ")
     .replace(/\bjobs?\b/giu, " ")
     .replace(/\s+/gu, " ")
     .trim();
+  return providerCompany.replace(/\b\p{L}/gu, (character) =>
+    character.toLocaleUpperCase(),
+  );
 }
 
 function createProviderApiTimeoutSignal() {
@@ -2095,10 +2110,15 @@ export function applyDiscoveryTitleTriage(input: {
     };
   }
 
-  if (CLOSED_LISTING_BODY_PATTERN.test(`${posting.summary ?? ""} ${posting.description}`)) {
+  if (
+    CLOSED_LISTING_BODY_PATTERN.test(
+      `${posting.summary ?? ""} ${posting.description}`,
+    )
+  ) {
     return {
       outcome: "skip_title" as const,
-      reason: "The listing says it is closed or no longer accepting applications.",
+      reason:
+        "The listing says it is closed or no longer accepting applications.",
     };
   }
 
@@ -2133,13 +2153,7 @@ export function applyDiscoveryTitleTriage(input: {
     !(
       allowsPollutedTitleEvidence &&
       matchesTitlePreference(postingEvidenceText, searchPreferences.targetRoles)
-    ) &&
-    !matchesTechnicalRoleFallback({
-      posting,
-      postingEvidenceText,
-      profile,
-      searchPreferences,
-    })
+    )
   ) {
     return {
       outcome: "skip_title" as const,
@@ -2147,18 +2161,25 @@ export function applyDiscoveryTitleTriage(input: {
     };
   }
 
+  const locationOptions = readLocationMatchOptions(searchPreferences);
   if (
     searchPreferences.locations.length > 0 &&
     assessLocationCompatibility(
       posting.location,
       searchPreferences.locations,
+      locationOptions,
     ) === "incompatible" &&
-    !matchesRemoteFriendlyTechnicalLocationFallback({
-      posting,
-      postingEvidenceText,
-      profile,
-      searchPreferences,
-    })
+    // The remote-friendly allowance is the "remote counts as any location"
+    // rule; with that setting off, a remote posting must fit a saved place.
+    !(
+      locationOptions.remoteCountsAsAnyLocation !== false &&
+      matchesRemoteFriendlyTechnicalLocationFallback({
+        posting,
+        postingEvidenceText,
+        profile,
+        searchPreferences,
+      })
+    )
   ) {
     return {
       outcome: "skip_location" as const,
@@ -2251,18 +2272,6 @@ function hasTechnicalTargetRolePreference(
   return searchPreferences.targetRoles.some(matchesTechnicalRoleSignal);
 }
 
-function collectProfileSkillSignals(profile: CandidateProfile): string[] {
-  return uniqueStrings([
-    ...profile.skills,
-    ...profile.skillGroups.coreSkills,
-    ...profile.skillGroups.tools,
-    ...profile.skillGroups.languagesAndFrameworks,
-    ...profile.skillGroups.highlightedSkills,
-    ...profile.experiences.flatMap((experience) => experience.skills),
-    ...profile.projects.flatMap((project) => project.skills),
-  ]);
-}
-
 function matchesTechnicalRoleFallback(input: {
   posting: JobPosting;
   postingEvidenceText?: string;
@@ -2353,133 +2362,4 @@ function matchesRemoteFriendlyTechnicalLocationFallback(input: {
   }
 
   return !posting.workMode.every((mode) => mode === "onsite");
-}
-
-export function selectLowYieldTechnicalFallbackPostings(input: {
-  skippedPostings: readonly JobPosting[];
-  searchPreferences: JobSearchPreferences;
-  profile: CandidateProfile | null | undefined;
-  limit?: number;
-}): JobPosting[] {
-  const { skippedPostings, searchPreferences, profile } = input;
-  if (skippedPostings.length === 0) {
-    return [];
-  }
-
-  if (!searchPreferences.targetRoles.some(matchesTechnicalRoleSignal)) {
-    return [];
-  }
-
-  const profileSkillSignals = profile
-    ? collectProfileSkillSignals(profile)
-    : [];
-  const rescueLimit = Math.max(0, input.limit ?? 6);
-
-  return skippedPostings
-    .flatMap((posting, index) => {
-      if (
-        posting.titleTriageOutcome !== "skip_title" &&
-        posting.titleTriageOutcome !== "skip_location"
-      ) {
-        return [];
-      }
-
-      const postingEvidenceText = buildPostingEvidenceText(posting);
-      const titleHasTechnicalSignal = matchesAdjacentTechnicalRoleSignal(
-        posting.title,
-      );
-      const evidenceHasTechnicalSignal =
-        matchesAdjacentTechnicalRoleSignal(postingEvidenceText);
-      const profileAlignedTechnicalRole = matchesTechnicalRoleFallback({
-        posting,
-        profile,
-        searchPreferences,
-      });
-
-      const allowsPollutedTitleEvidence =
-        posting.providerKey === null &&
-        /\bdismiss\b.{0,160}\bjob\b/iu.test(postingEvidenceText);
-
-      if (
-        !titleHasTechnicalSignal &&
-        !profileAlignedTechnicalRole &&
-        !(allowsPollutedTitleEvidence && evidenceHasTechnicalSignal)
-      ) {
-        return [];
-      }
-
-      const locationMatched = matchesLocationPreference(
-        posting.location,
-        searchPreferences.locations,
-      );
-      const remoteFriendlyLocation =
-        matchesRemoteFriendlyTechnicalLocationFallback({
-          posting,
-          searchPreferences,
-        });
-      const titleMatched = matchesTitlePreference(
-        posting.title,
-        searchPreferences.targetRoles,
-      );
-      const profileSkillOverlap =
-        profileSkillSignals.length > 0 &&
-        matchesAnyPhrase(postingEvidenceText, profileSkillSignals);
-      const rescuePriorityWeights = {
-        skipLocationTriage: 6,
-        remoteFriendly: 5,
-        titleMatched: 4,
-        profileAligned: 4,
-        titleTechnicalSignal: 3,
-        evidenceTechnicalSignal: 2,
-        locationMatched: 2,
-        profileSkillOverlap: 1,
-        easyApply: 1,
-      } as const;
-      let priority = 0;
-
-      if (posting.titleTriageOutcome === "skip_location") {
-        priority += rescuePriorityWeights.skipLocationTriage;
-      }
-      if (remoteFriendlyLocation) {
-        priority += rescuePriorityWeights.remoteFriendly;
-      }
-      if (titleMatched) {
-        priority += rescuePriorityWeights.titleMatched;
-      }
-      if (profileAlignedTechnicalRole) {
-        priority += rescuePriorityWeights.profileAligned;
-      }
-      if (titleHasTechnicalSignal) {
-        priority += rescuePriorityWeights.titleTechnicalSignal;
-      }
-      if (evidenceHasTechnicalSignal) {
-        priority += rescuePriorityWeights.evidenceTechnicalSignal;
-      }
-      if (locationMatched) {
-        priority += rescuePriorityWeights.locationMatched;
-      }
-      if (profileSkillOverlap) {
-        priority += rescuePriorityWeights.profileSkillOverlap;
-      }
-      if (posting.easyApplyEligible) {
-        priority += rescuePriorityWeights.easyApply;
-      }
-
-      return [
-        {
-          index,
-          priority,
-          posting: JobPostingSchema.parse({
-            ...posting,
-            titleTriageOutcome: "pass",
-          }),
-        },
-      ];
-    })
-    .sort(
-      (left, right) =>
-        right.priority - left.priority || left.index - right.index,
-    )
-    .slice(0, rescueLimit)
-    .map((entry) => entry.posting);
 }

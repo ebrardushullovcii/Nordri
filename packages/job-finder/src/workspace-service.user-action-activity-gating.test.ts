@@ -305,21 +305,10 @@ describe("resolved user action resumption activity gating", () => {
       reason: null,
     });
 
-    // A fresh service over the same repository resumes the action exactly
-    // once with one prepare-only retry and the exact lineage receipt.
-    const restartedService = createJobFinderWorkspaceService({
-      repository: serviceRepository,
-      browserRuntime: {
-        ...baseRuntime,
-        executeApplicationFlow,
-        inspectSourceAccess,
-      },
-      aiClient: createAiClient(),
-      documentManager: createDocumentManager(),
-      exportFileVerifier: { exists: () => Promise.resolve(true) },
-      researchAdapter: createResearchAdapter(),
-    });
-    const resumed = await restartedService.getWorkspaceSnapshot();
+    // The next snapshot on this same service retries an unclaimed verifying
+    // action. A completed startup pass is only an in-flight dedupe boundary;
+    // it must not strand later user answers until the app restarts.
+    const resumed = await service.getWorkspaceSnapshot();
 
     expect(inspectSourceAccess).toHaveBeenCalledTimes(1);
     expect(executeApplicationFlow).toHaveBeenCalledTimes(2);
@@ -357,6 +346,109 @@ describe("resolved user action resumption activity gating", () => {
         replayCheckpointId: request.scope.replayCheckpointId,
       }),
     );
+  });
+
+  test("an explicit unpause resumes verifying actions skipped during paused startup", async () => {
+    const { repository, executeApplicationFlow, request } =
+      await startLoginBlockedResumptionHarness();
+
+    await repository.saveActivityControl(PAUSED_CONTROL);
+    const reduction = reduceUserActionCommand(
+      request,
+      {
+        action: "confirm_done",
+        requestId: request.id,
+        commandId: "confirm_before_paused_restart",
+        expectedRevision: request.revision,
+      },
+      "2026-07-30T10:40:00.000Z",
+    );
+    if (reduction.status !== "applied") {
+      throw new Error("Expected the pending action to enter verification.");
+    }
+    await repository.commitUserActionTransition({
+      request: reduction.request,
+      event: reduction.event,
+    });
+
+    const restartedService = createJobFinderWorkspaceService({
+      repository,
+      browserRuntime: {
+        ...createBrowserRuntime(),
+        executeApplicationFlow,
+        inspectSourceAccess: authenticatedSourceAccess(),
+      },
+      aiClient: createAiClient(),
+      documentManager: createDocumentManager(),
+      exportFileVerifier: { exists: () => Promise.resolve(true) },
+      researchAdapter: createResearchAdapter(),
+    });
+
+    const pausedStartup = await restartedService.getWorkspaceSnapshot();
+    expect(pausedStartup.activityControl.paused).toBe(true);
+    expect(
+      pausedStartup.userActionRequests.find((entry) => entry.id === request.id),
+    ).toMatchObject({ state: "verifying" });
+    expect(executeApplicationFlow).toHaveBeenCalledTimes(1);
+
+    const resumed = await restartedService.setActivityControl({
+      paused: false,
+    });
+    expect(executeApplicationFlow).toHaveBeenCalledTimes(2);
+    expect(
+      resumed.userActionRequests.find((entry) => entry.id === request.id),
+    ).toMatchObject({ state: "resolved" });
+  });
+
+  test("rechecks deferred sign-in before resuming and lets an unsuccessful check be retried once", async () => {
+    const { repository, executeApplicationFlow, request } =
+      await startLoginBlockedResumptionHarness();
+    await repository.saveActivityControl(PAUSED_CONTROL);
+    await confirmAllPendingActions(repository);
+    const inspectSourceAccess = authenticatedSourceAccess();
+    inspectSourceAccess.mockRejectedValueOnce(
+      new Error("Sign-in is not available yet."),
+    );
+    const restartedService = createJobFinderWorkspaceService({
+      repository,
+      browserRuntime: {
+        ...createBrowserRuntime(),
+        executeApplicationFlow,
+        inspectSourceAccess,
+      },
+      aiClient: createAiClient(),
+      documentManager: createDocumentManager(),
+      exportFileVerifier: { exists: () => Promise.resolve(true) },
+      researchAdapter: createResearchAdapter(),
+    });
+
+    await restartedService.getWorkspaceSnapshot();
+    expect(inspectSourceAccess).not.toHaveBeenCalled();
+    const checked = await restartedService.setActivityControl({
+      paused: false,
+    });
+    const blockedRequest = checked.userActionRequests.find(
+      (entry) => entry.id === request.id,
+    );
+    expect(blockedRequest?.state).toBe("still_blocked");
+    expect(inspectSourceAccess).toHaveBeenCalledTimes(1);
+    expect(executeApplicationFlow).toHaveBeenCalledTimes(1);
+    if (!blockedRequest)
+      throw new Error("Expected a retryable sign-in request.");
+
+    const resumed = await restartedService.performUserAction({
+      action: "confirm_done",
+      commandId: "confirm_deferred_login_after_failed_check",
+      requestId: blockedRequest.id,
+      expectedRevision: blockedRequest.revision,
+    });
+    expect(
+      resumed.userActionRequests.find((entry) => entry.id === request.id)
+        ?.state,
+    ).toBe("resolved");
+    await restartedService.getWorkspaceSnapshot();
+    expect(inspectSourceAccess).toHaveBeenCalledTimes(2);
+    expect(executeApplicationFlow).toHaveBeenCalledTimes(2);
   });
 
   test("resumes an already-marked exact lineage at full capacity without charging another slot", async () => {
@@ -609,6 +701,80 @@ describe("resolved user action resumption activity gating", () => {
     expect(executeApplicationFlow).not.toHaveBeenCalled();
   });
 
+  test("does not replay a claimed application retry while snapshots poll", async () => {
+    const seed = createSeed();
+    seed.settings.resumeApplicationMode = "original_resume";
+    seed.profile.baseResume.storagePath = "C:/tmp/alex-vanguard.pdf";
+    const baseRuntime = createBrowserRuntime();
+    let executionCount = 0;
+    let releaseRecovery = (): void => {};
+    const recoveryGate = new Promise<void>((resolve) => {
+      releaseRecovery = resolve;
+    });
+    const executeApplicationFlow = vi.fn(
+      async (
+        source: Parameters<typeof baseRuntime.executeApplicationFlow>[0],
+        input: Parameters<typeof baseRuntime.executeApplicationFlow>[1],
+      ) => {
+        executionCount += 1;
+        const baseResult = await baseRuntime.executeApplicationFlow(
+          source,
+          input,
+        );
+        if (executionCount === 1) {
+          return ApplyExecutionResultSchema.parse({
+            ...baseResult,
+            state: "paused",
+            summary: "A required answer needs you",
+            detail: "Answer this question in the browser.",
+            blocker: {
+              code: "missing_candidate_answer",
+              userActionKind: "manual_answer",
+              summary: "Answer the required question.",
+              questionIds: ["question_required"],
+              url: input.job.applicationUrl ?? input.job.canonicalUrl,
+            },
+          });
+        }
+        await recoveryGate;
+        return baseResult;
+      },
+    );
+    const harness = createWorkspaceServiceHarness({
+      seed,
+      browserRuntime: { ...baseRuntime, executeApplicationFlow },
+    });
+    const blocked =
+      await harness.workspaceService.startApplyCopilotRun("job_ready");
+    const request = blocked.userActionRequests[0];
+    if (!request) throw new Error("Expected a manual application action.");
+
+    const command = harness.workspaceService.performUserAction({
+      action: "confirm_done",
+      commandId: "confirm_claimed_retry",
+      expectedRevision: request.revision,
+      requestId: request.id,
+    });
+    await vi.waitFor(() => {
+      expect(executeApplicationFlow).toHaveBeenCalledTimes(2);
+    });
+    expect(
+      (await harness.repository.listApplicationAttempts()).find(
+        (attempt) => attempt.userActionResumption?.requestId === request.id,
+      ),
+    ).toMatchObject({ state: "in_progress", completedAt: null });
+
+    const pollingSnapshots = [
+      harness.workspaceService.getWorkspaceSnapshot(),
+      harness.workspaceService.getWorkspaceSnapshot(),
+    ];
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(executeApplicationFlow).toHaveBeenCalledTimes(2);
+    releaseRecovery();
+    await Promise.all([command, ...pollingSnapshots]);
+    expect(executeApplicationFlow).toHaveBeenCalledTimes(2);
+  });
+
   test("fails closed when activity control cannot be read and stays resumable afterwards", async () => {
     const seed = createSeed();
     const baseRuntime = createBrowserRuntime();
@@ -655,21 +821,10 @@ describe("resolved user action resumption activity gating", () => {
     });
     expect(await repository.listApplicationAttempts()).toEqual([]);
 
-    // Healing the control surface lets the same action resume normally.
+    // Healing the control surface lets the same service retry the unclaimed
+    // action on its next snapshot; recovery does not require an app restart.
     brokenRepository.getActivityControl = () => repository.getActivityControl();
-    const healedService = createJobFinderWorkspaceService({
-      repository: brokenRepository,
-      browserRuntime: {
-        ...baseRuntime,
-        executeApplicationFlow,
-        inspectSourceAccess,
-      },
-      aiClient: createAiClient(),
-      documentManager: createDocumentManager(),
-      exportFileVerifier: { exists: () => Promise.resolve(true) },
-      researchAdapter: createResearchAdapter(),
-    });
-    const healed = await healedService.getWorkspaceSnapshot();
+    const healed = await service.getWorkspaceSnapshot();
 
     expect(inspectSourceAccess).toHaveBeenCalledTimes(1);
     expect((await repository.listUserActionRequests())[0]?.state).toBe(

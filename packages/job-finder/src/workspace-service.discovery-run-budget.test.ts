@@ -42,8 +42,8 @@ const fullYieldShares = (
 };
 
 describe("resolveDiscoveryTargetBudget", () => {
-  test("keeps the default interactive precision budgets unchanged", () => {
-    // Single-target interactive runs keep 50 jobs and the safety step ceiling.
+  test("keeps default browser planning hints and safety ceilings unchanged", () => {
+    // Single-target runs use a 50-job planning hint, not a retention cap.
     expect(
       resolveDiscoveryTargetBudget({
         targetsRemaining: 1,
@@ -51,8 +51,8 @@ describe("resolveDiscoveryTargetBudget", () => {
       }),
     ).toEqual({ targetJobCount: 50, maxSteps: 120 });
 
-    // Multi-target interactive runs keep the 100-job run budget, the safety step
-    // ceiling, and the exact legacy fair-share split.
+    // Multi-target runs keep the legacy 100-job planning split and safety
+    // ceiling; default retained counts are tested separately.
     const shares = fullYieldShares(3);
     expect(shares).toEqual([34, 33, 33]);
     expect(shares.reduce((total, share) => total + share, 0)).toBe(100);
@@ -188,13 +188,36 @@ function planShares(
   });
 }
 
+function planRetentionShares(
+  targetIds: readonly string[],
+  runJobBudget?: number,
+): number[] {
+  const plan = resolveDiscoveryBudgetPlan({
+    targetIds,
+    ...(runJobBudget !== undefined ? { runJobBudget } : {}),
+  });
+  return targetIds.map((targetId) => {
+    const entry = plan.get(targetId);
+    if (!entry) {
+      throw new Error(`Missing budget plan entry for ${targetId}.`);
+    }
+    return entry.retentionJobCount;
+  });
+}
+
 describe("resolveDiscoveryBudgetPlan exact-total semantics", () => {
-  test("funds leading high-priority targets first when the budget is below the target count", () => {
-    // Scarce budgets hand one-job units from the leading (highest-priority)
-    // position forward; every share is a non-negative integer, trailing
-    // lowest-priority sources receive zero, and the plan never over-allocates.
-    expect(planShares(["board_a", "board_b", "board_c"], 1)).toEqual([1, 0, 0]);
-    expect(planShares(["board_a", "board_b", "board_c"], 2)).toEqual([1, 1, 0]);
+  test("samples every source while retaining only the requested scarce total", () => {
+    // A result request smaller than the selected source count still gives
+    // every source an honest sample. The separate retention shares preserve
+    // the exact run-wide result cap.
+    expect(planShares(["board_a", "board_b", "board_c"], 1)).toEqual([1, 1, 1]);
+    expect(planRetentionShares(["board_a", "board_b", "board_c"], 1)).toEqual([
+      1, 0, 0,
+    ]);
+    expect(planShares(["board_a", "board_b", "board_c"], 2)).toEqual([1, 1, 1]);
+    expect(planRetentionShares(["board_a", "board_b", "board_c"], 2)).toEqual([
+      1, 1, 0,
+    ]);
     expect(planShares(["board_a", "board_b", "board_c"], 3)).toEqual([1, 1, 1]);
     // At or above the target count the floor fair-share split with the
     // trailing remainder is unchanged.
@@ -203,7 +226,7 @@ describe("resolveDiscoveryBudgetPlan exact-total semantics", () => {
   });
 
   test("retains the existing interactive and scaled allocation contracts", () => {
-    // Interactive default stays [34,33,33] over 100 jobs.
+    // The default collection planning hints remain [34,33,33].
     expect(fullYieldShares(3)).toEqual([34, 33, 33]);
     expect(planShares(["board_a", "board_b", "board_c"])).toEqual([34, 33, 33]);
     // Scaled budgets keep the floor-of-remaining positional split whenever
@@ -228,7 +251,12 @@ describe("resolveDiscoveryBudgetPlan exact-total semantics", () => {
         expect(
           shares.every((share) => Number.isInteger(share) && share >= 0),
         ).toBe(true);
-        expect(shares.reduce((total, share) => total + share, 0)).toBe(
+        expect(
+          planRetentionShares(targetIds, runJobBudget).reduce(
+            (total, share) => total + share,
+            0,
+          ),
+        ).toBe(
           runJobBudget,
         );
         expect(planShares(targetIds, runJobBudget)).toEqual(shares);
@@ -435,8 +463,7 @@ describe("campaign discovery run budgets", () => {
     // campaign explicitly.
     await workspaceService.runCampaignNow({ campaignId });
 
-    // The explicit scale budget - not the interactive 100-job default - is
-    // what bounds retention here.
+    // This explicit scale budget bounds retention; an omitted budget does not.
     const savedJobs = await repository.listSavedJobs();
     expect(savedJobs.length).toBeGreaterThanOrEqual(1_000);
 
@@ -487,6 +514,7 @@ describe("campaign discovery run budgets", () => {
     // keeping them hard-capped.
     const agentOptions = agentCalls[0];
     expect(agentOptions?.targetJobCount).toBe(1_000);
+    expect(agentOptions?.searchMode).toBe("scale");
     expect(agentOptions?.maxSteps).toBe(240);
     expect(agentOptions?.runControl?.timeBudgetMs).toBe(30 * 60_000);
     expect(agentOptions?.runControl?.noProgressStepLimit).toBe(8);
@@ -495,6 +523,81 @@ describe("campaign discovery run budgets", () => {
     const run = discoveryState.recentRuns.at(-1);
     expect(run?.summary.outcome).toBe("completed");
     expect(run?.targetExecutions[0]?.requestedJobBudget).toBe(1_000);
+  }, 60_000);
+
+  test("passes a precision campaign's focus to the browser agent", async () => {
+    const base = createBrowserRuntime();
+    const agentCalls: Array<
+      Parameters<NonNullable<BrowserSessionRuntime["runAgentDiscovery"]>>[1]
+    > = [];
+    const browserRuntime: BrowserSessionRuntime = {
+      ...base,
+      runAgentDiscovery: (source, options) => {
+        agentCalls.push(options);
+        return base.runAgentDiscovery!(source, options);
+      },
+    };
+    const seed = createEmptyDiscoverySeed();
+    seed.searchPreferences.discovery.targets = [
+      createBrowserTarget("target_precision", "Precision Board"),
+    ];
+    const harness = createWorkspaceServiceHarness({ seed, browserRuntime });
+    const preferences = await harness.repository.getSearchPreferences();
+    const snapshot = await harness.workspaceService.saveCampaign({
+      ...createScaleCampaignInput({
+        name: "Precision Campaign",
+        searchPreferences: preferences,
+        discoveryRunJobBudget: null,
+      }),
+      mode: "precision",
+    });
+    const campaign = snapshot.campaigns.find(
+      (candidate) => candidate.name === "Precision Campaign",
+    );
+    if (!campaign) throw new Error("Expected the precision campaign.");
+
+    await harness.workspaceService.runCampaignNow({ campaignId: campaign.id });
+
+    expect(agentCalls).toHaveLength(1);
+    expect(agentCalls[0]?.searchMode).toBe("precision");
+  }, 60_000);
+
+  test("honors the run-scoped goal, breadth, freshness, and selected sources", async () => {
+    const base = createBrowserRuntime();
+    const agentCalls: Array<
+      Parameters<NonNullable<BrowserSessionRuntime["runAgentDiscovery"]>>[1]
+    > = [];
+    const browserRuntime: BrowserSessionRuntime = {
+      ...base,
+      runAgentDiscovery: (source, options) => {
+        agentCalls.push(options);
+        return base.runAgentDiscovery!(source, options);
+      },
+    };
+    const seed = createEmptyDiscoverySeed();
+    seed.searchPreferences.discovery.targets = [
+      createBrowserTarget("target_first", "First Board"),
+      createBrowserTarget("target_selected", "Selected Board"),
+    ];
+    const harness = createWorkspaceServiceHarness({ seed, browserRuntime });
+    const searchRequest = {
+      intent: "around engineering",
+      breadth: "wide" as const,
+      freshness: "recent" as const,
+      sourceIds: ["target_selected"],
+    };
+
+    await harness.workspaceService.runAgentDiscovery(
+      undefined,
+      undefined,
+      undefined,
+      searchRequest,
+    );
+
+    expect(agentCalls).toHaveLength(1);
+    expect(agentCalls[0]?.siteLabel).toBe("Selected Board");
+    expect(agentCalls[0]?.searchMode).toBe("scale");
+    expect(agentCalls[0]?.searchRequest).toEqual(searchRequest);
   }, 60_000);
 
   test("records a truthful warning when the bounded agent runtime is unavailable instead of a silent zero", async () => {
@@ -660,16 +763,14 @@ describe("campaign discovery run budgets", () => {
     );
     expect(brokenExecution?.state).toBe("failed");
     expect(brokenExecution?.warning).toContain("browser navigation collapsed");
-    expect(brokenExecution?.requestedJobBudget).toBeGreaterThan(0);
+    expect(brokenExecution?.requestedJobBudget).toBeNull();
     expect(healthyExecution?.state).toBe("completed");
     expect(healthyExecution?.jobsPersisted).toBeGreaterThan(0);
   }, 60_000);
 
-  test("skips zero-budget API targets without launching provider requests", async () => {
+  test("samples every API target while retaining only the run budget", async () => {
     const seed = createEmptyDiscoverySeed();
-    // Under a scarce one-job budget the configuration order is priority
-    // order: the funded board leads, so the trailing zero-budget boards are
-    // skipped without joining the API prefetch window.
+    // Under a scarce one-job result budget every board is still sampled.
     seed.searchPreferences.discovery.targets = (
       [
         ["funded_board", "Funded Board"],
@@ -703,10 +804,7 @@ describe("campaign discovery run budgets", () => {
     const campaignId = await saveScaleCampaign(harness, globalPreferences, 1);
     await workspaceService.runCampaignNow({ campaignId });
 
-    // Only the funded target ever reaches the provider; zero-budget boards
-    // must not join the API prefetch window.
-    expect(fetchUrls).toHaveLength(1);
-    expect(fetchUrls[0]).toContain("funded_board");
+    expect(fetchUrls).toHaveLength(3);
 
     const savedJobs = await repository.listSavedJobs();
     expect(savedJobs).toHaveLength(1);
@@ -720,24 +818,19 @@ describe("campaign discovery run budgets", () => {
         execution,
       ]),
     );
-    expect(executions.zero_budget_a?.state).toBe("skipped");
-    // A skipped source requested nothing, so its recorded budget is null
-    // while the up-front plan held the zero allocation.
-    expect(executions.zero_budget_a?.requestedJobBudget).toBeNull();
-    expect(executions.zero_budget_a?.warning ?? "").toContain("budget");
-    expect(executions.zero_budget_b?.state).toBe("skipped");
-    expect(executions.zero_budget_b?.requestedJobBudget).toBeNull();
+    expect(executions.zero_budget_a?.state).toBe("completed");
+    expect(executions.zero_budget_a?.requestedJobBudget).toBe(1);
+    expect(executions.zero_budget_b?.state).toBe("completed");
+    expect(executions.zero_budget_b?.requestedJobBudget).toBe(1);
     expect(executions.funded_board?.state).toBe("completed");
     expect(executions.funded_board?.requestedJobBudget).toBe(1);
 
-    const skippedTargetIds = (run?.activity ?? [])
-      .filter((event) => event.terminalState === "skipped")
-      .map((event) => event.targetId)
-      .sort();
-    expect(skippedTargetIds).toEqual(["zero_budget_a", "zero_budget_b"]);
+    expect(
+      (run?.activity ?? []).filter((event) => event.terminalState === "skipped"),
+    ).toHaveLength(0);
   }, 60_000);
 
-  test("skips zero-budget browser targets without launching agent runtime work", async () => {
+  test("samples every browser target while retaining only the run budget", async () => {
     const base = createBrowserRuntime();
     const agentCalls: Array<
       Parameters<NonNullable<BrowserSessionRuntime["runAgentDiscovery"]>>[1]
@@ -751,8 +844,7 @@ describe("campaign discovery run budgets", () => {
     };
 
     const seed = createEmptyDiscoverySeed();
-    // Under a scarce one-job budget the funded board leads the configuration
-    // order, so only it launches the bounded agent runtime.
+    // Under a scarce one-job result budget every board still gets a run.
     seed.searchPreferences.discovery.targets = [
       createBrowserTarget("funded_browser", "Funded Board"),
       createBrowserTarget("zero_budget_browser", "Skipped Board"),
@@ -767,9 +859,9 @@ describe("campaign discovery run budgets", () => {
     const campaignId = await saveScaleCampaign(harness, globalPreferences, 1);
     await workspaceService.runCampaignNow({ campaignId });
 
-    // Only the funded target launches the bounded agent runtime.
-    expect(agentCalls).toHaveLength(1);
+    expect(agentCalls).toHaveLength(2);
     expect(agentCalls[0]?.siteLabel).toBe("Funded Board");
+    expect(agentCalls[1]?.siteLabel).toBe("Skipped Board");
 
     const discoveryState = await repository.getDiscoveryState();
     const run = discoveryState.recentRuns.at(-1);
@@ -780,9 +872,8 @@ describe("campaign discovery run budgets", () => {
         execution,
       ]),
     );
-    expect(executions.zero_budget_browser?.state).toBe("skipped");
-    expect(executions.zero_budget_browser?.requestedJobBudget).toBeNull();
-    expect(executions.zero_budget_browser?.warning ?? "").toContain("budget");
+    expect(executions.zero_budget_browser?.state).toBe("completed");
+    expect(executions.zero_budget_browser?.requestedJobBudget).toBe(1);
     expect(executions.funded_browser?.state).toBe("completed");
     expect(executions.funded_browser?.jobsPersisted).toBeGreaterThan(0);
   }, 60_000);

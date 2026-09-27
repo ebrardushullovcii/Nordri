@@ -1,6 +1,6 @@
-import { PageHeader } from "../../components/page-header";
+import { PageHeaderStack } from "../../components/page-header";
 import { useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import type {
   JobFinderWorkspaceSnapshot,
   SafeguardMutationInput,
@@ -118,6 +118,17 @@ function SafeguardRowCard(props: {
       ) : null}
 
       <div className="flex flex-wrap items-center gap-2">
+        {row.sampleLinks?.map((link) => (
+          <Button
+            asChild
+            key={link.href}
+            size="sm"
+            type="button"
+            variant="outline"
+          >
+            <Link to={link.href}>Review {link.label}</Link>
+          </Button>
+        ))}
         {/* The recovery sentence above names a place to look. This is that
             place, so the guidance is never an instruction the page refuses to
             carry out. */}
@@ -162,7 +173,10 @@ export function SafeguardsScreen(props: {
   workspace: JobFinderWorkspaceSnapshot | null;
 }) {
   const { actionMessage, isPending, onMutateSafeguards, workspace } = props;
-  const [tab, setTab] = useState<SafeguardTabId>("all");
+  const [searchParams] = useSearchParams();
+  const [tab, setTab] = useState<SafeguardTabId>(
+    searchParams.get("tab") === "reviews" ? "reviews" : "all",
+  );
   const [query, setQuery] = useState("");
   const [eventsOpenOverride, setEventsOpenOverride] = useState<boolean | null>(
     null,
@@ -217,7 +231,7 @@ export function SafeguardsScreen(props: {
           through the shared PageHeader like the rest of the app. The card
           below states the boundary in full, so the description no longer
           paraphrases it in smaller type first. */}
-      <PageHeader
+      <PageHeaderStack
         description="What Job Finder is allowed to do on an application site, and the automatic limits that keep a high-volume search safe."
         meta="Quality and reputation"
         title="Safeguards"
@@ -230,9 +244,9 @@ export function SafeguardsScreen(props: {
           are edited on the plan, not here, which this page used to leave
           unsaid. */}
       <p className="text-(length:--text-small) leading-6 text-foreground-soft">
-        These limits are checked on every search and application run and apply
-        from the next run you start. Per-plan limits and stop rules are edited
-        on each plan in{" "}
+        Each limit is checked when its relevant work starts and applies from the
+        next run you start. Per-plan limits and stop rules are edited on each
+        plan in{" "}
         <Link
           className="font-medium text-foreground underline underline-offset-2"
           to="/job-finder/campaigns"
@@ -252,8 +266,8 @@ export function SafeguardsScreen(props: {
             {blockedCount === 1
               ? "1 thing is being held back."
               : `${blockedCount} things are being held back.`}{" "}
-            Settle, dismiss, or retry them below so searching and preparing
-            applications can carry on.
+            Settle, dismiss, or retry them below so the affected work can carry
+            on.
           </span>
         </div>
       ) : dailyCapacityExhausted && dailyCapacity ? (

@@ -5,6 +5,12 @@ import { cn } from "@renderer/lib/cn";
 interface ProfileSaveFooterProps {
   actionMessage: string | null;
   hasUnsavedChanges: boolean;
+  /**
+   * False when the only difference from the saved profile is what an import
+   * filled in. "Unsaved changes" there accused the person of leaving work
+   * behind before they had typed anything.
+   */
+  hasUserEdits?: boolean;
   isSavePending: boolean;
   onSave: () => void;
   validationMessage: string | null;
@@ -13,6 +19,7 @@ interface ProfileSaveFooterProps {
 export function ProfileSaveFooter({
   actionMessage,
   hasUnsavedChanges,
+  hasUserEdits,
   isSavePending,
   onSave,
   validationMessage,
@@ -51,7 +58,9 @@ export function ProfileSaveFooter({
               )}
             />
             {hasUnsavedChanges
-              ? "Unsaved changes on this page."
+              ? hasUserEdits === false
+                ? "Imported details on this page are not saved yet."
+                : "Unsaved changes on this page."
               : "No unsaved changes."}
           </p>
           {/* When a saved profile is felt: the next tailored draft and

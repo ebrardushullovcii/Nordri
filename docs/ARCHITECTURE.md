@@ -34,18 +34,15 @@ See [ADR 0007](adr/0007-source-generic-browser-workflows.md) for the source-gene
 
 - desktop: renderer -> preload -> Electron main -> package services
 - resume import: desktop ingress -> parser/text/vision branches -> review candidates -> accepted canonical writes
-- discovery: ADR 0013 selects API-first ingestion, deterministic compact browser
-  observation second, and bounded model escalation third. `browser-agent` owns
-  source-generic Playwright observation/extraction policy and returns strict,
-  bounded, snapshot-scoped contracts; `job-finder` owns budgets, canonicalization,
-  matching, dedupe, ledger, persistence, and run truth. A model sees only failed
-  or uncertain bounded observations and does not own the whole run. Existing
-  agent checkpoints still carry retained-job progress while the replacement is
-  integrated, and each checkpoint's new postings use the same canonical merge
-  path as final collection.
-- applications: current production remains prepare-only. ADR 0013 replaces the
-  coupled form-driver direction with observe -> propose -> authorize -> execute
-  -> verify. Browser packages own generic observation and execution hands;
+- discovery: the model owns each search and source-check run on `runAgentLoop`
+  with general page tools plus `extract_jobs`, `scan_cards`, `saved_jobs`, and
+  `finish` (ADR 0023). `browser-agent` owns the source-generic search policy,
+  prompts, and structured outputs; `job-finder` owns budgets, canonical merge,
+  matching, dedupe, ledger, persistence, and run truth. Each checkpoint's new
+  postings use the same canonical merge path as final collection.
+- applications: the apply agent fills the form and sends it only under Send
+  for me or on the person's Send press under Ask before sending (ADR 0024,
+  ADR 0027). Browser packages own generic observation and execution hands;
   `job-finder` owns authority envelopes, preflight, idempotency, revocation,
   lineage, capacity, and tri-state outcome truth. Models and heuristics may
   propose typed actions but cannot grant authority or prove external outcomes.
@@ -99,9 +96,9 @@ See [ADR 0007](adr/0007-source-generic-browser-workflows.md) for the source-gene
 - Electron main owns typed IPC, local save dialogs, and the desktop campaign scheduler service (interval-driven due-run evaluation with power suspend/resume). Preload exposes only schema-checked campaign, activity, CRM, rule/funnel, schedule/digest/notification, outcome/strategy/company/safeguard actions. The renderer never writes the database or filesystem directly.
 - Active-campaign list scoping is a renderer projection over authoritative campaign job IDs. Workspace-wide search deliberately keeps all local entities and changes the active campaign before navigating to an item from another campaign.
 - Manual CRM stages do not change apply-run authority, browser outcomes,
-  external-write evidence, or submission receipts. Final submission will be
-  governed only by the separate typed authority envelope from ADR 0012; current
-  prepare-only contracts remain in force until that replacement exists.
+  external-write evidence, or submission receipts. Final submission is
+  governed only by the typed authority envelope from ADR 0012, which the saved
+  apply mode creates and updates (ADR 0024).
 - Outcome recording resolves the campaign and application identity for the exact job. Omitted identities are accepted only when the job has one unambiguous campaign or application record; multiple matches require an explicit identifier and conflicting identifiers are rejected before the event is written. Outcome events remain user-controlled local facts and never create apply or submission evidence.
 
 ## Resume Safety
@@ -111,17 +108,13 @@ See [ADR 0007](adr/0007-source-generic-browser-workflows.md) for the source-gene
 - stale drafts cannot be used as approved exports
 - every canonical experience remains represented in the editor even when excluded from recruiter-facing output
 - named resume strategies resolve a base resume document plus headline, skills, coverage, tailoring-strength, and evidence-boundary policies into generation context. This context is advisory input to résumé generation; strategy selection never approves, readies, or unstales an artifact.
-- current prepare-only browser execution must keep `submitAuthorized: false`,
-  treat ambiguous/final controls as stop points, and never infer submit
-  permission from an apply mode. Future submit authority requires the new typed
-  path from ADR 0012; legacy flags do not acquire that meaning
-- bounded intermediate ATS persistence is a separate prepare-only capability.
-  Its production resolver requires one active, unexpired envelope bound to one
-  job, one canonical origin, one verified resume digest, and the current
-  main-approved answer snapshot. The browser receives only that exact origin
-  and a main-owned callback which re-reads the same envelope revision before
-  every short field-save window. Revocation, revision/answer/origin/resume drift,
-  or callback failure closes the window; none of this grants a final action
+- `submitAuthorized` is true only under an `autonomous_submit` envelope or the
+  person's Send press under `confirm_before_submit`, after preflight;
+  `prepare_only` never sends, and legacy flags do not acquire that meaning
+- intermediate field saves are allowed by default to the origin the form's
+  frame saves to, in a 10-second, 40-request window after each field change;
+  a saved envelope may narrow the origins, and no final send, DOM submit, or
+  navigation mutation passes (ADR 0024). None of this grants a final action
 - Browser Runtime keeps Playwright `Page` private and exposes optional typed
   application observation/exact-one-action hands only to main-process
   composition. Job Finder owns the authority/preflight/idempotency policy around
@@ -138,7 +131,7 @@ See [ADR 0007](adr/0007-source-generic-browser-workflows.md) for the source-gene
   idempotency, ApplyJobResult receipt/state, and exact ApplicationRecord
   projection atomically. This recovery channel records external operator
   evidence but grants no browser action or submission authority
-- prepare-only browser execution installs page and network mutation guards before filling fields. A separate `intermediateMutationsAuthorized` capability may allow autosave/draft/non-final ATS traffic, but it never permits DOM form submission, `requestSubmit`, a final-control click, navigation mutation, beacon, WebSocket, EventSource, or WebTransport; omitted authorization remains false. The capability is deny-default and field-scoped: one exact grounded field action opens a same-origin 3-second/8-request window, only fetch/XHR `POST`/`PUT`/`PATCH` traffic with explicit draft/autosave/save/update/field/answer/upload/progress semantics can pass, and final-action, cross-origin, ambiguous, late, or exhausted traffic is blocked and journaled. Both the page wrapper and Playwright route enforce the boundary. Observed external writes and receipt attestations describe Job Finder's own authority and actions — they cannot confirm an external site outcome, which only the user can verify on the site
+- prepare-only browser execution installs page and network mutation guards before filling fields. A separate `intermediateMutationsAuthorized` capability may allow autosave/draft/non-final ATS traffic, but it never permits DOM form submission, `requestSubmit`, a final-control click, navigation mutation, beacon, WebSocket, EventSource, or WebTransport; omitted authorization remains false. The capability is field-scoped: one exact grounded field action opens a same-origin 10-second/40-request window, only fetch/XHR `POST`/`PUT`/`PATCH` traffic with explicit draft/autosave/save/update/field/answer/upload/progress semantics can pass, and final-action, cross-origin, ambiguous, late, or exhausted traffic is blocked and journaled. Both the page wrapper and Playwright route enforce the boundary. Observed external writes and receipt attestations describe Job Finder's own authority and actions — they cannot confirm an external site outcome, which only the user can verify on the site
 - prepare-only execution continuously rechecks application-origin service-worker registration through the run sentinel plus an in-page scan, with explicit rechecks before safe-advance clicks and at the preparation step limit, and pauses untouched before any further field or click action when a worker can influence the origin; a failed employer-page goto is classified once as the technical `application_page_unreachable` blocker carrying only causal-free user copy, while its raw transport detail stays in session diagnostics
 - exact provider job URLs are prioritized before per-source collection caps so a configured vacancy cannot silently degrade into an unrelated board result
 - authentication remains owned by the browser session. The default desktop browser uses sandboxed Electron tabs and a persistent session; main may bring sign-ins over from a browser profile the user picks from a discovered list, but cookie values, profile paths and credentials must never enter renderer state, prompts or logs. Opening a source does not prove authentication; the user explicitly confirms sign-in before a source-scoped retry. See [ADR 0017](adr/0017-embedded-job-finder-browser.md) for browser ownership, handover and import boundaries
@@ -155,11 +148,7 @@ See [ADR 0010](adr/0010-opencode-go-mixed-text-and-vision-routing.md) for config
 ## Known Debt
 
 - keep watching for any `browser-runtime` dependency on `browser-agent`; runtime should stay lower-level than workflow policy
-- the generic application-preparation state machine currently lives in
-  `browser-runtime`; decompose it as ADR 0013's deterministic policy executor is
-  integrated so workflow authority moves to `job-finder` and only reusable
-  browser mechanics remain below
-- compact discovery observation is integrated as the deterministic first pass
-  in the production discovery run loop. Keep the bounded legacy/model path as
-  fallback until compact coverage is broad enough to retire it with evidence
+- keep `browser-runtime` limited to page mechanics now that the fixed
+  preparation script is gone (ADR 0021), and search runs no deterministic pass
+  before the model sees the page (ADR 0023)
 - remaining source-named discovery debt from the browser substrate evaluation must not expand to other sources

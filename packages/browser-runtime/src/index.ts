@@ -2,6 +2,7 @@ export type {
   AgentDiscoveryOptions,
   ApplicationAttachmentArtifact,
   ApplicationExecutionMode,
+  ApplicationPreparationProgress,
   BrowserSessionRuntime,
   CatalogBrowserSessionRuntimeSeed,
   ExecuteApplicationFlowInput,
@@ -18,6 +19,8 @@ export {
   createCatalogBrowserSessionRuntime,
   createStubBrowserSessionRuntime,
 } from "./catalog-browser-session-runtime";
+
+export { applicationSiteKey } from "./application-preparation-scheduler";
 
 export {
   ApplicationNavigationError,
@@ -51,6 +54,12 @@ export {
   ensurePrepareOnlyMutationGuard,
   loadVerifiedResumeBytes,
 } from "./playwright-application-flow";
+
+export {
+  classifySourceAccess,
+  collectVisibleAccessSignals,
+  type VisibleAccessSignals,
+} from "./source-access-probe";
 
 export {
   createPlaywrightApplyPageMechanics,

@@ -31,7 +31,8 @@ function createJobs(count: number): SavedJob[] {
       title: `Engineer ${ordinal}`,
       company: "Mega Corp",
       location: "Remote",
-      workMode: ["remote"],
+      // Two work modes, so the Filters disclosure has something to offer.
+      workMode: [index % 2 === 0 ? "remote" : "hybrid"],
       applyPath: "external_redirect",
       easyApplyEligible: false,
       discoveredAt: "2026-08-01T10:00:00.000Z",
@@ -93,7 +94,7 @@ describe("DiscoveryResultsPanel toolbar control metrics", () => {
 
     const controls = getToolbarControls();
     // Filters disclosure, sort field, sort direction.
-    expect(controls).toHaveLength(3);
+    expect(controls).toHaveLength(2);
 
     const sharedClasses = DISCOVERY_RESULTS_TOOLBAR_CONTROL_CLASS.split(" ");
     expect(
@@ -102,7 +103,7 @@ describe("DiscoveryResultsPanel toolbar control metrics", () => {
           control.classList.contains(className),
         ),
       ),
-    ).toEqual([sharedClasses, sharedClasses, sharedClasses]);
+    ).toEqual([sharedClasses, sharedClasses]);
   });
 
   it("keeps the toolbar row free of the heights and radii that made it ragged", () => {
@@ -166,15 +167,11 @@ describe("DiscoveryResultsPanel toolbar control metrics", () => {
       Array.from(select.options).map((option) => [option.value, option.text]),
     ).toEqual([
       ["fit", "Best match"],
-      ["recent", "Newest listing date"],
-      ["company", "Company"],
+      ["recent", "Newest first"],
+      ["company", "Company A to Z"],
     ]);
     expect(select.value).toBe("fit");
-
-    const direction = screen.getByRole("button", {
-      name: "Sort direction: highest first. Select to sort lowest first.",
-    });
-    expect(direction.getAttribute("type")).toBe("button");
-    expect(screen.getByText("Highest first")).toBeTruthy();
+    // Each option carries its own direction, so there is no flip control.
+    expect(screen.queryByText("Highest first")).toBeNull();
   });
 });

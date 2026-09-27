@@ -88,6 +88,88 @@ describe("ResumeWorkspaceStudioShell", () => {
     ).toBe(true);
   });
 
+  it("says an Original job's draft is not used and offers one press to an editable draft instead of approval", () => {
+    const onWriteEditableResume = vi.fn();
+
+    render(
+      <ResumeWorkspaceStudioShell
+        approvalBlockedReason={null}
+        approvalStateLabel={null}
+        canApproveResume
+        canClearApproval={false}
+        editorPanel={<div>Editor</div>}
+        exportBlockedReason={null}
+        hasUnsavedChanges={false}
+        historyPanel={<div>History</div>}
+        isWorkspacePending={false}
+        mobileStudioTab="preview"
+        onApproveCurrentPdf={vi.fn()}
+        onClearApproval={vi.fn()}
+        onContinueToShortlisted={vi.fn()}
+        onExportPdf={vi.fn()}
+        onReviewBlockingIssues={vi.fn()}
+        onSaveDraft={vi.fn()}
+        onSetMobileStudioTab={vi.fn()}
+        originalResume={{ levelLabel: "Tailored", onWriteEditableResume }}
+        previewPane={<div>Preview</div>}
+        selectedTemplateApprovalEligible
+        studioStatusMessage="Ready"
+        templatePanel={<div>Templates</div>}
+      />,
+    );
+
+    expect(
+      document.querySelector("[data-resume-studio-original-notice]")
+        ?.textContent,
+    ).toContain(
+      "This job sends your original file unchanged, so edits here are not used.",
+    );
+    expect(screen.queryByRole("button", { name: /Approve resume/ })).toBeNull();
+    fireEvent.click(
+      screen.getByRole("button", { name: /Write an editable Tailored resume/ }),
+    );
+    expect(onWriteEditableResume).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps saying the editable resume is being written until it is done, never offering approval of the old draft", () => {
+    render(
+      <ResumeWorkspaceStudioShell
+        approvalBlockedReason={null}
+        approvalStateLabel={null}
+        canApproveResume
+        canClearApproval={false}
+        editorPanel={<div>Editor</div>}
+        exportBlockedReason={null}
+        hasUnsavedChanges={false}
+        historyPanel={<div>History</div>}
+        isWorkspacePending
+        mobileStudioTab="preview"
+        onApproveCurrentPdf={vi.fn()}
+        onClearApproval={vi.fn()}
+        onContinueToShortlisted={vi.fn()}
+        onExportPdf={vi.fn()}
+        onReviewBlockingIssues={vi.fn()}
+        onSaveDraft={vi.fn()}
+        onSetMobileStudioTab={vi.fn()}
+        originalResume={{
+          levelLabel: "Light",
+          writing: true,
+          onWriteEditableResume: vi.fn(),
+        }}
+        previewPane={<div>Preview</div>}
+        selectedTemplateApprovalEligible
+        studioStatusMessage="Ready"
+        templatePanel={<div>Templates</div>}
+      />,
+    );
+
+    expect(
+      document.querySelector("[data-resume-studio-original-notice]")
+        ?.textContent,
+    ).toContain("Writing an editable Light resume for this job.");
+    expect(screen.queryByRole("button", { name: /Approve resume/ })).toBeNull();
+  });
+
   it("uses instant navigation for the template chooser when reduced motion is requested", () => {
     const scrollIntoView = vi.fn();
 
@@ -571,7 +653,7 @@ describe("ResumeWorkspaceStudioShell", () => {
     );
 
     const prepareButtons = screen.getAllByRole("button", {
-      name: "Fill it in",
+      name: "Apply",
     });
     expect(prepareButtons).toHaveLength(1);
     fireEvent.click(prepareButtons[0]!);
@@ -1469,13 +1551,13 @@ describe("ResumeWorkspaceStudioShell locked-pane ownership", () => {
       />,
     );
 
-    // `Continue to Shortlisted →` used to sit beside `Fill it in →`
+    // `Continue to Shortlisted →` used to sit beside `Apply →`
     // while `← Back to Shortlisted` was ~100px away in the workspace header.
     expect(
       screen.queryByRole("button", { name: /Continue to Shortlisted/ }),
     ).toBeNull();
     expect(
-      screen.getByRole("button", { name: /Fill it in/ }),
+      screen.getByRole("button", { name: /Apply/ }),
     ).toBeTruthy();
     approved.unmount();
 
@@ -2011,6 +2093,7 @@ describe("ResumeWorkspaceStudioShell bounded compact tabs", () => {
 
   function renderCompactShell(
     overrides?: Partial<{
+      assistantDocked: boolean;
       canClearApproval: boolean;
       /** Renders the desktop split view instead, with the same props. */
       desktop: boolean;
@@ -2029,6 +2112,7 @@ describe("ResumeWorkspaceStudioShell bounded compact tabs", () => {
       <ResumeWorkspaceStudioShell
         approvalBlockedReason={null}
         approvalStateLabel={null}
+        assistantDocked={overrides?.assistantDocked ?? false}
         canApproveResume={false}
         canClearApproval={overrides?.canClearApproval ?? false}
         editorPanel={<div>Editor</div>}
@@ -2171,6 +2255,77 @@ describe("ResumeWorkspaceStudioShell bounded compact tabs", () => {
     expect(screen.queryByRole("tab", { name: "Assistant" })).toBeNull();
   });
 
+  it.each([
+    ["desktop", true],
+    ["compact", false],
+  ] as const)(
+    "gives the open Assistant its own %s column beside the panes, below the approval row",
+    (_label, desktop) => {
+      // No-overlap guarantee, by structure: the dock is an in-flow flex
+      // sibling of the panes column, below the row that owns Approve, and
+      // never positioned over anything.
+      const { container } = renderCompactShell({
+        assistantDocked: true,
+        desktop,
+      });
+      const studio = container.firstElementChild as HTMLElement;
+      const body = studio.querySelector<HTMLElement>(
+        "[data-resume-studio-body]",
+      );
+      const dock = studio.querySelector<HTMLElement>(
+        "[data-resume-studio-assistant-dock-slot]",
+      );
+      const approvalRow = studio.querySelector<HTMLElement>(
+        "[data-resume-workspace-top-actions]",
+      );
+
+      expect(body?.className).toContain("flex");
+      expect(dock?.parentElement).toBe(body);
+      expect(body?.lastElementChild).toBe(dock);
+      expect(dock?.previousElementSibling?.className).toContain("flex-1");
+      expect(dock?.className).toContain("w-(--resume-assistant-dock-width)");
+      expect(dock?.className).toContain("shrink-0");
+      expect(dock?.className).not.toMatch(/\b(fixed|absolute|sticky)\b/);
+      expect(dock?.getAttribute("data-resume-studio-assistant-docked")).toBe(
+        "true",
+      );
+      // The approval row sits above the body, so the dock can never reach it.
+      expect(
+        approvalRow &&
+          body &&
+          approvalRow.compareDocumentPosition(body) &
+            Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+      expect(body?.contains(approvalRow)).toBe(false);
+
+      if (desktop) {
+        const grid = studio.querySelector<HTMLElement>(
+          "[data-resume-studio-grid-columns]",
+        );
+        // The tools column may narrow while the Assistant is docked.
+        expect(grid?.className).toContain(
+          "xl:grid-cols-[minmax(0,1fr)_minmax(19rem,0.8fr)]",
+        );
+      }
+    },
+  );
+
+  it("keeps the dock slot empty and hidden while the Assistant is closed", () => {
+    const { container } = renderCompactShell({ desktop: true });
+    const dock = container.querySelector<HTMLElement>(
+      "[data-resume-studio-assistant-dock-slot]",
+    );
+    const grid = container.querySelector<HTMLElement>(
+      "[data-resume-studio-grid-columns]",
+    );
+
+    expect(dock?.className).toContain("hidden");
+    expect(dock?.childElementCount).toBe(0);
+    expect(grid?.className).toContain(
+      "xl:grid-cols-[minmax(0,1.15fr)_minmax(26rem,0.85fr)]",
+    );
+  });
+
   it("leaves exactly one always-visible studio row above the desktop panes", () => {
     // G3: the stack above the content used to be 117px of shell + a ~90px
     // workspace title row + this 53px state row. The title row now scrolls with
@@ -2189,17 +2344,26 @@ describe("ResumeWorkspaceStudioShell bounded compact tabs", () => {
       "[data-resume-studio-desktop-grid]",
     );
 
+    // The panes live in the studio body, beside the (closed, hidden)
+    // Assistant dock slot.
+    const body = studio.querySelector<HTMLElement>("[data-resume-studio-body]");
+
     expect(stickyRow?.parentElement).toBe(studio);
-    expect(desktopGrid?.parentElement).toBe(studio);
+    expect(body?.parentElement).toBe(studio);
+    expect(desktopGrid?.parentElement?.parentElement).toBe(body);
+    expect(
+      Array.from(desktopGrid?.parentElement?.children ?? []),
+      "on desktop the panes column holds only the desktop grid",
+    ).toEqual([desktopGrid]);
     expect(stickyRow?.className).toContain("shrink-0");
 
-    // Everything between them belongs to the compact tab surface and is hidden
-    // from xl up, so the desktop stack is: sticky row, then panes.
+    // Everything between the sticky row and the body belongs to the compact
+    // surface and is hidden from xl up, so the desktop stack is: sticky row,
+    // then panes.
     const between = rows.slice(
       rows.indexOf(stickyRow as HTMLElement) + 1,
-      rows.indexOf(desktopGrid as HTMLElement),
+      rows.indexOf(body as HTMLElement),
     );
-    expect(between.length).toBeGreaterThan(0);
     for (const row of between) {
       expect(row.className).toContain("xl:hidden");
     }

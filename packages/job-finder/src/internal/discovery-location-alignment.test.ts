@@ -103,11 +103,8 @@ describe("remote-only discovery location alignment", () => {
     });
 
     expect(
-      correctRemoteOnlyLocationAlignment(
-        job,
-        job.matchAssessment,
-        preferences,
-      ).locationReach,
+      correctRemoteOnlyLocationAlignment(job, job.matchAssessment, preferences)
+        .locationReach,
     ).toBe("in_area");
   });
 
@@ -159,7 +156,64 @@ describe("remote-only discovery location alignment", () => {
 
   it("warns when every retained result is remote and none is in area", () => {
     expect(describeRemoteOnlySourceMismatch([remoteJob()], preferences)).toBe(
-      "Your sources only list remote jobs; add a site that lists jobs in Chicago, IL.",
+      "This search returned only remote jobs; try another search for jobs in Chicago, IL.",
+    );
+  });
+
+  it("does not call a named local office remote-only because the body mentions remote work", () => {
+    const madridPreferences = JobSearchPreferencesSchema.parse({
+      ...preferences,
+      locations: ["Madrid, Spain"],
+    });
+    const madridOffice = SavedJobSchema.parse({
+      ...remoteJob(),
+      location: "Madrid Office",
+      workMode: [],
+      description:
+        "Frontend engineer in our Madrid office. Remote collaboration benefits.",
+    });
+
+    expect(
+      describeRemoteOnlySourceMismatch([madridOffice], madridPreferences),
+    ).toBeNull();
+  });
+
+  it("does not infer a remote-only result from generic remote wording in an office listing", () => {
+    const office = SavedJobSchema.parse({
+      ...remoteJob(),
+      location: "Berlin Office",
+      workMode: ["onsite"],
+      canonicalUrl: "https://example.test/jobs/office-role",
+      applicationUrl: null,
+      description: "This office role collaborates with remote teams.",
+    });
+    expect(describeRemoteOnlySourceMismatch([office], preferences)).toBeNull();
+  });
+
+  it("does not warn when a saved location explicitly accepts remote work", () => {
+    const remotePreferences = JobSearchPreferencesSchema.parse({
+      ...preferences,
+      locations: ["Chicago, IL", "Remote, Worldwide"],
+    });
+
+    expect(
+      describeRemoteOnlySourceMismatch([remoteJob()], remotePreferences),
+    ).toBeNull();
+  });
+
+  it("keeps remote geography specific when the saved place is not global", () => {
+    const regionalRemotePreferences = JobSearchPreferencesSchema.parse({
+      ...preferences,
+      locations: ["Remote, Europe"],
+    });
+
+    expect(
+      describeRemoteOnlySourceMismatch(
+        [remoteJob()],
+        regionalRemotePreferences,
+      ),
+    ).toBe(
+      "This search returned only remote jobs; try another search for jobs in Remote, Europe.",
     );
   });
 
@@ -184,7 +238,7 @@ describe("remote-only discovery location alignment", () => {
       expect(
         describeRemoteOnlySourceMismatch([urlOnlyRemote], localPreferences),
       ).toBe(
-        `Your sources only list remote jobs; add a site that lists jobs in ${location}.`,
+        `This search returned only remote jobs; try another search for jobs in ${location}.`,
       );
     },
   );

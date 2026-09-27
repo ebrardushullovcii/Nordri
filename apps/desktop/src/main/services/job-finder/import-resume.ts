@@ -1,9 +1,11 @@
 import { createHash } from "node:crypto";
-import { copyFile, mkdir, readFile } from "node:fs/promises";
+import { access, copyFile, mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import {
   JobFinderWorkspaceSnapshotSchema,
+  isInterruptedResumeImportRun,
   type ResumeImportProgressEvent,
+  type ResumeImportRun,
   type ResumeSourceDocument,
 } from "@unemployed/contracts";
 import {
@@ -17,6 +19,67 @@ import { getJobFinderDocumentsDirectory } from "./paths";
 export interface ImportResumeFromSourcePathOptions {
   onProgress?: (event: ResumeImportProgressEvent) => void;
   useVision?: boolean;
+  /**
+   * The name the person knows the file by. Set when importing the private
+   * working copy again, whose own name carries a timestamp prefix.
+   */
+  fileName?: string;
+}
+
+/**
+ * Where an import keeps its private working copy: the documents directory,
+ * named `<timestamp>_<file name>` with the same timestamp as the resume id
+ * `resume_<timestamp>`. Null when the id does not follow that shape.
+ */
+export function resolveResumeWorkingCopyPath(input: {
+  documentsDirectory: string;
+  sourceResumeId: string;
+  fileName: string;
+}): string | null {
+  const timestamp = /^resume_(\d+)$/.exec(input.sourceResumeId)?.[1];
+  const fileName = path.basename(input.fileName.trim());
+  if (!timestamp || !fileName) {
+    return null;
+  }
+  return path.join(input.documentsDirectory, `${timestamp}_${fileName}`);
+}
+
+export class ResumeImportRetryUnavailableError extends Error {}
+
+/**
+ * Imports again the file an import was reading when the app closed. The
+ * working copy saved at the start of that import is read in place of a file
+ * picker, so starting over is one press instead of finding the file again.
+ */
+export async function retryInterruptedResumeImport(
+  latestRun: ResumeImportRun | null,
+  options: Omit<ImportResumeFromSourcePathOptions, "fileName"> = {},
+) {
+  if (!latestRun || !isInterruptedResumeImportRun(latestRun)) {
+    throw new ResumeImportRetryUnavailableError(
+      "There is no stopped import to start again. Choose your resume file to import it.",
+    );
+  }
+  const workingCopy = resolveResumeWorkingCopyPath({
+    documentsDirectory: getJobFinderDocumentsDirectory(),
+    sourceResumeId: latestRun.sourceResumeId,
+    fileName: latestRun.sourceResumeFileName,
+  });
+  const exists = workingCopy
+    ? await access(workingCopy).then(
+        () => true,
+        () => false,
+      )
+    : false;
+  if (!workingCopy || !exists) {
+    throw new ResumeImportRetryUnavailableError(
+      `The saved copy of ${latestRun.sourceResumeFileName} is no longer on this device. Choose the file again to import it.`,
+    );
+  }
+  return importResumeFromSourcePath(workingCopy, {
+    ...options,
+    fileName: latestRun.sourceResumeFileName,
+  });
 }
 
 export async function importResumeFromSourcePath(
@@ -67,7 +130,9 @@ export async function importResumeFromSourcePath(
 
   const timestamp = Date.now();
   const uploadedAt = new Date(timestamp).toISOString();
-  const fileName = path.basename(sourcePath);
+  const fileName = path.basename(
+    options.fileName?.trim() || path.basename(sourcePath),
+  );
   const resumeId = `resume_${timestamp}`;
   const targetPath = path.join(targetDirectory, `${timestamp}_${fileName}`);
   const seedRunId = `resume_import_seed_${timestamp}`;
@@ -147,7 +212,7 @@ export async function importResumeFromSourcePath(
   reportProgress(
     "building_profile",
     hasReadableResumeContent
-      ? "Reading your resume with the model and building suggestions for your review. Nothing is applied without you."
+      ? "Reading your resume and filling in your profile. Anything that would replace details you already saved waits for your review."
       : "Checking what can be recovered from this file.",
   );
   const snapshot = await jobFinderWorkspaceService.runResumeImport({

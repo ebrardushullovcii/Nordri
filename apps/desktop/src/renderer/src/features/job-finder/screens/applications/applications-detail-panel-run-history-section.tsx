@@ -62,6 +62,9 @@ function RunHistoryEntry(props: {
           resolveApplicationRecoveryPresentation({
             canOpenSafeguards: false,
             isApplyPending: false,
+            run: run
+              ? { state: run.state, activityPaused: false, started: true }
+              : null,
             visibleApplyResult: result,
           }).statusLine
         }

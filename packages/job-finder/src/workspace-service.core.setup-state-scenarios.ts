@@ -131,7 +131,7 @@ describe("createJobFinderWorkspaceService", () => {
     expect(snapshot.profileSetupState.status).not.toBe("completed");
   });
 
-  test("cannot complete setup while the work-mode preference is missing", async () => {
+  test("completes setup without a work-mode preference", async () => {
     const baseSeed: ReturnType<typeof createSeed> = {
       ...createSeed(),
       searchPreferences: {
@@ -147,15 +147,14 @@ describe("createJobFinderWorkspaceService", () => {
       },
     };
 
-    // Without a chosen work mode the canonical blockers keep setup open even
-    // though every other readiness signal is present.
+    // A work mode is a hint on Job targets, not a gate: name, contact and a
+    // job source are enough to finish.
     const blockedHarness = createWorkspaceServiceHarness({ seed: baseSeed });
     const blockedSnapshot =
       await blockedHarness.workspaceService.getWorkspaceSnapshot();
-    expect(blockedSnapshot.profileSetupState.status).toBe("in_progress");
-    expect(blockedSnapshot.profileSetupState.currentStep).toBe("targeting");
+    expect(blockedSnapshot.profileSetupState.status).toBe("completed");
 
-    // Adding the work mode clears the last canonical blocker.
+    // Adding the work mode changes nothing about completion.
     const readyHarness = createWorkspaceServiceHarness({
       seed: {
         ...baseSeed,
@@ -243,7 +242,7 @@ describe("createJobFinderWorkspaceService", () => {
           workModes: [],
         },
         profileSetupState: {
-          status: "not_started",
+          status: "in_progress",
           currentStep: "import",
           completedAt: null,
           reviewItems: [],

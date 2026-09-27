@@ -23,6 +23,8 @@ import {
   validateResumeDraft,
 } from "./resume-workspace-helpers";
 import { buildResumeDraftIdentity } from "./resume-workspace-structure";
+import { hasResumeAffectingProfileChange } from "./resume-workspace-staleness";
+import { resolveJobResumeApplicationMode } from "./job-resume-application-mode";
 import {
   buildResumeStrategyContext,
   resolveCampaignDefaultResumeStrategyId,
@@ -153,10 +155,18 @@ export async function resolveEffectiveResumeTailoringStrengthForJob(
   ctx: WorkspaceServiceContext,
   jobId: string,
 ): Promise<TailoringMode | null> {
-  const [strategyContext, searchPreferences] = await Promise.all([
+  const [strategyContext, searchPreferences, savedJobs] = await Promise.all([
     resolveResumeStrategyContextForJob(ctx, jobId),
     ctx.repository.getSearchPreferences(),
+    ctx.repository.listSavedJobs(),
   ]);
+  // The level the person picked for this job on Shortlisted wins over a
+  // strategy and over the profile-wide setting.
+  const jobLevel =
+    savedJobs.find((job) => job.id === jobId)?.resumeTailoringMode ?? null;
+  if (jobLevel) {
+    return jobLevel;
+  }
   return resolveEffectiveResumeTailoringStrength({
     strategyTailoringStrength: strategyContext?.tailoringStrength ?? null,
     searchPreferencesTailoringMode: searchPreferences.tailoringMode,
@@ -398,15 +408,29 @@ export interface EnsuredResumeDraftState extends LoadedResumeWorkspaceState {
 }
 
 /**
+ * Said when a profile edit that changes resume content lands while a resume
+ * is being written. The run is recorded as a failed, retryable attempt.
+ */
+export const RESUME_PROFILE_CHANGED_DURING_GENERATION_MESSAGE =
+  "Your profile changed while this resume was being written, so it was not saved. Try again to write it from your updated profile.";
+
+/**
  * Resume generation/rendering inputs are assembled asynchronously. Recheck
  * the shared profile epoch before any result is committed so a concurrent
  * profile, preference, or setup edit cannot be paired with stale identity
  * evidence.
+ *
+ * The epoch is shared with search preferences, sources, and setup state, so a
+ * caller that snapshotted the profile (resume generation) may pass it as
+ * `snapshotProfile`: a moved epoch whose profile still has the same
+ * resume-relevant content is then accepted instead of failing hours of AI
+ * work over a Settings save.
  */
 export async function assertResumeProfileRevisionCurrent(
   ctx: WorkspaceServiceContext,
   expectedRevision: number,
   operation: string,
+  snapshotProfile?: CandidateProfile,
 ): Promise<
   Awaited<
     ReturnType<WorkspaceServiceContext["repository"]["getProfileWithRevision"]>
@@ -414,6 +438,12 @@ export async function assertResumeProfileRevisionCurrent(
 > {
   const current = await ctx.repository.getProfileWithRevision();
   if (current.revision !== expectedRevision) {
+    if (snapshotProfile) {
+      if (!hasResumeAffectingProfileChange(snapshotProfile, current.profile)) {
+        return current;
+      }
+      throw new Error(RESUME_PROFILE_CHANGED_DURING_GENERATION_MESSAGE);
+    }
     throw new Error(
       `The candidate profile changed while ${operation} was in progress. Review the latest profile and retry so resume identity stays current.`,
     );
@@ -509,17 +539,48 @@ export async function ensureResumeDraft(
     "creating the initial resume draft",
   );
 
+  // An Original job sends the imported file. Opening its studio must not
+  // record this seeded draft as a ready resume: it was never written for the
+  // job, and a later switch to a written level would otherwise find it
+  // "ready" and send it untailored.
+  const keepsOriginalFile =
+    resolveJobResumeApplicationMode(state.job, state.settings) ===
+    "original_resume";
+
   await ctx.repository.saveResumeDraftWithValidation({
     draft: sanitizedDraft,
     validation,
-    tailoredAsset,
+    tailoredAsset: keepsOriginalFile ? null : tailoredAsset,
   });
 
   return {
     ...state,
     draft: sanitizedDraft,
-    tailoredAsset,
+    tailoredAsset: keepsOriginalFile ? state.tailoredAsset : tailoredAsset,
   };
+}
+
+const RESUME_LEVEL_NAMES: Record<TailoringMode, string> = {
+  conservative: "Light",
+  balanced: "Tailored",
+  aggressive: "Aggressive",
+};
+
+/** The level name Shortlisted shows for a saved tailoring strength. */
+export function describeResumeLevelName(level: TailoringMode): string {
+  return RESUME_LEVEL_NAMES[level];
+}
+
+/**
+ * The Resume Studio Assistant's reply for a job that sends the original file.
+ * It names the studio's one-press route instead of proposing an edit the job
+ * would never send.
+ */
+export function buildOriginalResumeAssistantReply(
+  savedLevel: TailoringMode,
+): string {
+  const level = describeResumeLevelName(savedLevel);
+  return `This job sends your original resume file unchanged, so an edit here would never reach the employer. Press "Write an editable ${level} resume" at the top: I will write one at your saved level (${level}) and then make this change.`;
 }
 
 export async function renderDraftToPdf(
@@ -664,6 +725,7 @@ export async function fetchAndPersistResearch(
   ctx: WorkspaceServiceContext,
   job: SavedJob,
   expectedProfileRevision?: number,
+  snapshotProfile?: CandidateProfile,
 ) {
   const persistedArtifacts = await ctx.repository.listResumeResearchArtifacts(
     job.id,
@@ -687,6 +749,7 @@ export async function fetchAndPersistResearch(
       ctx,
       expectedProfileRevision,
       "preparing resume research",
+      snapshotProfile,
     );
   }
   const fetchedArtifacts = await ctx.researchAdapter.fetchResearchPages({
@@ -699,6 +762,7 @@ export async function fetchAndPersistResearch(
       ctx,
       expectedProfileRevision,
       "saving resume research",
+      snapshotProfile,
     );
   }
 
@@ -782,9 +846,11 @@ export async function buildResumeWorkspace(
         validation: validations[0] ?? null,
       }),
     strategyContext,
-    effectiveTailoringStrength: resolveEffectiveResumeTailoringStrength({
-      strategyTailoringStrength: strategyContext?.tailoringStrength ?? null,
-      searchPreferencesTailoringMode: searchPreferences.tailoringMode,
-    }),
+    effectiveTailoringStrength:
+      job.resumeTailoringMode ??
+      resolveEffectiveResumeTailoringStrength({
+        strategyTailoringStrength: strategyContext?.tailoringStrength ?? null,
+        searchPreferencesTailoringMode: searchPreferences.tailoringMode,
+      }),
   });
 }

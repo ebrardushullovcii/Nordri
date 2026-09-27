@@ -5,6 +5,7 @@ import type {
   ApplicationCrmMutationInput,
   ApplicationCrmSettings,
   ApplicationAttempt,
+  ApplicationAutomationMode,
   ApplicationRecord,
   ApplyRunDetails,
   ClearApplicationAnswerCommandInput,
@@ -17,6 +18,7 @@ import type {
   JobFinderApplyRunActionInput,
   JobFinderApplyRunDetailsQuery,
   JobFinderExactApplicationTarget,
+  UserActionCommandInput,
 } from "@unemployed/contracts";
 import { isListableCompanyName } from "@unemployed/contracts";
 import { ArrowLeft } from "lucide-react";
@@ -54,6 +56,23 @@ import {
   type ApplicationCrmView,
 } from "./applications-crm-views";
 import { ApplicationsCrmDetail } from "./applications-crm-detail";
+import type { ApplyMode } from "../../lib/apply-mode-contracts-stub";
+import {
+  resolveApplyStatePresentation,
+  WAITING_FOR_BROWSER_TAB_SUMMARY,
+} from "./apply-state";
+import { buildApplyRunContextReader } from "./applications-recovery-state";
+import { APPLICATION_PREPARATION_BATCH_LIMIT } from "../review-queue/review-queue-status";
+
+/** Statuses an application reaches once it was sent and can have an outcome. */
+const OUTCOME_STATUSES = new Set<string>([
+  "submitted",
+  "assessment",
+  "interview",
+  "rejected",
+  "offer",
+  "withdrawn",
+]);
 
 export function ApplicationsScreen(props: {
   actionMessage?: string | null;
@@ -61,6 +80,8 @@ export function ApplicationsScreen(props: {
   applicationRecords: readonly ApplicationRecord[];
   applyRuns: JobFinderWorkspaceSnapshot["applyRuns"];
   applyJobResults: JobFinderWorkspaceSnapshot["applyJobResults"];
+  /** The person's pause, so a job held by it reads Paused, not Filling in. */
+  activityControl?: JobFinderWorkspaceSnapshot["activityControl"] | null;
   /**
    * Live user-action requests, so the finished-run summary counts this run's
    * share of the same Needs you population the header badge totals.
@@ -101,9 +122,17 @@ export function ApplicationsScreen(props: {
     input: JobFinderApplyConsentActionInput,
   ) => void;
   onRevokeApplyRunApproval: (input: JobFinderApplyRunActionInput) => void;
-  onStartAutoApplyQueue: (jobIds: string[]) => void;
+  applicationAutomationMode?: ApplicationAutomationMode;
+  onStartAutoApplyQueue: (
+    jobIds: string[],
+    applicationAutomationMode?: ApplicationAutomationMode,
+  ) => void;
   onStartApplyCopilot: (input: JobFinderExactApplicationTarget) => void;
   onOpenCompany?: (companyId: string) => void;
+  /**
+   * The workspace's most recently updated run. Not used to pick a record's
+   * attempt (see effectiveSelectedApplyRunId); kept for callers.
+   */
   selectedApplyRunId: string | null;
   onSelectRecord: (recordId: string) => void;
   selectedAttempt: ApplicationAttempt | null;
@@ -125,7 +154,13 @@ export function ApplicationsScreen(props: {
   getOutcomeResumeStrategyId?: (jobId: string) => string | null;
   safeguardsBlockerCount?: number;
   onOpenSafeguards?: () => void;
+  /** Opens Outcomes, which has no navigation entry of its own. */
+  onOpenOutcomes?: () => void;
   onOpenNeedsYou?: () => void;
+  onPerformUserAction?: (
+    command: UserActionCommandInput,
+  ) => void | Promise<void>;
+  isUserActionPending?: (requestId: string) => boolean;
   onAllowSiteSaves?: (host: string | null) => void;
   /**
    * Opens or focuses the managed Job Finder browser on the paused application
@@ -142,8 +177,12 @@ export function ApplicationsScreen(props: {
   onConfirmFinishedInBrowser?: (input: FinishInBrowserInput) => void;
   /** True while a pending browser step exists for the visible result. */
   canConfirmFinishedInBrowser?: boolean;
+  /** The pending browser step is a sign-in Job Finder watches by itself. */
+  browserStepContinuesOnItsOwn?: boolean;
   confirmFinishedInBrowserStatus?: ConfirmFinishedInBrowserStatus;
   confirmFinishedInBrowserBlockerText?: string | null;
+  /** The mode chosen in Settings; decides what a finished fill means. */
+  applyMode?: ApplyMode;
   /** Route-owned tracker mode, so "Open tracker" is a link, not a tab. */
   workspaceView?: "workflow" | "crm";
   onWorkspaceViewChange?: (view: "workflow" | "crm") => void;
@@ -172,7 +211,6 @@ export function ApplicationsScreen(props: {
     onRevokeApplyRunApproval,
     onStartAutoApplyQueue,
     onStartApplyCopilot,
-    selectedApplyRunId,
     onSelectRecord,
     selectedAttempt,
     selectedRecord,
@@ -227,17 +265,145 @@ export function ApplicationsScreen(props: {
     },
     [],
   );
+  // The words for a job whose application is being filled in right now, so
+  // the list never shows a stale "prepare when you are ready" beside a
+  // running preparation.
+  const liveRunLinesByJobId = useMemo(() => {
+    const runningRunIds = new Set(
+      applyRuns.filter((run) => run.state === "running").map((run) => run.id),
+    );
+    const lines = new Map<string, string>();
+    for (const result of applyJobResults) {
+      if (!runningRunIds.has(result.runId)) continue;
+      // Started but held until the browser has a free tab: say that.
+      if (result.summary === WAITING_FOR_BROWSER_TAB_SUMMARY) {
+        lines.set(result.jobId, `${WAITING_FOR_BROWSER_TAB_SUMMARY}.`);
+        continue;
+      }
+      if (result.state === "planned") {
+        lines.set(
+          result.jobId,
+          props.activityControl?.paused
+            ? "Paused before this application. It carries on when you resume."
+            : "Waiting its turn in this run.",
+        );
+        continue;
+      }
+      if (result.state !== "filling" && result.state !== "submitting") continue;
+      lines.set(result.jobId, result.summary?.trim() || "Filling in the form.");
+    }
+    return lines;
+  }, [applyJobResults, applyRuns, props.activityControl?.paused]);
+  const applyMode: ApplyMode = props.applyMode ?? "fill_only";
+  // The newest run result per record, so each row reads one of the five
+  // apply states from what the run recorded.
+  const latestApplyResultByRecordId = useMemo(() => {
+    const latest = new Map<
+      string,
+      JobFinderWorkspaceSnapshot["applyJobResults"][number]
+    >();
+    for (const result of applyJobResults) {
+      if (!result.applicationRecordId) continue;
+      const current = latest.get(result.applicationRecordId);
+      if (!current || current.updatedAt < result.updatedAt) {
+        latest.set(result.applicationRecordId, result);
+      }
+    }
+    return latest;
+  }, [applyJobResults]);
+  // What each result's run is doing: a planned job waits its turn, is held
+  // by the person's pause, or was left behind by a batch that stopped.
+  const readApplyRunContext = useMemo(
+    () =>
+      buildApplyRunContextReader({
+        applyRuns,
+        applyJobResults,
+        activityControl: props.activityControl ?? null,
+      }),
+    [applyJobResults, applyRuns, props.activityControl],
+  );
+  // Bulk retry: every application whose last run ended where a fresh run
+  // could differ. One control, so a batch that failed on a bad network night
+  // is not ten separate "Try again" presses.
+  const retryableJobIds = useMemo(() => {
+    const running = new Set(
+      applyRuns
+        .filter((run) => run.state === "running")
+        .flatMap((run) => run.jobIds),
+    );
+    const jobIds: string[] = [];
+    for (const record of applicationRecords) {
+      if (running.has(record.jobId)) continue;
+      const result = latestApplyResultByRecordId.get(record.id);
+      if (!result) continue;
+      const presentation = resolveApplyStatePresentation({
+        mode:
+          record.automationMode === "autonomous_submit"
+            ? "apply_for_me"
+            : "fill_only",
+        result,
+        run: readApplyRunContext(result),
+        recordFailure:
+          record.lastAttemptState === "failed"
+            ? {
+                lastActionLabel: record.lastActionLabel,
+                lastUpdatedAt: record.lastUpdatedAt,
+              }
+            : null,
+      });
+      if (
+        presentation.kind === "could_not_apply" &&
+        presentation.action === "try_again" &&
+        !jobIds.includes(record.jobId)
+      ) {
+        jobIds.push(record.jobId);
+      }
+    }
+    return jobIds.slice(0, APPLICATION_PREPARATION_BATCH_LIMIT);
+  }, [
+    applicationRecords,
+    applyRuns,
+    latestApplyResultByRecordId,
+    readApplyRunContext,
+  ]);
   const filterCounts = useMemo(
     () =>
       Object.fromEntries(
         APPLICATION_FILTERS.map((filter) => [
           filter,
           applicationRecords.filter((record) =>
-            matchesApplicationsFilter(record, filter),
+            matchesApplicationsFilter(
+              record,
+              filter,
+              latestApplyResultByRecordId.has(record.id)
+                ? resolveApplyStatePresentation({
+                    mode:
+                      record.automationMode === "autonomous_submit"
+                        ? "apply_for_me"
+                        : "fill_only",
+                    result: latestApplyResultByRecordId.get(record.id) ?? null,
+                    run: readApplyRunContext(
+                      latestApplyResultByRecordId.get(record.id) ?? null,
+                    ),
+                    pendingQuestionCount: Math.max(
+                      0,
+                      record.questionSummary.total -
+                        record.questionSummary.answered,
+                    ),
+                    recordFailure:
+                      record.lastAttemptState === "failed"
+                        ? {
+                            lastActionLabel: record.lastActionLabel,
+                            lastUpdatedAt: record.lastUpdatedAt,
+                          }
+                        : null,
+                  }).kind
+                : undefined,
+            ),
           ).length,
         ]),
       ) as Record<ApplicationsViewFilter, number>,
-    [applicationRecords],
+    [applicationRecords, latestApplyResultByRecordId, readApplyRunContext],
   );
   const latestFinishedAutomaticRun = useMemo(
     () =>
@@ -272,12 +438,18 @@ export function ApplicationsScreen(props: {
       latestFinishedAutomaticRun
         ? countApplyRunItemsNeedingYou({
             applicationRecords,
+            applyJobResults,
             requests: userActionRequests ?? [],
             runId: latestFinishedAutomaticRun.id,
             runJobIds: new Set(latestFinishedAutomaticRun.jobIds),
           })
         : 0,
-    [applicationRecords, latestFinishedAutomaticRun, userActionRequests],
+    [
+      applicationRecords,
+      applyJobResults,
+      latestFinishedAutomaticRun,
+      userActionRequests,
+    ],
   );
   const latestRunSkippedCount = latestFinishedAutomaticResults.filter(
     (result) => result.state === "skipped",
@@ -285,9 +457,41 @@ export function ApplicationsScreen(props: {
   const filteredApplicationRecords = useMemo(
     () =>
       applicationRecords.filter((record) =>
-        matchesApplicationsFilter(record, activeFilter),
+        matchesApplicationsFilter(
+          record,
+          activeFilter,
+          latestApplyResultByRecordId.has(record.id)
+            ? resolveApplyStatePresentation({
+                mode:
+                  record.automationMode === "autonomous_submit"
+                    ? "apply_for_me"
+                    : "fill_only",
+                result: latestApplyResultByRecordId.get(record.id) ?? null,
+                run: readApplyRunContext(
+                  latestApplyResultByRecordId.get(record.id) ?? null,
+                ),
+                pendingQuestionCount: Math.max(
+                  0,
+                  record.questionSummary.total -
+                    record.questionSummary.answered,
+                ),
+                recordFailure:
+                  record.lastAttemptState === "failed"
+                    ? {
+                        lastActionLabel: record.lastActionLabel,
+                        lastUpdatedAt: record.lastUpdatedAt,
+                      }
+                    : null,
+              }).kind
+            : undefined,
+        ),
       ),
-    [activeFilter, applicationRecords],
+    [
+      activeFilter,
+      applicationRecords,
+      latestApplyResultByRecordId,
+      readApplyRunContext,
+    ],
   );
   const isSelectedRecordHiddenByFilter =
     selectedRecord !== null &&
@@ -391,20 +595,15 @@ export function ApplicationsScreen(props: {
       return locallySelectedRunId;
     }
 
-    if (
-      selectedApplyRunId &&
-      applyResultsForSelectedRecord.some(
-        (result) => result.runId === selectedApplyRunId,
-      )
-    ) {
-      return selectedApplyRunId;
-    }
-
+    // Otherwise the record's newest attempt. The workspace-wide selection is
+    // the most recently *updated* run, which after a Try again is often the
+    // older batch (a late write to it moves it forward). Following it here
+    // aimed "Open the Job Finder browser" at the earlier, failed attempt, so
+    // the kept page of the newer one was never handed to the person.
     return applyResultsForSelectedRecord[0]?.runId ?? null;
   }, [
     applyResultsForSelectedRecord,
     effectiveSelectedRecord,
-    selectedApplyRunId,
     selectedApplyRunIdByApplicationRecordId,
   ]);
   const effectiveSelectedApplyResult = useMemo(
@@ -466,35 +665,6 @@ export function ApplicationsScreen(props: {
     },
     [effectiveSelectedRecord],
   );
-
-  useEffect(() => {
-    if (!effectiveSelectedRecord || !selectedApplyRunId) {
-      return;
-    }
-
-    if (
-      !applyResultsForSelectedRecord.some(
-        (result) => result.runId === selectedApplyRunId,
-      )
-    ) {
-      return;
-    }
-
-    setSelectedApplyRunIdByApplicationRecordId((current) => {
-      if (current[effectiveSelectedRecord.id] === selectedApplyRunId) {
-        return current;
-      }
-
-      return {
-        ...current,
-        [effectiveSelectedRecord.id]: selectedApplyRunId,
-      };
-    });
-  }, [
-    applyResultsForSelectedRecord,
-    effectiveSelectedRecord,
-    selectedApplyRunId,
-  ]);
 
   useEffect(() => {
     if (
@@ -591,22 +761,41 @@ export function ApplicationsScreen(props: {
                   Back to Applications
                 </Button>
               ) : applicationRecords.length > 0 ? (
-                <Button
-                  className="border-(--control-border)"
-                  data-testid="applications-open-tracker"
-                  onClick={() => setWorkspaceView("crm")}
-                  size="sm"
-                  type="button"
-                  variant="ghost"
-                >
-                  Open tracker
-                </Button>
+                <div className="flex flex-wrap items-center gap-2">
+                  {/* Outcomes has no navigation entry; it is reached from
+                      here once something has been sent and can have one. */}
+                  {props.onOpenOutcomes &&
+                  applicationRecords.some((record) =>
+                    OUTCOME_STATUSES.has(record.status),
+                  ) ? (
+                    <Button
+                      className="border-(--control-border)"
+                      data-testid="applications-open-outcomes"
+                      onClick={props.onOpenOutcomes}
+                      size="sm"
+                      type="button"
+                      variant="ghost"
+                    >
+                      See outcomes
+                    </Button>
+                  ) : null}
+                  <Button
+                    className="border-(--control-border)"
+                    data-testid="applications-open-tracker"
+                    onClick={() => setWorkspaceView("crm")}
+                    size="sm"
+                    type="button"
+                    variant="ghost"
+                  >
+                    Open tracker
+                  </Button>
+                </div>
               ) : null
             }
             description={
               workspaceView === "crm"
                 ? "Stages you record yourself, plus notes, reminders and export. Recording a stage is a local note; it never submits anything."
-                : `${countApplicationLedgerEntries(applicationRecords)} applications. Review progress, resolve blockers, and continue applications.`
+                : `${countApplicationLedgerEntries(applicationRecords)} applications. Each one shows where it stands and what it needs from you.`
             }
             title={workspaceView === "crm" ? "Tracker" : "Applications"}
           />
@@ -656,6 +845,36 @@ export function ApplicationsScreen(props: {
                   latestRunAttentionCount === 1 ? "case" : "cases"
                 }`}
               </StatusBadge>
+            </section>
+          ) : null}
+          {workspaceView === "workflow" && retryableJobIds.length > 1 ? (
+            <section
+              aria-label="Retry applications that could not be applied"
+              className="flex flex-wrap items-center justify-between gap-4 rounded-(--radius-field) border border-(--surface-panel-border) bg-(--surface-panel-tint) px-4 py-3"
+              data-testid="applications-bulk-retry"
+            >
+              <p className="min-w-0 text-(length:--text-small) leading-6 text-foreground">
+                {retryableJobIds.length} applications could not be applied and
+                can be tried again.
+              </p>
+              <Button
+                disabled={
+                  isApplyPending ||
+                  (dailyPreparationCapacity !== null &&
+                    dailyPreparationCapacity.remaining < 1)
+                }
+                onClick={() =>
+                  onStartAutoApplyQueue(
+                    [...retryableJobIds],
+                    props.applicationAutomationMode ?? "prepare_only",
+                  )
+                }
+                size="sm"
+                type="button"
+                variant="secondary"
+              >
+                Try again for all {retryableJobIds.length}
+              </Button>
             </section>
           ) : null}
           {hasUnassignedLegacyLineage ? (
@@ -730,6 +949,10 @@ export function ApplicationsScreen(props: {
             applicationRecords={filteredApplicationRecords}
             filterCounts={filterCounts}
             hasAnyApplications={applicationRecords.length > 0}
+            liveRunLinesByJobId={liveRunLinesByJobId}
+            latestApplyResultByRecordId={latestApplyResultByRecordId}
+            readApplyRunContext={readApplyRunContext}
+            applyMode={applyMode}
             onFilterChange={setActiveFilter}
             onSelectRecord={selectRecordAndRevealDetails}
             selectedRecord={effectiveSelectedRecord}
@@ -802,6 +1025,7 @@ export function ApplicationsScreen(props: {
         ) : (
           <ApplicationsDetailPanel
             activeFilter={activeFilter}
+            readApplyRunContext={readApplyRunContext}
             applyRunDetails={applyRunDetails}
             applyRunDetailsTarget={applyRunDetailsTarget}
             applyRunDetailsError={applyRunDetailsError}
@@ -851,12 +1075,25 @@ export function ApplicationsScreen(props: {
               ? { onPrepareApplicationAgain }
               : {})}
             onRevokeApplyRunApproval={onRevokeApplyRunApproval}
-            onStartAutoApplyQueue={onStartAutoApplyQueue}
+            onStartAutoApplyQueue={(jobIds) =>
+              onStartAutoApplyQueue(
+                jobIds,
+                props.applicationAutomationMode ?? "prepare_only",
+              )
+            }
+            applyMode={applyMode}
             onSelectApplyRun={handleSelectApplyRun}
             onStartApplyCopilot={onStartApplyCopilot}
             applicationAttempts={applicationAttempts}
             {...(props.onOpenNeedsYou
               ? { onOpenNeedsYou: props.onOpenNeedsYou }
+              : {})}
+            {...(userActionRequests ? { userActionRequests } : {})}
+            {...(props.onPerformUserAction
+              ? { onPerformUserAction: props.onPerformUserAction }
+              : {})}
+            {...(props.isUserActionPending
+              ? { isUserActionPending: props.isUserActionPending }
               : {})}
             {...(props.onAllowSiteSaves
               ? { onAllowSiteSaves: props.onAllowSiteSaves }
@@ -866,6 +1103,9 @@ export function ApplicationsScreen(props: {
               : {})}
             canConfirmFinishedInBrowser={
               props.canConfirmFinishedInBrowser ?? false
+            }
+            browserStepContinuesOnItsOwn={
+              props.browserStepContinuesOnItsOwn ?? false
             }
             confirmFinishedInBrowserStatus={
               props.confirmFinishedInBrowserStatus ?? "idle"

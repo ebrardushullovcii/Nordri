@@ -1,7 +1,10 @@
 import { chromium, type Browser } from "playwright";
-import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 
-import { readRawApplyPage } from "./apply-page-mechanics";
+import {
+  createPlaywrightApplyPageMechanics,
+  readRawApplyPage,
+} from "./apply-page-mechanics";
 
 /**
  * Two lists the page draws itself, read one after the other.
@@ -61,6 +64,44 @@ describe("reading the choices of lists the page draws itself", () => {
     await browser?.close();
   });
 
+  test("keeps nested choices and entered answers out of question labels in pages and frames", async () => {
+    const page = await browser.newPage();
+    const form = `
+      <label><span>Preferred interview session</span>
+        <select id="session" required><option value="">Choose a session</option><option>Thursday</option><option>Friday</option><option disabled>Unavailable</option><optgroup label="Past" disabled><option>Yesterday</option></optgroup></select>
+      </label>
+      <label id="note-label">Additional information <textarea id="note" aria-labelledby="note-label">A previous answer</textarea></label>
+      <label><input id="updates" type="checkbox">Email me updates</label>
+    `;
+    await page.setContent(form + '<iframe id="embedded"></iframe>');
+    const frame = page.locator("#embedded").contentFrame();
+    await frame.locator("body").evaluate((body, html) => {
+      body.innerHTML = html;
+    }, form);
+
+    const observation = await readRawApplyPage(page);
+    const sessions = observation.controls.filter(
+      (control) => control.id === "session",
+    );
+    expect(sessions).toHaveLength(2);
+    for (const control of sessions) {
+      expect(control.label).toBe("Preferred interview session");
+      expect(control.options).toEqual(["Thursday", "Friday"]);
+    }
+    for (const control of observation.controls.filter(
+      (item) => item.id === "note",
+    )) {
+      expect(control.label).toBe("Additional information");
+      expect(control.value).toBe("A previous answer");
+    }
+    for (const control of observation.controls.filter(
+      (item) => item.id === "updates",
+    )) {
+      expect(control.label).toBe("Email me updates");
+    }
+    await page.close();
+  });
+
   test("each control gets its own choices, and keeps them on a second read", async () => {
     const page = await browser.newPage();
     await page.setContent(PAGE);
@@ -86,4 +127,311 @@ describe("reading the choices of lists the page draws itself", () => {
 
     await page.close();
   }, 60_000);
+
+  test("keeps person-completed fields when asked to navigate to the exact current URL", async () => {
+    const page = await browser.newPage();
+    await page.route("https://jobs.example.test/**", (route) =>
+      route.fulfill({
+        contentType: "text/html",
+        body: '<input id="person-step" value=""><p>Application</p>',
+      }),
+    );
+    await page.goto("https://jobs.example.test/apply/1?stage=review#human");
+    await page.locator("#person-step").fill("completed by person");
+    const goto = vi.spyOn(page, "goto");
+    const mechanics = createPlaywrightApplyPageMechanics(page);
+
+    await expect(
+      mechanics.navigate(
+        "https://jobs.example.test/apply/1?stage=review#human",
+      ),
+    ).resolves.toEqual({
+      ok: true,
+      url: "https://jobs.example.test/apply/1?stage=review#human",
+    });
+    expect(goto).not.toHaveBeenCalled();
+    expect(await page.locator("#person-step").inputValue()).toBe(
+      "completed by person",
+    );
+
+    await mechanics.navigate(
+      "https://jobs.example.test/apply/1?stage=questions#agent",
+    );
+    expect(goto).toHaveBeenCalledTimes(1);
+    await page.close();
+  }, 60_000);
+
+  test("reads the current step from an accessible step list", async () => {
+    const page = await browser.newPage();
+    await page.setContent(`
+      <ol aria-label="Application steps">
+        <li>My Information</li>
+        <li>My Experience</li>
+        <li>Application Questions</li>
+        <li aria-current="step">Review</li>
+      </ol>
+      <button type="button">Save and continue</button>
+      <button type="submit">Submit</button>
+    `);
+
+    const observation = await readRawApplyPage(page);
+
+    expect(observation.stepLabel).toBe("Step 4 of 4: Review");
+    await page.close();
+  });
+
+  test("keeps hidden future steps in the total when the marker is nested", async () => {
+    const page = await browser.newPage();
+    await page.setContent(`
+      <ol aria-label="Application steps">
+        <li>My Information</li>
+        <li><a aria-current="step">My Experience</a></li>
+        <li>Application Questions</li>
+        <li hidden>Review</li>
+      </ol>
+      <button type="button">Save and continue</button>
+      <button type="submit">Submit</button>
+    `);
+
+    const observation = await readRawApplyPage(page);
+
+    expect(observation.stepLabel).toBe("Step 2 of 4: My Experience");
+    await page.close();
+  });
+
+  test("does not treat a closed prepared page as reusable", async () => {
+    const page = await browser.newPage();
+    await page.goto("https://example.com/apply/closed");
+    const mechanics = createPlaywrightApplyPageMechanics(page);
+    await page.close();
+
+    await expect(
+      mechanics.navigate("https://example.com/apply/closed"),
+    ).resolves.toEqual({
+      ok: false,
+      error:
+        "The prepared application page was closed. Prepare it again before continuing.",
+    });
+  }, 60_000);
+
+  test("one task sees and closes only popups opened by its own page", async () => {
+    const context = await browser.newContext();
+    const taskPage = await context.newPage();
+    const unrelatedTaskPage = await context.newPage();
+    await unrelatedTaskPage.setContent("<title>Other task</title>");
+    await taskPage.setContent(`
+      <title>Current task</title>
+      <button id="open">Apply</button>
+      <script>
+        document.getElementById("open").addEventListener("click", () => {
+          const popup = window.open("about:blank", "_blank");
+          if (popup) popup.document.title = "Current task popup";
+        });
+      </script>
+    `);
+
+    await taskPage.click("#open");
+    await expect.poll(() => context.pages().length).toBe(3);
+
+    const observation = await readRawApplyPage(taskPage);
+    expect(observation.openedTabs).toHaveLength(1);
+    expect(observation.openedTabs[0]?.title).toBe("Current task popup");
+
+    const mechanics = createPlaywrightApplyPageMechanics(taskPage);
+    const adoption = await mechanics.adoptOpenedTab!(0);
+    expect(adoption).toEqual({
+      ok: false,
+      error: "That tab never loaded a web page.",
+    });
+    expect(unrelatedTaskPage.isClosed()).toBe(false);
+    expect(await unrelatedTaskPage.title()).toBe("Other task");
+
+    await context.close();
+  }, 60_000);
+
+  test("presses keyboard-only controls on the requested field", async () => {
+    const page = await browser.newPage();
+    await page.setContent(`
+      <label for="city">City</label>
+      <input id="city" />
+      <p id="result">Waiting</p>
+      <script>
+        document.getElementById("city").addEventListener("keydown", (event) => {
+          if (event.key === "Enter") {
+            document.getElementById("result").textContent = "Accepted";
+          }
+        });
+      </script>
+    `);
+
+    const mechanics = createPlaywrightApplyPageMechanics(page);
+    expect(await mechanics.pressKey("c0", "Enter")).toEqual({
+      ok: true,
+      observedValue: "Enter",
+    });
+    expect(await page.locator("#result").innerText()).toBe("Accepted");
+
+    await page.close();
+  });
+
+  test("reads a question wrapped around an otherwise unlabelled select", async () => {
+    const page = await browser.newPage();
+    await page.setContent(`
+      <li>
+        <div>
+          Are you currently authorized to work in this country?
+          <div><select required><option>Select...</option><option>Yes</option><option>No</option></select></div>
+        </div>
+      </li>
+    `);
+
+    const observation = await readRawApplyPage(page);
+    expect(observation.controls[0]?.label).toBe(
+      "Are you currently authorized to work in this country?",
+    );
+
+    await page.close();
+  });
+
+  test("does not report success when a controlled input clears the value", async () => {
+    const page = await browser.newPage();
+    await page.setContent(`
+      <label>Current location <input id="location" /></label>
+      <script>
+        document.getElementById("location").addEventListener("input", (event) => {
+          setTimeout(() => { event.target.value = ""; }, 10);
+        });
+      </script>
+    `);
+
+    const mechanics = createPlaywrightApplyPageMechanics(page);
+    await expect(mechanics.fillText("c0", "Pristina")).resolves.toEqual({
+      ok: false,
+      error:
+        "The field cleared the answer instead of keeping it. Leave it for the person or try a different control once.",
+    });
+
+    await page.close();
+  });
+
+  test("toggle labels cannot bypass the typed answer path through generic clicks", async () => {
+    const page = await browser.newPage();
+    await page.setContent(`
+      <label for="consent">I consent to a background check</label>
+      <input id="consent" type="checkbox" />
+    `);
+    const mechanics = createPlaywrightApplyPageMechanics(page);
+    const observation = await readRawApplyPage(page);
+    const label = observation.clickables.find(
+      (item) => item.tagName === "label",
+    );
+    if (!label) throw new Error("Expected a clickable checkbox label");
+    for (const ref of [`e${label.index}`, "c0"]) {
+      const outcome = await mechanics.clickElement(ref);
+      expect(outcome.ok).toBe(false);
+      if (outcome.ok) throw new Error("A generic click changed the answer");
+      expect(outcome.error).toContain("set_checkbox");
+      expect(await page.locator("#consent").isChecked()).toBe(false);
+    }
+    await expect(mechanics.setToggle("c0", true)).resolves.toMatchObject({
+      ok: true,
+    });
+    expect(await page.locator("#consent").isChecked()).toBe(true);
+    await page.close();
+  });
+
+  test("checks an enabled radio even when another element covers its pointer target", async () => {
+    const page = await browser.newPage();
+    await page.setContent(`
+      <fieldset>
+        <legend>Are you authorized to work here?</legend>
+        <label><input id="authorized" type="radio" name="authorized" required /> Yes</label>
+        <label><input type="radio" name="authorized" /> No</label>
+      </fieldset>
+      <div style="position:fixed;inset:0;z-index:10"></div>
+    `);
+
+    const mechanics = createPlaywrightApplyPageMechanics(page);
+    await expect(mechanics.setToggle("c0", true)).resolves.toEqual({
+      ok: true,
+      observedValue: "checked",
+    });
+    expect(await page.locator("#authorized").isChecked()).toBe(true);
+
+    await page.close();
+  }, 15_000);
+
+  test("reads and operates accessible shadow-root and iframe forms", async () => {
+    const page = await browser.newPage();
+    await page.setContent(`
+      <h1>Application</h1>
+      <div id="shadow-host"></div>
+      <div id="second-shadow-host"></div>
+      <iframe id="embedded" srcdoc='
+        <label for="email">Email in frame</label>
+        <input id="email" type="email" />
+        <button id="continue">Continue</button>
+      '></iframe>
+      <script>
+        const root = document.getElementById("shadow-host").attachShadow({ mode: "open" });
+        root.innerHTML = '<label for="name">Name in component</label><input id="name" /><input id="first-radio" type="radio" name="authorized" />';
+        const secondRoot = document.getElementById("second-shadow-host").attachShadow({ mode: "open" });
+        secondRoot.innerHTML = '<input id="second-radio" type="radio" name="authorized" />';
+      </script>
+    `);
+    await expect.poll(() => page.frames().length).toBe(2);
+    const childFrame = page
+      .frames()
+      .find((frame) => frame !== page.mainFrame())!;
+    await childFrame.evaluate(() => {
+      document.getElementById("continue")?.addEventListener("click", () => {
+        document.body.dataset.continued = "yes";
+      });
+    });
+
+    const mechanics = createPlaywrightApplyPageMechanics(page);
+    const observation = await mechanics.readPage();
+    const shadowControl = observation.controls.find(
+      (control) => control.id === "name",
+    );
+    const frameControl = observation.controls.find(
+      (control) => control.id === "email",
+    );
+    const frameAction = observation.actions.find(
+      (action) => action.label === "Continue",
+    );
+
+    const shadowRef = shadowControl?.ref ?? `c${shadowControl?.index}`;
+    expect(shadowRef).toMatch(/^c\d+$/u);
+    expect(frameControl?.ref).toMatch(/^f0c\d+$/u);
+    expect(frameAction?.ref).toMatch(/^f0a\d+$/u);
+    expect(
+      observation.controls.find((control) => control.id === "first-radio")
+        ?.scopeKey,
+    ).not.toBe(
+      observation.controls.find((control) => control.id === "second-radio")
+        ?.scopeKey,
+    );
+    expect(observation.bodyText).toContain("Email in frame");
+
+    expect(await mechanics.fillText(shadowRef, "Ada Lovelace")).toEqual({
+      ok: true,
+      observedValue: "Ada Lovelace",
+    });
+    expect(
+      await mechanics.fillText(frameControl!.ref!, "ada@example.test"),
+    ).toEqual({
+      ok: true,
+      observedValue: "ada@example.test",
+    });
+    expect(await mechanics.clickAction(frameAction!.ref!)).toEqual({
+      ok: true,
+      observedValue: "clicked",
+    });
+    expect(
+      await childFrame.locator("body").getAttribute("data-continued"),
+    ).toBe("yes");
+
+    await page.close();
+  });
 });

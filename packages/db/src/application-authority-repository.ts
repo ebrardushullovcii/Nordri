@@ -447,13 +447,73 @@ function matchesOutcomeLineage(
   );
 }
 
+function hasDurableFinalSubmitAuthorization(
+  state: JobFinderRepositoryState,
+  outcome: SubmissionOutcomeRecord,
+): boolean {
+  const preflight =
+    state.submissionPreflights.find(
+      (value) => value.id === outcome.preflightId,
+    ) ?? null;
+  const authority =
+    state.applicationAuthorityEnvelopes.find(
+      (value) =>
+        value.id === outcome.authorityEnvelopeId &&
+        value.revision === outcome.authorityRevision,
+    ) ?? null;
+  const marker =
+    state.submissionArmedMarkers.find(
+      (value) =>
+        value.preflightId === outcome.preflightId &&
+        value.idempotencyKey === outcome.idempotencyKey,
+    ) ?? null;
+  if (
+    preflight === null ||
+    authority === null ||
+    marker === null ||
+    !matchesPreflightLineage(preflight, outcome) ||
+    !matchesMarkerLineage(marker, preflight)
+  ) {
+    return false;
+  }
+  if (authority.mode === "autonomous_submit") {
+    return true;
+  }
+  if (authority.mode !== "confirm_before_submit") {
+    return false;
+  }
+  return state.submissionExecutionGrants.some(
+    (grant) =>
+      grant.preflightId === preflight.id &&
+      grant.status === "consumed" &&
+      matchesPreflightLineage(preflight, grant),
+  );
+}
+
+/**
+ * A result whose last attempt is on record as not sent can take the outcome
+ * of a later attempt under a different key: the person pressed Send again
+ * after nothing reached the site. A sent or uncertain outcome is never
+ * replaced.
+ */
+function isLaterAttemptAfterNotSubmitted(
+  previous: SubmissionOutcomeRecord,
+  outcome: SubmissionOutcomeRecord,
+): boolean {
+  return (
+    previous.outcome === "not_submitted" &&
+    previous.idempotencyKey !== outcome.idempotencyKey &&
+    previous.preflightId !== outcome.preflightId
+  );
+}
+
 interface ReconciledSubmissionOutcomeProjection {
   applicationRecord: ApplicationRecord;
   result: ApplyJobResult;
 }
 
 /**
- * Reconciles a terminal non-submission outcome into the already persisted
+ * Reconciles a terminal submission outcome into the already persisted
  * ApplyJobResult receipt and its exact ApplicationRecord. The authority
  * outcome, result receipt, and application projection are one durable fact,
  * so callers must never be able to commit only one of them. A projection is
@@ -490,7 +550,8 @@ function buildReconciledSubmissionOutcomeProjection(
 
   if (
     receipt.submissionOutcome !== null &&
-    !sameValue(receipt.submissionOutcome, outcome)
+    !sameValue(receipt.submissionOutcome, outcome) &&
+    !isLaterAttemptAfterNotSubmitted(receipt.submissionOutcome, outcome)
   ) {
     return null;
   }
@@ -507,6 +568,51 @@ function buildReconciledSubmissionOutcomeProjection(
   }
 
   try {
+    const finalSubmitAuthorized = hasDurableFinalSubmitAuthorization(
+      state,
+      outcome,
+    );
+    if (outcome.outcome === "submitted") {
+      const verifiedAt = outcome.verifiedAt;
+      if (verifiedAt === null) return null;
+      const applicationRecord = ApplicationRecordSchema.parse({
+        ...currentApplicationRecord,
+        status: "submitted",
+        lastActionLabel: "Application submitted",
+        nextActionLabel: null,
+        lastUpdatedAt: verifiedAt,
+        lastAttemptState: "submitted",
+        latestBlocker: null,
+        events: mergeApplicationEvents(currentApplicationRecord.events, [
+          {
+            id: `event_submission_outcome_${outcome.id}`,
+            at: verifiedAt,
+            title: "Application submitted",
+            detail:
+              "The employer site confirmed that it received the application.",
+            emphasis: "positive",
+          },
+        ]),
+      });
+      const result = ApplyJobResultSchema.parse({
+        ...current,
+        state: "submitted",
+        summary: "Application submitted",
+        detail: "The employer site confirmed that it received the application.",
+        updatedAt: verifiedAt,
+        completedAt: verifiedAt,
+        blockerReason: null,
+        blockerSummary: null,
+        privacyReceipt: {
+          ...receipt,
+          finalSubmitAuthorized,
+          finalSubmitOccurred: true,
+          submissionOutcome: outcome,
+        },
+      });
+      return { applicationRecord, result };
+    }
+
     const uncertain = outcome.outcome === "outcome_uncertain";
     const applicationRecord = ApplicationRecordSchema.parse({
       ...currentApplicationRecord,
@@ -562,14 +668,14 @@ function buildReconciledSubmissionOutcomeProjection(
         : {}),
       privacyReceipt: {
         ...receipt,
+        finalSubmitAuthorized,
         submissionOutcome: outcome,
       },
     });
     return { applicationRecord, result };
   } catch {
-    // A legacy receipt that claims a final submit, an absent/cross-lineage
-    // application record, or any future schema incompatibility is not safe to
-    // reconcile as a non-submission outcome.
+    // An absent/cross-lineage application record or any future schema
+    // incompatibility is not safe to reconcile.
     return null;
   }
 }
@@ -622,6 +728,9 @@ function buildResolvedSubmissionOutcomeProjection(
   }
 
   try {
+    const finalSubmitAuthorized =
+      receipt.finalSubmitAuthorized ||
+      hasDurableFinalSubmitAuthorization(state, outcome);
     const applicationRecord = ApplicationRecordSchema.parse({
       ...currentApplicationRecord,
       status: submitted ? "submitted" : currentApplicationRecord.status,
@@ -669,6 +778,7 @@ function buildResolvedSubmissionOutcomeProjection(
       blockerSummary: null,
       privacyReceipt: {
         ...receipt,
+        finalSubmitAuthorized,
         finalSubmitOccurred: submitted,
         submissionOutcome: outcome,
       },
@@ -1484,18 +1594,6 @@ export function createApplicationAuthorityRepositoryMethods(
             };
           }
 
-          // This slice only reconciles outcomes that prove the final action
-          // did not complete. A submitted outcome needs an independently
-          // verified external receipt and remains outside this repository
-          // boundary for now.
-          if (outcome.outcome === "submitted") {
-            return {
-              status: "blocked" as const,
-              outcome: existing,
-              idempotency,
-            };
-          }
-
           // Resolve and validate the existing result before changing any
           // authority state. This keeps an absent, cross-lineage, or stale
           // receipt from leaving an outcome record without its parent result.
@@ -1699,14 +1797,14 @@ export function createApplicationAuthorityRepositoryMethods(
           const prepared: Array<{
             outcome: SubmissionOutcomeRecord;
             resolved: SubmissionIdempotencyRecord;
-            projection: ReconciledSubmissionOutcomeProjection;
+            projection: ReconciledSubmissionOutcomeProjection | null;
           }> = [];
           const resultIds = new Set<string>();
 
-          // Build every recovery mutation first. In particular, a malformed
-          // timestamp or missing/mismatched result must fail before any
-          // earlier armed attempt is converted, preserving the transaction's
-          // all-or-nothing promise in the in-memory implementation as well.
+          // Build every recovery mutation first. A malformed timestamp must
+          // fail before any earlier armed attempt is converted, preserving the
+          // transaction's all-or-nothing promise in the in-memory
+          // implementation as well.
           for (const current of armed) {
             const outcome = SubmissionOutcomeRecordSchema.parse({
               id: `recovery_outcome_${current.id}_${current.revision}`,
@@ -1724,21 +1822,18 @@ export function createApplicationAuthorityRepositoryMethods(
               evidence: [],
               retry: { eligible: false, blockReason: "outcome_uncertain" },
             });
-            const projection = buildReconciledSubmissionOutcomeProjection(
+            const built = buildReconciledSubmissionOutcomeProjection(
               state,
               outcome,
             );
-            if (projection === null) {
-              throw new Error(
-                "Cannot recover an armed submission without its exact ApplyJobResult privacy receipt and ApplicationRecord.",
-              );
-            }
-            if (resultIds.has(projection.result.id)) {
-              throw new Error(
-                "Cannot recover multiple armed submissions into one ApplyJobResult.",
-              );
-            }
-            resultIds.add(projection.result.id);
+            // One attempt whose result cannot carry the outcome (the result
+            // is gone, was sent by the person meanwhile, or already holds
+            // another attempt's outcome) is closed as uncertain on its own,
+            // leaving that result as it is. It never stops the others from
+            // recovering, and it never stops the workspace from opening.
+            const projection =
+              built !== null && !resultIds.has(built.result.id) ? built : null;
+            if (projection) resultIds.add(projection.result.id);
             const resolved = SubmissionIdempotencyRecordSchema.parse({
               ...current,
               status: "outcome_uncertain",
@@ -1768,8 +1863,13 @@ export function createApplicationAuthorityRepositoryMethods(
           // authority records and their matching receipts can now be swapped
           // together.
           for (const entry of prepared) {
-            replaceApplyJobResult(state, entry.projection.result);
-            replaceApplicationRecord(state, entry.projection.applicationRecord);
+            if (entry.projection) {
+              replaceApplyJobResult(state, entry.projection.result);
+              replaceApplicationRecord(
+                state,
+                entry.projection.applicationRecord,
+              );
+            }
             state.submissionOutcomeRecords.push(entry.outcome);
             replaceById(state.submissionIdempotencyRecords, entry.resolved);
             recovered.push(entry.outcome);

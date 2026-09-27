@@ -206,6 +206,60 @@ describe("user action lifecycle domain", () => {
     });
   });
 
+  test("never copies task-local credentials into persisted requests or events", () => {
+    const identifier = "fixture-person@example.test";
+    const password = "test-secret-value";
+    const request = createRequest({
+      scope: {
+        type: "application",
+        runId: "apply-run-1",
+        jobId: "job-1",
+        resultId: "result-1",
+        replayCheckpointId: "checkpoint-1",
+        source: "target_site",
+      },
+    });
+    const result = reduceUserActionCommand(
+      request,
+      {
+        action: "submit_task_local_credentials",
+        requestId: request.id,
+        commandId: "command-credential-1",
+        expectedRevision: 1,
+        identifier,
+        password,
+        taskLocalUseAuthorized: true,
+      },
+      "2026-07-30T10:04:00.000Z",
+    );
+
+    expect(result.status).toBe("applied");
+    expect(JSON.stringify(result)).not.toContain(identifier);
+    expect(JSON.stringify(result)).not.toContain(password);
+    expect(result).toMatchObject({
+      request: { state: "verifying", attemptCount: 1 },
+      event: { operation: "submit_task_local_credentials" },
+    });
+  });
+
+  test("refuses task-local credentials for a source login without application lineage", () => {
+    expect(() =>
+      reduceUserActionCommand(
+        createRequest(),
+        {
+          action: "submit_task_local_credentials",
+          requestId: "action-login-1",
+          commandId: "command-credential-wrong-scope",
+          expectedRevision: 1,
+          identifier: "fixture-person@example.test",
+          password: "test-secret-value",
+          taskLocalUseAuthorized: true,
+        },
+        "2026-07-30T10:04:00.000Z",
+      ),
+    ).toThrow(/exact sign-in request/i);
+  });
+
   test("records failed verification truthfully and resolves only verified work", () => {
     const verifyingRequest = createRequest({
       revision: 2,

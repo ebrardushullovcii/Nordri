@@ -1192,6 +1192,9 @@ export function ProfileCopilotRail(props: {
                   messages={props.messages}
                   onApplyPatchGroup={props.onApplyPatchGroup}
                   onRejectPatchGroup={props.onRejectPatchGroup}
+                  onAskAgain={(content, context) =>
+                    submitMessage(content, context)
+                  }
                   onRetryFailedRequest={handleRetryFailedRequest}
                   onUndoRevision={props.onUndoRevision}
                   onUsePrompt={handleInputChange}

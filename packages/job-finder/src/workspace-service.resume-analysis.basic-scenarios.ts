@@ -17,6 +17,15 @@ describe("createJobFinderWorkspaceService", () => {
           headline: "Placeholder headline",
           portfolioUrl: null,
           linkedinUrl: null,
+          // Untouched: nothing of the person's own is on it yet. A profile
+          // with roles or skills on it is theirs, and an import asks before
+          // replacing what it holds.
+          experiences: [],
+          education: [],
+          certifications: [],
+          projects: [],
+          spokenLanguages: [],
+          skills: [],
           baseResume: {
             ...createSeed().profile.baseResume,
             extractionStatus: "not_started",
@@ -38,15 +47,17 @@ describe("createJobFinderWorkspaceService", () => {
     expect(snapshot.profile.currentLocation).toBe("Berlin, Germany");
     expect(snapshot.profile.email).toBe("jamie@example.com");
     expect(snapshot.profile.phone).toBe("+49 555 1234");
-    expect(snapshot.profile.headline).toBe("Placeholder headline");
+    // A fresh profile takes the headline and summary too; nothing waits for
+    // a confirmation click when there is no stored value to protect.
+    expect(snapshot.profile.headline).toBe("Staff Frontend Engineer");
     expect(snapshot.profile.baseResume.extractionStatus).toBe("ready");
     expect(snapshot.searchPreferences.salaryCurrency).toBe("USD");
-    expect(snapshot.latestResumeImportRun?.status).toBe("review_ready");
+    expect(snapshot.latestResumeImportRun?.status).toBe("applied");
     expect(
       snapshot.latestResumeImportReviewCandidates.map(
         (candidate) => candidate.label,
       ),
-    ).toEqual(expect.arrayContaining(["Headline", "Summary"]));
+    ).not.toContain("Headline");
     expect(
       candidates.some(
         (candidate) =>
@@ -61,7 +72,8 @@ describe("createJobFinderWorkspaceService", () => {
         (candidate) =>
           candidate.target.section === "identity" &&
           candidate.target.key === "headline" &&
-          candidate.resolution === "needs_review",
+          candidate.resolution === "auto_applied" &&
+          candidate.resolutionReason === "applied_into_empty_profile",
       ),
     ).toBe(true);
   });
@@ -183,14 +195,13 @@ describe("createJobFinderWorkspaceService", () => {
 
     const snapshot = await workspaceService.analyzeProfileFromResume();
 
-    expect(snapshot.latestResumeImportRun?.status).toBe("review_ready");
+    expect(snapshot.latestResumeImportRun?.status).toBe("applied");
     expect(
       snapshot.latestResumeImportRun?.candidateCounts.autoApplied,
     ).toBeGreaterThan(0);
-    expect(snapshot.latestResumeImportReviewCandidates.length).toBeGreaterThan(
+    expect(snapshot.latestResumeImportRun?.candidateCounts.total).toBeGreaterThan(
       0,
     );
-    expect(snapshot.latestResumeImportReviewCandidates[0]?.label).toBeTruthy();
   });
 
   test("fresh-start sample imports auto-apply placeholder summary and avoid duplicate derived name review", async () => {

@@ -21,7 +21,22 @@ import {
  */
 export const PROPOSAL_GROUNDING_HEADING = "Checked against your saved evidence";
 
-export type ResumeProposalVerdictTone = "blocked" | "clear" | "removal";
+export type ResumeProposalVerdictTone =
+  | "blocked"
+  | "clear"
+  | "confirm"
+  | "removal";
+
+/**
+ * A stretch the person keeps or removes under Lines to confirm is a decision
+ * they make after accepting, not a defect in the proposal. Older messages
+ * carry no kind and keep the blocking reading.
+ */
+export function isLinesToConfirmBlocker(
+  blocker: Pick<ResumeProposalApprovalBlocker, "kind">,
+): boolean {
+  return blocker.kind === "needs_confirmation";
+}
 
 export interface ResumeProposalPatchVerdict {
   /** Short sentence that states the outcome. Never empty. */
@@ -47,6 +62,8 @@ export interface ResumeProposalVerdict {
    * may never be described as "approvable".
    */
   unresolvedBlockerCount: number;
+  /** Lines still waiting for Keep or Remove under Lines to confirm. */
+  undecidedLineCount: number;
   /** One sentence covering both facts above. Never empty. */
   summary: string;
   tone: ResumeProposalVerdictTone;
@@ -91,14 +108,39 @@ export function countUnresolvedApprovalBlockers(input: {
     return 0;
   }
 
+  // Lines waiting under Lines to confirm are counted on their own: calling
+  // them "approval blockers" on an Aggressive card sent people to fix lines
+  // they only had to keep or remove.
+  const confirmIssueIds = new Set(
+    validation.claimAssessments
+      .filter((assessment) => assessment.status === "confirm_needed")
+      .map((assessment) => `issue_claim_grounding_${assessment.id}`),
+  );
   const blockingIssues = validation.issues.filter(
-    isBlockingResumeValidationIssue,
+    (issue) =>
+      isBlockingResumeValidationIssue(issue) && !confirmIssueIds.has(issue.id),
   ).length;
-  const blockingClaims = validation.claimAssessments.filter((assessment) =>
-    isBlockingResumeClaimAssessment({ assessment, draft: input.draft }),
+  const blockingClaims = validation.claimAssessments.filter(
+    (assessment) =>
+      assessment.status !== "confirm_needed" &&
+      isBlockingResumeClaimAssessment({ assessment, draft: input.draft }),
   ).length;
 
   return blockingIssues + blockingClaims;
+}
+
+/** Lines still waiting for Keep or Remove under Lines to confirm. */
+export function countUndecidedLinesToConfirm(input: {
+  draft: ResumeDraft;
+  validation: ResumeValidationResult | null | undefined;
+}): number {
+  return (
+    input.validation?.claimAssessments.filter(
+      (assessment) =>
+        assessment.status === "confirm_needed" &&
+        isBlockingResumeClaimAssessment({ assessment, draft: input.draft }),
+    ).length ?? 0
+  );
 }
 
 /**
@@ -112,29 +154,69 @@ export function evaluateResumeProposalVerdict(input: {
   message: ResumeAssistantMessage;
   validation: ResumeValidationResult | null | undefined;
 }): ResumeProposalVerdict {
-  const introducedBlockerCount = (input.message.approvalBlockers ?? []).length;
+  // A blocker tied to no change and no section is about the whole draft (for
+  // example a draft seeded from a preview that is not traceable yet). Blaming
+  // it on the proposed wording made the card say both "adds no new wording
+  // that would block approval" and "1 proposed change would block approval".
+  const blockers = input.message.approvalBlockers ?? [];
+  const draftLevelBlockers = blockers.filter(
+    (blocker) => blocker.patchId === null && blocker.sectionId === null,
+  );
+  const wordingBlockers = blockers.filter(
+    (blocker) => !draftLevelBlockers.includes(blocker),
+  );
+  const confirmCount = wordingBlockers.filter(isLinesToConfirmBlocker).length;
+  const introducedBlockerCount = wordingBlockers.length - confirmCount;
   const unresolvedBlockerCount = countUnresolvedApprovalBlockers({
     draft: input.draft,
     validation: input.validation,
   });
+  const confirmSentence =
+    confirmCount > 0
+      ? confirmCount === 1
+        ? " 1 change stretches past your saved evidence; after you accept, it is listed under Lines to confirm for you to keep or remove."
+        : ` ${confirmCount} changes stretch past your saved evidence; after you accept, they are listed under Lines to confirm for you to keep or remove.`
+      : "";
   const introducedSentence =
     introducedBlockerCount > 0
       ? introducedBlockerCount === 1
-        ? "1 proposed change would block approval because its new wording is not supported by your saved evidence."
-        : `${introducedBlockerCount} proposed changes would block approval because their new wording is not supported by your saved evidence.`
-      : "No proposed change adds wording that would block approval.";
+        ? "1 proposed change would block approval because your saved evidence does not back its new wording."
+        : `${introducedBlockerCount} proposed changes would block approval because your saved evidence does not back their new wording.`
+      : confirmCount > 0
+        ? "No proposed change adds wording that blocks approval by itself."
+        : "No proposed change adds wording that would block approval.";
+  const draftLevelSentence =
+    draftLevelBlockers.length > 0
+      ? ` Approval stays blocked for the whole resume, not because of this change: ${draftLevelBlockers[0]!.message}`
+      : "";
   const unresolvedSentence =
-    unresolvedBlockerCount > 0
+    unresolvedBlockerCount > 0 && draftLevelBlockers.length === 0
       ? unresolvedBlockerCount === 1
         ? " The resume already has 1 approval blocker, and accepting this proposal does not clear it."
         : ` The resume already has ${unresolvedBlockerCount} approval blockers, and accepting this proposal does not clear them.`
       : "";
+  const undecidedLineCount = countUndecidedLinesToConfirm({
+    draft: input.draft,
+    validation: input.validation,
+  });
+  const undecidedSentence =
+    undecidedLineCount > 0
+      ? undecidedLineCount === 1
+        ? " 1 line is still waiting for your Keep or Remove under Lines to confirm."
+        : ` ${undecidedLineCount} lines are still waiting for your Keep or Remove under Lines to confirm.`
+      : "";
 
   return {
     introducedBlockerCount,
-    summary: `${introducedSentence}${unresolvedSentence}`,
-    tone: introducedBlockerCount > 0 ? "blocked" : "clear",
+    summary: `${introducedSentence}${confirmSentence}${draftLevelSentence}${unresolvedSentence}${undecidedSentence}`,
+    tone:
+      introducedBlockerCount > 0 || draftLevelBlockers.length > 0
+        ? "blocked"
+        : confirmCount > 0
+          ? "confirm"
+          : "clear",
     unresolvedBlockerCount,
+    undecidedLineCount,
   };
 }
 
@@ -164,12 +246,21 @@ export function evaluateResumeProposalPatchVerdict(input: {
     reasons.push(PROPOSED_WORDING_CHECK_NOTE);
   }
 
+  if (input.blockers.some((blocker) => !isLinesToConfirmBlocker(blocker))) {
+    return {
+      outcome:
+        "Blocks approval: your saved evidence does not back the new wording. Accept it only if it is true, then approve it as accurate in the resume checks.",
+      reasons,
+      tone: "blocked",
+    };
+  }
+
   if (input.blockers.length > 0) {
     return {
       outcome:
-        "Blocks approval: the new wording is not supported by your saved evidence.",
+        "Stretches past your saved evidence. After you accept, it is listed under Lines to confirm, where you keep it or remove it.",
       reasons,
-      tone: "blocked",
+      tone: "confirm",
     };
   }
 

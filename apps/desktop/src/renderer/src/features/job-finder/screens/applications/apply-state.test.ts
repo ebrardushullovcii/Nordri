@@ -39,6 +39,26 @@ function buildResult(overrides: Partial<ApplyResult>): ApplyResult {
 }
 
 describe("the five apply states (ADR 0022)", () => {
+  it.each(["site_protection", "required_human_input"] as const)(
+    "keeps a CAPTCHA without a question in Needs you (%s)",
+    (blockerReason) => {
+      expect(
+        resolveApplyStatePresentation({
+          mode: "fill_only",
+          pendingQuestionCount: 0,
+          result: buildResult({
+            blockerReason,
+            summary: "The site asks you to complete a CAPTCHA.",
+          }),
+        }),
+      ).toMatchObject({
+        kind: "needs_you",
+        title: "Needs you",
+        action: "open_browser",
+      });
+    },
+  );
+
   it("gives each state one title and at most one button", () => {
     const cases: Array<{
       expected: { kind: string; title: string; actionLabel: string | null };
@@ -122,6 +142,39 @@ describe("the five apply states (ADR 0022)", () => {
     }
   });
 
+  it("a ready form whose send was refused says Not sent and why", () => {
+    const presentation = resolveApplyStatePresentation({
+      mode: "apply_for_me",
+      result: buildResult({
+        summary: "Not sent: your permission to send changed",
+        detail: "Nothing was sent.",
+      }),
+    });
+    expect(presentation).toMatchObject({
+      kind: "ready_to_send",
+      sentence: "Not sent: your permission to send changed. Nothing was sent.",
+    });
+  });
+
+  it("an application waiting for a browser tab says so instead of filling in", () => {
+    const presentation = resolveApplyStatePresentation({
+      mode: "fill_only",
+      result: buildResult({
+        state: "planned",
+        applicationPreparationStartedAt: "2026-09-14T10:00:30.000Z",
+        completedAt: null,
+        summary: "Waiting for a free browser tab",
+        detail: "Close a tab you no longer need and this one starts.",
+      }),
+      run: { state: "running" } as never,
+    });
+    expect(presentation).toMatchObject({
+      kind: "filling_in",
+      title: "Waiting for a browser tab",
+      sentence: "Close a tab you no longer need and this one starts.",
+    });
+  });
+
   it("never calls an unverified outcome Applied", () => {
     const presentation = resolveApplyStatePresentation({
       mode: "apply_for_me",
@@ -134,7 +187,90 @@ describe("the five apply states (ADR 0022)", () => {
       }),
     });
 
-    expect(presentation.kind).not.toBe("applied");
+    expect(presentation).toMatchObject({
+      kind: "needs_you",
+      title: "Needs you",
+      action: "open_browser",
+      actionLabel: OPEN_THE_BROWSER_ACTION,
+    });
+    expect(presentation.sentence).toContain("could not confirm");
+    expect(presentation.sentence).not.toContain("click Apply");
+  });
+
+  it("does not treat a failed run's not-submitted receipt as a filled form", () => {
+    expect(
+      resolveApplyStatePresentation({
+        mode: "apply_for_me",
+        result: buildResult({
+          state: "failed",
+          detail: "The assistant is unavailable. Try again shortly.",
+          privacyReceipt: {
+            submissionOutcome: { outcome: "not_submitted" },
+          } as unknown as ApplyResult["privacyReceipt"],
+        }),
+      }),
+    ).toMatchObject({
+      kind: "could_not_apply",
+      action: "try_again",
+    });
+  });
+
+  it("keeps uncertain submission ahead of retryable local record failures", () => {
+    expect(
+      resolveApplyStatePresentation({
+        mode: "apply_for_me",
+        recordFailure: {
+          lastActionLabel: "The application page closed.",
+          lastUpdatedAt: "2026-09-14T10:04:00.000Z",
+        },
+        result: buildResult({
+          state: "blocked",
+          blockerReason: "submission_outcome_uncertain",
+        }),
+      }),
+    ).toMatchObject({ kind: "needs_you", action: "open_browser" });
+  });
+
+  it("lets a newer durable failed record correct an older ready result", () => {
+    const result = buildResult({
+      state: "awaiting_review",
+      updatedAt: "2026-09-14T10:01:00.000Z",
+    });
+    const corrected = resolveApplyStatePresentation({
+      mode: "fill_only",
+      recordFailure: {
+        lastActionLabel: "The prepared application page is no longer open.",
+        lastUpdatedAt: "2026-09-14T10:02:00.000Z",
+      },
+      result,
+    });
+    expect(corrected).toMatchObject({
+      kind: "could_not_apply",
+      title: "Could not apply",
+      action: "try_again",
+      questionsLeftLabel: null,
+    });
+
+    expect(
+      resolveApplyStatePresentation({
+        mode: "fill_only",
+        recordFailure: {
+          lastActionLabel: "An older failure.",
+          lastUpdatedAt: "2026-09-14T09:59:00.000Z",
+        },
+        result,
+      }).kind,
+    ).toBe("ready_to_send");
+    expect(
+      resolveApplyStatePresentation({
+        mode: "apply_for_me",
+        recordFailure: {
+          lastActionLabel: "A stale local failure.",
+          lastUpdatedAt: "2026-09-14T10:03:00.000Z",
+        },
+        result: buildResult({ state: "submitted" }),
+      }).kind,
+    ).toBe("applied");
   });
 
   it("says how many questions are left for the person", () => {
@@ -155,10 +291,12 @@ describe("the five apply states (ADR 0022)", () => {
   });
 
   it("names the one control after the mode", () => {
-    expect(applyActionLabel("fill_only")).toBe("Fill it in");
+    expect(applyActionLabel("fill_only")).toBe("Apply");
     expect(applyActionLabel("apply_for_me")).toBe("Apply");
     expect(applyAllActionLabel("fill_only")).toBe("Fill in all shortlisted");
-    expect(applyAllActionLabel("apply_for_me")).toBe("Apply to all shortlisted");
+    expect(applyAllActionLabel("apply_for_me")).toBe(
+      "Apply to all shortlisted",
+    );
   });
 
   it("keeps the banned jargon out of every state sentence", () => {
@@ -177,5 +315,131 @@ describe("the five apply states (ADR 0022)", () => {
         /form state|safe advance|authority envelope|configured model|prepare-only|verified writes|submit click/i,
       );
     }
+  });
+});
+
+describe("a job its batch stopped around", () => {
+  it("reads Could not apply with Try again, never Ready to send", () => {
+    const presentation = resolveApplyStatePresentation({
+      mode: "apply_for_me",
+      result: buildResult({
+        state: "skipped",
+        summary: "Not started.",
+        detail:
+          "You took over the browser, so Job Finder stopped this batch here. Nothing more was sent. Try again when you are ready.",
+      }),
+    });
+    expect(presentation).toMatchObject({
+      kind: "could_not_apply",
+      action: "try_again",
+    });
+    expect(presentation.sentence).toMatch(/took over the browser/);
+  });
+});
+
+describe("an answer given after the prepared page closed", () => {
+  it("reads Could not apply with Try again, not a dead end", () => {
+    const presentation = resolveApplyStatePresentation({
+      mode: "apply_for_me",
+      result: buildResult({
+        state: "failed",
+        summary: "Application retry stopped safely",
+        detail: "The exact prepared application page is no longer open.",
+      }),
+    });
+    expect(presentation).toMatchObject({
+      kind: "could_not_apply",
+      action: "try_again",
+    });
+  });
+});
+
+describe("a planned job is never Filling in", () => {
+  const planned = buildResult({
+    state: "planned",
+    startedAt: "2026-09-14T10:00:00.000Z",
+    completedAt: null,
+  });
+
+  it("waits its turn while its batch runs", () => {
+    expect(
+      resolveApplyStatePresentation({
+        mode: "fill_only",
+        now: Date.parse("2026-09-14T10:30:00.000Z"),
+        result: planned,
+        run: { state: "running", activityPaused: false, started: true },
+      }),
+    ).toMatchObject({
+      kind: "filling_in",
+      title: "Waiting its turn",
+      action: "none",
+      plannedStanding: "waiting_turn",
+    });
+  });
+
+  it("reads Paused when the person paused new work before it", () => {
+    expect(
+      resolveApplyStatePresentation({
+        mode: "fill_only",
+        result: planned,
+        run: { state: "running", activityPaused: true, started: true },
+      }),
+    ).toMatchObject({
+      kind: "filling_in",
+      title: "Paused",
+      action: "none",
+      plannedStanding: "paused",
+    });
+  });
+
+  it.each([
+    "paused_for_user_review",
+    "failed",
+    "cancelled",
+    "completed",
+  ] as const)(
+    "is retryable in one press when its batch stopped (%s)",
+    (state) => {
+      const presentation = resolveApplyStatePresentation({
+        mode: "fill_only",
+        result: planned,
+        run: { state, activityPaused: false, started: true },
+      });
+      expect(presentation).toMatchObject({
+        kind: "could_not_apply",
+        title: "Not started",
+        action: "try_again",
+        plannedStanding: "not_started",
+      });
+      expect(presentation.sentence).toContain("Nothing was filled in or sent.");
+    },
+  );
+
+  it("names the safety limit when one stopped the batch", () => {
+    expect(
+      resolveApplyStatePresentation({
+        mode: "fill_only",
+        result: planned,
+        run: {
+          state: "paused_for_user_review",
+          activityPaused: false,
+          started: true,
+        },
+      }).sentence,
+    ).toMatch(/^A safety limit stopped the batch/);
+  });
+
+  it("keeps a started job Filling in whatever its run says", () => {
+    expect(
+      resolveApplyStatePresentation({
+        mode: "fill_only",
+        now: Date.parse("2026-09-14T10:03:00.000Z"),
+        result: buildResult({
+          state: "filling",
+          startedAt: "2026-09-14T10:00:00.000Z",
+        }),
+        run: { state: "running", activityPaused: true, started: true },
+      }),
+    ).toMatchObject({ kind: "filling_in", title: "Filling in (3 min)" });
   });
 });

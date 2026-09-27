@@ -1,4 +1,7 @@
-import type { CoverLetterPreference } from "@unemployed/contracts";
+import type {
+  CandidateProfile,
+  CoverLetterPreference,
+} from "@unemployed/contracts";
 
 import { normalizeSignal } from "./control-classification";
 import type { ApplyAnswerSources, ApplyFormControl } from "./types";
@@ -10,9 +13,9 @@ import type { ApplyAnswerSources, ApplyFormControl } from "./types";
  * form that asks for it in a box are the same request, and the person should
  * never end up having sent two different letters for the same job.
  *
- * Everything the letter says has to be supportable by the resume going out
- * with it, the profile, and the posting. The preference shapes how it reads;
- * it never adds a fact.
+ * Candidate claims must come from the outgoing resume and profile. The
+ * posting supplies employer and role context, not candidate experience.
+ * The preference shapes how the letter reads; it never adds a fact.
  */
 
 /** True when this control is asking for the letter itself. */
@@ -27,6 +30,15 @@ export function isCoverLetterControl(control: ApplyFormControl): boolean {
       normalizeSignal(`${control.groupLabel} ${control.label}`),
     )
   );
+}
+
+/** Whether the saved applying preference allows this exact letter field. */
+export function coverLetterPolicyAllows(
+  control: ApplyFormControl,
+  policy: "never" | "when_required" | "when_possible",
+): boolean {
+  if (policy === "never") return false;
+  return policy === "when_possible" || control.required;
 }
 
 /** Whether the form wants the letter as a file or typed into a box. */
@@ -84,6 +96,36 @@ export interface CoverLetterRequest {
   language: string | null;
 }
 
+/** Application-relevant profile facts, without internal storage metadata. */
+export function buildApplicationProfileGrounding(
+  profile: CandidateProfile,
+): string {
+  return `Profile facts:\n${JSON.stringify(
+    {
+      name: profile.fullName,
+      headline: profile.headline,
+      summary: profile.summary,
+      location: profile.currentLocation,
+      yearsExperience: profile.yearsExperience,
+      professionalSummary: profile.professionalSummary,
+      narrative: profile.narrative,
+      proofBank: profile.proofBank,
+      skillGroups: profile.skillGroups,
+      targetRoles: profile.targetRoles,
+      preferredLocations: profile.locations,
+      skills: profile.skills,
+      experiences: profile.experiences,
+      education: profile.education,
+      certifications: profile.certifications,
+      projects: profile.projects,
+      spokenLanguages: profile.spokenLanguages,
+      workEligibility: profile.workEligibility,
+    },
+    null,
+    2,
+  )}`;
+}
+
 /**
  * Guesses the language of the posting from the words in it.
  *
@@ -120,19 +162,22 @@ export function buildCoverLetterRequest(input: {
   const { sources, preference } = input;
   const language =
     preference.language ?? detectPostingLanguage(sources.posting.description);
+  const resumeText =
+    sources.resumeText ?? sources.profile.baseResume.textContent;
 
   const groundedIn = [
-    sources.resumeText ? "the resume sent with this application" : null,
-    "your profile",
-    `the posting for ${sources.posting.title} at ${sources.posting.company}`,
-    preference.sample ? "the sample letter you saved" : null,
+    resumeText ? `Resume sent with this application:\n${resumeText}` : null,
+    buildApplicationProfileGrounding(sources.profile),
+    `Job posting for ${sources.posting.title} at ${sources.posting.company}:\n${sources.posting.description}`,
+    preference.sample ? `Saved sample letter:\n${preference.sample}` : null,
   ].filter((value): value is string => value !== null);
 
   const prompt = [
     `Write a cover letter for ${sources.posting.title} at ${sources.posting.company}.`,
     "",
     "Rules:",
-    "- Every claim must be supported by the resume, the profile, or the posting below. Do not state anything else as fact.",
+    "- Claims about the person's skills, experience, achievements, and qualifications must be supported by their resume or profile. The posting describes the employer and role; it is not evidence of the person's experience. Do not state anything else as fact.",
+    "- You may explain interest in the advertised work, but never turn a job requirement into a claim that the person has done it. Leave unsupported candidate claims out.",
     "- No invented employers, dates, numbers, qualifications, or enthusiasm for things not in the posting.",
     "- Do not repeat the resume line by line. Say why this person and this job fit.",
     `- ${TONE_GUIDANCE[preference.tone]}`,

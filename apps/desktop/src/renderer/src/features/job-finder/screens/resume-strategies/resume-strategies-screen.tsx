@@ -10,7 +10,7 @@ import type {
 import { Button } from "@renderer/components/ui/button";
 import { Input } from "@renderer/components/ui/input";
 import { EmptyState } from "../../components/empty-state";
-import { PageHeader } from "../../components/page-header";
+import { PageHeaderStack } from "../../components/page-header";
 import { StatusBadge } from "../../components/status-badge";
 import {
   CollectionNoMatches,
@@ -678,7 +678,7 @@ export function ResumeStrategiesScreen(props: {
 
   return (
     <section className="grid gap-5 pb-8">
-      <PageHeader
+      <PageHeaderStack
         actions={
           <>
             {shortlistedReturnPath ? (

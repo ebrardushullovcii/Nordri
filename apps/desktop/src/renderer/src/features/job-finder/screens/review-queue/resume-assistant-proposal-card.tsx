@@ -20,6 +20,7 @@ import type { ProposalProvenance } from "./resume-assistant-proposal-provenance"
 import {
   evaluateResumeProposalPatchVerdict,
   evaluateResumeProposalVerdict,
+  isLinesToConfirmBlocker,
   PROPOSAL_GROUNDING_HEADING,
   type ResumeProposalPatchVerdict,
   type ResumeProposalVerdictTone,
@@ -127,6 +128,7 @@ function ProposalWordingDiff(props: { after: string; before: string }) {
 const verdictToneClassNames: Record<ResumeProposalVerdictTone, string> = {
   blocked: "text-destructive",
   clear: "text-(--success-text)",
+  confirm: "text-(--warning-text)",
   removal: "text-(--warning-text)",
 };
 
@@ -215,10 +217,15 @@ export function ResumeAssistantProposalCard(props: {
     () => props.message.patches.map((patch) => patch.id),
   );
   const pending = props.message.proposalStatus === "pending";
+  // Only wording the evidence does not back demotes Accept. A stretch that
+  // goes to Lines to confirm is accepted like any other change and decided
+  // there.
   const blockedSelectionCount = props.message.patches.filter(
     (patch) =>
       selectedPatchIds.includes(patch.id) &&
-      findPatchApprovalBlockers(props.message, patch).length > 0,
+      findPatchApprovalBlockers(props.message, patch).some(
+        (blocker) => !isLinesToConfirmBlocker(blocker),
+      ),
   ).length;
   // One evaluation drives every grounding statement on this card: the
   // per-change verdicts, this summary, and the accept control's own wording.
@@ -229,8 +236,10 @@ export function ResumeAssistantProposalCard(props: {
   });
   const firstBlockedEditableTargetId =
     props.message.patches
-      .filter(
-        (patch) => findPatchApprovalBlockers(props.message, patch).length > 0,
+      .filter((patch) =>
+        findPatchApprovalBlockers(props.message, patch).some(
+          (blocker) => !isLinesToConfirmBlocker(blocker),
+        ),
       )
       .map(getProposalPatchEditorTargetId)
       .find((targetId): targetId is string => targetId !== null) ?? null;
@@ -373,11 +382,28 @@ export function ResumeAssistantProposalCard(props: {
               )}
               {patchApprovalBlockers.length > 0 ? (
                 <div
-                  className="grid gap-1 rounded-(--radius-field) border border-destructive/45 bg-destructive/10 px-2.5 py-2 text-(length:--text-tiny) leading-4 text-(--text-headline)"
+                  className={
+                    patchApprovalBlockers.every(isLinesToConfirmBlocker)
+                      ? "grid gap-1 rounded-(--radius-field) border border-(--warning-border) bg-(--warning-surface) px-2.5 py-2 text-(length:--text-tiny) leading-4 text-(--text-headline)"
+                      : "grid gap-1 rounded-(--radius-field) border border-destructive/45 bg-destructive/10 px-2.5 py-2 text-(length:--text-tiny) leading-4 text-(--text-headline)"
+                  }
                   data-resume-proposal-approval-blocker={patch.id}
+                  data-resume-proposal-approval-blocker-kind={
+                    patchApprovalBlockers.every(isLinesToConfirmBlocker)
+                      ? "needs_confirmation"
+                      : "unsupported"
+                  }
                 >
-                  <span className="font-semibold uppercase tracking-(--tracking-caps) text-destructive">
-                    Would block approval
+                  <span
+                    className={
+                      patchApprovalBlockers.every(isLinesToConfirmBlocker)
+                        ? "font-semibold uppercase tracking-(--tracking-caps) text-(--warning-text)"
+                        : "font-semibold uppercase tracking-(--tracking-caps) text-destructive"
+                    }
+                  >
+                    {patchApprovalBlockers.every(isLinesToConfirmBlocker)
+                      ? "Goes to Lines to confirm"
+                      : "Would block approval"}
                   </span>
                   {patchApprovalBlockers.map((blocker, blockerIndex) => (
                     <span
@@ -412,7 +438,9 @@ export function ResumeAssistantProposalCard(props: {
           change it repeated the line directly above it. */}
       {pending &&
       (proposalVerdict.tone === "blocked" ||
+        proposalVerdict.tone === "confirm" ||
         proposalVerdict.unresolvedBlockerCount > 0 ||
+        proposalVerdict.undecidedLineCount > 0 ||
         props.message.patches.length > 1) ? (
         <p
           className={
@@ -495,7 +523,8 @@ export function ResumeAssistantProposalCard(props: {
           {blockedSelectionCount > 0 ? (
             <p className="text-(length:--text-tiny) leading-4 text-foreground-soft">
               Accepting a blocked change keeps approval disabled until you
-              rewrite the flagged wording.
+              rewrite the flagged wording or approve it as accurate in the
+              resume checks.
             </p>
           ) : null}
         </div>

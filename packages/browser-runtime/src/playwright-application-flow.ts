@@ -1,9 +1,17 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import type { BrowserContext, Frame, Page, Request, Route } from "playwright";
+import type {
+  BrowserContext,
+  Frame,
+  Locator,
+  Page,
+  Request,
+  Route,
+} from "playwright";
 import {
   ApplyExecutionResultSchema,
+  type ApplyExecutionModelUse,
   type ApplyExecutionResult,
   type ApplicationAttemptBlocker,
   type ApplicationAttemptCheckpoint,
@@ -97,12 +105,174 @@ const prepareOnlyNetworkGuardStates = new WeakMap<
     intermediateMutationsAuthorized: boolean;
     intermediateMutationAllowedOrigins: string[];
     intermediateMutationWindow: IntermediateMutationWindowSnapshot | null;
+    authorizedFormActionWindow: {
+      method: string;
+      url: string;
+      expiresAtMs: number;
+      remainingRequests: number;
+      completion: Promise<void>;
+      resolveCompletion: () => void;
+    } | null;
+    /** Epoch ms until which the one authorized send may go out. */
+    finalActionAllowedUntilMs: number;
     initScriptInstalled: boolean;
     serviceWorkerInitScriptInstalled: boolean;
     responseListenerInstalled: boolean;
     webSocketListenerInstalled: boolean;
   }
 >();
+
+interface AuthorizedFormActionWindow {
+  method: string;
+  url: string;
+  token: string;
+  expiresAtMs: number;
+}
+
+export async function openPrepareOnlyAuthorizedFormActionWindow(
+  page: Page,
+  locator: Locator,
+  durationMs: number | null = 20_000,
+): Promise<void> {
+  const networkGuardState = prepareOnlyNetworkGuardStates.get(page);
+  if (!networkGuardState) {
+    throw new Error("Prepare-only network guard is not installed.");
+  }
+  const expiresAtMs =
+    durationMs === null ? Number.MAX_SAFE_INTEGER : Date.now() + durationMs;
+  const token = `authorized-form-action-${Date.now()}-${Math.random()
+    .toString(36)
+    .slice(2)}`;
+  const action = await locator.evaluate(
+    (element, input) => {
+      const actionElement = element as HTMLButtonElement | HTMLInputElement;
+      const form = actionElement.form;
+      if (!form || actionElement.disabled) return null;
+      const actionUrl = new URL(
+        (actionElement.hasAttribute("formaction")
+          ? actionElement.formAction
+          : form.action) || window.location.href,
+        window.location.href,
+      ).toString();
+      const method = (
+        (actionElement.hasAttribute("formmethod")
+          ? actionElement.formMethod
+          : form.method) || "GET"
+      ).toUpperCase();
+      if (method !== "POST") return null;
+      actionElement.dataset.unemployedAuthorizedFormAction = input.token;
+      const state = (window as unknown as Record<string, unknown>)[
+        "__unemployedPrepareOnlyMutationGuardV1"
+      ] as
+        | {
+            authorizedFormActionWindow?: AuthorizedFormActionWindow | null;
+          }
+        | undefined;
+      if (state) {
+        state.authorizedFormActionWindow = {
+          method,
+          url: actionUrl,
+          token: input.token,
+          expiresAtMs: input.expiresAtMs,
+        };
+      }
+      return { method, url: actionUrl };
+    },
+    { token, expiresAtMs },
+  );
+  if (!action) {
+    throw new Error("The authorized control is not attached to a form.");
+  }
+  let resolveCompletion: () => void = () => undefined;
+  const completion = new Promise<void>((resolve) => {
+    resolveCompletion = resolve;
+  });
+  networkGuardState.authorizedFormActionWindow = {
+    method: action.method,
+    url: action.url,
+    expiresAtMs,
+    remainingRequests: 1,
+    completion,
+    resolveCompletion,
+  };
+}
+
+export async function waitForPrepareOnlyAuthorizedFormAction(
+  page: Page,
+  timeoutMs = 3_000,
+): Promise<void> {
+  const completion =
+    prepareOnlyNetworkGuardStates.get(page)?.authorizedFormActionWindow
+      ?.completion;
+  if (!completion) return;
+  await Promise.race([
+    completion,
+    new Promise<void>((resolve) => setTimeout(resolve, timeoutMs)),
+  ]);
+}
+
+export async function closePrepareOnlyAuthorizedFormActionWindow(
+  page: Page,
+): Promise<void> {
+  const networkGuardState = prepareOnlyNetworkGuardStates.get(page);
+  if (!networkGuardState) return;
+  networkGuardState.authorizedFormActionWindow = null;
+  await page
+    .evaluate(() => {
+      const state = (window as unknown as Record<string, unknown>)[
+        "__unemployedPrepareOnlyMutationGuardV1"
+      ] as
+        | { authorizedFormActionWindow?: AuthorizedFormActionWindow | null }
+        | undefined;
+      if (state) state.authorizedFormActionWindow = null;
+    })
+    .catch(() => undefined);
+}
+
+/**
+ * Lets the one authorized send through the prepare-only guard.
+ *
+ * Preparation installs a guard that aborts every non-read request and cancels
+ * the form's own submit. That guard stayed on the page when the submission
+ * path pressed the send control, so "Send for me" clicked a button whose
+ * request was aborted and could only ever report an uncertain outcome. The
+ * window is short and closed again by the caller; it is only ever opened
+ * after preflight, on the exact control the authority covers.
+ */
+export async function openPrepareOnlyFinalActionWindow(
+  page: Page,
+  durationMs = 20_000,
+): Promise<void> {
+  const networkGuardState = prepareOnlyNetworkGuardStates.get(page);
+  if (networkGuardState) {
+    networkGuardState.finalActionAllowedUntilMs = Date.now() + durationMs;
+  }
+  await page
+    .evaluate(() => {
+      const state = (window as unknown as Record<string, unknown>)[
+        "__unemployedPrepareOnlyMutationGuardV1"
+      ] as { finalActionAllowed?: boolean } | undefined;
+      if (state) state.finalActionAllowed = true;
+    })
+    .catch(() => undefined);
+}
+
+export async function closePrepareOnlyFinalActionWindow(
+  page: Page,
+): Promise<void> {
+  const networkGuardState = prepareOnlyNetworkGuardStates.get(page);
+  if (networkGuardState) {
+    networkGuardState.finalActionAllowedUntilMs = 0;
+  }
+  await page
+    .evaluate(() => {
+      const state = (window as unknown as Record<string, unknown>)[
+        "__unemployedPrepareOnlyMutationGuardV1"
+      ] as { finalActionAllowed?: boolean } | undefined;
+      if (state) state.finalActionAllowed = false;
+    })
+    .catch(() => undefined);
+}
 
 /**
  * Runs inside the application page. Keep this function self-contained because
@@ -115,7 +285,13 @@ export function installPrepareOnlyMutationGuardInPage(
     preparedValues: string[];
     intermediateMutationsAuthorized: boolean;
     intermediateMutationWindow: IntermediateMutationWindowSnapshot | null;
+    authorizedFormActionWindow: AuthorizedFormActionWindow | null;
     submitListenerInstalled: boolean;
+    /**
+     * True only while Job Finder presses the one authorized send control.
+     * The guard then lets the form's own submit and requests through.
+     */
+    finalActionAllowed: boolean;
     formSubmitWrapper: typeof HTMLFormElement.prototype.submit | null;
     formRequestSubmitWrapper:
       | typeof HTMLFormElement.prototype.requestSubmit
@@ -141,7 +317,9 @@ export function installPrepareOnlyMutationGuardInPage(
     preparedValues: [],
     intermediateMutationsAuthorized,
     intermediateMutationWindow: null,
+    authorizedFormActionWindow: null,
     submitListenerInstalled: false,
+    finalActionAllowed: false,
     formSubmitWrapper: null,
     formRequestSubmitWrapper: null,
     sendBeaconWrapper: null,
@@ -156,6 +334,8 @@ export function installPrepareOnlyMutationGuardInPage(
   };
   state.intermediateMutationsAuthorized = intermediateMutationsAuthorized;
   state.preparedValues ??= [];
+  state.finalActionAllowed ??= false;
+  state.authorizedFormActionWindow ??= null;
   pageWindow["__unemployedPrepareOnlyMutationGuardV1"] = state;
 
   const normalizeMethod = (value: string | null | undefined): string =>
@@ -209,10 +389,7 @@ export function installPrepareOnlyMutationGuardInPage(
           ? element.value
           : (element.textContent ?? "");
       const trimmed = value.trim();
-      if (
-        trimmed.length >= 3 &&
-        state.preparedValues.includes(trimmed)
-      ) {
+      if (trimmed.length >= 3 && state.preparedValues.includes(trimmed)) {
         values.push(trimmed);
       }
     }
@@ -337,9 +514,7 @@ export function installPrepareOnlyMutationGuardInPage(
     const pathname = parsed.pathname.toLowerCase();
     const telemetrySubdomain =
       /^(?:analytics|beacon|metrics|rum|sa|telemetry)\./u.test(hostname);
-    const trackingPixel = /(?:^|\/)(?:pixel|simple)(?:\.gif)?$/u.test(
-      pathname,
-    );
+    const trackingPixel = /(?:^|\/)(?:pixel|simple)(?:\.gif)?$/u.test(pathname);
     const pageViewSignal =
       parsed.searchParams.has("page_id") ||
       parsed.searchParams.get("type")?.toLowerCase() === "pageview";
@@ -369,9 +544,7 @@ export function installPrepareOnlyMutationGuardInPage(
       pathname === "/cdn-cgi/rum" ||
       pathname === "/cdn-cgi/beacon" ||
       (telemetrySubdomain && (trackingPixel || pageViewSignal)) ||
-      /(?:^|\/)(?:analytics|beacon|ping|rum)(?:\/|$)/u.test(
-        pathname,
-      )
+      /(?:^|\/)(?:analytics|beacon|ping|rum)(?:\/|$)/u.test(pathname)
     );
   };
   const isPageOwnedRead = (
@@ -407,6 +580,9 @@ export function installPrepareOnlyMutationGuardInPage(
     method: string;
     url: string | null;
   }): boolean => {
+    if (state.finalActionAllowed) {
+      return true;
+    }
     const mutationWindow = state.intermediateMutationWindow;
     if (
       !state.intermediateMutationsAuthorized ||
@@ -427,7 +603,12 @@ export function installPrepareOnlyMutationGuardInPage(
     } catch {
       return false;
     }
-    if (parsedUrl.origin !== mutationWindow.expectedOrigin) {
+    // "*" is the default: field saves are allowed wherever the form lives
+    // (an embedded ATS answers from its own origin, not the page's), and
+    // any write that is not a final send goes through. A pinned origin from
+    // a saved permission keeps the older, narrower rule.
+    const anyOrigin = mutationWindow.expectedOrigin === "*";
+    if (!anyOrigin && parsedUrl.origin !== mutationWindow.expectedOrigin) {
       return false;
     }
     const signal = `${parsedUrl.pathname} ${parsedUrl.search} ${
@@ -439,7 +620,7 @@ export function installPrepareOnlyMutationGuardInPage(
       /(?:^|[^a-z0-9])(?:autosave|auto[-_\s]*save|draft|save[-_\s]*(?:field|answer|progress|draft)?|update[-_\s]*(?:field|answer|progress|draft|application|form)?|field|answer|attachment|upload|progress)(?:[^a-z0-9]|$)/iu;
     if (
       finalActionSignal.test(signal) ||
-      !intermediateActionSignal.test(signal)
+      (!anyOrigin && !intermediateActionSignal.test(signal))
     ) {
       return false;
     }
@@ -447,12 +628,47 @@ export function installPrepareOnlyMutationGuardInPage(
     return true;
   };
 
+  const authorizedSubmitter = (
+    form: HTMLFormElement,
+    submitter: HTMLElement | null,
+  ): boolean => {
+    const authorized = state.authorizedFormActionWindow;
+    return Boolean(
+      authorized &&
+      submitter &&
+      (submitter as HTMLButtonElement | HTMLInputElement).form === form &&
+      submitter.dataset.unemployedAuthorizedFormAction === authorized.token &&
+      Date.now() <= authorized.expiresAtMs &&
+      normalizeMethod(
+        submitter.hasAttribute("formmethod")
+          ? (submitter as HTMLButtonElement | HTMLInputElement).formMethod
+          : form.method,
+      ) === authorized.method &&
+      normalizeUrl(
+        (submitter.hasAttribute("formaction")
+          ? (submitter as HTMLButtonElement | HTMLInputElement).formAction
+          : form.action) || window.location.href,
+      ) === authorized.url,
+    );
+  };
+
   if (!state.submitListenerInstalled) {
     document.addEventListener(
       "submit",
       (event) => {
+        if (state.finalActionAllowed) {
+          return;
+        }
         const form =
           event.target instanceof HTMLFormElement ? event.target : null;
+        const submitter =
+          event instanceof SubmitEvent && event.submitter instanceof HTMLElement
+            ? event.submitter
+            : null;
+        if (form && authorizedSubmitter(form, submitter)) {
+          state.authorizedFormActionWindow = null;
+          return;
+        }
         if (formCarriesPreparedValue(form) === true) {
           recordBlockedAttempt(
             "dom_submit",
@@ -470,8 +686,17 @@ export function installPrepareOnlyMutationGuardInPage(
   }
 
   if (HTMLFormElement.prototype.submit !== state.formSubmitWrapper) {
+    // Called below with the exact form as `this`.
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    const originalFormSubmit = HTMLFormElement.prototype.submit;
     const guardedFormSubmit: typeof HTMLFormElement.prototype.submit =
       function guardedFormSubmit(this: HTMLFormElement): void {
+        // The authorized send (or the person finishing the form) often goes
+        // through the site's own script calling submit().
+        if (state.finalActionAllowed) {
+          originalFormSubmit.call(this);
+          return;
+        }
         if (formCarriesPreparedValue(this) === true) {
           recordBlockedAttempt(
             "form_submit",
@@ -488,8 +713,27 @@ export function installPrepareOnlyMutationGuardInPage(
   if (
     HTMLFormElement.prototype.requestSubmit !== state.formRequestSubmitWrapper
   ) {
+    // Called below with the exact form as `this`.
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    const originalRequestSubmit = HTMLFormElement.prototype.requestSubmit;
     const guardedRequestSubmit: typeof HTMLFormElement.prototype.requestSubmit =
-      function guardedRequestSubmit(this: HTMLFormElement): void {
+      function guardedRequestSubmit(
+        this: HTMLFormElement,
+        submitter?: HTMLElement,
+      ): void {
+        if (state.finalActionAllowed) {
+          originalRequestSubmit.call(this, submitter);
+          return;
+        }
+        const selected =
+          submitter ??
+          this.querySelector<HTMLElement>(
+            "[data-unemployed-authorized-form-action]",
+          );
+        if (authorizedSubmitter(this, selected)) {
+          originalRequestSubmit.call(this, selected);
+          return;
+        }
         if (formCarriesPreparedValue(this) === true) {
           recordBlockedAttempt(
             "form_request_submit",
@@ -1055,12 +1299,6 @@ export function collectApplicationOriginServiceWorkerStateInPage(): Promise<Page
     .catch(() => emptyPayload());
 }
 
-
-
-
-
-
-
 async function ensureFramePrepareOnlyMutationGuard(
   frame: Frame,
   intermediateMutationsAuthorized: boolean,
@@ -1095,16 +1333,58 @@ export async function ensurePrepareOnlyMutationGuard(
         ...new Set(intermediateMutationAllowedOrigins),
       ],
       intermediateMutationWindow: null,
+      authorizedFormActionWindow: null,
+      finalActionAllowedUntilMs: 0,
       initScriptInstalled: false,
       serviceWorkerInitScriptInstalled: false,
       responseListenerInstalled: false,
       webSocketListenerInstalled: false,
     };
     prepareOnlyNetworkGuardStates.set(page, networkGuardState);
+    page.on("framenavigated", (frame) => {
+      if (frame === page.mainFrame()) {
+        networkGuardState!.authorizedFormActionWindow = null;
+      }
+    });
+    // A page handed to the person stays theirs across its own navigations
+    // (a sign-in that leads to "create account", a form with several
+    // steps): each new document starts with the in-page guard shut, so it
+    // is opened again while the person's window lasts.
+    page.on("domcontentloaded", () => {
+      if (Date.now() >= networkGuardState!.finalActionAllowedUntilMs) return;
+      void page
+        .evaluate(() => {
+          const state = (window as unknown as Record<string, unknown>)[
+            "__unemployedPrepareOnlyMutationGuardV1"
+          ] as { finalActionAllowed?: boolean } | undefined;
+          if (state) state.finalActionAllowed = true;
+        })
+        .catch(() => undefined);
+    });
     await page.route("**/*", async (route) => {
       const request = route.request();
       const method = request.method().trim().toUpperCase();
       const resourceType = request.resourceType();
+      if (Date.now() < networkGuardState!.finalActionAllowedUntilMs) {
+        await route.continue();
+        return;
+      }
+      const authorizedFormAction =
+        networkGuardState!.authorizedFormActionWindow;
+      if (
+        authorizedFormAction &&
+        Date.now() <= authorizedFormAction.expiresAtMs &&
+        authorizedFormAction.remainingRequests > 0 &&
+        request.isNavigationRequest() &&
+        resourceType === "document" &&
+        method === authorizedFormAction.method &&
+        request.url() === authorizedFormAction.url
+      ) {
+        authorizedFormAction.remainingRequests -= 1;
+        await route.continue();
+        authorizedFormAction.resolveCompletion();
+        return;
+      }
 
       const denyRequest = async (): Promise<void> => {
         networkGuardState!.blockedAttempts.push({
@@ -1275,18 +1555,42 @@ export async function openPrepareOnlyIntermediateMutationWindow(
     );
   }
   const networkGuardState = prepareOnlyNetworkGuardStates.get(page);
+  // An empty origin list means "the origin the run is on right now": the
+  // window is still pinned to one origin for its short life, it just is not
+  // pinned ahead of time.
   if (
     !networkGuardState?.intermediateMutationsAuthorized ||
-    !networkGuardState.intermediateMutationAllowedOrigins.includes(
-      expectedOrigin,
-    )
+    (networkGuardState.intermediateMutationAllowedOrigins.length > 0 &&
+      !networkGuardState.intermediateMutationAllowedOrigins.includes(
+        expectedOrigin,
+      ))
   ) {
     throw new Error(
       "The current application origin is outside the explicit intermediate-mutation authority.",
     );
   }
+  // The page has usually navigated since the guard was installed (listing
+  // page to apply page), and a document created by the init script starts
+  // from whatever the script was first registered with. Re-assert the
+  // authorization on every frame before the window opens, so the frame the
+  // field lives in agrees that saves are allowed.
+  for (const frame of page.frames()) {
+    try {
+      await ensureFramePrepareOnlyMutationGuard(
+        frame,
+        networkGuardState.intermediateMutationsAuthorized,
+      );
+    } catch {
+      // A frame mid-navigation gets the window on the next write.
+    }
+  }
   await setPrepareOnlyIntermediateMutationWindow(page, {
-    expectedOrigin,
+    // No pinned origins: the window covers whichever origin the form's
+    // frame saves to. The submit guard is separate and unchanged.
+    expectedOrigin:
+      networkGuardState.intermediateMutationAllowedOrigins.length === 0
+        ? "*"
+        : expectedOrigin,
     expiresAtMs: Date.now() + INTERMEDIATE_MUTATION_WINDOW_DURATION_MS,
     remainingRequests: INTERMEDIATE_MUTATION_WINDOW_MAX_REQUESTS,
   });
@@ -1319,18 +1623,33 @@ export async function registerPrepareOnlyPreparedValue(
   }
 }
 
-
 export async function getLatestBlockedPrepareOnlyAttempt(
   page: Page,
 ): Promise<PrepareOnlyBlockedAttempt | null> {
+  return (await getBlockedPrepareOnlyAttempts(page)).at(-1) ?? null;
+}
+
+/**
+ * Everything the guard has blocked on this page, oldest first.
+ *
+ * The network ledger and each frame's in-page ledger are kept separately, so
+ * they are merged by time here: "the latest" has to mean the latest.
+ */
+export async function getBlockedPrepareOnlyAttempts(
+  page: Page,
+): Promise<PrepareOnlyBlockedAttempt[]> {
   const ledger: PrepareOnlyBlockedAttempt[] = [
     ...(prepareOnlyNetworkGuardStates.get(page)?.blockedAttempts ?? []),
   ];
   for (const frame of page.frames()) {
-    const snapshot = await frame.evaluate(readPrepareOnlyMutationGuardInPage);
-    ledger.push(...snapshot.blockedAttempts);
+    try {
+      const snapshot = await frame.evaluate(readPrepareOnlyMutationGuardInPage);
+      ledger.push(...snapshot.blockedAttempts);
+    } catch {
+      // A frame that has navigated away has no ledger to read any more.
+    }
   }
-  return ledger.at(-1) ?? null;
+  return ledger.sort((left, right) => left.at.localeCompare(right.at));
 }
 
 /**
@@ -1352,6 +1671,8 @@ export function recordPrepareOnlyRunInterruption(
       intermediateMutationsAuthorized: false,
       intermediateMutationAllowedOrigins: [],
       intermediateMutationWindow: null,
+      authorizedFormActionWindow: null,
+      finalActionAllowedUntilMs: 0,
       initScriptInstalled: false,
       serviceWorkerInitScriptInstalled: false,
       responseListenerInstalled: false,
@@ -1661,6 +1982,7 @@ export function createApplicationRunServiceWorkerSentinel(input: {
   const pendingWorkerEvents: string[] = [];
   const pendingInterruptions: PrepareOnlyBlockedAttempt[] = [];
   const detachListeners: Array<() => void> = [];
+  const ownedPopups = new Set<Page>();
   let ledgerPage: Page | null = null;
   let eventChannelBroken = false;
   let contextRouteInstalled = false;
@@ -1680,10 +2002,37 @@ export function createApplicationRunServiceWorkerSentinel(input: {
     pendingInterruptions.push(attempt);
   };
 
+  const currentApplicationUrl = (): string => {
+    const pageUrl = ledgerPage?.url();
+    return pageUrl && isHttpUrlLike(pageUrl) ? pageUrl : input.targetUrl;
+  };
+
+  const isOwnedPage = async (page: Page): Promise<boolean> => {
+    if (!ledgerPage || detached) return false;
+    let current: Page | null = page;
+    const seen = new Set<Page>();
+    for (let depth = 0; current && depth < 8; depth += 1) {
+      if (current === ledgerPage || ownedPopups.has(current)) return true;
+      if (seen.has(current) || typeof current.opener !== "function") break;
+      seen.add(current);
+      current = await current.opener().catch(() => null);
+    }
+    return false;
+  };
+
+  const passToOtherGuards = async (route: Route): Promise<void> => {
+    if (typeof route.fallback === "function") await route.fallback();
+    else await route.continue();
+  };
+
   if (typeof input.context.on === "function") {
     try {
       const onServiceWorker = (worker: { url(): string }): void => {
-        pendingWorkerEvents.push(worker.url());
+        const workerUrl = worker.url();
+        const workerOrigin = parseHttpOriginOrNull(workerUrl);
+        const applicationOrigin = parseHttpOriginOrNull(currentApplicationUrl());
+        if (!workerOrigin || workerOrigin === applicationOrigin)
+          pendingWorkerEvents.push(workerUrl);
       };
       input.context.on("serviceworker" as never, onServiceWorker as never);
       detachListeners.push(() => {
@@ -1694,20 +2043,17 @@ export function createApplicationRunServiceWorkerSentinel(input: {
 
       const onPage = (page: Page): void => {
         void (async () => {
-          // Only opener-backed popups (window.open/target=_blank) are
-          // contained. Pages created without an opener are first-class tabs
-          // such as the managed application page itself.
-          const opener = await page.opener().catch(() => null);
-          if (!opener) {
-            return;
-          }
+          // A shared context also contains other applications, searches, and
+          // the person's tabs. Only this run's opener chain is contained.
+          if (!(await isOwnedPage(page))) return;
+          ownedPopups.add(page);
           let popupUrl: string | null = null;
           try {
             const candidateUrl = page.url();
             if (isHttpUrlLike(candidateUrl)) {
               popupUrl = candidateUrl;
             } else {
-              const openerUrl = opener.url();
+              const openerUrl = ledgerPage?.url();
               if (openerUrl && isHttpUrlLike(openerUrl)) {
                 popupUrl = openerUrl;
               }
@@ -1737,6 +2083,17 @@ export function createApplicationRunServiceWorkerSentinel(input: {
 
   const contextRouteHandler = async (route: Route): Promise<void> => {
     const request = route.request();
+    let requestPage: Page | null = null;
+    try {
+      requestPage = request.frame().page();
+    } catch {
+      // Service-worker requests have no frame. Their origin is handled by the
+      // worker sentinel; a shared-context route cannot assign them to a tab.
+    }
+    if (!requestPage || !(await isOwnedPage(requestPage))) {
+      await passToOtherGuards(route);
+      return;
+    }
     const method = request.method().trim().toUpperCase();
     const resourceType = request.resourceType();
     const allowed =
@@ -1753,13 +2110,19 @@ export function createApplicationRunServiceWorkerSentinel(input: {
       await route.abort("blockedbyclient");
       return;
     }
-    await route.continue();
+    await passToOtherGuards(route);
   };
   if (typeof input.context.route === "function") {
     try {
       void input.context
         .route("**/*", contextRouteHandler)
-        .then(() => {
+        .then(async () => {
+          if (detached) {
+            await input.context
+              .unroute("**/*", contextRouteHandler)
+              .catch(() => undefined);
+            return;
+          }
           contextRouteInstalled = true;
         })
         .catch(() => undefined);
@@ -1801,7 +2164,7 @@ export function createApplicationRunServiceWorkerSentinel(input: {
 
       return findApplicationOriginServiceWorkerIssue({
         context: input.context,
-        targetUrl: input.targetUrl,
+        targetUrl: currentApplicationUrl(),
         page: ledgerPage,
         phase,
         pendingWorkerEventUrls: drainedEvents,
@@ -1864,7 +2227,6 @@ export function createApplicationRunServiceWorkerSentinel(input: {
   return sentinel;
 }
 
-
 export function normalizeFileSystemPath(value: string): string {
   const normalized = resolve(value.trim()).replace(/\\/gu, "/");
   return process.platform === "win32" ? normalized.toLowerCase() : normalized;
@@ -1896,25 +2258,6 @@ export async function loadVerifiedResumeBytes(
   return bytes;
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 /** A short, stable, readable id segment made from a label. */
 function toStableIdSegment(value: string): string {
   return (
@@ -1929,7 +2272,6 @@ function toStableIdSegment(value: string): string {
       .slice(0, 48) || "field"
   );
 }
-
 
 function createPreparationConsentDecisions(input: {
   jobId: string;
@@ -2003,7 +2345,7 @@ export function buildPreparationResult(input: {
   // Only the application facts are needed; the callback that fills the form is
   // not one of them.
   executionInput: Omit<ExecuteApplicationFlowInput, "prepareApplicationForm">;
-  state?: "paused" | "failed";
+  state?: "paused" | "failed" | "ready";
   summary: string;
   detail: string;
   questions: readonly ApplicationAttemptQuestion[];
@@ -2017,6 +2359,7 @@ export function buildPreparationResult(input: {
   nextActionLabel: string;
   manualDecisionLabel?: string;
   externalWrites?: readonly ApplicationAttemptExternalWriteEvidence[];
+  modelUse?: readonly ApplyExecutionModelUse[];
 }): ApplyExecutionResult {
   const finalCheckpoint: ApplicationAttemptCheckpoint = {
     id: `checkpoint_${input.executionInput.job.id}_${toStableIdSegment(input.checkpointLabel)}_${input.checkpoints.length + 1}`,
@@ -2058,9 +2401,9 @@ export function buildPreparationResult(input: {
     visualCheckpoints: [],
     nextActionLabel: input.nextActionLabel,
     checkpoints: [...input.checkpoints, finalCheckpoint],
+    modelUse: input.modelUse ? [...input.modelUse] : [],
     externalWrites: input.externalWrites
       ? [...input.externalWrites]
       : undefined,
   });
 }
-

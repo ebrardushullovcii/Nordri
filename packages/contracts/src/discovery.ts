@@ -77,6 +77,19 @@ export const JobDiscoveryTargetSchema = z.object({
 });
 export type JobDiscoveryTarget = z.infer<typeof JobDiscoveryTargetSchema>;
 
+export const JobFinderSearchRequestSchema = z.object({
+  intent: z.string().trim().max(1_000).default(""),
+  /** A run-scoped override of the saved search selectivity. */
+  breadth: z.enum(["best_only", "wide"]).optional(),
+  freshness: z.enum(["any", "recent"]).default("any"),
+  sourceIds: z
+    .union([z.literal("all"), z.array(NonEmptyStringSchema).min(1).max(1_000)])
+    .default("all"),
+});
+export type JobFinderSearchRequest = z.infer<
+  typeof JobFinderSearchRequestSchema
+>;
+
 /** Returns true only when a saved source can actually be used for discovery. */
 export function isRunnableJobDiscoveryTarget(
   target: Pick<JobDiscoveryTarget, "enabled" | "startingUrl">,
@@ -107,9 +120,9 @@ const JobDiscoveryPreferencesObjectSchema = z.object({
   collectOnlyHardCriteriaMatches: z.boolean().default(false),
   /**
    * Explicit total valid-job budget for one discovery run across all enabled
-   * targets. `null`/`undefined` keeps the interactive precision default; when
-   * set, the budget is split deterministically across targets and raises the
-   * bounded crawl step/time ceilings proportionally.
+   * targets. `null`/`undefined` retains all eligible listings collected with
+   * the normal crawl safety ceilings; when set, the budget is split across
+   * targets and raises the bounded crawl step/time ceilings proportionally.
    */
   runJobBudget: z
     .number()
@@ -117,6 +130,14 @@ const JobDiscoveryPreferencesObjectSchema = z.object({
     .min(1)
     .max(DISCOVERY_RUN_JOB_BUDGET_MAX)
     .nullish(),
+  /**
+   * Run-time copy of Settings' "Count remote jobs as any location"
+   * (`settings.aiBehavior.jobSearch.remoteCountsAsAnyLocation`), set by the
+   * search and scoring code from the saved settings when they read the
+   * preferences. Only `false` is ever set; absent means on. No save path
+   * writes it.
+   */
+  remoteCountsAsAnyLocation: z.boolean().optional(),
 });
 type JobDiscoveryPreferencesInput = z.input<
   typeof JobDiscoveryPreferencesObjectSchema
@@ -929,6 +950,8 @@ export const ListingDetailFetchSchema = z.object({
   outcome: ListingDetailFetchOutcomeSchema,
   method: z.enum(["json_ld", "page_text"]).nullable().default(null),
   detail: NonEmptyStringSchema.nullable().default(null),
+  /** A server-requested earliest retry time after rate limiting. */
+  retryAfterAt: IsoDateTimeSchema.nullable().optional(),
 });
 export type ListingDetailFetch = z.infer<typeof ListingDetailFetchSchema>;
 
@@ -1249,6 +1272,20 @@ export const SavedJobDiscoveryProvenanceSchema = z.object({
   providerKey: SourceIntelligenceProviderKeySchema.nullable().default(null),
   providerBoardToken: NonEmptyStringSchema.nullable().default(null),
   titleTriageOutcome: DiscoveryTitleTriageOutcomeSchema.default("pass"),
+  // What this one source showed for the job. A job seen on several sources is
+  // built from exactly one of these sightings (ADR 0030), so each keeps its own
+  // listing and application link instead of the latest one overwriting the job.
+  // Optional: provenance written before these fields existed stays valid.
+  /** The listing page this source linked to. */
+  listingUrl: NonEmptyStringSchema.nullable().optional(),
+  /** The application link this source's collection carried. */
+  applicationUrl: UrlStringSchema.nullable().optional(),
+  /** The apply link read from this sighting's own listing page. */
+  pageApplyUrl: UrlStringSchema.nullable().optional(),
+  /** When this sighting's listing page was read for its apply link. */
+  routeReadAt: IsoDateTimeSchema.nullable().optional(),
+  sourceJobId: NonEmptyStringSchema.nullable().optional(),
+  applyPath: JobApplyPathSchema.nullable().optional(),
 });
 export type SavedJobDiscoveryProvenance = z.infer<
   typeof SavedJobDiscoveryProvenanceSchema
@@ -1373,6 +1410,11 @@ export type SavedJob = JobPosting & {
   provenance: SavedJobDiscoveryProvenance[];
   discoveryFeedback: DiscoveryFeedback | null;
   resumeApplicationMode: z.infer<typeof ResumeApplicationModeSchema> | null;
+  /**
+   * How far a tailored resume for this job may go, when the person chose a
+   * level for this job. `null` follows the profile-wide setting.
+   */
+  resumeTailoringMode?: z.infer<typeof TailoringModeSchema> | null;
   latestMatchAssessmentAudit: MatchAssessmentChangeAudit | null;
 };
 type SavedJobInput = z.input<typeof JobPostingSchema> & {
@@ -1389,6 +1431,7 @@ type SavedJobInput = z.input<typeof JobPostingSchema> & {
     | z.input<typeof ResumeApplicationModeSchema>
     | null
     | undefined;
+  resumeTailoringMode?: z.input<typeof TailoringModeSchema> | null | undefined;
   latestMatchAssessmentAudit?:
     | z.input<typeof MatchAssessmentChangeAuditSchema>
     | null
@@ -1404,6 +1447,7 @@ export const SavedJobSchema: z.ZodType<SavedJob, z.ZodTypeDef, SavedJobInput> =
     provenance: z.array(SavedJobDiscoveryProvenanceSchema).default([]),
     discoveryFeedback: DiscoveryFeedbackSchema.nullable().default(null),
     resumeApplicationMode: ResumeApplicationModeSchema.nullable().default(null),
+    resumeTailoringMode: TailoringModeSchema.nullable().default(null),
     latestMatchAssessmentAudit:
       MatchAssessmentChangeAuditSchema.nullable().default(null),
   });
@@ -1544,9 +1588,18 @@ export const ReviewQueueItemSchema = z.object({
   resumeAssetId: NonEmptyStringSchema.nullable(),
   resumeApplicationMode:
     ResumeApplicationModeSchema.default("tailored_per_job"),
+  /** The per-job tailoring level, or `null` when the profile setting applies. */
+  resumeTailoringMode: TailoringModeSchema.nullable().optional(),
   resumeReview: ReviewQueueResumeReviewStateSchema.default({
     status: "not_started",
   }),
+  /**
+   * Lines in the job's saved resume that still wait for the person's
+   * decision. The export gate refuses the resume until each one is decided,
+   * whatever the level, so a job with any is not ready to apply. Absent or 0
+   * when nothing is waiting.
+   */
+  resumeLinesToDecide: z.number().int().min(0).optional(),
   updatedAt: IsoDateTimeSchema,
 });
 export type ReviewQueueItem = z.infer<typeof ReviewQueueItemSchema>;
@@ -1910,6 +1963,27 @@ export const ApplicationAttemptSchema = z.object({
 export type ApplicationAttempt = z.infer<typeof ApplicationAttemptSchema>;
 export type ApplicationAttemptInput = z.input<typeof ApplicationAttemptSchema>;
 
+/**
+ * One use of a model during application preparation, for the privacy
+ * receipt. The agent that fills a form is a model loop; a receipt that says
+ * nothing went to a model is false, and this is how it stays true.
+ */
+export const ApplyExecutionModelUseSchema = z.object({
+  purpose: z.enum([
+    "application_answering",
+    "resume_generation",
+    "visual_interpretation",
+    "other",
+  ]),
+  providerLabel: NonEmptyStringSchema,
+  modelLabel: NonEmptyStringSchema.nullable().default(null),
+  occurredAt: IsoDateTimeSchema,
+  turns: z.number().int().nonnegative().default(0),
+});
+export type ApplyExecutionModelUse = z.infer<
+  typeof ApplyExecutionModelUseSchema
+>;
+
 export const ApplyExecutionResultSchema = z.object({
   state: ApplicationAttemptStateSchema,
   summary: NonEmptyStringSchema,
@@ -1933,6 +2007,7 @@ export const ApplyExecutionResultSchema = z.object({
   externalWrites: z
     .array(ApplicationAttemptExternalWriteEvidenceSchema)
     .optional(),
+  modelUse: z.array(ApplyExecutionModelUseSchema).default([]),
 });
 export type ApplyExecutionResult = z.infer<typeof ApplyExecutionResultSchema>;
 
@@ -1960,8 +2035,7 @@ export const DiscoveryAgentMetadataSchema = z.object({
   phaseCompletionReason: NonEmptyStringSchema.nullable().default(null),
   phaseEvidence: SourceDebugPhaseEvidenceSchema.nullable().default(null),
   debugFindings: AgentDebugFindingsSchema.nullable().default(null),
-  accessBlockerReason:
-    DiscoveryAccessBlockerReasonSchema.nullable().optional(),
+  accessBlockerReason: DiscoveryAccessBlockerReasonSchema.nullable().optional(),
   parkedTab: ParkedBrowserTabReferenceSchema.nullable().optional(),
 });
 export type DiscoveryAgentMetadata = z.infer<
@@ -2118,8 +2192,7 @@ export const DiscoveryTargetExecutionSchema = z.object({
   invalidSkipped: z.number().int().nonnegative().default(0),
   changeDigest: DiscoveryChangeDigestSchema.default({}),
   warning: NonEmptyStringSchema.nullable().default(null),
-  accessBlockerReason:
-    DiscoveryAccessBlockerReasonSchema.nullable().optional(),
+  accessBlockerReason: DiscoveryAccessBlockerReasonSchema.nullable().optional(),
   parkedTab: ParkedBrowserTabReferenceSchema.nullable().optional(),
   compactionState: SharedAgentCompactionSnapshotSchema.nullable().default(null),
   compactionUsedFallbackTrigger: z.boolean().default(false),
@@ -2260,7 +2333,6 @@ export function appendDiscoveryLiveActivityEvent(
   );
 }
 
-
 export const DiscoveryRunSummarySchema = z.object({
   targetsPlanned: z.number().int().nonnegative().default(0),
   targetsCompleted: z.number().int().nonnegative().default(0),
@@ -2319,6 +2391,9 @@ export const DiscoveryRunRecordSchema = z.object({
   startedAt: IsoDateTimeSchema,
   completedAt: IsoDateTimeSchema.nullable().default(null),
   targetIds: z.array(NonEmptyStringSchema).default([]),
+  searchIntent: z.string().trim().max(1_000).optional(),
+  searchBreadth: z.enum(["best_only", "wide"]).nullable().optional(),
+  searchFreshness: z.enum(["any", "recent"]).optional(),
   targetExecutions: z.array(DiscoveryTargetExecutionSchema).default([]),
   activity: z.array(DiscoveryActivityEventSchema).default([]),
   summary: DiscoveryRunSummarySchema.default({}),

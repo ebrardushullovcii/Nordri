@@ -1,4 +1,5 @@
 import type { JobFinderRepository } from "@unemployed/db";
+import { SubmissionExecutionGrantSchema } from "@unemployed/contracts";
 import {
   SubmissionArmedMarkerSchema,
   SubmissionOutcomeRecordSchema,
@@ -36,6 +37,7 @@ export type SyntheticSubmissionAuthorityRepository = Pick<
   | "getSubmissionPreflightRecord"
   | "getSubmissionExecutionGrant"
   | "listSubmissionExecutionGrants"
+  | "commitSubmissionExecutionGrant"
   | "getSubmissionIdempotencyRecord"
   | "getSubmissionOutcomeRecord"
   | "authorizeAndArmSubmissionAttempt"
@@ -66,7 +68,14 @@ export interface SyntheticSubmissionExecutorInput {
   now: string;
 }
 
-export type SyntheticSubmissionExecutorResult =
+export type SyntheticSubmissionExecutorResult = {
+  browserAction?: SubmissionOutcomeRecord["browserAction"];
+} & (
+  | {
+      outcome: "submitted";
+      verifiedAt: string;
+      evidence: readonly SubmissionOutcomeEvidenceEntry[];
+    }
   | {
       outcome: "not_submitted";
       evidence?: readonly SubmissionOutcomeEvidenceEntry[];
@@ -75,7 +84,8 @@ export type SyntheticSubmissionExecutorResult =
   | {
       outcome: "outcome_uncertain";
       evidence?: readonly SubmissionOutcomeEvidenceEntry[];
-    };
+    }
+);
 
 export interface SyntheticSubmissionExecutor {
   execute(
@@ -92,6 +102,12 @@ export interface RunSyntheticApplicationSubmissionInput {
   observation: SyntheticSubmissionObservation;
   now: string;
   executionGrantId?: string | null;
+  /**
+   * The person pressed Send on an "Ask before sending" application. That
+   * press is the confirmation the mode asks for; it becomes the execution
+   * grant, issued here right after the preflight it must bind to exists.
+   */
+  personConfirmation?: { grantedAt: string; expiresAt: string } | null;
   executor: SyntheticSubmissionExecutor;
 }
 
@@ -130,6 +146,13 @@ export type SyntheticSubmissionRecordedNotSubmittedResult = {
   executionGrant: SubmissionExecutionGrant | null;
 };
 
+export type SyntheticSubmissionSubmittedResult = {
+  status: "submitted";
+  authorization: AuthorizedApplicationSubmission;
+  outcome: SubmissionOutcomeRecord;
+  executionGrant: SubmissionExecutionGrant | null;
+};
+
 export type SyntheticSubmissionUncertainResult = {
   status: "outcome_uncertain";
   authorization: AuthorizedApplicationSubmission;
@@ -155,6 +178,7 @@ export type SyntheticSubmissionRecoveryNeededResult = {
 
 export type SyntheticSubmissionOrchestrationResult =
   | SyntheticSubmissionBlockedResult
+  | SyntheticSubmissionSubmittedResult
   | SyntheticSubmissionRecordedNotSubmittedResult
   | SyntheticSubmissionUncertainResult
   | SyntheticSubmissionRecoveryNeededResult;
@@ -308,7 +332,11 @@ function isSyntheticSubmissionExecutorResult(
   }
 
   const outcome = (value as { outcome?: unknown }).outcome;
-  return outcome === "not_submitted" || outcome === "outcome_uncertain";
+  return (
+    outcome === "submitted" ||
+    outcome === "not_submitted" ||
+    outcome === "outcome_uncertain"
+  );
 }
 
 async function readDurableSubmissionState(
@@ -397,6 +425,28 @@ function buildOutcome(
   now: string,
   executorResult: SyntheticSubmissionExecutorResult,
 ): SubmissionOutcomeRecord {
+  if (executorResult.outcome === "submitted") {
+    return SubmissionOutcomeRecordSchema.parse({
+      id: `outcome_${preflight.id}`,
+      preflightId: authorization.preflightId,
+      idempotencyKey: authorization.idempotencyKey,
+      authorityEnvelopeId: authorization.authorityEnvelopeId,
+      authorityRevision: authorization.authorityRevision,
+      runId: authorization.runId,
+      jobId: authorization.jobId,
+      resultId: authorization.resultId,
+      applicationRecordId: authorization.applicationRecordId,
+      attemptedAt: now,
+      verifiedAt: executorResult.verifiedAt,
+      evidence: [...executorResult.evidence],
+      ...(executorResult.browserAction
+        ? { browserAction: executorResult.browserAction }
+        : {}),
+      retry: { eligible: false, blockReason: "submission_confirmed" },
+      outcome: "submitted",
+    });
+  }
+
   if (executorResult.outcome === "not_submitted") {
     return SubmissionOutcomeRecordSchema.parse({
       id: `outcome_${preflight.id}`,
@@ -411,6 +461,9 @@ function buildOutcome(
       attemptedAt: now,
       verifiedAt: null,
       evidence: [...(executorResult.evidence ?? [])],
+      ...(executorResult.browserAction
+        ? { browserAction: executorResult.browserAction }
+        : {}),
       retry: executorResult.retry,
       outcome: "not_submitted",
     });
@@ -429,6 +482,9 @@ function buildOutcome(
     attemptedAt: now,
     verifiedAt: null,
     evidence: [...(executorResult.evidence ?? [])],
+    ...(executorResult.browserAction
+      ? { browserAction: executorResult.browserAction }
+      : {}),
     retry: { eligible: false, blockReason: "outcome_uncertain" },
     outcome: "outcome_uncertain",
   });
@@ -526,9 +582,19 @@ function resultFromOutcome(
     | "outcome_commit_failed"
     | null = null,
 ):
+  | SyntheticSubmissionSubmittedResult
   | SyntheticSubmissionRecordedNotSubmittedResult
   | SyntheticSubmissionUncertainResult
   | SyntheticSubmissionRecoveryNeededResult {
+  if (outcome.outcome === "submitted") {
+    return {
+      status: "submitted",
+      authorization,
+      outcome,
+      executionGrant,
+    };
+  }
+
   if (outcome.outcome === "outcome_uncertain") {
     return {
       status: "outcome_uncertain",
@@ -552,8 +618,7 @@ function resultFromOutcome(
     authorization,
     executionGrant,
     cause: "unsupported_durable_outcome",
-    detail:
-      "The durable record contains an outcome this synthetic executor cannot independently establish; recovery is required before any further action.",
+    detail: "The durable record contains an unsupported outcome.",
   });
 }
 
@@ -581,6 +646,43 @@ export async function runSyntheticApplicationSubmission(
       }
 
       const preflight = committedPreflight.preflight;
+      // Issue the person's grant now that the preflight it binds to exists.
+      let confirmedGrantId: string | null = null;
+      if (
+        input.personConfirmation &&
+        input.savedMode === "confirm_before_submit"
+      ) {
+        const committedGrant =
+          await input.repository.commitSubmissionExecutionGrant(
+            SubmissionExecutionGrantSchema.parse({
+              id: `grant_${preflight.id}`,
+              preflightId: preflight.id,
+              idempotencyKey: preflight.idempotencyKey,
+              runId: preflight.runId,
+              jobId: preflight.jobId,
+              resultId: preflight.resultId,
+              applicationRecordId: preflight.applicationRecordId,
+              authorityEnvelopeId: preflight.authorityEnvelopeId,
+              authorityRevision: preflight.authorityRevision,
+              mode: "confirm_before_submit",
+              status: "active",
+              grantedBy: "user",
+              grantedAt: input.personConfirmation.grantedAt,
+              expiresAt: input.personConfirmation.expiresAt,
+              revokedAt: null,
+              consumedAt: null,
+            }),
+          );
+        if (
+          committedGrant.status === "created" ||
+          committedGrant.status === "duplicate"
+        ) {
+          confirmedGrantId = committedGrant.grant.id;
+        }
+      }
+      if (confirmedGrantId) {
+        input = { ...input, executionGrantId: confirmedGrantId };
+      }
       let durable = await readDurableSubmissionState(input, preflight.id);
 
       if (!durable.preflight) {

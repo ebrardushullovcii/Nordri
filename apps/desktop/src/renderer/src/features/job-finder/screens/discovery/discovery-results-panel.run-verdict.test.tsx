@@ -23,6 +23,7 @@ function renderEmptyResults(options?: {
   isSearchInProgress?: boolean;
   latestRunVerdict?: DiscoveryLatestRunVerdict | null;
   editPlanHref?: string;
+  failureCalloutShown?: boolean;
 }) {
   return render(
     <MemoryRouter>
@@ -35,6 +36,7 @@ function renderEmptyResults(options?: {
           ? { editPlanHref: options.editPlanHref }
           : {})}
         {...(options?.hasCompletedSearch ? { hasCompletedSearch: true } : {})}
+        {...(options?.failureCalloutShown ? { failureCalloutShown: true } : {})}
         {...(options?.isSearchInProgress ? { isSearchInProgress: true } : {})}
         {...(options?.latestRunVerdict !== undefined
           ? { latestRunVerdict: options.latestRunVerdict }
@@ -145,6 +147,23 @@ describe("DiscoveryResultsPanel newest-run empty-state verdicts", () => {
     expect(screen.queryByText("No matches from this search")).toBeNull();
   });
 
+  it("defers to the failure callout instead of offering Search now beside it", () => {
+    const verdict: DiscoveryLatestRunVerdict = {
+      hasEarlierCompleted: false,
+      interruptState: "sources_failed",
+      kind: "interrupted",
+    };
+    renderEmptyResults({ latestRunVerdict: verdict });
+    expect(screen.getByText(/Select Search now to try again\./)).toBeTruthy();
+    cleanup();
+
+    renderEmptyResults({ latestRunVerdict: verdict, failureCalloutShown: true });
+    expect(screen.queryByText(/Select Search now to try again/)).toBeNull();
+    expect(
+      screen.getByText(/The message above says what to do next\./),
+    ).toBeTruthy();
+  });
+
   it("keeps the earlier-completed note behind a degraded newest run", () => {
     renderEmptyResults({
       latestRunVerdict: {
@@ -170,7 +189,7 @@ describe("DiscoveryResultsPanel newest-run empty-state verdicts", () => {
     expect(screen.getByText("No matches from this search")).toBeTruthy();
     expect(
       screen
-        .getByRole("link", { name: "Edit this plan's places" })
+        .getByRole("link", { name: "Edit your places" })
         .getAttribute("href"),
     ).toBe("/job-finder/campaigns?campaignId=plan_chicago");
     expect(

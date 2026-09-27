@@ -133,23 +133,20 @@ const groupCopy: Record<
     // a demotion of the very jobs the search was run to find.
     label: "Matches your role, not yet scored",
   },
-  // Both of the bands below are the two halves of the one pool the summary
-  // line and the reveal control call "also found". They stay separate bands —
-  // "scored below your targets" and "conflicts with your requirements" are
-  // different verdicts and earn different explainers — but a divider reading
-  // only "Clear mismatches" left the user with no way to connect what they
-  // revealed with "Show also found (2)" to what the list then labelled. The
-  // pool is named first, the part second, so one vocabulary runs from the
-  // count through the control to the divider.
+  // Both of the bands below are the two halves of the one pool the reveal
+  // control calls "weaker matches". They stay separate bands — "scored below
+  // your targets" and "conflicts with your requirements" are different
+  // verdicts and earn different explainers — and each divider says its own
+  // verdict plainly so the list reads without a glossary.
   weaker: {
     description:
       "These scored well below your saved targets. Open one before trusting its score.",
-    label: "Also found · Weaker matches",
+    label: "Weaker matches",
   },
   mismatches: {
     description:
       "Hidden by default because they conflict with your saved roles, locations, or other requirements. Nothing was deleted.",
-    label: "Also found · Clear mismatches",
+    label: "Clear mismatches",
   },
 };
 

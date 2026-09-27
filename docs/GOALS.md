@@ -28,8 +28,8 @@ The primary journey is:
 Profile -> Find jobs -> Shortlisted -> resume policy and review -> Apply ->
 Applications must feel like one continuous journey. The next useful action should
 be obvious without reading long explanations or learning terms such as campaign,
-strategy, lineage, or runtime. Needs you, Task center, search plans, resume
-approaches, Companies, Outcomes, Documents, diagnostics, and Settings support
+strategy, lineage, or runtime. Needs you, Activity, search plans, resume
+approaches, Companies, Outcomes, Files (in Profile), diagnostics, and Settings support
 this journey; they must not compete with it.
 
 Acceptance binds to these user outcomes, not the current implementation. The

@@ -78,10 +78,28 @@ export function getApplicationApplyPresentation(input: {
   if (outcome === "outcome_uncertain") {
     return {
       state: "submitted_unverified",
-      label: "Sent — unconfirmed",
+      label: "Needs you",
       tone: "warning",
-      summary: `Job Finder sent this application${at}, but the site did not confirm it arrived. It will not be sent again.`,
+      summary: `Job Finder could not confirm whether this application was sent${at}. Check the employer site before sending it again.`,
       nextStep: `Open ${employer ?? "the site"} to check, then tell Job Finder what you found`,
+    };
+  }
+
+  // A successful continuation can update the exact result and its review card
+  // in the same repository transition that replaces an older person handoff.
+  // Prefer that current, blocker-free result over a stale paused projection on
+  // the application record so Ask before sending always exposes its review.
+  if (
+    applyResult?.state === "awaiting_review" &&
+    applyResult.blockerReason == null &&
+    record.automationMode === "confirm_before_submit"
+  ) {
+    return {
+      state: "awaiting_your_review",
+      label: "Ready to send",
+      tone: "active",
+      summary: `Job Finder filled this application in${at}. Look it over and send it when you are happy with it.`,
+      nextStep: "Review it and send it",
     };
   }
 

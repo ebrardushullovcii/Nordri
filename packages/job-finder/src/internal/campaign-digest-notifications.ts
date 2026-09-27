@@ -69,6 +69,14 @@ export function describeJobSourceWorkTitle(
   return label.length > 0 ? `Job source ${label}` : UNNAMED_JOB_SOURCE_TITLE;
 }
 
+/** The plain sentence for a source stopped at a step only the person can take. */
+function describeAccessBlockedSource(reason: string | null): string | null {
+  if (!reason) return null;
+  return reason === "auth_required"
+    ? "This site asks you to sign in before Job Finder can read its jobs. Sign in from Needs you; the search carries on by itself."
+    : "This site showed a check only you can finish before Job Finder could read its jobs. Finish it from Needs you; the search carries on by itself.";
+}
+
 function truncate(value: string, maxLength: number): string {
   if (value.length <= maxLength) return value;
   return `${value.slice(0, maxLength - 1).trimEnd()}…`;
@@ -98,6 +106,12 @@ function listFailedSourcesFromRecord(
       execution.completedAt,
     ]),
   );
+  const accessBlockerByTarget = new Map(
+    record.targetExecutions.map((execution) => [
+      execution.targetId,
+      execution.accessBlockerReason ?? null,
+    ]),
+  );
 
   const sources: CampaignDigestFailedSource[] = [];
   for (const source of record.summary.sourceHealth) {
@@ -107,8 +121,14 @@ function listFailedSourcesFromRecord(
     if (failedAt === null) continue;
     sources.push({
       sourceTargetId: source.targetId,
+      // A wall only the person can clear is said the way its Needs you card
+      // says it; the agent's own notes about the page are not for the person.
       reason: truncate(
-        source.warnings[0] ?? DEFAULT_FAILED_SOURCE_REASON,
+        describeAccessBlockedSource(
+          accessBlockerByTarget.get(source.targetId) ?? null,
+        ) ??
+          source.warnings[0] ??
+          DEFAULT_FAILED_SOURCE_REASON,
         1_000,
       ),
       failedAt,

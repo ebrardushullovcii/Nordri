@@ -1,5 +1,8 @@
 import type {
   ApplyBlockedAttempt,
+  RawApplyClickable,
+  RawApplyHeading,
+  RawApplyOpenedTab,
   ApplyNavigationResult,
   ApplyPageSession,
   ApplyRawPageHands,
@@ -11,15 +14,22 @@ import type {
   RawApplyLink,
   RawApplyPage,
 } from "@unemployed/contracts";
-import type { Locator, Page } from "playwright";
+import {
+  describeBrowserError,
+  isPageReplacedError,
+} from "@unemployed/contracts";
+import type { Frame, Locator, Page } from "playwright";
 
 import {
+  closePrepareOnlyAuthorizedFormActionWindow,
   closePrepareOnlyIntermediateMutationWindow,
   ensurePrepareOnlyMutationGuard,
-  getLatestBlockedPrepareOnlyAttempt,
+  getBlockedPrepareOnlyAttempts,
+  openPrepareOnlyAuthorizedFormActionWindow,
   openPrepareOnlyIntermediateMutationWindow,
   registerPrepareOnlyPreparedValue,
   type ApplicationRunServiceWorkerSentinel,
+  waitForPrepareOnlyAuthorizedFormAction,
 } from "./playwright-application-flow";
 
 /**
@@ -40,12 +50,432 @@ export const APPLY_ACTION_SELECTOR =
 
 export const APPLY_LINK_SELECTOR = "a[href]";
 
+/**
+ * Everything else a person could press.
+ *
+ * Sites are built out of divs with click handlers, cards, and tiles as often
+ * as they are out of buttons. A harness that can only press a `<button>`
+ * cannot use the web.
+ */
+export const APPLY_CLICKABLE_SELECTOR =
+  "[onclick], [role='link'], [role='menuitem'], [role='tab'], [role='option'], [data-testid], [class*='card'], [class*='tile'], summary, label[for]";
+
+/**
+ * Lets a page that is mid-navigation finish before it is read.
+ *
+ * Bounded: a page that never settles is read as it is. Short, because this
+ * runs before every read and a run is made of many reads.
+ */
+async function settlePage(page: Page, timeout = 4_000): Promise<void> {
+  await page
+    .waitForLoadState("domcontentloaded", { timeout })
+    .catch(() => undefined);
+}
+
 export async function readRawApplyPage(page: Page): Promise<RawApplyPage> {
+  await settlePage(page);
+  try {
+    return await includeChildFrameContent(
+      page,
+      await readRawApplyPageOnce(page),
+    );
+  } catch (error) {
+    if (!isPageReplacedError(error)) {
+      throw new Error(
+        describeBrowserError(error, "The page could not be read."),
+      );
+    }
+  }
+  // The page moved on while it was being read. Wait for where it went and
+  // read that: a second failure is genuinely the page's, and is said plainly.
+  await settlePage(page, 8_000);
+  try {
+    return await includeChildFrameContent(
+      page,
+      await readRawApplyPageOnce(page),
+    );
+  } catch (error) {
+    throw new Error(describeBrowserError(error, "The page could not be read."));
+  }
+}
+
+/**
+ * Reads same-origin and cross-origin child frames through Playwright's frame
+ * handles. Frame elements get explicit refs (`f0c1`, `f0a2`, …), so a later
+ * tool call reaches the same frame instead of accidentally addressing a
+ * similarly positioned element in the top document.
+ */
+async function includeChildFrameContent(
+  page: Page,
+  root: RawApplyPage,
+): Promise<RawApplyPage> {
+  const frames = page.frames().filter((frame) => frame !== page.mainFrame());
+  if (frames.length === 0) return root;
+
+  const snapshots = await Promise.all(
+    frames.slice(0, 16).map((frame, index) => readApplyFrame(frame, index)),
+  );
+  const readable = snapshots.filter(
+    (snapshot): snapshot is NonNullable<typeof snapshot> => snapshot !== null,
+  );
+  if (readable.length === 0) return root;
+
+  return {
+    ...root,
+    bodyText: [root.bodyText, ...readable.map((item) => item.bodyText)]
+      .filter(Boolean)
+      .join("\n\n")
+      .slice(0, 20_000),
+    controls: [...root.controls, ...readable.flatMap((item) => item.controls)],
+    actions: [...root.actions, ...readable.flatMap((item) => item.actions)],
+    links: [...root.links, ...readable.flatMap((item) => item.links)],
+    clickables: [
+      ...root.clickables,
+      ...readable.flatMap((item) => item.clickables),
+    ],
+    headings: [...root.headings, ...readable.flatMap((item) => item.headings)],
+    validationErrors: [
+      ...root.validationErrors,
+      ...readable.flatMap((item) => item.validationErrors),
+    ].slice(0, 24),
+  };
+}
+
+async function readApplyFrame(frame: Frame, frameIndex: number) {
+  try {
+    const [
+      controls,
+      actions,
+      links,
+      clickables,
+      headings,
+      bodyText,
+      validationErrors,
+    ] = await Promise.all([
+      frame
+        .locator(APPLY_CONTROL_SELECTOR)
+        .evaluateAll((elements, prefix): RawApplyControl[] => {
+          const labelText = (element: Element | null): string => {
+            if (!element) return "";
+            const clone = element.cloneNode(true) as Element;
+            clone
+              .querySelectorAll(
+                "input, textarea, select, [role='option'], [role='listbox']",
+              )
+              .forEach((control) => control.remove());
+            return (clone.textContent ?? "").replace(/\s+/gu, " ").trim();
+          };
+          const roots = Array.from(
+            new Set(elements.map((element) => element.getRootNode())),
+          );
+          const scopeKeyFor = (element: Element): string => {
+            const root = element.getRootNode();
+            const rootIndex = roots.indexOf(root);
+            const form =
+              element instanceof HTMLInputElement ||
+              element instanceof HTMLTextAreaElement ||
+              element instanceof HTMLSelectElement
+                ? element.form
+                : null;
+            const forms =
+              root instanceof Document || root instanceof ShadowRoot
+                ? Array.from(root.querySelectorAll("form"))
+                : [];
+            return `${prefix}r${rootIndex}${
+              form ? `form${forms.indexOf(form)}` : "root"
+            }`;
+          };
+          return elements.map((element, index) => {
+            const html = element as HTMLElement;
+            const input = element instanceof HTMLInputElement ? element : null;
+            const textarea =
+              element instanceof HTMLTextAreaElement ? element : null;
+            const select =
+              element instanceof HTMLSelectElement ? element : null;
+            const style = window.getComputedStyle(html);
+            const ariaLabel = element.getAttribute("aria-label")?.trim() ?? "";
+            const labelledBy = (element.getAttribute("aria-labelledby") ?? "")
+              .split(/\s+/u)
+              .filter(Boolean)
+              .map((id) => labelText(document.getElementById(id)))
+              .join(" ")
+              .trim();
+            const labels =
+              input?.labels ?? textarea?.labels ?? select?.labels ?? null;
+            const nearbyQuestionText = (): string => {
+              let ancestor = element.parentElement;
+              for (let depth = 0; ancestor && depth < 5; depth += 1) {
+                const clone = ancestor.cloneNode(true) as HTMLElement;
+                clone
+                  .querySelectorAll(
+                    "input, textarea, select, button, [role='option'], [role='listbox']",
+                  )
+                  .forEach((candidate) => candidate.remove());
+                const text = (clone.textContent ?? "")
+                  .replace(/\s+/gu, " ")
+                  .trim();
+                if (text.length > 0 && text.length <= 500) return text;
+                ancestor = ancestor.parentElement;
+              }
+              return "";
+            };
+            const label =
+              ariaLabel ||
+              labelledBy ||
+              (labels
+                ? Array.from(labels)
+                    .map((item) => labelText(item))
+                    .filter(Boolean)
+                    .join(" ")
+                : "") ||
+              labelText(element.closest("label")) ||
+              nearbyQuestionText() ||
+              "";
+            const legend = element
+              .closest("fieldset")
+              ?.querySelector(":scope > legend")
+              ?.textContent?.trim();
+            const role = element.getAttribute("role")?.toLowerCase() ?? "";
+            const tagName = select
+              ? "select"
+              : textarea
+                ? "textarea"
+                : input
+                  ? "input"
+                  : "contenteditable";
+            return {
+              ref: `${prefix}c${index}`,
+              index,
+              tagName,
+              inputType: input?.type.toLowerCase() ?? (role || tagName),
+              role,
+              id: html.id,
+              name: input?.name ?? textarea?.name ?? select?.name ?? "",
+              scopeKey: scopeKeyFor(element),
+              label,
+              groupLabel: legend ?? "",
+              placeholder: input?.placeholder ?? textarea?.placeholder ?? "",
+              autocomplete: input?.autocomplete ?? textarea?.autocomplete ?? "",
+              required:
+                Boolean(
+                  input?.required ?? textarea?.required ?? select?.required,
+                ) || element.getAttribute("aria-required") === "true",
+              invalid: element.getAttribute("aria-invalid") === "true",
+              validationMessage:
+                input?.validationMessage ??
+                textarea?.validationMessage ??
+                select?.validationMessage ??
+                "",
+              disabled:
+                Boolean(
+                  input?.disabled ?? textarea?.disabled ?? select?.disabled,
+                ) || element.getAttribute("aria-disabled") === "true",
+              readOnly: Boolean(input?.readOnly ?? textarea?.readOnly),
+              // A file input is almost always hidden behind a styled "Attach"
+              // button (Lever, Greenhouse, Workday). Attaching works on the
+              // hidden input, so it stays in the observation; without it the
+              // run saw only the button and could never attach the resume.
+              visible:
+                (input?.type === "file" && !input.disabled) ||
+                (style.display !== "none" &&
+                  style.visibility !== "hidden" &&
+                  style.opacity !== "0" &&
+                  html.getClientRects().length > 0),
+              value:
+                input?.value ??
+                textarea?.value ??
+                select?.value ??
+                html.textContent ??
+                "",
+              checked:
+                input?.checked ??
+                element.getAttribute("aria-checked") === "true",
+              multiple: select?.multiple ?? false,
+              options: select
+                ? Array.from(select.options)
+                    .filter(
+                      (option) =>
+                        !option.disabled &&
+                        !(
+                          option.parentElement instanceof HTMLOptGroupElement &&
+                          option.parentElement.disabled
+                        ) &&
+                        !(select.required && option.value === ""),
+                    )
+                    .map((option) => option.label.trim())
+                    .filter(Boolean)
+                : [],
+              selectedOptionLabel:
+                select?.selectedOptions.item(0)?.label.trim() ??
+                element.getAttribute("aria-valuetext")?.trim() ??
+                "",
+            };
+          });
+        }, `f${frameIndex}`),
+      frame.locator(APPLY_ACTION_SELECTOR).evaluateAll(
+        (elements, prefix): RawApplyAction[] =>
+          elements.map((element, index) => {
+            const html = element as HTMLElement;
+            const input = element instanceof HTMLInputElement ? element : null;
+            const button =
+              element instanceof HTMLButtonElement ? element : null;
+            const actionElement = input ?? button;
+            const form = actionElement?.form ?? null;
+            const style = window.getComputedStyle(html);
+            return {
+              ref: `${prefix}a${index}`,
+              index,
+              label:
+                element.getAttribute("aria-label")?.trim() ||
+                input?.value.trim() ||
+                html.innerText.trim(),
+              visible:
+                style.display !== "none" &&
+                style.visibility !== "hidden" &&
+                style.opacity !== "0" &&
+                html.getClientRects().length > 0,
+              disabled:
+                Boolean(input?.disabled ?? button?.disabled) ||
+                element.getAttribute("aria-disabled") === "true",
+              ...(form
+                ? {
+                    formAction: new URL(
+                      (actionElement?.hasAttribute("formaction")
+                        ? actionElement.formAction
+                        : form.action) || window.location.href,
+                      window.location.href,
+                    ).toString(),
+                    formMethod: (
+                      (actionElement?.hasAttribute("formmethod")
+                        ? actionElement.formMethod
+                        : form.method) || "GET"
+                    ).toUpperCase(),
+                  }
+                : {}),
+            };
+          }),
+        `f${frameIndex}`,
+      ),
+      frame.locator(APPLY_LINK_SELECTOR).evaluateAll(
+        (elements, prefix): RawApplyLink[] =>
+          elements.slice(0, 400).map((element, index) => {
+            const html = element as HTMLElement;
+            const anchor =
+              element instanceof HTMLAnchorElement ? element : null;
+            const style = window.getComputedStyle(html);
+            const rect = html.getBoundingClientRect();
+            return {
+              ref: `${prefix}l${index}`,
+              index,
+              label:
+                element.getAttribute("aria-label")?.trim() ||
+                html.innerText.trim() ||
+                element.getAttribute("title")?.trim() ||
+                "",
+              href: anchor?.href || element.getAttribute("href") || "",
+              target: anchor?.target.trim() ?? "",
+              visible:
+                style.display !== "none" &&
+                style.visibility !== "hidden" &&
+                style.opacity !== "0" &&
+                html.getClientRects().length > 0,
+              topOffset: Math.round(rect.top + window.scrollY),
+            };
+          }),
+        `f${frameIndex}`,
+      ),
+      frame.locator(APPLY_CLICKABLE_SELECTOR).evaluateAll(
+        (elements, prefix): RawApplyClickable[] =>
+          elements.slice(0, 300).flatMap((element, index) => {
+            const html = element as HTMLElement;
+            const style = window.getComputedStyle(html);
+            const label = (
+              element.getAttribute("aria-label")?.trim() ||
+              html.innerText.trim() ||
+              element.getAttribute("title")?.trim() ||
+              ""
+            ).slice(0, 300);
+            if (!label) return [];
+            return [
+              {
+                ref: `${prefix}e${index}`,
+                index,
+                label,
+                role: element.getAttribute("role")?.toLowerCase() ?? "",
+                tagName: element.tagName.toLowerCase(),
+                visible:
+                  style.display !== "none" &&
+                  style.visibility !== "hidden" &&
+                  style.opacity !== "0" &&
+                  html.getClientRects().length > 0,
+                topOffset: 0,
+              },
+            ];
+          }),
+        `f${frameIndex}`,
+      ),
+      frame
+        .locator("h1, h2, h3, [role='heading']")
+        .evaluateAll((elements): RawApplyHeading[] =>
+          elements.slice(0, 60).flatMap((element) => {
+            const text = (element as HTMLElement).innerText
+              .trim()
+              .slice(0, 300);
+            if (!text) return [];
+            const explicit = element.getAttribute("aria-level");
+            const fromTag = /^H([1-6])$/u.exec(element.tagName)?.[1];
+            return [
+              {
+                level: Number.parseInt(explicit ?? fromTag ?? "2", 10) || 2,
+                text,
+              },
+            ];
+          }),
+        ),
+      frame
+        .locator("body")
+        .innerText({ timeout: 3_000 })
+        .catch(() => ""),
+      frame
+        .locator("[role='alert'], [aria-live='assertive']")
+        .evaluateAll((elements) =>
+          elements
+            .map((element) => (element as HTMLElement).innerText.trim())
+            .filter((text) => text.length > 0 && text.length < 300)
+            .slice(0, 12),
+        )
+        .catch(() => [] as string[]),
+    ]);
+    return {
+      controls,
+      actions,
+      links,
+      clickables,
+      headings,
+      bodyText: bodyText.slice(0, 8_000),
+      validationErrors,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function readRawApplyPageOnce(page: Page): Promise<RawApplyPage> {
   const [controls, actions, links, bodyText, validationErrors, stepLabel] =
     await Promise.all([
       page
         .locator(APPLY_CONTROL_SELECTOR)
         .evaluateAll((elements): RawApplyControl[] => {
+          const labelText = (element: Element | null): string => {
+            if (!element) return "";
+            const clone = element.cloneNode(true) as Element;
+            clone
+              .querySelectorAll(
+                "input, textarea, select, [role='option'], [role='listbox']",
+              )
+              .forEach((control) => control.remove());
+            return (clone.textContent ?? "").replace(/\s+/gu, " ").trim();
+          };
           const isVisible = (element: HTMLElement): boolean => {
             if (element.getAttribute("aria-hidden") === "true") {
               return false;
@@ -62,7 +492,7 @@ export async function readRawApplyPage(page: Page): Promise<RawApplyPage> {
             (element.getAttribute("aria-labelledby") ?? "")
               .split(/\s+/u)
               .filter(Boolean)
-              .map((id) => document.getElementById(id)?.textContent ?? "")
+              .map((id) => labelText(document.getElementById(id)))
               .join(" ")
               .trim();
           const directLabel = (element: Element): string => {
@@ -76,20 +506,39 @@ export async function readRawApplyPage(page: Page): Promise<RawApplyPage> {
                 ? Array.from(labelled.labels)
                 : [];
             const text = labels
-              .map((label) => label.innerText.trim())
+              .map((label) => labelText(label))
               .filter(Boolean)
               .join(" ");
             if (text) return text;
-            return element.closest("label")?.textContent?.trim() ?? "";
+            const enclosing = labelText(element.closest("label"));
+            if (enclosing) return enclosing;
+            let ancestor = element.parentElement;
+            for (let depth = 0; ancestor && depth < 5; depth += 1) {
+              const clone = ancestor.cloneNode(true) as HTMLElement;
+              clone
+                .querySelectorAll(
+                  "input, textarea, select, button, [role='option'], [role='listbox']",
+                )
+                .forEach((candidate) => candidate.remove());
+              const nearby = (clone.textContent ?? "")
+                .replace(/\s+/gu, " ")
+                .trim();
+              if (nearby.length > 0 && nearby.length <= 500) return nearby;
+              ancestor = ancestor.parentElement;
+            }
+            return "";
           };
           const groupLabel = (element: Element): string => {
             const legend = element
               .closest("fieldset")
               ?.querySelector(":scope > legend");
             if (legend?.textContent?.trim()) return legend.textContent.trim();
-            const group = element.closest("[role='group'], [role='radiogroup']");
+            const group = element.closest(
+              "[role='group'], [role='radiogroup']",
+            );
             return group
-              ? group.getAttribute("aria-label")?.trim() || referencedText(group)
+              ? group.getAttribute("aria-label")?.trim() ||
+                  referencedText(group)
               : "";
           };
           const customOptions = (element: HTMLElement): string[] => {
@@ -108,12 +557,34 @@ export async function readRawApplyPage(page: Page): Promise<RawApplyPage> {
               .slice(0, 200);
           };
 
+          const roots = Array.from(
+            new Set(elements.map((element) => element.getRootNode())),
+          );
+          const scopeKeyFor = (element: Element): string => {
+            const root = element.getRootNode();
+            const rootIndex = roots.indexOf(root);
+            const form =
+              element instanceof HTMLInputElement ||
+              element instanceof HTMLTextAreaElement ||
+              element instanceof HTMLSelectElement
+                ? element.form
+                : null;
+            const forms =
+              root instanceof Document || root instanceof ShadowRoot
+                ? Array.from(root.querySelectorAll("form"))
+                : [];
+            return `r${rootIndex}${
+              form ? `form${forms.indexOf(form)}` : "root"
+            }`;
+          };
+
           return elements.map((element, index) => {
             const html = element as HTMLElement;
             const input = element instanceof HTMLInputElement ? element : null;
             const textarea =
               element instanceof HTMLTextAreaElement ? element : null;
-            const select = element instanceof HTMLSelectElement ? element : null;
+            const select =
+              element instanceof HTMLSelectElement ? element : null;
             const role = element.getAttribute("role")?.toLowerCase() ?? "";
             const tagName = select
               ? "select"
@@ -129,6 +600,7 @@ export async function readRawApplyPage(page: Page): Promise<RawApplyPage> {
               role,
               id: html.id ?? "",
               name: input?.name ?? textarea?.name ?? select?.name ?? "",
+              scopeKey: scopeKeyFor(element),
               label: directLabel(element),
               groupLabel: groupLabel(element),
               placeholder: input?.placeholder ?? textarea?.placeholder ?? "",
@@ -148,7 +620,12 @@ export async function readRawApplyPage(page: Page): Promise<RawApplyPage> {
                   input?.disabled ?? textarea?.disabled ?? select?.disabled,
                 ) || element.getAttribute("aria-disabled") === "true",
               readOnly: Boolean(input?.readOnly ?? textarea?.readOnly),
-              visible: isVisible(html),
+              // A file input is almost always hidden behind a styled "Attach"
+              // button (Lever, Greenhouse, Workday). Attaching works on the
+              // hidden input, so it stays in the observation; without it the
+              // run saw only the button and could never attach the resume.
+              visible:
+                (input?.type === "file" && !input.disabled) || isVisible(html),
               value:
                 input?.value ??
                 textarea?.value ??
@@ -156,10 +633,20 @@ export async function readRawApplyPage(page: Page): Promise<RawApplyPage> {
                 html.textContent ??
                 "",
               checked:
-                input?.checked ?? element.getAttribute("aria-checked") === "true",
+                input?.checked ??
+                element.getAttribute("aria-checked") === "true",
               multiple: select?.multiple ?? false,
               options: select
                 ? Array.from(select.options)
+                    .filter(
+                      (option) =>
+                        !option.disabled &&
+                        !(
+                          option.parentElement instanceof HTMLOptGroupElement &&
+                          option.parentElement.disabled
+                        ) &&
+                        !(select.required && option.value === ""),
+                    )
                     .map((option) => option.label.trim())
                     .filter(Boolean)
                 : customOptions(html),
@@ -178,6 +665,8 @@ export async function readRawApplyPage(page: Page): Promise<RawApplyPage> {
             const input = element instanceof HTMLInputElement ? element : null;
             const button =
               element instanceof HTMLButtonElement ? element : null;
+            const actionElement = input ?? button;
+            const form = actionElement?.form ?? null;
             const style = window.getComputedStyle(html);
             return {
               index,
@@ -193,6 +682,21 @@ export async function readRawApplyPage(page: Page): Promise<RawApplyPage> {
               disabled:
                 Boolean(input?.disabled ?? button?.disabled) ||
                 element.getAttribute("aria-disabled") === "true",
+              ...(form
+                ? {
+                    formAction: new URL(
+                      (actionElement?.hasAttribute("formaction")
+                        ? actionElement.formAction
+                        : form.action) || window.location.href,
+                      window.location.href,
+                    ).toString(),
+                    formMethod: (
+                      (actionElement?.hasAttribute("formmethod")
+                        ? actionElement.formMethod
+                        : form.method) || "GET"
+                    ).toUpperCase(),
+                  }
+                : {}),
             };
           }),
         ),
@@ -241,12 +745,39 @@ export async function readRawApplyPage(page: Page): Promise<RawApplyPage> {
             .slice(0, 12),
         )
         .catch(() => [] as string[]),
-      page
-        .locator("[role='progressbar'], [aria-label*='step' i]")
-        .first()
-        .innerText({ timeout: 1_000 })
-        .then((text) => text.trim().slice(0, 200))
-        .catch(() => null),
+      (async () => {
+        const current = page.locator("[aria-current='step']").first();
+        const currentStep =
+          (await current.count()) > 0
+            ? await current
+                .evaluate((element) => {
+                  const container = element.closest("[role='list'], ol, ul");
+                  if (!container) return null;
+                  const steps = Array.from(container.children).filter(
+                    (candidate) =>
+                      candidate.matches("li, [role='listitem']") &&
+                      (candidate.textContent ?? "").trim().length > 0,
+                  );
+                  const index = steps.findIndex(
+                    (candidate) =>
+                      candidate === element || candidate.contains(element),
+                  );
+                  if (index < 0 || steps.length < 2) return null;
+                  const label = (element as HTMLElement).innerText
+                    .trim()
+                    .slice(0, 120);
+                  return `Step ${index + 1} of ${steps.length}${label ? `: ${label}` : ""}`;
+                })
+                .catch(() => null)
+            : null;
+        if (currentStep) return currentStep;
+        return page
+          .locator("[role='progressbar'], [aria-label*='step' i]")
+          .first()
+          .innerText({ timeout: 1_000 })
+          .then((text) => text.trim().slice(0, 200))
+          .catch(() => null);
+      })(),
     ]);
 
   // A list the page draws itself does not report its own selection, so it is
@@ -264,7 +795,10 @@ export async function readRawApplyPage(page: Page): Promise<RawApplyPage> {
   const customStates =
     customIndexes.length > 0
       ? await readCustomComboboxStates(page, customIndexes)
-      : new Map<number, { selectedOptionLabel: string; compositeVisible: boolean }>();
+      : new Map<
+          number,
+          { selectedOptionLabel: string; compositeVisible: boolean }
+        >();
   const enrichedControls = controls.map((control) => {
     const custom = customStates.get(control.index);
     if (!custom) {
@@ -290,16 +824,128 @@ export async function readRawApplyPage(page: Page): Promise<RawApplyPage> {
     enrichedControls,
   );
 
+  const [headings, clickables, openedTabs, loading] = await Promise.all([
+    page
+      .locator("h1, h2, h3, [role='heading']")
+      .evaluateAll((elements): RawApplyHeading[] =>
+        elements.slice(0, 60).flatMap((element) => {
+          const html = element as HTMLElement;
+          const text = html.innerText.trim().slice(0, 300);
+          if (!text) return [];
+          const explicit = element.getAttribute("aria-level");
+          const fromTag = /^H([1-6])$/u.exec(element.tagName)?.[1];
+          return [
+            {
+              level: Number.parseInt(explicit ?? fromTag ?? "2", 10) || 2,
+              text,
+            },
+          ];
+        }),
+      )
+      .catch(() => [] as RawApplyHeading[]),
+    page
+      .locator(APPLY_CLICKABLE_SELECTOR)
+      .evaluateAll((elements): RawApplyClickable[] =>
+        elements.slice(0, 300).flatMap((element, index) => {
+          const html = element as HTMLElement;
+          const style = window.getComputedStyle(html);
+          const rect = html.getBoundingClientRect();
+          const label = (
+            element.getAttribute("aria-label")?.trim() ||
+            html.innerText.trim() ||
+            element.getAttribute("title")?.trim() ||
+            ""
+          ).slice(0, 300);
+          if (!label) return [];
+          return [
+            {
+              index,
+              label,
+              role: element.getAttribute("role")?.toLowerCase() ?? "",
+              tagName: element.tagName.toLowerCase(),
+              visible:
+                style.display !== "none" &&
+                style.visibility !== "hidden" &&
+                style.opacity !== "0" &&
+                html.getClientRects().length > 0,
+              topOffset: Math.round(rect.top + window.scrollY),
+            },
+          ];
+        }),
+      )
+      .catch(() => [] as RawApplyClickable[]),
+    readOpenedTabs(page),
+    page.evaluate(() => document.readyState !== "complete").catch(() => false),
+  ]);
+
   return {
     url: page.url(),
     title: await page.title().catch(() => null),
     bodyText,
+    headings,
     controls: controlsWithChoices,
     actions,
     links,
+    clickables,
+    openedTabs,
     validationErrors,
     stepLabel,
+    loading,
   };
+}
+
+/**
+ * Tabs the page opened for itself.
+ *
+ * A site that opens its application in a new tab has not blocked anything; it
+ * has just moved the work. Reporting the tab lets the model go there.
+ */
+async function readOpenedTabs(page: Page): Promise<RawApplyOpenedTab[]> {
+  try {
+    const others = await listTaskOwnedPopups(page);
+    return await Promise.all(
+      others.slice(0, 8).map(async (candidate, index) => ({
+        index,
+        url: candidate.url(),
+        title: await candidate.title().catch(() => ""),
+      })),
+    );
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Only tabs opened by this task's page belong to this task.
+ *
+ * Browser contexts may be shared by several bounded jobs. Enumerating every
+ * page in the context lets one job adopt or close another job's live form.
+ * Following the opener chain keeps direct popups and their descendants while
+ * leaving unrelated task tabs untouched.
+ */
+async function listTaskOwnedPopups(root: Page): Promise<Page[]> {
+  const candidates = root
+    .context()
+    .pages()
+    .filter((candidate) => candidate !== root && !candidate.isClosed());
+  const owned: Page[] = [];
+
+  for (const candidate of candidates) {
+    let current: Page | null = candidate;
+    const seen = new Set<Page>();
+    for (let depth = 0; current && depth < 8; depth += 1) {
+      if (seen.has(current)) break;
+      seen.add(current);
+      const opener: Page | null = await current.opener().catch(() => null);
+      if (opener === root) {
+        owned.push(candidate);
+        break;
+      }
+      current = opener;
+    }
+  }
+
+  return owned;
 }
 
 /** How many closed lists one page read is willing to open. */
@@ -384,13 +1030,17 @@ async function readClosedComboboxOptions(
       // dismisses someone else's flyout reads as a list with no choices, and
       // the question then reaches the person as a bare text box.
       await page.keyboard.press("Escape").catch(() => undefined);
-      await locator.scrollIntoViewIfNeeded({ timeout: 1_500 }).catch(() => undefined);
+      await locator
+        .scrollIntoViewIfNeeded({ timeout: 1_500 })
+        .catch(() => undefined);
       // Focus and a down arrow, the way a person opens one of these with the
       // keyboard. A click depends on the window being the one in front, which
       // it is not when the browser is doing this beside the app; the keyboard
       // does not care. The click stays as the fallback.
       await locator.focus({ timeout: 1_500 }).catch(() => undefined);
-      await locator.press("ArrowDown", { timeout: 1_500 }).catch(() => undefined);
+      await locator
+        .press("ArrowDown", { timeout: 1_500 })
+        .catch(() => undefined);
       if ((await locator.getAttribute("aria-expanded")) !== "true") {
         await locator.click({ timeout: 1_500 });
       }
@@ -472,71 +1122,79 @@ async function readCustomComboboxStates(
   const wanted = new Set(indexes);
   const states = await page
     .locator(APPLY_CONTROL_SELECTOR)
-    .evaluateAll((elements, selected: number[]) => {
-      const want = new Set(selected);
-      const readOne = (
-        element: Element,
-      ): { selectedOptionLabel: string; compositeVisible: boolean } => {
-      const controlRoot =
-        element.closest("[class*='__control']") ??
-        element.closest("[class*='-control']") ??
-        element.closest(".select-shell, [class*='select-shell']");
-      const compositeVisible = Boolean(
-        controlRoot &&
-          controlRoot.getAttribute("aria-hidden") !== "true" &&
-          controlRoot.getAttribute("hidden") === null &&
-          controlRoot.getClientRects().length > 0,
-      );
-      const selectedValue = controlRoot?.querySelector<HTMLElement>(
-        "[class*='__single-value'], [class*='-singleValue'], [class*='single-value'], [role='option'][aria-selected='true']",
-      );
-      if (!selectedValue) {
-        return { selectedOptionLabel: "", compositeVisible };
-      }
+    .evaluateAll(
+      (elements, selected: number[]) => {
+        const want = new Set(selected);
+        const readOne = (
+          element: Element,
+        ): { selectedOptionLabel: string; compositeVisible: boolean } => {
+          const controlRoot =
+            element.closest("[class*='__control']") ??
+            element.closest("[class*='-control']") ??
+            element.closest(".select-shell, [class*='select-shell']");
+          const compositeVisible = Boolean(
+            controlRoot &&
+            controlRoot.getAttribute("aria-hidden") !== "true" &&
+            controlRoot.getAttribute("hidden") === null &&
+            controlRoot.getClientRects().length > 0,
+          );
+          const selectedValue = controlRoot?.querySelector<HTMLElement>(
+            "[class*='__single-value'], [class*='-singleValue'], [class*='single-value'], [role='option'][aria-selected='true']",
+          );
+          if (!selectedValue) {
+            return { selectedOptionLabel: "", compositeVisible };
+          }
 
-      const selectedText = selectedValue.textContent?.trim() ?? "";
-      const regionCode = [
-        selectedValue,
-        ...Array.from(
-          controlRoot?.querySelectorAll<HTMLElement>("[class*='iti__']") ?? [],
-        ),
-        ...Array.from(selectedValue.querySelectorAll<HTMLElement>("[class]")),
-      ]
-        .flatMap((candidate) =>
-          (candidate.getAttribute("class") ?? "").split(/\s+/u),
-        )
-        .map((className) => /^iti__([a-z]{2})$/iu.exec(className)?.[1] ?? "")
-        .find(Boolean);
-      if (!regionCode) {
-        return { selectedOptionLabel: selectedText, compositeVisible };
-      }
+          const selectedText = selectedValue.textContent?.trim() ?? "";
+          const regionCode = [
+            selectedValue,
+            ...Array.from(
+              controlRoot?.querySelectorAll<HTMLElement>("[class*='iti__']") ??
+                [],
+            ),
+            ...Array.from(
+              selectedValue.querySelectorAll<HTMLElement>("[class]"),
+            ),
+          ]
+            .flatMap((candidate) =>
+              (candidate.getAttribute("class") ?? "").split(/\s+/u),
+            )
+            .map(
+              (className) => /^iti__([a-z]{2})$/iu.exec(className)?.[1] ?? "",
+            )
+            .find(Boolean);
+          if (!regionCode) {
+            return { selectedOptionLabel: selectedText, compositeVisible };
+          }
 
-      let regionName = "";
-      try {
-        regionName =
-          new Intl.DisplayNames(["en"], { type: "region" }).of(
-            regionCode.toUpperCase(),
-          ) ?? "";
-      } catch {
-        // A flag without a verified country name stays insufficient: several
-        // countries share a calling code.
-      }
+          let regionName = "";
+          try {
+            regionName =
+              new Intl.DisplayNames(["en"], { type: "region" }).of(
+                regionCode.toUpperCase(),
+              ) ?? "";
+          } catch {
+            // A flag without a verified country name stays insufficient: several
+            // countries share a calling code.
+          }
 
-        return {
-          selectedOptionLabel: [regionName, selectedText]
-            .filter(Boolean)
-            .join(" ")
-            .trim(),
-          compositeVisible,
+          return {
+            selectedOptionLabel: [regionName, selectedText]
+              .filter(Boolean)
+              .join(" ")
+              .trim(),
+            compositeVisible,
+          };
         };
-      };
 
-      return elements.map((element, index) =>
-        want.has(index)
-          ? ([index, readOne(element)] as const)
-          : ([index, null] as const),
-      );
-    }, [...wanted])
+        return elements.map((element, index) =>
+          want.has(index)
+            ? ([index, readOne(element)] as const)
+            : ([index, null] as const),
+        );
+      },
+      [...wanted],
+    )
     .catch(
       () =>
         [] as ReadonlyArray<
@@ -559,32 +1217,104 @@ async function readCustomComboboxStates(
   return byIndex;
 }
 
-function controlLocator(page: Page, ref: string): Locator | null {
-  const index = Number.parseInt(ref.replace(/^c/u, ""), 10);
-  if (!ref.startsWith("c") || Number.isNaN(index)) {
+function locatorRootForRef(
+  page: Page,
+  ref: string,
+  kind: "c" | "a" | "l" | "e",
+): { root: Page | Frame; index: number } | null {
+  const top = new RegExp(`^${kind}(\\d+)$`, "u").exec(ref);
+  if (top?.[1]) {
+    return { root: page, index: Number.parseInt(top[1], 10) };
+  }
+  const framed = new RegExp(`^f(\\d+)${kind}(\\d+)$`, "u").exec(ref);
+  if (!framed?.[1] || !framed[2]) {
     return null;
   }
-  return page.locator(APPLY_CONTROL_SELECTOR).nth(index);
+  const frame = page
+    .frames()
+    .filter((candidate) => candidate !== page.mainFrame())[
+    Number.parseInt(framed[1], 10)
+  ];
+  return frame ? { root: frame, index: Number.parseInt(framed[2], 10) } : null;
+}
+
+function controlLocator(page: Page, ref: string): Locator | null {
+  const target = locatorRootForRef(page, ref, "c");
+  return target
+    ? target.root.locator(APPLY_CONTROL_SELECTOR).nth(target.index)
+    : null;
 }
 
 function actionLocator(page: Page, ref: string): Locator | null {
-  const index = Number.parseInt(ref.replace(/^a/u, ""), 10);
-  if (!ref.startsWith("a") || Number.isNaN(index)) {
-    return null;
+  const target = locatorRootForRef(page, ref, "a");
+  return target
+    ? target.root.locator(APPLY_ACTION_SELECTOR).nth(target.index)
+    : null;
+}
+
+/** Arms a human-owned native form action without pressing it. */
+export async function armPlaywrightApplicationFormAction(
+  page: Page,
+  ref: string,
+): Promise<void> {
+  const locator = actionLocator(page, ref);
+  if (
+    !locator ||
+    (await locator.count()) !== 1 ||
+    !(await locator.isVisible()) ||
+    !(await locator.isEnabled())
+  ) {
+    throw new Error("The exact form action is no longer available.");
   }
-  return page.locator(APPLY_ACTION_SELECTOR).nth(index);
+  await openPrepareOnlyAuthorizedFormActionWindow(page, locator, null);
 }
 
 function linkLocator(page: Page, ref: string): Locator | null {
-  const index = Number.parseInt(ref.replace(/^l/u, ""), 10);
-  if (!ref.startsWith("l") || Number.isNaN(index)) {
-    return null;
-  }
-  return page.locator(APPLY_LINK_SELECTOR).nth(index);
+  const target = locatorRootForRef(page, ref, "l");
+  return target
+    ? target.root.locator(APPLY_LINK_SELECTOR).nth(target.index)
+    : null;
+}
+
+function clickableLocator(page: Page, ref: string): Locator | null {
+  const target = locatorRootForRef(page, ref, "e");
+  return target
+    ? target.root.locator(APPLY_CLICKABLE_SELECTOR).nth(target.index)
+    : null;
 }
 
 function describeWriteFailure(error: unknown, fallback: string): string {
-  return error instanceof Error && error.message ? error.message : fallback;
+  return describeBrowserError(error, fallback);
+}
+
+/**
+ * Presses one thing and lets whatever it started finish.
+ *
+ * A click that begins a navigation is the click working. Waiting a moment for
+ * the new page means the read that follows sees where the click went rather
+ * than the document it destroyed on the way.
+ */
+async function clickAndSettle(page: Page, locator: Locator): Promise<void> {
+  await locator
+    .scrollIntoViewIfNeeded({ timeout: 2_000 })
+    .catch(() => undefined);
+  try {
+    await locator.click({ timeout: 10_000 });
+  } catch (error) {
+    // Something is drawn over it, or it sits under a sticky header. A person
+    // would still get the click in; so does a click aimed straight at it.
+    if (
+      !/intercepts pointer events|outside of the viewport|not visible/iu.test(
+        error instanceof Error ? error.message : "",
+      )
+    ) {
+      throw error;
+    }
+    await locator.click({ timeout: 5_000, force: true });
+  }
+  await page
+    .waitForLoadState("domcontentloaded", { timeout: 3_000 })
+    .catch(() => undefined);
 }
 
 /** The live-page implementation of the apply mechanics. */
@@ -600,9 +1330,22 @@ export function createPlaywrightApplyPageMechanics(
       }
       try {
         await locator.fill(value, { timeout: 5_000 });
+        // Some controlled inputs accept the synthetic input event and then
+        // immediately clear themselves because the site did not accept the
+        // value. Recording that as a successful write makes the agent revisit
+        // the same empty field indefinitely.
+        await page.waitForTimeout(300);
+        const observedValue = await locator.inputValue({ timeout: 2_000 });
+        if (value.trim().length > 0 && observedValue.trim().length === 0) {
+          return {
+            ok: false,
+            error:
+              "The field cleared the answer instead of keeping it. Leave it for the person or try a different control once.",
+          };
+        }
         return {
           ok: true,
-          observedValue: await locator.inputValue({ timeout: 2_000 }),
+          observedValue,
         };
       } catch (error) {
         return {
@@ -630,9 +1373,11 @@ export function createPlaywrightApplyPageMechanics(
           // then take the choice that says it. Typing first is what makes a
           // list of two hundred countries usable at all.
           await locator.click({ timeout: 5_000 });
-          await locator.fill(optionLabel, { timeout: 2_000 }).catch(async () => {
-            await locator.type(optionLabel, { timeout: 2_000 });
-          });
+          await locator
+            .fill(optionLabel, { timeout: 2_000 })
+            .catch(async () => {
+              await locator.type(optionLabel, { timeout: 2_000 });
+            });
           await page
             .getByRole("option", { name: optionLabel, exact: true })
             .first()
@@ -655,7 +1400,29 @@ export function createPlaywrightApplyPageMechanics(
         return { ok: false, error: `No control named ${ref} on this page.` };
       }
       try {
-        await locator.setChecked(checked, { timeout: 5_000 });
+        await locator
+          .scrollIntoViewIfNeeded({ timeout: 2_000 })
+          .catch(() => undefined);
+        try {
+          await locator.setChecked(checked, { timeout: 5_000 });
+        } catch (actionabilityError) {
+          // Styled radios and checkboxes often leave the native input under a
+          // label or outside the painted viewport. Activating that exact,
+          // enabled input through the DOM preserves its normal click/change
+          // events without depending on pointer geometry.
+          const changed = await locator
+            .evaluate((element, desired) => {
+              if (!(element instanceof HTMLInputElement) || element.disabled) {
+                return false;
+              }
+              if (element.checked !== desired) {
+                element.click();
+              }
+              return element.checked === desired;
+            }, checked)
+            .catch(() => false);
+          if (!changed) throw actionabilityError;
+        }
         return { ok: true, observedValue: checked ? "checked" : "unchecked" };
       } catch (error) {
         return {
@@ -664,7 +1431,10 @@ export function createPlaywrightApplyPageMechanics(
         };
       }
     },
-    uploadFile: async (ref, file: ApplyUploadFile): Promise<ApplyWriteResult> => {
+    uploadFile: async (
+      ref,
+      file: ApplyUploadFile,
+    ): Promise<ApplyWriteResult> => {
       const locator = controlLocator(page, ref);
       if (!locator) {
         return { ok: false, error: `No control named ${ref} on this page.` };
@@ -692,12 +1462,42 @@ export function createPlaywrightApplyPageMechanics(
         return { ok: false, error: `No button named ${ref} on this page.` };
       }
       try {
-        await locator.click({ timeout: 10_000 });
+        await clickAndSettle(page, locator);
         return { ok: true, observedValue: "clicked" };
       } catch (error) {
         return {
           ok: false,
           error: describeWriteFailure(error, "The button would not respond."),
+        };
+      }
+    },
+    pressKey: async (ref, key): Promise<ApplyWriteResult> => {
+      const locator = ref
+        ? (controlLocator(page, ref) ??
+          actionLocator(page, ref) ??
+          linkLocator(page, ref) ??
+          clickableLocator(page, ref))
+        : null;
+      try {
+        if (ref && !locator) {
+          return { ok: false, error: `No element named ${ref} on this page.` };
+        }
+        if (locator) {
+          await locator.press(key, { timeout: 5_000 });
+        } else {
+          await page.keyboard.press(key);
+        }
+        await page
+          .waitForLoadState("domcontentloaded", { timeout: 3_000 })
+          .catch(() => undefined);
+        return { ok: true, observedValue: key };
+      } catch (error) {
+        return {
+          ok: false,
+          error: describeWriteFailure(
+            error,
+            `The ${key} key would not respond.`,
+          ),
         };
       }
     },
@@ -752,9 +1552,157 @@ export function createPlaywrightApplyPageMechanics(
         };
       }
     },
+    navigate: async (url): Promise<ApplyNavigationResult> => {
+      let target: URL;
+      try {
+        target = new URL(url, page.url());
+      } catch {
+        return { ok: false, error: `${url} is not an address.` };
+      }
+      if (target.protocol !== "https:" && target.protocol !== "http:") {
+        return { ok: false, error: "That address is not a web page." };
+      }
+      if (page.isClosed()) {
+        return {
+          ok: false,
+          error:
+            "The prepared application page was closed. Prepare it again before continuing.",
+        };
+      }
+      // A recovery prompt can tell the model to return to the exact retained
+      // apply URL even though it is already there. Reloading that same page
+      // erases the person's CAPTCHA, declaration, and other in-page work.
+      if (new URL(page.url()).toString() === target.toString()) {
+        return { ok: true, url: page.url() };
+      }
+      try {
+        await page.goto(target.toString(), {
+          waitUntil: "domcontentloaded",
+          timeout: 20_000,
+        });
+        return { ok: true, url: page.url() };
+      } catch (error) {
+        return {
+          ok: false,
+          error: describeWriteFailure(error, "That page would not open."),
+        };
+      }
+    },
+    clickElement: async (ref): Promise<ApplyWriteResult> => {
+      const locator =
+        actionLocator(page, ref) ??
+        linkLocator(page, ref) ??
+        clickableLocator(page, ref) ??
+        controlLocator(page, ref);
+      if (!locator) {
+        return { ok: false, error: `There is nothing called ${ref} here.` };
+      }
+      try {
+        const changesToggle = await locator.evaluate((element) => {
+          const label = element.closest("label");
+          const target = label?.control ?? element;
+          return target.matches(
+            "input[type='checkbox'], input[type='radio'], [role='checkbox'], [role='radio']",
+          );
+        });
+        if (changesToggle) {
+          return {
+            ok: false,
+            error:
+              "This click changes a checkbox or radio answer. Use set_checkbox with the control reference so its answer is checked first.",
+          };
+        }
+        await clickAndSettle(page, locator);
+        return { ok: true, observedValue: "clicked" };
+      } catch (error) {
+        return {
+          ok: false,
+          error: describeWriteFailure(error, "That would not respond."),
+        };
+      }
+    },
+    scroll: async (direction): Promise<ApplyWriteResult> => {
+      try {
+        await page.evaluate((where) => {
+          const step = window.innerHeight * 0.85;
+          if (where === "top") window.scrollTo({ top: 0 });
+          else if (where === "bottom")
+            window.scrollTo({ top: document.body.scrollHeight });
+          else window.scrollBy({ top: where === "down" ? step : -step });
+        }, direction);
+        return { ok: true, observedValue: direction };
+      } catch (error) {
+        return {
+          ok: false,
+          error: describeWriteFailure(error, "The page would not scroll."),
+        };
+      }
+    },
+    wait: async (milliseconds) => {
+      await page.waitForTimeout(Math.max(0, Math.min(10_000, milliseconds)));
+    },
+    goBack: async (): Promise<ApplyNavigationResult> => {
+      try {
+        await page.goBack({ waitUntil: "domcontentloaded", timeout: 15_000 });
+        return { ok: true, url: page.url() };
+      } catch (error) {
+        return {
+          ok: false,
+          error: describeWriteFailure(error, "There is nothing to go back to."),
+        };
+      }
+    },
+    adoptOpenedTab: async (index): Promise<ApplyNavigationResult> => {
+      const others = await listTaskOwnedPopups(page);
+      const opened = others[index];
+      if (!opened) {
+        return { ok: false, error: "That tab is no longer open." };
+      }
+      await opened
+        .waitForLoadState("domcontentloaded", { timeout: 5_000 })
+        .catch(() => undefined);
+      const url = opened.url();
+      if (!/^https?:/iu.test(url)) {
+        await opened.close().catch(() => undefined);
+        return { ok: false, error: "That tab never loaded a web page." };
+      }
+      await opened.close().catch(() => undefined);
+      try {
+        await page.goto(url, {
+          waitUntil: "domcontentloaded",
+          timeout: 20_000,
+        });
+        return { ok: true, url: page.url() };
+      } catch (error) {
+        return {
+          ok: false,
+          error: describeWriteFailure(error, "That page would not open here."),
+        };
+      }
+    },
+    readText: async (ref) => {
+      if (!ref) {
+        return page
+          .locator("body")
+          .innerText({ timeout: 5_000 })
+          .then((text) => text.slice(0, 40_000))
+          .catch(() => "");
+      }
+      const locator =
+        controlLocator(page, ref) ??
+        actionLocator(page, ref) ??
+        linkLocator(page, ref) ??
+        clickableLocator(page, ref);
+      if (!locator) {
+        return "";
+      }
+      return locator
+        .innerText({ timeout: 5_000 })
+        .then((text) => text.slice(0, 40_000))
+        .catch(() => "");
+    },
   };
 }
-
 
 /**
  * One open application page and the safety mechanics that go with it.
@@ -769,6 +1717,18 @@ export function createPlaywrightApplyPageSession(input: {
   const { page } = input;
   const mechanics = createPlaywrightApplyPageMechanics(page);
   let intermediateWriteCount = 0;
+  // Attempts already handed to the workflow layer. Each read hands out one
+  // it has not seen, and the one that matters most first: the page trying to
+  // open a tab or send the form is never hidden behind its own analytics.
+  const handedOut = new Set<string>();
+  const attemptWeight = (attempt: ApplyBlockedAttempt): number =>
+    attempt.kind.includes("submit")
+      ? 3
+      : attempt.kind === "download"
+        ? 2
+        : attempt.kind === "popup_open" || attempt.kind === "window_open"
+          ? 1
+          : 0;
 
   return {
     ...mechanics,
@@ -779,8 +1739,24 @@ export function createPlaywrightApplyPageSession(input: {
         guardInput.allowedOrigins,
       );
     },
-    readBlockedAttempt: async (): Promise<ApplyBlockedAttempt | null> =>
-      (await getLatestBlockedPrepareOnlyAttempt(page)) ?? null,
+    readBlockedAttempt: async (): Promise<ApplyBlockedAttempt | null> => {
+      const unseen = (await getBlockedPrepareOnlyAttempts(page)).filter(
+        (attempt) =>
+          !handedOut.has(
+            `${attempt.kind}|${attempt.method}|${attempt.url ?? ""}|${attempt.at}`,
+          ),
+      );
+      if (unseen.length === 0) {
+        return null;
+      }
+      const chosen = unseen.reduce((best, attempt) =>
+        attemptWeight(attempt) > attemptWeight(best) ? attempt : best,
+      );
+      handedOut.add(
+        `${chosen.kind}|${chosen.method}|${chosen.url ?? ""}|${chosen.at}`,
+      );
+      return chosen;
+    },
     registerPreparedValue: (value) =>
       registerPrepareOnlyPreparedValue(page, value),
     openIntermediateWriteWindow: async () => {
@@ -789,6 +1765,28 @@ export function createPlaywrightApplyPageSession(input: {
     },
     closeIntermediateWriteWindow: () =>
       closePrepareOnlyIntermediateMutationWindow(page),
+    clickAuthorizedFormAction: async (ref) => {
+      const locator = actionLocator(page, ref);
+      if (!locator) {
+        return { ok: false, error: `No button named ${ref} on this page.` };
+      }
+      try {
+        await openPrepareOnlyAuthorizedFormActionWindow(page, locator);
+        await clickAndSettle(page, locator);
+        await waitForPrepareOnlyAuthorizedFormAction(page);
+        return { ok: true, observedValue: "clicked" };
+      } catch (error) {
+        return {
+          ok: false,
+          error: describeWriteFailure(
+            error,
+            "The authorized form action would not respond.",
+          ),
+        };
+      } finally {
+        await closePrepareOnlyAuthorizedFormActionWindow(page);
+      }
+    },
     readIntermediateWriteCount: () => intermediateWriteCount,
     checkServiceWorker: async (): Promise<ApplyServiceWorkerFinding | null> => {
       const finding = await input.sentinel?.check("form_preparation");

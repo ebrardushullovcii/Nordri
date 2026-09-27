@@ -22,6 +22,7 @@ export type SettingsDirtySection = {
   anchorId: string;
   /** Whether this section's own save is currently in flight. */
   isSaving: boolean;
+  isSaveDisabled?: boolean;
   /** Human name of the section, as shown in the section nav. */
   label: string;
   /** Document order, so the bar lists sections the way the page does. */
@@ -46,6 +47,7 @@ function areSectionsEqual(
   return (
     left.anchorId === right.anchorId &&
     left.isSaving === right.isSaving &&
+    left.isSaveDisabled === right.isSaveDisabled &&
     left.label === right.label &&
     left.order === right.order &&
     left.save === right.save &&
@@ -120,13 +122,22 @@ export function useRegisterSettingsDirtySection(input: {
   anchorId: string;
   isDirty: boolean;
   isSaving: boolean;
+  isSaveDisabled?: boolean;
   label: string;
   onSave: () => void;
   order: number;
   saveLabel: string;
 }) {
-  const { anchorId, isDirty, isSaving, label, onSave, order, saveLabel } =
-    input;
+  const {
+    anchorId,
+    isDirty,
+    isSaveDisabled = false,
+    isSaving,
+    label,
+    onSave,
+    order,
+    saveLabel,
+  } = input;
   const context = useContext(SettingsDirtySectionsContext);
   const publish = context?.publish;
 
@@ -152,6 +163,7 @@ export function useRegisterSettingsDirtySection(input: {
     }
     publish(anchorId, {
       anchorId,
+      isSaveDisabled,
       isSaving,
       label,
       order,
@@ -161,6 +173,7 @@ export function useRegisterSettingsDirtySection(input: {
   }, [
     anchorId,
     isDirty,
+    isSaveDisabled,
     isSaving,
     label,
     order,

@@ -740,7 +740,11 @@ describe("profile editor application identity defaults", () => {
     expect(values.collectOnlyHardCriteriaMatches).toBe(false);
 
     values.targetRoles = "Principal Product Designer";
+    // The strict-collection flag and the tailoring strength are saved from
+    // Settings (AI behavior). A profile save carries the saved values through
+    // unchanged, so a stale form value can never overwrite that choice.
     values.collectOnlyHardCriteriaMatches = true;
+    values.tailoringMode = "aggressive";
 
     const draftSearchPreferences = buildSearchPreferencesPayload(
       searchPreferences,
@@ -750,7 +754,11 @@ describe("profile editor application identity defaults", () => {
     expect(draftSearchPreferences).toBeDefined();
     expect(
       draftSearchPreferences?.discovery.collectOnlyHardCriteriaMatches,
-    ).toBe(true);
+    ).toBe(false);
+    expect(draftSearchPreferences?.tailoringMode).toBe("balanced");
+    expect(draftSearchPreferences?.targetRoles).toEqual([
+      "Principal Product Designer",
+    ]);
     expect(
       hasSearchPreferencesDraftChanges(
         searchPreferences,
@@ -1003,6 +1011,7 @@ describe("profile editor application identity defaults", () => {
     ).payload?.discovery.targets[0];
 
     expect(changedTarget).toMatchObject({
+      label: "Mercury Greenhouse",
       startingUrl: "https://jobs.example.com/careers",
       instructionStatus: "missing",
       validatedInstructionId: null,
@@ -1012,6 +1021,38 @@ describe("profile editor application identity defaults", () => {
       staleReason:
         "Starting page URL changed. Check this source again before reusing saved guidance.",
     });
+
+    const generatedLabelValues = createSearchPreferencesEditorValues({
+      ...searchPreferences,
+      discovery: {
+        ...searchPreferences.discovery,
+        targets: [
+          {
+            ...searchPreferences.discovery.targets[0]!,
+            label: "job-boards.greenhouse.io",
+          },
+        ],
+      },
+    });
+    generatedLabelValues.discoveryTargets[0]!.startingUrl =
+      "https://jobs.example.com/careers";
+    expect(
+      buildSearchPreferencesPayload(
+        {
+          ...searchPreferences,
+          discovery: {
+            ...searchPreferences.discovery,
+            targets: [
+              {
+                ...searchPreferences.discovery.targets[0]!,
+                label: "job-boards.greenhouse.io",
+              },
+            ],
+          },
+        },
+        generatedLabelValues,
+      ).payload?.discovery.targets[0]?.label,
+    ).toBe("jobs.example.com");
 
     const whitespaceOnlyValues =
       createSearchPreferencesEditorValues(searchPreferences);

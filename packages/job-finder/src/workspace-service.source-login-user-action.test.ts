@@ -15,6 +15,7 @@ import { describe, expect, test, vi } from "vitest";
 import {
   persistDiscoveryLoginUserAction,
   persistDiscoveryRunBlockerUserAction,
+  resolveSourceAccessRequestsAfterCompletedRun,
 } from "./internal/workspace-source-user-action";
 import {
   createSeed,
@@ -117,13 +118,18 @@ describe("discovery source login UserActionRequest adoption", () => {
           );
         }
 
-        for (const existingPage of [...pages]) {
-          if (
-            !options.protectedPages?.some(
-              (protectedPage) => protectedPage.url === existingPage,
-            )
-          ) {
-            pages.delete(existingPage);
+        // A run in its own tab (the way sources search side by side now)
+        // never closes another tab; only a shared-tab run closes the
+        // unprotected ones, and a parked tab is always protected.
+        if (!options.dedicatedPage) {
+          for (const existingPage of [...pages]) {
+            if (
+              !options.protectedPages?.some(
+                (protectedPage) => protectedPage.url === existingPage,
+              )
+            ) {
+              pages.delete(existingPage);
+            }
           }
         }
         pages.add(targetUrl);
@@ -144,16 +150,9 @@ describe("discovery source login UserActionRequest adoption", () => {
 
     await harness.workspaceService.runAgentDiscovery();
 
-    expect(protectedInputs).toEqual([
-      [],
-      [
-        {
-          tabId: "tab_parked",
-          url: firstTarget.startingUrl,
-          title: null,
-        },
-      ],
-    ]);
+    // Sources start side by side, so the second run may begin before the
+    // first parks its tab; what must hold is that the parked tab survives.
+    expect(protectedInputs).toHaveLength(2);
     expect(pages).toEqual(
       new Set([firstTarget.startingUrl, secondTarget.startingUrl]),
     );
@@ -240,6 +239,71 @@ describe("discovery source login UserActionRequest adoption", () => {
           request.state === "pending",
       ),
     ).toBe(true);
+  });
+
+  test("a second wall on the same source replaces the first card and closes its tab", async () => {
+    const seed = createSeed();
+    seed.settings.keepSessionAlive = false;
+    const target = seed.searchPreferences.discovery.targets[0];
+    if (!target) throw new Error("Expected a saved source.");
+    let run = 0;
+    const baseRuntime = createBrowserRuntime();
+    const closeParkedTab = vi.fn(() => Promise.resolve());
+    const browserRuntime: BrowserSessionRuntime = {
+      ...baseRuntime,
+      closeParkedTab,
+      runAgentDiscovery: (source) => {
+        run += 1;
+        return Promise.resolve(
+          DiscoveryRunResultSchema.parse({
+            source,
+            startedAt: `2026-09-12T10:0${run}:00.000Z`,
+            completedAt: `2026-09-12T10:0${run}:01.000Z`,
+            querySummary: target.label,
+            warning: "The source stopped at a sign-in page.",
+            inventoryCompleteness: "partial",
+            jobs: [],
+            agentMetadata: {
+              accessBlockerReason: "auth_required",
+              parkedTab: {
+                tabId: `tab_wall_${run}`,
+                url: target.startingUrl,
+                title: target.label,
+              },
+            },
+          }),
+        );
+      },
+    };
+    const harness = createWorkspaceServiceHarness({ seed, browserRuntime });
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await expect(
+        harness.workspaceService.runAgentDiscovery(
+          undefined,
+          undefined,
+          target.id,
+        ),
+      ).rejects.toThrow("sign-in page");
+    }
+
+    const open = (await harness.repository.listUserActionRequests()).filter(
+      (request) =>
+        request.scope.type === "discovery_source" &&
+        !["resolved", "cancelled", "superseded", "skipped", "expired"].includes(
+          request.state,
+        ),
+    );
+    expect(open).toHaveLength(1);
+    expect(open[0]?.scope).toMatchObject({ parkedTab: { tabId: "tab_wall_2" } });
+    expect(closeParkedTab).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ tabId: "tab_wall_1" }),
+    );
+    expect(closeParkedTab).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ tabId: "tab_wall_2" }),
+    );
   });
 
   test("keeps a wall tab open until its Needs you item is dismissed", async () => {
@@ -403,6 +467,110 @@ describe("discovery source login UserActionRequest adoption", () => {
     expect(closeSession).toHaveBeenCalledOnce();
   });
 
+  test("opening a parked sign-in asks the host for that tab, or to open it again as that tab", async () => {
+    const seed = createSeed();
+    const target = seed.searchPreferences.discovery.targets[0];
+    if (!target) throw new Error("Expected a saved source.");
+    const harness = createWorkspaceServiceHarness({ seed });
+    const openSession = vi.spyOn(harness.browserRuntime, "openSession");
+    await persistDiscoveryRunBlockerUserAction({
+      repository: harness.repository,
+      runId: "discovery_run_sign_in",
+      target,
+      execution: DiscoveryTargetExecutionSchema.parse({
+        targetId: target.id,
+        adapterKind: target.adapterKind,
+        state: "failed",
+        accessBlockerReason: "auth_required",
+        parkedTab: {
+          tabId: "tab_before_restart",
+          url: target.startingUrl,
+          title: target.label,
+        },
+      }),
+      occurredAt: "2026-07-30T08:01:00.000Z",
+    });
+    const [request] = await harness.repository.listUserActionRequests();
+    if (!request) throw new Error("Expected a sign-in action.");
+
+    await harness.workspaceService.performUserAction({
+      action: "open_page",
+      requestId: request.id,
+      commandId: "open_parked_sign_in",
+      expectedRevision: request.revision,
+      credentialsPolicy: "browser_only",
+      submitAuthorized: false,
+      accountCreationAuthorized: false,
+    });
+
+    expect(openSession).toHaveBeenCalledWith(
+      "target_site",
+      expect.objectContaining({
+        targetUrl: target.startingUrl,
+        tabId: "tab_before_restart",
+        parkedFor: "sign_in",
+      }),
+    );
+  });
+
+  test("a later search that reads the source closes its open sign-in card and returns the parked tab", async () => {
+    const seed = createSeed();
+    const target = seed.searchPreferences.discovery.targets[0];
+    if (!target) throw new Error("Expected a saved source.");
+    const harness = createWorkspaceServiceHarness({ seed });
+    const parkedTab = {
+      tabId: "tab_sign_in",
+      url: target.startingUrl,
+      title: target.label,
+    };
+    await persistDiscoveryRunBlockerUserAction({
+      repository: harness.repository,
+      runId: "discovery_run_wall",
+      target,
+      execution: DiscoveryTargetExecutionSchema.parse({
+        targetId: target.id,
+        adapterKind: target.adapterKind,
+        state: "failed",
+        accessBlockerReason: "auth_required",
+        parkedTab,
+      }),
+      occurredAt: "2026-07-30T08:01:00.000Z",
+    });
+
+    // A run that met the wall again, or read nothing, leaves the card alone.
+    await expect(
+      resolveSourceAccessRequestsAfterCompletedRun({
+        repository: harness.repository,
+        runId: "discovery_run_empty",
+        target,
+        execution: DiscoveryTargetExecutionSchema.parse({
+          targetId: target.id,
+          adapterKind: target.adapterKind,
+          state: "completed",
+        }),
+        occurredAt: "2026-07-30T08:02:00.000Z",
+      }),
+    ).resolves.toEqual([]);
+
+    const closed = await resolveSourceAccessRequestsAfterCompletedRun({
+      repository: harness.repository,
+      runId: "discovery_run_signed_in",
+      target,
+      execution: DiscoveryTargetExecutionSchema.parse({
+        targetId: target.id,
+        adapterKind: target.adapterKind,
+        state: "completed",
+        // Every listing was already saved: read, but nothing new.
+        jobsSkippedByLedger: 10,
+      }),
+      occurredAt: "2026-07-30T08:05:00.000Z",
+    });
+
+    expect(closed).toEqual([parkedTab]);
+    const [request] = await harness.repository.listUserActionRequests();
+    expect(request?.state).toBe("superseded");
+  });
+
   test("creates one run-scoped item for a source that stopped at a parked verification tab", async () => {
     const seed = createSeed();
     const target = seed.searchPreferences.discovery.targets[0];
@@ -560,6 +728,7 @@ describe("continuing a search after the person clears a wall", () => {
             startedAt: "2026-09-12T10:00:00.000Z",
             completedAt: "2026-09-12T10:00:01.000Z",
             querySummary: target.label,
+            warning: null,
             inventoryCompleteness: "partial",
             jobs: [],
           }),
@@ -636,6 +805,121 @@ describe("continuing a search after the person clears a wall", () => {
     const resolved = await harness.repository.getUserActionRequest(request.id);
     expect(resolved?.state).toBe("resolved");
   });
+
+  test("a sign-in finished while another search runs searches the source once that search ends", async () => {
+    const seed = createSeed();
+    const target = seed.searchPreferences.discovery.targets[0];
+    if (!target) throw new Error("Expected a saved source.");
+    const baseRuntime = createBrowserRuntime();
+    const expectedOrigin = new URL(target.startingUrl).origin;
+    let releaseRunning: () => void = () => undefined;
+    const running = new Promise<void>((resolve) => {
+      releaseRunning = resolve;
+    });
+    let calls = 0;
+    const runAgentDiscovery = vi.fn(
+      async (source: Parameters<NonNullable<BrowserSessionRuntime["runAgentDiscovery"]>>[0]) => {
+        calls += 1;
+        // The first search is still running when the person signs in.
+        if (calls === 1) await running;
+        return Promise.resolve(
+          DiscoveryRunResultSchema.parse({
+            source,
+            startedAt: "2026-09-12T10:00:00.000Z",
+            completedAt: "2026-09-12T10:00:01.000Z",
+            querySummary: target.label,
+            warning: null,
+            inventoryCompleteness: "partial",
+            jobs: [],
+          }),
+        );
+      },
+    );
+    const browserRuntime: BrowserSessionRuntime = {
+      ...baseRuntime,
+      runAgentDiscovery,
+      inspectSourceAccess: () =>
+        Promise.resolve({
+          state: "authenticated" as const,
+          currentOrigin: `${expectedOrigin}/`,
+          checkedAt: "2026-09-12T10:05:00.000Z",
+          signals: ["account_menu_control" as const],
+        }),
+    };
+    const harness = createWorkspaceServiceHarness({ seed, browserRuntime });
+    const initialized = await harness.workspaceService.getWorkspaceSnapshot();
+    const campaignId = initialized.activeCampaignId;
+    if (!campaignId) throw new Error("Expected an active search plan.");
+    await harness.repository.commitDiscoveryStateUpdate((current) => ({
+      ...current,
+      recentRuns: [
+        DiscoveryRunRecordSchema.parse({
+          id: "discovery_run_blocked",
+          campaignId,
+          state: "failed",
+          scope: "single_target",
+          startedAt: "2026-09-12T10:00:00.000Z",
+          completedAt: "2026-09-12T10:01:00.000Z",
+          targetIds: [target.id],
+        }),
+        ...current.recentRuns,
+      ],
+    }));
+
+    await persistDiscoveryRunBlockerUserAction({
+      repository: harness.repository,
+      runId: "discovery_run_blocked",
+      target,
+      execution: DiscoveryTargetExecutionSchema.parse({
+        targetId: target.id,
+        adapterKind: target.adapterKind,
+        state: "failed",
+        accessBlockerReason: "site_protection",
+        parkedTab: {
+          tabId: "tab_parked",
+          url: target.startingUrl,
+          title: target.label,
+        },
+      }),
+      occurredAt: "2026-09-12T10:01:00.000Z",
+    });
+
+    const [request] = await harness.repository.listUserActionRequests();
+    if (!request) throw new Error("Expected a parked-tab action.");
+    expect(runAgentDiscovery).not.toHaveBeenCalled();
+
+    const runningSearch = harness.workspaceService.runAgentDiscovery();
+    await vi.waitFor(() => {
+      expect(runAgentDiscovery).toHaveBeenCalledTimes(1);
+    });
+
+    const confirmed = harness.workspaceService.performUserAction({
+      action: "confirm_done",
+      requestId: request.id,
+      commandId: "confirm_cleared_discovery_wall",
+      expectedRevision: request.revision,
+      credentialsPolicy: "browser_only",
+      submitAuthorized: false,
+      accountCreationAuthorized: false,
+    });
+
+    // The source is not searched while the other search holds the browser,
+    // and the card is not closed as if it had been.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(runAgentDiscovery).toHaveBeenCalledTimes(1);
+    releaseRunning();
+    await runningSearch.catch(() => undefined);
+    await confirmed;
+
+    // It was searched once the running search ended, and only then resolved.
+    await vi.waitFor(() => {
+      expect(runAgentDiscovery.mock.calls.length).toBeGreaterThan(1);
+    });
+    const resolved = await harness.repository.getUserActionRequest(request.id);
+    expect(resolved?.state).toBe("resolved");
+  });
+
+
 
   test("continues a blocked run with its non-active plan preferences and retention", async () => {
     const seed = createSeed();
@@ -735,6 +1019,11 @@ describe("continuing a search after the person clears a wall", () => {
       updatedOrigin?.history.some((entry) => entry.kind === "discovery_run"),
     ).toBe(true);
     expect(updatedOrigin?.latestDigest?.discoveryRunId).not.toBeNull();
+
+    const repeatedSnapshot =
+      await harness.workspaceService.getWorkspaceSnapshot();
+    expect(repeatedSnapshot.activeCampaignId).toBe(active.id);
+    expect(capturedRoles).toEqual([["Principal UX Engineer"]]);
   });
 
   test("keeps the handoff visible with plain copy when its search plan was removed", async () => {

@@ -75,6 +75,34 @@ interface ProfileExperienceTabProps {
   onContinueWithoutWorkHistory?: (() => void) | undefined;
 }
 
+const RECORD_MONTH_NAMES = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
+
+/** "2021-03" reads as "Mar 2021" on a card; anything else stays as typed. */
+export function formatRecordMonth(value: string | undefined): string {
+  if (!value) {
+    return "";
+  }
+  const match = value.trim().match(/^(\d{4})-(\d{2})(?:-\d{2})?$/);
+  if (!match) {
+    return value.trim();
+  }
+  const month = RECORD_MONTH_NAMES[Number.parseInt(match[2] ?? "", 10) - 1];
+  return month ? `${month} ${match[1]}` : value.trim();
+}
+
 export function ProfileExperienceTab({
   isProfileSetupPending = false,
   experienceArray,
@@ -145,7 +173,12 @@ export function ProfileExperienceTab({
         .join(" - ") || "";
     const detailLine = [
       location,
-      [startDate, isCurrent ? "Present" : endDate].filter(Boolean).join(" to "),
+      [
+        formatRecordMonth(startDate),
+        isCurrent ? "Present" : formatRecordMonth(endDate),
+      ]
+        .filter(Boolean)
+        .join(" to "),
     ]
       .filter(Boolean)
       .join(" | ");
@@ -167,7 +200,7 @@ export function ProfileExperienceTab({
       <ProfileSectionHeader
         eyebrow="Work history"
         title="Work history"
-        description="Keep one role per card so you can review it quickly, then expand only the entries that need more detail."
+        description="One card per role. Expand a card to edit its details."
         action={
           hasWorkHistory ? (
             <Button

@@ -1,664 +1,477 @@
+import { useState } from "react";
+import { Pause, Play } from "lucide-react";
 import type {
+  ApplicationAutomationMode,
   CampaignNotification,
-  DiscoveryRunRecord,
+  DiscoveryActivityEvent,
+  JobFinderSearchRequest,
   JobFinderWorkspaceSnapshot,
+  ProfileSetupStep,
+  ResumeImportProgressEvent,
 } from "@unemployed/contracts";
-import { listSourceAttentionReasons } from "@unemployed/job-finder/source-health";
-import { projectPlanSafeguardPauses } from "@unemployed/job-finder/plan-safeguard-pauses";
-import { PlanSafeguardPauseCards } from "../../components/plan-safeguard-pause-cards";
 import { Button } from "@renderer/components/ui/button";
-import { PageHeader } from "../../components/page-header";
-import { JobFinderActivityControl } from "../../components/job-finder-activity-control";
-import { JobFinderGlobalSearch } from "../../components/job-finder-global-search";
+import { cn } from "@renderer/lib/cn";
+import { PageHeaderStack } from "../../components/page-header";
 import { CampaignNotificationCenter } from "../../components/campaign-notification-center";
-import { StatusBadge } from "../../components/status-badge";
-import { buildJobFinderGlobalSearchEntries } from "../../lib/build-job-finder-global-search-entries";
-import {
-  countApplicationRecords,
-  countDiscoveryVisibleJobs,
-  countNeedsYou,
-  countShortlistedJobs,
-  selectCampaignJobIds,
-} from "../../lib/destination-counts";
-import {
-  formatDiscoveryRunCountLabel,
-  formatDiscoveryRunReportLabel,
-  formatLastSearchSummarySentence,
-  formatSearchFinishedStatusLine,
-  getDiscoveryRunCountEvidence,
-  getDiscoveryRunReportCounts,
-  hasDiscoveryRunReportCounts,
-} from "../../lib/discovery-run-count-label";
-import type { JobFinderGlobalSearchEntry } from "../../lib/job-finder-global-search";
-import {
-  DISCOVERY_OFFLINE_RUNTIME_LABEL,
-  DISCOVERY_OFFLINE_SETUP_NOTICE,
-} from "../discovery/discovery-search-readiness";
+import { buildJobFinderTaskCenterModel } from "../../components/task-center/job-finder-task-center-model";
+import { JOB_FINDER_ROUTE_PATHS } from "../../lib/job-finder-route-hrefs";
+import { listApplicationsAwaitingUser } from "../../lib/needs-you-count";
 import { DiscoveryRunFeedbackCallout } from "../discovery/discovery-run-feedback-callout";
+import type { DiscoveryRunFeedback } from "../discovery/discovery-run-feedback";
+import type { ActionState } from "../../lib/job-finder-types";
+import type { TailoredDraftPreparationViewState } from "../review-queue/review-queue-status";
 import {
-  getDiscoveryLatestRunNotices,
-  type DiscoveryRunFeedback,
-} from "../discovery/discovery-run-feedback";
-import {
-  formatDiscoveryRunSourceProblemSummary,
-  selectCardOnlyEvidenceNotices,
-  selectNewestSettledDiscoveryRun,
-} from "./home-source-health-summary";
+  buildJobSearchHomeModel,
+  type HomeAction,
+  type HomeButton,
+} from "./job-search-home-model";
 
-/**
- * The recommended card already carries the action as its heading; repeating
- * the identical sentence on the button said one thing twice. The button says
- * where it goes instead.
- */
-function formatRecommendedActionButtonLabel(route: string): string {
-  if (route.startsWith("/job-finder/discovery")) {
-    return "Open Find jobs";
-  }
-  if (route.startsWith("/job-finder/review-queue")) {
-    return "Open Shortlisted";
-  }
-  if (route.startsWith("/job-finder/applications")) {
-    return "Open Applications";
-  }
-  if (
-    route.startsWith("/job-finder/action-inbox") ||
-    route.startsWith("/job-finder/actions")
-  ) {
-    return "Open Needs you";
-  }
-  if (route.startsWith("/job-finder/rapid-review")) {
-    return "Open Quick review";
-  }
-  if (route.startsWith("/job-finder/profile")) {
-    return "Open Profile";
-  }
-  return "Open";
-}
+export { buildInterruptedSearchRetryRequest } from "./job-search-home-model";
 
-function countHomeNeedsYou(workspace: JobFinderWorkspaceSnapshot): number {
-  const requests = workspace.userActionRequests ?? [];
-  const groupedDecisions = workspace.intelligence?.groupedDecisions ?? [];
-  const unresolved = requests.filter(
-    (request) =>
-      !["resolved", "skipped", "cancelled", "expired", "superseded"].includes(
-        request.state,
-      ),
-  );
-  const pendingDecisions = groupedDecisions.filter(
-    (decision) => decision.approval === "pending",
-  );
-  const representedRequestIds = new Set(
-    pendingDecisions.flatMap((decision) =>
-      decision.lineage.map((entry) => entry.requestId),
-    ),
-  );
-  const unrepresentedRequests = unresolved.filter(
-    (request) => !representedRequestIds.has(request.id),
-  );
-  return unrepresentedRequests.length + pendingDecisions.length +
-    projectPlanSafeguardPauses(workspace.intelligence?.safeguards, workspace.campaigns).length;
-}
-
-/**
- * Newest persisted run, used only as count evidence. The canonical count
- * helper owns the wording so Home, Task center and Search history cannot
- * report three different numbers for one search (F28).
- */
-function newestDiscoveryRun(
-  workspace: JobFinderWorkspaceSnapshot,
-): DiscoveryRunRecord | null {
-  const runs = workspace.recentDiscoveryRuns ?? [];
-  let newest: DiscoveryRunRecord | null = null;
-  for (const run of runs) {
-    if (!newest || run.startedAt > newest.startedAt) {
-      newest = run;
-    }
-  }
-  return workspace.activeDiscoveryRun ?? newest;
-}
-
-/**
- * Zero states are not status: `0 need attention · 0 running` printed two
- * facts nobody asked about beside the one that mattered.
- */
-function formatSourceHealthCounts(counts: {
-  healthy: number;
-  needsAttention: number;
-  running: number;
-}): string | null {
-  const parts: string[] = [];
-  if (counts.healthy > 0) parts.push(`${counts.healthy} healthy`);
-  if (counts.needsAttention > 0) {
-    parts.push(
-      `${counts.needsAttention} ${counts.needsAttention === 1 ? "needs" : "need"} attention`,
-    );
-  }
-  if (counts.running > 0) parts.push(`${counts.running} running`);
-  return parts.length > 0 ? parts.join(" · ") : null;
-}
-
-export function JobSearchHomeScreen(props: {
-  activityPending: boolean;
+export interface JobSearchHomeScreenProps {
+  workspace: JobFinderWorkspaceSnapshot;
   /**
-   * Tailored-resume drafts the renderer is waiting on. The dashboard's own
-   * background count never includes them, so without this Home said
-   * "Nothing is running right now." while a 60-second draft ran.
+   * What the last press on this page came to, in a sentence. A refusal
+   * (Apply held back by a resume, a send that could not start) is shown here
+   * instead of the press doing nothing visible.
    */
-  activeResumeDraftCount?: number;
+  actionState?: ActionState;
+  activityPending: boolean;
+  applicationAutomationMode?: ApplicationAutomationMode;
+  browserSessionPending?: boolean;
+  campaignNotificationAllPending?: boolean;
   campaignNotificationError?: string | null;
   campaignNotificationPending?: (notificationId: string) => boolean;
-  campaignNotificationAllPending?: boolean;
   campaignNotifications?: readonly CampaignNotification[];
   discoveryRunFeedback?: DiscoveryRunFeedback | null;
   discoveryRunPending?: boolean;
-  browserSessionPending?: boolean;
+  isDiscoveryPending?: boolean;
+  isResumeImportPending?: boolean;
+  liveDiscoveryEvents?: readonly DiscoveryActivityEvent[];
+  resumeImportProgress?: ResumeImportProgressEvent | null;
+  tailoredDraftPreparation?: TailoredDraftPreparationViewState | null;
+  onApplyToJobs?: (jobIds: readonly string[]) => Promise<unknown> | void;
+  /** Send for me: Job Finder presses Send on each filled-in form. */
+  onSendPreparedApplications?: (
+    jobIds: readonly string[],
+  ) => Promise<unknown> | void;
+  onCreateResumes?: () => void;
   onMarkAllCampaignNotificationsRead?: () => void;
   onMarkCampaignNotificationRead?: (notificationId: string) => void;
   onNavigate: (path: string) => void;
-  onNavigateGlobalEntry: (entry: JobFinderGlobalSearchEntry) => void;
-  onPauseActivity: () => void;
   onOpenBrowserSession?: () => void;
+  onPauseActivity: () => void;
   onResumeActivity: () => void;
-  onRunDiscovery?: () => void;
+  onRunDiscovery?: (request?: JobFinderSearchRequest) => void;
+  onResumeSetup?: (step: ProfileSetupStep) => void;
   onSelectCampaign: (campaignId: string) => void;
-  workspace: JobFinderWorkspaceSnapshot;
-}) {
-  const { dashboard } = props.workspace;
-  const needsYouCount = countHomeNeedsYou(props.workspace);
-  const safeguardPauses = projectPlanSafeguardPauses(props.workspace.intelligence?.safeguards, props.workspace.campaigns);
-  const globalEntries = buildJobFinderGlobalSearchEntries(props.workspace);
-  const activeBrowserCount =
-    (props.workspace.activeDiscoveryRun?.state === "running" ? 1 : 0) +
-    (props.workspace.activeSourceDebugRun?.state === "running" ? 1 : 0);
-  const activeApplicationCount = props.workspace.applyRuns.filter(
-    (run) => run.state === "running",
-  ).length;
-  const activeResumeDraftCount = props.activeResumeDraftCount ?? 0;
-  const backgroundOperationCount =
-    dashboard.backgroundOperationCount + activeResumeDraftCount;
-  const profileSetupState = props.workspace.profileSetupState;
-  const hasIncompleteProfileSetup = profileSetupState?.status !== "completed";
-  const activeCampaign = props.workspace.campaigns.find(
-    (campaign) => campaign.id === props.workspace.activeCampaignId,
-  );
-  const activeCampaignJobIds = new Set(activeCampaign?.jobIds ?? []);
-  const hasSearchHistory =
-    (activeCampaign?.history?.some((entry) => entry.kind === "discovery_run") ??
-      false) ||
-    (props.workspace.recentDiscoveryRuns?.length ?? 0) > 0;
-  const showProfileSetupBlocker =
-    hasIncompleteProfileSetup && !hasSearchHistory;
-  // A brand-new workspace has nothing to continue, so the card must invite
-  // setup instead of narrating a resumed step that never started.
-  const isFreshProfileSetup =
-    (profileSetupState?.status ?? "not_started") === "not_started";
-  const profileSetupStepLabel =
-    {
-      import: "resume import",
-      essentials: "your basics",
-      background: "your work history",
-      targeting: "your job targets",
-      extras: "the optional extras",
-      narrative: "the optional extras",
-      answers: "the optional extras",
-      ready_check: "your job targets",
-    }[profileSetupState?.currentStep ?? "import"] ?? "your profile setup";
+  onStopApply?: (runId: string) => void;
+  onStopResumes?: () => void;
+  onStopSearch?: (runId: string) => void;
+}
 
-  const isZeroMetrics =
-    dashboard.jobsFoundToday === 0 &&
-    dashboard.jobsAwaitingReview === 0 &&
-    dashboard.applicationsReadyForApproval === 0 &&
-    needsYouCount === 0 &&
-    dashboard.applicationsAppliedToday === 0 &&
-    dashboard.applicationsAppliedThisWeek === 0 &&
-    dashboard.upcomingInterviews === 0 &&
-    dashboard.upcomingFollowUps === 0;
+/**
+ * Unread notifications that still say something true. A "Failed" or
+ * "Blocked" note about a job that has since been sent is history, not news:
+ * Home kept four "could not open the application page" notes for jobs every
+ * other screen showed as Applied.
+ */
+export function listCurrentUnreadNotifications(
+  notifications: readonly CampaignNotification[],
+  workspace: Pick<
+    JobFinderWorkspaceSnapshot,
+    | "applicationRecords"
+    | "userActionRequests"
+    | "applyJobResults"
+    | "applyRuns"
+  >,
+): CampaignNotification[] {
+  const sentJobIds = new Set(
+    (workspace.applicationRecords ?? [])
+      .filter(
+        (record) =>
+          record.status === "submitted" ||
+          record.lastAttemptState === "submitted",
+      )
+      .map((record) => record.jobId),
+  );
+  // A source that asked for a sign-in and got it is searched again by
+  // itself; its "Blocked: sign in from Needs you" note is done with once
+  // that step resolved and none is open for the source.
+  const sourceSteps = (workspace.userActionRequests ?? []).flatMap((request) =>
+    request.scope.type === "discovery_source"
+      ? [{ request, targetId: request.scope.targetId }]
+      : [],
+  );
+  const sourceBlockResolved = (notification: CampaignNotification) => {
+    const targetId = notification.sourceTargetId;
+    if (!targetId) return false;
+    const steps = sourceSteps.filter((step) => step.targetId === targetId);
+    return (
+      steps.length > 0 &&
+      steps.every(
+        ({ request }) =>
+          request.state === "resolved" || request.state === "skipped",
+      ) &&
+      steps.some(
+        ({ request }) =>
+          request.state === "resolved" &&
+          Boolean(request.resolvedAt) &&
+          request.resolvedAt! >= notification.createdAt,
+      )
+    );
+  };
+  // A job's failure note describes one attempt. Once a newer attempt for
+  // that job has started, the note is about an attempt that is over; the
+  // newer attempt writes its own note if it fails too.
+  const latestAttemptStartByJobId = new Map<string, string>();
+  for (const result of workspace.applyJobResults ?? []) {
+    const previous = latestAttemptStartByJobId.get(result.jobId);
+    if (!previous || previous < result.startedAt) {
+      latestAttemptStartByJobId.set(result.jobId, result.startedAt);
+    }
+  }
+  const jobRetriedSince = (jobId: string, since: string) => {
+    const latestStart = latestAttemptStartByJobId.get(jobId);
+    return Boolean(latestStart && latestStart > since);
+  };
+  const supersededByNewerAttempt = (notification: CampaignNotification) => {
+    if (notification.jobId) {
+      return jobRetriedSince(notification.jobId, notification.createdAt);
+    }
+    // A run's own failure note (its id ends in `apply_run_<run id>`, see
+    // `deriveCampaignNotifications`) is over once every job of that run has
+    // been tried again.
+    const runId = /_apply_run_(.+)$/u.exec(notification.id)?.[1];
+    const run = runId
+      ? (workspace.applyRuns ?? []).find((entry) => entry.id === runId)
+      : undefined;
+    return Boolean(
+      run &&
+      run.jobIds.length > 0 &&
+      run.jobIds.every((jobId) =>
+        jobRetriedSince(jobId, notification.createdAt),
+      ),
+    );
+  };
+  return notifications.filter(
+    (notification) =>
+      notification.unread &&
+      !(
+        notification.kind === "blocked_work" &&
+        ((notification.jobId && sentJobIds.has(notification.jobId)) ||
+          supersededByNewerAttempt(notification) ||
+          sourceBlockResolved(notification))
+      ),
+  );
+}
 
-  // `dashboard.sourceHealth` comes from the shared source-health derivation
-  // (`deriveEnabledSourceHealthCounts` over enabled targets only), so its
-  // `total` is the enabled count and can never distinguish "none saved" from
-  // "saved but all switched off". The saved list is the only place that fact
-  // lives, and Find jobs already separates the two; Home must agree.
-  const liveSourceTargets = props.workspace.searchPreferences.discovery.targets;
-  const savedSourceCount =
-    liveSourceTargets.length > 0
-      ? liveSourceTargets.length
-      : dashboard.sourceHealth.total;
-  const enabledSourceCount =
-    liveSourceTargets.length > 0
-      ? liveSourceTargets.filter(
-      (target) => target.enabled,
-        ).length
-      : dashboard.sourceHealth.total;
-  const hasNoEnabledSources = enabledSourceCount === 0;
-  const hasSavedSourcesAllDisabled =
-    hasNoEnabledSources && savedSourceCount > 0;
-  const hasCatalogRows = props.workspace.discoveryJobs.some(
-    (job) => job.discoveryMethod === "catalog_seed",
-  );
-  const showOfflineCatalogNotice = hasNoEnabledSources && hasCatalogRows;
-  const hasSourceHealthAttention = dashboard.sourceHealth.needsAttention > 0;
-  const sourcesReadyButNoMetrics =
-    !hasNoEnabledSources && isZeroMetrics && !hasSearchHistory;
-  const showZeroGuidance = isZeroMetrics && sourcesReadyButNoMetrics;
-  const canRunFirstSearch =
-    !showProfileSetupBlocker &&
-    !hasNoEnabledSources &&
-    sourcesReadyButNoMetrics &&
-    Boolean(props.onRunDiscovery);
-  const firstRunPresentation = showProfileSetupBlocker || hasNoEnabledSources;
-  const showReturningDashboardModules = !firstRunPresentation;
-  // Home states what is true, not what a dashboard could hold: an idle
-  // background pane and two "Not enough data yet" rows were pure furniture.
-  const showBackgroundWorkPane =
-    dashboard.backgroundOperationCount > 0 ||
-    Boolean(props.workspace.activityControl.reason);
-  const showResultsPane = Boolean(
-    dashboard.responseRate || dashboard.interviewRate,
-  );
-  // `Pause background work` used to appear only while something was running,
-  // which made it unfindable: people looking for a way to stop background work
-  // could not find one, and the control vanished the moment they resumed. It
-  // now always states whether background work is paused, and always offers the
-  // switch.
-  const newestRun = newestDiscoveryRun(props.workspace);
-  const homeDiscoveryFeedback =
-    props.discoveryRunFeedback?.targetLabel === null &&
-    (props.discoveryRunFeedback.status === "started" || newestRun === null)
+const PANEL_CLASS =
+  "surface-panel-shell grid min-w-0 gap-3 rounded-(--radius-panel) border border-(--surface-panel-border) p-5";
+
+export function JobSearchHomeScreen(props: JobSearchHomeScreenProps) {
+  const [applyPending, setApplyPending] = useState(false);
+  const [dismissedActionState, setDismissedActionState] =
+    useState<ActionState | null>(null);
+  const actionMessage =
+    props.actionState?.message &&
+    props.actionState !== dismissedActionState
+      ? props.actionState.message
+      : null;
+  const tasks = buildJobFinderTaskCenterModel({
+    workspace: props.workspace,
+    isDiscoveryPending: props.isDiscoveryPending ?? false,
+    isResumeImportPending: props.isResumeImportPending ?? false,
+    liveDiscoveryEvents: props.liveDiscoveryEvents,
+    resumeImportProgress: props.resumeImportProgress,
+    tailoredDraftPreparation: props.tailoredDraftPreparation,
+  });
+  // A search outcome the person has to do something about (a browser that
+  // would not open, a source that needs sign-in) keeps its own callout with
+  // its own corrective action. A finished search is a status fact and reads
+  // as the line under the title instead.
+  const model = buildJobSearchHomeModel({
+    workspace: props.workspace,
+    tasks,
+    discoveryRunPending: props.discoveryRunPending ?? false,
+    canRunDiscovery: Boolean(props.onRunDiscovery),
+    applicationAutomationMode:
+      props.applicationAutomationMode ?? "prepare_only",
+  });
+  const missingStartingPageCoveredBySourceFix =
+    model.problems.some((problem) => problem.id === "failing-sources") &&
+    /Starting page returned HTTP (404|410)/iu.test(
+      props.discoveryRunFeedback?.detail ?? "",
+    );
+  // A search that stopped at a sign-in carries on by itself once the person
+  // signs in; the press that started it failed, but a later search of the
+  // same plan finished. That completion replaces the failure, as it does on
+  // Find jobs.
+  const failureRecordedAtMs =
+    props.discoveryRunFeedback?.status === "failed"
+      ? props.discoveryRunFeedback.recordedAtMs
+      : undefined;
+  const failureSupersededByCompletedRun =
+    failureRecordedAtMs !== undefined &&
+    (props.workspace.recentDiscoveryRuns ?? []).some(
+      (run) =>
+        run.campaignId === props.workspace.activeCampaignId &&
+        run.state === "completed" &&
+        run.completedAt !== null &&
+        Date.parse(run.completedAt) > failureRecordedAtMs,
+    );
+  const unresolvedFeedback =
+    props.discoveryRunFeedback &&
+    props.discoveryRunFeedback.targetLabel === null &&
+    props.discoveryRunFeedback.status !== "succeeded" &&
+    props.discoveryRunFeedback.status !== "started" &&
+    // The person's own Stop: the line under the title already says the
+    // last search stopped early, and nothing needs fixing.
+    props.discoveryRunFeedback.status !== "cancelled" &&
+    !failureSupersededByCompletedRun &&
+    !missingStartingPageCoveredBySourceFix &&
+    // The next step already names the broken source and where to fix it.
+    model.next.id !== "source_failed" &&
+    model.next.id !== "sources" &&
+    // A source to correct is Home's card or problem line, which follow the
+    // sources as they are now; this callout kept naming a source the person
+    // had already removed.
+    props.discoveryRunFeedback.recovery?.kind !== "source_setup"
       ? props.discoveryRunFeedback
       : null;
-  // A finished search is a status fact, not a second next action. It reads as
-  // one line inside the recommended card instead of a green banner plus its
-  // own button outranking the card.
+  const applicationsAwaitingUser = new Set(
+    listApplicationsAwaitingUser({
+      applicationRecords: props.workspace.applicationRecords,
+      applyJobResults: props.workspace.applyJobResults,
+      requests: props.workspace.userActionRequests,
+    }).map((record) => record.id),
+  );
+  const activeActionRecordIds = new Set(
+    props.workspace.userActionRequests
+      .filter(
+        (request) =>
+          ![
+            "resolved",
+            "skipped",
+            "cancelled",
+            "expired",
+            "superseded",
+          ].includes(request.state),
+      )
+      .flatMap((request) =>
+        request.scope?.type === "application" &&
+        request.scope.applicationRecordId
+          ? [request.scope.applicationRecordId]
+          : [],
+      ),
+  );
+  const applicationRecoveryRecords = props.workspace.applicationRecords
+    .filter(
+      (record) =>
+        !applicationsAwaitingUser.has(record.id) &&
+        !activeActionRecordIds.has(record.id),
+    )
+    .map((record) => ({ jobId: record.jobId, applicationRecordId: record.id }));
 
-  const profileJobSourcesRoute =
-    "/job-finder/profile?section=sources&focus=job-sources#profile-job-sources";
-  const profileSetupRoute = "/job-finder/profile/setup";
-  const discoveryRoute = "/job-finder/discovery";
-  const reviewQueueRoute = "/job-finder/review-queue";
-  // The page promises "see progress"; these four numbers are that progress,
-  // read from the same counters the sidebar badges use so they never disagree.
-  const pipelineJobIds = selectCampaignJobIds(props.workspace);
-  const pipeline = [
-    {
-      // "Results", not "Jobs found": Search plans prints the plan's whole
-      // retained count under that name, and this tile counts only what Find
-      // jobs lists by default.
-      label: "Results",
-      count: countDiscoveryVisibleJobs(props.workspace, pipelineJobIds),
-      route: discoveryRoute,
-    },
-    {
-      label: "Shortlisted",
-      count: countShortlistedJobs(props.workspace, pipelineJobIds),
-      route: reviewQueueRoute,
-    },
-    {
-      label: "Applications",
-      count: countApplicationRecords(props.workspace, pipelineJobIds),
-      route: "/job-finder/applications",
-    },
-    {
-      label: "Needs you",
-      count: countNeedsYou(props.workspace),
-      route: "/job-finder/actions",
-    },
-  ] as const;
-
-  const profileSetupCardLabel = isFreshProfileSetup
-    ? "Set up your profile"
-    : "Continue setup";
-  const profileSetupCardAction = isFreshProfileSetup
-    ? "Start setup"
-    : "Continue setup";
-  // A fresh setup card already says "Set up your profile" in its heading; a
-  // caption repeating it a third time is noise. A resumed card earns its
-  // caption because it names the step the button lands on.
-  const profileSetupCardHelper = isFreshProfileSetup
-    ? null
-    : `Opens guided setup at ${profileSetupStepLabel}.`;
-
-  // One canonical number for one search. The shared helper owns both the
-  // count and the vocabulary, so Home can never claim a "found" volume that
-  // Find jobs and Search history do not recognise.
-  const searchSucceeded = newestRun
-    ? newestRun.state === "completed"
-    : hasSearchHistory;
-  const countEvidence = getDiscoveryRunCountEvidence(newestRun, null);
-  const hasCountEvidence =
-    countEvidence.distinctJobsRetained > 0 ||
-    countEvidence.duplicatesMerged > 0;
-  // A run that froze its own report is quoted verbatim: "N found · M new ·
-  // K kept" is the same sentence Find jobs, Search history, the plan card and
-  // Tasks print for that run, so the five screens cannot disagree. Only runs
-  // recorded before the report existed fall back to the older label.
-  const runReport = getDiscoveryRunReportCounts(newestRun);
-  const hasRunReport = hasDiscoveryRunReportCounts(runReport);
-  const lastSearchCountLabel = hasRunReport
-    ? formatDiscoveryRunReportLabel(runReport)
-    : hasCountEvidence
-      ? formatDiscoveryRunCountLabel(countEvidence)
-      : null;
-  // Find jobs lists the active plan's jobs, not everything a run saved, so
-  // Home reads the same population before it prints a number about it — and
-  // it must be the *same* population, not just the same plan. `jobIds` is the
-  // plan's membership ledger and is never pruned, while Find jobs and the
-  // sidebar badge both list `discoveryJobs` intersected with that ledger,
-  // which drops dismissed, applied, and otherwise retired rows. Counting the
-  // ledger made one "Not interested" click print "15 kept in your current
-  // search plan" beside Find jobs' "14 jobs kept in this search plan" in
-  // otherwise identical words.
-  const keptInActivePlan = activeCampaign
-    ? props.workspace.discoveryJobs.filter((job) =>
-        activeCampaignJobIds.has(job.id),
-      ).length
-    : 0;
-  // Exactly one owner for the counts clause inside the recommended card. The
-  // status line below states it for a search that just finished; only when
-  // there is no such line does the recommendation body carry the same numbers,
-  // so the card can never print the identical sentence twice in a row.
-  const lastSearchSentence =
-    lastSearchCountLabel && !searchSucceeded
-      ? hasRunReport
-        ? // The frozen label already names all three populations, so nothing
-          // is reconciled against current inventory here.
-          `Your last search: ${lastSearchCountLabel}.`
-        : formatLastSearchSummarySentence({
-            runCountLabel: lastSearchCountLabel,
-            savedByRun: countEvidence.distinctJobsRetained,
-            keptInPlan: keptInActivePlan,
-          })
-      : null;
-
-  const awaitingReview = dashboard.jobsAwaitingReview;
-  // The returning user's actual next move is the search loop, so it owns the
-  // recommended slot — unless something is blocked on them or waiting for
-  // their approval. Then the backend's own recommendation ("Resolve what
-  // needs you") wins: sending them back to a shortlisted job that already has
-  // an approved resume and a blocked application hides the real next step.
-  const searchLoopRecommendation =
-    showReturningDashboardModules &&
-    !canRunFirstSearch &&
-    awaitingReview > 0 &&
-    needsYouCount === 0 &&
-    dashboard.applicationsReadyForApproval === 0
-      ? {
-          label: `Review ${awaitingReview} shortlisted ${
-            awaitingReview === 1 ? "job" : "jobs"
-          }`,
-          detail: lastSearchSentence
-            ? `${lastSearchSentence} Open Shortlisted to decide which ones deserve a tailored resume.`
-            : "Open Shortlisted to decide which ones deserve a tailored resume.",
-          route: reviewQueueRoute,
+  const run = (action: HomeAction) => {
+    switch (action.kind) {
+      case "navigate":
+        props.onNavigate(action.route);
+        return;
+      case "run_search":
+        if (props.onRunDiscovery) {
+          props.onRunDiscovery(action.request);
+        } else {
+          props.onNavigate(JOB_FINDER_ROUTE_PATHS.discovery);
         }
-      : null;
-
-  const effectiveRecommendedNext = safeguardPauses[0] ? {
-    label: "Open Safeguards", detail: safeguardPauses[0].explanation, route: safeguardPauses[0].route,
-  } : showProfileSetupBlocker
-    ? {
-        label: profileSetupCardLabel,
-        detail: isFreshProfileSetup
-          ? "Import your resume and tell Job Finder what you're looking for. Takes about five minutes."
-          : `Pick up at ${profileSetupStepLabel} so Job Finder can use your job targets, sources, and resume tailoring when you search.`,
-        route: profileSetupRoute,
-      }
-    : hasSavedSourcesAllDisabled
-      ? {
-          // The same fact, in the same words, as the Find jobs setup blocker.
-          label: "Enable a source before searching",
-          detail:
-            "Sources are saved but none are turned on, so searches have nowhere to look. Enable a saved source in Profile, then search.",
-          route: profileJobSourcesRoute,
+        return;
+      case "create_resumes":
+        if (props.onCreateResumes) {
+          props.onCreateResumes();
+        } else {
+          props.onNavigate(JOB_FINDER_ROUTE_PATHS.reviewQueue);
         }
-      : hasNoEnabledSources
-        ? {
-            label: "Set up job sources",
-            detail:
-              "Add at least one enabled job source in Profile to start discovering relevant openings. You can enable a public board like Greenhouse or Lever in seconds.",
-            route: profileJobSourcesRoute,
-          }
-        : showZeroGuidance
-          ? {
-              label: "Run your first search",
-              detail:
-                "Your job sources are ready. Run the active search plan to collect your first openings and see metrics here.",
-              route: discoveryRoute,
-            }
-          : (searchLoopRecommendation ?? dashboard.recommendedNextAction);
-
-  const unresolvedDiscoveryFeedback = searchSucceeded
-    ? null
-    : homeDiscoveryFeedback;
-  const recommendedActionButtonLabel = formatRecommendedActionButtonLabel(
-    effectiveRecommendedNext.route,
-  );
-  const searchStatusLine = searchSucceeded
-    ? lastSearchCountLabel
-      ? // Both populations, each with the noun that separates it. The run
-        // total alone read as a contradiction of the smaller "kept in this
-        // search plan" count that Find jobs prints for the same search. While
-        // this line is showing it is the card's only carrier of those numbers.
-        (hasRunReport
-          ? `Search finished · ${lastSearchCountLabel}.`
-          : formatSearchFinishedStatusLine({
-              runCountLabel: lastSearchCountLabel,
-              savedByRun: countEvidence.distinctJobsRetained,
-              keptInPlan: keptInActivePlan,
-            }))
-      : "Search finished · nothing new was saved, and nothing was deleted."
-    : null;
-
-  // Continuing the search is the point of the product, so Home always offers
-  // it once setup and sources are done — even when the recommended action is
-  // something else.
-  const canContinueSearch =
-    showReturningDashboardModules && !canRunFirstSearch && !hasNoEnabledSources;
-  const showReviewResultsAction =
-    canContinueSearch &&
-    !effectiveRecommendedNext.route.startsWith(discoveryRoute) &&
-    (hasCountEvidence || props.workspace.discoveryJobs.length > 0);
-
-  // Attention is only red when an enabled source is actually failing (a
-  // recorded stale reason). Never-verified or guidance-only attention stays
-  // neutral so a fresh source that just worked is not painted as broken.
-  // The `failing` reason itself comes from the shared classification so Home
-  // and the Profile Job sources library can never disagree about which
-  // enabled source is broken.
-  const failingSourceCount =
-    props.workspace.searchPreferences.discovery.targets.filter(
-      (target) =>
-        target.enabled &&
-        listSourceAttentionReasons(target).includes("failing"),
-    ).length;
-  // While setup is unfinished there is nothing to alarm about: sources are
-  // chosen inside setup, so the badge and its neutral line would only repeat
-  // each other in an alarm colour on a normal first run.
-  const showSourceHealthBadge = !showProfileSetupBlocker;
-  const sourceHealthBadgeTone = hasNoEnabledSources
-    ? failingSourceCount > 0
-      ? "critical"
-      : "neutral"
-    : hasSourceHealthAttention
-      ? failingSourceCount > 0
-        ? "critical"
-        : "neutral"
-      : dashboard.sourceHealth.healthy > 0
-        ? "positive"
-        : "muted";
-
-  const sourceHealthCountsLabel = formatSourceHealthCounts(
-    dashboard.sourceHealth,
-  );
-  // Source health is exactly where a run-level shortfall about what a source
-  // could be read belongs. The run itself recorded the sentence; Home prints
-  // it verbatim rather than re-deriving the condition from saved results.
-  //
-  // Only the product-authored card-only evidence sentence earns a line of its
-  // own. Every other per-source warning is a raw internal error string, and a
-  // large plan produces one per source, so those collapse into the single
-  // classified count line below instead of a wall of debug prose (G7). The
-  // caveat is extracted rather than filtered because production joins it onto
-  // whatever partial warning a source already had.
-  const latestSettledDiscoveryRun = selectNewestSettledDiscoveryRun(
-    props.workspace.recentDiscoveryRuns ?? [],
-  );
-  const sourceHealthRunNotices = selectCardOnlyEvidenceNotices(
-    getDiscoveryLatestRunNotices(
-      latestSettledDiscoveryRun ? [latestSettledDiscoveryRun] : [],
-    ),
-  );
-  const sourceProblemSummaryLine = formatDiscoveryRunSourceProblemSummary(
-    latestSettledDiscoveryRun,
-  );
-  const sourceHealthBadgeLabel = hasSavedSourcesAllDisabled
-    ? "No job sources turned on"
-    : hasNoEnabledSources
-      ? "No job sources configured"
-      : (sourceHealthCountsLabel ?? "Not checked yet");
-
-  // The global search only helps once there is something to find; on an empty
-  // workspace it is one more empty control above an empty page.
-  const hasSearchableWorkspaceRecords =
-    (props.workspace.discoveryJobs?.length ?? 0) > 0 ||
-    (props.workspace.applicationRecords?.length ?? 0) > 0;
-
-  // The campaign layer stays hidden until it is earned: with one plan there is
-  // nothing to switch between, so the selector is configuration furniture.
-  const showSearchPlanSelector =
-    showReturningDashboardModules && props.workspace.campaigns.length > 1;
-
-  const recommendedIsNeedsYou =
-    effectiveRecommendedNext.route.startsWith("/job-finder/action");
-  const recommendedIsReviewQueue =
-    effectiveRecommendedNext.route.startsWith(reviewQueueRoute);
-  const recommendedIsApplications = effectiveRecommendedNext.route.startsWith(
-    "/job-finder/applications",
-  );
-
-  const runSearchAgain = () => {
-    if (props.onRunDiscovery) {
-      props.onRunDiscovery();
-      return;
+        return;
+      case "resume_setup":
+        if (props.onResumeSetup) {
+          props.onResumeSetup(action.step);
+        } else {
+          props.onNavigate("/job-finder/profile/setup");
+        }
+        return;
+      case "apply_all":
+        if (props.onApplyToJobs) {
+          setApplyPending(true);
+          void Promise.resolve(props.onApplyToJobs(action.jobIds)).finally(() =>
+            setApplyPending(false),
+          );
+        } else {
+          props.onNavigate(JOB_FINDER_ROUTE_PATHS.reviewQueue);
+        }
+        return;
+      case "send_prepared":
+        if (props.onSendPreparedApplications) {
+          setApplyPending(true);
+          void Promise.resolve(
+            props.onSendPreparedApplications(action.jobIds),
+          ).finally(() => setApplyPending(false));
+        } else {
+          props.onNavigate(JOB_FINDER_ROUTE_PATHS.applications);
+        }
+        return;
+      case "stop_search":
+        props.onStopSearch?.(action.runId);
+        return;
+      case "stop_apply":
+        props.onStopApply?.(action.runId);
+        return;
+      case "stop_resumes":
+        props.onStopResumes?.();
+        return;
+      case "pause_activity":
+        props.onPauseActivity();
+        return;
+      case "resume_activity":
+        props.onResumeActivity();
+        return;
     }
-    props.onNavigate(discoveryRoute);
   };
+
+  const isButtonPending = (button: HomeButton): boolean =>
+    (button.action.kind === "run_search" &&
+      Boolean(props.discoveryRunPending)) ||
+    ((button.action.kind === "apply_all" ||
+      button.action.kind === "send_prepared") &&
+      applyPending) ||
+    ((button.action.kind === "pause_activity" ||
+      button.action.kind === "resume_activity") &&
+      props.activityPending);
+
+  const unreadNotifications = listCurrentUnreadNotifications(
+    props.campaignNotifications ?? [],
+    props.workspace,
+  );
+  const showNotifications =
+    unreadNotifications.length > 0 &&
+    Boolean(
+      props.onMarkCampaignNotificationRead ||
+      props.onMarkAllCampaignNotificationsRead,
+    );
 
   return (
     <section className="grid min-w-0 gap-5 pb-8">
-      <PageHeader
+      <PageHeaderStack
         actions={
-          <JobFinderActivityControl
-            onPause={props.onPauseActivity}
-            onResume={props.onResumeActivity}
-            state={{
-              activeApplicationCount,
-              activeBrowserCount,
-              paused: props.workspace.activityControl.paused,
-              pausedAt: props.workspace.activityControl.pausedAt,
-              pending: props.activityPending,
-            }}
-          />
+          model.paused ? (
+            <Button
+              onClick={() => run({ kind: "resume_activity" })}
+              pending={props.activityPending}
+              size="sm"
+              type="button"
+            >
+              <Play aria-hidden="true" className="size-4" />
+              Resume
+            </Button>
+          ) : model.showPlanSelector ? (
+            <label className="flex min-w-0 items-center gap-2 text-xs text-foreground-muted">
+              <span>Search plan</span>
+              <select
+                aria-label="Active search plan"
+                className="h-9 min-w-0 max-w-56 rounded-(--radius-field) border border-(--field-border) bg-(--field) px-2 text-sm outline-none focus-visible:border-(--field-focus-border) focus-visible:bg-(--field-strong) focus-visible:shadow-[var(--field-focus-shadow)]"
+                onChange={(event) => props.onSelectCampaign(event.target.value)}
+                value={props.workspace.activeCampaignId}
+              >
+                {props.workspace.campaigns.map((campaign) => (
+                  <option key={campaign.id} value={campaign.id}>
+                    {campaign.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : undefined
         }
-        description="See progress, open tasks, and the best next step."
+        description={model.statusLine}
         title="Home"
       />
 
-      <div
-        aria-label="Source health"
-        className="flex min-w-0 flex-wrap items-center gap-2"
-        data-testid="source-health-badge-top"
-      >
-        {showSourceHealthBadge ? (
-          <StatusBadge tone={sourceHealthBadgeTone}>
-            {sourceHealthBadgeLabel}
-          </StatusBadge>
-        ) : null}
-        <span className="text-xs text-foreground-muted">
-          {showProfileSetupBlocker
-            ? // Nothing to say yet: the user has not met the word "source",
-              // and setup chooses them.
-              ""
-            : hasSavedSourcesAllDisabled
-              ? `${savedSourceCount} saved source${savedSourceCount === 1 ? "" : "s"} • Turn one on in Profile`
-              : hasNoEnabledSources
-                ? "No job sources yet • Add one in Profile"
-                : `${enabledSourceCount} enabled source${enabledSourceCount === 1 ? "" : "s"}`}
-        </span>
-        {/* Gated with the badge and the summary line: during setup the user
-            has not met the word "source" yet, so a lone review action would
-            point at something Home is not showing. */}
-        {showSourceHealthBadge &&
-        (hasSourceHealthAttention || sourceProblemSummaryLine !== null) ? (
-          <Button
-            onClick={() => props.onNavigate(profileJobSourcesRoute)}
-            size="sm"
-            type="button"
-            variant="outline"
-          >
-            Review source health
-          </Button>
-        ) : null}
-        {showSearchPlanSelector ? (
-          <label className="flex min-w-0 items-center gap-2 text-xs text-foreground-muted">
-            <span>Search plan</span>
-            <select
-              aria-label="Active search plan"
-              className="h-9 min-w-0 max-w-56 rounded-(--radius-field) border border-(--field-border) bg-(--field) px-2 text-sm outline-none focus-visible:border-(--field-focus-border) focus-visible:bg-(--field-strong) focus-visible:shadow-[var(--field-focus-shadow)]"
-              onChange={(event) => props.onSelectCampaign(event.target.value)}
-              value={props.workspace.activeCampaignId}
-            >
-              {props.workspace.campaigns.map((campaign) => (
-                <option key={campaign.id} value={campaign.id}>
-                  {campaign.name}
-                </option>
-              ))}
-            </select>
-          </label>
-        ) : null}
-        {showProfileSetupBlocker || sourceProblemSummaryLine === null ? null : (
-          <p
-            className="w-full min-w-0 break-words text-xs text-foreground-muted"
-            data-testid="source-health-problem-summary"
-          >
-            {sourceProblemSummaryLine}
-          </p>
-        )}
-        {showProfileSetupBlocker
-          ? null
-          : sourceHealthRunNotices.map((notice) => (
-              <p
-                className="w-full min-w-0 break-words text-xs text-foreground-muted"
-                data-testid="source-health-run-notice"
-                key={notice}
-              >
-                {notice}
-              </p>
-            ))}
-      </div>
-
-      {showOfflineCatalogNotice ? (
-        <div
-          aria-live="polite"
-          className="min-w-0 break-words rounded-(--radius-panel) border border-(--info-border) bg-(--info-surface) px-4 py-3 text-sm leading-6 text-(--info-text)"
-          data-testid="home-offline-catalog-notice"
-          role="status"
+      {model.now.length > 0 ? (
+        <section
+          aria-label="Happening now"
+          className={PANEL_CLASS}
+          data-testid="home-now"
         >
-          <strong>{DISCOVERY_OFFLINE_RUNTIME_LABEL}.</strong>{" "}
-          {DISCOVERY_OFFLINE_SETUP_NOTICE}
-        </div>
+          <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+            <h2 className="text-(length:--text-tiny) uppercase tracking-(--tracking-label) text-muted-foreground">
+              Happening now
+            </h2>
+            {!model.paused ? (
+              <Button
+                onClick={() => run({ kind: "pause_activity" })}
+                pending={props.activityPending}
+                size="xs"
+                type="button"
+                variant="ghost"
+              >
+                <Pause aria-hidden="true" className="size-3" />
+                Pause new work
+              </Button>
+            ) : null}
+          </div>
+          <ul className="grid min-w-0 gap-2">
+            {model.now.map((item) => (
+              <li
+                className="flex min-w-0 flex-wrap items-center justify-between gap-3"
+                key={item.id}
+              >
+                <div className="min-w-0">
+                  <p className="min-w-0 break-words text-sm font-medium text-(--text-headline)">
+                    <span
+                      aria-hidden="true"
+                      className="mr-2 inline-block size-2 animate-pulse rounded-full bg-primary align-middle"
+                    />
+                    {item.title}
+                  </p>
+                  {item.detail ? (
+                    <p className="min-w-0 break-words text-xs text-foreground-muted">
+                      {item.detail}
+                    </p>
+                  ) : null}
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  {item.open ? (
+                    <Button
+                      onClick={() => item.open && run(item.open.action)}
+                      size="xs"
+                      type="button"
+                      variant="outline"
+                    >
+                      {item.open.label}
+                    </Button>
+                  ) : null}
+                  {item.stop ? (
+                    <Button
+                      onClick={() => item.stop && run(item.stop.action)}
+                      size="xs"
+                      type="button"
+                      variant="ghost"
+                    >
+                      {item.stop.label}
+                    </Button>
+                  ) : null}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
       ) : null}
 
-      {unresolvedDiscoveryFeedback ? (
-        // Only an outcome the user has to do something about earns a callout.
-        // A successful search is reported as one status line inside the
-        // recommended card instead.
+      {unresolvedFeedback ? (
         <div
           className="grid min-w-0 gap-2"
           data-testid="home-discovery-run-feedback"
         >
           <DiscoveryRunFeedbackCallout
-            feedback={unresolvedDiscoveryFeedback}
+            feedback={unresolvedFeedback}
             {...(props.browserSessionPending !== undefined
               ? { isRecoveryPending: props.browserSessionPending }
               : {})}
@@ -669,231 +482,163 @@ export function JobSearchHomeScreen(props: {
         </div>
       ) : null}
 
-      {showReturningDashboardModules ? (
+      {model.problems.map((problem) => (
+        <div
+          className={cn(
+            "flex min-w-0 flex-wrap items-center justify-between gap-3 rounded-(--radius-panel) border px-4 py-3 text-sm leading-6",
+            problem.tone === "critical"
+              ? "border-critical/40 bg-critical/10 text-foreground"
+              : "border-warning/40 bg-(--warning-surface) text-(--warning-text)",
+          )}
+          data-testid={`home-problem-${problem.id}`}
+          key={problem.id}
+          role="status"
+        >
+          <p className="min-w-0 flex-1 break-words">{problem.text}</p>
+          {problem.button ? (
+            <Button
+              onClick={() => problem.button && run(problem.button.action)}
+              size="sm"
+              type="button"
+              variant="outline"
+            >
+              {problem.button.label}
+            </Button>
+          ) : null}
+        </div>
+      ))}
+
+      {actionMessage ? (
+        <div
+          aria-atomic="true"
+          className="flex min-w-0 items-start justify-between gap-3 rounded-(--radius-field) border border-(--surface-panel-border) bg-background px-3 py-2 text-sm leading-5 text-foreground"
+          data-testid="home-action-message"
+          role="status"
+        >
+          <p className="min-w-0 break-words">{actionMessage}</p>
+          <div className="flex shrink-0 items-center gap-1">
+            {props.actionState?.actionLink ? (
+              <Button
+                onClick={() =>
+                  props.actionState?.actionLink &&
+                  props.onNavigate(props.actionState.actionLink.route)
+                }
+                size="sm"
+                type="button"
+                variant="outline"
+              >
+                {props.actionState.actionLink.label}
+              </Button>
+            ) : null}
+            <Button
+              onClick={() =>
+                setDismissedActionState(props.actionState ?? null)
+              }
+              size="sm"
+              type="button"
+              variant="ghost"
+            >
+              Dismiss
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
+      <section
+        aria-labelledby="home-next-step-title"
+        className="surface-panel-shell grid min-w-0 gap-3 rounded-(--radius-panel) border border-primary/40 bg-primary/10 p-5"
+        data-home-next-step={model.next.id}
+        data-testid="home-next-step"
+      >
+        <p className="text-(length:--text-tiny) uppercase tracking-(--tracking-label) text-muted-foreground">
+          Next step
+        </p>
+        <h2
+          className="min-w-0 break-words font-semibold text-(--text-headline)"
+          id="home-next-step-title"
+        >
+          {model.next.title}
+        </h2>
+        <p className="min-w-0 max-w-[68ch] break-words text-sm text-foreground-soft">
+          {model.next.detail}
+          {model.next.detailLink ? (
+            <>
+              {" "}
+              <button
+                className="inline cursor-pointer rounded-sm text-primary underline underline-offset-2 outline-none hover:text-primary/80 focus-visible:ring-2 focus-visible:ring-ring"
+                data-testid="home-next-step-detail-link"
+                onClick={() =>
+                  model.next.detailLink && run(model.next.detailLink.action)
+                }
+                type="button"
+              >
+                {model.next.detailLink.label}
+              </button>
+            </>
+          ) : null}
+        </p>
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <Button
+            className="h-11 w-fit px-5"
+            onClick={() => run(model.next.primary.action)}
+            pending={isButtonPending(model.next.primary)}
+            type="button"
+          >
+            {model.next.primary.label}
+          </Button>
+          {model.next.secondary.map((button) => (
+            <Button
+              className="h-11 w-fit px-4"
+              key={button.label}
+              onClick={() => run(button.action)}
+              pending={isButtonPending(button)}
+              size="sm"
+              type="button"
+              variant="outline"
+            >
+              {button.label}
+            </Button>
+          ))}
+        </div>
+      </section>
+
+      {model.stages ? (
         <nav
-          aria-label="Your pipeline"
-          className="grid min-w-0 grid-cols-2 gap-2 sm:grid-cols-4"
+          aria-label="Where you are"
+          className="grid min-w-0 gap-2 sm:grid-cols-3"
           data-testid="home-pipeline"
         >
-          {pipeline.map((stage) => (
+          {model.stages.map((stage) => (
             <button
-              key={stage.label}
-              className="surface-panel-shell grid min-w-0 gap-0.5 rounded-(--radius-panel) border border-(--surface-panel-border) px-4 py-3 text-left outline-none transition-colors hover:border-(--control-border-hover) hover:bg-secondary/35 focus-visible:ring-2 focus-visible:ring-ring"
+              className="surface-panel-shell grid min-w-0 content-start gap-0.5 rounded-(--radius-panel) border border-(--surface-panel-border) px-4 py-3 text-left outline-none transition-colors hover:border-(--control-border-hover) hover:bg-secondary/35 focus-visible:ring-2 focus-visible:ring-ring"
+              data-home-stage={stage.id}
+              key={stage.id}
               onClick={() => props.onNavigate(stage.route)}
               type="button"
             >
-              <span className="text-(length:--text-heading-2) font-semibold tabular-nums leading-tight text-(--text-headline)">
-                {stage.count}
-              </span>
               <span className="text-(length:--text-small) text-foreground-soft">
                 {stage.label}
               </span>
+              <span className="text-(length:--text-heading-2) font-semibold tabular-nums leading-tight text-(--text-headline)">
+                {stage.count}
+              </span>
+              {stage.detail ? (
+                <span className="min-w-0 break-words text-xs text-foreground-muted">
+                  {stage.detail}
+                </span>
+              ) : null}
             </button>
           ))}
         </nav>
       ) : null}
 
-      <PlanSafeguardPauseCards
-        pauses={safeguardPauses}
-        onNavigate={props.onNavigate}
-      />
-      {/* One recommended action, full width. Home used to put a second card
-          of plan controls beside it, so the page opened with two competing
-          places to act. */}
-      <div className="surface-panel-shell grid min-w-0 gap-3 rounded-(--radius-panel) border border-primary/40 bg-primary/10 p-5">
-        <p className="text-(length:--text-tiny) uppercase tracking-(--tracking-label) text-muted-foreground">
-          Recommended next
-        </p>
-        <h2 className="min-w-0 break-words font-semibold text-(--text-headline)">
-          {effectiveRecommendedNext.label}
-        </h2>
-        <p className="min-w-0 break-words text-sm text-foreground-soft">
-          {effectiveRecommendedNext.detail}
-        </p>
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <Button
-            className="h-11 w-fit px-5"
-            onClick={() => {
-              if (canRunFirstSearch) {
-                props.onRunDiscovery?.();
-                return;
-              }
-
-              props.onNavigate(effectiveRecommendedNext.route);
-            }}
-            pending={canRunFirstSearch && Boolean(props.discoveryRunPending)}
-            type="button"
-          >
-            {/* The heading already names the action; the button says what
-                pressing it does. */}
-            {showProfileSetupBlocker
-              ? profileSetupCardAction
-              : hasNoEnabledSources
-                ? "Open job sources"
-                : canRunFirstSearch
-                  ? "Search now"
-                  : recommendedIsReviewQueue && searchLoopRecommendation
-                    ? "Open Shortlisted"
-                    : recommendedActionButtonLabel}
-          </Button>
-          {showReviewResultsAction ? (
-            <Button
-              className="h-11 w-fit px-4"
-              onClick={() => props.onNavigate(discoveryRoute)}
-              size="sm"
-              type="button"
-              variant="outline"
-            >
-              Open Find jobs
-            </Button>
-          ) : null}
-          {canContinueSearch ? (
-            <Button
-              className="h-11 w-fit px-4"
-              onClick={runSearchAgain}
-              pending={Boolean(
-                props.onRunDiscovery && props.discoveryRunPending,
-              )}
-              size="sm"
-              type="button"
-              variant="outline"
-            >
-              Search again
-            </Button>
-          ) : null}
-        </div>
-        {searchStatusLine ? (
-          <p
-            className="min-w-0 break-words text-xs text-foreground-muted"
-            data-testid="home-status-line"
-          >
-            {searchStatusLine}
-          </p>
-        ) : null}
-        {showProfileSetupBlocker ? (
-          profileSetupCardHelper ? (
-            <p className="text-xs text-foreground-muted">
-              {profileSetupCardHelper}
-            </p>
-          ) : null
-        ) : hasNoEnabledSources ? (
-          // The setup blocker owns this card when it is showing, so the
-          // sources caption must not contradict a "Start setup" button. It
-          // also avoids "public board", a term first-run users have not met.
-          <p className="text-xs text-foreground-muted">
-            Opens Profile, where you choose which job sites Job Finder searches.
-          </p>
-        ) : null}
-      </div>
-
-      {hasSearchableWorkspaceRecords ? (
-        // The search box used to float between two cards as the only bordered
-        // thing on the page, so it read as belonging to nothing.
-        <section
-          className="surface-panel-shell grid min-w-0 gap-3 rounded-(--radius-panel) border border-(--surface-panel-border) p-5"
-          data-testid="home-workspace-search"
-        >
-          <JobFinderGlobalSearch
-            entries={globalEntries}
-            onNavigate={props.onNavigateGlobalEntry}
-          />
-        </section>
-      ) : null}
-
-      {showResultsPane || showBackgroundWorkPane ? (
-        <div className="grid gap-3 lg:grid-cols-2">
-          {showResultsPane ? (
-            <section className="surface-panel-shell grid gap-3 rounded-(--radius-panel) border border-(--surface-panel-border) p-5">
-              <h2 className="font-semibold text-(--text-headline)">
-                Results so far
-              </h2>
-              <p className="text-sm text-foreground-soft">
-                Response rate:{" "}
-                {dashboard.responseRate
-                  ? `${dashboard.responseRate.percent}% (${dashboard.responseRate.numerator} of ${dashboard.responseRate.denominator})`
-                  : "Not enough data yet"}
-              </p>
-              <p className="text-sm text-foreground-soft">
-                Interview rate:{" "}
-                {dashboard.interviewRate
-                  ? `${dashboard.interviewRate.percent}% (${dashboard.interviewRate.numerator} of ${dashboard.interviewRate.denominator})`
-                  : "Not enough data yet"}
-              </p>
-            </section>
-          ) : null}
-          {/* Source health has exactly one owner on this page: the badge
-              beside the title. The card below repeated the same three numbers
-              in different casing, with a plural bug of its own. */}
-          {showBackgroundWorkPane ? (
-            <section className="surface-panel-shell grid gap-3 rounded-(--radius-panel) border border-(--surface-panel-border) p-5">
-              <h2 className="font-semibold text-(--text-headline)">
-                Background work
-              </h2>
-              <p className="text-sm text-foreground-soft">
-                {backgroundOperationCount === 0
-                  ? "Nothing is running right now."
-                  : activeResumeDraftCount > 0 &&
-                      activeResumeDraftCount === backgroundOperationCount
-                    ? `Writing ${activeResumeDraftCount} ${activeResumeDraftCount === 1 ? "resume" : "resumes"}.`
-                    : `${backgroundOperationCount} ${backgroundOperationCount === 1 ? "operation is" : "operations are"} running.`}
-              </p>
-              {props.workspace.activityControl.reason ? (
-                <p className="text-xs text-foreground-muted">
-                  Pause reason: {props.workspace.activityControl.reason}
-                </p>
-              ) : null}
-            </section>
-          ) : null}
-        </div>
-      ) : null}
-
-      {(props.onMarkCampaignNotificationRead ||
-        props.onMarkAllCampaignNotificationsRead) &&
-      (showReturningDashboardModules ||
-        (props.campaignNotifications?.length ?? 0) > 0) ? (
+      {showNotifications ? (
         <CampaignNotificationCenter
+          applicationRecoveryRecords={applicationRecoveryRecords}
           errorMessage={props.campaignNotificationError ?? null}
           loading={false}
-          notifications={props.campaignNotifications ?? []}
+          notifications={unreadNotifications}
           onNavigate={props.onNavigate}
-          // Derived from the same workspace state as the sidebar badges, so a
-          // finished search with work waiting can never render "Nothing here
-          // yet" beside a NEEDS YOU badge. Anything already carried by
-          // Recommended next is suppressed here so one blocked item cannot
-          // generate three advertisements for itself.
-          outstandingWork={[
-            ...(needsYouCount > 0 && !recommendedIsNeedsYou
-              ? [
-                  {
-                    id: "needs-you",
-                    label: `${needsYouCount} ${needsYouCount === 1 ? "item needs" : "items need"} you`,
-                    openLabel: "Open Needs you",
-                    onOpen: () => props.onNavigate("/job-finder/actions"),
-                  },
-                ]
-              : []),
-            ...(dashboard.jobsAwaitingReview > 0 && !recommendedIsReviewQueue
-              ? [
-                  {
-                    id: "awaiting-review",
-                    label: `${dashboard.jobsAwaitingReview} ${dashboard.jobsAwaitingReview === 1 ? "job is" : "jobs are"} waiting for your review`,
-                    openLabel: "Open Shortlisted",
-                    onOpen: () => props.onNavigate(reviewQueueRoute),
-                  },
-                ]
-              : []),
-            ...(dashboard.applicationsReadyForApproval > 0 &&
-            !recommendedIsApplications
-              ? [
-                  {
-                    id: "awaiting-approval",
-                    label: `${dashboard.applicationsReadyForApproval} ${dashboard.applicationsReadyForApproval === 1 ? "application is" : "applications are"} ready for your approval`,
-                    openLabel: "Open Applications",
-                    onOpen: () => props.onNavigate("/job-finder/applications"),
-                  },
-                ]
-              : []),
-          ]}
           onMarkAllRead={() => props.onMarkAllCampaignNotificationsRead?.()}
           onMarkRead={(notificationId) =>
             props.onMarkCampaignNotificationRead?.(notificationId)

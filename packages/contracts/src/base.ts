@@ -35,12 +35,10 @@ export type ApplicationStatus = z.infer<typeof ApplicationStatusSchema>;
  * DRAFTING with no apply attempt, so every surface that counts prepared
  * applications reads this one rule.
  */
-export function isPreparedApplicationStatus(
-  record: {
-    status: ApplicationStatus;
-    lastAttemptState?: ApplicationAttemptState | null | undefined;
-  },
-): boolean {
+export function isPreparedApplicationStatus(record: {
+  status: ApplicationStatus;
+  lastAttemptState?: ApplicationAttemptState | null | undefined;
+}): boolean {
   if (
     record.lastAttemptState === "ready" ||
     record.lastAttemptState === "submitted"
@@ -111,7 +109,13 @@ export const DiscoveryRunReportSchema = z.object({
   alreadyHere: z.number().int().nonnegative().nullable().optional(),
   /** Retention settings frozen when the search plan committed this run. */
   retentionLimitApplied: z.number().int().positive().nullable().optional(),
-  minimumFitScoreApplied: z.number().int().min(0).max(100).nullable().optional(),
+  minimumFitScoreApplied: z
+    .number()
+    .int()
+    .min(0)
+    .max(100)
+    .nullable()
+    .optional(),
 });
 export type DiscoveryRunReport = z.infer<typeof DiscoveryRunReportSchema>;
 
@@ -797,3 +801,17 @@ export const RevealSavedFileResultSchema = z.object({
   outcome: RevealSavedFileOutcomeSchema,
 });
 export type RevealSavedFileResult = z.infer<typeof RevealSavedFileResultSchema>;
+
+/** Text the desktop shell may copy to the operating system clipboard. */
+export const WriteClipboardTextInputSchema = z.object({
+  text: z.string().max(100_000),
+});
+export type WriteClipboardTextInput = z.infer<
+  typeof WriteClipboardTextInputSchema
+>;
+export const WriteClipboardTextResultSchema = z.object({
+  written: z.literal(true),
+});
+export type WriteClipboardTextResult = z.infer<
+  typeof WriteClipboardTextResultSchema
+>;

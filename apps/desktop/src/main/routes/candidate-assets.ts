@@ -9,6 +9,7 @@ import {
   CandidateAssetListResultSchema,
   CandidateAssetRestoreInputSchema,
   CandidateAssetRestoreResultSchema,
+  type CandidateAsset,
 } from "@unemployed/contracts";
 import { CandidateAssetLibraryError } from "../services/job-finder/candidate-asset-library";
 import type { CandidateAssetLibrary } from "../services/job-finder/candidate-asset-library";
@@ -17,6 +18,45 @@ import { getCandidateAssetLibrary } from "../services/job-finder/candidate-asset
 interface CandidateAssetRouteDependencies {
   library: CandidateAssetLibrary;
   selectFile: (event: IpcMainInvokeEvent) => Promise<string | null>;
+  /**
+   * Told when a file the applications may attach becomes available, so an
+   * application waiting on a file question carries on without another press.
+   */
+  onApplicationFileAvailable?: (asset: CandidateAsset) => Promise<unknown>;
+}
+
+async function continueApplicationsWaitingForFile(
+  asset: CandidateAsset,
+): Promise<unknown> {
+  const { getJobFinderWorkspaceService } =
+    await import("../services/job-finder/workspace-service");
+  const workspaceService = await getJobFinderWorkspaceService();
+  return workspaceService.continueApplicationsWaitingForFiles({
+    assetId: asset.id,
+    assetKind: asset.kind,
+  });
+}
+
+function notifyApplicationFileAvailable(
+  dependencies: CandidateAssetRouteDependencies,
+  asset: CandidateAsset,
+): void {
+  if (
+    !dependencies.onApplicationFileAvailable ||
+    asset.deletedAt ||
+    asset.kind === "resume" ||
+    asset.consentScope !== "job_application_attachment"
+  ) {
+    return;
+  }
+  // Not awaited: the continuation drives the browser for minutes, and the
+  // Files tab must settle as soon as the file is stored.
+  void dependencies.onApplicationFileAvailable(asset).catch((error) => {
+    console.warn(
+      "[candidate-assets] Could not continue an application waiting for a file.",
+      error instanceof Error ? error.message : error,
+    );
+  });
 }
 
 const fileDialogOptions: OpenDialogOptions = {
@@ -67,6 +107,7 @@ export function registerCandidateAssetRouteHandlers(
   dependencies: CandidateAssetRouteDependencies = {
     library: getCandidateAssetLibrary(),
     selectFile: selectCandidateAssetFile,
+    onApplicationFileAvailable: continueApplicationsWaitingForFile,
   },
 ) {
   ipcMain.handle(
@@ -89,11 +130,15 @@ export function registerCandidateAssetRouteHandlers(
       if (!sourcePath) {
         return CandidateAssetImportResultSchema.parse({ status: "cancelled" });
       }
-      return runAssetOperation(async () =>
+      const result = await runAssetOperation(async () =>
         CandidateAssetImportResultSchema.parse(
           await dependencies.library.importFromSourcePath(sourcePath, input),
         ),
       );
+      if (result.status === "imported") {
+        notifyApplicationFileAvailable(dependencies, result.asset);
+      }
+      return result;
     },
   );
 
@@ -113,11 +158,13 @@ export function registerCandidateAssetRouteHandlers(
     "job-finder:candidate-assets:restore",
     async (_event, payload) => {
       const input = CandidateAssetRestoreInputSchema.parse(payload);
-      return runAssetOperation(async () =>
+      const result = await runAssetOperation(async () =>
         CandidateAssetRestoreResultSchema.parse(
           await dependencies.library.restore(input),
         ),
       );
+      notifyApplicationFileAvailable(dependencies, result.asset);
+      return result;
     },
   );
 }

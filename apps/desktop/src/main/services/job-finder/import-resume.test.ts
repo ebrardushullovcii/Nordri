@@ -483,3 +483,127 @@ describe("importResumeFromSourcePath", () => {
     }
   });
 });
+
+describe("importing a stopped import's file again", () => {
+  test("finds the working copy the stopped import saved", async () => {
+    const { resolveResumeWorkingCopyPath } = await import("./import-resume");
+
+    expect(
+      resolveResumeWorkingCopyPath({
+        documentsDirectory: "/data/documents/resumes",
+        sourceResumeId: "resume_1758621600000",
+        fileName: "resume-import-sample.txt",
+      }),
+    ).toBe(
+      path.join(
+        "/data/documents/resumes",
+        "1758621600000_resume-import-sample.txt",
+      ),
+    );
+    // A name can never climb out of the documents directory.
+    expect(
+      resolveResumeWorkingCopyPath({
+        documentsDirectory: "/data/documents/resumes",
+        sourceResumeId: "resume_1758621600000",
+        fileName: "../../secrets.txt",
+      }),
+    ).toBe(path.join("/data/documents/resumes", "1758621600000_secrets.txt"));
+    expect(
+      resolveResumeWorkingCopyPath({
+        documentsDirectory: "/data/documents/resumes",
+        sourceResumeId: "resume_fresh_start",
+        fileName: "resume.txt",
+      }),
+    ).toBeNull();
+  });
+
+  test("imports the saved copy under the file's own name, with no picker", async () => {
+    const { RESUME_IMPORT_INTERRUPTED_MESSAGE, ResumeImportRunSchema } =
+      await import("@unemployed/contracts");
+    const { retryInterruptedResumeImport } = await import("./import-resume");
+    const { directory } = await createTempResumeFile();
+    const documentsDirectory = path.join(directory, "documents");
+    const actualFs =
+      await vi.importActual<typeof FsPromises>("node:fs/promises");
+    await actualFs.mkdir(documentsDirectory, { recursive: true });
+    await actualFs.writeFile(
+      path.join(documentsDirectory, "1758621600000_resume.txt"),
+      "Jamie Rivers",
+    );
+    const bundle = createTestBundle("Jamie Rivers\nStaff Frontend Engineer");
+    const workspaceService = {
+      runResumeImport: vi.fn(
+        ({ baseResume }: { baseResume: ResumeSourceDocument }) =>
+          Promise.resolve(createSnapshot(baseResume)),
+      ),
+      getWorkspaceSnapshot: vi.fn(),
+      saveProfile: vi.fn(),
+    };
+    mockMkdir.mockResolvedValue(undefined);
+    mockCopyFile.mockResolvedValue(undefined);
+    mockGetJobFinderDocumentsDirectory.mockReturnValue(documentsDirectory);
+    mockGetJobFinderWorkspaceService.mockResolvedValue(workspaceService);
+    mockExtractResumeDocument.mockResolvedValue({
+      textContent: bundle.fullText,
+      bundle,
+      warnings: [],
+    });
+    const stoppedRun = ResumeImportRunSchema.parse({
+      id: "resume_import_cut_off",
+      sourceResumeId: "resume_1758621600000",
+      sourceResumeFileName: "resume.txt",
+      trigger: "import",
+      status: "failed",
+      startedAt: "2026-09-23T10:00:00.000Z",
+      completedAt: "2026-09-23T10:05:00.000Z",
+      errorMessage: RESUME_IMPORT_INTERRUPTED_MESSAGE,
+    });
+
+    try {
+      await retryInterruptedResumeImport(stoppedRun);
+
+      expect(mockCopyFile).toHaveBeenCalledWith(
+        path.join(documentsDirectory, "1758621600000_resume.txt"),
+        expect.stringMatching(/\d+_resume\.txt$/),
+      );
+      const importInput = workspaceService.runResumeImport.mock.calls[0]?.[0];
+      expect(importInput?.baseResume.fileName).toBe("resume.txt");
+
+      // A run stopped under an older wording is still recognised by its
+      // typed failure kind, not by comparing the sentence it saved.
+      workspaceService.runResumeImport.mockClear();
+      await retryInterruptedResumeImport({
+        ...stoppedRun,
+        errorMessage:
+          "This import stopped early because the app closed. Import the file again.",
+        failureKind: "interrupted",
+      });
+      expect(workspaceService.runResumeImport).toHaveBeenCalledOnce();
+      // A failure that was not an interruption offers nothing to redo.
+      await expect(
+        retryInterruptedResumeImport({
+          ...stoppedRun,
+          errorMessage: "The resume could not be read.",
+          failureKind: null,
+        }),
+      ).rejects.toThrow("There is no stopped import to start again.");
+
+      // Nothing to redo, or nothing left on disk: a plain sentence.
+      await expect(
+        retryInterruptedResumeImport({
+          ...stoppedRun,
+          status: "applied",
+          errorMessage: null,
+        }),
+      ).rejects.toThrow("There is no stopped import to start again.");
+      await expect(
+        retryInterruptedResumeImport({
+          ...stoppedRun,
+          sourceResumeId: "resume_1",
+        }),
+      ).rejects.toThrow("is no longer on this device");
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+});

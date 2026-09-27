@@ -1,24 +1,468 @@
 import {
+  ApplicationAttemptSchema,
   ApplicationAttemptBlockerSchema,
   ApplicationRecordSchema,
+  ApplyJobResultSchema,
+  ApplyRunSchema,
   ApplyExecutionResultSchema,
   UserActionRequestSchema,
+  type ApplyPageSession,
+  type RawApplyPage,
 } from "@unemployed/contracts";
 import type { BrowserSessionRuntime } from "@unemployed/browser-runtime";
 import { describe, expect, test, vi } from "vitest";
 
 import {
   describeApplicationBlockerReason,
+  handApplicationPageToPersonForAccessStep,
   persistApplicationUserAction,
+  terminalizeApplicationAfterPreparedPageLost,
 } from "./internal/workspace-application-user-action";
+import { reconcileReadyRunAfterApplicationResumption } from "./internal/workspace-application-user-action-resumption";
 import { reduceUserActionCommand } from "./user-action-domain";
+import * as submissionRunStep from "./internal/apply-submission-run-step";
 import { createJobFinderWorkspaceService } from "./index";
 import {
+  createAiClient,
   createBrowserRuntime,
   createSeed,
   createWorkspaceServiceHarness,
 } from "./workspace-service.test-support";
+
+function taskLocalSignInSession(onSubmitted: () => void): ApplyPageSession {
+  let signedIn = false;
+  const page = (): RawApplyPage => ({
+    url: signedIn
+      ? "https://fixture.example/application"
+      : "https://fixture.example/sign-in",
+    title: signedIn ? "Application" : "Sign in",
+    bodyText: signedIn ? "Application form" : "Sign in to continue",
+    headings: [],
+    controls: signedIn
+      ? []
+      : [
+          {
+            index: 0,
+            tagName: "input",
+            inputType: "email",
+            role: "textbox",
+            id: "email",
+            name: "email",
+            label: "Email",
+            groupLabel: "",
+            placeholder: "Email",
+            autocomplete: "username",
+            required: true,
+            invalid: false,
+            validationMessage: "",
+            disabled: false,
+            readOnly: false,
+            visible: true,
+            value: "",
+            checked: false,
+            multiple: false,
+            options: [],
+            selectedOptionLabel: "",
+          },
+          {
+            index: 1,
+            tagName: "input",
+            inputType: "password",
+            role: "textbox",
+            id: "password",
+            name: "password",
+            label: "Password",
+            groupLabel: "",
+            placeholder: "Password",
+            autocomplete: "current-password",
+            required: true,
+            invalid: false,
+            validationMessage: "",
+            disabled: false,
+            readOnly: false,
+            visible: true,
+            value: "",
+            checked: false,
+            multiple: false,
+            options: [],
+            selectedOptionLabel: "",
+          },
+        ],
+    actions: signedIn
+      ? []
+      : [
+          {
+            index: 0,
+            label: "Sign in",
+            visible: true,
+            disabled: false,
+            formAction: "https://login.example/session",
+            formMethod: "POST",
+          },
+        ],
+    links: [],
+    clickables: [],
+    openedTabs: [],
+    validationErrors: [],
+    stepLabel: null,
+    loading: false,
+  });
+  return {
+    readPage: () => Promise.resolve(page()),
+    navigate: (url) => Promise.resolve({ ok: true, url }),
+    clickElement: () => Promise.resolve({ ok: true, observedValue: "" }),
+    pressKey: (_ref, key) => Promise.resolve({ ok: true, observedValue: key }),
+    scroll: () => Promise.resolve({ ok: true, observedValue: "" }),
+    wait: () => Promise.resolve(),
+    goBack: () => Promise.resolve({ ok: true, url: page().url ?? "" }),
+    readText: () => Promise.resolve(page().bodyText),
+    fillText: () => Promise.resolve({ ok: true, observedValue: "redacted" }),
+    chooseOption: () => Promise.resolve({ ok: true, observedValue: "" }),
+    setToggle: () => Promise.resolve({ ok: true, observedValue: "" }),
+    uploadFile: () => Promise.resolve({ ok: true, observedValue: "" }),
+    clickAction: () => {
+      signedIn = true;
+      onSubmitted();
+      return Promise.resolve({ ok: true, observedValue: "signed in" });
+    },
+    followLink: () => Promise.resolve({ ok: true, url: page().url ?? "" }),
+    installPrepareOnlyGuard: () => Promise.resolve(),
+    readBlockedAttempt: () => Promise.resolve(null),
+    registerPreparedValue: () => Promise.resolve(),
+    openIntermediateWriteWindow: () => Promise.resolve(),
+    closeIntermediateWriteWindow: () => Promise.resolve(),
+    clickAuthorizedFormAction: () => {
+      signedIn = true;
+      onSubmitted();
+      return Promise.resolve({ ok: true, observedValue: "signed in" });
+    },
+    readIntermediateWriteCount: () => 0,
+    checkServiceWorker: () => Promise.resolve(null),
+  };
+}
+
+test("resumed ready preparation preserves queued jobs and the chosen run mode", () => {
+  const at = "2026-09-23T10:00:00.000Z";
+  const run = ApplyRunSchema.parse({
+    id: "run_queue_login",
+    mode: "queue_auto",
+    state: "paused_for_user_review",
+    jobIds: ["job_login", "job_next"],
+    currentJobId: "job_login",
+    createdAt: at,
+    updatedAt: at,
+    summary: "Sign in before continuing.",
+    detail: "The first job needs an account session.",
+    totalJobs: 2,
+    pendingJobs: 2,
+  });
+  const ready = ApplyJobResultSchema.parse({
+    id: "result_login",
+    runId: run.id,
+    jobId: "job_login",
+    state: "awaiting_review",
+    summary: "Application ready for review.",
+    detail: "The form is filled in.",
+    startedAt: at,
+    updatedAt: at,
+    blockerReason: null,
+  });
+  const next = ApplyJobResultSchema.parse({
+    id: "result_next",
+    runId: run.id,
+    jobId: "job_next",
+    state: "planned",
+    summary: "Waiting to start.",
+    detail: "This job has not been prepared.",
+    startedAt: at,
+    updatedAt: at,
+  });
+  const reconciled = reconcileReadyRunAfterApplicationResumption({
+    run,
+    results: [ready, next],
+    resumedRun: ApplyRunSchema.parse({
+      ...run,
+      mode: "copilot",
+      jobIds: ["job_login"],
+      totalJobs: 1,
+      summary: ready.summary,
+      detail: ready.detail,
+      pendingJobs: 1,
+    }),
+    resumedJobId: "job_login",
+    completedAt: at,
+    summary: ready.summary,
+    detail: ready.detail,
+  });
+  expect(reconciled).toMatchObject({
+    mode: "queue_auto",
+    state: "paused_for_user_review",
+    jobIds: ["job_login", "job_next"],
+    totalJobs: 2,
+    pendingJobs: 2,
+    currentJobId: "job_login",
+    completedAt: null,
+  });
+  expect(reconciled.summary).not.toContain("Sign in before continuing");
+});
 describe("application login UserActionRequest adoption", () => {
+  test("losing prepared A preserves sibling B running and reconciles the batch", async () => {
+    const harness = createWorkspaceServiceHarness({ seed: createSeed() });
+    const job = (await harness.repository.listSavedJobs())[0];
+    if (!job) throw new Error("Expected a saved job fixture.");
+    const occurredAt = "2026-07-30T10:05:00.000Z";
+    await harness.repository.upsertApplicationRecord(
+      ApplicationRecordSchema.parse({
+        id: "application_a",
+        jobId: job.id,
+        title: job.title,
+        company: job.company,
+        status: "ready_for_review",
+        lastActionLabel: "Prepared",
+        nextActionLabel: "Review",
+        lastUpdatedAt: "2026-07-30T10:02:00.000Z",
+        lastAttemptState: "ready",
+      }),
+    );
+    await harness.repository.upsertApplyRun(
+      ApplyRunSchema.parse({
+        id: "apply_run_ab",
+        mode: "copilot",
+        state: "running",
+        jobIds: [job.id, "job_b"],
+        currentJobId: "job_b",
+        createdAt: "2026-07-30T10:00:00.000Z",
+        updatedAt: "2026-07-30T10:02:00.000Z",
+        completedAt: null,
+        summary: "A is ready while B is filling.",
+        detail: "The batch is still running.",
+        totalJobs: 2,
+        pendingJobs: 2,
+      }),
+    );
+    await harness.repository.upsertApplyJobResult(
+      ApplyJobResultSchema.parse({
+        id: "apply_result_a",
+        runId: "apply_run_ab",
+        jobId: job.id,
+        applicationRecordId: "application_a",
+        state: "awaiting_review",
+        summary: "A is prepared.",
+        detail: "A is waiting for review.",
+        startedAt: "2026-07-30T10:00:00.000Z",
+        updatedAt: "2026-07-30T10:02:00.000Z",
+        completedAt: null,
+      }),
+    );
+    await harness.repository.upsertApplyJobResult(
+      ApplyJobResultSchema.parse({
+        id: "apply_result_b",
+        runId: "apply_run_ab",
+        jobId: "job_b",
+        applicationRecordId: "application_b",
+        state: "filling",
+        summary: "B is filling.",
+        detail: "B still owns the active browser work.",
+        startedAt: "2026-07-30T10:03:00.000Z",
+        updatedAt: "2026-07-30T10:04:00.000Z",
+        completedAt: null,
+      }),
+    );
+
+    await terminalizeApplicationAfterPreparedPageLost({
+      repository: harness.repository,
+      runId: "apply_run_ab",
+      jobId: job.id,
+      applicationRecordId: "application_a",
+      resultId: "apply_result_a",
+      occurredAt,
+      eventId: "event_page_a_lost",
+    });
+
+    expect(
+      (await harness.repository.listApplyRuns()).find(
+        (run) => run.id === "apply_run_ab",
+      ),
+    ).toMatchObject({
+      state: "running",
+      currentJobId: "job_b",
+      pendingJobs: 1,
+      failedJobs: 1,
+      completedAt: null,
+    });
+  });
+
+  test("a protected terminal result cannot change its application record", async () => {
+    const harness = createWorkspaceServiceHarness({ seed: createSeed() });
+    const job = (await harness.repository.listSavedJobs())[0];
+    if (!job) throw new Error("Expected a saved job fixture.");
+    await harness.repository.upsertApplicationRecord(
+      ApplicationRecordSchema.parse({
+        id: "application_submitted",
+        jobId: job.id,
+        title: job.title,
+        company: job.company,
+        status: "ready_for_review",
+        lastActionLabel: "Submitted",
+        nextActionLabel: "View application",
+        lastUpdatedAt: "2026-07-30T10:02:00.000Z",
+        lastAttemptState: "submitted",
+      }),
+    );
+    await harness.repository.upsertApplyRun(
+      ApplyRunSchema.parse({
+        id: "apply_run_submitted",
+        mode: "copilot",
+        state: "completed",
+        jobIds: [job.id],
+        currentJobId: null,
+        createdAt: "2026-07-30T10:00:00.000Z",
+        updatedAt: "2026-07-30T10:02:00.000Z",
+        completedAt: "2026-07-30T10:02:00.000Z",
+        summary: "Application submitted.",
+        detail: "The terminal outcome is protected.",
+        totalJobs: 1,
+        pendingJobs: 0,
+        submittedJobs: 1,
+      }),
+    );
+    await harness.repository.upsertApplyJobResult(
+      ApplyJobResultSchema.parse({
+        id: "apply_result_submitted",
+        runId: "apply_run_submitted",
+        jobId: job.id,
+        applicationRecordId: "application_submitted",
+        state: "submitted",
+        summary: "Application submitted.",
+        detail: "The employer confirmed receipt.",
+        startedAt: "2026-07-30T10:00:00.000Z",
+        updatedAt: "2026-07-30T10:02:00.000Z",
+        completedAt: "2026-07-30T10:02:00.000Z",
+      }),
+    );
+
+    await terminalizeApplicationAfterPreparedPageLost({
+      repository: harness.repository,
+      runId: "apply_run_submitted",
+      jobId: job.id,
+      applicationRecordId: "application_submitted",
+      resultId: "apply_result_submitted",
+      occurredAt: "2026-07-30T10:05:00.000Z",
+      eventId: "event_must_not_land",
+    });
+
+    expect(
+      (await harness.repository.listApplicationRecords()).find(
+        (record) => record.id === "application_submitted",
+      ),
+    ).toMatchObject({
+      lastAttemptState: "submitted",
+      lastActionLabel: "Submitted",
+    });
+
+    await harness.repository.upsertApplicationRecord(
+      ApplicationRecordSchema.parse({
+        id: "application_uncertain",
+        jobId: "job_uncertain",
+        title: "Uncertain application",
+        company: "Fixture employer",
+        status: "ready_for_review",
+        lastActionLabel: "Check the employer site",
+        nextActionLabel: "Verify whether it was sent",
+        lastUpdatedAt: "2026-07-30T10:03:00.000Z",
+        lastAttemptState: "failed",
+      }),
+    );
+    await harness.repository.upsertApplyRun(
+      ApplyRunSchema.parse({
+        id: "apply_run_uncertain",
+        mode: "copilot",
+        state: "completed",
+        jobIds: ["job_uncertain"],
+        currentJobId: null,
+        createdAt: "2026-07-30T10:00:00.000Z",
+        updatedAt: "2026-07-30T10:03:00.000Z",
+        completedAt: "2026-07-30T10:03:00.000Z",
+        summary: "Submission outcome is uncertain.",
+        detail: "The application must not be retried automatically.",
+        totalJobs: 1,
+        pendingJobs: 0,
+        failedJobs: 1,
+      }),
+    );
+    await harness.repository.upsertApplyJobResult(
+      ApplyJobResultSchema.parse({
+        id: "apply_result_uncertain",
+        runId: "apply_run_uncertain",
+        jobId: "job_uncertain",
+        applicationRecordId: "application_uncertain",
+        state: "failed",
+        summary: "Submission outcome is uncertain.",
+        detail: "Check the employer site before doing anything else.",
+        startedAt: "2026-07-30T10:00:00.000Z",
+        updatedAt: "2026-07-30T10:03:00.000Z",
+        completedAt: "2026-07-30T10:03:00.000Z",
+        privacyReceipt: {
+          generatedAt: "2026-07-30T10:03:00.000Z",
+          lineage: {
+            runId: "apply_run_uncertain",
+            jobId: "job_uncertain",
+            resultId: "apply_result_uncertain",
+            applicationRecordId: "application_uncertain",
+          },
+          destination: {
+            origin: "https://jobs.example.com",
+            safePath: "/apply",
+          },
+          resume: {
+            source: "original_upload",
+            sourceDocumentId: "resume_1",
+            fileName: "resume.pdf",
+            sha256: "a".repeat(64),
+          },
+          finalSubmitOccurred: false,
+          submissionOutcome: {
+            id: "outcome_uncertain",
+            preflightId: "preflight_uncertain",
+            idempotencyKey: "submit_uncertain",
+            authorityEnvelopeId: "authority_uncertain",
+            authorityRevision: 1,
+            runId: "apply_run_uncertain",
+            jobId: "job_uncertain",
+            resultId: "apply_result_uncertain",
+            applicationRecordId: "application_uncertain",
+            outcome: "outcome_uncertain",
+            attemptedAt: "2026-07-30T10:02:00.000Z",
+            verifiedAt: null,
+            evidence: [],
+            retry: {
+              eligible: false,
+              blockReason: "outcome_uncertain",
+            },
+          },
+        },
+      }),
+    );
+
+    await terminalizeApplicationAfterPreparedPageLost({
+      repository: harness.repository,
+      runId: "apply_run_uncertain",
+      jobId: "job_uncertain",
+      applicationRecordId: "application_uncertain",
+      resultId: "apply_result_uncertain",
+      occurredAt: "2026-07-30T10:06:00.000Z",
+      eventId: "event_uncertain_must_not_land",
+    });
+    expect(
+      (await harness.repository.listApplicationRecords()).find(
+        (record) => record.id === "application_uncertain",
+      ),
+    ).toMatchObject({
+      lastAttemptState: "failed",
+      lastActionLabel: "Check the employer site",
+    });
+  });
+
   test("persists one strict application-scoped request for a login blocker", async () => {
     const harness = createWorkspaceServiceHarness({ seed: createSeed() });
     const job = (await harness.repository.listSavedJobs())[0];
@@ -47,6 +491,14 @@ describe("application login UserActionRequest adoption", () => {
 
     const requests = await harness.repository.listUserActionRequests();
     expect(requests).toHaveLength(1);
+    // The sign-in is watched on the kept page, so the card never asks the
+    // person to come back and confirm it.
+    expect(requests[0]?.summary).toContain(
+      "carries on with this application by itself once you're in",
+    );
+    expect(
+      [requests[0]?.summary, ...(requests[0]?.instructions ?? [])].join(" "),
+    ).not.toMatch(/confirm/i);
     expect(requests[0]).toMatchObject({
       kind: "login",
       state: "pending",
@@ -73,6 +525,370 @@ describe("application login UserActionRequest adoption", () => {
       },
     });
   });
+
+  test("opens same-URL application handoffs by exact result binding", async () => {
+    const seed = createSeed();
+    const baseRuntime = createBrowserRuntime();
+    const focusApplicationPageBinding = vi.fn(
+      (_source: string, resultId: string) =>
+        Promise.resolve(resultId !== "apply_result_missing"),
+    );
+    const openSession = vi.spyOn(baseRuntime, "openSession");
+    const harness = createWorkspaceServiceHarness({
+      seed,
+      browserRuntime: {
+        ...baseRuntime,
+        focusApplicationPageBinding,
+      },
+    });
+    const job = (await harness.repository.listSavedJobs())[0];
+    if (!job) throw new Error("Expected a saved job fixture.");
+    const blocker = ApplicationAttemptBlockerSchema.parse({
+      code: "requires_manual_review",
+      userActionKind: "captcha",
+      summary: "Complete the CAPTCHA yourself.",
+      url: job.applicationUrl ?? job.canonicalUrl,
+    });
+
+    for (const suffix of ["a", "b"] as const) {
+      await persistApplicationUserAction({
+        repository: harness.repository,
+        applicationRecordId: `application_${suffix}`,
+        job,
+        runId: `apply_run_${suffix}`,
+        resultId: `apply_result_${suffix}`,
+        replayCheckpointId: `apply_checkpoint_${suffix}`,
+        blocker,
+        occurredAt: `2026-07-30T10:0${suffix === "a" ? "0" : "1"}:00.000Z`,
+      });
+    }
+    const requests = await harness.repository.listUserActionRequests();
+    for (const request of requests) {
+      if (request.scope.type !== "application") {
+        throw new Error("Expected application request.");
+      }
+      await harness.workspaceService.performUserAction({
+        commandId: `open_${request.id}`,
+        requestId: request.id,
+        expectedRevision: request.revision,
+        action: "open_page",
+      });
+    }
+
+    expect(focusApplicationPageBinding.mock.calls).toEqual(
+      expect.arrayContaining([
+        [job.source, "apply_result_a"],
+        [job.source, "apply_result_b"],
+      ]),
+    );
+    expect(openSession).not.toHaveBeenCalled();
+
+    const missingApplicationRecordId = "application_missing";
+    await harness.repository.upsertApplicationRecord(
+      ApplicationRecordSchema.parse({
+        id: missingApplicationRecordId,
+        jobId: job.id,
+        title: job.title,
+        company: job.company,
+        status: "ready_for_review",
+        lastActionLabel: "Paused on a step you have to finish.",
+        nextActionLabel: "Finish the step in the Job Finder browser.",
+        lastUpdatedAt: "2026-07-30T10:02:00.000Z",
+        lastAttemptState: "paused",
+        consentSummary: { status: "requested" },
+      }),
+    );
+    await harness.repository.upsertApplyRun(
+      ApplyRunSchema.parse({
+        id: "apply_run_missing",
+        mode: "copilot",
+        state: "paused_for_user_review",
+        jobIds: [job.id],
+        currentJobId: job.id,
+        createdAt: "2026-07-30T10:02:00.000Z",
+        updatedAt: "2026-07-30T10:02:00.000Z",
+        completedAt: null,
+        summary: "Waiting for the person.",
+        detail: "The prepared page is open.",
+        totalJobs: 1,
+        pendingJobs: 1,
+      }),
+    );
+    await harness.repository.upsertApplyJobResult(
+      ApplyJobResultSchema.parse({
+        id: "apply_result_missing",
+        runId: "apply_run_missing",
+        jobId: job.id,
+        applicationRecordId: missingApplicationRecordId,
+        state: "awaiting_review",
+        summary: "Waiting for the person.",
+        detail: "The prepared page is open.",
+        startedAt: "2026-07-30T10:02:00.000Z",
+        updatedAt: "2026-07-30T10:02:00.000Z",
+        completedAt: null,
+        blockerReason: "required_human_input",
+        blockerSummary: "Complete the CAPTCHA yourself.",
+      }),
+    );
+    await persistApplicationUserAction({
+      repository: harness.repository,
+      applicationRecordId: missingApplicationRecordId,
+      job,
+      runId: "apply_run_missing",
+      resultId: "apply_result_missing",
+      replayCheckpointId: "apply_checkpoint_missing",
+      blocker,
+      occurredAt: "2026-07-30T10:02:00.000Z",
+    });
+    const missing = (await harness.repository.listUserActionRequests()).find(
+      (request) =>
+        request.scope.type === "application" &&
+        request.scope.resultId === "apply_result_missing",
+    );
+    if (!missing) throw new Error("Expected missing-page request.");
+    const afterMissing = await harness.workspaceService.performUserAction({
+      commandId: "open_missing_binding",
+      requestId: missing.id,
+      expectedRevision: missing.revision,
+      action: "open_page",
+    });
+    expect(
+      (await harness.repository.getUserActionRequest(missing.id))?.state,
+    ).toBe("cancelled");
+    expect(
+      afterMissing.applicationRecords.find(
+        (record) => record.id === missingApplicationRecordId,
+      ),
+    ).toMatchObject({
+      lastAttemptState: "failed",
+      lastActionLabel: "The prepared application page is no longer open.",
+      nextActionLabel: "Try again, or finish it yourself on the job site.",
+    });
+    expect(
+      afterMissing.applyJobResults.find(
+        (result) => result.id === "apply_result_missing",
+      ),
+    ).toMatchObject({
+      state: "failed",
+      summary: "The prepared application page is no longer open.",
+      blockerReason: "unexpected_navigation",
+    });
+    expect(
+      afterMissing.applyRuns.find((run) => run.id === "apply_run_missing"),
+    ).toMatchObject({
+      state: "completed",
+      pendingJobs: 0,
+      failedJobs: 1,
+    });
+  });
+
+  test("a new sign-in or account step hands the kept page to the person; other steps do not", async () => {
+    const handApplicationPageToPerson = vi.fn(() => Promise.resolve());
+    for (const [code, expected] of [
+      ["site_login_required", 1],
+      ["missing_candidate_answer", 0],
+      ["application_page_unreachable", 0],
+    ] as const) {
+      handApplicationPageToPerson.mockClear();
+      await handApplicationPageToPersonForAccessStep({
+        browserRuntime: { handApplicationPageToPerson },
+        source: "target_site",
+        resultId: "result_1",
+        blocker: ApplicationAttemptBlockerSchema.parse({
+          code,
+          summary: "Blocked.",
+          url: "https://jobs.example.com/apply",
+        }),
+      });
+      expect(handApplicationPageToPerson).toHaveBeenCalledTimes(expected);
+    }
+    // No kept page: nothing to hand over, and nothing breaks.
+    await expect(
+      handApplicationPageToPersonForAccessStep({
+        browserRuntime: {
+          handApplicationPageToPerson: () =>
+            Promise.reject(new Error("no page")),
+        },
+        source: "target_site",
+        resultId: "result_1",
+        blocker: ApplicationAttemptBlockerSchema.parse({
+          code: "site_login_required",
+          summary: "Sign in.",
+          url: "https://jobs.example.com/apply",
+        }),
+      }),
+    ).resolves.toBeUndefined();
+  });
+
+  test("arms only the observed sign-in control on the retained application binding", async () => {
+    const baseRuntime = createBrowserRuntime();
+    const raw = await taskLocalSignInSession(() => undefined).readPage();
+    const armApplicationFormAction = vi.fn(() => Promise.resolve());
+    const closeApplicationFormAction = vi.fn(() => Promise.resolve());
+    const handApplicationPageToPerson = vi.fn(() => Promise.resolve());
+    const harness = createWorkspaceServiceHarness({
+      seed: createSeed(),
+      browserRuntime: {
+        ...baseRuntime,
+        focusApplicationPageBinding: vi.fn(() => Promise.resolve(true)),
+        readApplicationPageBinding: vi.fn(() => Promise.resolve(raw)),
+        armApplicationFormAction,
+        closeApplicationFormAction,
+        handApplicationPageToPerson,
+      },
+    });
+    const job = (await harness.repository.listSavedJobs())[0];
+    if (!job) throw new Error("Expected a saved job fixture.");
+    await persistApplicationUserAction({
+      repository: harness.repository,
+      applicationRecordId: `application_${job.id}`,
+      job,
+      runId: "run_exact_login",
+      resultId: "result_exact_login",
+      replayCheckpointId: "checkpoint_exact_login",
+      blocker: ApplicationAttemptBlockerSchema.parse({
+        code: "site_login_required",
+        summary: "Sign in before continuing.",
+        url: job.applicationUrl ?? job.canonicalUrl,
+      }),
+      occurredAt: "2026-07-30T10:00:00.000Z",
+    });
+    const request = (await harness.repository.listUserActionRequests())[0];
+    if (!request) throw new Error("Expected a sign-in request.");
+    await harness.workspaceService.performUserAction({
+      commandId: "open_exact_login",
+      requestId: request.id,
+      expectedRevision: request.revision,
+      action: "open_page",
+    });
+    expect(closeApplicationFormAction).toHaveBeenCalledWith(
+      job.source,
+      "result_exact_login",
+    );
+    // The person's own posts on the kept page (creating the account,
+    // signing in) go through while this step is theirs; the lock comes first.
+    expect(handApplicationPageToPerson).toHaveBeenCalledWith(
+      job.source,
+      "result_exact_login",
+    );
+    expect(closeApplicationFormAction.mock.invocationCallOrder[0]).toBeLessThan(
+      handApplicationPageToPerson.mock.invocationCallOrder[0]!,
+    );
+    // Confirming the step locks the page again before Job Finder continues.
+    const opened = await harness.repository.getUserActionRequest(request.id);
+    closeApplicationFormAction.mockClear();
+    await harness.workspaceService.performUserAction({
+      commandId: "confirm_exact_login",
+      requestId: request.id,
+      expectedRevision: opened!.revision,
+      action: "confirm_done",
+    });
+    expect(closeApplicationFormAction).toHaveBeenCalledWith(
+      job.source,
+      "result_exact_login",
+    );
+    expect(armApplicationFormAction).toHaveBeenCalledWith(job.source, {
+      pageBindingKey: "result_exact_login",
+      pageUrl: "https://fixture.example/sign-in",
+      ref: "a0",
+      label: "Sign in",
+      formAction: "https://login.example/session",
+      formMethod: "POST",
+    });
+  });
+
+  test.each(["page read", "arm"] as const)(
+    "a cancelled sign-in request is closed after a pending %s finishes",
+    async (heldPhase) => {
+      const baseRuntime = createBrowserRuntime();
+      const raw = await taskLocalSignInSession(() => undefined).readPage();
+      let releaseRead: (() => void) | undefined;
+      let reading: (() => void) | undefined;
+      const started = new Promise<void>((resolve) => {
+        reading = resolve;
+      });
+      const heldRead = new Promise<void>((resolve) => {
+        releaseRead = resolve;
+      });
+      const armApplicationFormAction = vi.fn(async () => {
+        if (heldPhase === "arm") {
+          reading?.();
+          await heldRead;
+        }
+      });
+      const closeApplicationFormAction = vi.fn(() => Promise.resolve());
+      const harness = createWorkspaceServiceHarness({
+        seed: createSeed(),
+        browserRuntime: {
+          ...baseRuntime,
+          focusApplicationPageBinding: vi.fn(() => Promise.resolve(true)),
+          readApplicationPageBinding: vi.fn(async () => {
+            if (heldPhase === "page read") {
+              reading?.();
+              await heldRead;
+            }
+            return raw;
+          }),
+          armApplicationFormAction,
+          closeApplicationFormAction,
+        },
+      });
+      const job = (await harness.repository.listSavedJobs())[0];
+      if (!job) throw new Error("Expected a saved job fixture.");
+      await persistApplicationUserAction({
+        repository: harness.repository,
+        applicationRecordId: `application_${job.id}`,
+        job,
+        runId: "run_cancelled_login",
+        resultId: "result_cancelled_login",
+        replayCheckpointId: "checkpoint_cancelled_login",
+        blocker: ApplicationAttemptBlockerSchema.parse({
+          code: "site_login_required",
+          summary: "Sign in before continuing.",
+          url: job.applicationUrl ?? job.canonicalUrl,
+        }),
+        occurredAt: "2026-07-30T10:00:00.000Z",
+      });
+      const request = (await harness.repository.listUserActionRequests())[0];
+      if (!request) throw new Error("Expected a sign-in request.");
+      const opening = harness.workspaceService.performUserAction({
+        commandId: "open_cancelled_login",
+        requestId: request.id,
+        expectedRevision: request.revision,
+        action: "open_page",
+      });
+      await started;
+      const cancellation = reduceUserActionCommand(
+        request,
+        {
+          commandId: "external_cancel_login",
+          requestId: request.id,
+          expectedRevision: request.revision,
+          action: "cancel",
+          reason: "The person closed this step.",
+          credentialsPolicy: "browser_only",
+          submitAuthorized: false,
+          accountCreationAuthorized: false,
+        },
+        "2026-07-30T10:01:00.000Z",
+      );
+      if (cancellation.status !== "applied")
+        throw new Error("Expected cancellation.");
+      await harness.repository.commitUserActionTransition({
+        request: cancellation.request,
+        event: cancellation.event,
+      });
+      releaseRead?.();
+      await opening;
+      expect(armApplicationFormAction).toHaveBeenCalledTimes(
+        heldPhase === "arm" ? 1 : 0,
+      );
+      expect(closeApplicationFormAction).toHaveBeenCalledWith(
+        job.source,
+        "result_cancelled_login",
+      );
+    },
+  );
 
   test("carries the concrete blocker reason into the Needs-you summary for an unclassified step", async () => {
     const harness = createWorkspaceServiceHarness({ seed: createSeed() });
@@ -179,6 +995,36 @@ describe("application login UserActionRequest adoption", () => {
       replayCheckpointId: "apply_checkpoint_unreachable",
       blocker,
       occurredAt: "2026-07-30T10:00:00.000Z",
+    });
+
+    expect(await harness.repository.listUserActionRequests()).toEqual([]);
+  });
+
+  test("persists no Needs-you request when the assistant stalls", async () => {
+    const harness = createWorkspaceServiceHarness({ seed: createSeed() });
+    const job = (await harness.repository.listSavedJobs())[0];
+    if (!job) throw new Error("Expected a saved job fixture.");
+    const blocker = ApplicationAttemptBlockerSchema.parse({
+      code: "requires_manual_review",
+      userActionKind: null,
+      summary: "The assistant did not answer in time.",
+      detail: "Nothing was submitted, and everything completed so far is kept.",
+      questionIds: [],
+      sourceDebugEvidenceRefIds: [],
+      url: job.applicationUrl,
+    });
+
+    await persistApplicationUserAction({
+      repository: harness.repository,
+      applicationRecordId: `application_${job.id}`,
+      job,
+      runId: "apply_run_timeout",
+      resultId: "apply_result_timeout",
+      resultState: "failed",
+      resultStartedAt: "2026-07-30T10:00:00.000Z",
+      replayCheckpointId: "apply_checkpoint_timeout",
+      blocker,
+      occurredAt: "2026-07-30T10:04:00.000Z",
     });
 
     expect(await harness.repository.listUserActionRequests()).toEqual([]);
@@ -657,11 +1503,594 @@ describe("application login UserActionRequest adoption", () => {
       | undefined;
     expect(executionCall?.[0]).toBe("target_site");
     expect(executionCall?.[1]).toMatchObject({
+      applicationPageBindingKey: result?.id,
       mode: "prepare_only",
       accountCreationAuthorized: false,
       submitAuthorized: false,
     });
     expect(executionCall?.[2]?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  test("uses task-local application credentials once without persisting either value", async () => {
+    const seed = createSeed();
+    seed.settings.resumeApplicationMode = "original_resume";
+    seed.profile.baseResume.storagePath = "C:/tmp/alex-vanguard.pdf";
+    const baseRuntime = createBrowserRuntime();
+    let executionCount = 0;
+    let signInSubmitted = false;
+    let releaseApplicationPreparation!: () => void;
+    const applicationPreparationReleased = new Promise<void>((resolve) => {
+      releaseApplicationPreparation = resolve;
+    });
+    let markApplicationPreparationStarted!: () => void;
+    const applicationPreparationStarted = new Promise<void>((resolve) => {
+      markApplicationPreparationStarted = resolve;
+    });
+    const executeApplicationFlow = vi.fn(
+      async (
+        source: Parameters<typeof baseRuntime.executeApplicationFlow>[0],
+        input: Parameters<typeof baseRuntime.executeApplicationFlow>[1],
+      ) => {
+        executionCount += 1;
+        const baseResult = await baseRuntime.executeApplicationFlow(
+          source,
+          input,
+        );
+        if (executionCount === 1) {
+          return ApplyExecutionResultSchema.parse({
+            ...baseResult,
+            state: "paused",
+            summary: "Sign in to continue",
+            detail: "The exact application page requires sign-in.",
+            blocker: {
+              code: "site_login_required",
+              summary: "Sign in to continue",
+              detail: "The exact application page requires sign-in.",
+              questionIds: [],
+              sourceDebugEvidenceRefIds: [],
+              url: input.job.applicationUrl ?? input.job.canonicalUrl,
+            },
+          });
+        }
+
+        if (!input.prepareTaskLocalCredentials) {
+          throw new Error("Expected the exact task-local sign-in callback.");
+        }
+        const session = taskLocalSignInSession(() => {
+          signInSubmitted = true;
+        });
+        await input.prepareTaskLocalCredentials({ session });
+        markApplicationPreparationStarted();
+        await applicationPreparationReleased;
+        return input.prepareApplicationForm({
+          session,
+          currentUrl: "https://fixture.example/application",
+          startedAt: "2026-09-22T02:00:00.000Z",
+        });
+      },
+    );
+    const baseAiClient = createAiClient();
+    const harness = createWorkspaceServiceHarness({
+      seed,
+      browserRuntime: { ...baseRuntime, executeApplicationFlow },
+      aiClient: {
+        ...baseAiClient,
+        chatWithTools: () =>
+          Promise.resolve({
+            toolCalls: [
+              {
+                id: "finish-prepared-application",
+                type: "function" as const,
+                function: {
+                  name: "finish",
+                  arguments: JSON.stringify({
+                    reason: "The signed-in application is ready for review.",
+                  }),
+                },
+              },
+            ],
+          }),
+      },
+    });
+
+    const blocked =
+      await harness.workspaceService.startApplyCopilotRun("job_ready");
+    const blockedRecord = blocked.applicationRecords[0];
+    if (!blockedRecord)
+      throw new Error("Expected a blocked application record.");
+    await harness.repository.upsertApplicationRecord({
+      ...blockedRecord,
+      automationMode: "confirm_before_submit",
+    });
+    const request = blocked.userActionRequests[0];
+    if (
+      !request ||
+      request.scope.type !== "application" ||
+      !request.scope.applicationRecordId
+    ) {
+      throw new Error("Expected an exact application login request.");
+    }
+    const identifier = "fixture-person-task-local@example.test";
+    const password = "test-secret-task-local-value";
+
+    const resumedPromise = harness.workspaceService.performUserAction({
+      action: "submit_task_local_credentials",
+      requestId: request.id,
+      commandId: "command-task-local-sign-in",
+      expectedRevision: request.revision,
+      identifier,
+      password,
+      taskLocalUseAuthorized: true,
+      credentialsPolicy: "browser_only",
+      submitAuthorized: false,
+      accountCreationAuthorized: false,
+    });
+    await applicationPreparationStarted;
+
+    // Renderer polling while the application is still preparing must join
+    // the exact application resumption. It must not run generic source-access
+    // verification against the same request revision.
+    const concurrentSnapshotPromise =
+      harness.workspaceService.getWorkspaceSnapshot();
+    await Promise.resolve();
+    expect(
+      (await harness.repository.getUserActionRequest(request.id))?.state,
+    ).toBe("verifying");
+    releaseApplicationPreparation();
+    const [resumed, concurrentSnapshot] = await Promise.all([
+      resumedPromise,
+      concurrentSnapshotPromise,
+    ]);
+
+    expect({
+      signInSubmitted,
+      executionCount,
+      callbackPresent: Boolean(
+        executeApplicationFlow.mock.calls[1]?.[1].prepareTaskLocalCredentials,
+      ),
+      requestState: resumed.userActionRequests[0]?.state,
+      attemptSummary: resumed.applicationAttempts.at(-1)?.summary,
+      attemptDetail: resumed.applicationAttempts.at(-1)?.detail,
+      attemptState: resumed.applicationAttempts.at(-1)?.state,
+      recordAttemptState: resumed.applicationRecords[0]?.lastAttemptState,
+      resultState: resumed.applyJobResults[0]?.state,
+    }).toEqual({
+      signInSubmitted: true,
+      executionCount: 2,
+      callbackPresent: true,
+      requestState: "resolved",
+      attemptSummary:
+        "The browser step is complete and this application is ready for you.",
+      attemptDetail:
+        "Job Finder verified the exact step on the retained application page and continued the form without sending it.",
+      attemptState: "ready",
+      recordAttemptState: "ready",
+      resultState: "awaiting_review",
+    });
+    expect(resumed.applyJobResults[0]?.reviewCard).toMatchObject({
+      pageUrl: "https://fixture.example/application",
+      waitingOnYou: [],
+    });
+    expect(resumed.applyRuns[0]).toMatchObject({
+      mode: "copilot",
+      state: "paused_for_user_review",
+      currentJobId: "job_ready",
+      pendingJobs: 1,
+      completedAt: null,
+      summary: resumed.applyJobResults[0]?.summary,
+      detail: resumed.applyJobResults[0]?.detail,
+    });
+    expect(executeApplicationFlow).toHaveBeenCalledTimes(2);
+    expect(resumed.userActionRequests[0]?.state).toBe("resolved");
+    expect(concurrentSnapshot.userActionRequests[0]?.state).toBe("resolved");
+    expect(resumed.applicationRecords[0]?.automationMode).toBe(
+      "confirm_before_submit",
+    );
+    const persisted = {
+      request: await harness.repository.getUserActionRequest(request.id),
+      events: await harness.repository.listUserActionEvents({
+        requestId: request.id,
+      }),
+      answers: await harness.repository.listApplicationAnswerRecords({
+        applicationRecordId: request.scope.applicationRecordId,
+      }),
+      snapshot: resumed,
+    };
+    expect(JSON.stringify(persisted)).not.toContain(identifier);
+    expect(JSON.stringify(persisted)).not.toContain(password);
+    expect(persisted.events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "command-task-local-sign-in",
+          operation: "submit_task_local_credentials",
+        }),
+      ]),
+    );
+  });
+
+  test("persists a question discovered after task-local sign-in so one answer can continue it", async () => {
+    const seed = createSeed();
+    seed.settings.resumeApplicationMode = "original_resume";
+    seed.profile.baseResume.storagePath = "C:/tmp/alex-vanguard.pdf";
+    const baseRuntime = createBrowserRuntime();
+    let executionCount = 0;
+    const executeApplicationFlow = vi.fn(
+      async (
+        source: Parameters<typeof baseRuntime.executeApplicationFlow>[0],
+        input: Parameters<typeof baseRuntime.executeApplicationFlow>[1],
+      ) => {
+        executionCount += 1;
+        const baseResult = await baseRuntime.executeApplicationFlow(
+          source,
+          input,
+        );
+        if (executionCount === 1) {
+          return ApplyExecutionResultSchema.parse({
+            ...baseResult,
+            state: "paused",
+            summary: "Sign in to continue",
+            detail: "The exact application page requires sign-in.",
+            blocker: {
+              code: "site_login_required",
+              summary: "Sign in to continue",
+              detail: "The exact application page requires sign-in.",
+              questionIds: [],
+              sourceDebugEvidenceRefIds: [],
+              url: input.job.applicationUrl ?? input.job.canonicalUrl,
+            },
+          });
+        }
+        if (executionCount === 2) {
+          if (!input.prepareTaskLocalCredentials) {
+            throw new Error("Expected the exact task-local sign-in callback.");
+          }
+          await input.prepareTaskLocalCredentials({
+            session: taskLocalSignInSession(() => undefined),
+          });
+          return ApplyExecutionResultSchema.parse({
+            ...baseResult,
+            state: "paused",
+            summary: "One source answer is required",
+            detail: "Choose how this job was found.",
+            questions: [
+              {
+                id: "question_job_source",
+                prompt: "How did you hear about this job?",
+                kind: "other",
+                answerControlType: "single_choice",
+                isRequired: true,
+                detectedAt: "2026-09-22T02:00:00.000Z",
+                answerOptions: ["Job board", "Company website", "Referral"],
+                suggestedAnswers: [],
+                submittedAnswer: null,
+                status: "detected",
+              },
+            ],
+            blocker: {
+              code: "missing_candidate_answer",
+              userActionKind: "manual_answer",
+              summary: "Choose how this job was found.",
+              detail: "The answer is not in the profile.",
+              questionIds: ["question_job_source"],
+              sourceDebugEvidenceRefIds: [],
+              url: input.job.applicationUrl ?? input.job.canonicalUrl,
+            },
+          });
+        }
+        expect(
+          input.profile.answerBank.customAnswers.map((answer) => answer.answer),
+        ).toContain("Job board");
+        return baseResult;
+      },
+    );
+    const harness = createWorkspaceServiceHarness({
+      seed,
+      browserRuntime: { ...baseRuntime, executeApplicationFlow },
+    });
+
+    const blocked =
+      await harness.workspaceService.startApplyCopilotRun("job_ready");
+    const blockedRecord = blocked.applicationRecords[0];
+    if (!blockedRecord)
+      throw new Error("Expected a blocked application record.");
+    await harness.repository.upsertApplicationRecord({
+      ...blockedRecord,
+      automationMode: "confirm_before_submit",
+    });
+    const loginRequest = blocked.userActionRequests.find(
+      (request) => request.kind === "login",
+    );
+    if (!loginRequest) throw new Error("Expected a login request.");
+
+    const afterSignIn = await harness.workspaceService.performUserAction({
+      action: "submit_task_local_credentials",
+      requestId: loginRequest.id,
+      commandId: "command-task-local-sign-in-before-question",
+      expectedRevision: loginRequest.revision,
+      identifier: "fixture-person@example.test",
+      password: "fixture-task-secret",
+      taskLocalUseAuthorized: true,
+      credentialsPolicy: "browser_only",
+      submitAuthorized: false,
+      accountCreationAuthorized: false,
+    });
+    const answerRequest = afterSignIn.userActionRequests.find(
+      (request) => request.kind === "manual_answer",
+    );
+    if (
+      !answerRequest ||
+      answerRequest.scope.type !== "application" ||
+      !answerRequest.scope.resultId
+    ) {
+      throw new Error("Expected a manual-answer request after sign-in.");
+    }
+    expect(afterSignIn.applicationRecords[0]?.automationMode).toBe(
+      "confirm_before_submit",
+    );
+    expect(
+      await harness.repository.listApplicationQuestionRecords({
+        resultId: answerRequest.scope.resultId,
+      }),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          prompt: "How did you hear about this job?",
+          status: "detected",
+        }),
+      ]),
+    );
+
+    const resumed = await harness.workspaceService.performUserAction({
+      commandId: "submit-source-answer",
+      requestId: answerRequest.id,
+      expectedRevision: answerRequest.revision,
+      action: "submit_manual_answer",
+      answer: "Job board",
+      saveForFuture: true,
+      credentialsPolicy: "browser_only",
+      submitAuthorized: false,
+      accountCreationAuthorized: false,
+    });
+
+    expect(executeApplicationFlow).toHaveBeenCalledTimes(3);
+    expect(resumed.applicationRecords[0]?.automationMode).toBe(
+      "confirm_before_submit",
+    );
+    expect(
+      resumed.userActionRequests.find(
+        (request) => request.id === answerRequest.id,
+      )?.state,
+    ).toBe("resolved");
+    expect(
+      await harness.repository.listApplicationAnswerRecords({
+        resultId: answerRequest.scope.resultId,
+      }),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sourceId: answerRequest.id,
+          text: "Job board",
+        }),
+      ]),
+    );
+  });
+
+  test.each([
+    { outcome: "confirmed", confirmed: true, cancelled: false },
+    { outcome: "cancelled", confirmed: true, cancelled: true },
+    { outcome: "uncertain", confirmed: false, cancelled: false },
+  ])(
+    "reconciles a resumed send only when confirmed, preserving cancellation: $outcome",
+    async ({ confirmed, cancelled }) => {
+      const seed = createSeed();
+      seed.settings.resumeApplicationMode = "original_resume";
+      seed.profile.baseResume.storagePath = "C:/tmp/alex-vanguard.pdf";
+      const baseRuntime = createBrowserRuntime();
+      let executionCount = 0;
+      const executeApplicationFlow: BrowserSessionRuntime["executeApplicationFlow"] =
+        async (source, input) => {
+          const baseResult = await baseRuntime.executeApplicationFlow(
+            source,
+            input,
+          );
+          executionCount += 1;
+          if (executionCount > 1) {
+            if (!input.prepareTaskLocalCredentials)
+              throw new Error("Expected sign-in callback.");
+            await input.prepareTaskLocalCredentials({
+              session: taskLocalSignInSession(() => undefined),
+            });
+            return baseResult;
+          }
+          return ApplyExecutionResultSchema.parse({
+            ...baseResult,
+            state: "paused",
+            blocker: {
+              code: "site_login_required",
+              summary: "Sign in to continue",
+              detail: "The exact application needs sign-in.",
+              questionIds: [],
+              sourceDebugEvidenceRefIds: [],
+              url: input.job.applicationUrl ?? input.job.canonicalUrl,
+            },
+          });
+        };
+      const harness = createWorkspaceServiceHarness({
+        seed,
+        browserRuntime: { ...baseRuntime, executeApplicationFlow },
+      });
+      const blocked =
+        await harness.workspaceService.startApplyCopilotRun("job_ready");
+      const request = blocked.userActionRequests[0];
+      if (!request) throw new Error("Expected a login request.");
+      // The submission runtime owns the durable result; this regression tests
+      // its caller's reconciliation after that runtime confirms receipt.
+      const send = vi
+        .spyOn(submissionRunStep, "sendPreparedApplicationIfAllowed")
+        .mockImplementationOnce(async ({ lineage }) => {
+          const result = (
+            await harness.repository.listApplyJobResults({
+              runId: lineage.runId,
+            })
+          ).find((entry) => entry.id === lineage.resultId);
+          const run = (
+            await harness.repository.listApplyRuns({ id: lineage.runId })
+          )[0];
+          if (!result || !run)
+            throw new Error("Expected exact resumed lineage.");
+          const now = new Date().toISOString();
+          await harness.repository.upsertApplyJobResult(
+            ApplyJobResultSchema.parse({
+              ...result,
+              state: confirmed ? "submitted" : "failed",
+              updatedAt: now,
+              completedAt: now,
+            }),
+          );
+          if (cancelled) {
+            await harness.repository.upsertApplyRun(
+              ApplyRunSchema.parse({
+                ...run,
+                state: "cancelled",
+                updatedAt: now,
+                completedAt: now,
+              }),
+            );
+          }
+          return {
+            sent: true,
+            confirmedSubmitted: confirmed,
+            pageClosed: false,
+            summary: "Application submitted",
+            detail: "The employer confirmed receipt.",
+            nextActionLabel: "View application",
+          };
+        });
+      try {
+        const resumed = await harness.workspaceService.performUserAction({
+          action: "submit_task_local_credentials",
+          requestId: request.id,
+          identifier: "fixture@example.test",
+          password: "synthetic-test-secret",
+          taskLocalUseAuthorized: true,
+          commandId: `confirm-login-send-${cancelled}`,
+          expectedRevision: request.revision,
+          credentialsPolicy: "browser_only",
+          submitAuthorized: false,
+          accountCreationAuthorized: false,
+        });
+        expect(send).toHaveBeenCalledOnce();
+        expect(resumed.applyJobResults[0]?.state).toBe(
+          confirmed ? "submitted" : "failed",
+        );
+        if (confirmed) {
+          expect(resumed.applicationRecords[0]?.lastAttemptState).toBe(
+            "submitted",
+          );
+        } else {
+          expect(resumed.applicationRecords[0]?.lastAttemptState).not.toBe(
+            "submitted",
+          );
+        }
+        const run = resumed.applyRuns.find(
+          (entry) => entry.id === blocked.applyRuns[0]?.id,
+        );
+        if (cancelled) {
+          expect(run?.state).toBe("cancelled");
+        } else if (!confirmed) {
+          expect(run?.submittedJobs).toBe(0);
+          expect(run?.state).not.toBe("completed");
+        } else {
+          expect(run).toMatchObject({
+            state: "completed",
+            currentJobId: null,
+            pendingJobs: 0,
+            submittedJobs: 1,
+            failedJobs: 0,
+            blockedJobs: 0,
+          });
+          expect(run?.completedAt).toBeTruthy();
+        }
+      } finally {
+        send.mockRestore();
+      }
+    },
+  );
+
+  test("resolves the sign-in step when later application preparation fails", async () => {
+    const seed = createSeed();
+    seed.settings.resumeApplicationMode = "original_resume";
+    seed.profile.baseResume.storagePath = "C:/tmp/alex-vanguard.pdf";
+    const baseRuntime = createBrowserRuntime();
+    let executionCount = 0;
+    const executeApplicationFlow = vi.fn(
+      async (
+        source: Parameters<typeof baseRuntime.executeApplicationFlow>[0],
+        input: Parameters<typeof baseRuntime.executeApplicationFlow>[1],
+      ) => {
+        executionCount += 1;
+        const baseResult = await baseRuntime.executeApplicationFlow(
+          source,
+          input,
+        );
+        if (executionCount === 1) {
+          return ApplyExecutionResultSchema.parse({
+            ...baseResult,
+            state: "paused",
+            summary: "Sign in to continue",
+            detail: "The exact application page requires sign-in.",
+            blocker: {
+              code: "site_login_required",
+              summary: "Sign in to continue",
+              detail: "The exact application page requires sign-in.",
+              questionIds: [],
+              sourceDebugEvidenceRefIds: [],
+              url: input.job.applicationUrl ?? input.job.canonicalUrl,
+            },
+          });
+        }
+        if (!input.prepareTaskLocalCredentials) {
+          throw new Error("Expected the exact task-local sign-in callback.");
+        }
+        await input.prepareTaskLocalCredentials({
+          session: taskLocalSignInSession(() => undefined),
+        });
+        return ApplyExecutionResultSchema.parse({
+          ...baseResult,
+          state: "failed",
+          summary: "Application preparation timed out",
+          detail: "The form remained open and can be tried again.",
+          blocker: null,
+        });
+      },
+    );
+    const harness = createWorkspaceServiceHarness({
+      seed,
+      browserRuntime: { ...baseRuntime, executeApplicationFlow },
+    });
+    const blocked =
+      await harness.workspaceService.startApplyCopilotRun("job_ready");
+    const request = blocked.userActionRequests[0];
+    if (!request) throw new Error("Expected a login request.");
+
+    const resumed = await harness.workspaceService.performUserAction({
+      action: "submit_task_local_credentials",
+      requestId: request.id,
+      commandId: "command-task-local-sign-in-then-failure",
+      expectedRevision: request.revision,
+      identifier: "fixture-person@example.test",
+      password: "synthetic-test-secret",
+      taskLocalUseAuthorized: true,
+      credentialsPolicy: "browser_only",
+      submitAuthorized: false,
+      accountCreationAuthorized: false,
+    });
+
+    expect(resumed.userActionRequests[0]?.state).toBe("resolved");
+    expect(resumed.applyJobResults[0]?.state).toBe("failed");
+    expect(resumed.applyJobResults[0]?.summary).toBe(
+      "Application preparation timed out",
+    );
   });
   test("synthesizes an exact resumable checkpoint when a blocker omits runtime checkpoints", async () => {
     const seed = createSeed();
@@ -738,6 +2167,7 @@ describe("application login UserActionRequest adoption", () => {
 
     expect(executeApplicationFlow).toHaveBeenCalledTimes(2);
     expect(executeApplicationFlow.mock.calls[1]?.[1]).toMatchObject({
+      applicationPageBindingKey: request.scope.resultId,
       mode: "prepare_only",
       accountCreationAuthorized: false,
       submitAuthorized: false,
@@ -829,6 +2259,61 @@ describe("application login UserActionRequest adoption", () => {
       });
     },
   );
+
+  test("names the file an upload step needs", async () => {
+    const seed = createSeed();
+    seed.settings.resumeApplicationMode = "original_resume";
+    seed.profile.baseResume.storagePath = "C:/tmp/alex-vanguard.pdf";
+    const baseRuntime = createBrowserRuntime();
+    const harness = createWorkspaceServiceHarness({
+      seed,
+      browserRuntime: {
+        ...baseRuntime,
+        executeApplicationFlow: async (source, input) =>
+          ApplyExecutionResultSchema.parse({
+            ...(await baseRuntime.executeApplicationFlow(source, input)),
+            state: "paused",
+            summary: "Browser action required",
+            detail:
+              "Job Finder filled in what it could and needs your answers to 1 question.",
+            questions: [
+              {
+                id: "question_transcript",
+                prompt: "Academic transcript",
+                kind: "other",
+                answerControlType: "file",
+                isRequired: true,
+                detectedAt: "2026-07-30T10:00:00.000Z",
+                answerOptions: [],
+                suggestedAnswers: [],
+                submittedAnswer: null,
+                status: "detected",
+              },
+            ],
+            blocker: {
+              code: "missing_candidate_answer",
+              userActionKind: "manual_upload",
+              summary:
+                "Job Finder filled in what it could and needs your answers to 1 question.",
+              questionIds: ["question_transcript"],
+              url: input.job.applicationUrl ?? input.job.canonicalUrl,
+            },
+          }),
+      },
+    });
+
+    const snapshot =
+      await harness.workspaceService.startApplyCopilotRun("job_ready");
+    const request = snapshot.userActionRequests[0];
+
+    expect(request?.kind).toBe("manual_upload");
+    expect(request?.title).toMatch(
+      /^Add your academic transcript to continue/u,
+    );
+    expect(request?.summary).toMatch(
+      /form asks for your academic transcript\. Add or restore it in Profile › Files/u,
+    );
+  });
 
   test("rejects a submitted result reported through the prepare-only production path", async () => {
     const seed = createSeed();
@@ -1176,6 +2661,14 @@ describe("application login UserActionRequest adoption", () => {
     expect(resumed.applyJobResults[0]?.lastUserActionResumptionId).toContain(
       request.id,
     );
+    expect(resumed.applyJobResults[0]?.state).toBe("awaiting_review");
+    expect(resumed.applyRuns[0]).toMatchObject({
+      mode: "copilot",
+      state: "paused_for_user_review",
+      pendingJobs: 1,
+      summary: resumed.applyJobResults[0]?.summary,
+      detail: resumed.applyJobResults[0]?.detail,
+    });
     const resumptionAttempt = resumed.applicationAttempts.find(
       (attempt) => attempt.userActionResumption?.requestId === request.id,
     );
@@ -1470,6 +2963,13 @@ describe("application login UserActionRequest adoption", () => {
 
     const blocked =
       await harness.workspaceService.startApplyCopilotRun("job_ready");
+    const blockedRecord = blocked.applicationRecords[0];
+    if (!blockedRecord)
+      throw new Error("Expected a blocked application record.");
+    await harness.repository.upsertApplicationRecord({
+      ...blockedRecord,
+      automationMode: "autonomous_submit",
+    });
     const request = blocked.userActionRequests[0];
     if (
       !request ||
@@ -1522,6 +3022,9 @@ describe("application login UserActionRequest adoption", () => {
       }),
     ]);
     expect(resumed.userActionRequests[0]?.state).toBe("resolved");
+    expect(resumed.applicationRecords[0]?.automationMode).toBe(
+      "autonomous_submit",
+    );
     expect(resumed.applyJobResults[0]?.lastUserActionResumptionId).toContain(
       request.id,
     );
@@ -1543,6 +3046,197 @@ describe("application login UserActionRequest adoption", () => {
     const restarted = await restartedService.getWorkspaceSnapshot();
     expect(restartExecuteApplicationFlow).not.toHaveBeenCalled();
     expect(restarted.userActionRequests[0]?.state).toBe("resolved");
+  });
+
+  test("an answered step whose check an earlier run of the app left unfinished carries on", async () => {
+    const seed = createSeed();
+    seed.settings.resumeApplicationMode = "original_resume";
+    seed.profile.baseResume.storagePath = "C:/tmp/alex-vanguard.pdf";
+    const baseRuntime = createBrowserRuntime();
+    let executionCount = 0;
+    const executeApplicationFlow = vi.fn(
+      async (
+        source: Parameters<typeof baseRuntime.executeApplicationFlow>[0],
+        input: Parameters<typeof baseRuntime.executeApplicationFlow>[1],
+      ) => {
+        executionCount += 1;
+        const baseResult = await baseRuntime.executeApplicationFlow(
+          source,
+          input,
+        );
+        return executionCount === 1
+          ? ApplyExecutionResultSchema.parse({
+              ...baseResult,
+              state: "paused",
+              summary: "A required answer needs you",
+              detail: "Answer this question in the browser.",
+              questions: [
+                {
+                  id: "question_work_authorization",
+                  prompt: "Are you authorized to work in this location?",
+                  kind: "work_authorization",
+                  answerControlType: "text",
+                  isRequired: true,
+                  detectedAt: "2026-07-30T10:00:00.000Z",
+                  answerOptions: [],
+                  suggestedAnswers: [],
+                  submittedAnswer: null,
+                  status: "detected",
+                },
+              ],
+              blocker: {
+                code: "missing_candidate_answer",
+                userActionKind: "manual_answer",
+                summary: "Answer the work authorization question.",
+                detail: "The answer stays in the browser.",
+                questionIds: ["question_work_authorization"],
+                sourceDebugEvidenceRefIds: [],
+                url: input.job.applicationUrl ?? input.job.canonicalUrl,
+              },
+            })
+          : baseResult;
+      },
+    );
+    const harness = createWorkspaceServiceHarness({
+      seed,
+      browserRuntime: { ...baseRuntime, executeApplicationFlow },
+    });
+
+    const blocked =
+      await harness.workspaceService.startApplyCopilotRun("job_ready");
+    const request = blocked.userActionRequests[0];
+    if (
+      !request ||
+      request.scope.type !== "application" ||
+      !request.scope.applicationRecordId ||
+      !request.scope.resultId
+    ) {
+      throw new Error("Expected a manual application action.");
+    }
+    // An earlier run of the app claimed this step's check and quit before it
+    // ran (a restart while it waited for its site): the attempt is still in
+    // progress in the store, and nothing in this process is running it.
+    await harness.repository.upsertApplicationAttempt(
+      ApplicationAttemptSchema.parse({
+        id: `application_user_action_resume_${request.id}_r3`,
+        jobId: request.scope.jobId,
+        applicationRecordId: request.scope.applicationRecordId,
+        state: "in_progress",
+        summary: "Checking the completed browser step once",
+        detail: "Scheduled before the app was restarted.",
+        startedAt: "2026-07-30T10:05:00.000Z",
+        updatedAt: "2026-07-30T10:05:00.000Z",
+        completedAt: null,
+        outcome: null,
+        nextActionLabel: null,
+        userActionResumption: {
+          requestId: request.id,
+          requestRevision: 3,
+          verificationEventId: `verification:${request.id}:r2`,
+          runId: request.scope.runId,
+          jobId: request.scope.jobId,
+          resultId: request.scope.resultId,
+          replayCheckpointId: request.scope.replayCheckpointId,
+        },
+      }),
+    );
+
+    const resumed = await harness.workspaceService.performUserAction({
+      commandId: "submit_manual_answer_after_restart",
+      requestId: request.id,
+      expectedRevision: request.revision,
+      action: "submit_manual_answer",
+      answer: "Yes, I am authorized to work in this location.",
+      saveForFuture: false,
+      credentialsPolicy: "browser_only",
+      submitAuthorized: false,
+      accountCreationAuthorized: false,
+    });
+
+    expect(executeApplicationFlow).toHaveBeenCalledTimes(2);
+    expect(resumed.userActionRequests[0]?.state).toBe("resolved");
+    const attempt = resumed.applicationAttempts.find(
+      (entry) => entry.id === `application_user_action_resume_${request.id}_r3`,
+    );
+    expect(attempt?.completedAt).toBeTruthy();
+    expect(attempt?.state).not.toBe("in_progress");
+  });
+
+  test("offers retry immediately after a failed answer continuation", async () => {
+    const seed = createSeed();
+    seed.settings.resumeApplicationMode = "original_resume";
+    seed.profile.baseResume.storagePath = "C:/tmp/alex-vanguard.pdf";
+    const baseRuntime = createBrowserRuntime();
+    let executionCount = 0;
+    const executeApplicationFlow = vi.fn(
+      async (
+        source: Parameters<typeof baseRuntime.executeApplicationFlow>[0],
+        input: Parameters<typeof baseRuntime.executeApplicationFlow>[1],
+      ) => {
+        const baseResult = await baseRuntime.executeApplicationFlow(
+          source,
+          input,
+        );
+        executionCount += 1;
+        return ApplyExecutionResultSchema.parse({
+          ...baseResult,
+          state: executionCount === 1 ? "paused" : "failed",
+          summary:
+            executionCount === 1
+              ? "A required answer needs you"
+              : "The prepared page is no longer open.",
+          detail: "Nothing was sent.",
+          blocker:
+            executionCount === 1
+              ? {
+                  code: "missing_candidate_answer",
+                  userActionKind: "manual_answer",
+                  summary: "Answer the work authorization question.",
+                  questionIds: ["question_work_authorization"],
+                  url: input.job.applicationUrl ?? input.job.canonicalUrl,
+                }
+              : null,
+        });
+      },
+    );
+    const harness = createWorkspaceServiceHarness({
+      seed,
+      browserRuntime: { ...baseRuntime, executeApplicationFlow },
+    });
+    const blocked =
+      await harness.workspaceService.startApplyCopilotRun("job_ready");
+    const request = blocked.userActionRequests[0];
+    if (!request) throw new Error("Expected a manual application action.");
+    const originalResult = blocked.applyJobResults[0];
+    const originalRun = blocked.applyRuns.find(
+      (run) => run.id === originalResult?.runId,
+    );
+    if (!originalResult || !originalRun)
+      throw new Error("Expected apply lineage.");
+    const checked = await harness.workspaceService.performUserAction({
+      commandId: "confirm_answer_with_closed_page",
+      requestId: request.id,
+      expectedRevision: request.revision,
+      action: "confirm_done",
+    });
+    expect(executeApplicationFlow).toHaveBeenCalledTimes(2);
+    expect(
+      checked.userActionRequests.find((entry) => entry.id === request.id)
+        ?.state,
+    ).toBe("superseded");
+    const failedResult = checked.applyJobResults.find(
+      (result) => result.id === originalResult.id,
+    );
+    expect(failedResult?.state).toBe("failed");
+    expect(
+      checked.applyRuns.find((run) => run.id === originalRun.id),
+    ).toMatchObject({
+      state: "completed",
+      failedJobs: 1,
+      pendingJobs: 0,
+    });
+    expect(checked.applicationRecords[0]?.lastAttemptState).toBe("failed");
+    expect(failedResult?.lastUserActionResumptionId).toContain(request.id);
   });
 
   test("keeps the action blocked when the same stable blocker rerenders with different prose", async () => {
@@ -1770,6 +3464,83 @@ describe("application login UserActionRequest adoption", () => {
   });
 });
 
+// Gate 3: the app closed while an answered step was being checked. Startup
+// failed the batch run first, and the check then left the card on "still
+// blocked" asking the person to do what was already done.
+describe("a step whose run ended before its check", () => {
+  test("closes the step and leaves Could not apply with Try again", async () => {
+    const seed = createSeed();
+    seed.settings.resumeApplicationMode = "original_resume";
+    seed.profile.baseResume.storagePath = "C:/tmp/alex-vanguard.pdf";
+    const baseRuntime = createBrowserRuntime();
+    const executeApplicationFlow = vi.fn(
+      async (
+        source: Parameters<typeof baseRuntime.executeApplicationFlow>[0],
+        input: Parameters<typeof baseRuntime.executeApplicationFlow>[1],
+      ) => {
+        const baseResult = await baseRuntime.executeApplicationFlow(
+          source,
+          input,
+        );
+        return ApplyExecutionResultSchema.parse({
+          ...baseResult,
+          state: "paused",
+          summary: "A required answer needs you",
+          detail: "Answer this question in the browser.",
+          blocker: {
+            code: "missing_candidate_answer",
+            userActionKind: "manual_answer",
+            summary: "Answer the work authorization question.",
+            questionIds: ["question_work_authorization"],
+            url: input.job.applicationUrl ?? input.job.canonicalUrl,
+          },
+        });
+      },
+    );
+    const harness = createWorkspaceServiceHarness({
+      seed,
+      browserRuntime: { ...baseRuntime, executeApplicationFlow },
+    });
+
+    const blocked =
+      await harness.workspaceService.startApplyCopilotRun("job_ready");
+    const request = blocked.userActionRequests[0];
+    const run = blocked.applyRuns[0];
+    if (!request || request.scope.type !== "application" || !run)
+      throw new Error("Expected a manual application step.");
+    const applicationRecordId = request.scope.applicationRecordId;
+    await harness.repository.upsertApplyRun({
+      ...run,
+      state: "failed",
+      summary: "Automatic apply stopped because the app closed",
+      completedAt: "2026-07-30T11:00:00.000Z",
+      updatedAt: "2026-07-30T11:00:00.000Z",
+    });
+
+    const checked = await harness.workspaceService.performUserAction({
+      commandId: "confirm_manual_answer_after_run_failed",
+      requestId: request.id,
+      expectedRevision: request.revision,
+      action: "confirm_done",
+    });
+
+    expect(executeApplicationFlow).toHaveBeenCalledTimes(1);
+    expect(checked.userActionRequests[0]?.state).toBe("cancelled");
+    expect(checked.applyJobResults[0]).toMatchObject({
+      state: "failed",
+      summary: "The prepared application page is no longer open.",
+    });
+    expect(
+      checked.applicationRecords.find(
+        (record) => record.id === applicationRecordId,
+      ),
+    ).toMatchObject({
+      lastAttemptState: "failed",
+      nextActionLabel: "Try again, or finish it yourself on the job site.",
+    });
+  });
+});
+
 // R4: "I clicked Cancel this step on both blocked items and each time the page
 // said the step was closed, but the header badge stayed on Needs you: 2
 // unresolved and the job still showed NEEDS YOU in Applications."
@@ -1793,6 +3564,39 @@ describe("cancelling a browser step releases the application waiting on it", () 
         consentSummary: { status: "requested" },
       }),
     );
+    await harness.repository.upsertApplyRun(
+      ApplyRunSchema.parse({
+        id: "apply_run_cancel",
+        mode: "copilot",
+        state: "paused_for_user_review",
+        jobIds: [job.id],
+        currentJobId: job.id,
+        createdAt: "2026-07-30T10:00:00.000Z",
+        updatedAt: "2026-07-30T10:00:00.000Z",
+        completedAt: null,
+        summary: "Waiting for the person.",
+        detail: "One step needs the person.",
+        totalJobs: 1,
+        pendingJobs: 1,
+      }),
+    );
+    await harness.repository.upsertApplyJobResult(
+      ApplyJobResultSchema.parse({
+        id: "apply_result_cancel",
+        runId: "apply_run_cancel",
+        jobId: job.id,
+        applicationRecordId,
+        state: "awaiting_review",
+        summary: "Waiting for the person.",
+        detail: "One step needs the person.",
+        startedAt: "2026-07-30T10:00:00.000Z",
+        updatedAt: "2026-07-30T10:00:00.000Z",
+        completedAt: null,
+        blockerReason: "required_human_input",
+        blockerSummary: "Sign in before continuing.",
+        latestQuestionCount: 1,
+      }),
+    );
     await persistApplicationUserAction({
       repository: harness.repository,
       applicationRecordId,
@@ -1803,7 +3607,8 @@ describe("cancelling a browser step releases the application waiting on it", () 
       blocker: ApplicationAttemptBlockerSchema.parse({
         code: "site_login_required",
         summary: "Sign in before continuing.",
-        detail: "The application page requires a browser-owned account session.",
+        detail:
+          "The application page requires a browser-owned account session.",
         questionIds: [],
         sourceDebugEvidenceRefIds: [],
         url: job.applicationUrl,
@@ -1834,10 +3639,22 @@ describe("cancelling a browser step releases the application waiting on it", () 
     const released = after.applicationRecords.find(
       (record) => record.id === applicationRecordId,
     );
-    expect(released?.lastAttemptState).toBe("unsupported");
+    expect(released?.lastAttemptState).toBe("failed");
     expect(released?.nextActionLabel).toBe(
-      "Finish this application yourself on the job site.",
+      "Try again, or finish it yourself on the job site.",
     );
+    expect(released?.questionSummary.total).toBe(0);
+    expect(
+      after.applyJobResults.find(
+        (result) => result.id === "apply_result_cancel",
+      ),
+    ).toMatchObject({
+      state: "failed",
+      latestQuestionCount: 0,
+    });
+    expect(
+      after.applyRuns.find((run) => run.id === "apply_run_cancel"),
+    ).toMatchObject({ state: "completed", pendingJobs: 0, failedJobs: 1 });
     // Nothing is left claiming the person still owes this application a step.
     expect(
       (await harness.repository.listUserActionRequests()).filter(

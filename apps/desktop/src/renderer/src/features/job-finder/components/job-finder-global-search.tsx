@@ -22,7 +22,7 @@ const kindLabels: Record<JobFinderGlobalSearchKind, string> = {
   application: "Applications",
   campaign: "Search plans",
   company: "Companies",
-  document: "Documents",
+  document: "Resumes",
   job: "Jobs and companies",
 };
 
@@ -184,7 +184,7 @@ export function JobFinderGlobalSearch(props: {
         id={inputId}
         onChange={(event) => handleQueryChange(event.target.value)}
         onKeyDown={handleInputKeyDown}
-        placeholder="Search jobs, companies, applications, plans, or documents"
+        placeholder="Search jobs, companies, applications, plans, or resumes"
         role="combobox"
         type="search"
         value={query}
@@ -207,7 +207,7 @@ export function JobFinderGlobalSearch(props: {
           </p>
           {groups.length === 0 ? (
             <p className="rounded-(--radius-field) px-3 py-5 text-center text-sm text-foreground-soft">
-              Nothing in your saved jobs, companies, applications, or documents
+              Nothing in your saved jobs, companies, applications, or resumes
               matches &ldquo;{query}&rdquo;.
             </p>
           ) : (

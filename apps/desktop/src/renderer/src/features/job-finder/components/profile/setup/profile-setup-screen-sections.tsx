@@ -37,6 +37,7 @@ import {
   getReviewItemEditHint,
   getProfileSetupReviewItemCopy,
   isFinishBlockingReviewItem,
+  isProfileSetupMissingFieldReviewItem,
   isProfileSetupPathStepComplete,
   type ProfileSetupPathStepReadiness,
   type ProfileSetupReviewItemDisplay,
@@ -73,6 +74,11 @@ function getCandidateConflictLabel(
 export function ProfileSetupSummaryCards(props: {
   actionMessage: string | null;
   importDisabledReason?: string | null;
+  /** Set when the last import was cut off by the app closing. */
+  interruptedImportMessage?: string | null;
+  interruptedImportFileName?: string | null;
+  /** Imports that file again from the copy the stopped import saved. */
+  onRetryInterruptedImport?: () => void;
   isImportResumePending: boolean;
   isProfileSetupPending: boolean;
   resumeImportProgress: ResumeImportProgressEvent | null;
@@ -107,12 +113,36 @@ export function ProfileSetupSummaryCards(props: {
           <CardTitle>Start with the resume you already have.</CardTitle>
           <CardDescription className="max-w-2xl">
             Job Finder fills in your profile from it and asks only about the
-            gaps. The file stays on this device. The text read from it is
-            sent to Job Finder&apos;s AI to fill in your profile; nothing is
-            sent anywhere else.
+            gaps. The file stays on this device. The text read from it is sent
+            to Job Finder&apos;s AI to fill in your profile; nothing is sent
+            anywhere else.
           </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-5 pt-6">
+          {props.interruptedImportMessage ? (
+            <div
+              className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-(--radius-field) border border-(--warning-border) bg-(--warning-surface) p-3 text-sm leading-6 text-(--warning-text)"
+              data-profile-setup-import-interrupted
+              role="status"
+            >
+              <p className="min-w-0 flex-1 basis-80">
+                {props.interruptedImportMessage}
+              </p>
+              {props.onRetryInterruptedImport &&
+              props.interruptedImportFileName ? (
+                <Button
+                  disabled={Boolean(props.importDisabledReason)}
+                  onClick={props.onRetryInterruptedImport}
+                  pending={props.isImportResumePending}
+                  size="compact"
+                  type="button"
+                  variant="outline"
+                >
+                  Import {props.interruptedImportFileName} again
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
           <div className="grid items-stretch gap-3 sm:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
             <button
               // F49: this card was `bg-foreground text-background`, which in
@@ -141,7 +171,7 @@ export function ProfileSetupSummaryCards(props: {
               type="button"
             >
               <span className="sr-only">Recommended. </span>
-              <span className="inline-flex w-fit items-center gap-2 rounded-(--radius-button) border border-primary bg-primary px-4 py-2 font-semibold text-(--primary-foreground) shadow-[0_1px_0_var(--surface-inset-highlight)] group-hover:bg-primary/90">
+              <span className="inline-flex w-fit items-center gap-2 rounded-(--radius-button) border border-primary-fill bg-primary-fill px-4 py-2 font-semibold text-primary-fill-foreground shadow-[0_1px_0_var(--surface-inset-highlight)] group-hover:bg-primary-fill/90">
                 <FolderOpen className="size-4 shrink-0" />
                 {props.isImportResumePending
                   ? props.resumeImportProgress === null
@@ -208,7 +238,10 @@ export function ProfileSetupSummaryCards(props: {
             <ul className="mt-2 grid list-none gap-1.5 p-0 text-(length:--text-body) leading-7 text-foreground">
               <li>Your resume, or the same details entered by hand.</li>
               <li>At least one contact method, such as an email address.</li>
-              <li>A work-mode preference, like remote, hybrid, onsite, or flexible.</li>
+              <li>
+                Where you can work, and whether you would need visa sponsorship:
+                application forms ask both.
+              </li>
               <li>
                 One public job page for Job Finder to search — for example, a
                 job board you already browse.
@@ -383,6 +416,9 @@ export function ProfileSetupPathCard(props: {
 
 export function ProfileSetupReviewQueueCard(props: {
   compact?: boolean;
+  title?: string;
+  description?: string;
+  getSavedValue?: (item: ProfileSetupReviewItemDisplay) => string | null;
   actionsDisabledReason?: string | null;
   isReviewItemPending: (reviewItemId: string) => boolean;
   items: readonly ProfileSetupReviewItemDisplay[];
@@ -455,6 +491,12 @@ export function ProfileSetupReviewQueueCard(props: {
     props.onApplyReviewAction(reviewItemId, action, options);
   };
 
+  // A card whose only content is "nothing to confirm" is a box that says
+  // nothing; the step editor already has the room.
+  if (props.items.length === 0) {
+    return null;
+  }
+
   return (
     <Card
       className="min-h-0 flex-1 overflow-hidden rounded-(--radius-panel) border-border/40 scroll-mt-4 sm:scroll-mt-[8.25rem] min-[1440px]:!scroll-mt-[4.5rem]"
@@ -464,17 +506,10 @@ export function ProfileSetupReviewQueueCard(props: {
       <CardHeader className="gap-2 border-b border-border/30 pb-5">
         {/* The stepper chip above owns the count for this step; this card
             owns the items themselves and never restates the number. */}
-        <CardTitle>
-          {props.compact
-            ? "Suggested search targets"
-            : "Still to confirm on this step"}
-        </CardTitle>
+        <CardTitle>{props.title ?? "Still to confirm on this step"}</CardTitle>
         <CardDescription>
-          {props.items.length === 0
-            ? "Nothing to confirm on this step."
-            : props.compact
-              ? "Confirm the targets you want to search for, or edit them in the form below."
-              : "Imported suggestions stay here until you confirm, dismiss, or clear them. Required details stay here until you fill them in."}
+          {props.description ??
+            "Imported suggestions stay here until you confirm, dismiss, or clear them. Required details stay here until you fill them in."}
         </CardDescription>
       </CardHeader>
       <CardContent className="flex min-h-0 flex-1 flex-col gap-3 pt-6">
@@ -496,6 +531,7 @@ export function ProfileSetupReviewQueueCard(props: {
               {props.items.map((item) => {
                 const isRowReviewActionPending = isReviewActionPending(item.id);
                 const itemCopy = getProfileSetupReviewItemCopy(item);
+                const savedValue = props.getSavedValue?.(item);
                 const editActionLabel = getReviewItemEditActionLabel(item);
                 const linkedCandidate = item.sourceCandidateId
                   ? (resumeImportCandidateById.get(item.sourceCandidateId) ??
@@ -507,6 +543,12 @@ export function ProfileSetupReviewQueueCard(props: {
                 return (
                   <div
                     key={item.id}
+                    id={
+                      item.sourceCandidateId
+                        ? `profile-import-review-${item.sourceCandidateId}`
+                        : undefined
+                    }
+                    tabIndex={-1}
                     className="rounded-(--radius-field) border border-border/30 bg-background/50 p-4"
                   >
                     <div className="flex flex-wrap items-start justify-between gap-3">
@@ -546,6 +588,16 @@ export function ProfileSetupReviewQueueCard(props: {
                         ) : null}
                       </div>
                     </div>
+                    {item.status === "pending" && savedValue ? (
+                      <div className="mt-3 rounded-(--radius-field) border border-border/40 bg-background/70 p-3">
+                        <p className="text-(length:--text-tiny) uppercase tracking-[0.2em] text-muted-foreground">
+                          Currently saved
+                        </p>
+                        <p className="mt-2 text-sm text-foreground">
+                          {savedValue}
+                        </p>
+                      </div>
+                    ) : null}
                     {item.status === "pending" && item.proposedValue ? (
                       <div className="mt-3 rounded-(--radius-field) border border-dashed border-border/40 bg-background/70 p-3">
                         <p className="text-(length:--text-tiny) uppercase tracking-[0.2em] text-muted-foreground">
@@ -679,7 +731,11 @@ export function ProfileSetupReviewQueueCard(props: {
                             Confirm
                           </Button>
                         ) : null}
-                        {canClearReviewItem(item) ? (
+                        {/* A field that was never set has nothing to clear;
+                            offering "Clear current value" there reads as a
+                            third mystery button. */}
+                        {canClearReviewItem(item) &&
+                        !isProfileSetupMissingFieldReviewItem(item) ? (
                           <Button
                             disabled={
                               Boolean(props.actionsDisabledReason) ||

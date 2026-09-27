@@ -1,7 +1,13 @@
 // @vitest-environment jsdom
 
 import { act } from "react";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
 import type {
   JobFinderResumePreview,
   JobFinderResumeWorkspace,
@@ -445,6 +451,7 @@ function renderScreen(options?: {
     patchIds: readonly string[],
   ) => void;
   onRestoreRevision?: (jobId: string, revisionId: string) => void;
+  onUndoAiEdit?: (jobId: string, revisionId: string) => void;
   onSaveDraftAndThen?: (
     draft: ResumeDraft,
     next: () => void | Promise<void>,
@@ -485,6 +492,7 @@ function renderScreen(options?: {
         options?.onResolveAssistantProposal ?? vi.fn()
       }
       onRestoreRevision={options?.onRestoreRevision ?? vi.fn()}
+      onUndoAiEdit={options?.onUndoAiEdit ?? vi.fn()}
       onSaveDraft={vi.fn()}
       onSaveDraftAndThen={options?.onSaveDraftAndThen ?? vi.fn()}
       onSendAssistantMessage={vi.fn()}
@@ -564,7 +572,7 @@ describe("ResumeWorkspaceScreen", () => {
     vi.clearAllMocks();
   });
 
-  it("opens the one mounted proof disclosure from Review blocked claims at desktop width", async () => {
+  it("opens the one mounted proof disclosure from Review 1 line at desktop width", async () => {
     // Both studio layouts used to mount at once, so `id="resume-proof-details"`
     // existed twice and `getElementById` always returned the CSS-hidden
     // compact copy: at >= 1280px the button opened, scrolled and focused a
@@ -602,7 +610,7 @@ describe("ResumeWorkspaceScreen", () => {
     expect(proof.closest(".xl\\:hidden")).toBeNull();
 
     const review = screen.getByRole("button", {
-      name: "Review blocked claims",
+      name: "Review 1 line",
     });
     await act(async () => {
       fireEvent.click(review);
@@ -715,7 +723,7 @@ describe("ResumeWorkspaceScreen", () => {
     ).toBe("Application PDF ready · 1 page. Download a copy if you want one.");
     expect(
       screen.getAllByRole("button", {
-        name: /Fill it in|Approve resume|Download PDF/,
+        name: /Apply|Approve resume|Download PDF/,
       }).length,
     ).toBeGreaterThan(0);
   });
@@ -901,13 +909,14 @@ describe("ResumeWorkspaceScreen", () => {
 
     expect(screen.getByRole("dialog", { name: "Assistant" })).toBeTruthy();
     expect(guidedEditToggle?.getAttribute("aria-expanded")).toBe("true");
-    expect(screen.getAllByText("No edit requests yet").length).toBeGreaterThan(
-      0,
-    );
     expect(
-      screen.getAllByText(
-        "Ask for a tighter summary, stronger bullets, or clearer job-specific wording.",
-      ).length,
+      screen.getAllByText("Ask for a change, or ask what to change").length,
+    ).toBeGreaterThan(0);
+    // Three ready questions, the first being the one most people want.
+    expect(
+      screen.getAllByRole("button", {
+        name: "What would you change to fit this job better?",
+      }).length,
     ).toBeGreaterThan(0);
   });
 
@@ -947,6 +956,7 @@ describe("ResumeWorkspaceScreen", () => {
         onRefresh={vi.fn()}
         onRegenerateDraft={vi.fn()}
         onRestoreRevision={vi.fn()}
+        onUndoAiEdit={vi.fn()}
         onSaveDraft={vi.fn()}
         onSaveDraftAndThen={vi.fn()}
         onSendAssistantMessage={vi.fn()}
@@ -992,6 +1002,7 @@ describe("ResumeWorkspaceScreen", () => {
           onRefresh={vi.fn()}
           onRegenerateDraft={vi.fn()}
           onRestoreRevision={vi.fn()}
+          onUndoAiEdit={vi.fn()}
           onSaveDraft={vi.fn()}
           onSaveDraftAndThen={vi.fn()}
           onSendAssistantMessage={vi.fn()}
@@ -1231,7 +1242,7 @@ describe("ResumeWorkspaceScreen", () => {
     );
     fireEvent.click(
       screen.getByRole("button", {
-        name: "Try the AI draft again — this replaces your edits",
+        name: "Create a new AI draft — this replaces your edits",
       }),
     );
     // The whole-draft rewrite states what it replaces and asks once.
@@ -1300,6 +1311,7 @@ describe("ResumeWorkspaceScreen", () => {
       throw new Error("Expected a section with text in the fixture.");
     }
     const onRestoreRevision = vi.fn();
+    const onUndoAiEdit = vi.fn();
     const acceptedWorkspace = JobFinderResumeWorkspaceSchema.parse({
       ...workspace,
       revisions: [
@@ -1324,6 +1336,7 @@ describe("ResumeWorkspaceScreen", () => {
 
     renderScreen({
       onRestoreRevision,
+      onUndoAiEdit,
       workspace: acceptedWorkspace,
       assistantMessages: [
         buildAssistantMessage({
@@ -1361,12 +1374,14 @@ describe("ResumeWorkspaceScreen", () => {
     expect(notice?.textContent).toContain("1 AI edit applied");
 
     // Accepting a proposal is undoable from the page it changed, not only
-    // from version history.
+    // from version history. Undo removes only that AI edit; it does not
+    // restore the whole pre-edit draft over later manual edits.
     fireEvent.click(screen.getByRole("button", { name: "Undo" }));
-    expect(onRestoreRevision).toHaveBeenCalledWith(
+    expect(onUndoAiEdit).toHaveBeenCalledWith(
       "job_ready",
       "revision_assistant_1",
     );
+    expect(onRestoreRevision).not.toHaveBeenCalled();
   });
 
   it("keeps only the focused section open and still lands on its exact field", async () => {
@@ -1589,6 +1604,7 @@ describe("ResumeWorkspaceScreen", () => {
         onRefresh={vi.fn()}
         onRegenerateDraft={vi.fn()}
         onRestoreRevision={vi.fn()}
+        onUndoAiEdit={vi.fn()}
         onSaveDraft={vi.fn()}
         onSaveDraftAndThen={vi.fn()}
         onSendAssistantMessage={vi.fn()}
@@ -1838,6 +1854,7 @@ describe("ResumeWorkspaceScreen", () => {
         onRefresh={vi.fn()}
         onRegenerateDraft={vi.fn()}
         onRestoreRevision={vi.fn()}
+        onUndoAiEdit={vi.fn()}
         onSaveDraft={vi.fn()}
         onSaveDraftAndThen={vi.fn()}
         onSendAssistantMessage={vi.fn()}
@@ -2231,6 +2248,7 @@ describe("ResumeWorkspaceScreen", () => {
           onRegenerateDraft={vi.fn()}
           onResolveAssistantProposal={onResolveAssistantProposal}
           onRestoreRevision={vi.fn()}
+          onUndoAiEdit={vi.fn()}
           onSaveDraft={vi.fn()}
           onSaveDraftAndThen={vi.fn()}
           onSendAssistantMessage={vi.fn()}
@@ -2581,7 +2599,7 @@ describe("ResumeWorkspaceScreen", () => {
       },
     );
 
-    it("opens the Assistant without changing a single class on the preview or tools panes", async () => {
+    it("docks the open Assistant beside the panes instead of over them", async () => {
       renderScreen();
 
       await act(async () => {
@@ -2606,11 +2624,17 @@ describe("ResumeWorkspaceScreen", () => {
               ?.className ?? null,
         };
       };
+      const dockSlot = () =>
+        document.querySelector<HTMLElement>(
+          "[data-resume-studio-assistant-dock-slot]",
+        );
 
       const closed = readStudio();
       expect(closed.gridColumns).toBe("preview-tools");
       expect(closed.previewClass).toBeTruthy();
       expect(closed.toolsClass).toBeTruthy();
+      expect(dockSlot()?.className).toContain("hidden");
+      expect(dockSlot()?.childElementCount).toBe(0);
 
       fireEvent.click(
         screen.getByRole("button", { name: /^Open the Assistant/ }),
@@ -2619,30 +2643,37 @@ describe("ResumeWorkspaceScreen", () => {
       const panel = screen.getByRole("dialog", { name: "Assistant" });
       const opened = readStudio();
 
-      // The Assistant used to become a real third grid track, which squeezed
-      // both panes and shifted everything in them. It floats over the studio
-      // now: nothing behind it may react to it.
-      expect(opened).toEqual(closed);
-      expect(document.querySelector("[data-resume-assistant-dock]")).toBeNull();
+      // The floating panel rested over the tools column (Save, template,
+      // editor). Open, it is now a column of its own in the studio body:
+      // never inside the preview/tools grid, never portalled over the page.
+      expect(panel.parentElement).toBe(dockSlot());
       expect(panel.closest("[data-resume-studio-grid-columns]")).toBeNull();
-      expect(
-        document.querySelector<HTMLElement>("[data-resume-guided-edits-open]")
-          ?.parentElement,
-      ).toBe(document.body);
-      // Its own pixel box, sized by the window rather than by a studio column.
-      expect(panel.style.width).toBe(
-        window.innerWidth >= 1280 ? "384px" : "360px",
+      expect(panel.getAttribute("data-resume-guided-edits-docked")).toBe(
+        "true",
       );
+      expect(
+        dockSlot()?.getAttribute("data-resume-studio-assistant-docked"),
+      ).toBe("true");
+      expect(dockSlot()?.className).toContain(
+        "w-(--resume-assistant-dock-width)",
+      );
+      // The panes themselves are untouched; only the grid narrows to make room.
+      expect(opened.previewClass).toBe(closed.previewClass);
+      expect(opened.toolsClass).toBe(closed.toolsClass);
+      expect(opened.gridColumns).toBe(closed.gridColumns);
+      // Docked, it has no drag grip: there is nowhere to drag it to.
+      expect(within(panel).queryByLabelText("Drag the Assistant")).toBeNull();
 
       fireEvent.click(
         screen.getAllByRole("button", { name: "Minimize the Assistant" })[0]!,
       );
 
-      // Minimized back to the launcher pill: still identical.
+      // Minimized back to the launcher: the studio is exactly as it was.
       expect(readStudio()).toEqual(closed);
       expect(
         document.querySelector("[data-resume-guided-edits-panel]"),
       ).toBeNull();
+      expect(dockSlot()?.className).toContain("hidden");
       expect(
         screen.getByRole("button", { name: /^Open the Assistant/ }),
       ).toBeTruthy();

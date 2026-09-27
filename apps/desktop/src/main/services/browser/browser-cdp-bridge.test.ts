@@ -52,17 +52,32 @@ async function fixture() {
     getURL: () => "https://example.test/",
   }) as unknown as WebContents;
   const page: BrowserCdpPage = { id: "owned-tab", contents };
+  const closed: string[] = [];
+  const automationInput: string[] = [];
   const bridge = new BrowserCdpBridge({
     pages: () => [page],
     createPage: () => Promise.reject(new Error("Not used")),
-    closePage: () => undefined,
+    closePage: (id) => {
+      closed.push(id);
+    },
     selectPage: () => undefined,
     onPageCreated: () => () => undefined,
     userAgent: () => "Synthetic browser",
+    onAutomationInput: (id) => {
+      automationInput.push(id);
+    },
   });
   const transport = await bridge.start();
   resources.push(() => bridge.close());
-  return { bridge, transport, calls, debuggerEvents };
+  return {
+    bridge,
+    transport,
+    calls,
+    debuggerEvents,
+    page,
+    closed,
+    automationInput,
+  };
 }
 
 async function connect(transport: {
@@ -200,5 +215,90 @@ describe("scoped embedded browser transport", () => {
     expect(
       (await client.send("Runtime.enable", {}, parent)).error,
     ).toBeUndefined();
+  });
+
+  test("learns which tab a run works in from a token its page command carries", async () => {
+    const { bridge, transport } = await fixture();
+    const client = await connect(transport);
+    await client.send("Target.setAutoAttach", { autoAttach: true });
+    const session = String(
+      client.messages.find(
+        (message) => message.method === "Target.attachedToTarget",
+      )?.params?.sessionId,
+    );
+    const found = bridge.waitForToken("claim-token-1", 1_000);
+    await client.send(
+      "Runtime.callFunctionOn",
+      {
+        functionDeclaration: "(v) => v",
+        arguments: [{ value: "claim-token-1" }],
+      },
+      session,
+    );
+    await expect(found).resolves.toBe("owned-tab");
+    await expect(bridge.waitForToken("never-sent", 20)).resolves.toBeNull();
+  });
+
+  test("a released tab leaves automation without closing, and comes back when reclaimed", async () => {
+    const { bridge, transport, page, closed } = await fixture();
+    const client = await connect(transport);
+    await client.send("Target.setAutoAttach", { autoAttach: true });
+    const session = String(
+      client.messages.find(
+        (message) => message.method === "Target.attachedToTarget",
+      )?.params?.sessionId,
+    );
+    bridge.releasePage("owned-tab");
+    await client.send("Browser.getVersion");
+    // The client is told the page went away; the tab itself was not closed.
+    expect(
+      client.messages.some(
+        (message) =>
+          message.method === "Target.detachedFromTarget" &&
+          message.params?.sessionId === session,
+      ),
+    ).toBe(true);
+    expect(closed).toEqual([]);
+    expect(
+      (await client.send("Target.getTargets")).result?.targetInfos,
+    ).toEqual([]);
+    // Its old session and a close aimed at it both fail; nothing is closed.
+    expect(
+      (await client.send("Runtime.enable", {}, session)).error?.message,
+    ).toContain("no longer available");
+    expect(
+      (await client.send("Target.closeTarget", { targetId: "owned-page" }))
+        .error?.message,
+    ).toContain("not owned");
+    expect(closed).toEqual([]);
+
+    await bridge.reclaimPage(page);
+    await client.send("Browser.getVersion");
+    const reattached = client.messages.filter(
+      (message) => message.method === "Target.attachedToTarget",
+    );
+    expect(reattached).toHaveLength(2);
+    expect(
+      (await client.send("Target.getTargets")).result?.targetInfos,
+    ).toEqual([expect.objectContaining({ targetId: "owned-page" })]);
+  });
+
+  test("tells the host when automation sends input to a tab, so it is not mistaken for the person", async () => {
+    const { transport, automationInput } = await fixture();
+    const client = await connect(transport);
+    await client.send("Target.setAutoAttach", { autoAttach: true });
+    const session = String(
+      client.messages.find(
+        (message) => message.method === "Target.attachedToTarget",
+      )?.params?.sessionId,
+    );
+    await client.send("Runtime.enable", {}, session);
+    expect(automationInput).toEqual([]);
+    await client.send(
+      "Input.dispatchMouseEvent",
+      { type: "mousePressed", x: 1, y: 1 },
+      session,
+    );
+    expect(automationInput).toEqual(["owned-tab"]);
   });
 });

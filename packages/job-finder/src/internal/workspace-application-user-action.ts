@@ -1,5 +1,7 @@
 import {
   ApplicationRecordSchema,
+  ApplyJobResultSchema,
+  ApplyRunSchema,
   JOB_FINDER_BROWSER_LABEL,
   UserActionRequestSchema,
   type ApplicationAttemptBlocker,
@@ -13,7 +15,10 @@ import type { JobFinderRepository } from "@unemployed/db";
 import {
   isUserActionTerminal,
   reduceUserActionSuperseded,
+  reduceUserActionCommand,
 } from "../user-action-domain";
+import { withApplicationRecordTransition } from "./application-crm";
+import { reconcileApplyRunAfterConfirmedSubmission } from "./workspace-apply-run-support";
 
 const applicationAuthenticationKinds = new Set<UserActionRequestKind>([
   "login",
@@ -182,6 +187,40 @@ function detailRestatesSummary(summary: string, detail: string): boolean {
   ).length;
 
   return shared / summaryWords.size >= REASON_RESTATEMENT_OVERLAP;
+}
+
+/** The labels of the file fields a blocked form still needs, in form order. */
+async function listNeededApplicationFiles(input: {
+  repository: JobFinderRepository;
+  applicationRecordId: string;
+  resultId: string;
+  questionIds: readonly string[];
+}): Promise<string[]> {
+  if (input.questionIds.length === 0) return [];
+  const records = await input.repository
+    .listApplicationQuestionRecords({ resultId: input.resultId })
+    .catch(() => []);
+  return input.questionIds.flatMap((questionId) => {
+    const record = records.find(
+      (entry) =>
+        entry.id ===
+          `apply_question_${input.applicationRecordId}_${questionId}` &&
+        entry.answerControlType === "file",
+    );
+    const label = record?.prompt.trim().replace(/[\s*:]+$/u, "") ?? "";
+    if (!label) return [];
+    // "Academic transcript" reads "your academic transcript"; "CV" stays.
+    return [
+      /^[A-Z][a-z]/u.test(label)
+        ? label.charAt(0).toLowerCase() + label.slice(1)
+        : label,
+    ];
+  });
+}
+
+function joinWithAnd(values: readonly string[]): string {
+  if (values.length <= 1) return values[0] ?? "";
+  return `${values.slice(0, -1).join(", ")} and ${values.at(-1)}`;
 }
 
 export function describeApplicationBlockerReason(
@@ -354,6 +393,29 @@ async function commitApplicationActionSuperseded(input: {
   }
 }
 
+/**
+ * Written on a prepared application whose page closed (usually because Job
+ * Finder was restarted). The form had been filled; nothing went wrong on the
+ * site, so it is not a failed attempt for the failure-rate safeguard.
+ */
+export const PREPARED_PAGE_CLOSED_SUMMARY =
+  "The prepared application page is no longer open.";
+
+/**
+ * Written on a result whose site refused the send: nothing went out and
+ * nothing failed on the site, so the failure-rate safeguard does not count it.
+ */
+export const SITE_UNREACHABLE_SUMMARY =
+  "The site could not be reached when the application was sent.";
+
+/**
+ * Written on an application the person stepped into while it was being
+ * filled. Nothing went wrong on the site; it carries on when they hand the
+ * browser back, and it is not a failed attempt for the failure-rate
+ * safeguard.
+ */
+export const PERSON_TOOK_OVER_SUMMARY = "You took over this application.";
+
 async function keepOnlyLatestApplicationActionable(input: {
   repository: JobFinderRepository;
   applicationRecordId: string;
@@ -392,7 +454,8 @@ async function supersedeActionsClearedByNewerResult(input: {
     (request) =>
       request.scope.type === "application" &&
       request.scope.applicationRecordId === input.applicationRecordId &&
-      request.createdAt <= input.resultStartedAt &&
+      (request.scope.resultId === input.resultId ||
+        request.createdAt <= input.resultStartedAt) &&
       !isUserActionTerminal(request.state),
   );
 
@@ -419,6 +482,18 @@ export async function persistApplicationUserAction(input: {
   occurredAt: string;
 }): Promise<void> {
   if (!input.resultId || !input.replayCheckpointId) return;
+  if (input.resultState === "failed") {
+    if (input.resultStartedAt) {
+      await supersedeActionsClearedByNewerResult({
+        repository: input.repository,
+        applicationRecordId: input.applicationRecordId,
+        resultId: input.resultId,
+        resultStartedAt: input.resultStartedAt,
+        occurredAt: input.occurredAt,
+      });
+    }
+    return;
+  }
   if (!input.blocker) {
     if (input.resultState === "awaiting_review" && input.resultStartedAt) {
       await supersedeActionsClearedByNewerResult({
@@ -486,6 +561,18 @@ export async function persistApplicationUserAction(input: {
     return;
   }
 
+  // An upload step names the files the form asks for, so the person knows
+  // what to add in Profile › Files without opening the page.
+  const neededFiles =
+    kind === "manual_upload"
+      ? await listNeededApplicationFiles({
+          repository: input.repository,
+          applicationRecordId: input.applicationRecordId,
+          resultId: input.resultId,
+          questionIds: input.blocker.questionIds ?? [],
+        })
+      : [];
+  const neededFileLabel = joinWithAnd(neededFiles);
   const request = UserActionRequestSchema.parse({
     id: `application_${kind}_${occurrenceFingerprint}`,
     dedupeKey,
@@ -514,15 +601,34 @@ export async function persistApplicationUserAction(input: {
           blockerFingerprint,
           expectedPageFingerprint: null,
         },
-    title: `${copy.titleVerb} to continue the ${input.job.company} application`,
-    summary: `${describeApplicationBlockerReason(input.blocker)} Complete this ${copy.summaryStep} step in the ${JOB_FINDER_BROWSER_LABEL}, then come back here and confirm so Job Finder can check the page again.`,
-    instructions: [
-      copy.instruction,
-      "Return to Needs you and confirm completion only after the browser step is complete.",
-      isApplicationAuthenticationUserActionKind(kind)
-        ? "After access verification, Job Finder retries this exact application once."
-        : "After confirmation, Job Finder runs one exact prepare-only retry to verify the blocker.",
-    ],
+    title: neededFileLabel
+      ? `Add your ${neededFileLabel} to continue the ${input.job.company} application`
+      : `${copy.titleVerb} to continue the ${input.job.company} application`,
+    // A sign-in on the kept application page is watched and carries on by
+    // itself (ADR 0027); every other step still ends with the person's
+    // confirmation.
+    summary: isApplicationAuthenticationUserActionKind(kind)
+      ? `${describeApplicationBlockerReason(input.blocker)} Complete this ${copy.summaryStep} step in the ${JOB_FINDER_BROWSER_LABEL}; Job Finder carries on with this application by itself once you're in.`
+      : kind === "manual_upload"
+        ? neededFileLabel
+          ? `The ${input.job.company} form asks for your ${neededFileLabel}. Add or restore ${neededFiles.length === 1 ? "it" : "them"} in Profile › Files and Job Finder attaches ${neededFiles.length === 1 ? "it" : "them"} and carries on by itself.`
+          : `${describeApplicationBlockerReason(input.blocker)} Add or restore the file in Profile › Files and Job Finder attaches it and carries on by itself.`
+        : `${describeApplicationBlockerReason(input.blocker)} Complete this ${copy.summaryStep} step in the ${JOB_FINDER_BROWSER_LABEL}, then come back here and confirm so Job Finder can check the page again.`,
+    instructions: isApplicationAuthenticationUserActionKind(kind)
+      ? [
+          copy.instruction,
+          "Job Finder watches this page and carries on with this exact application once the sign-in is done.",
+        ]
+      : kind === "manual_upload"
+        ? [
+            "Add or restore the file in Profile › Files; Job Finder attaches it and carries on by itself.",
+            `Or attach it yourself in the ${JOB_FINDER_BROWSER_LABEL}, then choose Check whether this step is done.`,
+          ]
+        : [
+            copy.instruction,
+            "Return to Needs you and confirm completion only after the browser step is complete.",
+            "After confirmation, Job Finder checks the page again and carries on in your saved apply mode.",
+          ],
     actionUrl: browserTarget?.actionUrl ?? null,
     displayOrigin: browserTarget?.expectedOrigin ?? null,
     credentialsPolicy: "browser_only",
@@ -546,6 +652,167 @@ export async function persistApplicationUserAction(input: {
 export const persistApplicationLoginUserAction = persistApplicationUserAction;
 
 /**
+ * A sign-in, account, or verification step is the person's to do on the kept
+ * application page (ADR 0012, 0027). The page's prepare-only guard blocks
+ * every form post, which also blocked the person's own "Create account" or
+ * "Sign in" press there unless one exact sign-in button had been armed. While
+ * such a step waits on the person, the page is theirs: posts they make go
+ * through. The next continuation locks it again
+ * (`closeApplicationFormAction`) before Job Finder touches it.
+ */
+export async function handApplicationPageToPersonForAccessStep(input: {
+  browserRuntime: {
+    handApplicationPageToPerson?: (
+      source: SavedJob["source"],
+      pageBindingKey: string,
+    ) => Promise<void>;
+  };
+  source: SavedJob["source"];
+  resultId: string | null;
+  blocker: ApplicationAttemptBlocker | null;
+}): Promise<void> {
+  if (!input.resultId || !input.blocker) return;
+  if (isApplicationTechnicalFailureBlocker(input.blocker)) return;
+  const kind = mapApplicationBlockerToUserActionKind(input.blocker);
+  if (!isApplicationAuthenticationUserActionKind(kind)) return;
+  // No kept page (for example after a restart) means nothing to hand over;
+  // the step then opens a fresh page as before.
+  await input.browserRuntime
+    .handApplicationPageToPerson?.(input.source, input.resultId)
+    .catch(() => {});
+}
+
+/**
+ * Marks one exact prepared application as retryable when its in-memory page
+ * binding is gone. Both a pending browser hand-off and a ready-for-review
+ * browser hand-off use this path, so neither can fall back to an arbitrary
+ * tab after restart or after another application opens.
+ */
+export async function terminalizeApplicationAfterPreparedPageLost(input: {
+  repository: JobFinderRepository;
+  runId: string;
+  jobId: string;
+  applicationRecordId: string;
+  resultId: string;
+  occurredAt: string;
+  eventId: string;
+  preserveRunningRun?: boolean;
+}): Promise<void> {
+  const [records, runResults, jobResults, runs] = await Promise.all([
+    input.repository.listApplicationRecords(),
+    input.repository.listApplyJobResults({ runId: input.runId }),
+    input.repository.listApplyJobResults({ jobId: input.jobId }),
+    input.repository.listApplyRuns(),
+  ]);
+  const result = runResults.find(
+    (entry) =>
+      entry.id === input.resultId &&
+      entry.jobId === input.jobId &&
+      entry.applicationRecordId === input.applicationRecordId,
+  );
+  if (
+    !result ||
+    result.state === "submitting" ||
+    result.state === "submitted" ||
+    result.privacyReceipt?.submissionOutcome?.outcome === "outcome_uncertain"
+  ) {
+    return;
+  }
+
+  // A result-bound button may still be on screen while a newer attempt for
+  // the same record starts. Losing the older page must not overwrite that
+  // newer attempt's record or run state.
+  const hasNewerResult = jobResults.some(
+    (entry) =>
+      entry.applicationRecordId === input.applicationRecordId &&
+      entry.id !== result.id &&
+      (entry.updatedAt.localeCompare(result.updatedAt) > 0 ||
+        (entry.updatedAt === result.updatedAt && entry.id > result.id)),
+  );
+  if (hasNewerResult) return;
+
+  const record = records.find(
+    (entry) =>
+      entry.id === input.applicationRecordId && entry.jobId === input.jobId,
+  );
+  const run = runs.find((entry) => entry.id === input.runId);
+  if (
+    !record ||
+    (record.lastAttemptState !== "paused" &&
+      record.lastAttemptState !== "ready") ||
+    !run
+  ) {
+    return;
+  }
+
+  await input.repository.upsertApplicationRecord(
+    ApplicationRecordSchema.parse({
+      ...record,
+      lastAttemptState: "failed",
+      lastActionLabel: "The prepared application page is no longer open.",
+      nextActionLabel: "Try again, or finish it yourself on the job site.",
+      lastUpdatedAt: input.occurredAt,
+      questionSummary: {
+        total: 0,
+        required: 0,
+        answered: 0,
+        unansweredRequired: 0,
+      },
+      events: [
+        ...record.events,
+        {
+          id: input.eventId,
+          at: input.occurredAt,
+          title: "Prepared page closed",
+          detail:
+            "The exact prepared page could not be reopened. Nothing was sent, and you can choose Try again to prepare this application again.",
+          emphasis: "warning",
+        },
+      ],
+    }),
+  );
+
+  const terminalResult = ApplyJobResultSchema.parse({
+    ...result,
+    state: "failed",
+    summary: PREPARED_PAGE_CLOSED_SUMMARY,
+    detail:
+      "The exact prepared page could not be reopened. Nothing was sent; choose Try again to prepare this application again.",
+    updatedAt: input.occurredAt,
+    completedAt: input.occurredAt,
+    blockerReason: "unexpected_navigation",
+    blockerSummary: PREPARED_PAGE_CLOSED_SUMMARY,
+    latestQuestionCount: 0,
+  });
+  await input.repository.upsertApplyJobResult(terminalResult);
+
+  // A Home pause can park an approved queue between jobs. The prior prepared
+  // page is gone after restart, but its failed result must not terminate the
+  // untouched jobs that Resume will execute under the same approved run.
+  if (input.preserveRunningRun && run.state === "running") return;
+
+  const nextResults = runResults.map((entry) =>
+    entry.id === terminalResult.id ? terminalResult : entry,
+  );
+  const reconciledRun = reconcileApplyRunAfterConfirmedSubmission({
+    run,
+    results: nextResults,
+    submittedAt: input.occurredAt,
+    submittedSummary: "A prepared application page was no longer open",
+    submittedDetail:
+      "Nothing was sent. The affected application can be prepared again.",
+  });
+  await input.repository.upsertApplyRun(
+    ApplyRunSchema.parse({
+      ...reconciledRun,
+      summary: "A prepared application page was no longer open.",
+      detail:
+        "Nothing was sent. The affected application can be prepared again while any other work keeps its own state.",
+    }),
+  );
+}
+
+/**
  * Closing a browser step must also close the application waiting on it.
  *
  * Cancelling or skipping a step said "the step was closed" and stopped there:
@@ -562,10 +829,23 @@ export async function releaseApplicationRecordAfterDismissedUserAction(input: {
   occurredAt: string;
   eventId: string;
   dismissal: "cancelled" | "skipped";
+  unavailablePreparedPage?: boolean;
+  /**
+   * Said instead of "you cancelled the step" when Job Finder closed a step
+   * that was never the person's to do.
+   */
+  closedBecause?: {
+    lastActionLabel: string;
+    eventTitle: string;
+    eventDetail: string;
+    resultSummary: string;
+    resultDetail: string;
+  };
 }): Promise<void> {
   const { request } = input;
   if (request.scope.type !== "application") return;
-  const applicationRecordId = request.scope.applicationRecordId;
+  const applicationScope = request.scope;
+  const applicationRecordId = applicationScope.applicationRecordId;
   if (!applicationRecordId) return;
 
   const record = (await input.repository.listApplicationRecords()).find(
@@ -586,25 +866,233 @@ export async function releaseApplicationRecordAfterDismissedUserAction(input: {
   );
   if (stillOpen) return;
 
+  const unavailablePreparedPage = input.unavailablePreparedPage === true;
+  if (unavailablePreparedPage && applicationScope.resultId) {
+    await terminalizeApplicationAfterPreparedPageLost({
+      repository: input.repository,
+      runId: applicationScope.runId,
+      jobId: applicationScope.jobId,
+      applicationRecordId,
+      resultId: applicationScope.resultId,
+      occurredAt: input.occurredAt,
+      eventId: input.eventId,
+    });
+    return;
+  }
+
   const closedWord = input.dismissal === "skipped" ? "skipped" : "cancelled";
   await input.repository.upsertApplicationRecord(
     ApplicationRecordSchema.parse({
       ...record,
-      lastAttemptState: "unsupported",
-      lastActionLabel: `You ${closedWord} the step Job Finder was waiting on.`,
-      nextActionLabel: "Finish this application yourself on the job site.",
+      // Closing the step is not the end of the application: the person can
+      // press Try again later, or finish it on the site themselves.
+      lastAttemptState: "failed",
+      lastActionLabel:
+        input.closedBecause?.lastActionLabel ??
+        `You ${closedWord} the step Job Finder was waiting on.`,
+      nextActionLabel: "Try again, or finish it yourself on the job site.",
       lastUpdatedAt: input.occurredAt,
+      questionSummary: {
+        total: 0,
+        required: 0,
+        answered: 0,
+        unansweredRequired: 0,
+      },
       events: [
         ...record.events,
         {
           id: input.eventId,
           at: input.occurredAt,
-          title: `Step ${closedWord}`,
+          title: input.closedBecause?.eventTitle ?? `Step ${closedWord}`,
           detail:
+            input.closedBecause?.eventDetail ??
             "Job Finder stopped working on this application. Nothing was sent, and you can still finish it yourself on the job site.",
           emphasis: "warning",
         },
       ],
     }),
   );
+
+  if (!applicationScope.resultId) return;
+  const runResults = await input.repository.listApplyJobResults({
+    runId: applicationScope.runId,
+  });
+  const result = runResults.find(
+    (entry) => entry.id === applicationScope.resultId,
+  );
+  if (
+    !result ||
+    result.state === "submitted" ||
+    result.privacyReceipt?.submissionOutcome?.outcome === "outcome_uncertain"
+  ) {
+    return;
+  }
+
+  const terminalResult = ApplyJobResultSchema.parse({
+    ...result,
+    state: input.dismissal === "skipped" ? "skipped" : "failed",
+    summary:
+      input.closedBecause?.resultSummary ??
+      `The person ${closedWord} the step Job Finder was waiting on.`,
+    detail:
+      input.closedBecause?.resultDetail ??
+      "Job Finder stopped working on this application. Nothing was sent; choose Try again to prepare it again.",
+    updatedAt: input.occurredAt,
+    completedAt: input.occurredAt,
+    blockerReason: result.blockerReason,
+    blockerSummary: result.blockerSummary,
+    latestQuestionCount: 0,
+  });
+  await input.repository.upsertApplyJobResult(terminalResult);
+
+  const run = (await input.repository.listApplyRuns()).find(
+    (entry) => entry.id === applicationScope.runId,
+  );
+  if (!run) return;
+  const nextResults = runResults.map((entry) =>
+    entry.id === terminalResult.id ? terminalResult : entry,
+  );
+  const pendingResults = nextResults.filter(
+    (entry) => entry.state === "awaiting_review",
+  );
+  await input.repository.upsertApplyRun(
+    ApplyRunSchema.parse({
+      ...run,
+      state:
+        run.state === "cancelled" || run.state === "failed"
+          ? run.state
+          : pendingResults.length > 0
+            ? "paused_for_user_review"
+            : "completed",
+      currentJobId:
+        run.state === "cancelled" || run.state === "failed"
+          ? null
+          : (pendingResults[0]?.jobId ?? null),
+      updatedAt: input.occurredAt,
+      completedAt:
+        run.state === "cancelled" || run.state === "failed"
+          ? run.completedAt
+          : pendingResults.length > 0
+            ? null
+            : input.occurredAt,
+      pendingJobs: pendingResults.length,
+      submittedJobs: nextResults.filter((entry) => entry.state === "submitted")
+        .length,
+      skippedJobs: nextResults.filter((entry) => entry.state === "skipped")
+        .length,
+      blockedJobs: nextResults.filter((entry) => entry.state === "blocked")
+        .length,
+      failedJobs: nextResults.filter((entry) => entry.state === "failed")
+        .length,
+    }),
+  );
+}
+
+/** Close steps that can no longer resume because their exact run was cancelled. */
+export async function retireCancelledApplicationUserActions(
+  repository: JobFinderRepository,
+  runId?: string,
+): Promise<void> {
+  const [runs, requests, results] = await Promise.all([
+    repository.listApplyRuns(),
+    repository.listUserActionRequests({ scopeType: "application" }),
+    repository.listApplyJobResults(),
+  ]);
+  const cancelledRunIds = new Set(
+    runs
+      .filter(
+        (run) => run.state === "cancelled" && (!runId || run.id === runId),
+      )
+      .map((run) => run.id),
+  );
+  for (const request of requests) {
+    const scope = request.scope;
+    if (
+      scope.type !== "application" ||
+      !cancelledRunIds.has(scope.runId) ||
+      !scope.applicationRecordId ||
+      !scope.resultId ||
+      isUserActionTerminal(request.state)
+    )
+      continue;
+    const result = results.find(
+      (entry) =>
+        entry.id === scope.resultId &&
+        entry.runId === scope.runId &&
+        entry.jobId === scope.jobId &&
+        entry.applicationRecordId === scope.applicationRecordId,
+    );
+    if (
+      !result ||
+      result.state === "submitted" ||
+      result.privacyReceipt?.submissionOutcome?.outcome === "outcome_uncertain"
+    )
+      continue;
+    const now = new Date().toISOString();
+    const transition = reduceUserActionCommand(
+      request,
+      {
+        requestId: request.id,
+        commandId: `${request.id}_run_cancelled_r${request.revision}`,
+        expectedRevision: request.revision,
+        action: "cancel",
+        reason:
+          "The application run was cancelled. Choose Try again to prepare it again.",
+        credentialsPolicy: "browser_only",
+        submitAuthorized: false,
+        accountCreationAuthorized: false,
+      },
+      now,
+    );
+    if (transition.status !== "applied") continue;
+    const commit = await repository.commitUserActionTransition({
+      request: transition.request,
+      event: transition.event,
+    });
+    if (commit.status === "stale") continue;
+    await withApplicationRecordTransition(
+      repository,
+      scope.applicationRecordId,
+      async () => {
+        // Re-read under the record transition: a new attempt may have committed
+        // while this request was being closed. Ambiguous equal times stay intact.
+        const currentResults = await repository.listApplyJobResults();
+        const currentResult = currentResults.find(
+          (entry) => entry.id === result.id,
+        );
+        if (
+          !currentResult ||
+          currentResult.state === "submitted" ||
+          currentResult.privacyReceipt?.submissionOutcome?.outcome ===
+            "outcome_uncertain"
+        )
+          return;
+        if (
+          currentResults.some(
+            (entry) =>
+              entry.applicationRecordId === scope.applicationRecordId &&
+              entry.id !== result.id &&
+              entry.startedAt >= result.startedAt,
+          )
+        )
+          return;
+        await releaseApplicationRecordAfterDismissedUserAction({
+          repository,
+          request: commit.request,
+          occurredAt: now,
+          eventId: `event_${request.id}_run_cancelled`,
+          dismissal: "cancelled",
+          closedBecause: {
+            lastActionLabel: "You cancelled this application run.",
+            eventTitle: "Application step closed after cancellation",
+            eventDetail:
+              "The application run was cancelled. Its prepared evidence remains available; choose Try again to prepare it again.",
+            resultSummary: "You cancelled this application run.",
+            resultDetail:
+              "Nothing was sent. Choose Try again to prepare this application again.",
+          },
+        });
+      },
+    );
+  }
 }

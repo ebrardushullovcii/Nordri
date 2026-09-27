@@ -149,17 +149,14 @@ export function deriveSourceAccessPrompts(input: {
         ...(activeInstruction?.warnings ?? []),
       ].filter((value): value is string => Boolean(value)),
     );
+    // Only what the check itself called a blocker or an auth marker. A
+    // finding that says "no login required to view" mentions login too, and
+    // read as a signal it produced a "Sign-in recommended" header over a body
+    // saying the opposite.
     const recommendationSignals = uniqueStrings(
       [
-        ...(latestRun?.finalSummary ? [latestRun.finalSummary] : []),
-        ...targetAttempts.flatMap((attempt) => [
-          attempt.resultSummary,
-          attempt.blockerSummary,
-          ...attempt.confirmedFacts,
-          ...(attempt.phaseEvidence?.warnings ?? []),
-        ]),
+        ...targetAttempts.flatMap((attempt) => [attempt.blockerSummary]),
         ...(activeInstruction?.intelligence.apply.authMarkers ?? []),
-        ...(activeInstruction?.warnings ?? []),
       ].filter((value): value is string => Boolean(value)),
     );
 

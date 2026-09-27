@@ -133,14 +133,23 @@ export function formatDiscoveryRunReportLabel(
     return `Counts ${MISSING_RUN_COUNT_LABEL} for this run`;
   }
 
+  // "N found · M new"; "kept" only when fewer were kept than found, and
+  // "already here" only when there were any. Four numbers where two say
+  // everything was the sentence people skipped.
   const segments = [
-    formatReportSegment(counts.found, "looked at"),
+    formatReportSegment(counts.found, "found"),
     formatReportSegment(counts.new, "new"),
-    formatReportSegment(counts.retained, "kept"),
   ];
+  if (
+    counts.retained !== null &&
+    counts.found !== null &&
+    counts.retained !== counts.found
+  ) {
+    segments.push(formatReportSegment(counts.retained, "kept"));
+  }
 
   const alreadyHere = resolveAlreadyHereCount(counts);
-  if (alreadyHere !== null) {
+  if (alreadyHere !== null && alreadyHere > 0) {
     const everythingWasAlreadyHere =
       counts.found !== null &&
       counts.found > 0 &&

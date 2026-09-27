@@ -2,6 +2,7 @@ import type {
   ApplicationAttemptQuestion,
   ApplyBlockedAttempt,
   CoverLetterPreference,
+  AiApplyingBehavior,
   ApplyNavigationResult,
   ApplyServiceWorkerFinding,
   ApplyWriteResult,
@@ -11,6 +12,7 @@ import type {
   ApplicationQuestionKind,
   ApplicationSalaryDisclosureRule,
   CandidateProfile,
+  CandidateAssetKind,
   CandidateReusableAnswer,
 } from "@unemployed/contracts";
 
@@ -44,12 +46,16 @@ export interface ApplyFormControl {
   kind: ApplyControlKind;
   label: string;
   groupLabel: string;
+  /** Stable identity shared by controls that belong to one choice group. */
+  choiceGroupKey?: string;
   placeholder: string;
   required: boolean;
   disabled: boolean;
   readOnly: boolean;
   visible: boolean;
   value: string;
+  /** Credential meaning without exposing the secret value to the model. */
+  credentialRole?: "identifier" | "password" | null;
   checked: boolean;
   options: string[];
   selectedOptionLabel: string;
@@ -75,6 +81,8 @@ export interface ApplyFormAction {
   kind: ApplyActionKind;
   visible: boolean;
   disabled: boolean;
+  formAction?: string;
+  formMethod?: string;
 }
 
 /** What a link on the page opens, read from the address itself. */
@@ -119,6 +127,8 @@ export type ApplyBlockerCode =
 
 export interface ApplyBlocker {
   code: ApplyBlockerCode;
+  /** True when this page cannot progress until the person completes the step. */
+  requiresPerson?: boolean;
   /** One plain sentence about what the page is showing. */
   summary: string;
   detail: string;
@@ -130,20 +140,59 @@ export interface ApplyBlocker {
   host?: string | null;
 }
 
+/** Anything clickable that is not a control, a button, or a link. */
+export interface ApplyClickable {
+  ref: string;
+  label: string;
+  role: string;
+  tagName: string;
+  visible: boolean;
+}
+
+export interface ApplyHeading {
+  level: number;
+  text: string;
+}
+
+export interface ApplyOpenedTab {
+  index: number;
+  url: string;
+  title: string;
+}
+
+/**
+ * The whole page, as the model sees it.
+ *
+ * Nothing here is filtered by a phrase list or a guess about what matters. A
+ * page that shows an Apply button shows it here, whatever it is made of and
+ * whatever it is called, and the model decides what to do with it. Filtering
+ * the observation is how a harness ends up unable to see a button a person can
+ * see plainly.
+ */
 export interface ApplyFormObservation {
   observedAt: string;
-  /** Changes whenever the page changes; a proposal made against an older one is refused. */
+  /** Changes whenever the page changes; a write proposed against an older one is retried. */
   signature: string;
   url: string | null;
   origin: string | null;
   title: string | null;
   step: ApplyStepPosition;
-  /** A bounded excerpt of what the page says, for confirmation and blocker copy. */
+  /** A bounded excerpt of what the page says. `read_text` gets the rest. */
   bodyTextExcerpt: string;
+  headings: ApplyHeading[];
   controls: ApplyFormControl[];
   actions: ApplyFormAction[];
   links: ApplyPageLink[];
+  clickables: ApplyClickable[];
+  /** Tabs the page opened for itself. Going to one is the model's choice. */
+  openedTabs: ApplyOpenedTab[];
   validationErrors: string[];
+  /** True while the page is still loading. The model may wait and look again. */
+  loading: boolean;
+  /**
+   * Something only the person can do. Reported as a fact the model can act on
+   * or work around; it never ends the run on its own.
+   */
   blocker: ApplyBlocker | null;
 }
 
@@ -154,7 +203,7 @@ export interface ApplyDocument {
   mimeType: string;
   /** What the file is, in the person's words ("Your CV", "Cover letter"). */
   label: string;
-  kind: "resume" | "cover_letter" | "other";
+  kind: CandidateAssetKind;
   loadBytes: () => Promise<Uint8Array>;
 }
 
@@ -166,6 +215,19 @@ export interface ApplyDocument {
  */
 export interface ApplyPageHands {
   observe: () => Promise<ApplyFormObservation>;
+  navigate: (url: string) => Promise<ApplyNavigationResult>;
+  clickElement: (ref: string) => Promise<ApplyWriteResult>;
+  /** Presses a keyboard key on one element, or on the active page. */
+  pressKey?: (
+    ref: string | undefined,
+    key: string,
+  ) => Promise<ApplyWriteResult>;
+  scroll: (
+    direction: "down" | "up" | "top" | "bottom",
+  ) => Promise<ApplyWriteResult>;
+  wait: (milliseconds: number) => Promise<void>;
+  goBack: () => Promise<ApplyNavigationResult>;
+  readText: (ref?: string) => Promise<string>;
   fillText: (ref: string, value: string) => Promise<ApplyWriteResult>;
   chooseOption: (ref: string, optionLabel: string) => Promise<ApplyWriteResult>;
   setToggle: (ref: string, checked: boolean) => Promise<ApplyWriteResult>;
@@ -176,12 +238,15 @@ export interface ApplyPageHands {
   clickAction: (ref: string) => Promise<ApplyWriteResult>;
   /** Opens what a link points at, in the same page. A read, never a write. */
   followLink: (ref: string) => Promise<ApplyNavigationResult>;
+  /** Moves the run into a tab the page opened, closing that tab. */
+  adoptOpenedTab?: (index: number) => Promise<ApplyNavigationResult>;
 }
 
 /** Where an answer came from. Every written answer carries one. */
 export type ApplyAnswerSourceKind =
   | "profile"
   | "resume"
+  | "posting"
   | "answer_library"
   | "generated"
   | "document";
@@ -223,7 +288,7 @@ export interface ApplyAuthority {
   submitAuthorized: boolean;
   preApprovedAttestationKinds: readonly ApplicationAttestationKind[];
   salaryDisclosure: ApplicationSalaryDisclosureRule;
-  /** Exact origins the saved document covers. Empty means "only where we started". */
+  /** Exact origins where the final application may be sent. */
   allowedOrigins: readonly string[];
 }
 
@@ -254,12 +319,14 @@ export interface ApplySafetyHooks {
 export interface ApplyLetterProvider {
   preference: CoverLetterPreference;
   provide: (request: {
+    /** The kind of application document being written. */
+    purpose?: "cover_letter" | "motivation_letter" | "supporting_statement";
     prompt: string;
     groundedIn: string[];
     language: string | null;
     delivery: "file" | "text";
     /** A file type the form insists on, when it named one. */
-    fileType: "pdf" | "docx" | null;
+    fileType: "pdf" | "docx" | "txt" | null;
   }) => Promise<
     | { ok: true; text: string; document: ApplyDocument | null }
     | { ok: false; reason: string }
@@ -326,6 +393,10 @@ export interface ApplyAgentResult {
   pauses: ApplyPause[];
   /** Plain-sentence trail of what happened, oldest first. */
   notes: string[];
+  /** The same trail with the moment each line was written. */
+  timeline: { at: string; text: string }[];
+  /** How many times the model was asked. Zero means no model was used. */
+  modelTurns: number;
   /**
    * The button that sends this application, once the form is complete and the
    * checks passed. Null whenever the application is not ready to go.
@@ -333,15 +404,34 @@ export interface ApplyAgentResult {
   readyToSend: { actionRef: string; actionLabel: string } | null;
 }
 
-/** One bounded thing the model asked to do. */
+/**
+ * One thing the model asked to do.
+ *
+ * These are the ordinary powers a person has in a browser. The executor binds
+ * each one to the page as it is now and to what the person allowed, but it
+ * does not second-guess which of them is appropriate: that is the model's job.
+ */
 export type ApplyProposal =
-  | { tool: "inspect_form" }
-  | { tool: "read_blockers" }
-  | { tool: "answer_control"; ref: string; freeTextAnswer?: string; groundedIn?: string[] }
-  | { tool: "attach_document"; ref: string; documentId: string }
-  | { tool: "go_to_step"; ref: string }
+  | { tool: "observe" }
+  | { tool: "read_text"; ref?: string }
+  | { tool: "navigate"; url: string; reason?: string }
+  | { tool: "follow_link"; ref: string; reason?: string }
+  | { tool: "click"; ref: string; reason?: string }
+  | { tool: "type"; ref: string; text: string; groundedIn?: string[] }
+  | { tool: "select"; ref: string; option: string }
+  | { tool: "set_checkbox"; ref: string; checked: boolean }
+  | { tool: "upload"; ref: string; documentId: string }
+  | { tool: "scroll"; direction: "down" | "up" | "top" | "bottom" }
+  | { tool: "wait"; milliseconds: number }
+  | { tool: "go_back" }
+  | { tool: "suggest_answer"; ref: string }
   | { tool: "submit_application"; ref: string }
-  | { tool: "finish"; reason: string; stuck?: boolean };
+  | {
+      tool: "finish";
+      reason: string;
+      stuck?: boolean;
+      needsPerson?: boolean;
+    };
 
 export interface ApplyAgentConfig {
   hands: ApplyPageHands;
@@ -354,12 +444,25 @@ export interface ApplyAgentConfig {
    * When false, nothing is transmitted at all.
    */
   intermediateWritesAuthorized?: boolean;
+  /** Whether this exact run may enter an account-creation flow. */
+  accountCreationAuthorized?: boolean;
   authority: ApplyAuthority;
   sources: ApplyAnswerSources;
   /** Identity of the application record every write is bound to. */
-  application: { jobId: string; applicationId: string; startingUrl: string };
+  application: {
+    jobId: string;
+    applicationId: string;
+    startingUrl: string;
+    /** The live page belongs to a paused application that is being continued. */
+    continuation?: { sourceUrls: readonly string[] };
+  };
   /** Site name in the person's words, used in the copy: "Greenhouse", "the careers site". */
   siteLabel: string;
+  /**
+   * The saved AI applying behavior (Settings): when to write a letter and how
+   * long written answers run. Shapes the writing, never the permissions.
+   */
+  writing?: AiApplyingBehavior;
   /** Safety ceilings only. The agent decides when it is done. */
   runControl?: {
     maxSteps?: number;
@@ -370,6 +473,22 @@ export interface ApplyAgentConfig {
     /** How long the walk from a listing to the form may take. */
     applyEntryTimeBudgetMs?: number;
   };
+  onProgress?: (progress: {
+    step: number;
+    note: string;
+    progressSteps: number;
+    elapsedMs: number;
+  }) => void | Promise<void>;
+  /**
+   * The second judgement on leaving the listing's site. Given the address,
+   * the model's stated reason, and where the run is; allows or refuses.
+   * Without it, a move to another site is reported but not judged.
+   */
+  reviewMove?: (move: {
+    url: string;
+    reason: string;
+    fromUrl: string | null;
+  }) => Promise<{ allowed: boolean; verdict: string }>;
   now?: () => Date;
   signal?: AbortSignal;
 }

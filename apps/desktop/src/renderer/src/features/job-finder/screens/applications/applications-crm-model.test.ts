@@ -5,6 +5,7 @@ import {
   APPLICATION_CRM_STAGE_LABELS,
   applicationCrmStageLabelForView,
   applicationCrmStageProvenanceForView,
+  applicationCrmDataForView,
   buildApplicationCrmCalendarForView,
   groupApplicationRecordsByStage,
   inferApplicationCrmStageForView,
@@ -25,6 +26,38 @@ function record(overrides: Record<string, unknown> = {}) {
 }
 
 describe("application CRM renderer model", () => {
+  test("metadata-only CRM payloads follow activity in every view and keep truthful provenance", () => {
+    const progressing = record({
+      status: "interview",
+      crm: {
+        stage: "preparing",
+        stageSource: "activity",
+        stageChangedAt: "2026-08-01T10:00:00.000Z",
+        tags: ["Priority"],
+      },
+    });
+    expect(inferApplicationCrmStageForView(progressing)).toBe("interview");
+    expect(applicationCrmDataForView(progressing)).toMatchObject({
+      stage: "interview",
+      tags: ["Priority"],
+      stageSource: "activity",
+    });
+    expect(applicationCrmStageProvenanceForView(progressing)).toBe(
+      "From your activity",
+    );
+    expect(
+      groupApplicationRecordsByStage([progressing]).get("interview"),
+    ).toHaveLength(1);
+    const chosen = record({
+      ...progressing,
+      crm: { ...progressing.crm, stageSource: "user" },
+    });
+    expect(inferApplicationCrmStageForView(chosen)).toBe("preparing");
+    expect(applicationCrmStageProvenanceForView(chosen)).toBe(
+      "You recorded this",
+    );
+  });
+
   test("distinguishes compatibility-inferred stages from CRM stages", () => {
     const legacyRecord = record();
     const explicitRecord = record({
@@ -75,6 +108,27 @@ describe("application CRM renderer model", () => {
     expect(grouped.get("applied")).toHaveLength(1);
     expect(grouped.get("interview")).toHaveLength(1);
     expect(grouped.has("no_response")).toBe(true);
+  });
+
+  test.each([
+    "submitted",
+    "interview",
+    "offer",
+    "rejected",
+    "withdrawn",
+  ] as const)("keeps %s ahead of a stale preparation blocker", (status) => {
+    expect(
+      inferApplicationCrmStageForView(
+        record({
+          status,
+          lastAttemptState: "paused",
+          latestBlocker: {
+            code: "requires_manual_review",
+            summary: "Old preparation handoff.",
+          },
+        }),
+      ),
+    ).toBe(status === "submitted" ? "applied" : status);
   });
 
   test("projects reminders, interviews, and offer deadlines", () => {

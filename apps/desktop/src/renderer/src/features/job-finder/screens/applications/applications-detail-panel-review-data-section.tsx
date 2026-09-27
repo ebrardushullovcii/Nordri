@@ -20,6 +20,10 @@ import {
   formatStatusLabel,
 } from "@renderer/features/job-finder/lib/job-finder-utils";
 import { StatusBadge } from "../../components/status-badge";
+import {
+  ExternalUrlLink,
+  SavedFileLink,
+} from "../../components/open-outside-links";
 import { CANDIDATE_ASSETS_CHANGED_EVENT } from "./applications-application-documents";
 import {
   getAnswerTone,
@@ -27,6 +31,10 @@ import {
   getConsentTone,
 } from "./applications-detail-panel-helpers";
 import { buildJobFinderContextRoute } from "../../lib/job-finder-context-navigation";
+import {
+  inferFileKindForQuestion,
+  profileFilesHref,
+} from "../../lib/job-finder-route-hrefs";
 import { getJobFinderDateInputLocale } from "../../lib/job-finder-date-input-locale";
 
 const jobFinderDateInputLocale = getJobFinderDateInputLocale();
@@ -184,7 +192,7 @@ export function ApplicationsDetailPanelReviewDataSection(props: {
                     ) : null}
                     {checkpoint.storagePath ? (
                       <p className="mt-2 break-all">
-                        Saved: {checkpoint.storagePath}
+                        Saved: <SavedFileLink path={checkpoint.storagePath} />
                       </p>
                     ) : null}
                   </div>
@@ -239,7 +247,7 @@ export function ApplicationsDetailPanelReviewDataSection(props: {
                     ) : null}
                     {question.pageUrl ? (
                       <p className="mt-2 break-all text-(length:--text-small) leading-6 text-foreground-soft">
-                        Page: {question.pageUrl}
+                        Page: <ExternalUrlLink url={question.pageUrl} />
                       </p>
                     ) : null}
                     {question.visualContext ? (
@@ -251,6 +259,12 @@ export function ApplicationsDetailPanelReviewDataSection(props: {
                       <ApplicationQuestionAnswerEditor
                         key={`${question.id}:${latestAnswer?.revision ?? 0}`}
                         answer={latestAnswer}
+                        isBlocked={
+                          (visibleApplyResult?.state === "blocked" ||
+                            visibleApplyResult?.state === "awaiting_review") &&
+                          visibleApplyResult.blockerReason ===
+                            "required_human_input"
+                        }
                         jobId={visibleApplyResultJobId}
                         onClear={onClearApplicationAnswer}
                         onSave={onSaveApplicationAnswer}
@@ -308,10 +322,14 @@ export function ApplicationsDetailPanelReviewDataSection(props: {
                   <p>{formatStatusLabel(artifact.kind)}</p>
                   {artifact.textSnippet ? <p>{artifact.textSnippet}</p> : null}
                   {artifact.storagePath ? (
-                    <p className="break-all">Saved: {artifact.storagePath}</p>
+                    <p className="break-all">
+                      Saved: <SavedFileLink path={artifact.storagePath} />
+                    </p>
                   ) : null}
                   {artifact.url ? (
-                    <p className="break-all">URL: {artifact.url}</p>
+                    <p className="break-all">
+                      URL: <ExternalUrlLink url={artifact.url} />
+                    </p>
                   ) : null}
                   {artifact.visualEvidence ? (
                     <VisualEvidenceSummary evidence={artifact.visualEvidence} />
@@ -355,7 +373,9 @@ export function ApplicationsDetailPanelReviewDataSection(props: {
                       so a bare repeat printed the same long URL twice. */}
                   {checkpoint.url &&
                   !(checkpoint.detail ?? "").includes(checkpoint.url) ? (
-                    <p className="mt-2 break-all">{checkpoint.url}</p>
+                    <p className="mt-2 break-all">
+                      <ExternalUrlLink url={checkpoint.url} />
+                    </p>
                   ) : null}
                   {checkpoint.visualEvidence.length ? (
                     <div className="mt-2 grid gap-1">
@@ -504,6 +524,7 @@ function createApplicationAnswerCommandId(prefix: string): string {
 
 function ApplicationQuestionAnswerEditor(props: {
   answer: ApplicationAnswerRecord | null;
+  isBlocked: boolean;
   jobId: string;
   onClear: (command: ClearApplicationAnswerCommandInput) => Promise<void>;
   onSave: (command: SaveApplicationAnswerCommandInput) => Promise<void>;
@@ -730,8 +751,9 @@ function ApplicationQuestionAnswerEditor(props: {
       <div>
         <p className="label-mono-xs">Your prepared answer</p>
         <p className="mt-1 text-(length:--text-small) leading-6 text-foreground-soft">
-          Review and save this for the exact application. Saving never submits
-          it.
+          {props.isBlocked
+            ? "When all required answers are saved, this application continues in its chosen apply mode."
+            : "Review and save this for the exact application. Saving does not send it."}
         </p>
       </div>
       {/* Job Finder stopped here because it could not answer honestly, but it
@@ -845,11 +867,11 @@ function ApplicationQuestionAnswerEditor(props: {
             </p>
           ) : candidateAssetStatus === "loading" ? (
             <p className="text-(length:--text-small) text-foreground-soft">
-              Loading approved assets…
+              Loading your files…
             </p>
           ) : candidateAssetStatus === "error" ? (
             <p className="text-(length:--text-small) text-destructive">
-              Documents &amp; assets could not be loaded. Open Settings and try
+              Your files could not be loaded. Open Profile › Files and try
               again.
             </p>
           ) : candidateAssets.length > 0 ? (
@@ -860,7 +882,7 @@ function ApplicationQuestionAnswerEditor(props: {
               onChange={(event) => setSelectedAssetId(event.target.value)}
               value={selectedAssetId}
             >
-              <option value="">Choose an approved asset</option>
+              <option value="">Choose a file</option>
               {candidateAssets.map((asset) => (
                 <option key={asset.id} value={asset.id}>
                   {asset.originalName} · {formatStatusLabel(asset.kind)}
@@ -869,7 +891,7 @@ function ApplicationQuestionAnswerEditor(props: {
             </select>
           ) : (
             <p className="rounded-(--radius-field) border border-dashed border-border/50 px-3 py-3 text-(length:--text-small) leading-6 text-foreground-soft">
-              No files are approved for application attachment yet.
+              You have not added any files yet. Add one under Profile › Files.
             </p>
           )}
           <Link
@@ -879,12 +901,12 @@ function ApplicationQuestionAnswerEditor(props: {
                 ? buildJobFinderContextRoute("/job-finder/review-queue", {
                     jobId,
                   })
-                : "/job-finder/settings"
+                : profileFilesHref(inferFileKindForQuestion(question))
             }
           >
             {question.kind === "resume"
               ? "Open this job in Shortlisted"
-              : "Open Documents"}
+              : "Open your files in Profile"}
           </Link>
         </div>
       ) : (
@@ -949,16 +971,20 @@ function ApplicationQuestionAnswerEditor(props: {
       </div>
       {activeAnswer ? (
         <p className="text-(length:--text-small) leading-6 text-foreground-soft">
-          Answer saved for this exact application. To retry the paused safe
-          preparation, open{" "}
-          <Link
-            className="font-semibold text-foreground underline underline-offset-4"
-            to="/job-finder/actions"
-          >
-            Needs you
-          </Link>{" "}
-          and choose Done on its action. Final submission and account creation
-          remain disabled.
+          Answer saved for this exact application.
+          {props.isBlocked ? (
+            <>
+              {" "}
+              Complete any remaining required answers here or in{" "}
+              <Link
+                className="font-semibold text-foreground underline underline-offset-4"
+                to="/job-finder/actions"
+              >
+                Needs you
+              </Link>
+              . The application then continues in its chosen apply mode.
+            </>
+          ) : null}
         </p>
       ) : null}
     </div>
@@ -974,7 +1000,12 @@ function VisualEvidenceSummary(props: {
     <p className="mt-2 break-words text-(length:--text-small) leading-6 text-foreground-soft">
       Visual evidence: {evidence.summary} •{" "}
       {formatStatusLabel(evidence.retention)}
-      {evidence.storagePath ? ` • ${evidence.storagePath}` : ""}
+      {evidence.storagePath ? (
+        <>
+          {" • "}
+          <SavedFileLink path={evidence.storagePath} />
+        </>
+      ) : null}
     </p>
   );
 }

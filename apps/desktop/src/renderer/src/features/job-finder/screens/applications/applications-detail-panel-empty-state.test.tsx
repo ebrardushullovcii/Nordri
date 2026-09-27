@@ -30,9 +30,7 @@ describe("ApplicationsDetailPanelEmptyState", () => {
       screen.queryByText("Start an application from the list on the left."),
     ).toBeNull();
     expect(
-      screen.getByText(
-        /choose Fill it in.*final submission stays disabled/i,
-      ),
+      screen.getByText(/choose Apply.*apply mode chosen in Settings/i),
     ).toBeTruthy();
   });
 

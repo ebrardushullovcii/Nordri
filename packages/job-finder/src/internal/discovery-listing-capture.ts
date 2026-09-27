@@ -61,7 +61,13 @@ export function countDiscoveryListingCapture(
         counts.captured += 1;
         break;
       case "blocked":
-        counts.blocked += 1;
+        // A rate limit is a "come back later", and the next search does:
+        // it is still to read, not a page that gave nothing.
+        if (job.listingDetailFetch?.retryAfterAt) {
+          counts.notAttempted += 1;
+        } else {
+          counts.blocked += 1;
+        }
         break;
       default:
         counts.notAttempted += 1;

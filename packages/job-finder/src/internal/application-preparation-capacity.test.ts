@@ -375,10 +375,49 @@ describe("application records in the daily counter", () => {
       applyRuns: [],
       applyJobResults: [],
       applicationRecords: [
-        record({ jobId: "job-preflight-failed", at: "2026-03-08T17:00:00.000Z" }),
+        record({
+          jobId: "job-preflight-failed",
+          at: "2026-03-08T17:00:00.000Z",
+        }),
       ],
     });
 
     expect(capacity).toMatchObject({ used: 0, remaining: capacity.limit });
   });
+});
+
+test("uses the person's configured daily preparation limit", () => {
+  const capacity = deriveGlobalDailyApplicationPreparationCapacity({
+    now: new Date("2026-03-08T18:00:00.000Z"),
+    applyRuns: [],
+    applyJobResults: [],
+    limit: 30,
+  });
+
+  expect(capacity).toMatchObject({ limit: 30, used: 0, remaining: 30 });
+});
+
+test("exhausts a configured limit lower than the default", () => {
+  const current = run({
+    id: "run-configured-limit",
+    campaignId: "campaign-current",
+    createdAt: "2026-03-08T07:00:00.000Z",
+  });
+  const capacity = deriveGlobalDailyApplicationPreparationCapacity({
+    now: new Date("2026-03-08T18:00:00.000Z"),
+    applyRuns: [current],
+    applyJobResults: [
+      result({
+        id: "result-configured-limit",
+        runId: current.id,
+        jobId: "job-1",
+        state: "filling",
+        preparationStartedAt: "2026-03-08T07:00:00.000Z",
+        preparationStartedLocalDate: "2026-03-08",
+      }),
+    ],
+    limit: 1,
+  });
+
+  expect(capacity).toMatchObject({ limit: 1, used: 1, remaining: 0 });
 });

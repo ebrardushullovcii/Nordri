@@ -329,6 +329,38 @@ describe("formatProfileSetupReviewValue", () => {
 });
 
 describe("getProfileSetupReviewItemCopy", () => {
+  it("preserves the explanation for an imported eligibility conflict", () => {
+    const reason =
+      "Your resume differs from your saved answer. Confirm which answer to use.";
+    const copy = getProfileSetupReviewItemCopy({
+      label: "Work eligibility",
+      reason,
+      target: {
+        domain: "work_eligibility",
+        key: "authorizedWorkCountries",
+        recordId: null,
+      },
+      sourceCandidateId: "imported_work_countries",
+    });
+
+    expect(copy.reason).toBe(reason);
+  });
+
+  it.each(["authorizedWorkCountries", "requiresVisaSponsorship"])(
+    "keeps the required %s answer distinct from optional work details",
+    (key) => {
+      const copy = getProfileSetupReviewItemCopy({
+        label: "Work eligibility",
+        reason: "The imported resume did not provide this answer.",
+        target: { domain: "work_eligibility", key, recordId: null },
+      });
+
+      expect(copy.label).toBe("Work eligibility");
+      expect(copy.reason).toContain("before finishing setup");
+      expect(copy.reason).not.toContain("Optional");
+    },
+  );
+
   it("explains how to handle unknown legal work details", () => {
     const copy = getProfileSetupReviewItemCopy({
       label: "Work eligibility",
@@ -340,11 +372,9 @@ describe("getProfileSetupReviewItemCopy", () => {
       },
     });
 
-    expect(copy).toEqual({
-      label: "Check legal work details",
-      reason:
-        "The imported resume did not provide this answer. If no legal work-authorization fact is available, leave this Not set; Job Finder will not guess.",
-    });
+    expect(copy.label).toBe("Work details");
+    expect(copy.reason).toMatch(/^Optional\./);
+    expect(copy.reason).toContain("Not set");
   });
 });
 
@@ -465,7 +495,9 @@ describe("profile setup review priority", () => {
 
     expect(isFinishBlockingReviewItem(recommendedImportedLocation)).toBe(false);
     expect(isReviewableSuggestionItem(recommendedImportedLocation)).toBe(true);
-    expect(isFinishBlockingReviewItem(requiredMissingWorkMode)).toBe(true);
+    // A recommended field the resume left empty is a hint, not a gate: a
+    // person with a name, a contact, and a source is ready to search.
+    expect(isFinishBlockingReviewItem(requiredMissingWorkMode)).toBe(false);
     expect(isFinishBlockingReviewItem(criticalPending)).toBe(true);
     expect(isReviewableSuggestionItem(criticalPending)).toBe(false);
 
@@ -477,11 +509,12 @@ describe("profile setup review priority", () => {
         hasEligibilityPreferences: true,
         hasWorkModePreference: true,
         hasDiscoverySource: true,
+        hasWorkEligibilityAnswers: true,
       },
       reviewItems: [recommendedImportedLocation, requiredMissingWorkMode],
     });
-    expect(presentation.blockingPendingReviewItemCount).toBe(1);
-    expect(presentation.remainingBlockerCount).toBe(1);
+    expect(presentation.blockingPendingReviewItemCount).toBe(0);
+    expect(presentation.remainingBlockerCount).toBe(0);
   });
 });
 
@@ -578,6 +611,7 @@ describe("isProfileSetupPathStepComplete domain evidence", () => {
     hasEligibilityPreferences: false,
     hasMeaningfulBackground: false,
     hasNarrative: false,
+    hasWorkEligibilityAnswers: false,
     hasWorkModePreference: false,
   };
   const completeReadiness: ProfileSetupPathStepReadiness = {
@@ -588,6 +622,7 @@ describe("isProfileSetupPathStepComplete domain evidence", () => {
     hasEligibilityPreferences: true,
     hasMeaningfulBackground: true,
     hasNarrative: true,
+    hasWorkEligibilityAnswers: true,
     hasWorkModePreference: true,
   };
 

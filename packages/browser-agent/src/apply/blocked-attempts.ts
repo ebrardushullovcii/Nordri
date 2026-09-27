@@ -46,6 +46,12 @@ export type BlockedAttemptJudgement =
       tolerated: boolean;
       note: string | null;
       /**
+       * Set when the page tried to open another tab. Job Finder works in one
+       * tab, so the popup was closed; this is where it was going, so the run
+       * can open it here instead. Null when the address was not readable.
+       */
+      openedWindow?: { url: string | null };
+      /**
        * Set when the blocked request was the site saving an answer as it was
        * typed. Nothing left the page and the run carries on; it only matters
        * later, if the form will not move on without that save.
@@ -87,13 +93,27 @@ export function judgeBlockedAttempt(input: {
     return { stop: false, tolerated: false, note: null };
   }
 
-  if (isContainmentAttempt(attempt)) {
+  if (attempt.kind === "download") {
     return {
       stop: true,
       summary:
-        attempt.kind === "download"
-          ? "The site tried to download a file on its own, so Job Finder stopped and left the form as it was."
-          : "The site tried to open another window on its own, so Job Finder stopped and left the form as it was.",
+        "The site tried to download a file on its own, so Job Finder stopped and left the form as it was.",
+    };
+  }
+
+  // A new tab is not an attack; it is how most job boards hand you to the
+  // employer's own site. The popup is closed because the run lives in one
+  // tab, and the address it was going to is handed back so the run can go
+  // there itself.
+  if (isContainmentAttempt(attempt)) {
+    const host = attemptHost(attempt);
+    return {
+      stop: false,
+      tolerated: true,
+      note: host
+        ? `The page tried to open ${host} in a new tab. Job Finder keeps to one tab, so it opened the address here instead.`
+        : "The page tried to open a new tab, which Job Finder closed; it works in one tab.",
+      openedWindow: { url: attempt.url },
     };
   }
 

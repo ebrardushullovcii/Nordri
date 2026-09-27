@@ -44,7 +44,6 @@ const WIDE_SIDEBAR_DESTINATIONS = Object.freeze([
   "Find jobs",
   "Shortlisted",
   "Applications",
-  "Documents",
   "Companies",
   "Outcomes",
   "Search plans",
@@ -113,7 +112,7 @@ const CANONICAL_ROUTE_DEFINITIONS = Object.freeze([
     id: "shortlisted",
     route: "/job-finder/review-queue",
     label: "Shortlisted",
-    heading: "Shortlisted jobs",
+    heading: "Shortlisted",
     surface: "shortlisted",
   },
   {
@@ -152,8 +151,6 @@ const routeCycles = 3;
 // unbounded number of rendered pages.
 const MAX_PAGINATION_FAST_FORWARD_CLICKS = 200;
 const REVIEW_QUEUE_DRAFT_PREPARATION_LIMIT = 10;
-const REVIEW_QUEUE_READY_RESUME_REASON =
-  "Batch preparation needs a ready resume file: an approved tailored PDF or unchanged original resume.";
 
 const report = {
   startedAt: new Date().toISOString(),
@@ -450,7 +447,11 @@ function createScaleState(baseSnapshot) {
   const applicationRecords = Array.from(
     { length: counts.applications },
     (_, index) => {
-      const job = jobs[index];
+      // Keep the Applications scale axis distinct from the Shortlisted axis.
+      // Jobs already in Applications are intentionally excluded from the new
+      // all-jobs row, so reusing the first 1,001 jobs would leave no Shortlisted
+      // action to verify.
+      const job = jobs[counts.shortlisted + index];
       return {
         ...structuredClone(applicationTemplate),
         id: `scale_application_${index + 1}`,
@@ -3278,125 +3279,62 @@ async function assertRapidReviewPagination(page) {
 }
 
 async function assertReviewQueueBatchActions(page) {
-  const expectedCountsText = `${counts.shortlisted} eligible · 0 ready to prepare`;
   const draftRemainder =
     counts.shortlisted - REVIEW_QUEUE_DRAFT_PREPARATION_LIMIT;
-  const expectedCapNoteText = `Only the next ${REVIEW_QUEUE_DRAFT_PREPARATION_LIMIT} eligible jobs run now, in list order; ${draftRemainder} more remain.`;
-  const expectedPrepareLabel = `Prepare up to ${REVIEW_QUEUE_DRAFT_PREPARATION_LIMIT} drafts (review required)`;
-  await navigateHash(page, "/job-finder/review-queue", "Shortlisted jobs");
-  const summary = page
-    .locator('details[data-testid="batch-actions"] > summary')
-    .first();
-  await summary.waitFor({ state: "visible", timeout: 15_000 });
-  await summary.click();
-  await page.waitForFunction(
-    () => {
-      const details = document.querySelector(
-        'details[data-testid="batch-actions"]',
-      );
-      return Boolean(
-        details?.open &&
-        details.querySelector('[data-testid="tailored-draft-preparation"]'),
-      );
-    },
-    undefined,
-    { timeout: 15_000 },
-  );
+  const expectedCreateLabel = `Create ${REVIEW_QUEUE_DRAFT_PREPARATION_LIMIT} missing resumes`;
+  const expectedHelpText = `About a minute each, ${REVIEW_QUEUE_DRAFT_PREPARATION_LIMIT} at a time; ${draftRemainder} more after that.`;
+  await navigateHash(page, "/job-finder/review-queue", "Shortlisted");
+  const allJobsRow = page.locator('[data-testid="shortlisted-all-jobs"]');
+  await allJobsRow.waitFor({ state: "visible", timeout: 15_000 });
   const batchActionsEvidence = await page.evaluate(() => {
     const normalize = (value) => value?.replace(/\s+/g, " ").trim() ?? null;
-    const details = document.querySelector(
-      'details[data-testid="batch-actions"]',
+    const panel = document.querySelector(
+      '[data-testid="shortlisted-all-jobs"]',
     );
-    const panel = details?.querySelector(
-      '[data-testid="tailored-draft-preparation"]',
+    const createButton = panel?.querySelector(
+      '[data-testid="create-missing-resumes"]',
     );
+    const applyButton = panel?.querySelector('[data-testid="apply-all-ready"]');
     const panelParagraphs = panel
       ? Array.from(panel.querySelectorAll("p")).map((paragraph) =>
           normalize(paragraph.textContent),
         )
       : [];
-    const prepareButton = panel
-      ? Array.from(panel.querySelectorAll("button")).find((button) =>
-          normalize(button.textContent)?.startsWith("Prepare up to "),
-        )
-      : null;
-    const selectionLabels = Array.from(
-      document.querySelectorAll("label"),
-    ).filter((label) => normalize(label.textContent) === "Select for batch");
-    const rowSelections = selectionLabels.map((label) => {
-      const control = label.querySelector(
-        'input[type="checkbox"], [role="checkbox"]',
-      );
-      const rect = label.getBoundingClientRect();
-      const reasonId = control?.getAttribute("aria-describedby") ?? null;
-      return {
-        role: control?.getAttribute("role"),
-        disabled: control?.disabled ?? null,
-        describedByReason: Boolean(reasonId),
-        reason: reasonId
-          ? normalize(document.getElementById(reasonId)?.textContent)
-          : null,
-        visible: rect.width > 0 && rect.height > 0,
-      };
-    });
-    const selectAllReadyJobsPresent = Array.from(
-      document.querySelectorAll("button"),
-    ).some(
-      (button) => normalize(button.textContent) === "Select all ready jobs",
-    );
     return {
-      disclosureOpen: Boolean(details?.open),
-      summaryExpanded:
-        details?.querySelector("summary")?.getAttribute("aria-expanded") ??
-        null,
       panelMounted: Boolean(panel),
-      countsText:
-        panelParagraphs.find((text) => text?.includes("eligible ·")) ?? null,
-      capNoteText:
-        panelParagraphs.find((text) => text?.startsWith("Only the next ")) ??
-        null,
-      prepareButtonLabel: prepareButton
-        ? normalize(prepareButton.textContent)
+      helpText: panelParagraphs[0] ?? null,
+      createButtonLabel: createButton
+        ? normalize(createButton.textContent)
         : null,
-      prepareButtonDisabled: prepareButton?.disabled ?? null,
-      rowSelectionCount: rowSelections.length,
-      rowSelections,
-      selectAllReadyJobsPresent,
+      createButtonDisabled: createButton?.disabled ?? null,
+      applyButtonPresent: Boolean(applyButton),
+      removedBatchDisclosurePresent: Boolean(
+        document.querySelector('details[data-testid="batch-actions"]'),
+      ),
+      removedBatchSelectionCount: Array.from(
+        document.querySelectorAll("label"),
+      ).filter((label) => normalize(label.textContent) === "Select for batch")
+        .length,
     };
   });
   assert(
-    batchActionsEvidence.disclosureOpen &&
-      batchActionsEvidence.summaryExpanded === "true" &&
-      batchActionsEvidence.panelMounted,
-    `scale-review-queue-batch-actions: the batch actions disclosure did not open its preparation panel: ${JSON.stringify(batchActionsEvidence)}`,
+    batchActionsEvidence.panelMounted,
+    `scale-review-queue-batch-actions: the all-jobs action row did not render: ${JSON.stringify(batchActionsEvidence)}`,
   );
   assert(
-    batchActionsEvidence.countsText === expectedCountsText,
-    `scale-review-queue-batch-actions: eligibility strip was "${batchActionsEvidence.countsText}", expected "${expectedCountsText}".`,
+    batchActionsEvidence.helpText === expectedHelpText,
+    `scale-review-queue-batch-actions: helper was "${batchActionsEvidence.helpText}", expected "${expectedHelpText}".`,
   );
   assert(
-    batchActionsEvidence.capNoteText === expectedCapNoteText,
-    `scale-review-queue-batch-actions: cap note was "${batchActionsEvidence.capNoteText}", expected "${expectedCapNoteText}".`,
+    batchActionsEvidence.createButtonLabel === expectedCreateLabel &&
+      batchActionsEvidence.createButtonDisabled === false,
+    `scale-review-queue-batch-actions: Create action was "${batchActionsEvidence.createButtonLabel}" disabled=${batchActionsEvidence.createButtonDisabled}, expected enabled "${expectedCreateLabel}".`,
   );
   assert(
-    batchActionsEvidence.prepareButtonLabel === expectedPrepareLabel &&
-      batchActionsEvidence.prepareButtonDisabled === false,
-    `scale-review-queue-batch-actions: Prepare action was "${batchActionsEvidence.prepareButtonLabel}" disabled=${batchActionsEvidence.prepareButtonDisabled}, expected enabled "${expectedPrepareLabel}".`,
-  );
-  assert(
-    batchActionsEvidence.rowSelectionCount > 0 &&
-      batchActionsEvidence.rowSelections.every(
-        (selection) =>
-          selection.disabled === true &&
-          selection.describedByReason &&
-          selection.reason === REVIEW_QUEUE_READY_RESUME_REASON &&
-          selection.visible,
-      ),
-    `scale-review-queue-batch-actions: per-row Select for batch controls are not all disabled with the ready-resume reason: ${JSON.stringify(batchActionsEvidence.rowSelections.slice(0, 3))}`,
-  );
-  assert(
-    !batchActionsEvidence.selectAllReadyJobsPresent,
-    "scale-review-queue-batch-actions: Select all ready jobs rendered without any stage-ready job.",
+    !batchActionsEvidence.applyButtonPresent &&
+      !batchActionsEvidence.removedBatchDisclosurePresent &&
+      batchActionsEvidence.removedBatchSelectionCount === 0,
+    `scale-review-queue-batch-actions: removed batch controls or an ineligible Apply-to-all action rendered: ${JSON.stringify(batchActionsEvidence)}`,
   );
   await captureScreenshot(page, "review-queue-batch-actions-1440", {
     viewport: "1440-normal",
@@ -3405,19 +3343,11 @@ async function assertReviewQueueBatchActions(page) {
       ...batchActionsEvidence,
       eligibleTotal: counts.shortlisted,
       draftPreparationLimit: REVIEW_QUEUE_DRAFT_PREPARATION_LIMIT,
-      expectedCountsText,
-      expectedCapNoteText,
-      expectedPrepareLabel,
-      readyResumeReason: REVIEW_QUEUE_READY_RESUME_REASON,
+      expectedCreateLabel,
+      expectedHelpText,
     },
   });
   completeScenario("scale-review-queue-batch-actions");
-  await summary.click();
-  await page.waitForFunction(
-    () => !document.querySelector('details[data-testid="batch-actions"]')?.open,
-    undefined,
-    { timeout: 10_000 },
-  );
 }
 
 async function run() {
@@ -3848,7 +3778,7 @@ async function run() {
       id: "shortlisted",
       scenarioId: "scale-shortlisted-pagination",
       route: "/job-finder/review-queue",
-      heading: "Shortlisted jobs",
+      heading: "Shortlisted",
       surface: "shortlisted",
       pageCount: Math.ceil(counts.shortlisted / 40),
       paginationLabel: "shortlisted jobs pagination",
@@ -4011,7 +3941,7 @@ async function run() {
       paginationGeometry: native125PaginationGeometry,
     });
 
-    await navigateHash(page, "/job-finder/review-queue", "Shortlisted jobs");
+    await navigateHash(page, "/job-finder/review-queue", "Shortlisted");
     await checkHorizontalOverflow(page, "shortlisted-native125");
     await captureScreenshot(page, "shortlisted-p1-native125", {
       viewport: "native125",

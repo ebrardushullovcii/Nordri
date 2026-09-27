@@ -7,6 +7,9 @@ import type {
   BrowserVisualSnapshotRequest,
   BrowserAgentRunCheckpoint,
   JobPosting,
+  JobFinderSearchRequest,
+  JobSearchCampaignMode,
+  AiJobSearchBehavior,
   CandidateProfile,
   AgentDiscoveryProgress,
   JobSource,
@@ -43,6 +46,11 @@ export interface AgentNavigationPolicy {
 
 export interface AgentPromptContext {
   siteLabel: string;
+  /** Whether this run should favor only strong fits or find a broad pool. */
+  searchMode?: JobSearchCampaignMode;
+  searchRequest?: JobFinderSearchRequest;
+  /** The saved AI search behavior: how picky, and how remote counts. */
+  searchGuidance?: AiJobSearchBehavior;
   siteInstructions?: string[];
   toolUsageNotes?: string[];
   experimental?: boolean;
@@ -109,6 +117,10 @@ export interface AgentCompactionStatus {
 }
 
 export interface AgentConfig {
+  /** No person-specified result cap; retain every suitable posting found. */
+  retainAllFound?: boolean;
+  /** Public feed postings available for the model to inspect and select. */
+  sourceCatalog?: JobPosting[];
   source: JobSource;
   maxSteps: number;
   /** Legacy-compatible emergency ceiling. Normal completion is progress based. */

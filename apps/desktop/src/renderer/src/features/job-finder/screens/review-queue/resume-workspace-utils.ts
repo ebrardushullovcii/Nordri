@@ -128,6 +128,45 @@ export function describeUntailorableListing(
 }
 
 /**
+ * Internal stop reasons ("permanent_failure", stream errors) mean nothing to
+ * the person. Say what happened in plain words; keep short provider details
+ * such as "HTTP 502 from provider" as they are.
+ */
+function plainGenerationDetail(detail: string | null): string | null {
+  if (!detail) {
+    return null;
+  }
+  if (/stopped before completing|permanent_failure|budget_exhausted/i.test(detail)) {
+    return "the AI stopped partway through";
+  }
+  if (/closed the stream before finishing/i.test(detail)) {
+    return "the connection to the AI service dropped";
+  }
+  return detail;
+}
+
+/**
+ * Shortlisted's one sentence for a resume the AI could not write, or null
+ * when the AI wrote it or retrying would change nothing.
+ */
+export function describeAiUnavailableResume(
+  asset: ResumeGenerationPathInput | null | undefined,
+): string | null {
+  if (!asset || asset.generationMethod !== "deterministic") {
+    return null;
+  }
+  switch (asset.generationReason) {
+    case "no_provider_configured":
+    case "provider_failed":
+    case "provider_timeout":
+    case "provider_output_unverified":
+      return "AI could not write this resume, so it keeps your saved wording. Try again, or apply it as it is.";
+    default:
+      return null;
+  }
+}
+
+/**
  * Explains why the built-in generator wrote the first draft. Prefers the
  * structured reason recorded by the AI boundary; the note-prose match remains
  * only for assets saved before the structured reason existed.
@@ -139,7 +178,7 @@ export function describeResumeGenerationPath(
     return null;
   }
 
-  const detail = asset.generationDetail?.trim() || null;
+  const detail = plainGenerationDetail(asset.generationDetail?.trim() || null);
   const disclose = (
     originSentence: string,
     canRetryWithAi: boolean,
@@ -254,13 +293,45 @@ export interface AcceptedAssistantEditSummary {
 
 export function describeAcceptedAssistantEdits(
   messages: readonly ResumeAssistantMessage[],
+  revisions?: readonly ResumeDraftRevision[],
 ): AcceptedAssistantEditSummary | null {
-  const acceptedPatches = messages.flatMap((message) =>
-    message.role === "assistant" && message.proposalStatus === "accepted"
-      ? message.patches.filter((patch) =>
-          message.resolvedPatchIds.includes(patch.id),
-        )
-      : [],
+  const acceptedMessages = messages
+    .filter(
+      (message) =>
+        message.role === "assistant" && message.proposalStatus === "accepted",
+    )
+    .sort((left, right) =>
+      (left.resolvedAt ?? left.createdAt).localeCompare(
+        right.resolvedAt ?? right.createdAt,
+      ),
+    );
+  // Each accepted proposal wrote exactly one assistant revision, in the same
+  // order. An edit that was undone, or that a full regeneration replaced, no
+  // longer shapes the draft, so it is not counted or marked.
+  const liveMessages = (() => {
+    if (!revisions) {
+      return acceptedMessages;
+    }
+    const assistantRevisions = listAssistantEditRevisions(revisions);
+    const liveIds = new Set(listLiveAssistantEditRevisionIds(revisions));
+    if (assistantRevisions.length === acceptedMessages.length) {
+      return acceptedMessages.filter((_message, index) =>
+        liveIds.has(assistantRevisions[index]!.id),
+      );
+    }
+    // Older history without a one-to-one match: keep only edits accepted
+    // after the latest full regeneration.
+    const latestRegeneration = latestRegenerationAt(revisions);
+    return acceptedMessages.filter(
+      (message) =>
+        !latestRegeneration ||
+        (message.resolvedAt ?? message.createdAt) > latestRegeneration,
+    );
+  })();
+  const acceptedPatches = liveMessages.flatMap((message) =>
+    message.patches.filter((patch) =>
+      message.resolvedPatchIds.includes(patch.id),
+    ),
   );
 
   if (acceptedPatches.length === 0) {
@@ -325,19 +396,54 @@ export function describeResumeDraftProvenance(input: {
 }
 
 /**
- * The revision an Undo restores: assistant revisions snapshot the draft as it
- * was *before* the patch, so restoring the newest assistant patch returns the
- * document to its pre-edit wording.
+ * The AI edit an Undo removes: the newest accepted assistant patch that has
+ * not been undone yet and that a full regeneration has not replaced. Undo
+ * removes only that edit; later manual edits stay.
  */
 export function findLatestAssistantEditRevisionId(
   revisions: readonly ResumeDraftRevision[],
 ): string | null {
-  return (
-    [...revisions]
-      .filter((revision) => revision.mutationKind === "assistant_patch")
-      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0]
-      ?.id ?? null
+  return listLiveAssistantEditRevisionIds(revisions).at(-1) ?? null;
+}
+
+/**
+ * Accepted AI edits that still shape the draft, oldest first: not undone and
+ * not replaced by a later full regeneration.
+ */
+function listLiveAssistantEditRevisionIds(
+  revisions: readonly ResumeDraftRevision[],
+): string[] {
+  const undoneRevisionIds = new Set(
+    revisions
+      .map((revision) => revision.restoredFromRevisionId)
+      .filter((id): id is string => Boolean(id)),
   );
+  const latestRegeneration = latestRegenerationAt(revisions);
+  return listAssistantEditRevisions(revisions)
+    .filter(
+      (revision) =>
+        !undoneRevisionIds.has(revision.id) &&
+        (!latestRegeneration || revision.createdAt > latestRegeneration),
+    )
+    .map((revision) => revision.id);
+}
+
+function latestRegenerationAt(
+  revisions: readonly ResumeDraftRevision[],
+): string | undefined {
+  return revisions
+    .filter((revision) => revision.mutationKind === "regenerate_draft")
+    .map((revision) => revision.createdAt)
+    .sort()
+    .at(-1);
+}
+
+function listAssistantEditRevisions(
+  revisions: readonly ResumeDraftRevision[],
+): ResumeDraftRevision[] {
+  return revisions
+    .filter((revision) => revision.mutationKind === "assistant_patch")
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
 }
 
 export function formatTimestamp(value: string | null): string {
@@ -367,43 +473,21 @@ export function formatOptionalDate(
 export function describeResumeExportClaimBlock(input: {
   blockingAssessments: readonly Pick<ResumeClaimAssessment, "status">[];
 }): string | null {
-  if (input.blockingAssessments.length === 0) {
+  const count = input.blockingAssessments.length;
+  if (count === 0) {
     return null;
   }
 
-  const confirmCount = input.blockingAssessments.filter(
-    (assessment) => assessment.status === "confirm_needed",
-  ).length;
-  const rewriteCount = input.blockingAssessments.length - confirmCount;
-  const confirmLabel =
-    confirmCount === 1
-      ? "1 line still needs your confirmation"
-      : `${confirmCount} lines still need your confirmation`;
-  const rewriteLabel =
-    rewriteCount === 1
-      ? "1 claim must be rewritten or approved"
-      : `${rewriteCount} claims must be rewritten or approved`;
-
-  if (rewriteCount === 0) {
-    return `${confirmLabel} before this resume can be exported.`;
-  }
-  if (confirmCount === 0) {
-    return `${rewriteLabel} before this resume can be exported.`;
-  }
-  return `${confirmLabel}, and ${rewriteLabel}, before this resume can be exported.`;
+  return count === 1
+    ? "1 line needs your decision before this resume can be approved."
+    : `${count} lines need your decision before this resume can be approved.`;
 }
 
 export function resumeExportClaimBlockActionLabel(input: {
   blockingAssessments: readonly Pick<ResumeClaimAssessment, "status">[];
 }): string {
-  const confirmCount = input.blockingAssessments.filter(
-    (assessment) => assessment.status === "confirm_needed",
-  ).length;
-  const rewriteCount = input.blockingAssessments.length - confirmCount;
-  if (confirmCount > 0 && rewriteCount === 0) {
-    return "Review confirmations";
-  }
-  return "Review blocked claims";
+  const count = input.blockingAssessments.length;
+  return count === 1 ? "Review 1 line" : `Review ${count} lines`;
 }
 
 export function cloneDraft(draft: ResumeDraft): ResumeDraft {
@@ -426,4 +510,26 @@ export function cloneDraft(draft: ResumeDraft): ResumeDraft {
       sourceRefs: [...section.sourceRefs],
     })),
   };
+}
+
+/**
+ * The person's newest Assistant request when the reply to it changed nothing
+ * (no proposal), so a route that makes the draft editable can send it again
+ * instead of making the person retype it.
+ */
+export function findUnansweredAssistantRequest(
+  messages: readonly Pick<ResumeAssistantMessage, "role" | "content" | "patches">[],
+): string | null {
+  const reply = messages.at(-1);
+  const request = messages.at(-2);
+  if (
+    !reply ||
+    !request ||
+    reply.role !== "assistant" ||
+    reply.patches.length > 0 ||
+    request.role !== "user"
+  ) {
+    return null;
+  }
+  return request.content.trim() || null;
 }

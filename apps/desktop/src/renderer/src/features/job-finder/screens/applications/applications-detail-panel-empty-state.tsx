@@ -20,8 +20,8 @@ export function ApplicationsDetailPanelEmptyState(props: {
         <div className="grid max-w-96 gap-3 justify-items-center text-center">
           <p className="text-(length:--text-description) leading-6 text-foreground-soft break-words [overflow-wrap:anywhere]">
             Details appear here after you select a job in Shortlisted and choose
-            Fill it in. Review, export, and approve the exact resume
-            first; final submission stays disabled.
+            Apply. Job Finder uses your resume and the apply mode chosen in
+            Settings.
           </p>
           <Button asChild size="sm" type="button" variant="primary">
             <Link to={JOB_FINDER_ROUTE_PATHS.reviewQueue}>

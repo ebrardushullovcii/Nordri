@@ -35,7 +35,9 @@ import type {
   JobFinderApplyRunActionInput,
   JobFinderApplyRunDetailsQuery,
   JobFinderApplicationStartTarget,
+  JobFinderPreparedApplicationPageInput,
   JobFinderDiscoveryCancellationInput,
+  JobFinderSearchRequest,
   CandidateProfile,
   ClearApplicationAnswerCommandInput,
   EditApplicationDocumentInput,
@@ -72,6 +74,7 @@ import type {
   SaveInterviewSetupInput,
   SendInterviewChatMessageInput,
   UpdateInterviewOverlayPreferenceInput,
+  WriteClipboardTextResult,
   JobFinderOpenBrowserSessionInput,
   JobFinderSetResumeClaimConfirmationInput,
   JobFinderSetWorkHistoryReviewAcknowledgmentInput,
@@ -89,6 +92,7 @@ import type {
   ResumeImportProgressEvent,
   ResumeImportRun,
   ResumeApplicationMode,
+  TailoringMode,
   JobFinderResumePdfExportResult,
   RevealSavedFileResult,
   ResumePdfExportIntent,
@@ -137,6 +141,7 @@ import type {
   UpdateApplicationDefaultsInput,
   UpdateApplicationAuthorityEnvelopeInput,
   UpdateWorkspaceBehaviorInput,
+  UpdateAiBehaviorInput,
   WorkspaceRevision,
   UserActionCommandInput,
 } from "@unemployed/contracts";
@@ -388,6 +393,9 @@ declare global {
         updateWorkspaceBehavior: (
           input: UpdateWorkspaceBehaviorInput,
         ) => Promise<JobFinderWorkspaceSnapshot>;
+        updateAiBehavior: (
+          input: UpdateAiBehaviorInput,
+        ) => Promise<JobFinderWorkspaceSnapshot>;
         updateAppearanceTheme: (
           appearanceTheme: AppearanceTheme,
         ) => Promise<JobFinderWorkspaceSnapshot>;
@@ -422,12 +430,15 @@ declare global {
         ) => Promise<JobFinderWorkspaceSnapshot>;
         importResume: (
           onProgress?: (event: ResumeImportProgressEvent) => void,
+          /** `retryInterrupted` imports again the file a stopped import saved. */
+          options?: { retryInterrupted?: boolean },
         ) => Promise<JobFinderWorkspaceSnapshot>;
         cancelImportResume: () => void;
         runDiscovery: () => Promise<JobFinderWorkspaceSnapshot>;
         runAgentDiscovery: (
           onActivity?: (event: DiscoveryActivityEvent) => void,
           targetId?: string,
+          searchRequest?: JobFinderSearchRequest,
         ) => Promise<JobFinderAgentDiscoveryResult>;
         runSourceDebug: (
           targetId: string,
@@ -492,6 +503,7 @@ declare global {
         setJobResumeApplicationMode: (
           jobId: string,
           resumeApplicationMode: ResumeApplicationMode,
+          resumeTailoringMode?: TailoringMode | null,
         ) => Promise<JobFinderWorkspaceSnapshot>;
         removeJobFromReview: (
           jobId: string,
@@ -525,6 +537,10 @@ declare global {
           jobId: string,
           revisionId: string,
         ) => Promise<JobFinderWorkspaceSnapshot>;
+        undoResumeAssistantEdit: (
+          jobId: string,
+          revisionId: string,
+        ) => Promise<JobFinderWorkspaceSnapshot>;
         regenerateResumeDraft: (
           jobId: string,
         ) => Promise<JobFinderWorkspaceSnapshot>;
@@ -537,6 +553,7 @@ declare global {
           intent?: ResumePdfExportIntent,
         ) => Promise<JobFinderResumePdfExportResult>;
         revealSavedFile: (path: string) => Promise<RevealSavedFileResult>;
+        writeClipboardText: (text: string) => Promise<WriteClipboardTextResult>;
         approveResume: (
           jobId: string,
           exportId: string,
@@ -576,6 +593,7 @@ declare global {
         ) => Promise<JobFinderWorkspaceSnapshot>;
         startAutoApplyQueueRun: (
           jobIds: JobFinderApplyQueueActionInput["jobIds"],
+          applicationAutomationMode?: JobFinderApplyQueueActionInput["applicationAutomationMode"],
         ) => Promise<JobFinderWorkspaceSnapshot>;
         approveApplyRun: (
           input: JobFinderApplyRunActionInput,
@@ -589,8 +607,14 @@ declare global {
         revokeApplyRunApproval: (
           input: JobFinderApplyRunActionInput,
         ) => Promise<JobFinderWorkspaceSnapshot>;
+        focusPreparedApplicationPage: (
+          input: JobFinderPreparedApplicationPageInput,
+        ) => Promise<JobFinderWorkspaceSnapshot>;
         submitPreparedApplication: (input: {
           jobId: string;
+        }) => Promise<JobFinderWorkspaceSnapshot>;
+        sendPreparedApplications: (input: {
+          jobIds: string[];
         }) => Promise<JobFinderWorkspaceSnapshot>;
         approveApply: (
           input: JobFinderApplicationStartTarget,
@@ -617,6 +641,12 @@ declare global {
           ) => Promise<{ ok: true }>;
           loadResumeWorkspaceDemo: () => Promise<JobFinderWorkspaceSnapshot>;
           loadApplyQueueDemo: () => Promise<JobFinderWorkspaceSnapshot>;
+          loadWorkHistoryReviewDemo: () => Promise<JobFinderWorkspaceSnapshot>;
+          loadAgentOwnedBrowserDemo: (input: {
+            sourceUrl: string;
+            applicationUrl: string;
+            secondaryApplicationUrl?: string;
+          }) => Promise<JobFinderWorkspaceSnapshot>;
           /**
            * Arms exactly the next save on one protected surface to fail, then
            * clears itself. Test API only; absent in a production build.

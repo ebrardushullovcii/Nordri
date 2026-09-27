@@ -315,17 +315,14 @@ function renderReviewQueueScreen(
         globalDailyApplicationPreparationCapacity={null}
         isApplyPending={false}
         isJobPending={() => false}
-        isResumeStrategyPending={() => false}
         onEditResumeWorkspace={vi.fn()}
         onGenerateResume={vi.fn(() => Promise.resolve(true))}
         onOpenBrowserSession={vi.fn()}
         onOpenJobDetails={vi.fn()}
         onOpenProfile={vi.fn()}
         onPrepareTailoredDrafts={vi.fn()}
-        onRecommendResumeStrategy={vi.fn()}
         onRemoveReviewJob={vi.fn()}
         onSelectItem={onSelectItem}
-        onSelectResumeStrategy={vi.fn()}
         onSetJobResumeApplicationMode={vi.fn()}
         onStartApplyCopilot={vi.fn()}
         onStartAutoApplyQueue={vi.fn(() =>
@@ -340,8 +337,6 @@ function renderReviewQueueScreen(
           } as unknown as ResumeSourceDocument
         }
         queue={queue}
-        resumeStrategies={[]}
-        resumeStrategySelections={[]}
         selectedAsset={null}
         selectedItem={queue[0] ?? null}
         selectedJob={null}

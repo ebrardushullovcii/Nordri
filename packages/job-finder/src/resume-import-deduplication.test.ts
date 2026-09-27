@@ -148,17 +148,20 @@ describe("resume import deduplication", () => {
         candidate.target.key === "record",
     );
 
+    // One record survives the pair; on an empty profile it is applied
+    // rather than queued, and the duplicate is rejected.
     expect(
       snapshot.latestResumeImportReviewCandidates.filter(
         (candidate) => candidate.target.section === "experience",
       ),
-    ).toHaveLength(1);
+    ).toHaveLength(0);
     expect(experienceCandidates).toHaveLength(2);
     expect(
       experienceCandidates.filter(
-        (candidate) => candidate.resolution === "needs_review",
+        (candidate) => candidate.resolution === "auto_applied",
       ),
     ).toHaveLength(1);
+    expect(snapshot.profile.experiences).toHaveLength(1);
     expect(
       experienceCandidates.filter(
         (candidate) => candidate.resolution === "rejected",
@@ -1664,7 +1667,7 @@ describe("resume import deduplication", () => {
     });
   });
 
-  test("mergeExperienceRecords does not collapse distinct jobs when company and location are missing", () => {
+  test("mergeExperienceRecords folds an employer-less reading of a role into the reading that names the employer", () => {
     const merged = mergeExperienceRecords(
       [],
       [
@@ -1705,10 +1708,42 @@ describe("resume import deduplication", () => {
       ],
     );
 
+    // A live import produced exactly this pair for one job: the model kept the
+    // title and dates but lost the employer line, the text reader kept the
+    // employer and the bullets. Two cards for one role is the defect.
+    expect(merged).toHaveLength(1);
+    expect(merged[0]?.companyName).toBe("Mercury");
+    expect(merged[0]?.location).toBe("Remote");
+  });
+
+  test("mergeExperienceRecords keeps same-title jobs apart when both name different employers", () => {
+    const base = {
+      companyUrl: null,
+      employmentType: null,
+      location: null,
+      workMode: [],
+      startDate: "2024-08",
+      endDate: null,
+      isCurrent: true,
+      summary: null,
+      achievements: [],
+      skills: [],
+      domainTags: [],
+      peopleManagementScope: null,
+      ownershipScope: null,
+    };
+    const merged = mergeExperienceRecords(
+      [],
+      [
+        { ...base, companyName: "Mercury", title: "Software Engineer" },
+        { ...base, companyName: "Venus Labs", title: "Software Engineer" },
+      ],
+    );
+
     expect(merged).toHaveLength(2);
   });
 
-  test("auto-applies grounded fresh-start fields while inferred search preferences stay review-first", async () => {
+  test("auto-applies grounded fresh-start fields including inferred search preferences", async () => {
     const seed = createSeed();
     const { workspaceService } = createWorkspaceServiceHarness({
       seed: {
@@ -1793,11 +1828,14 @@ describe("resume import deduplication", () => {
       .filter((candidate) => candidate.target.section === "search_preferences")
       .map((candidate) => candidate.target.key);
 
-    expect(snapshot.searchPreferences.targetRoles).toEqual([]);
-    expect(snapshot.searchPreferences.locations).toEqual([]);
-    expect(pendingTargetingKeys).toContain("targetRoles");
-    expect(pendingTargetingKeys).toContain("locations");
-    expect(snapshot.latestResumeImportRun?.status).toBe("review_ready");
+    // Empty targeting fields take the resume's roles and location; the
+    // person edits them on the Job targets step instead of confirming cards.
+    expect(snapshot.searchPreferences.targetRoles).toEqual([
+      "Senior Software Engineer",
+    ]);
+    expect(snapshot.searchPreferences.locations.length).toBeGreaterThan(0);
+    expect(pendingTargetingKeys).not.toContain("targetRoles");
+    expect(snapshot.latestResumeImportRun?.status).toBe("applied");
     expect(
       snapshot.profileSetupState.reviewItems.map((item) => item.label),
     ).not.toContain("Work history");

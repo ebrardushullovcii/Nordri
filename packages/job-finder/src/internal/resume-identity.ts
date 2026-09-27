@@ -605,7 +605,11 @@ export function findResumeDraftIdentityConflicts(
     if (
       draftValue &&
       resolvedValue &&
-      !valuesMatch(field, draftValue, resolvedValue)
+      !valuesMatch(field, draftValue, resolvedValue) &&
+      !(
+        field === "location" &&
+        locationKeepsProfilePlace(draftValue, resolvedValue)
+      )
     ) {
       conflicts.push(
         `The saved draft ${field} '${draftValue}' does not match the resolved profile identity '${resolvedValue}'.`,
@@ -614,6 +618,24 @@ export function findResumeDraftIdentityConflicts(
   }
 
   return conflicts;
+}
+
+/**
+ * A header location that still names the profile's place with a note added
+ * ("Berlin, Germany (open to remote)") is the person describing where they
+ * work, not a different person. It used to block the preview as an identity
+ * mismatch. A location that drops the profile's place still counts.
+ */
+function locationKeepsProfilePlace(
+  draftLocation: string,
+  profileLocation: string,
+): boolean {
+  const draftComparable = comparable(draftLocation);
+  const profileComparable = comparable(profileLocation);
+  return (
+    profileComparable.length > 0 &&
+    ` ${draftComparable} `.includes(` ${profileComparable} `)
+  );
 }
 
 export function resumeIdentityMismatchMessage(

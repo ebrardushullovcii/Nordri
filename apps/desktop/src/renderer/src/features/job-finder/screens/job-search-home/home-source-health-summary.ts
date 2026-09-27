@@ -313,16 +313,27 @@ export function formatDiscoveryRunSourceProblemSummary(
   }
 
   if (summary.total > 0) {
+    const noResults =
+      summary.groups.find((group) => group.category === "no_results")?.count ??
+      0;
+    const problems = summary.total - noResults;
     const lead =
-      summary.total === 1
+      problems === 1
         ? "1 source had a problem in the last search"
-        : `${summary.total} sources had a problem in the last search`;
-    sentences.push(
-      [
-        lead,
-        ...summary.groups.map((group) => `${group.count} ${group.label}`),
-      ].join(" · "),
-    );
+        : `${problems} sources had a problem in the last search`;
+    if (problems > 0)
+      sentences.push(
+        [
+          lead,
+          ...summary.groups
+            .filter((group) => group.category !== "no_results")
+            .map((group) => `${group.count} ${group.label}`),
+        ].join(" · ") + (noResults > 0 ? "." : ""),
+      );
+    if (noResults > 0)
+      sentences.push(
+        `${noResults} ${noResults === 1 ? "source" : "sources"} found nothing in the last search.`,
+      );
   }
 
   return sentences.length > 0 ? sentences.join(" ") : null;

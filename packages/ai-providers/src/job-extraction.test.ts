@@ -44,6 +44,26 @@ function assertCapturedRequestBody(
 }
 
 describe("normalizeCompositeTitle", () => {
+  test("preserves role words when a separate location disproves the inferred suffix", () => {
+    expect(
+      normalizeCompositeTitle("Ingenieur für Datenplattformen", "Berlin"),
+    ).toMatchObject({
+      title: "Ingenieur für Datenplattformen",
+      location: null,
+    });
+    expect(
+      normalizeCompositeTitle("Senior Engineer Infrastructure", "London"),
+    ).toMatchObject({
+      title: "Senior Engineer Infrastructure",
+      location: null,
+    });
+    expect(
+      normalizeCompositeTitle("Backend Engineer New York", "New York, USA"),
+    ).toMatchObject({
+      title: "Backend Engineer",
+      location: "New York",
+    });
+  });
   test("strips posted-at suffixes across supported languages", () => {
     expect(
       normalizeCompositeTitle(

@@ -20,6 +20,8 @@ import {
   type ResumeGenerationStrategyPolicy,
   type StringMap,
   type TailorResumeInput,
+  describeProfileAssistantBehavior,
+  PROFILE_RESUME_APPROACH_VOCABULARY,
 } from "./shared";
 import {
   buildDeterministicResumeProfileExtraction,
@@ -49,6 +51,7 @@ import {
   extractModelJsonFromPayload,
   parseModelApiMode,
   parseModelReasoningEffort,
+  type ModelReasoningEffort,
 } from "./openai-compatible-transport";
 import {
   type ModelRequestResilienceOptions,
@@ -75,6 +78,8 @@ import { createBrowserVisualAnalysisProviderFromEnvironment } from "./browser-vi
 import {
   runProfileCopilotAgentTask,
   runResumeEditAgentTask,
+  runResumeGenerationAgentTask,
+  runResumeImportStageAgentTask,
 } from "./agent-capabilities";
 import {
   buildModelRequestHeaders,
@@ -97,6 +102,8 @@ const DEFAULT_RESUME_DRAFT_TIMEOUT_MS = 600_000;
  * collapsed into the safe fallback.
  */
 const DEFAULT_AGENT_TURN_TIMEOUT_MS = 300_000;
+/** Browser-agent turns and page reads think briefly; see `agentReasoningEffort`. */
+const DEFAULT_AGENT_TURN_REASONING_EFFORT: ModelReasoningEffort = "low";
 const DEFAULT_RESUME_EXTRACTION_TIMEOUT_MS = 600_000;
 const DEFAULT_RESUME_IMPORT_STAGE_TIMEOUT_MS: Record<
   Exclude<ResumeImportExtractionStage, "shared_memory">,
@@ -134,8 +141,8 @@ function buildResumeRewriteProposalPrompt(
 
   const returnGuidance =
     tailoringMode === "aggressive"
-      ? "Return one JSON object of material improvements. Do not return {}: name every targetJob.listingRequestedSkills item that is missing from the cited evidence in inferred:true prose and in coreSkills, and round evidenced years up by one on an inferred line when the listing itself states that higher figure."
-      : "Return one JSON object containing only material improvements. Return {} when the cited evidence is already as clear and professional as you can safely make it.";
+      ? "Compose one sparse proposal of material improvements with compose_resume_proposal. Do not compose {}: name every targetJob.listingRequestedSkills item that is missing from the cited evidence in inferred:true prose and in coreSkills, and round evidenced years up by one on an inferred line when the listing itself states that higher figure."
+      : "Compose one sparse proposal containing only material improvements with compose_resume_proposal. Compose {} when the cited evidence is already as clear and professional as you can safely make it.";
   const jobWordingGuidance =
     tailoringMode === "aggressive"
       ? "Use job-description wording for technologies in targetJob.listingRequestedSkills and for work the cited evidence supports. Never copy employer language that is not a technology or a supported skill, and never add target-company claims."
@@ -152,7 +159,7 @@ function buildResumeRewriteProposalPrompt(
     jobWordingGuidance,
     modeGuidance,
     ...strategyGuidance,
-    "Do not return a full resume, identity metadata, compatibility scores, labels, notes, explanations, or uncited text. In aggressive mode return coreSkills covering the candidate's key skills plus targetJob.listingRequestedSkills.",
+    "Do not compose a full resume, identity metadata, compatibility scores, labels, notes, explanations, or uncited text. In aggressive mode include coreSkills covering the candidate's key skills plus targetJob.listingRequestedSkills.",
   ].join(" ");
 }
 
@@ -226,6 +233,8 @@ export function createOpenAiCompatibleJobFinderAiClient(
   const validatedOptions = configuredOptions.success
     ? configuredOptions.data
     : null;
+  const agentReasoningEffort =
+    validatedOptions?.agentReasoningEffort ?? validatedOptions?.reasoningEffort;
   const status = AgentProviderStatusSchema.parse({
     kind: "openai_compatible",
     ready: configuredOptions.success,
@@ -264,6 +273,8 @@ export function createOpenAiCompatibleJobFinderAiClient(
       signal?: AbortSignal;
       /** Which conversation this request continues; see model-request-identity. */
       conversationKey?: string;
+      /** Overrides the client's effort for this one request. */
+      reasoningEffort?: ModelReasoningEffort | undefined;
     },
   ): Promise<unknown> {
     if (!validatedOptions) {
@@ -303,11 +314,17 @@ export function createOpenAiCompatibleJobFinderAiClient(
         body: buildModelRequestBody({
           apiMode,
           model: validatedOptions.model,
-          reasoningEffort: validatedOptions.reasoningEffort,
+          reasoningEffort:
+            options?.reasoningEffort ?? validatedOptions.reasoningEffort,
           reasoningSummary: resilience.streaming !== false,
           jsonOutput: true,
           messages: [
-            { role: "system", content: systemPrompt },
+            {
+              role: "system",
+              content: /\bjson\b/i.test(systemPrompt)
+                ? systemPrompt
+                : `${systemPrompt}\nReturn JSON only.`,
+            },
             {
               role: "user",
               content: JSON.stringify(compactedUserPayload),
@@ -505,6 +522,8 @@ export function createOpenAiCompatibleJobFinderAiClient(
         "reviseCandidateProfile",
         [
           "You are a profile editing assistant.",
+          ...describeProfileAssistantBehavior(input.assistantBehavior),
+          PROFILE_RESUME_APPROACH_VOCABULARY,
           "Return JSON only with content and typed patchGroups.",
           "Patch groups must use the provided bounded profile copilot operations only.",
           "Answer grounded factual questions directly when the request is asking what is already in the profile, even if no edit is needed.",
@@ -593,9 +612,10 @@ export function createOpenAiCompatibleJobFinderAiClient(
           ? SEARCH_RESULTS_EXTRACTION_PAGE_TEXT_LIMIT
           : JOB_DETAIL_EXTRACTION_PAGE_TEXT_LIMIT;
       const timeoutMs =
-        input.pageType === "search_results"
+        validatedOptions?.requestTimeoutMs ??
+        (input.pageType === "search_results"
           ? SEARCH_RESULTS_EXTRACTION_TIMEOUT_MS
-          : DEFAULT_MODEL_TIMEOUT_MS;
+          : DEFAULT_MODEL_TIMEOUT_MS);
 
       const payload = await fetchModelJson(
         "extractJobsFromPage",
@@ -608,6 +628,7 @@ export function createOpenAiCompatibleJobFinderAiClient(
           timeoutMs,
           ...(input.signal ? { signal: input.signal } : {}),
           conversationKey: modelConversationKeys.pageExtraction(input.pageUrl),
+          reasoningEffort: agentReasoningEffort,
         },
       );
 
@@ -646,7 +667,7 @@ export function createOpenAiCompatibleJobFinderAiClient(
           body: buildModelRequestBody({
             apiMode,
             model: validatedOptions.model,
-            reasoningEffort: validatedOptions.reasoningEffort,
+            reasoningEffort: agentReasoningEffort,
             reasoningSummary: resilience.streaming !== false,
             messages: messages.map((msg) => {
               const base = { role: msg.role, content: msg.content };
@@ -791,7 +812,11 @@ export function countDistinguishingListingTerms(job: {
   summary?: string | null;
   keySkills?: readonly string[];
 }): number {
-  const text = [job.description ?? "", job.summary ?? "", ...(job.keySkills ?? [])]
+  const text = [
+    job.description ?? "",
+    job.summary ?? "",
+    ...(job.keySkills ?? []),
+  ]
     .join(" ")
     .toLowerCase();
   const terms = new Set(
@@ -828,6 +853,43 @@ function buildProviderFailureProvenance(error: unknown) {
   };
 }
 
+/** Why a stage used the built-in reader when no model is available at all. */
+export const NO_AI_PROVIDER_REASON = "No AI model is available right now.";
+
+export const PROFILE_ASSISTANT_UNFINISHED_MESSAGE =
+  "The Assistant stopped before it could finish this request, so nothing was changed. Your question is kept; ask it again or say it another way.";
+
+/** The Assistant ran twice without finishing and the built-in editor had nothing either. */
+export class ProfileCopilotUnfinishedError extends Error {
+  constructor() {
+    super(PROFILE_ASSISTANT_UNFINISHED_MESSAGE);
+    this.name = "ProfileCopilotUnfinishedError";
+  }
+}
+
+/**
+ * Stops a fresh run can plausibly get past: the model circled without a
+ * change, or ran out of turns. A time-budget stop already used the whole
+ * wait, and a refused external action or a question for the person would
+ * stop the same way again.
+ */
+function shouldRetryUnfinishedProfileRun(reply: ProfileCopilotReply): boolean {
+  const stopReason = reply.executionReceipt?.stopReason;
+  return (
+    stopReason === "no_progress" ||
+    stopReason === "emergency_ceiling" ||
+    stopReason === "cost_budget"
+  );
+}
+
+/** The built-in editor's reply when it could not make a change either. */
+function isProfileCopilotNonAnswer(reply: ProfileCopilotReply): boolean {
+  return (
+    reply.patchGroups.length === 0 &&
+    /could not turn it into a safe structured profile edit/i.test(reply.content)
+  );
+}
+
 export function createJobFinderAiClientFromEnvironment(
   env: StringMap = process.env,
 ): JobFinderAiClient {
@@ -860,6 +922,45 @@ export function createJobFinderAiClientFromEnvironment(
 
     return {
       ...deterministicClient,
+      // The model ships with the product, so a missing one is an outage, not
+      // a setup step. Without these markers an import finished "Ready" and
+      // the Assistant answered "I could not turn it into a safe edit", and
+      // nobody could tell the AI had never been asked.
+      async extractResumeImportStage(input) {
+        const result =
+          await deterministicClient.extractResumeImportStage(input);
+        return input.stage === "shared_memory"
+          ? result
+          : {
+              ...result,
+              fallback: {
+                kind: "provider_error" as const,
+                reason: NO_AI_PROVIDER_REASON,
+              },
+            };
+      },
+      async reviseCandidateProfile(input) {
+        const reply = await deterministicClient.reviseCandidateProfile(input);
+        const timestamp = new Date().toISOString();
+        return {
+          ...reply,
+          executionReceipt: AgentTaskExecutionReceiptSchema.parse({
+            taskId: `profile_copilot_unavailable_${Date.now()}`,
+            capability: "profile_copilot",
+            startedAt: timestamp,
+            completedAt: timestamp,
+            durationMs: 0,
+            model: null,
+            reasoningEffort: null,
+            providerCalls: 0,
+            repairAttempts: 0,
+            fallbackUsed: true,
+            stopReason: "permanent_failure",
+            finalValidationIssues: [],
+            toolReceipts: [],
+          }),
+        };
+      },
       analyzeBrowserVisualSnapshot: (input) =>
         browserVisualProvider.analyzeBrowserVisualSnapshot(input),
     };
@@ -875,6 +976,9 @@ export function createJobFinderAiClientFromEnvironment(
     reasoningEffort:
       parseModelReasoningEffort(env.UNEMPLOYED_AI_REASONING_EFFORT) ??
       DEFAULT_TEXT_MODEL_REASONING_EFFORT,
+    agentReasoningEffort:
+      parseModelReasoningEffort(env.UNEMPLOYED_AI_AGENT_REASONING_EFFORT) ??
+      DEFAULT_AGENT_TURN_REASONING_EFFORT,
     label: "AI resume agent",
     requestTimeoutMs: parsedRequestTimeoutMs,
     resumeExtractionTimeoutMs: parsedResumeExtractionTimeoutMs,
@@ -983,7 +1087,10 @@ export function createJobFinderAiClientFromEnvironment(
       const fallbackPromise = fallbackClient.extractResumeImportStage(input);
 
       try {
-        const primary = await primaryClient.extractResumeImportStage(input);
+        const primary = await runResumeImportStageAgentTask({
+          client: primaryClient,
+          request: input,
+        });
         const primaryProviderMs =
           primary.timing?.primaryProviderMs ??
           Math.max(0, Math.round(performance.now() - primaryStartedAtMs));
@@ -1133,7 +1240,26 @@ export function createJobFinderAiClientFromEnvironment(
       const providerLabel =
         modelClient === aggressiveClient ? "Aggressive AI" : "Primary AI";
       try {
-        return await modelClient.createResumeDraft(input);
+        const generated = await runResumeGenerationAgentTask({
+          client: modelClient,
+          request: input,
+          substantivePrompt: buildResumeRewriteProposalPrompt(
+            input.strategy?.tailoringStrength ??
+              input.searchPreferences.tailoringMode,
+            input.strategy,
+          ),
+        });
+        const model = modelClient.getStatus().model;
+        return {
+          ...generated,
+          notes:
+            generated.generationProvenance?.method === "ai"
+              ? uniqueStrings([
+                  ...generated.notes,
+                  `Generated with ${providerLabel}${model ? ` (${model})` : ""}.`,
+                ])
+              : generated.notes,
+        };
       } catch (error) {
         logFallbackError("createResumeDraft", error);
         // Empty model output still goes through completeTailoredResumeDraft,
@@ -1166,6 +1292,18 @@ export function createJobFinderAiClientFromEnvironment(
           request: input,
         });
         if (reply.executionReceipt?.stopReason === "completed") return reply;
+        // Names and outcomes only, never content: without this a stopped
+        // Assistant run left no trace of what it spent its budget on.
+        console.warn(
+          `[AI Provider] reviseResumeDraft stopped (${reply.executionReceipt?.stopReason ?? "unknown"}) after ${reply.executionReceipt?.providerCalls ?? 0} model calls: ${(
+            reply.executionReceipt?.toolReceipts ?? []
+          )
+            .map(
+              (receipt) =>
+                `${receipt.toolName}:${receipt.outcome}${receipt.durationMs >= 5_000 ? `(${Math.round(receipt.durationMs / 1_000)}s)` : ""}`,
+            )
+            .join(", ")}`,
+        );
         // A run that stopped on its time or progress budget may still have
         // produced the answer: a grounded patch, or a plain explanation of
         // what could not be done. Throwing that away for the deterministic
@@ -1179,13 +1317,22 @@ export function createJobFinderAiClientFromEnvironment(
           return reply;
         }
         const fallback = await fallbackClient.reviseResumeDraft(input);
+        const timedOut = reply.executionReceipt?.stopReason === "time_budget";
         return {
           ...fallback,
+          // The built-in reply "could not safely turn that request into a
+          // grounded patch" blamed the request when the AI had only been too
+          // slow to answer ("the second one", two model calls of 61 s and
+          // 110 s).
+          ...(timedOut && fallback.patches.length === 0
+            ? {
+                content:
+                  "The AI took too long to answer this time, so nothing was changed. Send the request again.",
+              }
+            : {}),
           executionReceipt: createFallbackExecutionReceipt(
             "resume_guided_edit",
-            reply.executionReceipt?.stopReason === "time_budget"
-              ? "time_budget"
-              : "no_progress",
+            timedOut ? "time_budget" : "no_progress",
           ),
         };
       } catch (error) {
@@ -1223,13 +1370,39 @@ export function createJobFinderAiClientFromEnvironment(
       }
 
       try {
-        const primaryReply = await runProfileCopilotAgentTask({
+        let primaryReply = await runProfileCopilotAgentTask({
           client: primaryClient,
           request: input,
         });
 
+        // A run that stops short of finish_task used to be thrown away whole,
+        // proposals included, and the built-in editor answered "I could not
+        // turn it into a safe structured profile edit" with no card (a live
+        // "add a target role" run). A run that stopped with nothing prepared
+        // gets one fresh attempt; one that prepared cards keeps them, and its
+        // receipt tells the service it stopped early.
+        if (
+          shouldRetryUnfinishedProfileRun(primaryReply) &&
+          primaryReply.patchGroups.length === 0
+        ) {
+          primaryReply = await runProfileCopilotAgentTask({
+            client: primaryClient,
+            request: input,
+          });
+        }
+
         if (primaryReply.executionReceipt?.stopReason !== "completed") {
+          if (primaryReply.patchGroups.length > 0) {
+            return primaryReply;
+          }
           const fallback = await fallbackClient.reviseCandidateProfile(input);
+          if (isProfileCopilotNonAnswer(fallback)) {
+            // Neither the model nor the built-in editor has anything to show.
+            // Recording the editor's "could not turn it into a safe edit" as
+            // the answer left a dead end; failing keeps the question on
+            // screen with Ask again under it.
+            throw new ProfileCopilotUnfinishedError();
+          }
           return {
             ...fallback,
             executionReceipt: createFallbackExecutionReceipt(
@@ -1256,6 +1429,9 @@ export function createJobFinderAiClientFromEnvironment(
 
         return primaryReply;
       } catch (error) {
+        if (error instanceof ProfileCopilotUnfinishedError) {
+          throw error;
+        }
         logFallbackError("reviseCandidateProfile", error);
         const fallback = await fallbackClient.reviseCandidateProfile(input);
         return {
@@ -1299,6 +1475,9 @@ export function createJobFinderAiClientFromEnvironment(
       try {
         return await primaryClient.extractJobsFromPage(input);
       } catch (error) {
+        if (input.signal?.aborted) {
+          throw error;
+        }
         logFallbackError("extractJobsFromPage", error);
         return fallbackClient.extractJobsFromPage(input);
       }

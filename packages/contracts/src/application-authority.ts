@@ -63,8 +63,8 @@ export type ApplicationAuthorityStatus = z.infer<
 
 /** Bounded collection sizes so no authority document grows unbounded. */
 export const applicationAuthorityMaxScopedJobIds = 1000;
-export const applicationAuthorityMaxResumeDigests = 20;
-export const applicationAuthorityMaxOrigins = 50;
+export const applicationAuthorityMaxResumeDigests = 1000;
+export const applicationAuthorityMaxOrigins = 1000;
 
 /**
  * Exact HTTP(S) origin scope. Structurally identical to the privacy-receipt
@@ -221,9 +221,8 @@ export const ApplicationAuthorityAnswerPolicySchema = z
         (values) => new Set(values).size === values.length,
         "Pre-approved declaration kinds must be unique.",
       ),
-    salaryDisclosure: ApplicationSalaryDisclosureRuleSchema.default(
-      "pause_for_user",
-    ),
+    salaryDisclosure:
+      ApplicationSalaryDisclosureRuleSchema.default("pause_for_user"),
   })
   .strict();
 export type ApplicationAuthorityAnswerPolicy = z.infer<
@@ -469,32 +468,10 @@ export const ApplicationAuthorityEnvelopeSchema = z
         path: ["expiresAt"],
       });
     }
-    if (value.intermediateMutationsAuthorized) {
-      if (value.scope.campaignId !== null || value.scope.jobIds.length !== 1) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message:
-            "Intermediate external mutation capability requires exactly one job and no campaign scope.",
-          path: ["scope"],
-        });
-      }
-      if (value.allowedResumeSha256.length !== 1) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message:
-            "Intermediate external mutation capability requires exactly one resume SHA-256 digest.",
-          path: ["allowedResumeSha256"],
-        });
-      }
-      if (value.allowedOrigins.length !== 1) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message:
-            "Intermediate external mutation capability requires exactly one canonical origin.",
-          path: ["allowedOrigins"],
-        });
-      }
-    }
+    // Field saves on employer sites are on by default (ADR 0024), so one
+    // grant covers every job, resume and origin the person applies with; the
+    // old "exactly one of each" pin made the second application of a session
+    // fail validation.
 
     if (new Set(value.scope.jobIds).size !== value.scope.jobIds.length) {
       ctx.addIssue({
@@ -1191,6 +1168,21 @@ export type SubmissionOutcomeRetryEligibility = z.infer<
   typeof SubmissionOutcomeRetryEligibilitySchema
 >;
 
+/** Browser execution diagnostics are not employer confirmation evidence. */
+export const SubmissionBrowserActionDiagnosticsSchema = z
+  .object({
+    reason: NonEmptyStringSchema.max(80),
+    detail: NonEmptyStringSchema.max(500).optional(),
+    actionAttempted: z.boolean().optional(),
+    actionIssued: z.boolean().optional(),
+    actionCompleted: z.boolean().optional(),
+    requestsObservedDuringAction: z.number().int().nonnegative().optional(),
+  })
+  .strict();
+export type SubmissionBrowserActionDiagnostics = z.infer<
+  typeof SubmissionBrowserActionDiagnosticsSchema
+>;
+
 /**
  * Refinement matrix enforced here and relied upon by receipts/packets:
  * - `submitted`: retry permanently blocked as `submission_confirmed`,
@@ -1219,6 +1211,7 @@ export const SubmissionOutcomeRecordSchema = z
       .array(SubmissionOutcomeEvidenceEntrySchema)
       .max(submissionOutcomeMaxEvidenceEntries),
     retry: SubmissionOutcomeRetryEligibilitySchema,
+    browserAction: SubmissionBrowserActionDiagnosticsSchema.optional(),
   })
   .strict()
   .superRefine((value, ctx) => {

@@ -35,6 +35,7 @@ import {
   DISCOVERY_DETAIL_SCROLL_EDGE_HEIGHT_PX,
   DISCOVERY_DETAIL_SCROLL_GUTTER_PX,
   DiscoveryDetailPanel,
+  listFlaggedKeywordTerms,
   MatchAssessmentChangeDisclosure,
   SourceDiagnostics,
 } from "./discovery-detail-panel";
@@ -92,6 +93,37 @@ function deferred<T>() {
 describe("DiscoveryDetailPanel listing capture copy", () => {
   afterEach(cleanup);
 
+  it("copies the canonical listing URL through the desktop bridge", async () => {
+    const writeClipboardText = vi.fn().mockResolvedValue({ written: true });
+    Object.defineProperty(window, "unemployed", {
+      configurable: true,
+      value: { jobFinder: { writeClipboardText } },
+    });
+
+    render(
+      <MemoryRouter>
+        <DiscoveryDetailPanel
+          applicationRecords={[]}
+          discoveryTargets={[]}
+          isJobPending={() => false}
+          onDismissJob={vi.fn()}
+          onOpenApplication={vi.fn()}
+          onQueueJob={vi.fn()}
+          selectedJob={baseSelectedJob}
+        />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Copy link" }));
+
+    await waitFor(() => {
+      expect(writeClipboardText).toHaveBeenCalledWith(
+        baseSelectedJob.canonicalUrl,
+      );
+      expect(screen.getByRole("button", { name: "Link copied" })).toBeTruthy();
+    });
+  });
+
   it("explains a refused detail read as a title-only estimate", () => {
     const blockedJob = {
       ...baseSelectedJob,
@@ -120,15 +152,45 @@ describe("DiscoveryDetailPanel listing capture copy", () => {
     );
 
     expect(
-      screen.getByText(
-        "This site did not let Job Finder read the listing",
-      ),
+      screen.getByText("This site did not let Job Finder read the listing"),
     ).toBeTruthy();
     expect(
-      screen.queryByText(
-        "Headway Featured Full-Time United States of America",
-      ),
+      screen.queryByText("Headway Featured Full-Time United States of America"),
     ).toBeNull();
+  });
+
+  it("explains thin listing content without calling it an access refusal", () => {
+    render(
+      <MemoryRouter>
+        <DiscoveryDetailPanel
+          applicationRecords={[]}
+          discoveryTargets={[]}
+          isJobPending={() => false}
+          onDismissJob={vi.fn()}
+          onOpenApplication={vi.fn()}
+          onQueueJob={vi.fn()}
+          selectedJob={
+            {
+              ...baseSelectedJob,
+              description: "A short listing card",
+              listingDetailCapture: { state: "blocked", textHash: null },
+              listingDetailFetch: {
+                attemptedAt: "2026-09-12T10:00:00.000Z",
+                outcome: "no_detail",
+                method: null,
+                detail: "The page published too little readable text.",
+              },
+            } as SavedJob
+          }
+        />
+      </MemoryRouter>,
+    );
+    expect(
+      screen.getByTestId("discovery-detail-listing-text").textContent,
+    ).toContain("too little readable job detail");
+    expect(
+      screen.getByTestId("discovery-detail-listing-text").textContent,
+    ).not.toContain("did not let");
   });
 });
 
@@ -424,7 +486,7 @@ describe("DiscoveryDetailPanel", () => {
       "hide_job",
       null,
     );
-    expect(getByRole("button", { name: "Copy listing link" })).toBeTruthy();
+    expect(getByRole("button", { name: "Copy link" })).toBeTruthy();
     expect(getByRole("status")).toBeTruthy();
   });
 
@@ -472,7 +534,7 @@ describe("DiscoveryDetailPanel", () => {
     );
 
     expect(screen.queryByText("Resume needs review")).toBeNull();
-    expect(screen.getByText("Ready to prepare")).toBeTruthy();
+    expect(screen.getByText("Ready to apply")).toBeTruthy();
   });
 
   it("confirms the exact job identity after a shortlist outcome", () => {
@@ -1181,7 +1243,7 @@ describe("DiscoveryDetailPanel", () => {
     const listingActivityCard = screen.getByTestId(
       "discovery-detail-listing-activity",
     );
-    const listingActivityLabel = screen.getByText("Listing activity");
+    const listingActivityLabel = screen.getByText("Listing status");
     const activeBadge = screen.getByText("Active");
     expect(listingActivityCard.contains(listingActivityLabel)).toBe(true);
     expect(listingActivityCard.contains(activeBadge)).toBe(true);
@@ -1307,9 +1369,7 @@ describe("DiscoveryDetailPanel", () => {
         .hasAttribute("disabled"),
     ).toBe(true);
     expect(screen.getByText(canonicalUrl)).toBeTruthy();
-    expect(
-      screen.getByRole("button", { name: "Copy listing link" }),
-    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Copy link" })).toBeTruthy();
   });
 
   it("moves source chronology behind a closed source timeline disclosure", () => {
@@ -1435,7 +1495,7 @@ describe("DiscoveryDetailPanel listing facts", () => {
     expect(factGrid?.textContent).not.toContain("UpdatedUnknown");
     expect(
       container.querySelector("[data-job-detail-fact-grid]")?.textContent,
-    ).toContain("Listing activityUnknown");
+    ).toContain("Listing statusUnknown");
   });
 
   it("keeps a known listing date visible", () => {
@@ -1479,8 +1539,10 @@ describe("DiscoveryDetailPanel listing facts", () => {
     const method = screen.getByTestId("discovery-detail-application-method");
     expect(method.textContent).toBe("Application method: Manual application");
 
+    // The listing URL and its method live behind "Source details" now; the
+    // pane's open area keeps only what decides a shortlist.
     const listingCard = container.querySelector(
-      "[data-job-detail-fact-grid] > div:last-child",
+      '[data-testid="discovery-detail-source-details"]',
     );
     expect(listingCard?.textContent).toContain("Original listing");
     expect(listingCard?.contains(method)).toBe(true);
@@ -1628,5 +1690,72 @@ describe("job inspector compact action reachability", () => {
         getByTestId("discovery-detail-scroll-area"),
       ) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
+  });
+
+  it("calls a rate-limited read a request to slow down, never a sign-in wall", () => {
+    const rateLimitedJob = {
+      ...baseSelectedJob,
+      description: "Headway Featured Full-Time United States of America",
+      listingDetailCapture: { state: "blocked" },
+      listingDetailFetch: {
+        attemptedAt: "2026-09-12T10:00:00.000Z",
+        outcome: "blocked",
+        method: null,
+        detail:
+          "The site asked Job Finder to slow down (HTTP 429). The listing is read again on the next search.",
+        retryAfterAt: "2026-09-12T10:00:02.000Z",
+      },
+    } as unknown as SavedJob;
+
+    render(
+      <MemoryRouter>
+        <DiscoveryDetailPanel
+          applicationRecords={[]}
+          discoveryTargets={[]}
+          isJobPending={() => false}
+          onDismissJob={vi.fn()}
+          onOpenApplication={vi.fn()}
+          onQueueJob={vi.fn()}
+          selectedJob={rateLimitedJob}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(
+      screen.getByText(
+        "This site asked Job Finder to slow down, so the listing has not been read yet. It will be read on the next search.",
+      ),
+    ).toBeTruthy();
+    expect(
+      screen.queryByText("This site did not let Job Finder read the listing"),
+    ).toBeNull();
+  });
+});
+
+describe("listFlaggedKeywordTerms", () => {
+  it("keeps short terms, drops listing sentences and skills already shown", () => {
+    expect(
+      listFlaggedKeywordTerms(
+        [
+          { id: "k1", label: "TypeScript", kind: "skill", weight: 5 },
+          { id: "k2", label: "Kubernetes", kind: "tool", weight: 4 },
+          {
+            id: "k3",
+            label: "Design and ship maintainable software with TypeScript.",
+            kind: "responsibility",
+            weight: 3,
+          },
+          {
+            id: "k4",
+            label: "Professional software development experience.",
+            kind: "qualification",
+            weight: 4,
+          },
+          { id: "k5", label: "kubernetes", kind: "skill", weight: 3 },
+          { id: "k6", label: "Fintech", kind: "industry", weight: 2 },
+        ],
+        ["TypeScript", "SQL"],
+      ),
+    ).toEqual(["Kubernetes", "Fintech"]);
   });
 });

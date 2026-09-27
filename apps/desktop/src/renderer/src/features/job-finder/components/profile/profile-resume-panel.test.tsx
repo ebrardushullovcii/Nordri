@@ -16,6 +16,7 @@ import {
 } from "../../lib/profile-editor";
 import {
   ProfileResumePanel,
+  isPersonFacingImportNote,
   resolveResumeStripStatus,
 } from "./profile-resume-panel";
 
@@ -1435,5 +1436,27 @@ describe("ProfileResumePanel", () => {
     const panelSection = statusBadge?.closest("section");
     expect(panelSection?.className).toContain("py-4 sm:py-5");
     expect(panelSection?.className).not.toContain("px-");
+  });
+});
+
+describe("isPersonFacingImportNote", () => {
+  it("keeps Job Finder's own notes and drops the import model's working notes", () => {
+    expect(
+      isPersonFacingImportNote(
+        "1 optional proof suggestion is available to review before using it in tailored resume narratives.",
+      ),
+    ).toBe(true);
+    expect(
+      isPersonFacingImportNote(
+        "Paste plain-text resume content below if you want the agent to extract profile details from this file.",
+      ),
+    ).toBe(true);
+    for (const modelNote of [
+      "No target roles or salary statements; search_preferences omitted.",
+      "No experience record created: resume Experience section names Signal Systems. Per instructions, do not create an experience record without an explicit date range.",
+      "Existing profile is empty; all candidates are new imports from literal resume blocks.",
+    ]) {
+      expect(isPersonFacingImportNote(modelNote)).toBe(false);
+    }
   });
 });

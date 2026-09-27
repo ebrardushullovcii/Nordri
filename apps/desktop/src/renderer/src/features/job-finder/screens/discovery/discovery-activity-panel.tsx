@@ -44,6 +44,26 @@ import {
  * Tasks. Runs recorded before the report existed keep the older label rather
  * than inventing numbers for it.
  */
+/** Plain words for one source's outcome in a run, never the raw state. */
+export function describeSourceRunHealth(
+  health: DiscoveryRunRecord["summary"]["sourceHealth"][number]["health"],
+): string {
+  switch (health) {
+    case "healthy":
+      return "Finished";
+    case "warning":
+      return "No jobs collected";
+    case "failed":
+      return "Could not be read";
+    case "cancelled":
+      return "Stopped";
+    case "skipped":
+      return "Skipped";
+    default:
+      return "Waiting";
+  }
+}
+
 function describeRunCounts(run: DiscoveryRunRecord): string {
   const report = getDiscoveryRunReportCounts(run);
   if (hasDiscoveryRunReportCounts(report)) {
@@ -518,7 +538,7 @@ export function DiscoveryHistoryModal(props: {
             </div>
           </aside>
 
-          <div className="grid min-h-0 grid-rows-[auto_auto_auto_minmax(0,1fr)] gap-4 overflow-hidden px-4 py-4">
+          <div className="grid min-h-0 grid-rows-[auto_minmax(12rem,auto)_auto_minmax(16rem,1fr)] gap-4 overflow-y-auto px-4 py-4">
             {selectedRun ? (
               <div className="grid gap-3 rounded-(--radius-panel) border border-(--surface-panel-border) bg-(--surface-panel-raised) px-4 py-4 sm:grid-cols-4">
                 <div>
@@ -685,11 +705,11 @@ export function DiscoveryHistoryModal(props: {
                           const label =
                             targetLabels.get(source.targetId) ??
                             "Configured source";
+                          const execution = selectedRun.targetExecutions.find(
+                            (candidate) => candidate.targetId === source.targetId,
+                          );
                           const contributed =
-                            selectedRun.targetExecutions.find(
-                              (execution) =>
-                                execution.targetId === source.targetId,
-                            )?.jobsPersisted ?? 0;
+                            (execution?.jobsPersisted ?? 0) + (execution?.jobsStaged ?? 0);
                           return `${label} — ${contributed} ${contributed === 1 ? "job" : "jobs"}`;
                         })
                         .join("; ")}.
@@ -708,7 +728,22 @@ export function DiscoveryHistoryModal(props: {
                         const execution = selectedRun.targetExecutions.find(
                           (candidate) => candidate.targetId === source.targetId,
                         );
-                        const contributed = execution?.jobsPersisted ?? 0;
+                        // These are disjoint additions in the frozen run:
+                        // direct saved jobs and jobs staged for the results list.
+                        const contributed =
+                          (execution?.jobsPersisted ?? 0) + (execution?.jobsStaged ?? 0);
+                        const terminalReport = contributed === 0
+                          ? selectedRun.activity.findLast((event) =>
+                              event.targetId === source.targetId &&
+                              event.stage === "target" &&
+                              event.terminalState !== null,
+                            )?.message
+                          : undefined;
+                        // Jobs this source listed that were already saved: a
+                        // quiet re-run found them, it did not come up empty.
+                        const alreadySaved =
+                          (execution?.duplicatesMerged ?? 0) +
+                          (execution?.jobsSkippedByLedger ?? 0);
                         const previousExecution = props.recentRuns
                           .filter((run) => run.id !== selectedRun.id)
                           .sort((left, right) =>
@@ -721,8 +756,13 @@ export function DiscoveryHistoryModal(props: {
                           );
                         const repeatedZero =
                           contributed === 0 &&
-                          previousExecution?.jobsPersisted === 0;
-                        const zeroReason = repeatedZero
+                          alreadySaved === 0 &&
+                          previousExecution?.jobsPersisted === 0 &&
+                          previousExecution.jobsStaged === 0 &&
+                          previousExecution.duplicatesMerged +
+                            previousExecution.jobsSkippedByLedger ===
+                            0;
+                        const zeroReason = repeatedZero && !terminalReport
                           ? execution?.warning || source.warnings[0]
                             ? "The source was blocked or could not be read. Review it in the Job Finder browser or replace it."
                             : (execution?.jobsReviewed ?? 0) === 0
@@ -740,14 +780,18 @@ export function DiscoveryHistoryModal(props: {
                                 <p className="break-words text-[0.9rem] font-semibold text-(--text-headline)">
                                   {sourceLabel}
                                 </p>
-                                <p className="mt-1 text-[0.76rem] capitalize text-foreground-muted">
-                                  {source.health}
+                                <p className="mt-1 text-[0.76rem] text-foreground-muted">
+                                  {describeSourceRunHealth(source.health)}
                                   {source.durationMs > 0
                                     ? ` · ${formatDuration(source.durationMs)}`
                                     : ""}
                                 </p>
                                 <p className="mt-1 text-[0.82rem] text-foreground-soft">
-                                  Contributed {contributed} job{contributed === 1 ? "" : "s"} to this run.
+                                  Contributed {contributed} new job{contributed === 1 ? "" : "s"} to this run
+                                  {alreadySaved > 0
+                                    ? `; ${alreadySaved} ${alreadySaved === 1 ? "was" : "were"} already saved`
+                                    : ""}
+                                  .
                                 </p>
                               </div>
                               {canRetry ? (
@@ -771,6 +815,11 @@ export function DiscoveryHistoryModal(props: {
                                 </Button>
                               ) : null}
                             </div>
+                            {terminalReport && source.warnings.length === 0 ? (
+                              <p className="text-[0.82rem] leading-5 text-foreground-soft">
+                                {terminalReport}
+                              </p>
+                            ) : null}
                             {source.warnings.map((warning) => (
                               <p
                                 className="text-[0.82rem] leading-5 text-foreground-soft"

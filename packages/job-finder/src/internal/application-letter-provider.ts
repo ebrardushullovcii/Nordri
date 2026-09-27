@@ -1,13 +1,15 @@
-import type { ApplyDocument, ApplyLetterProvider } from "@unemployed/browser-agent";
+import type {
+  ApplyDocument,
+  ApplyLetterProvider,
+} from "@unemployed/browser-agent";
 import type { CoverLetterPreference } from "@unemployed/contracts";
 
 /**
- * The letter one application sends.
+ * The application documents one application sends.
  *
- * Written once, kept for the rest of the run, and handed back unchanged
- * however the form asks for it. A form with a file field and a form with a
- * text box are the same request, and a person must never discover they sent
- * two different letters for the same job.
+ * Each purpose and set of instructions creates one stable version. Asking for
+ * that same version as text or a file returns the same words, while a revision
+ * or a different purpose remains a distinct document.
  *
  * The letter is rendered by whoever owns document rendering, and stored beside
  * the resume that went with it, as the exact bytes that were sent.
@@ -16,7 +18,7 @@ import type { CoverLetterPreference } from "@unemployed/contracts";
 export interface ApplicationLetterRenderRequest {
   text: string;
   /** The type the form insisted on, or null when it did not care. */
-  fileType: "pdf" | "docx" | null;
+  fileType: "pdf" | "docx" | "txt" | null;
   jobId: string;
   applicationId: string;
 }
@@ -35,6 +37,11 @@ export interface ApplicationLetterDependencies {
   /** Writes the letter. Returns null when no model is available. */
   writeLetter: (input: {
     prompt: string;
+    purpose: "cover_letter" | "motivation_letter" | "supporting_statement";
+    groundedIn: string[];
+    language: string | null;
+    preference: CoverLetterPreference;
+    priorText: string | null;
     signal?: AbortSignal;
   }) => Promise<string | null>;
   /**
@@ -53,16 +60,32 @@ export interface ApplicationLetterDependencies {
 export function createApplicationLetterProvider(
   dependencies: ApplicationLetterDependencies,
 ): ApplyLetterProvider {
-  // One application, one letter: written on first ask, reused after.
-  let writtenText: string | null = null;
-  const renderedByType = new Map<string, ApplyDocument>();
+  type WrittenVersion = {
+    purpose: NonNullable<
+      Parameters<ApplyLetterProvider["provide"]>[0]["purpose"]
+    >;
+    version: number;
+    text: string;
+    renderedByType: Map<string, ApplyDocument>;
+  };
+  const versionsByRequest = new Map<string, WrittenVersion>();
+  const versionCounts = new Map<WrittenVersion["purpose"], number>();
+  const latestByPurpose = new Map<WrittenVersion["purpose"], WrittenVersion>();
 
   return {
     preference: dependencies.preference,
     provide: async (request) => {
-      if (writtenText === null) {
+      const purpose = request.purpose ?? "cover_letter";
+      const requestKey = `${purpose}\n${request.prompt.trim()}`;
+      let writtenVersion = versionsByRequest.get(requestKey) ?? null;
+      if (!writtenVersion) {
         const written = await dependencies.writeLetter({
           prompt: request.prompt,
+          purpose,
+          groundedIn: request.groundedIn,
+          language: request.language,
+          preference: dependencies.preference,
+          priorText: latestByPurpose.get(purpose)?.text ?? null,
           ...(dependencies.signal ? { signal: dependencies.signal } : {}),
         });
         if (!written?.trim()) {
@@ -72,43 +95,57 @@ export function createApplicationLetterProvider(
               "Its assistant is unavailable right now, so nothing was attached. Try this application again shortly.",
           };
         }
-        writtenText = written.trim();
+        const version = (versionCounts.get(purpose) ?? 0) + 1;
+        versionCounts.set(purpose, version);
+        writtenVersion = {
+          purpose,
+          version,
+          text: written.trim(),
+          renderedByType: new Map(),
+        };
+        versionsByRequest.set(requestKey, writtenVersion);
+        latestByPurpose.set(purpose, writtenVersion);
       }
 
       if (request.delivery === "text") {
-        return { ok: true, text: writtenText, document: null };
+        return { ok: true, text: writtenVersion.text, document: null };
       }
 
       const typeKey = request.fileType ?? "any";
-      const alreadyRendered = renderedByType.get(typeKey);
+      const alreadyRendered = writtenVersion.renderedByType.get(typeKey);
       if (alreadyRendered) {
-        return { ok: true, text: writtenText, document: alreadyRendered };
+        return {
+          ok: true,
+          text: writtenVersion.text,
+          document: alreadyRendered,
+        };
       }
 
       if (!dependencies.renderLetter) {
-        return { ok: true, text: writtenText, document: null };
+        return { ok: true, text: writtenVersion.text, document: null };
       }
 
       const rendered = await dependencies.renderLetter({
-        text: writtenText,
+        text: writtenVersion.text,
         fileType: request.fileType,
         jobId: dependencies.application.jobId,
         applicationId: dependencies.application.applicationId,
       });
       if (!rendered.ok) {
-        return { ok: true, text: writtenText, document: null };
+        return { ok: true, text: writtenVersion.text, document: null };
       }
 
+      const purposeLabel = writtenVersion.purpose.replace(/_/gu, " ");
       const document: ApplyDocument = {
-        id: `document_letter_${dependencies.application.jobId}_${typeKey}`,
+        id: `document_${writtenVersion.purpose}_${dependencies.application.jobId}_v${writtenVersion.version}_${typeKey}`,
         fileName: rendered.fileName,
         mimeType: rendered.mimeType,
-        label: "Cover letter",
+        label: `${purposeLabel.charAt(0).toUpperCase()}${purposeLabel.slice(1)} v${writtenVersion.version}`,
         kind: "cover_letter",
         loadBytes: rendered.loadBytes,
       };
-      renderedByType.set(typeKey, document);
-      return { ok: true, text: writtenText, document };
+      writtenVersion.renderedByType.set(typeKey, document);
+      return { ok: true, text: writtenVersion.text, document };
     },
   };
 }

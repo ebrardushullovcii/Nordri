@@ -261,6 +261,12 @@ describe("unified user action command contracts", () => {
       answer: "I am authorized to work in this location.",
     },
     {
+      action: "submit_task_local_credentials",
+      identifier: "fixture-person@example.test",
+      password: "test-password",
+      taskLocalUseAuthorized: true,
+    },
+    {
       action: "record_legal_decision",
       decision: "decline",
     },
@@ -290,6 +296,13 @@ describe("unified user action command contracts", () => {
       captchaSolution: "solved-token",
     },
     { ...commandBase, action: "confirm_done", submitAuthorized: true },
+    {
+      ...commandBase,
+      action: "submit_task_local_credentials",
+      identifier: "fixture-person@example.test",
+      password: "test-password",
+      taskLocalUseAuthorized: false,
+    },
     {
       ...commandBase,
       action: "choose_account_path",

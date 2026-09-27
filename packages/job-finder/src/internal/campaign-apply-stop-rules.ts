@@ -31,6 +31,18 @@ const uncertainEligibilityReasons = new Set<ApplyBlockerReason>([
   "question_grounding_failed",
 ]);
 
+/**
+ * The stop rule for questions only the person can answer. It is not a safety
+ * limit being hit: the run did what it could and the rest waits in Needs you,
+ * so the run's summary says that instead of "paused by safety rules".
+ */
+export const UNCERTAIN_ELIGIBILITY_PAUSE_REASON =
+  "Pausing: unresolved eligibility or user-answer uncertainty requires human input.";
+
+export function isQuestionHandoffPauseReason(reason: string | null): boolean {
+  return reason === UNCERTAIN_ELIGIBILITY_PAUSE_REASON;
+}
+
 function formatFailureRateReason(
   failureRatePercent: number,
   thresholdPercent: number,
@@ -58,7 +70,7 @@ export function evaluateCampaignApplyStopRules(
       stopRules.pauseOnUncertainEligibility &&
       uncertainEligibilityReasons.has(blockerReason)
     ) {
-      return "Pausing: unresolved eligibility or user-answer uncertainty requires human input.";
+      return UNCERTAIN_ELIGIBILITY_PAUSE_REASON;
     }
   }
 

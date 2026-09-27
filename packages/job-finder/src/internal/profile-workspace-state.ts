@@ -1,6 +1,8 @@
 import {
   ProfileSetupStateSchema,
   deriveProfileSetupState,
+  evaluateProfileSetupReadiness,
+  getProfileSetupLandingStep,
   type CandidateProfile,
   type JobSearchPreferences,
   type ProfileSetupState,
@@ -131,4 +133,67 @@ export async function deriveAndPersistProfileSetupState(
   }
 
   return derivedState;
+}
+
+/**
+ * After a resume import, guided setup opens on the first step that still
+ * needs the person. It used to open wherever an optional suggestion sat
+ * (a proof point on Extras, a summary to confirm on Basics), so the first
+ * press after every import was a stepper chip. A person who moved to another
+ * step while the import ran keeps the step they chose, and a finished setup
+ * is left alone.
+ */
+export async function landProfileSetupAfterImport(
+  ctx: WorkspaceServiceContext,
+  input: { importStartedAt: string },
+): Promise<void> {
+  const [profile, rawSearchPreferences, storedState, latestRun] =
+    await Promise.all([
+      ctx.repository.getProfile(),
+      ctx.repository.getSearchPreferences(),
+      ctx.repository.getProfileSetupState(),
+      ctx.repository.getLatestResumeImportRun(),
+    ]);
+  if (storedState.status === "completed") {
+    return;
+  }
+  if (
+    storedState.lastResumedAt !== null &&
+    storedState.lastResumedAt > input.importStartedAt
+  ) {
+    return;
+  }
+  const readiness = evaluateProfileSetupReadiness(
+    profile,
+    rawSearchPreferences,
+  );
+  if (!readiness.hasResumeText) {
+    return;
+  }
+  const latestResumeImportRunId = latestRun?.id ?? null;
+  // Derive first so the landing step sees the review items this import just
+  // raised, not only the ones stored before it ran.
+  const derived = await deriveAndPersistProfileSetupState(ctx, {
+    persistedState: ProfileSetupStateSchema.parse({
+      ...storedState,
+      status: "in_progress",
+    }),
+    profile,
+    searchPreferences: rawSearchPreferences,
+    latestResumeImportRunId,
+    persist: false,
+  });
+  const landingStep =
+    derived.status === "completed"
+      ? derived.currentStep
+      : getProfileSetupLandingStep(readiness, derived.reviewItems);
+  await deriveAndPersistProfileSetupState(ctx, {
+    persistedState: ProfileSetupStateSchema.parse({
+      ...derived,
+      currentStep: landingStep,
+    }),
+    profile,
+    searchPreferences: rawSearchPreferences,
+    latestResumeImportRunId,
+  });
 }

@@ -1,7 +1,10 @@
 import { describe, expect, test } from "vitest";
 import type { ProfileCopilotPatchOperation } from "@unemployed/contracts";
 
-import { runProfileCopilotAgentTask } from "./agent-capabilities";
+import {
+  findBulletsOnTwoCards,
+  runProfileCopilotAgentTask,
+} from "./agent-capabilities";
 import type { AgentCapableJobFinderAiClient } from "./shared";
 import { createDeterministicJobFinderAiClient } from "./deterministic";
 import { createPreferences, createProfile } from "./test-fixtures";
@@ -186,6 +189,16 @@ const operationCases: Record<
       value: { workModes: ["hybrid"] },
     },
   },
+  set_resume_approach: {
+    input: {
+      operation: "set_resume_approach",
+      value: "original_resume",
+    },
+    expected: {
+      operation: "set_resume_approach",
+      value: "original_resume",
+    },
+  },
   replace_compensation_preferences_fields: {
     input: {
       operation: "replace_compensation_preferences_fields",
@@ -206,21 +219,7 @@ const operationCases: Record<
       record: {
         id: null,
         companyName: "Acme Interactive",
-        companyUrl: null,
         title: "Frontend Engineer",
-        employmentType: null,
-        location: null,
-        workMode: [],
-        startDate: null,
-        endDate: null,
-        isCurrent: false,
-        isDraft: false,
-        summary: null,
-        achievements: [],
-        skills: [],
-        domainTags: [],
-        peopleManagementScope: null,
-        ownershipScope: null,
       },
     },
   },
@@ -244,13 +243,6 @@ const operationCases: Record<
       record: {
         id: null,
         schoolName: "Tech State University",
-        degree: null,
-        fieldOfStudy: null,
-        location: null,
-        startDate: null,
-        endDate: null,
-        isDraft: false,
-        summary: null,
       },
     },
   },
@@ -264,6 +256,16 @@ const operationCases: Record<
       recordId: "education_1",
     },
   },
+  reorder_education_records: {
+    input: {
+      operation: "reorder_education_records",
+      orderedRecordIds: ["education_2", "education_1"],
+    },
+    expected: {
+      operation: "reorder_education_records",
+      orderedRecordIds: ["education_2", "education_1"],
+    },
+  },
   upsert_certification_record: {
     input: {
       operation: "upsert_certification_record",
@@ -274,11 +276,6 @@ const operationCases: Record<
       record: {
         id: null,
         name: "AWS Solutions Architect",
-        issuer: null,
-        issueDate: null,
-        expiryDate: null,
-        credentialUrl: null,
-        isDraft: false,
       },
     },
   },
@@ -302,14 +299,6 @@ const operationCases: Record<
       record: {
         id: null,
         name: "Ops Dashboard",
-        projectType: null,
-        summary: null,
-        role: null,
-        skills: [],
-        outcome: null,
-        projectUrl: null,
-        repositoryUrl: null,
-        caseStudyUrl: null,
       },
     },
   },
@@ -333,7 +322,6 @@ const operationCases: Record<
         label: "Portfolio",
         url: "https://alexvanguard.example.com",
         kind: "portfolio",
-        isDraft: false,
       },
     },
   },
@@ -352,8 +340,6 @@ const operationCases: Record<
         id: null,
         language: "Albanian",
         proficiency: "Native",
-        interviewPreference: false,
-        notes: null,
       },
     },
   },
@@ -375,11 +361,6 @@ const operationCases: Record<
         id: null,
         title: "Cut checkout latency",
         claim: "Reduced p95 checkout latency by 40 percent.",
-        heroMetric: null,
-        supportingContext: null,
-        roleFamilies: [],
-        projectIds: [],
-        linkIds: [],
       },
     },
   },
@@ -405,8 +386,6 @@ const operationCases: Record<
         label: "Notice period",
         question: "When can you start?",
         answer: "Two weeks after signing.",
-        roleFamilies: [],
-        proofEntryIds: [],
       },
     },
   },
@@ -429,6 +408,39 @@ const operationCases: Record<
 };
 
 describe("propose_profile_operations model-tool harness", () => {
+  test("tells the model to omit unchanged record fields and reserve empty values for explicit clears", async () => {
+    const deterministic = createDeterministicJobFinderAiClient();
+    let systemPrompt = "";
+    const client: AgentCapableJobFinderAiClient = {
+      ...deterministic,
+      chatWithTools(messages) {
+        systemPrompt = messages
+          .filter((message) => message.role === "system")
+          .map((message) => message.content)
+          .join(" ");
+        return Promise.resolve({ toolCalls: [finishCall("finish")] });
+      },
+    };
+
+    await runProfileCopilotAgentTask({
+      client,
+      request: createCopilotRequest(
+        "Change only the location on my current role.",
+      ),
+    });
+
+    expect(systemPrompt).toContain("Omit every unchanged field");
+    expect(systemPrompt).toContain(
+      "Send null or an empty list only when the person explicitly asks to clear that field",
+    );
+    expect(systemPrompt).toContain(
+      "map the Settings names Light to conservative, Tailored to balanced, Aggressive to aggressive",
+    );
+    // Original is reachable from the chat; the old prompt said it was not.
+    expect(systemPrompt).toContain("propose set_resume_approach");
+    expect(systemPrompt).not.toContain("cannot be changed through");
+  });
+
   for (const [operationName, testCase] of Object.entries(operationCases)) {
     test(`accepts ${operationName} and wraps it in one runtime-owned review-only group`, async () => {
       const client = createScriptedToolClient([
@@ -535,6 +547,241 @@ describe("propose_profile_operations model-tool harness", () => {
     ]);
   });
 
+  test("rejects an id-less field-only record update and repairs it with the existing id", async () => {
+    const client = createScriptedToolClient([
+      {
+        toolCalls: [
+          proposeCall("missing_id", [
+            {
+              operation: "upsert_experience_record",
+              record: { achievements: ["Mentored two frontend engineers."] },
+            },
+          ]),
+        ],
+      },
+      {
+        toolCalls: [
+          proposeCall("repaired_id", [
+            {
+              operation: "upsert_experience_record",
+              record: {
+                id: "experience_1",
+                achievements: ["Mentored two frontend engineers."],
+              },
+            },
+          ]),
+          finishCall("finish_repaired_id"),
+        ],
+      },
+    ]);
+
+    const reply = await runProfileCopilotAgentTask({
+      client,
+      request: createCopilotRequest("Add one bullet to my existing role."),
+    });
+
+    expect(reply.executionReceipt?.repairAttempts).toBe(1);
+    expect(reply.executionReceipt?.stopReason).toBe("completed");
+    expect(reply.patchGroups[0]?.operations).toEqual([
+      {
+        operation: "upsert_experience_record",
+        record: {
+          id: "experience_1",
+          achievements: ["Mentored two frontend engineers."],
+        },
+      },
+    ]);
+  });
+
+  test("rejects a new role with a title but no employer and repairs the split", async () => {
+    // Splitting "Acme" used to add a stray employer-less "Backend Engineer"
+    // card beside the untouched original.
+    const client = createScriptedToolClient([
+      {
+        toolCalls: [
+          proposeCall("title_only", [
+            {
+              operation: "upsert_experience_record",
+              record: { title: "Backend Engineer", endDate: "2022-12" },
+            },
+          ]),
+        ],
+      },
+      {
+        toolCalls: [
+          proposeCall("repaired_split", [
+            {
+              operation: "upsert_experience_record",
+              record: {
+                id: "experience_1",
+                title: "Backend Engineer",
+                endDate: "2022-12",
+                isCurrent: false,
+              },
+            },
+            {
+              operation: "upsert_experience_record",
+              record: {
+                companyName: "Signal Systems",
+                title: "Senior Backend Engineer",
+                startDate: "2023-01",
+                isCurrent: true,
+              },
+            },
+          ]),
+          finishCall("finish_repaired_split"),
+        ],
+      },
+    ]);
+
+    const reply = await runProfileCopilotAgentTask({
+      client,
+      request: createCopilotRequest(
+        "Split my role: Backend Engineer until December 2022, then Senior Backend Engineer.",
+      ),
+    });
+
+    expect(reply.executionReceipt?.repairAttempts).toBe(1);
+    const rejected = reply.executionReceipt?.toolReceipts.find(
+      (receipt) =>
+        receipt.toolName === "propose_profile_operations" &&
+        receipt.outcome === "rejected",
+    );
+    expect(
+      rejected?.validationIssues.some((issue) =>
+        issue.message.includes("must include both companyName and title"),
+      ),
+    ).toBe(true);
+    expect(reply.patchGroups).toHaveLength(1);
+    expect(reply.patchGroups[0]?.operations).toHaveLength(2);
+  });
+
+  test("sends a split back when a bullet would stay on the old card and land on the new one", async () => {
+    const bullets = [
+      "Led the settlement migration.",
+      "Cut reconciliation time to 35 minutes.",
+    ];
+    const profile = {
+      ...createProfile(),
+      experiences: [
+        {
+          id: "experience_acme",
+          companyName: "Acme Payments",
+          companyUrl: null,
+          title: "Senior Backend Engineer",
+          employmentType: null,
+          location: "Lisbon, Portugal",
+          workMode: [],
+          startDate: "2021-03",
+          endDate: null,
+          isCurrent: true,
+          isDraft: false,
+          summary: null,
+          achievements: bullets,
+          skills: [],
+          domainTags: [],
+          peopleManagementScope: null,
+          ownershipScope: null,
+        },
+      ],
+    };
+    const newCard = {
+      operation: "upsert_experience_record",
+      record: {
+        companyName: "Acme Payments",
+        title: "Senior Backend Engineer",
+        startDate: "2023-01",
+        isCurrent: true,
+        achievements: bullets,
+      },
+    };
+    const client = createScriptedToolClient([
+      {
+        toolCalls: [
+          proposeCall("copied_bullets", [
+            {
+              operation: "upsert_experience_record",
+              record: {
+                id: "experience_acme",
+                title: "Backend Engineer",
+                endDate: "2022-12",
+                isCurrent: false,
+              },
+            },
+            newCard,
+          ]),
+          finishCall("finish_copied"),
+        ],
+      },
+      {
+        toolCalls: [
+          proposeCall("moved_bullets", [
+            {
+              operation: "upsert_experience_record",
+              record: {
+                id: "experience_acme",
+                title: "Backend Engineer",
+                endDate: "2022-12",
+                isCurrent: false,
+                achievements: [],
+              },
+            },
+            newCard,
+          ]),
+          finishCall("finish_moved"),
+        ],
+      },
+    ]);
+
+    const reply = await runProfileCopilotAgentTask({
+      client,
+      request: {
+        ...createCopilotRequest("Split my Acme role at January 2023."),
+        profile,
+      },
+    });
+
+    expect(reply.executionReceipt?.stopReason).toBe("completed");
+    // The duplicated proposal was never kept: only the repaired one lands.
+    expect(reply.patchGroups.at(-1)?.operations[0]).toMatchObject({
+      operation: "upsert_experience_record",
+      record: { id: "experience_acme", achievements: [] },
+    });
+    expect(findBulletsOnTwoCards(profile, reply.patchGroups.slice(-1))).toEqual(
+      [],
+    );
+    expect(
+      findBulletsOnTwoCards(profile, [
+        {
+          id: "group",
+          summary: "Split",
+          applyMode: "needs_review",
+          createdAt: "2026-09-23T10:00:00.000Z",
+          operations: [
+            {
+              operation: "upsert_experience_record",
+              record: {
+                id: "experience_acme",
+                title: "Backend Engineer",
+                endDate: "2022-12",
+                isCurrent: false,
+              },
+            },
+            {
+              operation: "upsert_experience_record",
+              record: {
+                id: null,
+                companyName: "Acme Payments",
+                title: "Senior Backend Engineer",
+                achievements: bullets,
+              },
+            },
+          ],
+        },
+      ] as never).map((issue) => issue.code),
+    ).toEqual(["bullet_on_two_cards", "bullet_on_two_cards"]);
+  });
+
   test("fails safe when every proposal is invalid: no group ever lands", async () => {
     const invalidPropose = proposeCall("invalid", [
       { operation: "replace_identity_fields" },
@@ -606,5 +853,122 @@ describe("propose_profile_operations model-tool harness", () => {
     expect(group?.operations).toEqual([
       operationCases.replace_identity_fields.expected,
     ]);
+  });
+});
+
+describe("the saved resume level and volunteer level in the Profile Copilot", () => {
+  function captureMessages() {
+    const deterministic = createDeterministicJobFinderAiClient();
+    const captured = { system: "", user: "" };
+    const client: AgentCapableJobFinderAiClient = {
+      ...deterministic,
+      chatWithTools(messages) {
+        captured.system = messages
+          .filter((message) => message.role === "system")
+          .map((message) => message.content)
+          .join(" ");
+        captured.user = messages
+          .filter((message) => message.role === "user")
+          .map((message) => message.content)
+          .join(" ");
+        return Promise.resolve({ toolCalls: [finishCall("finish")] });
+      },
+    };
+    return { captured, client };
+  }
+
+  test("set_resume_approach proposes the level as one review-only card", async () => {
+    const client = createScriptedToolClient([
+      {
+        toolCalls: [
+          call("set_response_content", "level_content", {
+            content:
+              "Original sends your imported file unchanged, so I prepared a switch to Light.",
+          }),
+          call("set_resume_approach", "level_propose", {
+            summary: "Use Light resumes for new jobs",
+            approach: "conservative",
+          }),
+          finishCall("level_finish"),
+        ],
+      },
+    ]);
+
+    const reply = await runProfileCopilotAgentTask({
+      client,
+      request: {
+        ...createCopilotRequest("Make my resume shorter."),
+        resumeApproach: "original_resume",
+      },
+    });
+
+    expect(reply.patchGroups).toHaveLength(1);
+    expect(reply.patchGroups[0]).toMatchObject({
+      applyMode: "needs_review",
+      operations: [{ operation: "set_resume_approach", value: "conservative" }],
+    });
+  });
+
+  test("the model is handed the saved level, Original included", async () => {
+    const { captured, client } = captureMessages();
+
+    await runProfileCopilotAgentTask({
+      client,
+      request: {
+        ...createCopilotRequest("Make my resume shorter."),
+        resumeApproach: "original_resume",
+      },
+    });
+
+    expect(captured.user).toContain("resumeApproach");
+    expect(captured.user).toContain("original_resume");
+  });
+
+  test("each volunteer level is a distinct instruction placed after the rule about gaps", async () => {
+    const prompts = new Map<string, string>();
+    for (const initiative of ["answer_only", "suggest", "proactive"] as const) {
+      const { captured, client } = captureMessages();
+      await runProfileCopilotAgentTask({
+        client,
+        request: {
+          ...createCopilotRequest("Add Jest to my skills."),
+          assistantBehavior: { initiative, replyStyle: "brief" },
+        },
+      });
+      prompts.set(initiative, captured.system);
+    }
+
+    const chosen = {
+      answer_only: "the person chose Only what I ask",
+      suggest: "the person chose Suggest a little",
+      proactive: "the person chose Proactive",
+    } as const;
+    for (const [initiative, phrase] of Object.entries(chosen)) {
+      const prompt = prompts.get(initiative) ?? "";
+      expect(prompt).toContain(phrase);
+      // The Profile rule that every mentioned gap must be proposed reads as a
+      // mandate to volunteer; the person's level has the last word after it.
+      expect(prompt.indexOf(phrase)).toBeGreaterThan(
+        prompt.indexOf("Every gap or improvement you mention"),
+      );
+      for (const [otherInitiative, otherPhrase] of Object.entries(chosen)) {
+        if (otherInitiative !== initiative) {
+          expect(prompt).not.toContain(otherPhrase);
+        }
+      }
+    }
+    expect(prompts.get("answer_only")).toContain(
+      "Do not propose, mention, or ask about anything else",
+    );
+    expect(prompts.get("proactive")).toContain(
+      "add up to three further improvements, every time",
+    );
+    // A built-app run on a profile with no skills: Proactive offered a
+    // target-role tidy-up and never raised the empty skills list.
+    expect(prompts.get("proactive")).toContain(
+      "An empty skills list is the first gap to raise",
+    );
+    expect(prompts.get("answer_only")).not.toContain("empty skills list");
+    expect(prompts.get("suggest")).not.toContain("empty skills list");
   });
 });

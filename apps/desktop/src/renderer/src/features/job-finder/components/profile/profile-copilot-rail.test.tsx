@@ -1873,10 +1873,12 @@ describe("ProfileCopilotRail", () => {
     act(() => {
       root?.render(renderRail("targeting"));
     });
-    const retry = document.body.querySelector<HTMLButtonElement>(
-      'button[aria-label="Retry failed message"]',
-    );
-    expect(retry).not.toBeNull();
+    const retry = [
+      ...document.body.querySelectorAll<HTMLButtonElement>(
+        '[data-profile-copilot-failed-turn="true"] button',
+      ),
+    ].find((button) => button.textContent === "Ask again");
+    expect(retry).toBeDefined();
 
     act(() => retry?.click());
 
@@ -1932,7 +1934,7 @@ describe("ProfileCopilotRail", () => {
     });
 
     expect(onSendMessage).toHaveBeenCalledTimes(1);
-    expect(document.body.textContent).toContain("Retry");
+    expect(document.body.textContent).toContain("Ask again");
     expect(document.body.querySelector("textarea")?.value).toBe(
       "Update my headline",
     );
@@ -2283,5 +2285,43 @@ describe("ProfileCopilotRail", () => {
       shellHeader.remove();
       actions.remove();
     }
+  });
+
+  it("heads the panel Assistant when no title is passed", () => {
+    // Guided setup now relies on this default. It used to pass
+    // title="the Assistant", left over from a find-and-replace, so its
+    // panel heading read "the Assistant" while Profile read "Assistant".
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    act(() => {
+      root?.render(
+        <ProfileCopilotRail
+          busy={false}
+          context={{ surface: "setup", step: "targeting" }}
+          emptyStateDescription="Ask why a field matters."
+          emptyStateTitle="No requests yet"
+          messages={[]}
+          onApplyPatchGroup={vi.fn()}
+          onRejectPatchGroup={vi.fn()}
+          onSendMessage={vi.fn()}
+          onUndoRevision={vi.fn()}
+          pendingContextKey={null}
+          placeholder="Ask for an edit"
+          revisions={[]}
+        />,
+      );
+    });
+
+    act(() => {
+      document.body
+        .querySelector<HTMLButtonElement>('button[aria-haspopup="dialog"]')
+        ?.click();
+    });
+
+    expect(
+      document.body.querySelector('aside[role="dialog"] h2')?.textContent,
+    ).toBe("Assistant");
   });
 });

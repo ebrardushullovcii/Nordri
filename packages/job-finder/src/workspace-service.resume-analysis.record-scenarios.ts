@@ -111,6 +111,10 @@ describe("createJobFinderWorkspaceService", () => {
 
   test("keeps LinkedIn separate from personal website and auto-applies grounded shared-memory candidates", async () => {
     const seed = createSeed();
+    // No LinkedIn saved yet: a saved one that differs from the resume now
+    // waits for review instead of being replaced (see the re-import test in
+    // resume-import-work-eligibility.test.ts).
+    seed.profile = { ...seed.profile, linkedinUrl: null };
     const baseClient = createAiClient();
     const { workspaceService } = createWorkspaceServiceHarness({
       seed,

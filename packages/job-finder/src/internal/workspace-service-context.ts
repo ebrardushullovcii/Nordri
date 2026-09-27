@@ -26,6 +26,14 @@ import type {
 } from "./workspace-service-contracts";
 import type { ListingHtmlFetcher } from "./listing-detail-enrichment";
 
+/** Secret-bearing data that exists only on one command's call stack. */
+export interface TaskLocalApplicationCredentials {
+  /** Opaque command identity; never an account identifier. */
+  reference: string;
+  identifier: string;
+  password: string;
+}
+
 export interface ResumeExportFileVerifier {
   exists(filePath: string): Promise<boolean>;
   sha256?(filePath: string): Promise<string>;
@@ -93,8 +101,17 @@ export interface WorkspaceServiceContext {
   withCampaignTransition<T>(operation: () => Promise<T>): Promise<T>;
   activeResumeVisionRunIds: Set<string>;
   getWorkspaceSnapshot: () => Promise<JobFinderWorkspaceSnapshot>;
+  /**
+   * Reads the current projection without launching user-action recovery.
+   * Nested workflows use this when they are themselves part of recovery, so
+   * they cannot await the recovery promise that is waiting for them.
+   */
+  readWorkspaceSnapshot: () => Promise<JobFinderWorkspaceSnapshot>;
   getActiveCampaignId: () => Promise<string | null>;
-  resumeApplicationUserAction: (request: UserActionRequest) => Promise<void>;
+  resumeApplicationUserAction: (
+    request: UserActionRequest,
+    taskLocalCredentials?: TaskLocalApplicationCredentials,
+  ) => Promise<void>;
   /**
    * Reads one source again after the person cleared whatever stopped it (a
    * sign-in page, a human-verification check, a full-page message). The search
@@ -141,6 +158,12 @@ export interface WorkspaceServiceContext {
     tab: ParkedBrowserTabReference,
   ) => Promise<void>;
   hasActiveBrowserWorkflow: () => boolean;
+  /**
+   * A deliberate start by the person (Search now, Run now, Apply): clears a
+   * pause, tells the host so its browser stops refusing work, and lets the
+   * host lift a pause the person caused in the browser itself.
+   */
+  resumeActivityForExplicitStart: () => Promise<void>;
   /**
    * Plain-HTTP page reader for listing bodies (see
    * `listing-detail-enrichment.ts`). Optional so tests inject a fake and the

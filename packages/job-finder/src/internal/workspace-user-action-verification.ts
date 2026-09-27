@@ -8,6 +8,7 @@ import {
 import type { JobFinderRepository } from "@unemployed/db";
 
 import { reduceUserActionVerification } from "../user-action-domain";
+import { inspectApplicationAccessPage } from "./application-access-page";
 
 export function isSourceAccessUserAction(request: UserActionRequest): boolean {
   return request.verification.type === "source_access";
@@ -41,6 +42,17 @@ async function inspectSourceAccess(input: {
       ? normalizeBrowserOrigin(input.request.verification.expectedOrigin)
       : null;
 
+  // An application sign-in is read on the exact page kept for that
+  // application. Origin probes are inconclusive when two tabs share a host
+  // and fail on application steps that show no account menu.
+  const exactPage = await inspectApplicationAccessPage({
+    browserRuntime: input.browserRuntime,
+    request: input.request,
+  });
+  if (exactPage !== "unavailable") {
+    return exactPage;
+  }
+
   if (!input.browserRuntime.inspectSourceAccess || !expectedOrigin) {
     return "still_blocked";
   }
@@ -51,6 +63,12 @@ async function inspectSourceAccess(input: {
         input.request.scope.source,
         {
           expectedOrigin,
+          // A source parked on one tab is read on that tab only, so a second
+          // tab on the same site never makes the check inconclusive.
+          ...(input.request.scope.type === "discovery_source" &&
+          input.request.scope.parkedTab?.tabId
+            ? { tabId: input.request.scope.parkedTab.tabId }
+            : {}),
         },
       ),
     );

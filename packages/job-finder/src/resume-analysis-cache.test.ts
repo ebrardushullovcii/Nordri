@@ -49,7 +49,10 @@ describe("resume analysis cache", () => {
     expect(callsAfterFirstRun).toBeGreaterThan(0);
     expect(first.latestResumeImportRun?.analysisCacheHit).toBe(false);
 
+    // The first import filled the profile and the targeting fields; restore
+    // both so the second run's context matches the first.
     await repository.saveProfile(profile);
+    await repository.saveSearchPreferences(seed.searchPreferences);
     const second = await workspaceService.runResumeImport({
       baseResume: profile.baseResume,
       documentBundle: bundle,

@@ -95,6 +95,22 @@ type CapabilitySignal = {
 
 const capabilitySignals: readonly CapabilitySignal[] = [
   {
+    label: "Customer support",
+    category: "domain",
+    listingPattern:
+      /\b(?:customer support|chat[- ](?:first )?support|client[- ]facing SaaS)\b/iu,
+    profilePattern:
+      /\b(?:customer support|chat[- ](?:first )?support|client[- ]facing SaaS)\b/iu,
+  },
+  {
+    label: "Customer implementation ownership",
+    category: "domain",
+    listingPattern:
+      /\b(?:leading customer (?:onboarding|implementation|setup)[^.!?\n]{0,60}projects|manag(?:e|ing) customers through multi[- ](?:step|week)[^.!?\n]{0,100}setup|(?:customer|client)[^.!?\n]{0,60}(?:implementation|setup) projects)\b/iu,
+    profilePattern:
+      /\b(?:(?:led|owned|managed|delivered) (?:customer|client) (?:onboarding|implementation|setup) (?:projects|programs)|(?:led|owned|managed|delivered)[^.!?\n]{0,35}multi[- ](?:step|week)[^.!?\n]{0,60}(?:customer|client|onboarding|implementation|setup)|managed customers through multi[- ](?:step|week)[^.!?\n]{0,100}setup)\b/iu,
+  },
+  {
     label: "Customer onboarding",
     category: "domain",
     listingPattern:
@@ -222,28 +238,30 @@ function getDescriptionSectionImportance(
   lines: readonly string[],
   index: number,
 ): JobRequirementImportance | null {
-  for (
-    let previousIndex = index - 1;
-    previousIndex >= Math.max(0, index - 4);
-    previousIndex -= 1
-  ) {
-    const previousLine = lines[previousIndex]!;
-    if (previousLine.length > 100) {
-      break;
-    }
+  // A requirement section remains in force through its bullets, regardless
+  // of their length. Stop at another heading instead of an arbitrary distance.
+  for (let previousIndex = index - 1; previousIndex >= 0; previousIndex -= 1) {
+    const previousLine = lines[previousIndex]!.trim();
     if (
-      /^(?:nice to have|preferred(?: qualifications?)?|bonus(?: qualifications?)?)[:：]?$/iu.test(
-        previousLine.trim(),
+      /^(?:nice[- ]to[- ]have(?: background)?|preferred(?: qualifications?)?|bonus(?: qualifications?)?)[:：]?$/iu.test(
+        previousLine,
       )
     ) {
       return "preferred";
     }
     if (
-      /^(?:requirements?|minimum qualifications?|qualifications?|what (?:you|we) (?:bring|expect|are looking for)|what you should bring|must have)[:：]?$/iu.test(
-        previousLine.trim(),
+      /^(?:candidate requirements?|requirements?|minimum qualifications?|qualifications?|what (?:you|we) (?:bring|expect|are looking for)|what (?:you['’]ll|you will) need|what we['’]re looking for|what you should bring|must[- ]have(?: background)?)[:：]?$/iu.test(
+        previousLine,
       )
     ) {
       return "required";
+    }
+    if (
+      /^(?:about(?: the)? .+|what you(?:['’]ll| will) do|responsibilities|benefits(?: & perks)?|tools and systems|how .+|this role is not|core skills and qualities|the role)[:：]?$/iu.test(
+        previousLine,
+      )
+    ) {
+      return null;
     }
   }
 
@@ -481,6 +499,64 @@ function parseCefrLevel(value: string): number | null {
   return ranks[`${match[1].toUpperCase()}${match[2]}`] ?? null;
 }
 
+function meetsEnglishProficiency(
+  value: string,
+  requiredLevel: number | null,
+  listing: string,
+): boolean {
+  if (
+    /\b(?:no|not|never|without|basic|beginner|elementary|learning|limited|uncertain|hoping|seeking|aspiring|aiming|want|wish|hope|improving|towards?)\b/iu.test(
+      value,
+    )
+  )
+    return false;
+  const level = parseCefrLevel(value);
+  const native = /\b(?:native|bilingual|mother tongue)\b/iu.test(value);
+  if (requiredLevel !== null)
+    return level !== null ? level >= requiredLevel : native;
+  if (/\bnative\b/iu.test(listing) && !native) return false;
+  // A stated CEFR level is more precise than a nearby generic fluency claim.
+  if (level !== null) return level >= (/\bfluent\b/iu.test(listing) ? 5 : 4);
+  return (
+    native ||
+    /\bfluent\b/iu.test(value) ||
+    (!/\bfluent\b/iu.test(listing) &&
+      /\b(?:proficient|professional proficiency)\b/iu.test(value))
+  );
+}
+
+function summaryEnglishEvidence(summary: string): string | null {
+  const lines = splitJobEvidence(summary, 1).filter((line) =>
+    /\bEnglish\b/iu.test(line),
+  );
+  // Explicit uncertainty or lower proficiency cannot be hidden by another
+  // sentence saying "fluent". A structured language record wins separately.
+  if (
+    lines.some((line) =>
+      /\b(?:no|not|never|without|basic|beginner|elementary|learning|limited|uncertain|hoping|seeking|aspiring|aiming|want|wish|hope|improving|towards?)\b/iu.test(
+        line,
+      ),
+    )
+  )
+    return null;
+  const explicit = lines.filter(
+    (line) =>
+      /^(?:I (?:am|speak) |I['’]m )?(?:fluent(?:ly)?(?: in)?|proficient in|native(?: in)?|bilingual(?: in)?) English[.!]?$/iu.test(
+        line.trim(),
+      ) ||
+      /^(?:My )?English\s*(?:(?:is (?:at )?|[:—–-])\s*)?(?:fluent|native|bilingual|professional proficiency|(?:CEFR(?: level)?\s*)?[ABC]\s*[12])[.!]?$/iu.test(
+        line.trim(),
+      ),
+  );
+  if (explicit.length === 0) return null;
+  const levelLines = lines.filter((line) => parseCefrLevel(line) !== null);
+  if (levelLines.some((line) => !explicit.includes(line))) return null;
+  const statedLevels = levelLines.sort(
+    (left, right) => parseCefrLevel(left)! - parseCefrLevel(right)!,
+  );
+  return statedLevels[0] ?? explicit[0] ?? null;
+}
+
 function inferImportance(input: {
   evidenceLine: RequirementEvidenceLine;
 }): JobRequirementImportance {
@@ -610,12 +686,25 @@ function collectProfileSkillEvidence(
   return evidence.slice(0, 3);
 }
 
+function hasAffirmativeCapability(
+  value: string,
+  capability: CapabilitySignal,
+): boolean {
+  return splitJobEvidence(value, 1).some(
+    (line) =>
+      capability.profilePattern.test(line) &&
+      !/\b(?:no|not|never|without|lack(?:s|ing)?|learning|aspir(?:e|ing)|seeking|hop(?:e|ing))\b/iu.test(
+        line,
+      ),
+  );
+}
+
 function matchesCapabilitySkillEntry(
   value: string,
   capability: CapabilitySignal,
 ): boolean {
   return (
-    capability.profilePattern.test(value) ||
+    hasAffirmativeCapability(value, capability) ||
     (capability.skillEntryAliases?.some((alias) =>
       containsPhrase(value, [alias]),
     ) ??
@@ -635,6 +724,17 @@ function collectProfileCapabilityEvidence(
     ...profile.skillGroups.highlightedSkills,
   ]);
   const evidence: ResumeRequirementEvidence[] = [];
+  const summaryEvidence = splitJobEvidence(profile.summary ?? "", 1).find(
+    (line) => hasAffirmativeCapability(line, capability),
+  );
+  if (summaryEvidence) {
+    evidence.push({
+      sourceKind: "profile",
+      sourceId: profile.id,
+      label: "Profile summary",
+      detail: clip(summaryEvidence),
+    });
+  }
   const directSkill = directSkills.find((skill) =>
     matchesCapabilitySkillEntry(skill, capability),
   );
@@ -657,7 +757,7 @@ function collectProfileCapabilityEvidence(
       experience.summary,
     ]
       .filter((value): value is string => typeof value === "string")
-      .find((value) => capability.profilePattern.test(value));
+      .find((value) => hasAffirmativeCapability(value, capability));
     const matched = skill ?? narrative;
     if (!matched) {
       continue;
@@ -679,7 +779,7 @@ function collectProfileCapabilityEvidence(
     );
     const narrative = [project.role, project.summary, project.outcome]
       .filter((value): value is string => typeof value === "string")
-      .find((value) => capability.profilePattern.test(value));
+      .find((value) => hasAffirmativeCapability(value, capability));
     const matched = skill ?? narrative;
     if (!matched) {
       continue;
@@ -716,6 +816,28 @@ function hasDesignRequirementContext(
   );
 }
 
+const waivedRequirementPattern =
+  /\b(?:not required|no (?:prior )?experience\b[^.!?\n]{0,140}\brequired)\b/iu;
+
+function hasUnwaivedRequirement(
+  text: string,
+  matches: (clause: string) => boolean,
+): boolean {
+  // A separate qualification can be waived without waiving this one:
+  // "Fluent English (French is not required)" still asks for English.
+  const clauses = text
+    .replace(/\(([^()]*)\)/gu, (whole: string, content: string) =>
+      waivedRequirementPattern.test(content) &&
+      !/^\s*not required\s*$/iu.test(content)
+        ? `;${content};`
+        : whole,
+    )
+    .split(/;|,\s*(?:but|while|whereas)\s+/iu);
+  return clauses.some(
+    (clause) => matches(clause) && !waivedRequirementPattern.test(clause),
+  );
+}
+
 function matchesCapabilityListingLine(
   line: RequirementEvidenceLine,
   capability: CapabilitySignal,
@@ -728,13 +850,15 @@ function matchesCapabilityListingLine(
     return false;
   }
 
-  return (
-    capability.listingPattern.test(line.text) ||
-    (line.source === "key_skill" &&
-      (capability.skillEntryAliases?.some((alias) =>
-        containsPhrase(line.text, [alias]),
-      ) ??
-        false))
+  return hasUnwaivedRequirement(
+    line.text,
+    (clause) =>
+      capability.listingPattern.test(clause) ||
+      (line.source === "key_skill" &&
+        (capability.skillEntryAliases?.some((alias) =>
+          containsPhrase(clause, [alias]),
+        ) ??
+          false)),
   );
 }
 
@@ -1045,37 +1169,45 @@ export function buildRequirementEvidenceAssessment(input: {
     });
   }
 
+  const englishProficiencyPattern =
+    /\b(?:English[^.!?\n]{0,60}(?:CEFR\s+Level\s+)?[ABC][12]|(?:proficient|fluent|professional proficiency|native)[^.!?\n]{0,24}English)\b/iu;
   const englishProficiencyLine = selectStrongestEvidenceLine(
-    evidenceLines,
-    /\b(?:English[^.!?\n]{0,60}(?:CEFR\s+Level\s+)?[ABC][12]|(?:proficient|fluent|professional proficiency|native)[^.!?\n]{0,24}English)\b/iu,
+    evidenceLines.filter((line) =>
+      hasUnwaivedRequirement(line, (clause) =>
+        englishProficiencyPattern.test(clause),
+      ),
+    ),
+    englishProficiencyPattern,
   );
   if (englishProficiencyLine) {
     const englishRecord = profile.spokenLanguages.find(
       (language) => normalizeText(language.language) === "english",
     );
     const requiredLevel = parseCefrLevel(englishProficiencyLine);
-    const storedProficiency = englishRecord?.proficiency ?? "";
-    const storedLevel = parseCefrLevel(storedProficiency);
-    const storedNativeOrBilingual =
-      /\b(?:native|bilingual|mother tongue)\b/iu.test(storedProficiency);
-    const supported = Boolean(
-      englishRecord &&
-      (requiredLevel === null ||
-        storedNativeOrBilingual ||
-        (storedLevel !== null && storedLevel >= requiredLevel)),
+    const summaryEvidence = englishRecord
+      ? null
+      : summaryEnglishEvidence(profile.summary ?? "");
+    const proficiency = englishRecord?.proficiency ?? summaryEvidence ?? "";
+    const supported = meetsEnglishProficiency(
+      proficiency,
+      requiredLevel,
+      englishProficiencyLine,
     );
-    const resumeEvidence = englishRecord
-      ? [
-          {
-            sourceKind: "profile" as const,
-            sourceId: profile.id,
-            label: "English proficiency",
-            detail: [englishRecord.language, englishRecord.proficiency]
-              .filter(Boolean)
-              .join(" — "),
-          },
-        ]
-      : [];
+    const resumeEvidence =
+      englishRecord || summaryEvidence
+        ? [
+            {
+              sourceKind: "profile" as const,
+              sourceId: profile.id,
+              label: englishRecord ? "English proficiency" : "Profile summary",
+              detail: englishRecord
+                ? [englishRecord.language, englishRecord.proficiency]
+                    .filter(Boolean)
+                    .join(" — ")
+                : summaryEvidence!,
+            },
+          ]
+        : [];
     requirements.push({
       id: requirementId("domain", "English proficiency"),
       category: "domain",

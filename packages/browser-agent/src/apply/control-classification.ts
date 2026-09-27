@@ -4,7 +4,11 @@ import type {
   ApplicationQuestionKind,
 } from "@unemployed/contracts";
 
-import type { ApplyActionKind, ApplyControlKind, ApplyFormControl } from "./types";
+import type {
+  ApplyActionKind,
+  ApplyControlKind,
+  ApplyFormControl,
+} from "./types";
 
 /**
  * Reading a form control's meaning from what it says about itself.
@@ -23,10 +27,11 @@ export function normalizeSignal(value: string): string {
 }
 
 function controlSignalText(
-  control: Pick<
-    ApplyFormControl,
-    "label" | "groupLabel" | "placeholder"
-  > & { name?: string; id?: string; autocomplete?: string },
+  control: Pick<ApplyFormControl, "label" | "groupLabel" | "placeholder"> & {
+    name?: string;
+    id?: string;
+    autocomplete?: string;
+  },
 ): string {
   return normalizeSignal(
     [
@@ -56,8 +61,6 @@ const QUESTION_KIND_SIGNALS: ReadonlyArray<
       "motivation letter",
       "motivational letter",
       "letter of motivation",
-      "why do you want to work",
-      "why are you interested",
     ],
   ],
   [
@@ -135,6 +138,7 @@ const QUESTION_KIND_SIGNALS: ReadonlyArray<
     "experience",
     [
       "years of experience",
+      "years of professional experience",
       "how many years",
       "experience with",
       "level of experience",
@@ -175,17 +179,35 @@ const QUESTION_KIND_SIGNALS: ReadonlyArray<
 ];
 
 export function inferQuestionKind(
-  control: Pick<ApplyFormControl, "label" | "groupLabel" | "placeholder" | "kind">,
+  control: Pick<
+    ApplyFormControl,
+    "label" | "groupLabel" | "placeholder" | "kind"
+  >,
 ): ApplicationQuestionKind {
   const signal = controlSignalText(control);
+  // Choice labels are sometimes observed together with every option. A
+  // job-source question can therefore contain "Company website" even though
+  // it is not asking for the candidate's portfolio URL. Keep that question
+  // in the exact-answer lane so a saved "Job board" answer wins.
+  if (
+    containsAny(signal, [
+      "how did you hear about",
+      "where did you hear about",
+      "how did you find this job",
+      "how did you learn about",
+    ])
+  ) {
+    return "other";
+  }
   for (const [kind, needles] of QUESTION_KIND_SIGNALS) {
     if (containsAny(signal, needles)) {
       return kind;
     }
   }
-  if (control.kind === "file") {
-    return "resume";
-  }
+  // A file control that names no resume, letter or portfolio is some other
+  // document (a transcript, a certificate, a work sample, or one the page
+  // does not name). Calling it a resume hid Profile › Files from the person
+  // and kept a restored transcript from continuing the application.
   return "other";
 }
 
@@ -276,7 +298,10 @@ const ATTESTATION_SIGNALS: ReadonlyArray<
 ];
 
 export function inferAttestationKind(
-  control: Pick<ApplyFormControl, "label" | "groupLabel" | "placeholder" | "kind">,
+  control: Pick<
+    ApplyFormControl,
+    "label" | "groupLabel" | "placeholder" | "kind"
+  >,
 ): ApplicationAttestationKind | null {
   const signal = controlSignalText(control);
   for (const [kind, needles] of ATTESTATION_SIGNALS) {
@@ -355,6 +380,9 @@ export function isControlAnswered(control: ApplyFormControl): boolean {
     case "radio":
       return control.checked;
     case "select":
+      // A native select can display placeholder text while its submitted value
+      // is still empty. The label is presentation; the value is the answer.
+      return control.value.trim().length > 0 && !control.invalid;
     case "combobox":
       return (
         control.selectedOptionLabel.trim().length > 0 ||

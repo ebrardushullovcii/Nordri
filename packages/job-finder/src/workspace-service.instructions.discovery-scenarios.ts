@@ -245,27 +245,14 @@ describe("createJobFinderWorkspaceService", () => {
 
     await workspaceService.runSourceDebug("target_linkedin_default");
 
-    expect(capturedPhaseInputs.get("Access Auth Probe")).toEqual({
-      startingUrls: ["https://www.linkedin.com/jobs/"],
-      maxSteps: 60,
-    });
     expect(capturedPhaseInputs.get("Site Structure Mapping")).toEqual({
       startingUrls: [
         "https://www.linkedin.com/jobs/collections/recommended/",
         "https://www.linkedin.com/jobs/",
-      ],
-      maxSteps: 60,
-    });
-    expect(capturedPhaseInputs.get("Search Filter Probe")).toEqual({
-      startingUrls: [
         "https://www.linkedin.com/jobs/search/",
-        "https://www.linkedin.com/jobs/",
-        "https://www.linkedin.com/jobs/collections/recommended/",
       ],
       maxSteps: 60,
     });
-    expect(capturedPhaseInputs.get("Job Detail Validation")?.maxSteps).toBe(60);
-    expect(capturedPhaseInputs.get("Apply Path Validation")?.maxSteps).toBe(60);
     expect(capturedPhaseInputs.get("Replay Verification")?.maxSteps).toBe(60);
 
     const latestRun = (await repository.listSourceDebugRuns())[0];
@@ -389,14 +376,7 @@ describe("createJobFinderWorkspaceService", () => {
       startingUrls: [
         "https://example.com/careers/open-roles/",
         "https://example.com/",
-      ],
-      maxSteps: 60,
-    });
-    expect(capturedPhaseInputs.get("Search Filter Probe")).toEqual({
-      startingUrls: [
         "https://example.com/careers/open-roles/search?team=product",
-        "https://example.com/",
-        "https://example.com/careers/open-roles/",
       ],
       maxSteps: 60,
     });
@@ -591,7 +571,7 @@ describe("createJobFinderWorkspaceService", () => {
 
     await workspaceService.runSourceDebug("target_linkedin_default");
 
-    expect(capturedPhaseInputs.get("Search Filter Probe")).toEqual({
+    expect(capturedPhaseInputs.get("Site Structure Mapping")).toEqual({
       startingUrls: [
         "https://www.linkedin.com/jobs/collections/recommended/",
         "https://www.linkedin.com/jobs/",

@@ -954,7 +954,9 @@ function buildDraftSectionsFromStructuredTailoredDraft(input: {
       id: "section_summary",
       kind: "summary",
       label: "Summary",
-      text: draft.summary,
+      // The person's own summary stands in for one the generator did not
+      // write. Basics promises generated resumes start from it.
+      text: draft.summary?.trim() ? draft.summary : (profile?.summary ?? null),
       // A target role, preferred location, or tool list describes the search
       // request, not the candidate. Keep thin generations visibly thin until
       // grounded evidence is available instead of turning those fields into

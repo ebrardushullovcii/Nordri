@@ -676,3 +676,230 @@ describe("fit recommendation rationale wording", () => {
     }
   });
 });
+
+describe("explicit narrative evidence and nontechnical requirements", () => {
+  const english = (
+    summary: string,
+    proficiency?: string,
+    required = "Fluent English is required.",
+  ) =>
+    buildAssessment({
+      profile: {
+        summary,
+        spokenLanguages:
+          proficiency === undefined
+            ? []
+            : [
+                {
+                  id: "en",
+                  language: "English",
+                  proficiency,
+                  interviewPreference: false,
+                  notes: null,
+                },
+              ],
+      },
+      posting: { minimumQualifications: [required] },
+    }).find((r) => r.label.startsWith("English proficiency"));
+
+  test("accepts explicit summary English and cites the actual sentence", () => {
+    expect(
+      english("London-based frontend engineer. Fluent English."),
+    ).toMatchObject({
+      status: "supported",
+      resumeEvidence: [{ label: "Profile summary", detail: "Fluent English." }],
+    });
+    expect(
+      english("English: C2.", undefined, "English CEFR C1 is required.")
+        ?.status,
+    ).toBe("supported");
+  });
+
+  test.each([
+    "Not fluent in English.",
+    "I hope to become fluent in English.",
+    "Learning English to become fluent.",
+    "English fluency uncertain.",
+    "Worked with fluent English speakers.",
+    "Fluent English. English: B1.",
+    "Fluent English. My English is at B1.",
+    "English: B1.",
+    "Working toward English C2.",
+    "Fluent English. Working towards English C2.",
+    "Fluent English. My colleague speaks English C2.",
+    "Fluent English. My English is limited.",
+  ])("does not infer fluency from %s", (summary) => {
+    expect(english(summary)?.status).not.toBe("supported");
+  });
+
+  test("structured proficiency and explicit CEFR requirements override generic claims", () => {
+    expect(english("Fluent English.", "B1")?.status).toBe("missing");
+    expect(
+      english("Fluent English.", "Native, B1", "English CEFR C2 is required.")
+        ?.status,
+    ).toBe("missing");
+    expect(english("Fluent English.", "")?.status).toBe("missing");
+    expect(
+      english("Fluent English.", undefined, "English CEFR C2 is required.")
+        ?.status,
+    ).toBe("missing");
+    expect(
+      english("English: C1.", undefined, "English CEFR C2 is required.")
+        ?.status,
+    ).toBe("missing");
+  });
+
+  const implementationDescription = [
+    "What You'll Need",
+    "Clear communication with customers, colleagues and stakeholders throughout the customer journey and every implementation stage.",
+    "Strong attention to detail.",
+    "Disciplined tracking of milestones.",
+    "Comfort communicating on video.",
+    "Careful follow-up on open questions.",
+    "Experience leading customer onboarding, implementation, or setup projects in a SaaS environment.",
+    "Must Have Background",
+    "Demonstrated ability to manage customers through multi-step, multi-week setup processes with consistent follow-through.",
+    "Nice-To-Have Background",
+    "Experience with Figma is a plus.",
+    "Benefits & Perks",
+    "Our engineers use React.",
+  ].join("\n");
+
+  test("keeps long qualification sections and distinguishes support from implementation ownership", () => {
+    const requirements = buildAssessment({
+      profile: {
+        summary:
+          "Two years of chat-first SaaS customer support. Handles billing and onboarding.",
+        skills: ["Customer support", "Customer onboarding"],
+        experiences: [],
+        projects: [],
+      },
+      posting: {
+        title: "Customer Onboarding Specialist",
+        description: implementationDescription,
+      },
+    });
+    expect(requirements).toContainEqual(
+      expect.objectContaining({
+        label: "Customer implementation ownership",
+        importance: "required",
+        status: "missing",
+      }),
+    );
+    expect(requirements).toContainEqual(
+      expect.objectContaining({
+        label: "Customer onboarding",
+        importance: "required",
+        status: "supported",
+      }),
+    );
+    expect(requirements).toContainEqual(
+      expect.objectContaining({ label: "Figma", importance: "preferred" }),
+    );
+    expect(requirements.some((r) => r.label === "React")).toBe(false);
+    expect(
+      buildFitRecommendation({ score: 80, requirements }).recommendation,
+    ).toBe("review_before_applying");
+  });
+
+  test.each([
+    [
+      "Owned customer implementation projects from kickoff to launch.",
+      "supported",
+    ],
+    [
+      "Managed customers through multi-step, multi-week setup processes.",
+      "supported",
+    ],
+    ["No experience leading customer onboarding projects.", "missing"],
+    ["Seeking to lead customer implementation projects.", "missing"],
+    ["Handled reactive chat support and employee onboarding.", "missing"],
+  ])("requires explicit implementation delivery: %s", (summary, status) => {
+    const requirements = buildAssessment({
+      profile: { summary, experiences: [], projects: [], skills: [] },
+      posting: {
+        title: "Customer Onboarding Specialist",
+        description: implementationDescription,
+      },
+    });
+    expect(
+      requirements.find((r) => r.label === "Customer implementation ownership")
+        ?.status,
+    ).toBe(status);
+  });
+
+  test("does not turn general onboarding leadership into implementation-depth requirements", () => {
+    const requirements = buildAssessment({
+      posting: {
+        minimumQualifications: [
+          "Required: experience leading customer onboarding, adoption, renewals, and stakeholder management.",
+        ],
+      },
+    });
+    expect(
+      requirements.some((r) => r.label === "Customer implementation ownership"),
+    ).toBe(false);
+  });
+
+  test("does not turn expressly waived qualifications into requirements", () => {
+    const requirements = buildAssessment({
+      posting: {
+        minimumQualifications: [
+          "No experience leading customer onboarding projects is required.",
+          "Fluent English is not required.",
+        ],
+      },
+    });
+    expect(
+      requirements.some(
+        (r) =>
+          r.label === "Customer implementation ownership" ||
+          r.label === "Customer onboarding" ||
+          r.label === "English proficiency",
+      ),
+    ).toBe(false);
+  });
+
+  test("keeps required English when a different language is waived", () => {
+    expect(
+      english(
+        "Fluent English.",
+        undefined,
+        "A fluent level in English (French is not required).",
+      )?.status,
+    ).toBe("supported");
+    expect(
+      english("Fluent English.", undefined, "Fluent English (not required)."),
+    ).toBeUndefined();
+    expect(
+      english(
+        "Fluent English.",
+        undefined,
+        "Fluent English is required; French is not required.",
+      )?.status,
+    ).toBe("supported");
+  });
+
+  test("reads explicit customer support under a common requirements heading", () => {
+    const requirements = buildAssessment({
+      profile: {
+        summary: "Two years of customer support using Intercom.",
+        skills: [],
+        experiences: [],
+        projects: [],
+      },
+      posting: {
+        title: "Customer Support Specialist",
+        description:
+          "What We're Looking For\n1-2+ years in a customer support, customer success, or client-facing SaaS role.",
+      },
+    });
+    expect(requirements).toContainEqual(
+      expect.objectContaining({
+        label: "Customer support",
+        importance: "required",
+        status: "supported",
+      }),
+    );
+  });
+});

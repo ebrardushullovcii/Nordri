@@ -44,7 +44,6 @@ export function getProfileSetupStepFooterContinue(input: {
   };
 }
 
-
 export function getProfileSetupStepFooterPrimary(input: {
   canFinishSetup: boolean;
   currentStep: ProfileSetupStep;
@@ -56,10 +55,12 @@ export function getProfileSetupStepFooterPrimary(input: {
   onPrimary: (() => void) | null;
 } {
   const currentStep = normalizeProfileSetupStep(input.currentStep);
-  const canOfferFinish =
-    currentStep === "targeting" || currentStep === "extras";
 
-  if (canOfferFinish && input.canFinishSetup) {
+  // Once nothing required is missing, finishing is the primary action on
+  // whichever step the person is on. A good import fills everything; walking
+  // Work history and Extras to reach a Finish button was three saves for
+  // nothing.
+  if (input.canFinishSetup) {
     return {
       disabled: false,
       label: PROFILE_SETUP_FINISH_LABEL,
@@ -104,7 +105,48 @@ export function formatProfileSetupFinishReadiness(input: {
     return "Setup cannot finish yet.";
   }
 
-  return `Still needed to finish: ${input.remainingBlockerLabels.join(" · ")}.`;
+  return `Still needed to finish: ${summarizeRemainingBlockerLabels(
+    input.remainingBlockerLabels,
+  ).join(" · ")}.`;
+}
+
+const NAMED_BLOCKER_LIMIT = 3;
+const REVIEW_LABEL_PATTERN = /^(?:Confirm|Fill in) /u;
+const STEP_SUFFIX_PATTERN = /\s\((.+) step\)$/u;
+
+/**
+ * A short list is named in full. A long one is mostly imported details
+ * waiting for a "Confirm" or "Fill in", and naming twenty-three of them turned
+ * the footer into a paragraph that pushed the form off screen. Real blockers
+ * (a missing source, a missing name) stay named; the review items collapse
+ * into one count per step, since the step itself lists them.
+ */
+function summarizeRemainingBlockerLabels(labels: readonly string[]): string[] {
+  if (labels.length <= NAMED_BLOCKER_LIMIT) {
+    return [...labels];
+  }
+  const named: string[] = [];
+  const reviewCountByStep = new Map<string, number>();
+  for (const label of labels) {
+    if (!REVIEW_LABEL_PATTERN.test(label)) {
+      named.push(label);
+      continue;
+    }
+    const step = STEP_SUFFIX_PATTERN.exec(label)?.[1] ?? "";
+    reviewCountByStep.set(step, (reviewCountByStep.get(step) ?? 0) + 1);
+  }
+  if (reviewCountByStep.size === 0) {
+    return [...labels];
+  }
+  for (const [step, count] of reviewCountByStep) {
+    const noun = count === 1 ? "detail" : "details";
+    named.push(
+      step === ""
+        ? `Review ${count} imported ${noun} on this step`
+        : `Review ${count} imported ${noun} (${step} step)`,
+    );
+  }
+  return named;
 }
 
 export function ProfileSetupStepFooter(props: {
@@ -180,7 +222,9 @@ export function ProfileSetupStepFooter(props: {
                 ? // Right after an import the step is dirty because Job Finder
                   // filled it in. Saying "unsaved changes" there accuses the
                   // user of leaving work behind before they have typed anything.
-                  "Imported details on this step are not saved yet."
+                  // Not "on this step": an import lands on Job targets while
+                  // the detail it filled in (a summary) sits on Basics.
+                  "Imported details are not saved yet."
                 : "Unsaved changes on this step."
               : "No unsaved changes."}
           </p>

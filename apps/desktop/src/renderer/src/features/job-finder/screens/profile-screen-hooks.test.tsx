@@ -2,15 +2,20 @@
 
 import type { ResumeImportFieldCandidateSummary } from "@unemployed/contracts";
 import {
+  CandidateEducationSchema,
   CandidateProfileSchema,
   JobSearchPreferencesSchema,
 } from "@unemployed/contracts";
 import { act, renderHook } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { buildProfilePayload } from "../lib/profile-editor";
+import {
+  buildProfilePayload,
+  createProfileEditorValues,
+} from "../lib/profile-editor";
 import {
   backgroundConflictNoticeMessage,
   backgroundMergedNoticeMessage,
+  buildCanonicalAwareProfilePayload,
   mergeDirtyEditorValues,
   useProfileScreenForms,
 } from "./profile-screen-hooks";
@@ -175,7 +180,73 @@ describe("mergeDirtyEditorValues identity-safe arrays", () => {
   });
 });
 
+describe("canonical-aware profile saves", () => {
+  it("keeps an assistant-updated canonical field while applying a real manual edit", () => {
+    const draftValues = createProfileEditorValues(profile);
+    draftValues.identity.headline = "Manual headline edit";
+    const result = buildCanonicalAwareProfilePayload({
+      draftValues,
+      dirtyFields: { identity: { headline: true } },
+      latestResumeImportReviewCandidates: [],
+      profile: {
+        ...profile,
+        summary: "Assistant-updated summary",
+      },
+    });
+
+    expect(result.payload?.headline).toBe("Manual headline edit");
+    expect(result.payload?.summary).toBe("Assistant-updated summary");
+  });
+
+  it("uses the canonical profile when only another form is dirty", () => {
+    const result = buildCanonicalAwareProfilePayload({
+      draftValues: createProfileEditorValues(profile),
+      dirtyFields: {},
+      latestResumeImportReviewCandidates: [],
+      profile: {
+        ...profile,
+        summary: "Assistant-updated summary",
+      },
+    });
+
+    expect(result.payload?.summary).toBe("Assistant-updated summary");
+  });
+});
+
 describe("useProfileScreenForms background-snapshot durability", () => {
+  it("adopts a clean assistant reorder and remains clean", () => {
+    const education = [
+      CandidateEducationSchema.parse({
+        id: "education_1",
+        schoolName: "University of Somewhere",
+        degree: "BSc",
+      }),
+      CandidateEducationSchema.parse({
+        id: "education_2",
+        schoolName: "Berlin Product Academy",
+        degree: "Certificate",
+      }),
+    ];
+    const initialProfile = { ...profile, education };
+    const { result, rerender } = renderProfileScreenForms(
+      createInput({ profile: initialProfile }),
+    );
+
+    rerender(
+      createInput({
+        profile: { ...initialProfile, education: [...education].reverse() },
+      }),
+    );
+
+    expect(
+      result.current.profileForm
+        .getValues("records.education")
+        .map((entry) => entry.id),
+    ).toEqual(["education_2", "education_1"]);
+    expect(result.current.hasUnsavedChanges).toBe(false);
+    expect(result.current.hasUserDraftChanges).toBe(false);
+  });
+
   it("keeps dirty profile and preference drafts across identical-content snapshot commits", () => {
     const { result, rerender } = renderProfileScreenForms(createInput());
 

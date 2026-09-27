@@ -178,6 +178,85 @@ describe("extractListingDetailFromHtml", () => {
       extractListingDetailFromHtml({ html, url: "https://x.example.test/2" }),
     ).toBeNull();
   });
+
+  it("reads a compact listing with a named title, role sections, and an apply link", () => {
+    const html = `<html><head><title>Full-stack Engineer</title></head><body><main>
+      <h1>Full-stack Engineer</h1><h2>About the role</h2>
+      <p>Build reliable software for a collaborative planning product with a small product engineering team.</p>
+      <h2>What you will do</h2><ul><li>Design and ship maintainable software with TypeScript, SQL and automated tests.</li><li>Collaborate across product and engineering.</li><li>Improve performance, accessibility and reliability.</li></ul>
+      <h2>What you bring</h2><p>Professional software development experience, clear communication and an interest in learning.</p>
+      <a href="/apply/1">Apply for this job</a>
+    </main></body></html>`;
+
+    const detail = extractListingDetailFromHtml({
+      html,
+      url: "https://x.example.test/jobs/1",
+      expectedTitle: "Full-stack Engineer",
+    });
+
+    expect(detail?.method).toBe("page_text");
+    expect(detail?.description).toContain("TypeScript, SQL");
+    expect(detail?.directApplyUrl).toBe("https://x.example.test/apply/1");
+  });
+
+  it("starts the listing at the heading that names the job, dropping the banner and meta line above it", () => {
+    const html = `<html><body><header><a href="/board/">Jobs</a></header><main>
+      <p class="fixture">Local test fixture • Fictional jobs • Use synthetic data only</p>
+      <p>Dusk Acorn Collective · Remote, Europe · Posted 6d ago</p>
+      <h1>Frontend Engineer, Dusk Design Systems</h1><h2>About the role</h2>
+      <p>Build reliable software for a collaborative planning product with a small product engineering team.</p>
+      <h2>What you will do</h2><ul><li>Design and ship maintainable software with TypeScript, SQL and automated tests.</li><li>Collaborate across product and engineering.</li><li>Improve performance, accessibility and reliability.</li></ul>
+      <h2>What you bring</h2><p>Professional software development experience, clear communication and an interest in learning.</p>
+      <a class="button" href="/employer-a/apply/8">Apply now</a>
+    </main></body></html>`;
+
+    const detail = extractListingDetailFromHtml({
+      html,
+      url: "https://x.example.test/board/jobs/8",
+      expectedTitle: "Frontend Engineer, Dusk Design Systems",
+    });
+
+    expect(detail?.description.startsWith("Frontend Engineer, Dusk Design Systems")).toBe(true);
+    expect(detail?.description).not.toContain("Local test fixture");
+    expect(detail?.description).not.toContain("Posted 6d ago");
+    expect(detail?.description).toContain("TypeScript, SQL");
+    // The apply link below the body is still found.
+    expect(detail?.directApplyUrl).toBe("https://x.example.test/employer-a/apply/8");
+  });
+
+  it("keeps text above an h1 that does not name the job", () => {
+    const html = `<html><body><main>
+      <p>Frontend Engineer, Dusk Design Systems is a role on our product team building reliable planning software.</p>
+      <h1>Dusk Acorn Collective</h1><h2>About the role</h2>
+      <p>Design and ship maintainable software with TypeScript, SQL and automated tests across product and engineering.</p>
+      <h2>What you bring</h2><p>Professional software development experience, clear communication and an interest in learning.</p>
+    </main></body></html>`;
+
+    const detail = extractListingDetailFromHtml({
+      html,
+      url: "https://x.example.test/jobs/8",
+      expectedTitle: "Frontend Engineer, Dusk Design Systems",
+    });
+
+    expect(detail?.description).toContain("is a role on our product team");
+  });
+
+  it("rejects compact listing-like text when it does not name the expected job", () => {
+    const body = Array.from(
+      { length: 8 },
+      () =>
+        "This role has responsibilities and requirements for professional experience, collaboration, communication, and reliable delivery.",
+    ).join(" ");
+    const html = `<html><body><main><h1>Account required</h1><p>${body}</p></main></body></html>`;
+
+    expect(
+      extractListingDetailFromHtml({
+        html,
+        url: "https://x.example.test/login",
+        expectedTitle: "Full-stack Engineer",
+      }),
+    ).toBeNull();
+  });
 });
 
 describe("htmlToPlainText", () => {

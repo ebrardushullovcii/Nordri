@@ -31,6 +31,8 @@ export interface BrowserCdpHost {
   onPageCreated(listener: (page: BrowserCdpPage) => void): () => void;
   userAgent(): string;
   emulateFocus?(): boolean;
+  /** Automation is about to send keyboard or pointer input to this page. */
+  onAutomationInput?(pageId: string): void;
 }
 interface AttachedPage {
   page: BrowserCdpPage;
@@ -71,8 +73,61 @@ export class BrowserCdpBridge {
   private disposed = false;
   private removeCreatedListener: (() => void) | null = null;
   private readonly pendingAttachments = new Set<Promise<void>>();
+  private readonly tokenWaiters = new Map<string, (tabId: string) => void>();
 
   constructor(private readonly host: BrowserCdpHost) {}
+
+  /**
+   * Resolves with the tab that the next page command carrying `token` is sent
+   * to, or null after `timeoutMs`. A run evaluates the token in its own page;
+   * the command passes through here on the way to exactly one tab, so this is
+   * how the host learns which tab a run is working in without comparing URLs.
+   */
+  waitForToken(token: string, timeoutMs: number): Promise<string | null> {
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this.tokenWaiters.delete(token);
+        resolve(null);
+      }, timeoutMs);
+      this.tokenWaiters.set(token, (tabId) => {
+        clearTimeout(timer);
+        this.tokenWaiters.delete(token);
+        resolve(tabId);
+      });
+    });
+  }
+
+  /**
+   * Takes one tab away from the automation client without closing it: the
+   * client is told the page is gone, and the tab stays open for the person.
+   * Used when the person steps into a tab, or a tab is parked for them.
+   */
+  releasePage(id: string): void {
+    const target = this.targets.get(id);
+    if (!target) return;
+    for (const sessionId of target.sessions) {
+      const binding = this.sessions.get(sessionId);
+      this.emit(
+        "Target.detachedFromTarget",
+        {
+          sessionId,
+          targetId: binding?.nativeTargetId ?? target.info.targetId,
+        },
+        binding?.parentSessionId,
+      );
+      this.sessions.delete(sessionId);
+    }
+    target.sessions.clear();
+    this.targets.delete(id);
+    this.emit("Target.targetDestroyed", { targetId: target.info.targetId });
+    target.dispose();
+  }
+
+  /** Hands a released tab back to the automation client. */
+  reclaimPage(page: BrowserCdpPage): Promise<void> {
+    if (this.disposed || this.targets.has(page.id)) return Promise.resolve();
+    return this.attachPage(page).catch(() => undefined);
+  }
 
   async start(): Promise<{
     endpoint: string;
@@ -211,6 +266,10 @@ export class BrowserCdpBridge {
       "Target.getTargetInfo",
     );
     if (this.disposed || page.contents.isDestroyed()) return;
+    // A tab the host keeps away from automation (the person's own tab) is
+    // never announced, even if it was created while a connection was open.
+    if (!this.host.pages().some((candidate) => candidate.id === page.id))
+      return;
     if (!record(native) || !record(native.targetInfo))
       throw new Error("Browser target identity is unavailable.");
     const targetId = string(native.targetInfo.targetId);
@@ -528,6 +587,16 @@ export class BrowserCdpBridge {
     method: string,
     params: Params,
   ): Promise<Params> {
+    // The page reports automation input as input too; the host must be
+    // able to tell it from the person's own clicks and keys.
+    if (method.startsWith("Input."))
+      this.host.onAutomationInput?.(binding.target.page.id);
+    if (this.tokenWaiters.size > 0) {
+      const text = JSON.stringify(params);
+      for (const [token, resolve] of [...this.tokenWaiters]) {
+        if (text.includes(token)) resolve(binding.target.page.id);
+      }
+    }
     const result: unknown =
       await binding.target.page.contents.debugger.sendCommand(
         method,

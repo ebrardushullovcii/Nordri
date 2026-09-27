@@ -133,4 +133,20 @@ describe("describeDiscoveryListingCapture", () => {
       describeDiscoveryListingCapture(countDiscoveryListingCapture([])),
     ).toBe("No jobs were kept, so there was nothing to read.");
   });
+
+  it("counts a rate-limited page as still to read, not as one that gave nothing", () => {
+    const counts = countDiscoveryListingCapture([
+      job({
+        id: "job_rate_limited",
+        listingDetailFetch: {
+          attemptedAt: "2026-09-05T10:00:00.000Z",
+          outcome: "blocked",
+          method: null,
+          detail: "The site asked Job Finder to slow down (HTTP 429).",
+          retryAfterAt: "2026-09-05T10:00:02.000Z",
+        },
+      }),
+    ]);
+    expect(counts).toMatchObject({ blocked: 0, notAttempted: 1 });
+  });
 });

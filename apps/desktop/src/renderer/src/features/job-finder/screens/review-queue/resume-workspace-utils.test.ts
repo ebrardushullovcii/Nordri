@@ -4,6 +4,7 @@ import type {
   ResumeDraftRevision,
 } from "@unemployed/contracts";
 import {
+  findUnansweredAssistantRequest,
   describeAcceptedAssistantEdits,
   describeResumeDraftProvenance,
   describeResumeGenerationPath,
@@ -62,6 +63,21 @@ describe("describeResumeGenerationPath", () => {
       "The first draft came from the built-in generator because the AI draft failed (HTTP 502 from provider).",
     );
     expect(disclosure?.canRetryWithAi).toBe(true);
+  });
+
+  it("says a stopped AI run in plain words instead of its internal stop reason", () => {
+    const disclosure = describeResumeGenerationPath({
+      generationMethod: "deterministic",
+      generationReason: "provider_failed",
+      generationDetail:
+        "Resume generation agent stopped before completing (permanent_failure).",
+      notes: [],
+    });
+
+    expect(disclosure?.message).toContain(
+      "because the AI draft failed (the AI stopped partway through).",
+    );
+    expect(disclosure?.message).not.toContain("permanent_failure");
   });
 
   it("distinguishes a timeout from a failure", () => {
@@ -303,6 +319,68 @@ describe("describeResumeDraftProvenance", () => {
   });
 });
 
+describe("describeAcceptedAssistantEdits after Undo or regeneration", () => {
+  const revision = (
+    id: string,
+    mutationKind: ResumeDraftRevision["mutationKind"],
+    createdAt: string,
+    restoredFromRevisionId: string | null = null,
+  ) =>
+    ({
+      id,
+      draftId: "draft_1",
+      parentRevisionId: null,
+      actor: "assistant",
+      mutationKind,
+      snapshotDraft: null,
+      snapshotIdentity: null,
+      snapshotSections: [],
+      beforeHash: null,
+      afterHash: null,
+      diff: null,
+      restoredFromRevisionId,
+      createdAt,
+      reason: null,
+    }) as ResumeDraftRevision;
+  const accepted = [
+    buildAssistantMessage({
+      id: "message_1",
+      proposalStatus: "accepted",
+      patches: [buildPatch("patch_1", "section_summary")],
+      resolvedPatchIds: ["patch_1"],
+      resolvedAt: "2026-09-03T10:00:00.000Z",
+    }),
+    buildAssistantMessage({
+      id: "message_2",
+      proposalStatus: "accepted",
+      patches: [buildPatch("patch_2", "section_experience", "entry_1")],
+      resolvedPatchIds: ["patch_2"],
+      resolvedAt: "2026-09-03T11:00:00.000Z",
+    }),
+  ];
+
+  it("stops counting and marking an AI edit once it is undone", () => {
+    const summary = describeAcceptedAssistantEdits(accepted, [
+      revision("rev_1", "assistant_patch", "2026-09-03T10:00:00.000Z"),
+      revision("rev_2", "assistant_patch", "2026-09-03T11:00:00.000Z"),
+      revision("rev_3", "restore", "2026-09-03T12:00:00.000Z", "rev_2"),
+    ]);
+
+    expect(summary?.label).toBe("1 AI edit applied");
+    expect(summary?.changedTargetIds).toEqual(["section_summary"]);
+  });
+
+  it("reports nothing once every AI edit is undone or regenerated away", () => {
+    expect(
+      describeAcceptedAssistantEdits(accepted, [
+        revision("rev_1", "assistant_patch", "2026-09-03T10:00:00.000Z"),
+        revision("rev_2", "assistant_patch", "2026-09-03T11:00:00.000Z"),
+        revision("rev_3", "regenerate_draft", "2026-09-03T12:00:00.000Z"),
+      ]),
+    ).toBeNull();
+  });
+});
+
 describe("findLatestAssistantEditRevisionId", () => {
   const revision = (
     id: string,
@@ -336,6 +414,26 @@ describe("findLatestAssistantEditRevisionId", () => {
     ).toBe("rev_3");
   });
 
+  it("skips AI edits already undone and those a full regeneration replaced", () => {
+    const undo = {
+      ...revision("rev_4", "restore", "2026-09-03T13:00:00.000Z"),
+      restoredFromRevisionId: "rev_3",
+    };
+    expect(
+      findLatestAssistantEditRevisionId([
+        revision("rev_1", "assistant_patch", "2026-09-03T10:00:00.000Z"),
+        revision("rev_3", "assistant_patch", "2026-09-03T11:00:00.000Z"),
+        undo,
+      ]),
+    ).toBe("rev_1");
+    expect(
+      findLatestAssistantEditRevisionId([
+        revision("rev_1", "assistant_patch", "2026-09-03T10:00:00.000Z"),
+        revision("rev_2", "regenerate_draft", "2026-09-03T11:00:00.000Z"),
+      ]),
+    ).toBeNull();
+  });
+
   it("returns null when the assistant has changed nothing", () => {
     expect(
       findLatestAssistantEditRevisionId([
@@ -346,30 +444,7 @@ describe("findLatestAssistantEditRevisionId", () => {
 });
 
 describe("describeResumeExportClaimBlock", () => {
-  it("tells the person to confirm lines when every blocker is confirm_needed", () => {
-    expect(
-      describeResumeExportClaimBlock({
-        blockingAssessments: [
-          { status: "confirm_needed" },
-          { status: "confirm_needed" },
-        ],
-      }),
-    ).toBe(
-      "2 lines still need your confirmation before this resume can be exported.",
-    );
-    expect(
-      resumeExportClaimBlockActionLabel({
-        blockingAssessments: [{ status: "confirm_needed" }],
-      }),
-    ).toBe("Review confirmations");
-  });
-
-  it("keeps rewrite copy for unsupported claims and mixes both when needed", () => {
-    expect(
-      describeResumeExportClaimBlock({
-        blockingAssessments: [{ status: "unsupported" }],
-      }),
-    ).toBe("1 claim must be rewritten or approved before this resume can be exported.");
+  it("counts the lines that need a decision, whatever kind of block each is", () => {
     expect(
       describeResumeExportClaimBlock({
         blockingAssessments: [
@@ -377,13 +452,65 @@ describe("describeResumeExportClaimBlock", () => {
           { status: "unsupported" },
         ],
       }),
-    ).toBe(
-      "1 line still needs your confirmation, and 1 claim must be rewritten or approved, before this resume can be exported.",
+    ).toBe("2 lines need your decision before this resume can be approved.");
+    expect(
+      describeResumeExportClaimBlock({
+        blockingAssessments: [{ status: "confirm_needed" }],
+      }),
+    ).toBe("1 line needs your decision before this resume can be approved.");
+    expect(describeResumeExportClaimBlock({ blockingAssessments: [] })).toBe(
+      null,
     );
+  });
+
+  it("names the count on the action", () => {
     expect(
       resumeExportClaimBlockActionLabel({
-        blockingAssessments: [{ status: "unsupported" }],
+        blockingAssessments: [{ status: "confirm_needed" }],
       }),
-    ).toBe("Review blocked claims");
+    ).toBe("Review 1 line");
+    expect(
+      resumeExportClaimBlockActionLabel({
+        blockingAssessments: [
+          { status: "confirm_needed" },
+          { status: "unsupported" },
+          { status: "review" },
+        ],
+      }),
+    ).toBe("Review 3 lines");
+  });
+});
+
+describe("findUnansweredAssistantRequest", () => {
+  const message = (
+    role: "user" | "assistant",
+    content: string,
+    patchCount = 0,
+  ) => ({
+    role,
+    content,
+    patches: new Array<ResumeAssistantMessage["patches"][number]>(patchCount),
+  });
+
+  it("returns the newest request when its reply proposed nothing", () => {
+    expect(
+      findUnansweredAssistantRequest([
+        message("user", "Shorten the summary."),
+        message(
+          "assistant",
+          "This job sends your original resume file unchanged.",
+        ),
+      ]),
+    ).toBe("Shorten the summary.");
+  });
+
+  it("returns null once a reply carried a proposal or nothing was asked", () => {
+    expect(
+      findUnansweredAssistantRequest([
+        message("user", "Shorten the summary."),
+        message("assistant", "Here is a change.", 1),
+      ]),
+    ).toBeNull();
+    expect(findUnansweredAssistantRequest([])).toBeNull();
   });
 });

@@ -126,6 +126,39 @@ describe("workspace campaign and activity controls", () => {
     );
   });
 
+  test("Home pause keeps the current browser run alive until Resume", async () => {
+    const seed = createSeed();
+    seed.settings = {
+      ...seed.settings,
+      resumeApplicationMode: "original_resume",
+    };
+    const interruptible = createInterruptibleBrowserRuntime();
+    const { repository, workspaceService } = createWorkspaceServiceHarness({
+      seed,
+      browserRuntime: interruptible.browserRuntime,
+    });
+    const firstRun = workspaceService.startApplyCopilotRun("job_ready");
+    await interruptible.started;
+    const before = (await repository.listApplyRuns())[0]!;
+
+    const paused = await workspaceService.setActivityControl({
+      paused: true,
+      reason: "Paused by you.",
+      pauseBehavior: "finish_current",
+    });
+    expect(paused.activityControl.pauseBehavior).toBe("finish_current");
+    expect(interruptible.executionState.signal?.aborted).toBe(false);
+    expect((await repository.listApplyRuns())[0]).toMatchObject({
+      id: before.id,
+      state: "running",
+    });
+
+    await workspaceService.setActivityControl({ paused: false });
+    expect((await repository.listApplyRuns())[0]?.id).toBe(before.id);
+    await workspaceService.cancelApplyRun(before.id);
+    await expect(firstRun).rejects.toThrow(/aborted/i);
+  });
+
   test("deduplicates and aborts a direct copilot browser run when activity pauses", async () => {
     const seed = createSeed();
     seed.settings = {

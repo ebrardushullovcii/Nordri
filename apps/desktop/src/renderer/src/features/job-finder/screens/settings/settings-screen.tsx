@@ -3,23 +3,31 @@ import type {
   ApplicationCrmSettings,
   BrowserSessionState,
   JobFinderSettings,
+  JobSearchPreferences,
   ResumeTemplateDefinition,
+  UpdateAiBehaviorInput,
   UpdateApplicationDefaultsInput,
   UpdateWorkspaceBehaviorInput,
 } from "@unemployed/contracts";
 import { ApplicationCrmSettingsSchema } from "@unemployed/contracts";
 import type { CSSProperties, MouseEvent } from "react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { cn } from "@renderer/lib/cn";
 import { JOB_FINDER_ROUTE_PATHS } from "@renderer/features/job-finder/lib/job-finder-route-hrefs";
 import { SHELL_SCROLLING_ROUTE_BOTTOM_GUTTER_CANCEL_CLASS } from "../../lib/job-finder-shell-gutters";
-import { PageHeader } from "../../components/page-header";
+import { PageHeaderStack } from "../../components/page-header";
 import { ApplicationsCrmSettingsEditor } from "../applications/applications-crm-settings";
+import {
+  SETTINGS_AI_BEHAVIOR_LABEL,
+  SettingsAiBehaviorSection,
+} from "./settings-ai-behavior-section";
 import { SettingsAppDeviceSection } from "./settings-app-device-section";
-import { SettingsApplicationDefaultsSection } from "./settings-application-defaults-section";
-import { SettingsCoverLetterSection } from "./settings-cover-letter-section";
-import { SettingsApplyModeWired } from "./settings-apply-mode-wiring";
+import {
+  SETTINGS_RESUME_LOOK_LABEL,
+  SettingsApplicationDefaultsSection,
+} from "./settings-application-defaults-section";
+import { SettingsApplyModeSection } from "./settings-apply-mode-section";
 import {
   SettingsDirtySectionsProvider,
   useSettingsDirtySections,
@@ -48,10 +56,17 @@ const settingsSections = [
     tone: "default",
   },
   {
+    headingId: "settings-ai-behavior-heading",
+    href: "#settings-ai-behavior",
+    id: "settings-ai-behavior",
+    label: SETTINGS_AI_BEHAVIOR_LABEL,
+    tone: "default",
+  },
+  {
     headingId: "settings-application-defaults-heading",
     href: "#settings-application-defaults",
     id: "settings-application-defaults",
-    label: "Application defaults",
+    label: SETTINGS_RESUME_LOOK_LABEL,
     tone: "default",
   },
   {
@@ -137,6 +152,9 @@ export function SettingsScreen(props: {
   onUpdateAppearanceTheme: (
     theme: AppearanceTheme,
   ) => Promise<boolean | void> | void;
+  onUpdateAiBehavior: (
+    input: UpdateAiBehaviorInput,
+  ) => Promise<boolean | void> | void;
   onUpdateApplicationDefaults: (
     input: UpdateApplicationDefaultsInput,
   ) => Promise<boolean | void> | void;
@@ -146,6 +164,8 @@ export function SettingsScreen(props: {
   onUpdateWorkspaceBehavior: (
     input: UpdateWorkspaceBehaviorInput,
   ) => Promise<boolean | void> | void;
+  /** The saved resume tailoring strength lives here, not in settings. */
+  searchPreferences: Pick<JobSearchPreferences, "tailoringMode">;
   settings: JobFinderSettings;
 }) {
   const {
@@ -154,10 +174,12 @@ export function SettingsScreen(props: {
     isWorkspaceResetPending,
     onResetWorkspace,
     onSettingsDraftEdited,
+    onUpdateAiBehavior,
     onUpdateAppearanceTheme,
     onUpdateApplicationDefaults,
     onUpdateTrackerCrm,
     onUpdateWorkspaceBehavior,
+    searchPreferences,
     settings,
   } = props;
 
@@ -175,7 +197,18 @@ export function SettingsScreen(props: {
   const [activeSectionId, setActiveSectionId] = useState<string>(
     settingsSections[0].id,
   );
+  const location = useLocation();
   const { dirtySections, registry } = useSettingsDirtySections();
+
+  useLayoutEffect(() => {
+    const sectionId = location.hash.slice(1);
+    if (
+      settingsSections.some((section) => section.id === sectionId) &&
+      focusSettingsSection(sectionId)
+    ) {
+      setActiveSectionId(sectionId);
+    }
+  }, [location.hash]);
 
   // A workspace that has never saved tracker settings has no persisted
   // `applicationCrm`, and parsing a fresh default inline handed the Tracker
@@ -340,19 +373,18 @@ export function SettingsScreen(props: {
       {/* The old standing notice spent a bordered 70px band restating where
           Documents lives. It is one line of the header's own meta slot now, so
           the first real setting is reachable in a short window. */}
-      <PageHeader
-        description="Set reusable defaults for search, resumes, and applications."
+      <PageHeaderStack
+        description="Choose how the AI works for you, and set reusable defaults for resumes and applications."
         meta={
           <>
-            Your imported resume is managed in{" "}
+            Your resume and any extra files for applications are managed in{" "}
             <Link
               className="text-primary underline underline-offset-2 hover:text-primary/80"
               to={JOB_FINDER_ROUTE_PATHS.profile}
             >
               Profile
             </Link>
-            . Documents is for the extra files you attach to applications, like
-            a portfolio or transcript.
+            .
           </>
         }
         title="Settings"
@@ -426,31 +458,33 @@ export function SettingsScreen(props: {
         </section>
 
         <section
+          aria-labelledby="settings-ai-behavior-heading"
+          className="scroll-mt-(--settings-subnav-offset) min-w-0"
+          id="settings-ai-behavior"
+          tabIndex={-1}
+        >
+          <h2 className="sr-only" id="settings-ai-behavior-heading">
+            {SETTINGS_AI_BEHAVIOR_LABEL}
+          </h2>
+          <SettingsAiBehaviorSection
+            onSettingsDraftEdited={onSettingsDraftEdited}
+            onUpdateAiBehavior={onUpdateAiBehavior}
+            searchPreferences={searchPreferences}
+            settings={settings}
+          />
+        </section>
+
+        <section
           aria-labelledby="settings-application-defaults-heading"
           className="scroll-mt-(--settings-subnav-offset) min-w-0"
           id="settings-application-defaults"
           tabIndex={-1}
         >
           <h2 className="sr-only" id="settings-application-defaults-heading">
-            Application defaults
+            {SETTINGS_RESUME_LOOK_LABEL}
           </h2>
           <SettingsApplicationDefaultsSection
             availableResumeTemplates={availableResumeTemplates}
-            onSettingsDraftEdited={onSettingsDraftEdited}
-            onUpdateApplicationDefaults={onUpdateApplicationDefaults}
-            settings={settings}
-          />
-        </section>
-
-        <section
-          aria-labelledby="settings-cover-letter-heading"
-          className="scroll-mt-(--settings-subnav-offset) min-w-0"
-          tabIndex={-1}
-        >
-          <h2 className="sr-only" id="settings-cover-letter-heading">
-            Cover letters
-          </h2>
-          <SettingsCoverLetterSection
             onSettingsDraftEdited={onSettingsDraftEdited}
             onUpdateApplicationDefaults={onUpdateApplicationDefaults}
             settings={settings}
@@ -466,7 +500,23 @@ export function SettingsScreen(props: {
           {/* No sr-only h2 here: this section's visible heading already says
               exactly the region name, so a hidden duplicate above it read the
               same sentence twice at two different heading levels. */}
-          <SettingsApplyModeWired headingId="settings-application-authority-heading" />
+          <SettingsApplyModeSection
+            headingId="settings-application-authority-heading"
+            maxApplicationsPerLocalDay={
+              settings.maxApplicationsPerLocalDay ?? 20
+            }
+            mode={settings.applicationAutomationMode ?? "prepare_only"}
+            onSave={async (input) => {
+              onSettingsDraftEdited();
+              const saved = await onUpdateApplicationDefaults({
+                applicationAutomationMode: input.mode,
+                maxApplicationsPerLocalDay: input.maxApplicationsPerLocalDay,
+              });
+              if (saved === false) {
+                throw new Error("The application mode did not save.");
+              }
+            }}
+          />
         </section>
 
         <section

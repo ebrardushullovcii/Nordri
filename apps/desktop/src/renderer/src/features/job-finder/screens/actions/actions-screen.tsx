@@ -20,6 +20,7 @@ import { ArrowUpRight, Ban, BellOff, Check, ExternalLink } from "lucide-react";
 
 import { Badge } from "@renderer/components/ui/badge";
 import { Button } from "@renderer/components/ui/button";
+import { Input } from "@renderer/components/ui/input";
 import { Textarea } from "@renderer/components/ui/textarea";
 import {
   CollectionPagination,
@@ -32,7 +33,18 @@ import {
   TECHNICAL_DETAILS_LABEL,
 } from "../../lib/describe-failure";
 import { buildJobFinderContextRoute } from "../../lib/job-finder-context-navigation";
+import { buildResumeWorkspaceRoute } from "../../lib/resume-workspace-route";
 import { listApplicationsAwaitingUser } from "../../lib/needs-you-count";
+import {
+  APPLICATION_FILE_CONTINUES_NOTE,
+  APPLICATION_SIGN_IN_CONTINUES_NOTE,
+  OPEN_PROFILE_FILES_ACTION,
+  applicationSignInContinuesOnItsOwn,
+} from "../../lib/application-sign-in-handoff";
+import {
+  inferFileKindForQuestion,
+  profileFilesHref,
+} from "../../lib/job-finder-route-hrefs";
 import {
   getApplicationNextStepLabel,
   listPendingApplicationQuestions,
@@ -206,24 +218,29 @@ const TRAILING_SAFETY_CLAUSE =
 export function toActionableInstructions(
   instructions: readonly string[],
 ): readonly string[] {
-  return instructions
-    // A site's own decoration travels into these lines through the labels they
-    // quote; a colour pin in the middle of a step is noise, not an instruction.
-    .map((instruction) => stripScrapedGlyphs(instruction).trim())
-    .filter(
-      (instruction) =>
-        instruction.length > 0 && !SAFETY_ONLY_INSTRUCTION.test(instruction),
-    )
-    .map((instruction) =>
-      instruction.replace(TRAILING_SAFETY_CLAUSE, "").trim(),
-    )
-    .filter((instruction) => instruction.length > 0);
+  return (
+    instructions
+      // A site's own decoration travels into these lines through the labels they
+      // quote; a colour pin in the middle of a step is noise, not an instruction.
+      .map((instruction) => stripScrapedGlyphs(instruction).trim())
+      .filter(
+        (instruction) =>
+          instruction.length > 0 && !SAFETY_ONLY_INSTRUCTION.test(instruction),
+      )
+      .map((instruction) =>
+        instruction.replace(TRAILING_SAFETY_CLAUSE, "").trim(),
+      )
+      .filter((instruction) => instruction.length > 0)
+  );
 }
 
 /** Below this many open actions the list is scannable without a search field. */
 const ACTION_SEARCH_MIN_ITEMS = 5;
 
-function createCommand(
+const SECRET_CREDENTIAL_QUESTION =
+  /\b(?:password|passcode|one[- ]time (?:password|code)|verification code|security code|otp)\b/i;
+
+export function createCommand(
   request: UserActionRequest,
   action: "open_page" | "confirm_done" | "skip" | "cancel",
 ): UserActionCommandInput {
@@ -241,6 +258,128 @@ function createCommand(
     : { ...base, action };
 }
 
+function TaskLocalCredentialsForm(props: {
+  isPending: boolean;
+  onCommand: (command: UserActionCommandInput) => void | Promise<void>;
+  request: UserActionRequest;
+}) {
+  const [identifier, setIdentifier] = useState("");
+  const [password, setPassword] = useState("");
+  const canSubmit = identifier.trim().length > 0 && password.length > 0;
+
+  return (
+    <details className="grid gap-3 rounded-(--radius-field) border border-(--surface-panel-border) p-3">
+      <summary className="cursor-pointer text-sm font-medium text-foreground">
+        Use credentials for this task
+      </summary>
+      <p className="mt-3 text-xs leading-5 text-foreground-soft">
+        These are used once on this exact sign-in page. Job Finder does not save
+        them to your profile, answers, or application history.
+      </p>
+      <form
+        className="mt-3 grid max-w-md gap-3"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (!canSubmit) return;
+          const command: UserActionCommandInput = {
+            action: "submit_task_local_credentials",
+            requestId: props.request.id,
+            commandId: `user_action_task_local_credentials_${globalThis.crypto.randomUUID()}`,
+            expectedRevision: props.request.revision,
+            identifier: identifier.trim(),
+            password,
+            taskLocalUseAuthorized: true,
+            credentialsPolicy: "browser_only",
+            submitAuthorized: false,
+            accountCreationAuthorized: false,
+          };
+          setPassword("");
+          void props.onCommand(command);
+        }}
+      >
+        <label className="grid gap-1 text-sm text-foreground">
+          Account email or username
+          <Input
+            autoComplete="off"
+            disabled={props.isPending}
+            onChange={(event) => setIdentifier(event.target.value)}
+            value={identifier}
+          />
+        </label>
+        <label className="grid gap-1 text-sm text-foreground">
+          Password
+          <Input
+            autoComplete="off"
+            disabled={props.isPending}
+            onChange={(event) => setPassword(event.target.value)}
+            type="password"
+            value={password}
+          />
+        </label>
+        <Button
+          disabled={!canSubmit}
+          pending={props.isPending}
+          size="compact"
+          type="submit"
+          variant="secondary"
+        >
+          Sign in once and continue
+        </Button>
+      </form>
+    </details>
+  );
+}
+
+/** A check still running after this long says why it may be waiting. */
+const CHECK_SLOW_MINUTES = 3;
+/** After this long a check is treated as lost and offers a fresh start. */
+const CHECK_STALLED_MINUTES = 12;
+
+/** Whole minutes since `since`, re-read every half minute; null when unset. */
+function siteHostOf(job: {
+  applicationUrl?: string | null;
+  canonicalUrl: string;
+}): string | null {
+  try {
+    return new URL(job.applicationUrl ?? job.canonicalUrl).hostname;
+  } catch {
+    return null;
+  }
+}
+
+/** True when another job on this job's site is being filled in right now. */
+export function isSameSiteApplicationActive(
+  job: { id: string; applicationUrl?: string | null; canonicalUrl: string },
+  applyJobResults: readonly { jobId: string; state: string }[],
+  jobsById: ReadonlyMap<
+    string,
+    { id: string; applicationUrl?: string | null; canonicalUrl: string }
+  >,
+): boolean {
+  const host = siteHostOf(job);
+  if (!host) return false;
+  return applyJobResults.some((result) => {
+    if (result.jobId === job.id) return false;
+    if (!["filling", "question_capture", "submitting"].includes(result.state))
+      return false;
+    const other = jobsById.get(result.jobId);
+    return other ? siteHostOf(other) === host : false;
+  });
+}
+
+function useMinutesSince(since: string | null): number | null {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!since) return;
+    const timer = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(timer);
+  }, [since]);
+  if (!since) return null;
+  const started = Date.parse(since);
+  if (Number.isNaN(started)) return null;
+  return Math.max(0, Math.floor((now - started) / 60_000));
+}
+
 function ActionCard(props: {
   isGroupedProjectPending: (groupKey: string) => boolean;
   isPending: boolean;
@@ -251,26 +390,58 @@ function ActionCard(props: {
    */
   onCommand: (command: UserActionCommandInput) => void | Promise<void>;
   onOpenScope: () => void;
+  /** Opens Profile > Files, where a file question is answered. */
+  onOpenFiles?: () => void;
   onProjectGroupedManualAnswer: (
     command: ProjectGroupedManualAnswerCommand,
   ) => void;
   profile: CandidateProfile | null;
   questions: readonly ApplicationAttemptQuestion[];
   request: UserActionRequest;
+  /**
+   * Closes a check that never finished and prepares the application again,
+   * in one press. Absent where the application cannot be started from here.
+   */
+  onStartOver?: (cancel: UserActionCommandInput) => void | Promise<void>;
+  /**
+   * Another application on the same site is being filled in right now. A
+   * checked step waits for it (one application per site at a time).
+   */
+  sameSiteApplicationActive?: boolean;
 }) {
-  const {
-    isPending,
-    jobLabel,
-    onCommand,
-    onOpenScope,
-    questions,
-    request,
-  } = props;
+  const { isPending, jobLabel, onCommand, onOpenScope, questions, request } =
+    props;
   const isVerifying = request.state === "verifying";
+  const checkingMinutes = useMinutesSince(
+    isVerifying ? request.updatedAt : null,
+  );
+  const waitsForSameSite =
+    request.scope.type === "application" &&
+    Boolean(props.sameSiteApplicationActive) &&
+    checkingMinutes !== null &&
+    checkingMinutes >= 1;
+  const checkingStalled =
+    request.scope.type === "application" &&
+    checkingMinutes !== null &&
+    checkingMinutes >= CHECK_STALLED_MINUTES;
+  const checkingWaits =
+    !checkingStalled &&
+    checkingMinutes !== null &&
+    checkingMinutes >= CHECK_SLOW_MINUTES;
+  // Older runs could misclassify a password input as an ordinary application
+  // question. Never render a reusable-answer editor for that persisted data.
+  // It stays a browser handoff so the person can open, check, or cancel it.
+  const isLegacyCredentialQuestion =
+    request.kind === "manual_answer" &&
+    questions.some((question) =>
+      SECRET_CREDENTIAL_QUESTION.test(question.prompt.trim()),
+    );
   // One shape for the whole card: a question step is a question and an answer
   // box, not a browser hand-off with an answer editor bolted underneath it.
   const isQuestionStep =
-    request.kind === "manual_answer" && questions.length > 0;
+    request.kind === "manual_answer" &&
+    questions.length > 0 &&
+    !isLegacyCredentialQuestion;
   // A sign-in, account, or security-check step is a sentence and two buttons.
   // It used to stack five paraphrases of "do it in the browser and come back"
   // plus a retry-mechanics note the person cannot act on.
@@ -280,7 +451,8 @@ function ActionCard(props: {
     request.kind === "mfa" ||
     request.kind === "captcha" ||
     request.kind === "email_verification" ||
-    request.kind === "existing_account_choice";
+    request.kind === "existing_account_choice" ||
+    isLegacyCredentialQuestion;
   const stepHostLabel = (() => {
     const raw = request.actionUrl ?? request.displayOrigin;
     if (!raw) {
@@ -293,7 +465,24 @@ function ActionCard(props: {
     }
   })();
   const attemptsExhausted = request.attemptCount >= request.maxAttempts;
+  const continuesAfterSignIn = applicationSignInContinuesOnItsOwn(request);
+  // A file question is answered in Profile > Files: adding or restoring a
+  // fitting file there carries the application on by itself.
+  const waitsForFile =
+    request.kind === "manual_upload" &&
+    request.scope.type === "application" &&
+    Boolean(props.onOpenFiles) &&
+    questions.some(
+      (question) =>
+        question.answerControlType === "file" && question.kind !== "resume",
+    );
   const presentation = userActionKindPresentations[request.kind];
+  const actionPresentation = isLegacyCredentialQuestion
+    ? userActionKindPresentations.login
+    : presentation;
+  const displayedTitle = isLegacyCredentialQuestion
+    ? "Sign in to continue"
+    : stripScrapedGlyphs(request.title);
   const scopeLabel =
     request.scope.type === "application" ? "application" : "job source";
   const missingBrowserLinkDescriptionId = `${request.id}-missing-browser-link`;
@@ -332,15 +521,22 @@ function ActionCard(props: {
             )}
             {/* "Other" names nothing; the request summary already says what
             the step is, so only classified kinds earn a category badge. */}
-            {request.kind === "other" ? null : (
+            {request.kind === "other" || isLegacyCredentialQuestion ? null : (
               <Badge variant="status">{presentation.label}</Badge>
             )}
-            <Badge variant="outline">
-              {request.state.replaceAll("_", " ")}
-            </Badge>
+            {/* Everything on Needs you is awaiting the user, so that state
+                is the page, not a chip. Only a step in another state (being
+                verified after you confirmed it) says so. */}
+            {request.state === "awaiting_user" ? null : (
+              <Badge variant="outline">
+                {request.state === "verifying"
+                  ? "Checking"
+                  : request.state.replaceAll("_", " ")}
+              </Badge>
+            )}
           </div>
           <h3 className="font-semibold text-(--text-headline)">
-            {stripScrapedGlyphs(request.title)}
+            {displayedTitle}
           </h3>
           {/* A question step's summary was four sentences restating the
               heading, the question, and "do it in the browser and come back"
@@ -348,8 +544,29 @@ function ActionCard(props: {
               right here. */}
           <p className="max-w-3xl text-sm leading-6 text-foreground-soft">
             {isQuestionStep
-              ? "Nothing in your profile, resume, or saved answers covers this."
-              : stripScrapedGlyphs(summaryParts.message)}
+              ? // A question that came back with a reason (for example the
+                // saved work countries do not settle the job's region) says
+                // what Job Finder did find under the question; the heading
+                // must not claim the profile has nothing.
+                questions.some((question) => Boolean(question.note))
+                ? "Your saved details do not settle this. The note under the question says why."
+                : "Nothing in your profile, resume, or saved answers covers this."
+              : isLegacyCredentialQuestion
+                ? "This older step cannot collect a password. Open the exact job page to sign in there, or cancel it and try the application again."
+                : isVerifying
+                  ? // Being checked (or answered from a saved answer): saying
+                    // "do it in the browser, then come back and confirm" here
+                    // told the person to do what Job Finder was doing.
+                    waitsForSameSite && !checkingStalled
+                    ? "Waiting for the other application on this site to finish. It carries on by itself after that; nothing is needed from you."
+                    : checkingStalled
+                    ? `This check has not finished after ${checkingMinutes} minutes, so Job Finder has probably lost track of it. Nothing was sent. Prepare it again to start this application afresh with your answers.`
+                    : checkingWaits
+                      ? request.scope.type === "application"
+                        ? `Still checking after ${checkingMinutes} minutes. Another application on the same site is probably ahead of it; it carries on by itself when that one finishes.`
+                        : `Still checking after ${checkingMinutes} minutes. Another search is still running; this source is searched as soon as it ends.`
+                      : "Job Finder is checking this step and carries on by itself once it is done. Nothing is needed from you unless it asks again."
+                  : stripScrapedGlyphs(summaryParts.message)}
           </p>
         </div>
         <Button
@@ -374,7 +591,12 @@ function ActionCard(props: {
       {stepHostLabel ? (
         <p className="text-xs text-muted-foreground">On: {stepHostLabel}</p>
       ) : null}
-      {instructionParts.length > 0 && !isQuestionStep && !isBlockerStep ? (
+      {/* While Job Finder is checking the step, the person's instructions
+          ("confirm completion ...") contradict "Nothing is needed from you". */}
+      {instructionParts.length > 0 &&
+      !isQuestionStep &&
+      !isBlockerStep &&
+      !isVerifying ? (
         <ol className="grid list-decimal gap-1 pl-5 text-sm leading-6 text-foreground-soft">
           {instructionParts.map((part) => (
             <li key={part.message}>{part.message}</li>
@@ -397,30 +619,73 @@ function ActionCard(props: {
         </details>
       ) : null}
 
-      {isQuestionStep ? (
+      {isQuestionStep && isVerifying ? (
+        <p
+          aria-live="polite"
+          className="text-(length:--text-small) leading-6 text-foreground-soft"
+          data-testid="needs-you-answered-status"
+          role="status"
+        >
+          Answered. Job Finder is putting your answers in and carrying on; this
+          step closes on its own when the form moves forward.
+        </p>
+      ) : isQuestionStep ? (
         <QuestionAnswerForm
           isPending={isPending || isVerifying}
           onAnswer={async (answers, saveForFuture) => {
-            // One submit per question, in order. The last one carries the
-            // confirm base, which is exactly the single-question call this
-            // step has always made, so the retry still starts once.
-            for (const answer of answers) {
-              await onCommand({
-                ...createCommand(request, "confirm_done"),
-                action: "submit_manual_answer",
-                answer,
-                saveForFuture,
-              });
-            }
+            // Every answer in one command, each tied to its question, so one
+            // revision moves the step on and no answer is lost between calls.
+            const first = answers[0];
+            if (!first) return;
+            await onCommand({
+              ...createCommand(request, "confirm_done"),
+              action: "submit_manual_answer",
+              answer: first.answer,
+              // Always tied to its question: an application keeps earlier
+              // questions on record, so a bare answer can be ambiguous.
+              answers: answers.map((entry) => ({ ...entry })),
+              saveForFuture,
+            });
           }}
           questions={questions}
           requestId={request.id}
         />
       ) : null}
+      {request.kind === "login" &&
+      request.scope.type === "application" &&
+      request.scope.resultId &&
+      !isVerifying ? (
+        <TaskLocalCredentialsForm
+          isPending={isPending}
+          onCommand={onCommand}
+          request={request}
+        />
+      ) : null}
       {/* The boxed treatment framed the boundary as fine print and repeated
           the steps above it inside a grey rectangle. The per-kind sentence
           and the one no-submit sentence stay; the box does not. */}
-      {isQuestionStep || isBlockerStep ? null : (
+      {continuesAfterSignIn ? (
+        <p
+          className="text-xs leading-5 text-muted-foreground"
+          data-testid="needs-you-sign-in-continues-note"
+        >
+          {APPLICATION_SIGN_IN_CONTINUES_NOTE}
+        </p>
+      ) : isQuestionStep ||
+        isBlockerStep ||
+        isVerifying ? // answer the question in the browser" contradicted the line above. // A step being checked needs nothing from the person; "Review and
+      null : waitsForFile ? (
+        // Requests written before the file hand-off carried this sentence
+        // still get it once; newer ones already say it above.
+        request.summary.includes("Profile › Files") ? null : (
+          <p
+            className="text-xs leading-5 text-muted-foreground"
+            data-testid="needs-you-file-continues-note"
+          >
+            {APPLICATION_FILE_CONTINUES_NOTE}
+          </p>
+        )
+      ) : (
         <p className="text-xs leading-5 text-muted-foreground">
           {presentation.guidance} Confirming here cannot create an account or
           submit an application.
@@ -430,8 +695,31 @@ function ActionCard(props: {
       <div
         className="flex flex-wrap gap-2"
         role="group"
-        aria-label={`Actions for ${request.title}`}
+        aria-label={`Actions for ${displayedTitle}`}
       >
+        {checkingStalled && props.onStartOver ? (
+          <Button
+            data-testid="needs-you-start-over"
+            onClick={() => {
+              void props.onStartOver?.(createCommand(request, "cancel"));
+            }}
+            pending={isPending}
+            size="compact"
+            type="button"
+          >
+            Prepare it again
+          </Button>
+        ) : null}
+        {waitsForFile && props.onOpenFiles ? (
+          <Button
+            data-testid="needs-you-open-files"
+            onClick={props.onOpenFiles}
+            size="compact"
+            type="button"
+          >
+            <ArrowUpRight aria-hidden="true" /> {OPEN_PROFILE_FILES_ACTION}
+          </Button>
+        ) : null}
         {isQuestionStep ? null : request.actionUrl ? (
           <Button
             onClick={() => {
@@ -441,7 +729,7 @@ function ActionCard(props: {
             size="compact"
             type="button"
           >
-            <ExternalLink aria-hidden="true" /> {presentation.openLabel}
+            <ExternalLink aria-hidden="true" /> {actionPresentation.openLabel}
           </Button>
         ) : (
           <Button
@@ -454,7 +742,9 @@ function ActionCard(props: {
             <ArrowUpRight aria-hidden="true" /> Review {scopeLabel}
           </Button>
         )}
-        {!isQuestionStep ? (
+        {/* A sign-in on a kept application page is watched: the run goes
+            on by itself once the wall is gone, so no check press. */}
+        {!isQuestionStep && !continuesAfterSignIn ? (
           <Button
             disabled={isVerifying || attemptsExhausted}
             onClick={() => {
@@ -470,7 +760,7 @@ function ActionCard(props: {
               ? "Verifying"
               : attemptsExhausted
                 ? "Attempts exhausted"
-                : presentation.doneLabel}
+                : actionPresentation.doneLabel}
           </Button>
         ) : null}
         {/* "Skip" and "Cancel" were peers with no stated difference and the
@@ -738,10 +1028,63 @@ function GroupedDecisionCard(props: {
   );
 }
 
+/**
+ * An application paused on a site step with no live browser-step request
+ * behind it. It sits in the same Applications group as the live steps: the
+ * distinction between the two is how the runtime recorded the pause, not
+ * anything the person can act on differently.
+ */
+function AwaitingApplicationCard(props: {
+  onNavigate: (path: string) => void;
+  record: JobFinderWorkspaceSnapshot["applicationRecords"][number];
+}) {
+  const { record } = props;
+  const opensResumeStudio = getApplicationNextStepLabel(record)
+    .toLowerCase()
+    .includes("resume studio");
+  return (
+    <article className="grid gap-3 rounded-(--radius-field) border border-(--surface-panel-border) bg-(--surface-panel) p-5">
+      <div className="grid gap-1">
+        <h3 className="font-semibold text-(--text-headline)">
+          {stripScrapedGlyphs(record.title)}
+        </h3>
+        <p className="text-sm text-foreground-soft">
+          {stripScrapedGlyphs(record.company)}
+        </p>
+        <p className="text-sm leading-6 text-foreground-soft">
+          {stripScrapedGlyphs(getApplicationNextStepLabel(record))}
+        </p>
+      </div>
+      <div>
+        <Button
+          onClick={() =>
+            props.onNavigate(
+              opensResumeStudio
+                ? buildResumeWorkspaceRoute(record.jobId)
+                : buildJobFinderContextRoute("/job-finder/applications", {
+                    applicationRecordId: record.id,
+                    jobId: record.jobId,
+                    targetId: null,
+                  }),
+            )
+          }
+          size="compact"
+          type="button"
+          variant="secondary"
+        >
+          <ArrowUpRight aria-hidden="true" />{" "}
+          {opensResumeStudio ? "Open resume" : "Open this application"}
+        </Button>
+      </div>
+    </article>
+  );
+}
+
 export function ActionsScreen(props: {
   safeguardPauses?: readonly PlanSafeguardPause[];
   applicationAttempts?: JobFinderWorkspaceSnapshot["applicationAttempts"];
   applicationRecords?: JobFinderWorkspaceSnapshot["applicationRecords"];
+  applyJobResults?: JobFinderWorkspaceSnapshot["applyJobResults"];
   discoveryJobs: JobFinderWorkspaceSnapshot["discoveryJobs"];
   groupedDecisions?: readonly GroupedManualAnswerDecision[];
   isGroupedApplyPending?: (decisionId: string) => boolean;
@@ -759,6 +1102,11 @@ export function ActionsScreen(props: {
     command: ProjectGroupedManualAnswerCommand,
   ) => void;
   onSnoozeGroupedDecision?: (input: SnoozeGroupedDecisionInput) => void;
+  /** See ActionCard's onStartOver: cancel the lost check, prepare again. */
+  onStartOver?: (
+    request: UserActionRequest,
+    cancel: UserActionCommandInput,
+  ) => void | Promise<void>;
   profile?: CandidateProfile;
   requests: readonly UserActionRequest[];
 }) {
@@ -790,9 +1138,10 @@ export function ActionsScreen(props: {
     () =>
       listApplicationsAwaitingUser({
         applicationRecords: props.applicationRecords ?? [],
+        applyJobResults: props.applyJobResults ?? [],
         requests: props.requests,
       }),
-    [props.applicationRecords, props.requests],
+    [props.applicationRecords, props.applyJobResults, props.requests],
   );
   const view = usePersistedCollectionView("needs-you", "comfortable");
   const deferredQuery = useDeferredValue(view.query);
@@ -819,6 +1168,18 @@ export function ActionsScreen(props: {
       }),
     [deferredQuery, jobsById, unresolved],
   );
+  const visibleAwaitingRecords = useMemo(
+    () =>
+      applicationsAwaitingUser.filter((record) =>
+        matchesCollectionSearch(deferredQuery, [
+          record.title,
+          record.company,
+          "application",
+          getApplicationNextStepLabel(record),
+        ]),
+      ),
+    [applicationsAwaitingUser, deferredQuery],
+  );
   const [page, setPage] = useState(1);
   const pageCount = Math.max(
     1,
@@ -844,9 +1205,10 @@ export function ActionsScreen(props: {
     {
       id: "application" as const,
       title: "Applications",
-      totalCount: visibleRequests.filter(
-        (request) => request.scope.type === "application",
-      ).length,
+      totalCount:
+        visibleRequests.filter(
+          (request) => request.scope.type === "application",
+        ).length + visibleAwaitingRecords.length,
     },
     {
       id: "discovery_source" as const,
@@ -866,7 +1228,7 @@ export function ActionsScreen(props: {
         // action it offers; the page header owns the credential boundary
         // only, so the promise is stated once per card instead of three
         // times on the same screen.
-        description={`Finish each step in ${JOB_FINDER_BROWSER_NAME}, right here in the app, then come back and confirm. Passwords and security codes stay with you.`}
+        description={`Steps only you can do. Answer here, or finish in ${JOB_FINDER_BROWSER_NAME}; Job Finder notices when a step is done and carries on by itself. Passwords and security codes stay with you.`}
         title="Needs you"
       />
 
@@ -885,59 +1247,10 @@ export function ActionsScreen(props: {
         />
       ) : null}
 
-      <PlanSafeguardPauseCards pauses={props.safeguardPauses ?? []} onNavigate={props.onNavigate} />
-      {applicationsAwaitingUser.length > 0 ? (
-        <section
-          aria-labelledby="applications-awaiting-you-heading"
-          className="grid gap-3"
-        >
-          <div className="flex items-center gap-2">
-            <h2
-              className="font-semibold text-(--text-headline)"
-              id="applications-awaiting-you-heading"
-            >
-              Applications waiting on you
-            </h2>
-            <Badge variant="section">{applicationsAwaitingUser.length}</Badge>
-          </div>
-          {applicationsAwaitingUser.map((record) => (
-            <article
-              className="grid gap-3 rounded-(--radius-field) border border-(--surface-panel-border) bg-(--surface-panel) p-5"
-              key={record.id}
-            >
-              <div className="grid gap-1">
-                <h3 className="font-semibold text-(--text-headline)">
-                  {stripScrapedGlyphs(record.title)}
-                </h3>
-                <p className="text-sm text-foreground-soft">
-                  {stripScrapedGlyphs(record.company)}
-                </p>
-                <p className="text-sm leading-6 text-foreground-soft">
-                  {stripScrapedGlyphs(getApplicationNextStepLabel(record))}
-                </p>
-              </div>
-              <div>
-                <Button
-                  onClick={() =>
-                    props.onNavigate(
-                      buildJobFinderContextRoute("/job-finder/applications", {
-                        applicationRecordId: record.id,
-                        jobId: record.jobId,
-                        targetId: null,
-                      }),
-                    )
-                  }
-                  size="compact"
-                  type="button"
-                  variant="secondary"
-                >
-                  <ArrowUpRight aria-hidden="true" /> Open this application
-                </Button>
-              </div>
-            </article>
-          ))}
-        </section>
-      ) : null}
+      <PlanSafeguardPauseCards
+        pauses={props.safeguardPauses ?? []}
+        onNavigate={props.onNavigate}
+      />
       {activeDecisions.length > 0 ? (
         <section
           aria-labelledby="reusable-answers-heading"
@@ -1028,7 +1341,9 @@ export function ActionsScreen(props: {
             </Button>
           </div>
         </div>
-      ) : unresolved.length > 0 && visibleRequests.length === 0 ? (
+      ) : (unresolved.length > 0 || applicationsAwaitingUser.length > 0) &&
+        visibleRequests.length === 0 &&
+        visibleAwaitingRecords.length === 0 ? (
         <CollectionNoMatches
           noun="actions"
           onClear={() => view.setQuery("")}
@@ -1044,6 +1359,13 @@ export function ActionsScreen(props: {
             const pageRequests = pagedRequests.filter(
               (request) => request.scope.type === group.id,
             );
+            // Paused applications are not paged with the requests; they lead
+            // the group on its first page so the person sees them at once.
+            const pageRecords =
+              group.id === "application" && currentPage === 1
+                ? visibleAwaitingRecords
+                : [];
+            const shownCount = pageRequests.length + pageRecords.length;
             return (
               <section
                 className="grid gap-3"
@@ -1061,19 +1383,25 @@ export function ActionsScreen(props: {
                   of the mounted page window. */}
                   <Badge variant="section">{totalCount}</Badge>
                 </div>
-                {pageRequests.length === 0 ? (
+                {shownCount === 0 ? (
                   <p className="text-sm leading-6 text-foreground-soft">
                     All {totalCount} on another page.
                   </p>
                 ) : (
                   <>
-                    {pageRequests.length < totalCount ? (
+                    {shownCount < totalCount ? (
                       <p className="text-sm leading-6 text-foreground-soft">
-                        Showing {pageRequests.length} of {totalCount} on this
-                        page.
+                        Showing {shownCount} of {totalCount} on this page.
                       </p>
                     ) : null}
                     <div className="grid gap-3">
+                      {pageRecords.map((record) => (
+                        <AwaitingApplicationCard
+                          key={record.id}
+                          onNavigate={props.onNavigate}
+                          record={record}
+                        />
+                      ))}
                       {pageRequests.map((request) => {
                         const applicationScope =
                           request.scope.type === "application"
@@ -1089,6 +1417,8 @@ export function ActionsScreen(props: {
                           ? listPendingApplicationQuestions({
                               applicationAttempts:
                                 props.applicationAttempts ?? [],
+                              applicationRecordId:
+                                applicationScope.applicationRecordId,
                               jobId: applicationScope.jobId,
                             })
                           : [];
@@ -1103,6 +1433,13 @@ export function ActionsScreen(props: {
                             }
                             key={request.id}
                             onCommand={props.onCommand}
+                            {...(props.onStartOver
+                              ? {
+                                  onStartOver: (
+                                    cancel: UserActionCommandInput,
+                                  ) => props.onStartOver?.(request, cancel),
+                                }
+                              : {})}
                             onProjectGroupedManualAnswer={
                               props.onProjectGroupedManualAnswer ??
                               (() => undefined)
@@ -1114,6 +1451,30 @@ export function ActionsScreen(props: {
                                 getUserActionContextRoute(
                                   request,
                                   props.applicationRecords,
+                                ),
+                              )
+                            }
+                            sameSiteApplicationActive={
+                              job
+                                ? isSameSiteApplicationActive(
+                                    job,
+                                    props.applyJobResults ?? [],
+                                    jobsById,
+                                  )
+                                : false
+                            }
+                            onOpenFiles={() =>
+                              // Every kind the form asks for; Files starts on
+                              // the first one the person has no file of yet.
+                              props.onNavigate(
+                                profileFilesHref(
+                                  questions
+                                    .filter(
+                                      (question) =>
+                                        question.answerControlType ===
+                                          "file" && question.kind !== "resume",
+                                    )
+                                    .map(inferFileKindForQuestion),
                                 ),
                               )
                             }
@@ -1154,7 +1515,7 @@ export function ActionsScreen(props: {
 export function QuestionAnswerForm(props: {
   isPending: boolean;
   onAnswer: (
-    answers: readonly string[],
+    answers: readonly { questionId: string; answer: string }[],
     saveForFuture: boolean,
   ) => void | Promise<void>;
   questions: readonly ApplicationAttemptQuestion[];
@@ -1162,13 +1523,16 @@ export function QuestionAnswerForm(props: {
 }) {
   const { isPending, onAnswer, questions, requestId } = props;
   const [answers, setAnswers] = useState<Record<string, string>>({});
-  const [saveForFuture, setSaveForFuture] = useState(false);
+  // Remembered by default: the same question on the next application is
+  // answered without asking again. The person unticks it for a one-off.
+  const [saveForFuture, setSaveForFuture] = useState(true);
   const [working, setWorking] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const saveId = `${requestId}-save-answer`;
   const readAnswer = (questionId: string) => answers[questionId] ?? "";
   const missingRequired = questions.some(
-    (question) => question.isRequired !== false && !readAnswer(question.id).trim(),
+    (question) =>
+      question.isRequired !== false && !readAnswer(question.id).trim(),
   );
   const isSingle = questions.length === 1;
 
@@ -1188,8 +1552,11 @@ export function QuestionAnswerForm(props: {
             // An optional question the person left blank is left blank on the
             // form too; there is nothing to record for it.
             questions
-              .map((question) => readAnswer(question.id).trim())
-              .filter((answer) => answer.length > 0),
+              .map((question) => ({
+                questionId: question.id,
+                answer: readAnswer(question.id).trim(),
+              }))
+              .filter((entry) => entry.answer.length > 0),
             saveForFuture,
           ),
         ).then(
@@ -1270,6 +1637,25 @@ export function QuestionAnswerForm(props: {
                   </option>
                 ))}
               </select>
+            ) : question.answerControlType === "boolean" ? (
+              // A box on the form (a consent or declaration) is a box here
+              // too, not a text field asking the person to type "Yes".
+              <label className="flex items-start gap-2 text-sm leading-6 text-foreground">
+                <input
+                  checked={readAnswer(question.id) === "Yes"}
+                  className="mt-1 size-4 shrink-0 accent-(--primary)"
+                  data-testid="needs-you-question-checkbox"
+                  id={answerId}
+                  onChange={(event) =>
+                    setAnswers((current) => ({
+                      ...current,
+                      [question.id]: event.target.checked ? "Yes" : "",
+                    }))
+                  }
+                  type="checkbox"
+                />
+                Tick this box on the form
+              </label>
             ) : (
               <Textarea
                 id={answerId}

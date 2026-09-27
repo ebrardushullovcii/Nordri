@@ -40,7 +40,7 @@ describe("job finder synthetic save failure", () => {
     ).not.toThrow();
   });
 
-  test("rejects a surface that is not one of the four protected surfaces", () => {
+  test("rejects a surface that is not one of the supported surfaces", () => {
     expect(() => armJobFinderTestSaveFailure("browser", enabledEnv)).toThrow();
     expect(() => armJobFinderTestSaveFailure(null, enabledEnv)).toThrow();
     expect(getArmedJobFinderTestSaveFailureSurface()).toBeNull();
@@ -108,7 +108,7 @@ describe("job finder synthetic save failure", () => {
   });
 
   test("covers every protected surface with at least one owned channel", () => {
-    for (const surface of ["profile", "answers", "settings", "resume"]) {
+    for (const surface of ["profile", "answers", "settings", "resume", "campaign"]) {
       armJobFinderTestSaveFailure(surface, enabledEnv);
       const failures = jobFinderSaveChannels.filter((channel) => {
         try {

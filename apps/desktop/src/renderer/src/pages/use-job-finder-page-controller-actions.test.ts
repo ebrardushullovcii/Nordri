@@ -16,12 +16,88 @@ import type {
 import {
   createActionRunners,
   createDiscoveryWorkspaceRefreshCoordinator,
+  consumeFirstSearchRequest,
   createPrimaryPageActions,
+  describeAutoApplyQueueStart,
+  describePreparedApplicationSubmitResult,
   clearJobFinderNavigationHint,
   noteJobFinderNavigation,
   setJobFinderStatusRoute,
+  stripActionStateOwner,
   type ActionStateStatusWrite,
 } from "./use-job-finder-page-controller-actions";
+
+describe("describeAutoApplyQueueStart", () => {
+  it("counts the jobs the new batch took and names the one held back", () => {
+    const snapshot = {
+      applyRuns: [
+        { id: "old", createdAt: "2026-09-27T01:00:00.000Z", jobIds: ["a"] },
+        {
+          id: "new",
+          createdAt: "2026-09-27T02:00:00.000Z",
+          jobIds: ["dusk", "willow"],
+        },
+      ],
+      reviewQueue: [{ jobId: "cedar", title: "Cedar Engineer" }],
+    } as unknown as Parameters<typeof describeAutoApplyQueueStart>[0];
+    expect(
+      describeAutoApplyQueueStart(snapshot, ["cedar", "dusk", "willow"]),
+    ).toBe(
+      "2 applications started. Watch them in Applications. Cedar Engineer waits: its resume has a line for you to decide first.",
+    );
+    expect(describeAutoApplyQueueStart(snapshot, ["dusk", "willow"])).toBe(
+      "2 applications started. Watch them in Applications.",
+    );
+    // Home shows the running batch itself, so it keeps only a held-back job.
+    expect(
+      describeAutoApplyQueueStart(snapshot, ["dusk", "willow"], {
+        onlyWhenHeldBack: true,
+      }),
+    ).toBeNull();
+    expect(
+      describeAutoApplyQueueStart(snapshot, ["cedar", "dusk", "willow"], {
+        onlyWhenHeldBack: true,
+      }),
+    ).toContain("Cedar Engineer waits");
+  });
+});
+
+describe("describePreparedApplicationSubmitResult", () => {
+  const snapshotWith = (
+    outcome: "submitted" | "outcome_uncertain",
+    state: "submitted" | "blocked",
+  ) =>
+    ({
+      applyJobResults: [
+        {
+          id: "result_1",
+          jobId: "job_1",
+          state,
+          summary: "Submission outcome needs manual verification.",
+          updatedAt: "2026-09-21T12:00:00.000Z",
+          privacyReceipt: { submissionOutcome: { outcome } },
+        },
+      ],
+    }) as unknown as JobFinderWorkspaceSnapshot;
+
+  it("reports sent only for a confirmed submitted outcome", () => {
+    expect(
+      describePreparedApplicationSubmitResult(
+        snapshotWith("submitted", "submitted"),
+        "job_1",
+      ),
+    ).toBe("Application sent.");
+  });
+
+  it("does not report success when the employer outcome is uncertain", () => {
+    expect(
+      describePreparedApplicationSubmitResult(
+        snapshotWith("outcome_uncertain", "blocked"),
+        "job_1",
+      ),
+    ).toContain("did not confirm");
+  });
+});
 import { createJobFinderSaveCoordinator } from "./job-finder-save-state";
 import {
   type PendingActionState,
@@ -31,6 +107,19 @@ import {
 } from "./job-finder-pending-actions";
 
 describe("createActionRunners", () => {
+  it("removes route ownership without dropping saved-file action state", () => {
+    expect(
+      stripActionStateOwner({
+        message: "Saved.",
+        ownerPath: "/job-finder/review-queue/job_1/resume",
+        savedFilePath: "/tmp/alex-resume.pdf",
+      }),
+    ).toEqual({
+      message: "Saved.",
+      savedFilePath: "/tmp/alex-resume.pdf",
+    });
+  });
+
   it("keeps scoped pending state active until async success work finishes", async () => {
     let actionState: ActionState = { message: null };
     let pendingActionState: PendingActionState = {};
@@ -480,6 +569,7 @@ describe("createPrimaryPageActions", () => {
     },
     workEligibility: {
       authorizedWorkCountries: ["United Kingdom"],
+      requiresVisaSponsorship: false,
       remoteEligible: true,
     },
     targetRoles: ["Principal Designer"],
@@ -635,6 +725,71 @@ describe("createPrimaryPageActions", () => {
       replace: true,
     });
     expect(finish.navigate).not.toHaveBeenCalledWith("/job-finder/profile");
+  });
+
+  it("starts the first search when the source was added on the finishing step", async () => {
+    consumeFirstSearchRequest();
+    // The workspace the handler closed over predates the source the person
+    // just added on this step; only the saved snapshot has it.
+    const staleWorkspace = {
+      profile: completeSetupProfile,
+      searchPreferences: {
+        ...completeSetupPreferences,
+        discovery: { ...completeSetupPreferences.discovery, targets: [] },
+      },
+      recentDiscoveryRuns: [],
+      activeDiscoveryRun: null,
+      profileSetupState: {
+        status: "in_progress",
+        currentStep: "targeting",
+        completedAt: null,
+        lastResumedAt: null,
+        reviewItems: [],
+      },
+    } as unknown as JobFinderWorkspaceSnapshot;
+    const savedSnapshot = {
+      ...staleWorkspace,
+      searchPreferences: completeSetupPreferences,
+    } as unknown as JobFinderWorkspaceSnapshot;
+    const navigate = vi.fn();
+    type PrimaryPageActionArgs = Parameters<typeof createPrimaryPageActions>[0];
+    const pageActions = createPrimaryPageActions({
+      actions: {
+        saveProfileSetupState: vi.fn(
+          (nextState: JobFinderWorkspaceSnapshot["profileSetupState"]) =>
+            Promise.resolve({ ...savedSnapshot, profileSetupState: nextState }),
+        ),
+        saveWorkspaceInputs: vi.fn().mockResolvedValue(savedSnapshot),
+      } as unknown as JobFinderShellActions,
+      locationPathname: "/job-finder/profile/setup",
+      navigate,
+      runAction: vi.fn(),
+      runSaveAction: vi.fn(
+        async (saveInput: {
+          action: () => Promise<JobFinderWorkspaceSnapshot>;
+          onSuccess: (
+            result: JobFinderWorkspaceSnapshot,
+          ) => void | Promise<void>;
+        }) => {
+          await saveInput.onSuccess(await saveInput.action());
+          return true;
+        },
+      ),
+      workspace: staleWorkspace,
+    } as unknown as PrimaryPageActionArgs);
+
+    pageActions.onSaveSetupStep(
+      completeSetupProfile,
+      completeSetupPreferences,
+      "ready_check",
+      { finishSetup: true },
+    );
+    await vi.waitFor(() =>
+      expect(navigate).toHaveBeenCalledWith("/job-finder/discovery", {
+        replace: true,
+      }),
+    );
+    expect(consumeFirstSearchRequest()).toBe(true);
   });
 
   it("hands off to Find jobs before the completed setup state is persisted", async () => {
@@ -816,19 +971,11 @@ describe("createPrimaryPageActions", () => {
         },
       },
     ],
-    [
-      "work mode",
-      completeSetupProfile,
-      { ...completeSetupPreferences, workModes: [] },
-    ],
+    // Work mode and work history are hints now, not gates; only the name,
+    // a contact and a job source block Finish.
     [
       "contact",
       { ...completeSetupProfile, email: null, phone: null },
-      completeSetupPreferences,
-    ],
-    [
-      "background",
-      { ...completeSetupProfile, experiences: [], projects: [] },
       completeSetupPreferences,
     ],
   ])(
@@ -873,6 +1020,34 @@ describe("createPrimaryPageActions", () => {
     expect(setup.navigate).toHaveBeenCalledWith("/job-finder/discovery", {
       replace: true,
     });
+  });
+
+  it("keeps setup open until both work-eligibility answers are in", async () => {
+    // Countries alone are half the answer: the sponsorship question is the
+    // other one every application form asks.
+    const profileWithoutSponsorship = CandidateProfileSchema.parse({
+      ...completeSetupProfile,
+      workEligibility: {
+        ...completeSetupProfile.workEligibility,
+        requiresVisaSponsorship: null,
+      },
+    });
+    const setup = createSetupActions({ profile: profileWithoutSponsorship });
+
+    setup.pageActions.onSaveSetupStep(
+      profileWithoutSponsorship,
+      completeSetupPreferences,
+      "targeting",
+      { finishSetup: true, openProfile: true },
+    );
+
+    await vi.waitFor(() =>
+      expect(setup.saveProfileSetupState).toHaveBeenCalledOnce(),
+    );
+    expect(setup.saveProfileSetupState.mock.calls[0]?.[0].status).toBe(
+      "in_progress",
+    );
+    expect(setup.navigate).not.toHaveBeenCalled();
   });
 
   it("persists setup's unchanged-original choice through the existing application mode", async () => {
@@ -963,10 +1138,10 @@ describe("createPrimaryPageActions", () => {
     );
   });
 
-  it("blocks an explicit ready finish while a required setup item remains pending", async () => {
-    // A required missing-field item (no proposal, no import source) is the
-    // kind of pending item that still gates Finish; recommended imported
-    // suggestions are covered separately as non-blocking.
+  it("blocks an explicit ready finish while a critical setup item remains pending", async () => {
+    // Only a critical pending item still gates Finish. A recommended field the
+    // resume left empty is a hint: it never stands between a person with a
+    // name, a contact, and a source and their first search.
     const setup = createSetupActions({
       reviewItems: [
         {
@@ -979,7 +1154,7 @@ describe("createPrimaryPageActions", () => {
           },
           label: "Email",
           reason: "Add an email address or phone number.",
-          severity: "recommended",
+          severity: "critical",
           status: "pending",
           proposedValue: null,
           sourceSnippet: null,
@@ -1557,6 +1732,9 @@ describe("createPrimaryPageActions", () => {
     const updateWorkspaceBehavior = vi
       .fn<JobFinderShellActions["updateWorkspaceBehavior"]>()
       .mockResolvedValue(snapshot);
+    const updateAiBehavior = vi
+      .fn<JobFinderShellActions["updateAiBehavior"]>()
+      .mockResolvedValue(snapshot);
     const runSaveAction = vi.fn(
       async (input: { action: () => Promise<unknown> }) => {
         await input.action();
@@ -1570,6 +1748,7 @@ describe("createPrimaryPageActions", () => {
         updateApplicationDefaults,
         updateAppearanceTheme,
         updateWorkspaceBehavior,
+        updateAiBehavior,
       } as unknown as JobFinderShellActions,
       runSaveAction,
       workspace: {} as JobFinderWorkspaceSnapshot,
@@ -1580,13 +1759,20 @@ describe("createPrimaryPageActions", () => {
       discoveryOnly: true,
     });
     const themeCompleted = await pageActions.onUpdateAppearanceTheme("dark");
+    const aiCompleted = await pageActions.onUpdateAiBehavior({
+      resumeApproach: "conservative",
+    });
 
     expect(behaviorCompleted).toBe(true);
     expect(themeCompleted).toBe(true);
+    expect(aiCompleted).toBe(true);
     expect(updateAppearanceTheme).toHaveBeenCalledWith("dark");
     expect(updateWorkspaceBehavior).toHaveBeenCalledWith({
       keepSessionAlive: true,
       discoveryOnly: true,
+    });
+    expect(updateAiBehavior).toHaveBeenCalledWith({
+      resumeApproach: "conservative",
     });
     expect(updateApplicationDefaults).not.toHaveBeenCalled();
     expect(saveSettings).not.toHaveBeenCalled();
@@ -1677,13 +1863,35 @@ describe("createPrimaryPageActions", () => {
     expect(runAction).toHaveBeenCalledWith(
       expect.any(Function),
       expect.any(Function),
-      expect.stringMatching(
-        /fill-only run.*final submission and account creation remain disabled/i,
-      ),
+      expect.stringMatching(/apply now in applications/i),
       expect.objectContaining({ scope: jobFinderPendingActions.apply() }),
     );
     expect(runAction.mock.calls[0]?.[2] as string).not.toMatch(
       /automatic submit/i,
+    );
+  });
+
+  it("marks the one-job apply action pending before navigating to Applications", async () => {
+    const startApplyCopilotRun = vi
+      .fn<JobFinderShellActions["startApplyCopilotRun"]>()
+      .mockResolvedValue({} as JobFinderWorkspaceSnapshot);
+    const runAction = vi.fn(() => new Promise<boolean>(() => undefined));
+    const navigate = vi.fn();
+    type PrimaryPageActionArgs = Parameters<typeof createPrimaryPageActions>[0];
+    const pageActions = createPrimaryPageActions({
+      actions: { startApplyCopilotRun } as unknown as JobFinderShellActions,
+      confirmLeaveDirtyResumeWorkspace: () => Promise.resolve(true),
+      navigate,
+      runAction,
+      setResumeWorkspaceDirty: vi.fn(),
+    } as unknown as PrimaryPageActionArgs);
+
+    pageActions.onStartApplyCopilot({ jobId: "job_new_attempt" });
+    await vi.waitFor(() => expect(navigate).toHaveBeenCalledTimes(1));
+
+    expect(runAction).toHaveBeenCalledTimes(1);
+    expect(runAction.mock.invocationCallOrder[0]).toBeLessThan(
+      navigate.mock.invocationCallOrder[0]!,
     );
   });
 
@@ -1792,7 +2000,7 @@ describe("createPrimaryPageActions", () => {
     expect(approveApply).not.toHaveBeenCalled();
   });
 
-  it("states no-submit authority instead of a promised pre-submit stop when preparing an application", async () => {
+  it("describes application startup without contradicting the chosen apply mode", async () => {
     const startApplyCopilotRun = vi
       .fn<JobFinderShellActions["startApplyCopilotRun"]>()
       .mockResolvedValue({} as JobFinderWorkspaceSnapshot);
@@ -1817,9 +2025,11 @@ describe("createPrimaryPageActions", () => {
     const options = runAction.mock.calls[0]?.[3] as
       | { startMessage?: string }
       | undefined;
-    expect(options?.startMessage).toMatch(/no final-submit action/i);
-    expect(options?.startMessage).toMatch(/never clicks submit/i);
-    expect(options?.startMessage).toMatch(/verify the outcome on the site/i);
+    expect(options?.startMessage).toMatch(/filling in the application/i);
+    expect(options?.startMessage).toMatch(/apply mode chosen for this run/i);
+    expect(options?.startMessage).not.toMatch(
+      /no final-submit action|never clicks submit/i,
+    );
     expect(options?.startMessage).not.toMatch(submitOutcomeClaimPattern);
   });
 
@@ -1844,33 +2054,34 @@ describe("createPrimaryPageActions", () => {
       setResumeWorkspaceDirty: vi.fn(),
     } as unknown as PrimaryPageActionArgs);
 
+    // One press starts the application: no consent dialog stands between
+    // the button and the run any more, and screenshots stay off.
     pageActions.onStartApplyCopilot({ jobId: "job_copilot_checkpoints" });
-    resolveVisualCheckpoints[0]?.(true);
     pageActions.onStartApplyCopilot({ jobId: "job_copilot_plain" });
-    resolveVisualCheckpoints[1]?.(false);
+    expect(resolveVisualCheckpoints).toHaveLength(0);
 
-    // Each flow starts only after its async leave confirmation resolves;
-    // wait for both before reading the runner messages.
     await vi.waitFor(() => {
       expect(runAction).toHaveBeenCalledTimes(2);
     });
     const withCheckpoints = runAction.mock.calls[0]?.[2] as string;
     const withoutCheckpoints = runAction.mock.calls[1]?.[2] as string;
 
-    expect(withCheckpoints).toMatch(
-      /preparation finished with visual checkpoints\./i,
-    );
-    expect(withoutCheckpoints).toMatch(/^preparation finished\./i);
+    expect(withCheckpoints).toMatch(/^application run finished\./i);
+    expect(withoutCheckpoints).toMatch(/^application run finished\./i);
     for (const message of [withCheckpoints, withoutCheckpoints]) {
-      expect(message).toMatch(/check the result below/i);
+      // The person is taken to Applications the moment the run starts, so
+      // the finish line no longer sends them there.
+      expect(message).not.toMatch(/check the result on applications/i);
       expect(message).not.toMatch(/check applications/i);
-      expect(message).toMatch(/never clicks submit/i);
+      // The finish line is shared by every apply mode, so it no longer
+      // promises that nothing was sent.
+      expect(message).not.toMatch(/never clicks submit/i);
       expect(message).not.toMatch(/Job Finder prepared the application/i);
       expect(message).not.toMatch(submitOutcomeClaimPattern);
     }
   });
 
-  it("reports consent decisions with submit-authority wording and no submission outcome claims", () => {
+  it("reports consent decisions without promising prepare-only behavior or submission outcomes", () => {
     const resolveApplyConsentRequest = vi
       .fn<JobFinderShellActions["resolveApplyConsentRequest"]>()
       .mockResolvedValue({} as JobFinderWorkspaceSnapshot);
@@ -1903,15 +2114,16 @@ describe("createPrimaryPageActions", () => {
     const declined = runAction.mock.calls[1]?.[2] as string;
 
     expect(approved).toMatch(/consent approved/i);
-    expect(approved).toMatch(/resumes preparation only/i);
+    expect(approved).toMatch(/run continues/i);
     expect(declined).toMatch(/consent declined/i);
     expect(declined).toMatch(/skips that job/i);
     for (const message of [approved, declined]) {
-      expect(message).toMatch(/no final-submit action/i);
-      expect(message).toMatch(/never clicks submit/i);
+      expect(message).not.toMatch(
+        /no final-submit action|never clicks submit|preparation only/i,
+      );
       expect(message).not.toMatch(submitOutcomeClaimPattern);
     }
-    expect(approved).toMatch(/verify the outcome on the site/i);
+    expect(approved).toMatch(/latest state/i);
   });
 
   it("recommends a resume strategy with a pending scope and returns the reason", async () => {
@@ -2069,6 +2281,10 @@ describe("createPrimaryPageActions", () => {
       expect(queueJobForReview).toHaveBeenCalledWith("job_find_results");
       expect(setActionState).toHaveBeenLastCalledWith({
         message: "Job added to Shortlisted.",
+        actionLink: {
+          label: "Open Shortlisted",
+          route: "/job-finder/review-queue",
+        },
       });
     });
     expect(navigate).not.toHaveBeenCalled();
@@ -2364,6 +2580,45 @@ describe("createPrimaryPageActions", () => {
         .filter((next) => next.message !== null);
     }
 
+    it("keeps a delayed application start failure on Applications after its navigation commits", async () => {
+      setJobFinderStatusRoute("/job-finder/review-queue");
+      let rejectStart: (reason: Error) => void = () => undefined;
+      const pendingStart = new Promise<JobFinderWorkspaceSnapshot>(
+        (_resolve, reject) => {
+          rejectStart = reject;
+        },
+      );
+      const startApplyCopilotRun = vi.fn(() => pendingStart);
+      const setActionState = vi.fn();
+      const { runAction } = createActionRunners({
+        setActionState,
+        setPendingActionState: vi.fn(),
+      });
+      const navigate = vi.fn(() => {
+        setJobFinderStatusRoute("/job-finder/applications");
+        clearJobFinderNavigationHint();
+      });
+      const pageActions = createPrimaryPageActions({
+        actions: { startApplyCopilotRun } as unknown as JobFinderShellActions,
+        confirmLeaveDirtyResumeWorkspace: () => Promise.resolve(true),
+        navigate,
+        runAction,
+        setResumeWorkspaceDirty: vi.fn(),
+      } as unknown as Parameters<typeof createPrimaryPageActions>[0]);
+
+      pageActions.onStartApplyCopilot({ jobId: "job_failed_start" });
+      await vi.waitFor(() => expect(navigate).toHaveBeenCalledTimes(1));
+      expect(startApplyCopilotRun).toHaveBeenCalledTimes(1);
+      rejectStart(new Error("The AI provider key is missing."));
+
+      await vi.waitFor(() => {
+        expect(collectStatusWrites(setActionState).at(-1)).toMatchObject({
+          message: "The AI provider key is missing.",
+          ownerPath: "/job-finder/applications",
+        });
+      });
+    });
+
     it("owns every runner status write by the route where the action started", async () => {
       setJobFinderStatusRoute("/job-finder/discovery");
       const setActionState = vi.fn();
@@ -2457,6 +2712,79 @@ describe("createPrimaryPageActions", () => {
         ownerPath: "/job-finder/review-queue",
       });
     });
+  });
+});
+
+describe("createPrimaryPageActions resume PDF export", () => {
+  type PrimaryPageActionArgs = Parameters<typeof createPrimaryPageActions>[0];
+
+  it("keeps the saved path and Open-folder state after action cleanup", async () => {
+    let actionState: ActionState = { message: null };
+    const setActionState = (next: SetStateAction<ActionState>) => {
+      actionState = typeof next === "function" ? next(actionState) : next;
+    };
+    const exportResult = {
+      outcome: "saved" as const,
+      outputPath: "/tmp/alex-resume.pdf",
+      snapshot: {} as JobFinderWorkspaceSnapshot,
+    };
+    const exportResumePdf = vi.fn().mockResolvedValue(exportResult);
+    const runResumeWorkspaceAction = vi.fn(
+      async (
+        action: () => Promise<typeof exportResult>,
+        onSuccess: (result: typeof exportResult) => void | Promise<void>,
+      ) => {
+        const result = await action();
+        await onSuccess(result);
+        // The shared runner writes its own terminal status after onSuccess.
+        setActionState({ message: null });
+        return true;
+      },
+    );
+    setJobFinderStatusRoute("/job-finder/review-queue/job_1/resume");
+    const pageActions = createPrimaryPageActions({
+      actions: { exportResumePdf } as unknown as JobFinderShellActions,
+      refreshResumeWorkspace: vi.fn().mockResolvedValue(true),
+      runResumeWorkspaceAction,
+      setActionState,
+    } as unknown as PrimaryPageActionArgs);
+
+    pageActions.onExportResumePdf("job_1");
+    await vi.waitFor(() => {
+      expect(actionState).toMatchObject({
+        message: "Saved your resume PDF to /tmp/alex-resume.pdf.",
+        savedFilePath: "/tmp/alex-resume.pdf",
+      });
+    });
+    setJobFinderStatusRoute(null);
+  });
+
+  it("does not overwrite an export failure with a success outcome", async () => {
+    let actionState: ActionState = { message: null };
+    const setActionState = (next: SetStateAction<ActionState>) => {
+      actionState = typeof next === "function" ? next(actionState) : next;
+    };
+    const runResumeWorkspaceAction = vi.fn(() => {
+      setActionState({ message: "The PDF could not be exported." });
+      return Promise.resolve(false);
+    });
+    setJobFinderStatusRoute("/job-finder/review-queue/job_1/resume");
+    const pageActions = createPrimaryPageActions({
+      actions: {
+        exportResumePdf: vi.fn(),
+      } as unknown as JobFinderShellActions,
+      refreshResumeWorkspace: vi.fn().mockResolvedValue(true),
+      runResumeWorkspaceAction,
+      setActionState,
+    } as unknown as PrimaryPageActionArgs);
+
+    pageActions.onExportResumePdf("job_1");
+    await vi.waitFor(() => {
+      expect(actionState).toEqual({
+        message: "The PDF could not be exported.",
+      });
+    });
+    setJobFinderStatusRoute(null);
   });
 });
 
@@ -2562,6 +2890,21 @@ describe("createPrimaryPageActions auto-apply queue outcomes", () => {
     expect(harness.startAutoApplyQueueRun).toHaveBeenCalledWith(["job_a"]);
     expect(harness.setResumeWorkspaceDirty).toHaveBeenCalledWith(false);
     expect(harness.navigate).toHaveBeenCalledWith("/job-finder/applications");
+    expect(harness.readMessage()).toBe(
+      "Application started. Watch it in Applications.",
+    );
+    expect(harness.readMessage()).not.toMatch(/^Applying to/u);
+  });
+
+  it("starts a Home batch without leaving Home", async () => {
+    const harness = createQueueHarness({ capacity: null });
+    await expect(
+      harness.startQueue(["job_a", "job_b"], "prepare_only", {
+        stayOnCurrentPage: true,
+      }),
+    ).resolves.toMatchObject({ status: "confirmed" });
+    expect(harness.startAutoApplyQueueRun).toHaveBeenCalledTimes(1);
+    expect(harness.navigate).not.toHaveBeenCalled();
   });
 
   it("returns failed and keeps visible feedback when staging rejects", async () => {

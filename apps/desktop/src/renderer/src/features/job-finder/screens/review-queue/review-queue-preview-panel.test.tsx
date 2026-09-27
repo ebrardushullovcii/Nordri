@@ -91,7 +91,7 @@ describe("ReviewQueuePreviewPanel", () => {
 
     expect(screen.getByText("Original resume · unchanged")).toBeTruthy();
     expect(screen.getAllByText("alex-original.pdf")).toHaveLength(2);
-    expect(screen.getByText(/will not rewrite it, remove roles/i)).toBeTruthy();
+    expect(screen.getByText(/does not rewrite it, remove roles/i)).toBeTruthy();
     expect(screen.getByText("File selected for attachment")).toBeTruthy();
     expect(screen.getByText("Read-only extracted text preview")).toBeTruthy();
     expect(
@@ -162,7 +162,7 @@ describe("ReviewQueuePreviewPanel", () => {
     expect(
       screen.getByText("Usually 40-70 seconds for a tailored draft."),
     ).toBeTruthy();
-    expect(screen.getByText(/The draft keeps running/i)).toBeTruthy();
+    expect(screen.getByText(/The resume keeps writing/i)).toBeTruthy();
   });
 });
 
@@ -368,61 +368,79 @@ describe("ReviewQueuePreviewPanel locked pane scroll regions", () => {
     expect(screen.queryByText("Tailored resume v1")).toBeNull();
   });
 
-  it("keeps the stored label when a real tailored document exists", () => {
-    const selectedItem = {
-      jobId: "job_tailored",
-      title: "Senior Frontend Engineer",
-      company: "Mercury",
-      location: "Remote",
-      matchScore: 86,
-      applicationStatus: "shortlisted" as const,
-      resumeApplicationMode: "tailored_per_job" as const,
-      assetStatus: "ready" as const,
-      progressPercent: 100,
-      resumeAssetId: "asset_tailored",
-      resumeReview: { status: "needs_review" as const },
-      updatedAt: "2026-07-31T12:00:00.000Z",
-    } as never;
+  it.each(["conservative", "balanced", "aggressive"] as const)(
+    "keeps the tailored label and explains approval for %s",
+    (resumeTailoringMode) => {
+      const selectedItem = {
+        jobId: "job_tailored",
+        title: "Senior Frontend Engineer",
+        company: "Mercury",
+        location: "Remote",
+        matchScore: 86,
+        applicationStatus: "shortlisted" as const,
+        resumeApplicationMode: "tailored_per_job" as const,
+        resumeTailoringMode,
+        assetStatus: "ready" as const,
+        progressPercent: 100,
+        resumeAssetId: "asset_tailored",
+        resumeReview: { status: "needs_review" as const },
+        updatedAt: "2026-07-31T12:00:00.000Z",
+      } as never;
 
-    render(
-      <ReviewQueuePreviewPanel
-        pendingElapsedSeconds={0}
-        onEditResumeWorkspace={vi.fn()}
-        onGenerateResume={vi.fn()}
-        previewState={null}
-        queue={[selectedItem]}
-        selectedAsset={
-          {
-            id: "asset_tailored",
-            jobId: "job_tailored",
-            kind: "resume",
-            status: "ready",
-            label: "Tailored resume v1",
-            version: "v1",
-            templateName: "standard",
-            compatibilityScore: 92,
-            progressPercent: 100,
-            updatedAt: "2026-07-31T12:00:00.000Z",
-            storagePath: null,
-            contentText: null,
-            previewSections: [
-              { heading: "Summary", lines: ["Dependable product engineer."] },
-            ],
-            generationMethod: "ai",
-            generationReason: null,
-            notes: [],
-            failureMessage: null,
-            failedAt: null,
-          } as never
-        }
-        selectedItem={selectedItem}
-        selectedJob={null}
-      />,
-    );
+      render(
+        <ReviewQueuePreviewPanel
+          pendingElapsedSeconds={0}
+          onEditResumeWorkspace={vi.fn()}
+          onGenerateResume={vi.fn()}
+          previewState={null}
+          queue={[selectedItem]}
+          selectedAsset={
+            {
+              id: "asset_tailored",
+              jobId: "job_tailored",
+              kind: "resume",
+              status: "ready",
+              label: "Tailored resume v1",
+              version: "v1",
+              templateName: "standard",
+              compatibilityScore: 92,
+              progressPercent: 100,
+              updatedAt: "2026-07-31T12:00:00.000Z",
+              storagePath: null,
+              contentText: null,
+              previewSections: [
+                { heading: "Summary", lines: ["Dependable product engineer."] },
+              ],
+              generationMethod: "ai",
+              generationReason: null,
+              notes: [],
+              failureMessage: null,
+              failedAt: null,
+            } as never
+          }
+          selectedItem={selectedItem}
+          selectedJob={null}
+        />,
+      );
 
-    expect(screen.getByText("Tailored resume v1")).toBeTruthy();
-    expect(screen.queryByText("Your original resume")).toBeNull();
-  });
+      expect(screen.getByText("Tailored resume v1")).toBeTruthy();
+      expect(screen.queryByText("Your original resume")).toBeNull();
+      const reviewCopy =
+        "Review this resume, decide any flagged lines, then approve it before applying.";
+      const applyCopy =
+        "This is the resume as it stands. Edit it if you like; Apply approves it.";
+      expect(
+        screen.getByText(
+          resumeTailoringMode === "aggressive" ? reviewCopy : applyCopy,
+        ),
+      ).toBeTruthy();
+      expect(
+        screen.queryByText(
+          resumeTailoringMode === "aggressive" ? applyCopy : reviewCopy,
+        ),
+      ).toBeNull();
+    },
+  );
 
   it("leaves the centered generation-state wrapper unmarked", () => {
     const selectedItem = {

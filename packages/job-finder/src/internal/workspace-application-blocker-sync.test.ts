@@ -91,6 +91,29 @@ describe("workspace-application-blocker-sync", () => {
     expect(clearances).toHaveLength(1);
     expect(clearances[0]?.latestBlocker).toBeNull();
 
+    const reviewBlockedRecord = ApplicationRecordSchema.parse({
+      ...blockedRecord,
+      id: "application_record_resume_review",
+      latestBlocker: {
+        code: "requires_manual_review",
+        summary: "Confirm the intentionally hidden work-history role.",
+      },
+      nextActionLabel: "Open the resume and confirm the hidden role.",
+    });
+    expect(
+      listStaleMissingResumeBlockerClearances({
+        applicationRecords: [reviewBlockedRecord],
+        resumeDrafts: draft ? [draft] : [],
+        resumeExportArtifacts: exports,
+        tailoredAssets: asset ? [asset] : [],
+        detectedAt: "2026-08-27T00:01:00.000Z",
+      })[0],
+    ).toMatchObject({
+      id: reviewBlockedRecord.id,
+      latestBlocker: null,
+      nextActionLabel: "Retry preparation when you are ready.",
+    });
+
     const reconciled = await reconcileStaleMissingResumeBlockers(repository, {
       applicationRecords: [blockedRecord],
       resumeDrafts: draft ? [draft] : [],

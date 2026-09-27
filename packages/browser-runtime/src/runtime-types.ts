@@ -1,9 +1,12 @@
 import type {
   AgentDiscoveryProgress,
   ApplicationAttestationKind,
+  ApplicationAuthorityEnvelope,
   ApplicationAutomationMode,
   ApplyPageSession,
   ApplyRawPageHands,
+  RawApplyPage,
+  ApplicationFormActionHandoff,
   ApplicationSalaryDisclosureRule,
   ApplyExecutionResult,
   ApplyRecoveryContext,
@@ -15,10 +18,14 @@ import type {
   BrowserSourceAccessProbeInput,
   BrowserSourceAccessProbeResult,
   CandidateProfile,
+  CandidateAssetKind,
   DiscoveryRunResult,
   JobFinderSettings,
+  JobFinderSearchRequest,
   JobPosting,
   JobSearchPreferences,
+  JobSearchCampaignMode,
+  AiJobSearchBehavior,
   JobSource,
   ParkedBrowserTabReference,
   ApplicationResumeArtifact,
@@ -28,6 +35,7 @@ import type {
   SharedAgentCompactionPolicy,
   SavedJob,
 } from "@unemployed/contracts";
+import type { Page } from "playwright";
 import type { JobFinderAiClient } from "@unemployed/ai-providers";
 import type {
   ApplicationFinalActionResult,
@@ -43,6 +51,17 @@ export interface OpenBrowserSessionOptions {
   reuseExistingPage?: boolean;
   targetUrl?: string | null;
   targetId?: string | null;
+  /**
+   * The host's id for a tab parked for this request. A host that still has
+   * that tab shows it instead of opening the address in a second tab.
+   */
+  tabId?: string | null;
+  /**
+   * The page is a step parked for the person (a source sign-in or check).
+   * When its tab is gone, the host opens the address again as a parked tab
+   * under the same `tabId`, so the request stays bound to it.
+   */
+  parkedFor?: "sign_in" | "challenge";
 }
 
 export interface ExecuteEasyApplyInput {
@@ -63,7 +82,13 @@ export type ApplicationExecutionMode = "prepare_only" | "submit_when_ready";
  */
 export interface ApplicationAttachmentArtifact {
   assetId: string;
-  questionId: string;
+  /** The kind the person chose in Profile, independently of the form question. */
+  assetKind?: CandidateAssetKind;
+  /**
+   * The exact question that selected this asset. Library-wide application
+   * assets are available before a form question exists, so they carry null.
+   */
+  questionId: string | null;
   prompt: string;
   questionKind: ApplicationQuestionKind;
   fileName: string;
@@ -73,8 +98,20 @@ export interface ApplicationAttachmentArtifact {
 }
 
 export interface ExecuteApplicationFlowInput extends ExecuteEasyApplyInput {
+  /**
+   * Opaque identity for the exact prepared browser page. Later submission
+   * hands must present the same key; it carries no permission by itself.
+   */
+  applicationPageBindingKey?: string;
   applicationAttachments?: readonly ApplicationAttachmentArtifact[];
   mode: ApplicationExecutionMode;
+  /**
+   * Where to open the browser for this run, when it is not the job's own
+   * link. A run that continues after the person finished a step in the
+   * browser starts on the page it stopped on, and reuses that open tab, so
+   * what they ticked there is still ticked. Omitted means the job's link.
+   */
+  startingUrl?: string;
   /**
    * Stable logical execution key for a retry that may be recovered after a
    * process restart. Runtimes may use it to deduplicate safe intermediate
@@ -141,6 +178,14 @@ export interface ExecuteApplicationFlowInput extends ExecuteEasyApplyInput {
    */
   applyAllowedOrigins?: readonly string[];
   /**
+   * Records a newly discovered employer ATS origin after the independent move
+   * reviewer has accepted the handoff. Returning null keeps navigation
+   * available for preparation but does not widen final-submit authority.
+   */
+  authorizeReviewedApplicationOrigin?: (
+    origin: string,
+  ) => Promise<ApplicationAuthorityEnvelope | null>;
+  /**
    * Declaration kinds the person approved in advance, from the saved authority
    * document. Anything not on this list pauses for them. Omitted means none.
    */
@@ -151,6 +196,16 @@ export interface ExecuteApplicationFlowInput extends ExecuteEasyApplyInput {
    */
   salaryDisclosure?: ApplicationSalaryDisclosureRule;
   /**
+   * Optional main-owned, one-use setup before application preparation. The
+   * runtime supplies only generic page mechanics; the caller owns the policy
+   * that authorizes and recognizes the exact sign-in step. No value from this
+   * callback is persisted or exposed to the renderer.
+   */
+  prepareTaskLocalCredentials?: (input: {
+    session: ApplyPageSession;
+    signal?: AbortSignal;
+  }) => Promise<void>;
+  /**
    * Fills in the application form on the page the runtime has opened.
    *
    * The runtime owns the browser: opening the page, watching for service
@@ -160,10 +215,20 @@ export interface ExecuteApplicationFlowInput extends ExecuteEasyApplyInput {
    */
   prepareApplicationForm: (input: {
     session: ApplyPageSession;
+    /** The live URL of this exact bound page after any authorized setup. */
+    currentUrl: string;
     startedAt: string;
     signal?: AbortSignal;
+    onProgress?: (
+      progress: ApplicationPreparationProgress,
+    ) => void | Promise<void>;
   }) => Promise<ApplyExecutionResult>;
   recoveryContext?: ApplyRecoveryContext;
+  /**
+   * Called once when the browser has no free tab for this application and it
+   * waits for one (a tab the person closes, or a sent application's page).
+   */
+  onWaitingForBrowserTab?: () => void | Promise<void>;
   captureVisualSnapshot?: (
     request: BrowserVisualSnapshotRequest,
   ) => Promise<BrowserVisualSnapshotRef>;
@@ -176,6 +241,13 @@ export interface ExecuteApplicationFlowInput extends ExecuteEasyApplyInput {
     snapshot: BrowserVisualSnapshotRef;
     context: BrowserVisualAnalysisContext;
   }) => Promise<BrowserVisualObservationSet>;
+}
+
+export interface ApplicationPreparationProgress {
+  step: number;
+  note: string;
+  progressSteps: number;
+  elapsedMs: number;
 }
 
 export interface BrowserSessionRuntime {
@@ -207,6 +279,76 @@ export interface BrowserSessionRuntime {
     input: ExecuteApplicationFlowInput,
     options?: BrowserApplicationExecutionOptions,
   ): Promise<ApplyExecutionResult>;
+  /** Hold the exact prepared page and its site while a final action is checked and run. */
+  withApplicationPageExecution?<T>(
+    source: JobSource,
+    pageBindingKey: string,
+    operation: () => Promise<T>,
+    signal?: AbortSignal,
+  ): Promise<T>;
+  /** Whether the exact page retained for this preparation is still live. */
+  hasApplicationPageBinding?(
+    source: JobSource,
+    pageBindingKey: string,
+  ): Promise<boolean>;
+  /** Bring the exact retained application page to the person without URL matching. */
+  focusApplicationPageBinding?(
+    source: JobSource,
+    pageBindingKey: string,
+  ): Promise<boolean>;
+  /** Read the exact retained page for workflow policy, with passwords redacted. */
+  readApplicationPageBinding?(
+    source: JobSource,
+    pageBindingKey: string,
+  ): Promise<RawApplyPage>;
+  /**
+   * Reload the exact retained application page once: the person signed in
+   * to the same site in another tab, and this page still shows the sign-in
+   * it loaded before that.
+   */
+  reloadApplicationPageBinding?(
+    source: JobSource,
+    pageBindingKey: string,
+  ): Promise<void>;
+  /** Arm one native POST action on the exact retained page for a person. */
+  armApplicationFormAction?(
+    source: JobSource,
+    input: ApplicationFormActionHandoff,
+  ): Promise<void>;
+  /** Re-lock a retained handoff when the run resumes or another action opens. */
+  closeApplicationFormAction?(
+    source: JobSource,
+    pageBindingKey: string,
+  ): Promise<void>;
+  /**
+   * The person opened a prepared application to finish it themselves: let
+   * their own submit and requests through on that exact page. Job Finder is
+   * not working on the page then; `closeApplicationFormAction` locks it again
+   * whenever a run picks the page back up.
+   */
+  handApplicationPageToPerson?(
+    source: JobSource,
+    pageBindingKey: string,
+  ): Promise<void>;
+  /**
+   * Reads a prepared application page only while it is handed to the person
+   * (after `handApplicationPageToPerson`, before it is locked again). Null
+   * otherwise, so Job Finder's own send is never mistaken for the person's.
+   */
+  readApplicationPageWithPerson?(
+    source: JobSource,
+    pageBindingKey: string,
+  ): Promise<RawApplyPage | null>;
+  /**
+   * Forget the retained page of an application that is finished (the
+   * employer confirmed receipt). The tab stays open for the person but is no
+   * longer protected, so later runs can reuse or close it instead of
+   * counting it against the browser's tab limit.
+   */
+  releaseApplicationPageBinding?(
+    source: JobSource,
+    pageBindingKey: string,
+  ): Promise<void>;
   /**
    * Main-process-only application hand. The runtime retains Page ownership
    * and returns a redacted, transient observation with no DOM handle.
@@ -234,8 +376,8 @@ export interface BrowserSessionRuntime {
     },
   ): Promise<void>;
   /**
-   * Main-process-only one-shot final-action hand. It never returns a
-   * submission claim; external verification is a separate boundary.
+   * Main-process-only one-shot final-action hand. It reports submission only
+   * when the employer page visibly confirms receipt after the action.
    */
   executeExactlyOneFinalAction?(
     source: JobSource,
@@ -251,17 +393,35 @@ export interface BrowserSessionRuntime {
   ): Promise<DiscoveryRunResult>;
 }
 
+/**
+ * Told about every page a run starts working in, so a host that shares its
+ * browser between runs knows which run a tab belongs to (a person stepping
+ * into that tab then stops only that run).
+ */
+export type AutomationPageListener = (page: Page) => void;
+
 export interface BrowserApplicationExecutionOptions {
   signal?: AbortSignal;
+  onAutomationPage?: AutomationPageListener;
 }
 
 export interface AgentDiscoveryOptions {
+  /** No person-specified result cap; retain every suitable posting found. */
+  retainAllFound?: boolean;
+  /** Public feed postings available for the model to inspect and select. */
+  sourceCatalog?: JobPosting[];
   userProfile: CandidateProfile;
   searchPreferences: {
     targetRoles: string[];
     locations: string[];
     workModes?: string[];
   };
+  /** The person's search focus, expressed as an instruction to the agent. */
+  searchMode?: JobSearchCampaignMode;
+  /** The person's plain-language goal and run-scoped search choices. */
+  searchRequest?: JobFinderSearchRequest;
+  /** The saved AI search behavior (Settings): selectivity and remote handling. */
+  searchGuidance?: AiJobSearchBehavior;
   targetJobCount: number;
   maxSteps: number;
   runControl?: {
@@ -275,6 +435,12 @@ export interface AgentDiscoveryOptions {
   startingUrls: string[];
   /** Pages parked for unresolved user action; discovery must not reuse or close them. */
   protectedPages?: ParkedBrowserTabReference[];
+  /**
+   * Open this run in its own tab and leave every other tab alone, so several
+   * sources can be searched at the same time. The tab is closed when the run
+   * ends unless the run was stopped for the person.
+   */
+  dedicatedPage?: boolean;
   agentHints?: {
     widenReviewBudget?: boolean;
   };
@@ -304,6 +470,7 @@ export interface AgentDiscoveryOptions {
   captureVisualSnapshots?: boolean;
   aiClient?: JobFinderAiClient;
   onProgress?: (progress: AgentDiscoveryProgress) => void;
+  onAutomationPage?: AutomationPageListener;
   signal?: AbortSignal;
 }
 

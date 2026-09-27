@@ -31,10 +31,17 @@ vi.mock("./settings-app-device-section", () => ({
     <section data-testid="panel-app-device">App and device panel</section>
   ),
 }));
+vi.mock("./settings-ai-behavior-section", () => ({
+  SETTINGS_AI_BEHAVIOR_LABEL: "AI behavior",
+  SettingsAiBehaviorSection: () => (
+    <section data-testid="panel-ai-behavior">AI behavior panel</section>
+  ),
+}));
 vi.mock("./settings-application-defaults-section", () => ({
+  SETTINGS_RESUME_LOOK_LABEL: "Resume look",
   SettingsApplicationDefaultsSection: () => (
     <section data-testid="panel-application-defaults">
-      Application defaults panel
+      Resume look panel
     </section>
   ),
 }));
@@ -98,7 +105,9 @@ vi.mock("../applications/applications-crm-settings", () => ({
 
 const sectionLabels = [
   "App & device",
-  "Application defaults",
+  // Every choice about how the AI behaves, in one place.
+  "AI behavior",
+  "Resume look",
   // Plain-language tab names. The renames change the labels only: the
   // prepare-only boundary and every permission it describes are unchanged.
   "Applying",
@@ -125,10 +134,12 @@ const baseProps = {
   isWorkspaceResetPending: false,
   onResetWorkspace: vi.fn(),
   onSettingsDraftEdited: vi.fn(),
+  onUpdateAiBehavior: vi.fn(),
   onUpdateAppearanceTheme: vi.fn(),
   onUpdateApplicationDefaults: vi.fn(),
   onUpdateTrackerCrm: vi.fn(() => Promise.resolve()),
   onUpdateWorkspaceBehavior: vi.fn(),
+  searchPreferences: { tailoringMode: "balanced" as const },
   settings: baseSettings,
 };
 
@@ -138,7 +149,7 @@ describe("SettingsScreen information architecture", () => {
     vi.clearAllMocks();
   });
 
-  it("exposes exactly seven sticky section anchors whose labels match named landmarks", () => {
+  it("exposes exactly eight sticky section anchors whose labels match named landmarks", () => {
     render(
       <MemoryRouter>
         <SettingsScreen {...baseProps} />
@@ -163,7 +174,7 @@ describe("SettingsScreen information architecture", () => {
       );
     }
 
-    expect(within(nav).queryAllByRole("link")).toHaveLength(7);
+    expect(within(nav).queryAllByRole("link")).toHaveLength(8);
   });
 
   it("keeps keyboard-reachable nav targets with visible focus and scroll offset", () => {
@@ -426,12 +437,7 @@ describe("SettingsScreen information architecture", () => {
       JOB_FINDER_ROUTE_PATHS.profile,
     );
 
-    expect(
-      screen.queryByText("Keep reusable application material on this device"),
-    ).toBeNull();
-    expect(
-      screen.queryByText("Documents & assets", { exact: false }),
-    ).toBeNull();
+    expect(screen.queryByText("Add a file")).toBeNull();
     expect(
       screen.queryByRole("button", { name: "Choose file to import" }),
     ).toBeNull();
@@ -543,7 +549,7 @@ describe("SettingsScreen section anchor navigation", () => {
       name: "Settings sections",
     });
     const links = within(nav).getAllByRole("link");
-    expect(links).toHaveLength(7);
+    expect(links).toHaveLength(8);
 
     for (const label of sectionLabels) {
       const link = within(nav).getByRole("link", { name: label });
@@ -560,6 +566,29 @@ describe("SettingsScreen section anchor navigation", () => {
       expect(focus).toHaveBeenCalledWith({ preventScroll: true });
       expectRouteStaysOnSettings();
     }
+  });
+
+  it("lands directly on Applying when a recovery link names that section", () => {
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      writable: true,
+      value: scrollIntoView,
+    });
+    render(
+      <MemoryRouter
+        initialEntries={[
+          "/job-finder/settings#settings-application-authority",
+        ]}
+      >
+        <SettingsScreen {...baseProps} />
+      </MemoryRouter>,
+    );
+
+    const applying = document.getElementById("settings-application-authority");
+    expect(applying).not.toBeNull();
+    expect(document.activeElement).toBe(applying);
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: "start" });
   });
 
   it.each([

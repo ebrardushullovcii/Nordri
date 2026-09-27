@@ -17,6 +17,7 @@ import type {
   ApplyAnswerSources,
   ApplyFormControl,
 } from "./types";
+import { judgeWorkCountry, type WorkCountryVerdict } from "./work-country";
 
 /**
  * Where an answer comes from, in the order Job Finder trusts.
@@ -37,6 +38,23 @@ export type ApplyAnswerResolution =
   /** Nothing here can answer it truthfully. Ask the person. */
   | { status: "needs_you"; reason: string; suggestion: ApplyAnswer | null };
 
+/** The reason given when nothing stored bears on a question at all. */
+export const NO_STORED_ANSWER_REASON =
+  "Nothing in your profile, resume, or saved answers answers this.";
+
+/**
+ * The reason worth showing the person beside the question: one that names
+ * what Job Finder did find (for example the countries saved in the profile)
+ * and why it does not settle this question. The bare "nothing answers this"
+ * adds nothing to the card's own heading, so it is not repeated.
+ */
+export function personFacingNeedsYouReason(reason: string): string | null {
+  const trimmed = reason.trim();
+  return trimmed.length > 0 && trimmed !== NO_STORED_ANSWER_REASON
+    ? trimmed
+    : null;
+}
+
 function trimmedOrNull(value: string | null | undefined): string | null {
   const trimmed = value?.trim() ?? "";
   return trimmed.length > 0 ? trimmed : null;
@@ -46,6 +64,35 @@ function yesNo(value: boolean | null | undefined): string | null {
   if (value === true) return "Yes";
   if (value === false) return "No";
   return null;
+}
+
+const OVERALL_YEARS_EXPERIENCE_PATTERN =
+  /\byears?\s+(?:of\s+)?(?:(?:professional|work|overall)\s+)?experience\b/u;
+
+function asksForOverallYearsExperience(control: ApplyFormControl): boolean {
+  const label = normalizeSignal(control.label);
+  const match = OVERALL_YEARS_EXPERIENCE_PATTERN.exec(label);
+  if (!match) {
+    return false;
+  }
+
+  // "Years of experience with Python" asks about Python, not the person's
+  // overall career. Never let the generic prefix hide a trailing qualifier.
+  const suffix = label.slice(match.index + match[0].length);
+  if (/\b(?:with|in|using|on|for)\b/u.test(suffix)) {
+    return false;
+  }
+
+  const group = normalizeSignal(control.groupLabel);
+  if (!group || group === label) {
+    return true;
+  }
+  return (
+    OVERALL_YEARS_EXPERIENCE_PATTERN.test(group) ||
+    /^(?:professional |work |overall )?(?:experience|background|work history)$/u.test(
+      group,
+    )
+  );
 }
 
 function profileAnswer(
@@ -64,34 +111,95 @@ function profileAnswer(
   };
 }
 
+function technicalSkillsAnswer(
+  control: ApplyFormControl,
+  profile: CandidateProfile,
+): ApplyAnswer | null {
+  const signal = normalizeSignal(`${control.groupLabel} ${control.label}`);
+  if (
+    (control.kind !== "text" && control.kind !== "long_text") ||
+    control.options.length > 0 ||
+    control.questionKind === "experience" ||
+    /\b(?:how many|years?|duration|never|not|lack|unfamiliar|no experience)\b/u.test(
+      signal,
+    ) ||
+    !/\b(?:(?:which|what) (?:technical )?(?:skills?|technologies|tools)(?: would you bring| do you (?:have|use|know))?|list (?:your )?(?:technical )?(?:skills?|technologies|tools))\b/u.test(
+      signal,
+    )
+  ) {
+    return null;
+  }
+  const seen = new Set<string>();
+  const skills = [
+    ...profile.skills,
+    ...profile.skillGroups.coreSkills,
+    ...profile.skillGroups.tools,
+    ...profile.skillGroups.languagesAndFrameworks,
+    ...profile.skillGroups.highlightedSkills,
+  ].filter((skill) => {
+    const normalized = normalizeSignal(skill);
+    if (!normalized || seen.has(normalized)) return false;
+    seen.add(normalized);
+    return true;
+  });
+  if (skills.length === 0) return null;
+  return profileAnswer(
+    skills.slice(0, 12).join(", "),
+    control.questionKind,
+    "profile.skills",
+    "the technical skills saved in your profile",
+  );
+}
+
 function nameFieldAnswer(
   control: ApplyFormControl,
   profile: CandidateProfile,
 ): ApplyAnswer | null {
   const signal = normalizeSignal(`${control.label} ${control.groupLabel}`);
+  const label = normalizeSignal(control.label);
   const kind: ApplicationQuestionKind = "personal_info";
-  if (/\b(first|given)\b/u.test(signal)) {
+  if (
+    /\b(first|given)\s+name\b/u.test(signal) ||
+    /^(first|given)$/u.test(label)
+  ) {
     const value = trimmedOrNull(profile.firstName);
-    return value ? profileAnswer(value, kind, "profile.firstName", "your first name") : null;
-  }
-  if (/\b(last|family|sur)\b/u.test(signal)) {
-    const value = trimmedOrNull(profile.lastName);
-    return value ? profileAnswer(value, kind, "profile.lastName", "your last name") : null;
-  }
-  if (/\bmiddle\b/u.test(signal)) {
-    const value = trimmedOrNull(profile.middleName);
-    return value ? profileAnswer(value, kind, "profile.middleName", "your middle name") : null;
-  }
-  if (/\bpreferred\b/u.test(signal)) {
-    const value =
-      trimmedOrNull(profile.preferredDisplayName) ?? trimmedOrNull(profile.firstName);
     return value
-      ? profileAnswer(value, kind, "profile.preferredDisplayName", "the name you go by")
+      ? profileAnswer(value, kind, "profile.firstName", "your first name")
+      : null;
+  }
+  if (
+    /\b(last|family|sur)\s+name\b/u.test(signal) ||
+    /^(last|family|sur)$/u.test(label)
+  ) {
+    const value = trimmedOrNull(profile.lastName);
+    return value
+      ? profileAnswer(value, kind, "profile.lastName", "your last name")
+      : null;
+  }
+  if (/\bmiddle\s+name\b/u.test(signal) || label === "middle") {
+    const value = trimmedOrNull(profile.middleName);
+    return value
+      ? profileAnswer(value, kind, "profile.middleName", "your middle name")
+      : null;
+  }
+  if (/\bpreferred(?:\s+(?:full|display))?\s+name\b/u.test(signal)) {
+    const value =
+      trimmedOrNull(profile.preferredDisplayName) ??
+      trimmedOrNull(profile.firstName);
+    return value
+      ? profileAnswer(
+          value,
+          kind,
+          "profile.preferredDisplayName",
+          "the name you go by",
+        )
       : null;
   }
   if (/\bname\b/u.test(signal)) {
     const value = trimmedOrNull(profile.fullName);
-    return value ? profileAnswer(value, kind, "profile.fullName", "your name") : null;
+    return value
+      ? profileAnswer(value, kind, "profile.fullName", "your name")
+      : null;
   }
   return null;
 }
@@ -137,7 +245,9 @@ function personalInfoAnswer(
   control: ApplyFormControl,
   profile: CandidateProfile,
 ): ApplyAnswer | null {
-  const signal = normalizeSignal(`${control.label} ${control.groupLabel} ${control.placeholder}`);
+  const signal = normalizeSignal(
+    `${control.label} ${control.groupLabel} ${control.placeholder}`,
+  );
   if (isPhoneCountryControl(control)) {
     return phoneCountryAnswer(control, profile);
   }
@@ -146,7 +256,12 @@ function personalInfoAnswer(
       trimmedOrNull(profile.applicationIdentity.preferredEmail) ??
       trimmedOrNull(profile.email);
     return value
-      ? profileAnswer(value, "personal_info", "profile.email", "your email address")
+      ? profileAnswer(
+          value,
+          "personal_info",
+          "profile.email",
+          "your email address",
+        )
       : null;
   }
   if (/\b(phone|mobile|telephone|cell)\b/u.test(signal)) {
@@ -176,61 +291,257 @@ function locationAnswer(
   control: ApplyFormControl,
   profile: CandidateProfile,
 ): ApplyAnswer | null {
-  const signal = normalizeSignal(`${control.label} ${control.groupLabel} ${control.placeholder}`);
+  const signal = normalizeSignal(
+    `${control.label} ${control.groupLabel} ${control.placeholder}`,
+  );
   const kind: ApplicationQuestionKind = "location";
   if (/\bcountry\b/u.test(signal)) {
     const value = trimmedOrNull(profile.currentCountry);
-    return value ? profileAnswer(value, kind, "profile.currentCountry", "the country you live in") : null;
+    return value
+      ? profileAnswer(
+          value,
+          kind,
+          "profile.currentCountry",
+          "the country you live in",
+        )
+      : null;
   }
   if (/\b(city|town)\b/u.test(signal)) {
     const value = trimmedOrNull(profile.currentCity);
-    return value ? profileAnswer(value, kind, "profile.currentCity", "the city you live in") : null;
+    return value
+      ? profileAnswer(
+          value,
+          kind,
+          "profile.currentCity",
+          "the city you live in",
+        )
+      : null;
   }
   if (/\b(state|province|region)\b/u.test(signal)) {
     const value = trimmedOrNull(profile.currentRegion);
-    return value ? profileAnswer(value, kind, "profile.currentRegion", "the region you live in") : null;
+    return value
+      ? profileAnswer(
+          value,
+          kind,
+          "profile.currentRegion",
+          "the region you live in",
+        )
+      : null;
   }
   if (/\b(location|address|based)\b/u.test(signal)) {
     const value = trimmedOrNull(profile.currentLocation);
-    return value ? profileAnswer(value, kind, "profile.currentLocation", "where you live") : null;
+    return value
+      ? profileAnswer(value, kind, "profile.currentLocation", "where you live")
+      : null;
   }
   return null;
+}
+
+function asksForPostingLocation(control: ApplyFormControl): boolean {
+  const signal = normalizeSignal(`${control.label} ${control.placeholder}`);
+  const asksForResidence =
+    /\b(?:current|home|residential) location\b/u.test(signal) ||
+    /\bwhere (?:do you live|are you based)\b/u.test(signal);
+  return (
+    !asksForResidence &&
+    (/(?:^|\b)(?:which|what) location (?:are you |would you be )?applying for\b/u.test(
+      signal,
+    ) ||
+      /\b(?:job|role) location\b/u.test(signal) ||
+      /\blocation for this (?:job|role|application)\b/u.test(signal))
+  );
+}
+
+function postingLocationAnswer(
+  control: ApplyFormControl,
+  posting: ApplyAnswerSources["posting"],
+): ApplyAnswer | null {
+  const asksForApplicationLocation = asksForPostingLocation(control);
+  const value = trimmedOrNull(posting.location);
+  if (!asksForApplicationLocation || !value) {
+    return null;
+  }
+  return {
+    value,
+    kind: "location",
+    sourceKind: "posting",
+    sourceId: "posting.location",
+    provenanceLabel: "the job posting",
+    groundedIn: ["the job posting"],
+  };
+}
+
+type WorkHistoryField =
+  | "companyName"
+  | "title"
+  | "location"
+  | "startDate"
+  | "endDate"
+  | "summary";
+
+function workHistoryField(
+  control: ApplyFormControl,
+): { index: number; field: WorkHistoryField } | null {
+  const group = normalizeSignal(control.groupLabel);
+  const label = normalizeSignal(control.label);
+  const combined = normalizeSignal(`${control.groupLabel} ${control.label}`);
+  const indexedGroup =
+    /\b(?:work |employment |professional )?(?:experience|history)\s+(\d+)\b/u.exec(
+      group || combined,
+    );
+  const parsedIndex = indexedGroup?.[1]
+    ? Number.parseInt(indexedGroup[1], 10) - 1
+    : -1;
+  if (parsedIndex < 0) {
+    return null;
+  }
+
+  if (/\b(?:job title|position|role)\b/u.test(label)) {
+    return { index: parsedIndex, field: "title" };
+  }
+  if (/\b(?:company|employer|organization|organisation)\b/u.test(label)) {
+    return { index: parsedIndex, field: "companyName" };
+  }
+  if (/^(?:from|start|start date|started)$/u.test(label)) {
+    return { index: parsedIndex, field: "startDate" };
+  }
+  if (/^(?:to|end|end date|ended)(?: optional)?$/u.test(label)) {
+    return { index: parsedIndex, field: "endDate" };
+  }
+  if (
+    /\b(?:description|summary|responsibilities|achievements)\b/u.test(label)
+  ) {
+    return { index: parsedIndex, field: "summary" };
+  }
+  if (/\blocation\b/u.test(label)) {
+    return { index: parsedIndex, field: "location" };
+  }
+  return null;
+}
+
+function workHistoryAnswer(
+  control: ApplyFormControl,
+  profile: CandidateProfile,
+): ApplyAnswer | null {
+  const requested = workHistoryField(control);
+  if (!requested) {
+    return null;
+  }
+  const experience = profile.experiences.filter(
+    (entry) => entry.isDraft !== true,
+  )[requested.index];
+  if (!experience) {
+    return null;
+  }
+  const value =
+    requested.field === "summary"
+      ? trimmedOrNull(
+          [experience.summary, ...experience.achievements]
+            .filter((entry): entry is string => Boolean(entry?.trim()))
+            .join("\n"),
+        )
+      : trimmedOrNull(experience[requested.field]);
+  return value
+    ? profileAnswer(
+        value,
+        "experience",
+        `profile.experiences.${experience.id}.${requested.field}`,
+        "your saved work history",
+      )
+    : null;
 }
 
 function linkAnswer(
   control: ApplyFormControl,
   profile: CandidateProfile,
 ): ApplyAnswer | null {
-  const signal = normalizeSignal(`${control.label} ${control.groupLabel} ${control.placeholder}`);
+  const signal = normalizeSignal(
+    `${control.label} ${control.groupLabel} ${control.placeholder}`,
+  );
+  // A source select often includes an option called "Company website" inside
+  // the label text exposed by the page. That option is not a request for the
+  // person's portfolio URL; it is one possible answer to how they found the
+  // job. Let the exact saved source answer handle this question instead.
+  if (/\b(?:how|where) did you (?:hear|learn|find)\b/u.test(signal)) {
+    return null;
+  }
   const kind: ApplicationQuestionKind = "portfolio";
   const namedLink = profile.links.find((link) => {
     const label = normalizeSignal(link.label ?? "");
     return label.length > 0 && signal.includes(label);
   });
   if (namedLink?.url) {
-    return profileAnswer(namedLink.url, kind, `profile.links.${namedLink.id}`, "a link on your profile");
+    return profileAnswer(
+      namedLink.url,
+      kind,
+      `profile.links.${namedLink.id}`,
+      "a link on your profile",
+    );
   }
   if (/\b(portfolio|personal site|website|home page)\b/u.test(signal)) {
     const value =
-      trimmedOrNull(profile.portfolioUrl) ?? trimmedOrNull(profile.personalWebsiteUrl);
-    return value ? profileAnswer(value, kind, "profile.portfolioUrl", "your portfolio link") : null;
+      trimmedOrNull(profile.portfolioUrl) ??
+      trimmedOrNull(profile.personalWebsiteUrl);
+    return value
+      ? profileAnswer(
+          value,
+          kind,
+          "profile.portfolioUrl",
+          "your portfolio link",
+        )
+      : null;
   }
   if (/\b(repository|repositories|code|source)\b/u.test(signal)) {
     const value = trimmedOrNull(profile.githubUrl);
-    return value ? profileAnswer(value, kind, "profile.codeProfileUrl", "your code profile link") : null;
+    return value
+      ? profileAnswer(
+          value,
+          kind,
+          "profile.codeProfileUrl",
+          "your code profile link",
+        )
+      : null;
   }
   if (/\b(profile|professional network)\b/u.test(signal)) {
     const value = trimmedOrNull(profile.linkedinUrl);
     return value
-      ? profileAnswer(value, kind, "profile.professionalProfileUrl", "your professional profile link")
+      ? profileAnswer(
+          value,
+          kind,
+          "profile.professionalProfileUrl",
+          "your professional profile link",
+        )
       : null;
   }
   return null;
 }
 
+/**
+ * Whether the saved countries cover the country this question or job is
+ * about. Null when the profile lists no countries.
+ */
+function workCountryVerdict(
+  control: ApplyFormControl,
+  profile: CandidateProfile,
+  posting: ApplyAnswerSources["posting"] | null,
+): WorkCountryVerdict | null {
+  const countries = profile.workEligibility.authorizedWorkCountries.filter(
+    (country) => country.trim().length > 0,
+  );
+  if (countries.length === 0) {
+    return null;
+  }
+  return judgeWorkCountry({
+    questionText: `${control.groupLabel} ${control.label}`,
+    postingLocation: posting?.location ?? "",
+    authorizedWorkCountries: countries,
+  });
+}
+
 function eligibilityAnswer(
   control: ApplyFormControl,
   profile: CandidateProfile,
+  posting: ApplyAnswerSources["posting"] | null,
 ): ApplyAnswer | null {
   const eligibility = profile.workEligibility;
   const bank = profile.answerBank;
@@ -238,11 +549,27 @@ function eligibilityAnswer(
     case "work_authorization": {
       const saved = trimmedOrNull(bank.workAuthorization);
       if (saved) {
-        return profileAnswer(saved, control.questionKind, "profile.answerBank.workAuthorization", "your saved work-eligibility answer");
-      }
-      if (eligibility.authorizedWorkCountries.length > 0) {
         return profileAnswer(
-          `Yes — authorised to work in ${eligibility.authorizedWorkCountries.join(", ")}`,
+          saved,
+          control.questionKind,
+          "profile.answerBank.workAuthorization",
+          "your saved work-eligibility answer",
+        );
+      }
+      // The list answers only for the country this job or question is
+      // about. A list that does not settle it hands the question back.
+      const verdict = workCountryVerdict(control, profile, posting);
+      if (verdict?.kind === "covered") {
+        return profileAnswer(
+          `Yes — authorised to work in ${verdict.country}`,
+          control.questionKind,
+          "profile.workEligibility.authorizedWorkCountries",
+          "the countries you can work in",
+        );
+      }
+      if (verdict?.kind === "not_covered") {
+        return profileAnswer(
+          `No — not authorised to work in ${verdict.country}`,
           control.questionKind,
           "profile.workEligibility.authorizedWorkCountries",
           "the countries you can work in",
@@ -253,37 +580,81 @@ function eligibilityAnswer(
     case "visa_sponsorship": {
       const saved = trimmedOrNull(bank.visaSponsorship);
       if (saved) {
-        return profileAnswer(saved, control.questionKind, "profile.answerBank.visaSponsorship", "your saved sponsorship answer");
+        return profileAnswer(
+          saved,
+          control.questionKind,
+          "profile.answerBank.visaSponsorship",
+          "your saved sponsorship answer",
+        );
+      }
+      // "No sponsorship needed" is only true where the person can already
+      // work; for a job in a country their list clearly leaves out it goes
+      // back to them.
+      if (
+        eligibility.requiresVisaSponsorship === false &&
+        workCountryVerdict(control, profile, posting)?.kind === "not_covered"
+      ) {
+        return null;
       }
       const value = yesNo(eligibility.requiresVisaSponsorship);
       return value
-        ? profileAnswer(value, control.questionKind, "profile.workEligibility.requiresVisaSponsorship", "whether you need sponsorship")
+        ? profileAnswer(
+            value,
+            control.questionKind,
+            "profile.workEligibility.requiresVisaSponsorship",
+            "whether you need sponsorship",
+          )
         : null;
     }
     case "relocation": {
       const saved = trimmedOrNull(bank.relocation);
       if (saved) {
-        return profileAnswer(saved, control.questionKind, "profile.answerBank.relocation", "your saved relocation answer");
+        return profileAnswer(
+          saved,
+          control.questionKind,
+          "profile.answerBank.relocation",
+          "your saved relocation answer",
+        );
       }
       const value = yesNo(eligibility.willingToRelocate);
       return value
-        ? profileAnswer(value, control.questionKind, "profile.workEligibility.willingToRelocate", "whether you would relocate")
+        ? profileAnswer(
+            value,
+            control.questionKind,
+            "profile.workEligibility.willingToRelocate",
+            "whether you would relocate",
+          )
         : null;
     }
     case "travel": {
       const saved = trimmedOrNull(bank.travel);
       if (saved) {
-        return profileAnswer(saved, control.questionKind, "profile.answerBank.travel", "your saved travel answer");
+        return profileAnswer(
+          saved,
+          control.questionKind,
+          "profile.answerBank.travel",
+          "your saved travel answer",
+        );
       }
       const value = yesNo(eligibility.willingToTravel);
       return value
-        ? profileAnswer(value, control.questionKind, "profile.workEligibility.willingToTravel", "whether you would travel")
+        ? profileAnswer(
+            value,
+            control.questionKind,
+            "profile.workEligibility.willingToTravel",
+            "whether you would travel",
+          )
         : null;
     }
     case "notice_period": {
       const saved = trimmedOrNull(bank.noticePeriod);
       if (saved) {
-        return profileAnswer(saved, control.questionKind, "profile.answerBank.noticePeriod", "your saved notice period");
+        return profileAnswer(
+          saved,
+          control.questionKind,
+          "profile.answerBank.noticePeriod",
+          "your saved notice period",
+        );
       }
       if (eligibility.noticePeriodDays !== null) {
         return profileAnswer(
@@ -297,19 +668,30 @@ function eligibilityAnswer(
     }
     case "availability": {
       const saved =
-        trimmedOrNull(bank.availability) ?? trimmedOrNull(eligibility.availableStartDate);
+        trimmedOrNull(bank.availability) ??
+        trimmedOrNull(eligibility.availableStartDate);
       return saved
-        ? profileAnswer(saved, control.questionKind, "profile.workEligibility.availableStartDate", "when you can start")
+        ? profileAnswer(
+            saved,
+            control.questionKind,
+            "profile.workEligibility.availableStartDate",
+            "when you can start",
+          )
         : null;
     }
     case "clearance": {
       const value = trimmedOrNull(eligibility.securityClearance);
       return value
-        ? profileAnswer(value, control.questionKind, "profile.workEligibility.securityClearance", "your clearance")
+        ? profileAnswer(
+            value,
+            control.questionKind,
+            "profile.workEligibility.securityClearance",
+            "your clearance",
+          )
         : null;
     }
     case "experience": {
-      if (/\b(years|how many)\b/u.test(normalizeSignal(control.label))) {
+      if (asksForOverallYearsExperience(control)) {
         return profileAnswer(
           String(profile.yearsExperience),
           control.questionKind,
@@ -352,15 +734,17 @@ const ELIGIBILITY_QUESTION_KINDS: ReadonlySet<string> = new Set([
 export function resolveExactProfileAnswer(
   control: ApplyFormControl,
   profile: CandidateProfile,
+  posting: ApplyAnswerSources["posting"] | null = null,
 ): ApplyAnswer | null {
   if (ELIGIBILITY_QUESTION_KINDS.has(control.questionKind)) {
-    return eligibilityAnswer(control, profile);
+    return eligibilityAnswer(control, profile, posting);
   }
   return (
     personalInfoAnswer(control, profile) ??
     locationAnswer(control, profile) ??
     linkAnswer(control, profile) ??
-    eligibilityAnswer(control, profile)
+    technicalSkillsAnswer(control, profile) ??
+    eligibilityAnswer(control, profile, posting)
   );
 }
 
@@ -384,7 +768,7 @@ export function resolveResumeAnswer(
   if (!match?.[1]) {
     return null;
   }
-  if (!/\b(years|how many)\b/u.test(normalizeSignal(control.label))) {
+  if (!asksForOverallYearsExperience(control)) {
     return null;
   }
   return {
@@ -416,12 +800,17 @@ function answerLibraryScore(
   if (
     label.includes(question) ||
     question.includes(label) ||
-    (labelAlone && (labelAlone.includes(question) || question.includes(labelAlone)))
+    (labelAlone.split(" ").length >= 2 &&
+      (labelAlone.includes(question) || question.includes(labelAlone)))
   ) {
     return 0.9;
   }
-  const questionWords = new Set(question.split(" ").filter((word) => word.length > 3));
-  const labelWords = new Set(label.split(" ").filter((word) => word.length > 3));
+  const questionWords = new Set(
+    question.split(" ").filter((word) => word.length > 3),
+  );
+  const labelWords = new Set(
+    label.split(" ").filter((word) => word.length > 3),
+  );
   if (questionWords.size === 0 || labelWords.size === 0) {
     return 0;
   }
@@ -522,7 +911,10 @@ export function matchOption(
   }
   const contained = options.filter((option) => {
     const normalized = normalizeSignal(option);
-    return normalized.length > 0 && (normalized === desired || normalized.includes(desired));
+    return (
+      normalized.length > 0 &&
+      (normalized === desired || normalized.includes(desired))
+    );
   });
   if (contained.length === 1) {
     return contained[0] ?? null;
@@ -533,6 +925,26 @@ export function matchOption(
     normalizeSignal(option).startsWith(desired),
   );
   return prefixed.length === 1 ? (prefixed[0] ?? null) : null;
+}
+
+function matchExperienceRangeOption(
+  options: readonly string[],
+  desiredValue: string,
+): string | null {
+  const years = Number.parseInt(desiredValue.trim(), 10);
+  if (!Number.isFinite(years) || years < 0) {
+    return null;
+  }
+  const matches = options.filter((option) => {
+    const normalized = option.trim().replace(/[–—]/gu, "-");
+    const range = /^(\d+)\s*-\s*(\d+)(?:\s*years?)?$/iu.exec(normalized);
+    if (range?.[1] && range[2]) {
+      return years >= Number(range[1]) && years <= Number(range[2]);
+    }
+    const openEnded = /^(\d+)\s*\+(?:\s*years?)?$/iu.exec(normalized);
+    return Boolean(openEnded?.[1] && years >= Number(openEnded[1]));
+  });
+  return matches.length === 1 ? (matches[0] ?? null) : null;
 }
 
 /**
@@ -553,9 +965,15 @@ export function resolveApplyAnswer(input: {
     if (input.salaryDisclosure !== "answer_from_profile") {
       return {
         status: "needs_you",
-        reason: "This asks what pay you expect, and you asked Job Finder to leave that to you.",
+        reason:
+          "This asks what pay you expect, and you asked Job Finder to leave that to you.",
         suggestion: saved
-          ? profileAnswer(saved, "salary_expectation", "profile.answerBank.salaryExpectations", "your saved pay answer")
+          ? profileAnswer(
+              saved,
+              "salary_expectation",
+              "profile.answerBank.salaryExpectations",
+              "your saved pay answer",
+            )
           : null,
       };
     }
@@ -578,13 +996,27 @@ export function resolveApplyAnswer(input: {
   }
 
   const direct =
-    resolveExactProfileAnswer(control, sources.profile) ??
+    postingLocationAnswer(control, sources.posting) ??
+    (asksForPostingLocation(control)
+      ? null
+      : resolveExactProfileAnswer(control, sources.profile, sources.posting)) ??
+    workHistoryAnswer(control, sources.profile) ??
     resolveResumeAnswer(control, sources.resumeText) ??
     resolveReusableAnswer(control, sources.reusableAnswers);
 
   if (direct) {
     if (control.options.length > 0) {
-      const option = matchOption(control.options, direct.value);
+      const numericExperience =
+        control.questionKind === "experience" &&
+        /^\d+$/u.test(direct.value.trim());
+      const option = numericExperience
+        ? (matchExperienceRangeOption(control.options, direct.value) ??
+          control.options.find(
+            (candidate) =>
+              normalizeSignal(candidate) === normalizeSignal(direct.value),
+          ) ??
+          null)
+        : matchOption(control.options, direct.value);
       if (!option) {
         // Saying which answer did not fit and what the choices are is what
         // stops the person answering the identical question over and over.
@@ -599,6 +1031,63 @@ export function resolveApplyAnswer(input: {
     return { status: "answered", answer: direct };
   }
 
+  if (workHistoryField(control)) {
+    return {
+      status: "needs_you",
+      reason:
+        "This work-history field has no matching fact in your saved profile.",
+      suggestion: null,
+    };
+  }
+
+  // A legal answer the saved countries do not settle is never written as
+  // free text either.
+  if (
+    control.questionKind === "work_authorization" ||
+    control.questionKind === "visa_sponsorship"
+  ) {
+    const verdict = workCountryVerdict(
+      control,
+      sources.profile,
+      sources.posting,
+    );
+    if (
+      control.questionKind === "work_authorization" &&
+      verdict?.kind === "unknown"
+    ) {
+      return { status: "needs_you", reason: verdict.reason, suggestion: null };
+    }
+    if (
+      control.questionKind === "visa_sponsorship" &&
+      verdict?.kind === "not_covered"
+    ) {
+      return {
+        status: "needs_you",
+        reason: `This asks whether you need sponsorship to work in ${verdict.country}. Your profile says you need none, but it does not list ${verdict.country} among the countries you can work in.`,
+        suggestion: null,
+      };
+    }
+  }
+
+  // A notice period or start date is a fact about the person, not prose to
+  // compose. With nothing saved it goes to them the first time it is seen.
+  // Letting the model write one meant a sentence like "happy to discuss"
+  // went in on one pass, and the same question came back on a later pass
+  // when the written-answer check refused it.
+  if (
+    control.questionKind === "notice_period" ||
+    control.questionKind === "availability"
+  ) {
+    return {
+      status: "needs_you",
+      reason:
+        control.questionKind === "notice_period"
+          ? "This asks for your notice period, and your profile does not say."
+          : "This asks when you can start, and your profile does not say.",
+      suggestion: null,
+    };
+  }
+
   if (acceptsWrittenAnswer(control)) {
     const grounding = [
       sources.resumeText ? "the resume sent with this application" : null,
@@ -610,7 +1099,7 @@ export function resolveApplyAnswer(input: {
 
   return {
     status: "needs_you",
-    reason: "Nothing in your profile, resume, or saved answers answers this.",
+    reason: NO_STORED_ANSWER_REASON,
     suggestion: null,
   };
 }

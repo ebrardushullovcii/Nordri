@@ -29,7 +29,7 @@ function Input({
       data-slot="input"
       data-size={size}
       className={cn(
-        "w-full min-w-0 rounded-(--radius-field) border border-(--field-border) bg-(--field) py-0 tracking-normal text-foreground transition-[border-color,background-color,color] outline-none selection:bg-primary selection:text-primary-foreground file:inline-flex file:h-7 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground",
+        "w-full min-w-0 rounded-(--radius-field) border border-(--field-border) bg-(--field) py-0 tracking-normal text-foreground shadow-[var(--field-shadow)] transition-[border-color,background-color,color,box-shadow] outline-none selection:bg-primary selection:text-primary-foreground file:inline-flex file:h-7 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground hover:border-(--field-border-hover)",
         INPUT_SIZE_CLASS[size],
         // Disabled is a painted state, not a transparency: a 50% wash left the
         // field readable-but-muddy and put its border, text and placeholder on

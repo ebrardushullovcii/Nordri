@@ -152,8 +152,8 @@ export function ApplicationsApplicationDocuments(props: {
       window.dispatchEvent(new Event(CANDIDATE_ASSETS_CHANGED_EVENT));
       setMessage(
         approved.question
-          ? "Approved and added to Documents & assets. Select it in the exact attachment question below, then save that prepared answer."
-          : "Approved and added to Documents & assets for prepare-only use.",
+          ? "Approved and saved to your files. Select it in the exact attachment question below, then save that prepared answer."
+          : "Approved and saved to your files (Profile › Files).",
       );
     } catch (error) {
       setStatus("error");

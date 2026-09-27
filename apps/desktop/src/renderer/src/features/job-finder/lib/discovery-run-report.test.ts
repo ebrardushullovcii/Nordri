@@ -75,7 +75,7 @@ describe("frozen discovery run report", () => {
     const counts = getDiscoveryRunReportCounts(run);
     const label = formatDiscoveryRunReportLabel(counts);
 
-    expect(label).toBe("100 looked at · 50 new · 15 kept · 4 already here");
+    expect(label).toBe("100 found · 50 new · 15 kept · 4 already here");
     expect(describePlanRunCounts(counts)).toBe(label);
 
     // Tasks builds its own line from the same helpers.
@@ -107,7 +107,7 @@ describe("frozen discovery run report", () => {
         duplicates: 94,
         alreadyHere: null,
       }),
-    ).toBe("94 looked at · 47 new · 15 kept · 47 already here");
+    ).toBe("94 found · 47 new · 15 kept · 47 already here");
     expect(
       formatDiscoveryRunReportLabel({
         found: 94,
@@ -118,7 +118,7 @@ describe("frozen discovery run report", () => {
         duplicates: 94,
         alreadyHere: null,
       }),
-    ).toBe("94 looked at · 0 new · 0 kept · all already here");
+    ).toBe("94 found · 0 new · 0 kept · all already here");
   });
 
   test("keeps a first search's repeats out of what the plan already had", () => {
@@ -135,7 +135,7 @@ describe("frozen discovery run report", () => {
         duplicates: 47,
         alreadyHere: 0,
       }),
-    ).toBe("113 looked at · 66 new · 15 kept · 0 already here · 47 duplicates merged");
+    ).toBe("113 found · 66 new · 15 kept · 47 duplicates merged");
   });
 
   test("a run recorded before the report says so instead of showing zero", () => {

@@ -27,7 +27,7 @@ async function editProfile(
 }
 
 describe("resume profile revision gates", () => {
-  test("rejects generation after the profile changes during rendering without recording stale asset failure", async () => {
+  test("fails generation after a resume-relevant profile change during rendering and records a retryable failure", async () => {
     const baseDocumentManager = createDocumentManager();
     const renderStarted = deferred<void>();
     const renderRelease = deferred<void>();
@@ -60,7 +60,53 @@ describe("resume profile revision gates", () => {
       (asset) => asset.jobId === "job_ready",
     );
     expect(draftAfter).toBeNull();
-    expect(assetAfter).toEqual(assetBefore);
+    expect(assetAfter?.id).toBe(assetBefore?.id);
+    expect(assetAfter?.status).toBe("failed");
+    expect(assetAfter?.failureMessage).toMatch(
+      /Your profile changed while this resume was being written.*Try again/,
+    );
+  });
+
+  test("finishes generation when only search preferences or sources change during rendering", async () => {
+    const baseDocumentManager = createDocumentManager();
+    const renderStarted = deferred<void>();
+    const renderRelease = deferred<void>();
+    const documentManager = {
+      ...baseDocumentManager,
+      async renderResumeArtifact(
+        input: Parameters<typeof baseDocumentManager.renderResumeArtifact>[0],
+      ) {
+        renderStarted.resolve();
+        await renderRelease.promise;
+        return baseDocumentManager.renderResumeArtifact(input);
+      },
+    };
+    const { repository, workspaceService } = createWorkspaceServiceHarness({
+      documentManager,
+    });
+    const revisionBefore = (await repository.getProfileWithRevision())
+      .revision;
+
+    const generation = workspaceService.generateResume("job_ready");
+    await renderStarted.promise;
+    const preferences = await repository.getSearchPreferences();
+    await repository.saveSearchPreferences({
+      ...preferences,
+      tailoringMode:
+        preferences.tailoringMode === "aggressive" ? "balanced" : "aggressive",
+    });
+    expect((await repository.getProfileWithRevision()).revision).not.toBe(
+      revisionBefore,
+    );
+    renderRelease.resolve();
+
+    await expect(generation).resolves.toBeDefined();
+    const assetAfter = (await repository.listTailoredAssets()).find(
+      (asset) => asset.jobId === "job_ready",
+    );
+    expect(assetAfter?.status).toBe("ready");
+    expect(assetAfter?.failureMessage ?? null).toBeNull();
+    expect(await repository.getResumeDraftByJobId("job_ready")).not.toBeNull();
   });
 
   test("rejects a preview after the profile changes during rendering", async () => {

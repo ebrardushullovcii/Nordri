@@ -361,7 +361,7 @@ async function auditProfile(profile) {
         .getByRole("heading", { name: "Shortlisted jobs", level: 1 })
         .waitFor({ state: "visible", timeout: 15_000 });
       await page
-        .getByRole("button", { name: "Open resume workspace" })
+        .getByRole("button", { name: /Edit resume|Open the resume|Review the resume/i })
         .first()
         .click();
       await page

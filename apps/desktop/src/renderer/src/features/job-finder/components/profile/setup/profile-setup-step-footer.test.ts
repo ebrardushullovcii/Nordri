@@ -127,6 +127,42 @@ describe("getProfileSetupStepFooterContinue", () => {
 });
 
 describe("formatProfileSetupFinishReadiness", () => {
+  it("collapses a long run of imported-detail reviews into one count per step", () => {
+    // Twenty-three "Confirm ..." items used to print in full and push the
+    // step's form off screen. Real blockers stay named; review items become
+    // one line per step, because the step itself lists them.
+    const confirms = Array.from(
+      { length: 20 },
+      (_, index) => `Confirm acme field ${index + 1}`,
+    );
+    expect(
+      formatProfileSetupFinishReadiness({
+        canFinishSetup: false,
+        remainingBlockerLabels: [
+          "Add a job source (Job targets step)",
+          ...confirms,
+          "Fill in bluebird title (Basics step)",
+          "Confirm bluebird company (Basics step)",
+        ],
+      }),
+    ).toBe(
+      "Still needed to finish: Add a job source (Job targets step) · Review 20 imported details on this step · Review 2 imported details (Basics step).",
+    );
+    // Three or fewer stay named in full, whatever they are.
+    expect(
+      formatProfileSetupFinishReadiness({
+        canFinishSetup: false,
+        remainingBlockerLabels: [
+          "Confirm acme company",
+          "Confirm acme title",
+          "Confirm acme start date",
+        ],
+      }),
+    ).toBe(
+      "Still needed to finish: Confirm acme company · Confirm acme title · Confirm acme start date.",
+    );
+  });
+
   it("names what is missing instead of publishing a second count", () => {
     expect(
       formatProfileSetupFinishReadiness({

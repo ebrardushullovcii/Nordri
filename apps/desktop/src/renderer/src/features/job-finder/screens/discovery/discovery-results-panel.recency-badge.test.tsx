@@ -113,8 +113,10 @@ describe("DiscoveryResultsPanel relative-label recency truth", () => {
       />,
     );
 
-    const badge = screen.getByText(/not date-ranked/);
-    expect(badge.textContent).toBe("Posted 2 days ago · not date-ranked");
+    // The badge keeps the source's own words; the ranking caveat lives in
+    // the tooltip instead of being printed on every such row.
+    const badge = screen.getByText("Posted 2 days ago");
+    expect(badge.textContent).toBe("Posted 2 days ago");
     const titleOwner = badge.closest("[title]");
     expect(titleOwner?.getAttribute("title")).toContain(
       "Newest cannot rank this listing by its posting date",
@@ -195,7 +197,7 @@ describe("getDiscoveryListingDateBadge", () => {
     ).toEqual({
       rankable: false,
       shown: true,
-      text: "Posted 2 days ago · not date-ranked",
+      text: "Posted 2 days ago",
     });
   });
 

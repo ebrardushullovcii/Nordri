@@ -1,11 +1,16 @@
 import type {
   BrowserSessionState,
+  JobFinderSearchRequest,
   JobSearchCampaign,
   JobSearchPreferences,
 } from "@unemployed/contracts";
 import { SlidersHorizontal } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@renderer/components/ui/button";
+import { Popover } from "@renderer/components/ui/popover";
+import { useBoundedFloatingSurface } from "@renderer/features/job-finder/components/bounded-floating-surface";
+import { useJobFinderOverlayOwnership } from "@renderer/features/job-finder/lib/job-finder-overlay-ownership";
+import { isImeComposingEvent } from "@renderer/features/job-finder/lib/job-finder-shortcuts";
 import { formatCountLabel } from "@renderer/features/job-finder/lib/job-finder-utils";
 import { cn } from "@renderer/lib/cn";
 import {
@@ -14,6 +19,9 @@ import {
 } from "./discovery-search-readiness";
 
 export const DISCOVERY_SEARCH_SETUP_PANEL_ID = "discovery-search-setup-panel";
+
+const SOURCE_PICKER_DESIRED_HEIGHT_PX = 288;
+const SOURCE_PICKER_PREFERRED_WIDTH_PX = 256;
 
 export interface DiscoverySearchChip {
   id: string;
@@ -93,26 +101,24 @@ function useSearchElapsedSeconds(startedAt: string | null): number | null {
 }
 
 /**
- * `null` when the offline catalog runtime owns the page: there is no live
- * browser to open, and the setup panel already states that fact once. A second
- * "Offline catalog" copy here would only duplicate that owner.
+ * The browser only earns a mention here when it needs the person: a sign-in
+ * or a block. A search opens the browser itself, the app's top bar already
+ * offers it, and the offline catalog runtime has no live browser at all, so
+ * "Browser not open" or "Browser ready" beside Search now was noise.
  */
 function getBrowserChipLabel(
   browserSession: BrowserSessionState,
-  isPending: boolean,
 ): string | null {
   if (getDiscoveryRuntimeProjection(browserSession).isOffline) {
     return null;
   }
   switch (browserSession.status) {
-    case "ready":
-      return "Browser ready";
     case "login_required":
       return "Browser needs sign-in";
     case "blocked":
       return "Browser blocked";
     default:
-      return isPending ? "Starting browser" : "Browser not open";
+      return null;
   }
 }
 
@@ -130,16 +136,15 @@ export function getDiscoveryPlanOptions(
 }
 
 /**
- * One interactive strip above the results: what the search is set to, one
- * search command, and the browser as a small link rather than the first block
- * on the page.
+ * One interactive strip above the results: the goal, freshness and sources
+ * for this search, one search command, and the browser as a small link. How
+ * picky a search is lives in Settings (AI behavior) with every other choice
+ * about how the AI works. Plans, result scope and setup counts live elsewhere
+ * (Search plans, the results panel, the setup panel) so this row stays one
+ * line.
  */
 export function DiscoverySearchBar(props: {
-  /**
-   * Search plans, when the page can switch between them. Search now always
-   * runs the current plan, which used to be invisible from this page: the
-   * plan was chosen on Search plans and only inferred here from the chips.
-   */
+  /** Accepted for callers that still pass plans; the bar no longer shows them. */
   campaigns?: readonly Pick<JobSearchCampaign, "id" | "name" | "status">[];
   activeCampaignId?: string | null;
   isPlanSwitchPending?: boolean;
@@ -149,10 +154,7 @@ export function DiscoverySearchBar(props: {
   isSearchPending: boolean;
   isSearchDisabled: boolean;
   isSetupOpen: boolean;
-  /**
-   * Which chip owns the open panel, so a chip reports its OWN state instead
-   * of all three lighting up together whenever any section is open.
-   */
+  /** Accepted for compatibility; the single setup chip reflects `isSetupOpen`. */
   openSetupChipId?: string | null;
   /**
    * ISO start time of the run in progress. A search takes several seconds, so
@@ -170,7 +172,9 @@ export function DiscoverySearchBar(props: {
    */
   stoppedNotice?: string | null;
   onOpenBrowserSession: () => void;
-  onRunAgentDiscovery: (() => void) | undefined;
+  onRunAgentDiscovery:
+    | ((searchRequest?: JobFinderSearchRequest) => void)
+    | undefined;
   onStopSearch?: (() => void) | undefined;
   onToggleSetup: (chipId: string | null) => void;
   searchActionDescribedBy?: string | undefined;
@@ -181,20 +185,11 @@ export function DiscoverySearchBar(props: {
   onToggleResultScope?: () => void;
 }) {
   const {
-    campaigns = [],
-    activeCampaignId = null,
-    isPlanSwitchPending = false,
-    onSelectCampaign,
     browserSession,
-    isBrowserSessionPending,
     isSearchDisabled,
     isSearchPending,
     isSearchRunning,
-    resultScope = "focused",
-    hiddenResultCount = 0,
-    onToggleResultScope,
     isSetupOpen,
-    openSetupChipId = null,
     searchStartedAt = null,
     searchProgressLabel = null,
     isStopPending = false,
@@ -207,95 +202,218 @@ export function DiscoverySearchBar(props: {
     searchPreferences,
   } = props;
   const chips = getDiscoverySearchChips(searchPreferences);
-  const planOptions = getDiscoveryPlanOptions(campaigns, activeCampaignId);
-  const activePlan =
-    planOptions.find((plan) => plan.id === activeCampaignId) ?? null;
   const elapsedSeconds = useSearchElapsedSeconds(
     isSearchRunning ? searchStartedAt : null,
   );
-  const browserChipLabel = getBrowserChipLabel(
-    browserSession,
-    isBrowserSessionPending,
+  const browserChipLabel = getBrowserChipLabel(browserSession);
+  const availableSources = searchPreferences.discovery.targets.filter(
+    (target) => target.enabled,
   );
+  const [intent, setIntent] = useState("");
+  const [freshness, setFreshness] =
+    useState<JobFinderSearchRequest["freshness"]>("any");
+  const [selectedSourceIds, setSelectedSourceIds] = useState<"all" | string[]>(
+    "all",
+  );
+  const [isSourcePickerOpen, setIsSourcePickerOpen] = useState(false);
+  const sourcePickerTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const sourcePickerSurfaceRef = useRef<HTMLDivElement | null>(null);
+  const closeSourcePicker = useCallback((restoreFocus: boolean) => {
+    setIsSourcePickerOpen(false);
+    if (restoreFocus) sourcePickerTriggerRef.current?.focus();
+  }, []);
+  const { isTopmost: isSourcePickerTopmost } =
+    useJobFinderOverlayOwnership({
+      active: isSourcePickerOpen,
+      close: () => closeSourcePicker(true),
+    });
+  const sourcePickerPlacement = useBoundedFloatingSurface({
+    alignment: "start",
+    desiredHeight: SOURCE_PICKER_DESIRED_HEIGHT_PX,
+    open: isSourcePickerOpen,
+    preferredWidth: SOURCE_PICKER_PREFERRED_WIDTH_PX,
+    triggerRef: sourcePickerTriggerRef,
+  });
+  const selectedSourceCount =
+    selectedSourceIds === "all"
+      ? availableSources.length
+      : selectedSourceIds.length;
+  const sourceSelectionLabel =
+    selectedSourceIds === "all"
+      ? "All sources"
+      : formatCountLabel(selectedSourceCount, "source");
+  const toggleSource = (sourceId: string) => {
+    setSelectedSourceIds((current) => {
+      const selected =
+        current === "all"
+          ? new Set(availableSources.map((source) => source.id))
+          : new Set(current);
+      if (selected.has(sourceId)) {
+        selected.delete(sourceId);
+      } else {
+        selected.add(sourceId);
+      }
+      return selected.size === availableSources.length
+        ? "all"
+        : [...selected];
+    });
+  };
+  const runSearch = () => {
+    if (!onRunAgentDiscovery || selectedSourceCount === 0) return;
+    // How picky the search is comes from Settings, AI behavior; the bar only
+    // carries what changes from one run to the next.
+    onRunAgentDiscovery({
+      intent,
+      freshness,
+      sourceIds: selectedSourceIds,
+    });
+  };
+
+  useEffect(() => {
+    if (!isSourcePickerOpen) return undefined;
+
+    const closeOnOutsidePress = (event: PointerEvent) => {
+      const target = event.target;
+      if (
+        target instanceof Node &&
+        !sourcePickerTriggerRef.current?.contains(target) &&
+        !sourcePickerSurfaceRef.current?.contains(target)
+      ) {
+        closeSourcePicker(false);
+      }
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (
+        event.defaultPrevented ||
+        isImeComposingEvent(event) ||
+        event.key !== "Escape" ||
+        !isSourcePickerTopmost()
+      ) {
+        return;
+      }
+      event.preventDefault();
+      closeSourcePicker(true);
+    };
+
+    document.addEventListener("pointerdown", closeOnOutsidePress);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsidePress);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [closeSourcePicker, isSourcePickerOpen, isSourcePickerTopmost]);
 
   return (
     <div
       className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-2 rounded-(--radius-button) border border-(--surface-panel-border) bg-(--surface-panel) px-2 py-1.5"
       data-testid="discovery-search-bar"
     >
-      {activePlan && onSelectCampaign ? (
-        <label
-          className={cn(
-            "inline-flex min-h-7 shrink-0 items-center gap-1.5 rounded-(--radius-small) border border-(--control-border) pl-2.5 pr-1.5 text-(length:--text-small) transition-colors focus-within:ring-[3px] focus-within:ring-ring/30",
-            planOptions.length > 1
-              ? "hover:bg-secondary hover:text-foreground"
-              : null,
-          )}
-          data-testid="discovery-search-plan"
-          title="Search now uses this plan's roles and places and every job source enabled on Profile."
-        >
-          <span className="text-foreground-muted">Plan</span>
-          <select
-            aria-label="Search plan"
-            className="max-w-56 cursor-pointer truncate bg-transparent pr-1 font-medium text-foreground outline-none disabled:cursor-default"
-            disabled={
-              isPlanSwitchPending || isSearchRunning || planOptions.length < 2
-            }
-            onChange={(event) => onSelectCampaign(event.target.value)}
-            value={activePlan.id}
-          >
-            {planOptions.map((plan) => (
-              <option key={plan.id} value={plan.id}>
-                {plan.name}
-              </option>
-            ))}
-          </select>
-        </label>
-      ) : null}
-      {onToggleResultScope ? (
+      {/* The profile already says what the person is looking for, so this
+          box is an optional note for one run ("only startups", "no agencies")
+          rather than a question the app should already know the answer to. */}
+      <input
+        aria-label="Search focus (optional)"
+        className="min-h-8 min-w-56 flex-1 rounded-(--radius-small) border border-(--control-border) bg-background px-3 text-sm text-foreground outline-none placeholder:text-foreground-muted focus-visible:ring-[3px] focus-visible:ring-ring/30"
+        disabled={isSearchRunning}
+        maxLength={1_000}
+        onChange={(event) => setIntent(event.target.value)}
+        placeholder="Optional: anything specific for this search"
+        type="text"
+        value={intent}
+      />
+      <button
+        aria-pressed={freshness === "recent"}
+        className={cn(
+          "inline-flex min-h-8 shrink-0 items-center rounded-(--radius-small) border border-(--control-border) px-2.5 text-(length:--text-small) font-medium outline-none focus-visible:ring-[3px] focus-visible:ring-ring/30",
+          freshness === "recent"
+            ? "border-primary bg-accent text-accent-foreground"
+            : "text-foreground-soft hover:bg-secondary hover:text-foreground",
+        )}
+        disabled={isSearchRunning}
+        onClick={() =>
+          setFreshness((current) =>
+            current === "recent" ? "any" : "recent",
+          )
+        }
+        title="Prioritize recent listings. Older or undated roles may still appear when they fit."
+        type="button"
+      >
+        Prefer recent
+      </button>
+      {/* With one enabled source there is nothing to choose; the picker
+          returns as soon as a second source is on. */}
+      {availableSources.length > 1 ? (
+      <div className="relative shrink-0" data-testid="discovery-source-picker">
         <button
-          aria-label={
-            resultScope === "focused"
-              ? `Focused search. Show wider results${hiddenResultCount > 0 ? ` (${hiddenResultCount} hidden)` : ""}`
-              : "Wide search. Show focused results"
-          }
-          aria-pressed={resultScope === "wide"}
-          className="inline-flex min-h-7 shrink-0 items-center rounded-(--radius-small) border border-(--control-border) px-2.5 text-(length:--text-small) font-medium text-foreground-soft outline-none transition-colors hover:bg-secondary hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/30"
-          data-testid="discovery-result-scope-toggle"
-          onClick={onToggleResultScope}
+          aria-expanded={isSourcePickerOpen}
+          aria-haspopup="dialog"
+          className="inline-flex min-h-8 items-center rounded-(--radius-small) border border-(--control-border) px-2.5 text-(length:--text-small) font-medium text-foreground-soft outline-none hover:bg-secondary hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/30"
+          disabled={isSearchRunning}
+          onClick={() => setIsSourcePickerOpen((open) => !open)}
+          ref={sourcePickerTriggerRef}
           type="button"
         >
-          {resultScope === "focused"
-            ? "Focused search · Show wider results"
-            : "Wide search · Show focused results"}
+          {sourceSelectionLabel}
         </button>
-      ) : null}
-      <SlidersHorizontal
-        aria-hidden="true"
-        className="size-3.5 shrink-0 text-foreground-muted"
-      />
-      {chips.map((chip) => {
-        const isChipOpen = isSetupOpen && openSetupChipId === chip.id;
-
-        return (
+        {sourcePickerPlacement ? (
+          <Popover
+            className="p-2"
+            label="Search sources"
+            open={isSourcePickerOpen}
+            placement={{
+              left: sourcePickerPlacement.left,
+              maxHeight: sourcePickerPlacement.maxHeight,
+              top: sourcePickerPlacement.top,
+              width: sourcePickerPlacement.width,
+            }}
+            ref={sourcePickerSurfaceRef}
+            role="dialog"
+          >
           <button
-            aria-controls={DISCOVERY_SEARCH_SETUP_PANEL_ID}
-            aria-expanded={isChipOpen}
-            className={cn(
-              "inline-flex min-h-7 shrink-0 items-center rounded-(--radius-small) border border-(--control-border) px-2.5 text-(length:--text-small) font-medium outline-none transition-colors hover:bg-secondary hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/30",
-              isChipOpen
-                ? "border-primary bg-accent text-accent-foreground"
-                : "text-foreground-soft",
-            )}
-            data-discovery-search-chip={chip.id}
-            key={chip.id}
-            onClick={() => onToggleSetup(isChipOpen ? null : chip.id)}
+            className="mb-1 w-full rounded-(--radius-small) px-2 py-1.5 text-left text-sm font-medium hover:bg-secondary"
+            onClick={() => setSelectedSourceIds("all")}
             type="button"
           >
-            {chip.label}
+            All enabled sources
           </button>
-        );
-      })}
+          {availableSources.map((source) => {
+            const checked =
+              selectedSourceIds === "all" ||
+              selectedSourceIds.includes(source.id);
+            return (
+              <label
+                className="flex cursor-pointer items-center gap-2 rounded-(--radius-small) px-2 py-1.5 text-sm hover:bg-secondary"
+                key={source.id}
+              >
+                <input
+                  checked={checked}
+                  disabled={isSearchRunning}
+                  onChange={() => toggleSource(source.id)}
+                  type="checkbox"
+                />
+                <span className="truncate">{source.label}</span>
+              </label>
+            );
+          })}
+          </Popover>
+        ) : null}
+      </div>
+      ) : null}
+      <button
+        aria-controls={DISCOVERY_SEARCH_SETUP_PANEL_ID}
+        aria-expanded={isSetupOpen}
+        className={cn(
+          "inline-flex min-h-7 shrink-0 items-center gap-1.5 rounded-(--radius-small) px-2 text-xs outline-none transition-colors hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/30",
+          isSetupOpen ? "text-foreground" : "text-foreground-muted",
+        )}
+        data-discovery-search-chip="roles"
+        onClick={() => onToggleSetup(isSetupOpen ? null : "roles")}
+        title={chips.map((chip) => chip.label).join(" · ")}
+        type="button"
+      >
+        <SlidersHorizontal aria-hidden="true" className="size-3.5 shrink-0" />
+        Roles, places & sources
+      </button>
       {browserChipLabel === null ? null : (
         <button
           className="inline-flex min-h-7 shrink-0 items-center rounded-(--radius-small) px-2 text-xs text-foreground-muted underline-offset-2 outline-none transition-colors hover:text-foreground hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/30"
@@ -345,8 +463,8 @@ export function DiscoverySearchBar(props: {
         <Button
           aria-describedby={searchActionDescribedBy}
           data-testid="discovery-search-now"
-          disabled={isSearchDisabled}
-          onClick={onRunAgentDiscovery}
+          disabled={isSearchDisabled || selectedSourceCount === 0}
+          onClick={runSearch}
           pending={isSearchPending}
           size="sm"
           type="button"

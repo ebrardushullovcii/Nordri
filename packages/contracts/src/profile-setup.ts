@@ -183,6 +183,12 @@ export interface ProfileSetupReadiness {
   hasNarrative: boolean;
   hasResumeText: boolean;
   hasTargeting: boolean;
+  /**
+   * Both reusable answers application forms ask for: where the person may
+   * work, and whether they need visa sponsorship. Setup collects them so the
+   * first application never stops on them.
+   */
+  hasWorkEligibilityAnswers: boolean;
   hasWorkModePreference: boolean;
   materiallyComplete: boolean;
   recommendedStep: ProfileSetupStep;
@@ -196,6 +202,7 @@ export const profileSetupReadinessBlockerValues = [
   "eligibility_preferences",
   "work_mode_preference",
   "discovery_source",
+  "work_eligibility_answers",
 ] as const;
 export type ProfileSetupReadinessBlockerId =
   (typeof profileSetupReadinessBlockerValues)[number];
@@ -214,6 +221,7 @@ const PROFILE_SETUP_READINESS_BLOCKER_STEPS: Record<
   eligibility_preferences: "targeting",
   identity_contact: "essentials",
   work_mode_preference: "targeting",
+  work_eligibility_answers: "targeting",
 };
 
 /**
@@ -231,6 +239,7 @@ export function getProfileSetupReadinessBlockers(
     | "hasEligibilityPreferences"
     | "hasWorkModePreference"
     | "hasDiscoverySource"
+    | "hasWorkEligibilityAnswers"
   >,
 ): ProfileSetupReadinessBlocker[] {
   const blockers: ProfileSetupReadinessBlocker[] = [];
@@ -241,32 +250,61 @@ export function getProfileSetupReadinessBlockers(
       step: PROFILE_SETUP_READINESS_BLOCKER_STEPS.identity_contact,
     });
   }
-  if (!readiness.hasMeaningfulBackground) {
-    blockers.push({
-      id: "background",
-      step: PROFILE_SETUP_READINESS_BLOCKER_STEPS.background,
-    });
-  }
-  if (!readiness.hasEligibilityPreferences) {
-    blockers.push({
-      id: "eligibility_preferences",
-      step: PROFILE_SETUP_READINESS_BLOCKER_STEPS.eligibility_preferences,
-    });
-  }
-  if (!readiness.hasWorkModePreference) {
-    blockers.push({
-      id: "work_mode_preference",
-      step: PROFILE_SETUP_READINESS_BLOCKER_STEPS.work_mode_preference,
-    });
-  }
+  // Work history, eligibility and work mode are no longer blockers; the
+  // ids stay in the type for older persisted states.
   if (!readiness.hasDiscoverySource) {
     blockers.push({
       id: "discovery_source",
       step: PROFILE_SETUP_READINESS_BLOCKER_STEPS.discovery_source,
     });
   }
+  // Almost every application form asks both. Without them the first
+  // application stopped on "Are you authorized to work here?" and sent the
+  // person to Profile to answer what setup never asked.
+  if (!readiness.hasWorkEligibilityAnswers) {
+    blockers.push({
+      id: "work_eligibility_answers",
+      step: PROFILE_SETUP_READINESS_BLOCKER_STEPS.work_eligibility_answers,
+    });
+  }
 
   return blockers;
+}
+
+/**
+ * The first guided-setup step that still needs the person: the step of the
+ * earliest canonical blocker or critical review item. When nothing blocks,
+ * Job targets, which owns Finish. Optional and recommended suggestions never
+ * choose the step, so an import lands where there is something to do rather
+ * than on a step whose only content is an optional hint.
+ */
+export function getProfileSetupLandingStep(
+  readiness: Parameters<typeof getProfileSetupReadinessBlockers>[0] &
+    Pick<ProfileSetupReadiness, "hasResumeText">,
+  reviewItems: readonly ProfileReviewItem[],
+): ProfileSetupVisibleStep {
+  if (!readiness.hasResumeText && !readiness.hasCoreIdentity) {
+    return "import";
+  }
+  const candidateSteps = [
+    ...getProfileSetupReadinessBlockers(readiness).map((blocker) =>
+      normalizeProfileSetupStep(blocker.step),
+    ),
+    ...reviewItems
+      .filter(isProfileSetupFinishBlockingReviewItem)
+      .map((item) => normalizeProfileSetupStep(item.step)),
+  ];
+  let landing: ProfileSetupVisibleStep | null = null;
+  for (const step of candidateSteps) {
+    if (
+      landing === null ||
+      (profileSetupStepOrder.get(step) ?? Number.MAX_SAFE_INTEGER) <
+        (profileSetupStepOrder.get(landing) ?? Number.MAX_SAFE_INTEGER)
+    ) {
+      landing = step;
+    }
+  }
+  return landing ?? "targeting";
 }
 
 export interface DeriveProfileSetupStateOptions {
@@ -346,48 +384,19 @@ export function hasProfileSetupPlaceholderValue(
   }
 }
 
-function getHighestPriorityPendingStep(
-  reviewItems: readonly ProfileReviewItem[],
-): ProfileSetupStep | null {
-  const pendingItems = reviewItems
-    .filter((item) => item.status === "pending")
-    .sort((left, right) => {
-      const leftIndex =
-        profileSetupStepOrder.get(normalizeProfileSetupStep(left.step)) ??
-        Number.MAX_SAFE_INTEGER;
-      const rightIndex =
-        profileSetupStepOrder.get(normalizeProfileSetupStep(right.step)) ??
-        Number.MAX_SAFE_INTEGER;
-
-      return leftIndex - rightIndex;
-    });
-
-  return pendingItems[0]?.step ?? null;
-}
-
 /**
- * Only critical items and required missing-field items gate completion.
- * Recommended imported suggestions (they carry a proposal or a source
- * candidate) stay optional to review, so a user is never forced to confirm
- * or dismiss an import suggestion before finishing setup.
+ * Only critical items gate completion. Recommended items, whether an imported
+ * suggestion or a field the resume left empty (location, years of
+ * experience, work eligibility), stay optional to review: finishing needs a
+ * name, a contact path, and a job source, and a person with those should be
+ * searching rather than answering a questionnaire (ADR 0024). The guided
+ * setup footer applies the same rule, so Finish is never offered and then
+ * refused.
  */
 export function isProfileSetupFinishBlockingReviewItem(
   item: ProfileReviewItem,
 ): boolean {
-  if (item.status !== "pending") {
-    return false;
-  }
-  if (item.severity === "critical") {
-    return true;
-  }
-  return (
-    item.severity !== "optional" &&
-    item.target.recordId === null &&
-    item.proposedValue === null &&
-    item.sourceCandidateId === null &&
-    item.sourceRunId === null &&
-    item.sourceSnippet === null
-  );
+  return item.status === "pending" && item.severity === "critical";
 }
 
 function hasBlockingPendingReviewItems(
@@ -556,16 +565,19 @@ export function evaluateProfileSetupReadiness(
   const hasWorkModePreference = hasMeaningfulStringList(
     searchPreferences.workModes,
   );
+  const hasWorkEligibilityAnswers =
+    (hasMeaningfulStringList(profile.workEligibility.authorizedWorkCountries) ||
+      hasMeaningfulText(profile.answerBank?.workAuthorization)) &&
+    (profile.workEligibility.requiresVisaSponsorship !== null ||
+      hasMeaningfulText(profile.answerBank?.visaSponsorship));
   const hasNarrative = hasMeaningfulNarrative(profile);
   const hasAnswerBank = hasMeaningfulAnswerBank(profile);
+  // Finishing needs a name, one way to be contacted, and one place to look.
+  // Work history, targeting, eligibility and work mode improve results and
+  // stay visible as hints, but a person with a resume and a job board should
+  // be searching, not answering a questionnaire (ADR 0024).
   const materiallyComplete =
-    hasCoreIdentity &&
-    hasContactPath &&
-    hasMeaningfulBackground &&
-    hasTargeting &&
-    hasEligibilityPreferences &&
-    hasWorkModePreference &&
-    hasDiscoverySource;
+    hasCoreIdentity && hasContactPath && hasDiscoverySource;
   const started = Boolean(
     hasResumeText ||
     hasCoreIdentity ||
@@ -586,11 +598,7 @@ export function evaluateProfileSetupReadiness(
     recommendedStep = "essentials";
   } else if (!hasMeaningfulBackground) {
     recommendedStep = "background";
-  } else if (
-    !hasEligibilityPreferences ||
-    !hasWorkModePreference ||
-    !hasDiscoverySource
-  ) {
+  } else if (!hasDiscoverySource || !hasWorkEligibilityAnswers) {
     recommendedStep = "targeting";
   } else if (!hasNarrative || !hasAnswerBank) {
     recommendedStep = "extras";
@@ -607,6 +615,7 @@ export function evaluateProfileSetupReadiness(
     hasNarrative,
     hasResumeText,
     hasTargeting,
+    hasWorkEligibilityAnswers,
     hasWorkModePreference,
     materiallyComplete,
     recommendedStep,
@@ -624,12 +633,14 @@ export function deriveProfileSetupState(
     ? ProfileSetupStateSchema.parse(options.currentState)
     : null;
   const pendingReviewItems = currentState?.reviewItems ?? [];
-  const highestPriorityPendingStep =
-    getHighestPriorityPendingStep(pendingReviewItems);
 
+  // An explicit Finish stays authoritative while the profile is still
+  // materially complete: a later import's review items wait in Profile
+  // instead of reopening setup. Before Finish, blocking items still gate it.
   const canBeCompleted =
     readiness.materiallyComplete &&
-    !hasBlockingPendingReviewItems(pendingReviewItems);
+    (currentState?.status === "completed" ||
+      !hasBlockingPendingReviewItems(pendingReviewItems));
 
   let status: ProfileSetupStatus = "not_started";
   // An explicit Finish stays authoritative. A materially ready setup also
@@ -657,7 +668,10 @@ export function deriveProfileSetupState(
         ? "import"
         : currentState?.status === "in_progress"
           ? currentState.currentStep
-          : (highestPriorityPendingStep ?? readiness.recommendedStep);
+          : // An optional suggestion (a proof point on Extras, a summary to
+            // confirm on Basics) used to choose this step, so a fresh import
+            // landed where there was nothing to do.
+            getProfileSetupLandingStep(readiness, pendingReviewItems);
 
   return ProfileSetupStateSchema.parse({
     status,

@@ -28,9 +28,16 @@ function startFixtureServer(): Promise<FixtureServer> {
   const server = http.createServer((request, response) => {
     const requestUrl = new URL(request.url ?? "/", "http://127.0.0.1");
     requests.push(`${request.method ?? "GET"} ${requestUrl.pathname}`);
-    if (requestUrl.pathname === "/submit") {
+    if (
+      requestUrl.pathname === "/submit" ||
+      requestUrl.pathname === "/submit-confirmed"
+    ) {
       response.writeHead(200, { "content-type": "text/html" });
-      response.end("<main>fixture submitted page</main>");
+      response.end(
+        requestUrl.pathname === "/submit-confirmed"
+          ? "<main>Thank you for applying. We have received your application.</main>"
+          : "<main>fixture submitted page</main>",
+      );
       return;
     }
     response.writeHead(200, { "content-type": "text/html" });
@@ -312,7 +319,88 @@ describe("source-generic application browser hands", () => {
     ).toHaveLength(1);
   });
 
-  test("keeps actionIssued false when an overlay prevents click dispatch", async () => {
+  test("reports not sent when the site refused the connection and nothing answered", async () => {
+    const closed = http.createServer();
+    await new Promise<void>((resolve) => closed.listen(0, "127.0.0.1", resolve));
+    const closedPort = (closed.address() as AddressInfo).port;
+    await new Promise<void>((resolve) => closed.close(() => resolve()));
+    const { page } = await createPage(
+      `<form method=post action='http://127.0.0.1:${closedPort}/apply'><input name=a value=x><button id=send type=submit>Send application</button></form>`,
+    );
+    const observation = await observeApplicationForm(page);
+    const result = await executeExactlyOneFinalAction(page, {
+      expectedObservation: observation.identity,
+      expectedControl: observation.controls[0]!.identity,
+      expectedPageOrigin: expectedOrigin(page),
+      allowedOrigins: [expectedOrigin(page), `http://127.0.0.1:${closedPort}`],
+      veto: () => true,
+    });
+
+    expect(result).toMatchObject({
+      outcome: "not_submitted",
+      reason: "site_unreachable",
+      facts: { actionIssued: true },
+    });
+  });
+
+  test("a click that never reached the page can be pressed again", async () => {
+    const { page, server } = await createPage(
+      "<form action='/submit'><button id=send type=submit>Send application</button></form><div id=cover style='position:fixed;inset:0;z-index:10'></div>",
+    );
+    const observation = await observeApplicationForm(page);
+    const input = {
+      expectedObservation: observation.identity,
+      expectedControl: observation.controls[0]!.identity,
+      expectedPageOrigin: expectedOrigin(page),
+      allowedOrigins: [expectedOrigin(page)],
+      veto: () => true,
+      clickTimeoutMs: 500,
+    };
+    expect(await executeExactlyOneFinalAction(page, input)).toMatchObject({
+      outcome: "not_submitted",
+      reason: "action_error",
+      facts: { actionIssued: false },
+    });
+
+    await page.evaluate(() => document.getElementById("cover")?.remove());
+    expect(await executeExactlyOneFinalAction(page, input)).toMatchObject({
+      outcome: "outcome_uncertain",
+      reason: "action_issued",
+      facts: { actionIssued: true },
+    });
+    await page.waitForTimeout(100);
+    expect(
+      server.requests.filter((request) => request.includes("/submit")),
+    ).toHaveLength(1);
+  });
+
+  test("counts the employer page's receipt confirmation as submitted", async () => {
+    const { page, server } = await createPage(
+      "<form action='/submit-confirmed'><button id=send type=submit>Send application</button></form>",
+    );
+    const observation = await observeApplicationForm(page);
+    const result = await executeExactlyOneFinalAction(page, {
+      expectedObservation: observation.identity,
+      expectedControl: observation.controls[0]!.identity,
+      expectedPageOrigin: expectedOrigin(page),
+      allowedOrigins: [expectedOrigin(page)],
+      veto: () => true,
+    });
+
+    expect(result).toMatchObject({
+      outcome: "submitted",
+      reason: "employer_confirmation",
+      confirmation: {
+        destination: { safePath: "/submit-confirmed" },
+      },
+      facts: { actionIssued: true, actionCompleted: true },
+    });
+    expect(
+      server.requests.filter((request) => request.includes("/submit-confirmed")),
+    ).toHaveLength(1);
+  });
+
+  test("an overlay that prevents click dispatch leaves the form not submitted, not uncertain", async () => {
     const { page, server } = await createPage(
       "<form action='/submit'><button id=send type=submit>Send application</button><div id=overlay></div></form>",
     );
@@ -332,8 +420,10 @@ describe("source-generic application browser hands", () => {
       clickTimeoutMs: 50,
     });
 
+    // Playwright never got past its clickability wait, so no click reached
+    // the page: nothing was sent and the prepared form can be sent again.
     expect(result).toMatchObject({
-      outcome: "outcome_uncertain",
+      outcome: "not_submitted",
       reason: "action_error",
       facts: {
         actionAttempted: true,

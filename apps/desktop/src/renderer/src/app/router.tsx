@@ -7,7 +7,6 @@ import {
   JobFinderCompaniesRoute,
   JobFinderCompanyDetailRoute,
   JobFinderDiscoveryRoute,
-  JobFinderDocumentsRoute,
   JobFinderPage,
   JobFinderProfileRoute,
   JobFinderProfileSetupRoute,
@@ -133,9 +132,10 @@ export const appRouter = createHashRouter([
         element: <JobFinderApplicationsRoute />,
       },
       {
+        // The former Documents destination. Its files live under Profile ›
+        // Files now; old links and saved routes land there.
         path: "documents",
-        errorElement: <JobFinderRouteErrorBoundary scope="route" />,
-        element: <JobFinderDocumentsRoute />,
+        element: <Navigate replace to="/job-finder/profile?section=files" />,
       },
       {
         path: "settings",

@@ -28,6 +28,7 @@ import {
   type SafeguardBlocker,
 } from "./safeguard-operations";
 import type { WorkspaceServiceContext } from "./workspace-service-context";
+import { reconcileAutomaticBatchSampleReviews } from "./automatic-batch-review-recovery";
 
 /**
  * Typed high-volume quality and reputation safeguards integration.
@@ -240,6 +241,7 @@ export function createWorkspaceSafeguardMethods(input: {
   }
 
   async function getSafeguardsOverview(): Promise<SafeguardsOverview> {
+    await reconcileAutomaticBatchSampleReviews(ctx);
     const state = await ctx.repository.getIntelligenceState();
     const safeguards = state.safeguards;
     const blockers = deriveActiveSafeguardBlockers({ safeguards });
@@ -295,6 +297,7 @@ export function createWorkspaceSafeguardMethods(input: {
     jobIds: readonly string[],
     scopedSavedJobs?: readonly SavedJob[],
   ): Promise<SafeguardBlocker[]> {
+    await reconcileAutomaticBatchSampleReviews(ctx);
     const [state, savedJobs, applicationRecords] = await Promise.all([
       ctx.repository.getIntelligenceState(),
       scopedSavedJobs
@@ -334,14 +337,13 @@ export function createWorkspaceSafeguardMethods(input: {
   }
 
   /**
-   * Evaluates the global pipeline gates for a discovery run. Only pending batch
-   * sample review blocks search; abnormal failure pause applies to application
-   * preparation so users can keep discovering jobs while they recover prep
-   * failures from Safeguards.
+   * Reviews of prepared applications gate later application preparation,
+   * not read-only discovery. Discovery still reconciles them for the UI.
    */
   async function evaluateGlobalDiscoveryBlockers(): Promise<
     SafeguardBlocker[]
   > {
+    await reconcileAutomaticBatchSampleReviews(ctx);
     const state = await ctx.repository.getIntelligenceState();
 
     return deriveScopeBlockers({
@@ -349,6 +351,7 @@ export function createWorkspaceSafeguardMethods(input: {
       jobIds: [],
       companyIds: [],
       applicationRecordJobIds: new Map(),
+      operation: "discovery",
     }).filter((blocker) => blocker.kind === "batch_sample_review_pending");
   }
 

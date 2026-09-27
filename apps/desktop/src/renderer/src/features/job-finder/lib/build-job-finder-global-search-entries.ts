@@ -1,8 +1,8 @@
 import type { JobFinderWorkspaceSnapshot } from "@unemployed/contracts";
-import { isListableCompanyName } from "@unemployed/contracts";
 import type { JobFinderGlobalSearchEntry } from "./job-finder-global-search";
 import { buildJobFinderContextRoute } from "./job-finder-context-navigation";
 import { buildResumeWorkspaceRoute } from "./resume-workspace-route";
+import { JOB_FINDER_ROUTE_PATHS } from "./job-finder-route-hrefs";
 import {
   formatJobEmployerLocationLine,
   isEmployerAbsenceLabel,
@@ -19,28 +19,6 @@ export function buildJobFinderGlobalSearchEntries(
   const applicationRecords = workspace.applicationRecords ?? [];
   const tailoredAssets = workspace.tailoredAssets ?? [];
   const resumeExportArtifacts = workspace.resumeExportArtifacts ?? [];
-
-  const companyEntries: JobFinderGlobalSearchEntry[] =
-    workspace.intelligence?.companies
-      ?.filter((company) => isListableCompanyName(company.canonicalName))
-      .map((company) => ({
-        campaignId: null,
-        href: `/job-finder/companies/${company.id}`,
-        id: company.id,
-        kind: "company" as const,
-        metadata: [
-          company.canonicalName,
-          ...company.aliases.map((alias) => alias.alias),
-          ...company.domains.map((domain) => domain.domain),
-          company.preference,
-        ],
-        subtitle: [
-          `${company.jobIds.length} job${company.jobIds.length === 1 ? "" : "s"}`,
-          `${company.applicationRecordIds.length} application${company.applicationRecordIds.length === 1 ? "" : "s"}`,
-          company.preference,
-        ].join(" · "),
-        title: company.canonicalName,
-      })) ?? [];
 
   const campaignIdsByJobId = new Map<string, Set<string>>();
   for (const campaign of campaigns) {
@@ -82,17 +60,6 @@ export function buildJobFinderGlobalSearchEntries(
           campaignIdsByJobId.get(jobId)?.has(campaign.id),
         )?.id ?? null;
 
-  const campaignEntries: JobFinderGlobalSearchEntry[] = campaigns.map(
-    (campaign) => ({
-      campaignId: campaign.id,
-      href: `/job-finder/campaigns?campaignId=${encodeURIComponent(campaign.id)}`,
-      id: campaign.id,
-      kind: "campaign",
-      metadata: [campaign.mode, campaign.status, campaign.description],
-      subtitle: `${campaign.mode === "precision" ? "Precision" : "Scale"} mode · ${campaign.status}`,
-      title: campaign.name,
-    }),
-  );
   const jobEntries: JobFinderGlobalSearchEntry[] = discoveryJobs.map((job) => {
     const employer = resolveJobEmployerDisplay({
       company: job.company,
@@ -189,11 +156,28 @@ export function buildJobFinderGlobalSearchEntries(
     })),
   ];
 
+  const campaignEntries: JobFinderGlobalSearchEntry[] = campaigns.map(
+    (campaign) => ({
+      campaignId: campaign.id,
+      href: `${JOB_FINDER_ROUTE_PATHS.campaigns}?campaignId=${encodeURIComponent(campaign.id)}`,
+      id: campaign.id,
+      kind: "campaign",
+      metadata: [campaign.description, campaign.mode, campaign.status].filter(
+        (value): value is string =>
+          typeof value === "string" && value.length > 0,
+      ),
+      subtitle:
+        campaign.id === workspace.activeCampaignId
+          ? "Current search plan"
+          : "Search plan",
+      title: campaign.name,
+    }),
+  );
+
   return [
     ...campaignEntries,
     ...jobEntries,
     ...applicationEntries,
     ...documentEntries,
-    ...companyEntries,
   ];
 }

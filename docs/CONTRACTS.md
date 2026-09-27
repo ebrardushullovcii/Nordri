@@ -61,7 +61,7 @@ Each line names the symbol or file to check before changing the behavior. If the
 
 ### Applications and safety
 
-- Production stays prepare-only: saved mode `prepare_only` never authorizes final submission, `ApplicationAutomationMode` is a distinct axis from `ApplyRunMode`, and `application-submission-runtime-main` has no production caller (`application-submission-policy.ts`).
+- Sending is envelope-bound: saved mode `prepare_only` never authorizes final submission, `ApplicationAutomationMode` is a distinct axis from `ApplyRunMode`, and `application-submission-runtime-main` has no production caller (`application-submission-policy.ts`).
 - Submission evidence kinds are external only (`submissionOutcomeEvidenceKindValues`); there is no click or intent field, so intent can never prove submission.
 - `outcome_uncertain` permanently blocks automatic retry and forbids `finalSubmitOccurred` (`SubmissionOutcomeRecordSchema`, `application-submission-orchestrator.ts`).
 - `applicationPreparationStartedAt` and `applicationPreparationStartedLocalDate` are a pair: both absent is legacy unknown, both null is explicitly not begun (`apply.ts` refinement).

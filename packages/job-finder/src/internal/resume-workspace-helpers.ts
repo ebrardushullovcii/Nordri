@@ -1340,6 +1340,18 @@ function hasVisibleEntryContent(input: {
   );
 }
 
+// Visible content must keep letters from every script. The matching normalizer
+// used elsewhere is ASCII-only and turns non-Latin achievements into empty keys.
+function normalizeVisibleResumeText(value: string): string {
+  return value
+    .normalize("NFC")
+    .replace(/(^|[^a-z0-9])c\s*\+\s*\+(?=$|[^a-z0-9])/gi, "$1cplusplus")
+    .replace(/(^|[^a-z0-9])c\s*#(?=$|[^a-z0-9])/gi, "$1csharp")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{M}\p{N}]+/gu, " ")
+    .trim();
+}
+
 function removeBulletDuplicatesFromSummary(
   summary: string,
   bullets: readonly { included: boolean; text: string }[],
@@ -1347,7 +1359,7 @@ function removeBulletDuplicatesFromSummary(
   const visibleBulletLines = new Set(
     bullets
       .filter((bullet) => bullet.included)
-      .map((bullet) => normalizeText(bullet.text))
+      .map((bullet) => normalizeVisibleResumeText(bullet.text))
       .filter(Boolean),
   );
   const sentences = summary
@@ -1355,7 +1367,7 @@ function removeBulletDuplicatesFromSummary(
     .map((sentence) => sentence.trim())
     .filter(Boolean);
   const uniqueSentences = sentences.filter(
-    (sentence) => !visibleBulletLines.has(normalizeText(sentence)),
+    (sentence) => !visibleBulletLines.has(normalizeVisibleResumeText(sentence)),
   );
 
   return uniqueSentences.length > 0 ? uniqueSentences.join(" ") : null;
@@ -1392,10 +1404,23 @@ export function sanitizeResumeDraft(input: {
 
   const orderedDraft = normalizeResumeDraftEntryOrdering(input.draft);
   const nextSections = orderedDraft.sections.map((section) => {
-    const normalizedSectionText = normalizeText(section.text ?? "");
+    const normalizedSectionText = normalizeVisibleResumeText(
+      section.text ?? "",
+    );
+    // A summary the generator wrote badly is replaced by the person's own,
+    // never dropped: an export that starts at Experience with no summary is
+    // worse than the summary they already approved on their profile.
+    const profileSummaryFallback = (): string | null => {
+      if (section.kind !== "summary") return null;
+      const fallback = input.profile?.summary?.trim() || null;
+      if (!fallback || seenLines.has(normalizeVisibleResumeText(fallback)))
+        return null;
+      seenLines.add(normalizeVisibleResumeText(fallback));
+      return fallback;
+    };
     const nextText = (() => {
       if (!section.text?.trim()) {
-        return null;
+        return profileSummaryFallback();
       }
       if (section.locked) {
         seenLines.add(normalizedSectionText);
@@ -1412,7 +1437,7 @@ export function sanitizeResumeDraft(input: {
           hasUnsupportedQuantifiedClaim(section.text, profileSupportBank) ||
           looksLikeUnsupportedAbsoluteClaim(section.text, profileSupportBank))
       ) {
-        return null;
+        return profileSummaryFallback();
       }
       if (canSuppressGeneratedSummary) {
         // A summary is the pitch. Generators copy "Position ended in a
@@ -1421,9 +1446,9 @@ export function sanitizeResumeDraft(input: {
         const withoutEmploymentEnd = stripEmploymentEndSentences(section.text);
         if (withoutEmploymentEnd !== section.text.trim()) {
           if (!withoutEmploymentEnd) {
-            return null;
+            return profileSummaryFallback();
           }
-          seenLines.add(normalizeText(withoutEmploymentEnd));
+          seenLines.add(normalizeVisibleResumeText(withoutEmploymentEnd));
           return withoutEmploymentEnd;
         }
       }
@@ -1450,7 +1475,7 @@ export function sanitizeResumeDraft(input: {
       contextText?: string | null,
     ) =>
       bullets.filter((bullet) => {
-        const normalized = normalizeText(bullet.text);
+        const normalized = normalizeVisibleResumeText(bullet.text);
         if (!normalized) {
           return false;
         }
@@ -1458,7 +1483,10 @@ export function sanitizeResumeDraft(input: {
           seenLines.add(normalized);
           return true;
         }
-        if (contextText && normalizeText(contextText) === normalized) {
+        if (
+          contextText &&
+          normalizeVisibleResumeText(contextText) === normalized
+        ) {
           return false;
         }
         if (seenLines.has(normalized)) {
@@ -1507,10 +1535,10 @@ export function sanitizeResumeDraft(input: {
       .map((entry) => {
         if (entry.locked) {
           if (entry.summary) {
-            seenLines.add(normalizeText(entry.summary));
+            seenLines.add(normalizeVisibleResumeText(entry.summary));
           }
           for (const bullet of entry.bullets) {
-            const normalizedBullet = normalizeText(bullet.text);
+            const normalizedBullet = normalizeVisibleResumeText(bullet.text);
             if (normalizedBullet) {
               seenLines.add(normalizedBullet);
             }
@@ -1525,7 +1553,7 @@ export function sanitizeResumeDraft(input: {
           if (!deduplicatedSummary?.trim()) {
             return null;
           }
-          const normalized = normalizeText(deduplicatedSummary);
+          const normalized = normalizeVisibleResumeText(deduplicatedSummary);
           if (seenLines.has(normalized)) {
             return null;
           }
@@ -2317,6 +2345,11 @@ export type ResumeExportBlocker = {
   bulletId: string | null;
   flaggedText: string | null;
   message: string;
+  /**
+   * `needs_confirmation` when the line is a stretch the person keeps or
+   * removes under Lines to confirm; `unsupported` for everything else.
+   */
+  kind?: "needs_confirmation" | "unsupported";
 };
 
 function buildResumeExportBlockerKey(blocker: ResumeExportBlocker): string {
@@ -2352,6 +2385,12 @@ export function collectResumeExportBlockers(input: {
     blockers.push(blocker);
   };
 
+  const confirmNeededIssueIds = new Set(
+    input.validation.claimAssessments
+      .filter((assessment) => assessment.status === "confirm_needed")
+      .map((assessment) => `issue_claim_grounding_${assessment.id}`),
+  );
+
   for (const issue of input.validation.issues) {
     if (!isBlockingResumeValidationIssue(issue)) {
       continue;
@@ -2363,6 +2402,9 @@ export function collectResumeExportBlockers(input: {
       bulletId: issue.bulletId,
       flaggedText: issue.flaggedText ?? null,
       message: issue.message,
+      kind: confirmNeededIssueIds.has(issue.id)
+        ? "needs_confirmation"
+        : "unsupported",
     });
   }
 
@@ -2372,6 +2414,10 @@ export function collectResumeExportBlockers(input: {
     }
 
     push({
+      kind:
+        assessment.status === "confirm_needed"
+          ? "needs_confirmation"
+          : "unsupported",
       sectionId: assessment.sectionId,
       entryId: assessment.entryId,
       bulletId: assessment.bulletId,
@@ -2433,6 +2479,46 @@ export function evaluateResumeProposalExportGate(input: {
 }
 
 /**
+ * Which proposed change a flagged line belongs to. An inserted bullet gets
+ * its id only when applied, so it matched no patch by target and fell to the
+ * first change in the same section: a skill move was blamed for the new
+ * "Performance" skill while the insert itself read as clean. Matching the
+ * flagged text to the change that wrote it comes before that fallback.
+ */
+export function findResumeProposalPatchForBlocker(
+  patches: readonly ResumeDraftPatch[],
+  blocker: {
+    sectionId: string | null;
+    entryId: string | null;
+    bulletId: string | null;
+    flaggedText?: string | null;
+  },
+): string | null {
+  const sameTarget = patches.find(
+    (patch) =>
+      patch.targetSectionId === blocker.sectionId &&
+      (patch.targetEntryId ?? null) === blocker.entryId &&
+      (patch.targetBulletId ?? null) === blocker.bulletId,
+  );
+  if (sameTarget) {
+    return sameTarget.id;
+  }
+  const flagged = normalizeText(blocker.flaggedText ?? "");
+  const wroteFlaggedText = flagged
+    ? patches.find(
+        (patch) =>
+          patch.targetSectionId === blocker.sectionId &&
+          normalizeText(patch.newText ?? "") === flagged,
+      )
+    : undefined;
+  return (
+    wroteFlaggedText?.id ??
+    patches.find((patch) => patch.targetSectionId === blocker.sectionId)?.id ??
+    null
+  );
+}
+
+/**
  * Applies a pending proposal to a throwaway copy of the current draft and runs
  * the export gate over the result. This is the one call every proposal
  * producer uses to decide whether it may describe its own edits as grounded:
@@ -2480,22 +2566,16 @@ export function evaluateResumeProposalGrounding(input: {
 
   const approvalBlockers = gate.blockers.map((blocker) =>
     ResumeProposalApprovalBlockerSchema.parse({
-      patchId:
-        input.patches.find(
-          (patch) =>
-            patch.targetSectionId === blocker.sectionId &&
-            (patch.targetEntryId ?? null) === blocker.entryId &&
-            (patch.targetBulletId ?? null) === blocker.bulletId,
-        )?.id ??
-        input.patches.find(
-          (patch) => patch.targetSectionId === blocker.sectionId,
-        )?.id ??
-        null,
+      patchId: findResumeProposalPatchForBlocker(input.patches, blocker),
       sectionId: blocker.sectionId,
       entryId: blocker.entryId,
       bulletId: blocker.bulletId,
       flaggedText: blocker.flaggedText,
-      message: blocker.message,
+      message:
+        blocker.kind === "needs_confirmation"
+          ? "This wording stretches past your saved evidence. After you accept, it is listed under Lines to confirm, where you keep it or remove it."
+          : blocker.message,
+      kind: blocker.kind ?? "unsupported",
     }),
   );
 
@@ -2526,10 +2606,39 @@ export function buildResumeProposalReplyContent(input: {
   const plural = input.changeCount === 1 ? "" : "s";
   const note = selectAssistantNote(input.assistantNote);
 
-  if (input.approvalBlockers.length > 0) {
-    // A blocked proposal carries only the blocker: the model's own note could
-    // call the edit grounded or done, which the gate has just said it is not.
-    return `I prepared ${input.changeCount} resume edit${plural}${scope}, but ${input.approvalBlockers.length === 1 ? "1 of them would block approval" : `${input.approvalBlockers.length} of them would block approval`}: the new wording is not supported by your saved evidence. Nothing changed yet; rewrite the flagged text or reject this proposal.`;
+  // A blocker tied to no change and no section is about the whole draft, not
+  // the proposed wording; saying "the new wording is not supported" for it
+  // blamed an edit the card itself called clean.
+  const draftLevelBlocker = input.approvalBlockers.find(
+    (blocker) => blocker.patchId === null && blocker.sectionId === null,
+  );
+  const wordingBlockers = input.approvalBlockers.filter(
+    (blocker) => blocker !== draftLevelBlocker,
+  );
+  const confirmCount = wordingBlockers.filter(
+    (blocker) => blocker.kind === "needs_confirmation",
+  ).length;
+  const unsupportedCount = wordingBlockers.length - confirmCount;
+
+  if (unsupportedCount > 0) {
+    // The model saw this same verdict before it finished (the approval check
+    // is one of its tools), so its note usually says why it kept the wording:
+    // the person stated the fact themselves. A note that still calls the edit
+    // grounded contradicts the gate and is left out.
+    const blockedNote = /\bgrounded\b|\b(?:is|are|fully) (?:supported|backed)\b/iu.test(
+      note,
+    )
+      ? ""
+      : note;
+    return `I prepared ${input.changeCount} resume edit${plural}${scope}, but ${unsupportedCount === 1 ? "1 of them would block approval" : `${unsupportedCount} of them would block approval`}: your saved evidence does not back the new wording. Nothing changed yet. If it is true, accept it and approve it as accurate in the resume checks; otherwise ask me to reword it from your saved evidence.${blockedNote}`;
+  }
+
+  if (confirmCount > 0) {
+    return `I prepared ${input.changeCount} resume edit${plural}${scope} for your review. ${confirmCount === 1 ? "1 of them stretches" : `${confirmCount} of them stretch`} past your saved evidence, so after you accept, ${confirmCount === 1 ? "it is" : "they are"} listed under Lines to confirm for you to keep or remove. Nothing changed yet.${note}`;
+  }
+
+  if (draftLevelBlocker) {
+    return `I prepared ${input.changeCount} resume edit${plural}${scope} for your review. The edit${plural} add${input.changeCount === 1 ? "s" : ""} nothing that blocks approval, but the resume as a whole still does: ${draftLevelBlocker.message} Nothing changed yet; select the changes you want and accept them explicitly.`;
   }
 
   return `I prepared ${input.changeCount} grounded resume edit${plural}${scope} for your review. Nothing changed yet; select the changes you want and accept them explicitly.${note}`;

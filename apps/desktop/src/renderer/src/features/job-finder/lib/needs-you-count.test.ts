@@ -6,6 +6,7 @@ import {
   countApplicationLedgerEntries,
   countApplyRunItemsNeedingYou,
   countNeedsYouItems,
+  listApplicationsAwaitingUser,
 } from "./needs-you-count";
 
 describe("application ledger count", () => {
@@ -25,6 +26,84 @@ describe("application ledger count", () => {
       homeCount: 13,
       tasksCount: 13,
     });
+  });
+});
+
+describe("newest application result in Needs you", () => {
+  const record = {
+    id: "application_one",
+    jobId: "shared_job",
+    title: "Engineer",
+    company: "Example",
+    status: "approved",
+    lastAttemptState: "paused",
+    lastUpdatedAt: "2026-03-20T10:00:00.000Z",
+    questionSummary: { total: 0, answered: 0 },
+    consentSummary: { status: "approved" },
+  } as JobFinderWorkspaceSnapshot["applicationRecords"][number];
+  const otherRecord = {
+    ...record,
+    id: "application_two",
+  };
+  const result = (
+    applicationRecordId: string,
+    state: "awaiting_review" | "blocked",
+    updatedAt: string,
+    uncertain = false,
+  ) =>
+    ({
+      id: `${applicationRecordId}_${updatedAt}`,
+      applicationRecordId,
+      jobId: "shared_job",
+      state,
+      updatedAt,
+      startedAt: updatedAt,
+      blockerReason: uncertain ? "submission_outcome_uncertain" : null,
+      privacyReceipt: uncertain
+        ? { submissionOutcome: { outcome: "outcome_uncertain" } }
+        : null,
+    }) as JobFinderWorkspaceSnapshot["applyJobResults"][number];
+
+  it("drops a stale paused record once its newest result is ready", () => {
+    const applyJobResults = [
+      result(record.id, "awaiting_review", "2026-03-20T11:00:00.000Z"),
+      result(record.id, "blocked", "2026-03-20T10:30:00.000Z"),
+    ];
+    expect(
+      listApplicationsAwaitingUser({
+        applicationRecords: [record],
+        applyJobResults,
+        requests: [],
+      }),
+    ).toEqual([]);
+    expect(
+      countNeedsYouItems({
+        applicationRecords: [record],
+        applyJobResults,
+        requests: [],
+      }),
+    ).toBe(0);
+  });
+
+  it("keeps an uncertain result for its exact record, even beside a ready record for the same job", () => {
+    const applyJobResults = [
+      result(record.id, "awaiting_review", "2026-03-20T11:00:00.000Z"),
+      result(otherRecord.id, "blocked", "2026-03-20T11:01:00.000Z", true),
+    ];
+    expect(
+      listApplicationsAwaitingUser({
+        applicationRecords: [record, otherRecord],
+        applyJobResults,
+        requests: [],
+      }).map((item) => item.id),
+    ).toEqual([otherRecord.id]);
+    expect(
+      countNeedsYouItems({
+        applicationRecords: [record, otherRecord],
+        applyJobResults,
+        requests: [],
+      }),
+    ).toBe(1);
   });
 });
 

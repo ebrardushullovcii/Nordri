@@ -70,6 +70,7 @@ import type {
   JobFinderApplyRunActionInput,
   JobFinderApplyRunDetailsQuery,
   JobFinderApplicationStartTarget,
+  JobFinderPreparedApplicationPageInput,
   JobFinderDiscoveryCancellationInput,
   JobFinderOpenBrowserSessionInput,
   JobFinderSetResumeClaimConfirmationInput,
@@ -90,6 +91,7 @@ import type {
   ResumeImportProgressEvent,
   ResumeImportRun,
   ResumeApplicationMode,
+  TailoringMode,
   JobFinderResumePdfExportResult,
   RevealSavedFileResult,
   ResumePdfExportIntent,
@@ -103,6 +105,7 @@ import type {
   JobFinderTestSaveSurface,
   JobFinderAgentDiscoveryActionInput,
   JobFinderAgentDiscoveryResult,
+  JobFinderSearchRequest,
   JobFinderSettings,
   ProfileSetupState,
   ProjectGroupedManualAnswerCommand,
@@ -135,7 +138,9 @@ import type {
   UpdateApplicationDefaultsInput,
   UpdateApplicationAuthorityEnvelopeInput,
   UpdateWorkspaceBehaviorInput,
+  UpdateAiBehaviorInput,
   WorkspaceRevision,
+  WriteClipboardTextResult,
   UserActionCommandInput,
 } from "@unemployed/contracts";
 import { SYSTEM_THEME_CHANGE_EVENT } from "../shared/system-theme";
@@ -821,6 +826,11 @@ const desktopApi = {
         "job-finder:update-workspace-behavior",
         input,
       ) as Promise<JobFinderWorkspaceSnapshot>,
+    updateAiBehavior: (input: UpdateAiBehaviorInput) =>
+      ipcRenderer.invoke(
+        "job-finder:update-ai-behavior",
+        input,
+      ) as Promise<JobFinderWorkspaceSnapshot>,
     updateAppearanceTheme: (appearanceTheme: AppearanceTheme) =>
       ipcRenderer.invoke(
         "job-finder:update-appearance-theme",
@@ -876,7 +886,10 @@ const desktopApi = {
       ipcRenderer.invoke("job-finder:undo-profile-revision", {
         revisionId,
       }) as Promise<JobFinderWorkspaceSnapshot>,
-    importResume: (onProgress?: (event: ResumeImportProgressEvent) => void) => {
+    importResume: (
+      onProgress?: (event: ResumeImportProgressEvent) => void,
+      options?: { retryInterrupted?: boolean },
+    ) => {
       if (activeResumeImportRequestId) {
         return Promise.reject(new Error("A resume import is already running."));
       }
@@ -914,6 +927,9 @@ const desktopApi = {
         return Promise.resolve(
           ipcRenderer.invoke("job-finder:import-resume", {
             requestId,
+            ...(options?.retryInterrupted === true
+              ? { retryInterrupted: true }
+              : {}),
           }) as Promise<JobFinderWorkspaceSnapshot>,
         ).finally(cleanup);
       } catch (error) {
@@ -947,6 +963,7 @@ const desktopApi = {
     runAgentDiscovery: (
       onActivity?: (event: DiscoveryActivityEvent) => void,
       targetId?: string,
+      searchRequest?: JobFinderSearchRequest,
     ) => {
       if (activeAgentDiscoveryRequestId) {
         return Promise.reject(new Error("Agent discovery is already running."));
@@ -980,6 +997,7 @@ const desktopApi = {
       const payload: JobFinderAgentDiscoveryActionInput = {
         requestId,
         targetId: targetId ?? null,
+        ...(searchRequest ? { searchRequest } : {}),
       };
 
       const promise = ipcRenderer
@@ -1143,10 +1161,12 @@ const desktopApi = {
     setJobResumeApplicationMode: (
       jobId: string,
       resumeApplicationMode: ResumeApplicationMode,
+      resumeTailoringMode?: TailoringMode | null,
     ) =>
       ipcRenderer.invoke("job-finder:set-job-resume-application-mode", {
         jobId,
         resumeApplicationMode,
+        ...(resumeTailoringMode === undefined ? {} : { resumeTailoringMode }),
       }) as Promise<JobFinderWorkspaceSnapshot>,
     removeJobFromReview: (jobId: string) =>
       ipcRenderer.invoke("job-finder:remove-job-from-review", {
@@ -1195,6 +1215,11 @@ const desktopApi = {
         jobId,
         revisionId,
       }) as Promise<JobFinderWorkspaceSnapshot>,
+    undoResumeAssistantEdit: (jobId: string, revisionId: string) =>
+      ipcRenderer.invoke("job-finder:undo-resume-assistant-edit", {
+        jobId,
+        revisionId,
+      }) as Promise<JobFinderWorkspaceSnapshot>,
     regenerateResumeDraft: (jobId: string) =>
       ipcRenderer.invoke("job-finder:regenerate-resume-draft", {
         jobId,
@@ -1218,6 +1243,10 @@ const desktopApi = {
       ipcRenderer.invoke("job-finder:reveal-saved-file", {
         path,
       }) as Promise<RevealSavedFileResult>,
+    writeClipboardText: (text: string) =>
+      ipcRenderer.invoke("job-finder:write-clipboard-text", {
+        text,
+      }) as Promise<WriteClipboardTextResult>,
     approveResume: (jobId: string, exportId: string) =>
       ipcRenderer.invoke("job-finder:approve-resume", {
         jobId,
@@ -1286,9 +1315,11 @@ const desktopApi = {
       ) as Promise<JobFinderWorkspaceSnapshot>,
     startAutoApplyQueueRun: (
       jobIds: JobFinderApplyQueueActionInput["jobIds"],
+      applicationAutomationMode?: JobFinderApplyQueueActionInput["applicationAutomationMode"],
     ) =>
       ipcRenderer.invoke("job-finder:start-auto-apply-queue-run", {
         jobIds,
+        ...(applicationAutomationMode ? { applicationAutomationMode } : {}),
       }) as Promise<JobFinderWorkspaceSnapshot>,
     approveApplyRun: (input: JobFinderApplyRunActionInput) =>
       ipcRenderer.invoke(
@@ -1310,9 +1341,21 @@ const desktopApi = {
         "job-finder:revoke-apply-run-approval",
         input,
       ) as Promise<JobFinderWorkspaceSnapshot>,
+    focusPreparedApplicationPage: (
+      input: JobFinderPreparedApplicationPageInput,
+    ) =>
+      ipcRenderer.invoke(
+        "job-finder:focus-prepared-application-page",
+        input,
+      ) as Promise<JobFinderWorkspaceSnapshot>,
     submitPreparedApplication: (input: { jobId: string }) =>
       ipcRenderer.invoke(
         "job-finder:submit-prepared-application",
+        input,
+      ) as Promise<JobFinderWorkspaceSnapshot>,
+    sendPreparedApplications: (input: { jobIds: string[] }) =>
+      ipcRenderer.invoke(
+        "job-finder:send-prepared-applications",
         input,
       ) as Promise<JobFinderWorkspaceSnapshot>,
     approveApply: (input: JobFinderApplicationStartTarget) =>
@@ -1363,6 +1406,19 @@ const desktopApi = {
             loadApplyQueueDemo: () =>
               ipcRenderer.invoke(
                 "job-finder:test-load-apply-queue-demo",
+              ) as Promise<JobFinderWorkspaceSnapshot>,
+            loadWorkHistoryReviewDemo: () =>
+              ipcRenderer.invoke(
+                "job-finder:test-load-work-history-review-demo",
+              ) as Promise<JobFinderWorkspaceSnapshot>,
+            loadAgentOwnedBrowserDemo: (input: {
+              sourceUrl: string;
+              applicationUrl: string;
+              secondaryApplicationUrl?: string;
+            }) =>
+              ipcRenderer.invoke(
+                "job-finder:test-load-agent-owned-browser-demo",
+                input,
               ) as Promise<JobFinderWorkspaceSnapshot>,
             failNextSave: (surface: JobFinderTestSaveSurface) =>
               ipcRenderer.invoke(

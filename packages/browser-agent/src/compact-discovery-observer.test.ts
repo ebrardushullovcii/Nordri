@@ -245,6 +245,48 @@ describe("compact discovery observer", () => {
     ).toBe(true);
   });
 
+  test("keeps a first-seen access gate openable but never saves it as a posting", async () => {
+    const payload = emptyScanPayload();
+    payload.cardContainers.push(
+      makeContainer(
+        "gate",
+        [
+          "Security Engineer",
+          "Example Co · Remote · Full-time",
+          "Build secure systems.",
+        ],
+        { headingText: "Security Engineer" },
+      ),
+    );
+    payload.elements.push(
+      makeElement({
+        accessibleName: "Security Engineer",
+        href: "https://jobs.example.com/security/42",
+        containerKey: "gate",
+        jobIdHint: "42",
+      }),
+    );
+
+    const observation = await captureFrom({
+      url: "https://jobs.example.com/",
+      title: "Example Jobs",
+      bodyText: "Security Engineer Example Co Remote",
+      scanPayload: payload,
+    });
+
+    expect(observation.kind).toBe("supported");
+    if (observation.kind !== "supported") {
+      return;
+    }
+    expect(observation.postingCandidates).toHaveLength(0);
+    expect(observation.actionCandidates).toEqual([
+      expect.objectContaining({
+        kind: "open_posting",
+        label: "Security Engineer",
+      }),
+    ]);
+  });
+
   test("inline-metadata cards split company, location, salary, and date", async () => {
     const payload = emptyScanPayload();
     payload.cardContainers.push(

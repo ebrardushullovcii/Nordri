@@ -2,6 +2,7 @@ import type {
   JobFinderSetWorkHistoryReviewAcknowledgmentInput,
   WorkHistoryReviewSuggestion,
 } from "@unemployed/contracts";
+import type { BrowserSessionRuntime } from "@unemployed/browser-runtime";
 import { fnv1a32 } from "@unemployed/core";
 import { describe, expect, test } from "vitest";
 import {
@@ -12,6 +13,7 @@ import type { JobFinderWorkspaceService } from "./internal/workspace-service-con
 import { createAiClient } from "./workspace-service.test-runtimes";
 import {
   createWorkspaceServiceHarness,
+  createBrowserRuntime,
   createSeed,
 } from "./workspace-service.test-support";
 
@@ -49,7 +51,9 @@ const hiddenGapExperience = {
   achievements: ["Reconciled weekly invoice backlogs."],
 };
 
-function createHiddenRoleHarness() {
+function createHiddenRoleHarness(options?: {
+  browserRuntime?: BrowserSessionRuntime;
+}) {
   const seed = createSeed();
   const baseAiClient = createAiClient();
 
@@ -106,6 +110,9 @@ function createHiddenRoleHarness() {
         };
       },
     },
+    ...(options?.browserRuntime
+      ? { browserRuntime: options.browserRuntime }
+      : {}),
   });
 }
 
@@ -620,8 +627,33 @@ describe("work-history review acknowledgment commands", () => {
 
     await expect(
       workspaceService.startAutoApplyRun("job_ready"),
-    ).rejects.toThrow(/still need an explicit acknowledgment/i);
+    ).rejects.toThrow(/confirm the hidden role.* then apply again/i);
     expect(await repository.listApplyRuns()).toEqual([]);
+
+    const blockedSnapshot = await workspaceService.startApplyCopilotRun(
+      "job_ready",
+    );
+    const blockedRecord = blockedSnapshot.applicationRecords.find(
+      (record) => record.jobId === "job_ready",
+    );
+
+    expect(blockedRecord).toMatchObject({
+      lastAttemptState: "paused",
+      latestBlocker: {
+        code: "requires_manual_review",
+      },
+    });
+    expect(blockedRecord?.nextActionLabel).toMatch(
+      /open this job's resume in resume studio.*then apply again/i,
+    );
+    expect(blockedSnapshot.applyRuns.at(-1)).toMatchObject({
+      state: "paused_for_user_review",
+      submittedJobs: 0,
+    });
+    expect(blockedSnapshot.applyJobResults.at(-1)).toMatchObject({
+      state: "blocked",
+      blockerReason: "required_human_input",
+    });
   });
 
   test("compact-only drafts never block approval", async () => {
@@ -650,6 +682,37 @@ describe("work-history review acknowledgment commands", () => {
     expect(
       approved.resumeDrafts.find((draft) => draft.jobId === "job_ready"),
     ).toMatchObject({ status: "approved" });
+  });
+
+  test("an older tailored draft never blocks a job set to use the original resume", async () => {
+    const baseRuntime = createBrowserRuntime();
+    let preparedResumeSource: string | null = null;
+    const browserRuntime: BrowserSessionRuntime = {
+      ...baseRuntime,
+      executeApplicationFlow(source, input, options) {
+        preparedResumeSource = input.resumeArtifact.source;
+        return baseRuntime.executeApplicationFlow(source, input, options);
+      },
+    };
+    const { workspaceService } = createHiddenRoleHarness({ browserRuntime });
+    await generateWithSuggestions(workspaceService);
+    await workspaceService.setJobResumeApplicationMode(
+      "job_ready",
+      "original_resume",
+    );
+
+    const snapshot = await workspaceService.startApplyCopilotRun("job_ready");
+    const record = snapshot.applicationRecords.find(
+      (entry) => entry.jobId === "job_ready",
+    );
+
+    expect(record?.latestBlocker?.summary ?? "").not.toMatch(
+      /confirm the hidden role/i,
+    );
+    expect(snapshot.applyJobResults.at(-1)?.blockerReason).not.toBe(
+      "required_human_input",
+    );
+    expect(preparedResumeSource).toBe("original_upload");
   });
 
   test("exact-match helper ignores stale, cross-draft, and non-omission identities", () => {

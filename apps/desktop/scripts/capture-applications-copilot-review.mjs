@@ -186,7 +186,7 @@ async function captureApplicationsCopilotReview() {
     await window.getByRole('button', { name: /^Shortlisted/ }).click()
     await window.getByRole('heading', { level: 1, name: 'Shortlisted jobs' }).waitFor({ timeout: 10000 })
 
-    await window.getByRole('button', { name: /Open resume workspace/i }).first().click()
+    await window.getByRole('button', { name: /Edit resume|Open the resume|Review the resume/i }).first().click()
     await window.getByRole('heading', { level: 1, name: /Senior Product Designer/i }).waitFor({ timeout: 10000 })
 
     await window.getByRole('button', { name: 'Export PDF' }).click()

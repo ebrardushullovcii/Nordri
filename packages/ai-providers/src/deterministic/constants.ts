@@ -122,6 +122,10 @@ export const resumeSectionHeadings = new Set<string>([
   ...educationSectionAliases,
   ...languageSectionAliases,
   ...certificationSectionAliases,
+  "WORK ELIGIBILITY",
+  "WORK AUTHORIZATION",
+  "RIGHT TO WORK",
+  "VISA SPONSORSHIP",
 ]);
 
 export const contactOrMetaPattern =

@@ -752,6 +752,42 @@ ${ownSentence}`,
     ).toEqual(["English — Native"]);
   });
 
+  test("sanitizing visible resume text preserves distinct non-Latin achievements", () => {
+    const { profile, job } = getSeedContext();
+    const achievements = [
+      "Réconcilié les dossiers de Montréal.",
+      "Připravila přehled příjmů.",
+      "Συντόνισε την υποστήριξη πελατών.",
+      "Координировала обслуживание клиентов.",
+      "顧客対応と資料管理を担当しました。",
+      "负责客户支持和文档管理。",
+      "نسقت خدمة العملاء وحافظت على دقة السجلات.",
+      "顧客 20 件を担当しました。",
+      "資料 20 件を確認しました。",
+    ];
+    const draft = updateSection(
+      createBaseDraft(),
+      "section_experience",
+      (section) => ({
+        ...section,
+        entries: section.entries.map((entry) => ({
+          ...entry,
+          summary: "正確な記録を維持しました。",
+          bullets: createBullets("multilingual", [
+            ...achievements,
+            achievements[0]!.normalize("NFD"),
+          ]).map((bullet) => ({ ...bullet, origin: "user_edited" as const })),
+        })),
+      }),
+    );
+
+    const entry = getExperienceEntry(
+      sanitizeResumeDraft({ draft, job, profile }),
+    );
+    expect(entry.summary).toBe("正確な記録を維持しました。");
+    expect(entry.bullets.map((bullet) => bullet.text)).toEqual(achievements);
+  });
+
   test("sanitizeResumeDraft keeps grounded action bullets that include multiple commas", () => {
     const { profile, job } = getSeedContext();
     const actionBullet =
@@ -1733,9 +1769,10 @@ ${ownSentence}`,
       profile,
     });
 
+    // The bad generated summary is replaced by the person's own profile
+    // summary, never dropped: an export with no summary at all is worse.
     expect(getSection(sanitized, "section_summary")).toMatchObject({
-      text: null,
-      included: false,
+      text: profile.summary,
     });
     expect(getExperienceEntry(sanitized)).toMatchObject({
       profileRecordId: "experience_1",

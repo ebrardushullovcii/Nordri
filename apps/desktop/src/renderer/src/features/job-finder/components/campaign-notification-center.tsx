@@ -1,5 +1,6 @@
 import type { CampaignNotification } from "@unemployed/contracts";
 import { Button } from "@renderer/components/ui/button";
+import { buildJobFinderContextRoute } from "../lib/job-finder-context-navigation";
 import { JOB_FINDER_ROUTE_PATHS } from "../lib/job-finder-route-hrefs";
 
 const kindLabels: Record<CampaignNotification["kind"], string> = {
@@ -14,15 +15,15 @@ const NOTIFICATION_ROUTES: Record<CampaignNotification["kind"], string> = {
   digest_ready: "/job-finder/discovery",
   strong_match: "/job-finder/discovery",
   blocked_work: "/job-finder/actions",
-  schedule_paused: "/job-finder/campaigns",
-  rule_effect_update: "/job-finder/campaigns",
+  schedule_paused: "/job-finder/discovery",
+  rule_effect_update: "/job-finder/discovery",
 };
 const NOTIFICATION_OPEN_LABELS: Record<CampaignNotification["kind"], string> = {
   digest_ready: "Open Find jobs",
   strong_match: "Open Find jobs",
   blocked_work: "Open Needs you",
-  schedule_paused: "Open Search plans",
-  rule_effect_update: "Open Search plans",
+  schedule_paused: "Open Find jobs",
+  rule_effect_update: "Open Find jobs",
 };
 
 /**
@@ -31,16 +32,40 @@ const NOTIFICATION_OPEN_LABELS: Record<CampaignNotification["kind"], string> = {
  * so "Open Needs you" landed on a screen that said 0 and contradicted the
  * notification.
  */
-function getNotificationRoute(notification: CampaignNotification): string {
+function getNotificationRoute(
+  notification: CampaignNotification,
+  applicationRecoveryRecords: ReadonlyMap<string, string>,
+): string {
   if (notification.kind === "blocked_work" && notification.sourceTargetId) {
     return JOB_FINDER_ROUTE_PATHS.profileSources;
+  }
+  if (
+    notification.kind === "blocked_work" &&
+    notification.jobId &&
+    applicationRecoveryRecords.has(notification.jobId)
+  ) {
+    return buildJobFinderContextRoute(JOB_FINDER_ROUTE_PATHS.applications, {
+      applicationRecordId:
+        applicationRecoveryRecords.get(notification.jobId) ?? null,
+      jobId: notification.jobId,
+    });
   }
   return NOTIFICATION_ROUTES[notification.kind];
 }
 
-function getNotificationOpenLabel(notification: CampaignNotification): string {
+function getNotificationOpenLabel(
+  notification: CampaignNotification,
+  applicationRecoveryRecords: ReadonlyMap<string, string>,
+): string {
   if (notification.kind === "blocked_work" && notification.sourceTargetId) {
     return "Open job sources";
+  }
+  if (
+    notification.kind === "blocked_work" &&
+    notification.jobId &&
+    applicationRecoveryRecords.has(notification.jobId)
+  ) {
+    return "Open Applications";
   }
   return NOTIFICATION_OPEN_LABELS[notification.kind];
 }
@@ -77,6 +102,10 @@ export function CampaignNotificationCenter(props: {
   errorMessage?: string | null;
   loading?: boolean;
   notifications: readonly CampaignNotification[];
+  applicationRecoveryRecords?: readonly {
+    jobId: string;
+    applicationRecordId: string;
+  }[];
   /**
    * Work the rest of the app is already reporting (the sidebar badges).
    * Notifications must never claim nothing has happened while these exist.
@@ -99,6 +128,12 @@ export function CampaignNotificationCenter(props: {
   onNavigate?: (route: string) => void;
 }) {
   const notifications = [...props.notifications].sort(compareNewestFirst);
+  const applicationRecoveryRecords = new Map(
+    (props.applicationRecoveryRecords ?? []).map((record) => [
+      record.jobId,
+      record.applicationRecordId,
+    ]),
+  );
   const unreadCount = props.notifications.filter(
     (notification) => notification.unread,
   ).length;
@@ -121,7 +156,9 @@ export function CampaignNotificationCenter(props: {
           {/* The empty state below already explains what lands here. */}
           {hasNotifications ? (
             <p className="mt-3 text-xs text-foreground-muted">
-              {`${props.notifications.length} total · ${unreadCount} unread`}
+              {props.notifications.length === unreadCount
+                ? `${unreadCount} unread`
+                : `${props.notifications.length} total · ${unreadCount} unread`}
             </p>
           ) : null}
         </div>
@@ -238,14 +275,20 @@ export function CampaignNotificationCenter(props: {
                         <Button
                           onClick={() =>
                             props.onNavigate?.(
-                              getNotificationRoute(notification),
+                              getNotificationRoute(
+                                notification,
+                                applicationRecoveryRecords,
+                              ),
                             )
                           }
                           size="xs"
                           type="button"
                           variant="outline"
                         >
-                          {getNotificationOpenLabel(notification)}
+                          {getNotificationOpenLabel(
+                            notification,
+                            applicationRecoveryRecords,
+                          )}
                         </Button>
                       </div>
                     ) : null}

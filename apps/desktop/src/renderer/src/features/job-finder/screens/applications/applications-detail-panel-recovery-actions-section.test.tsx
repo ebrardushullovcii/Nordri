@@ -81,6 +81,39 @@ function primaryButtonLabels(container: HTMLElement): string[] {
   ).map((button) => (button.textContent ?? "").trim());
 }
 
+describe("ApplicationsDetailPanelRecoveryActionsSection · a sent application", () => {
+  it("does not show its batch's recovery summary once it was sent", () => {
+    const run = {
+      id: "run_1",
+      mode: "queue_auto",
+      state: "completed",
+      jobIds: ["job_1", "job_2"],
+    } as unknown as JobFinderWorkspaceSnapshot["applyRuns"][number];
+    const entries = [
+      {
+        jobId: "job_2",
+        label: "Dusk Engineer at Dusk",
+        runResult: buildResult({ jobId: "job_2", state: "failed" }),
+      },
+    ] as unknown as Parameters<
+      typeof ApplicationsDetailPanelRecoveryActionsSection
+    >[0]["selectedQueueOutcomeEntries"];
+    const sent = renderSection({
+      selectedRun: run,
+      selectedQueueOutcomeEntries: entries,
+      visibleApplyResult: buildResult({ state: "submitted" }),
+    });
+    expect(sent.container.textContent).not.toMatch(/Run outcome summary/i);
+    cleanup();
+    const failed = renderSection({
+      selectedRun: run,
+      selectedQueueOutcomeEntries: entries,
+      visibleApplyResult: buildResult({ state: "failed" }),
+    });
+    expect(failed.container.textContent).toMatch(/Run outcome summary/i);
+  });
+});
+
 describe("ApplicationsDetailPanelRecoveryActionsSection", () => {
   it("shows one primary action per state, with the label the state earns", () => {
     const cases: Array<{
@@ -201,7 +234,9 @@ describe("ApplicationsDetailPanelRecoveryActionsSection", () => {
     });
 
     expect(queryByRole("button", { name: "Try again" })).toBeNull();
-    expect(queryByRole("button", { name: /run preparation again/i })).toBeNull();
+    expect(
+      queryByRole("button", { name: /run preparation again/i }),
+    ).toBeNull();
     expect(queryByTestId("applications-recovery-more")).toBeNull();
   });
 
@@ -219,7 +254,9 @@ describe("ApplicationsDetailPanelRecoveryActionsSection", () => {
     expect(more.tagName).toBe("DETAILS");
     expect((more as HTMLDetailsElement).open).toBe(false);
     expect(getByRole("button", { name: "Run preparation again" })).toBeTruthy();
-    expect(getByRole("button", { name: "Prepare remaining jobs" })).toBeTruthy();
+    expect(
+      getByRole("button", { name: "Prepare remaining jobs" }),
+    ).toBeTruthy();
   });
 
   it("starts a fresh run under the saved mode from Try again", () => {
@@ -237,6 +274,32 @@ describe("ApplicationsDetailPanelRecoveryActionsSection", () => {
       jobId: "job_1",
       applicationRecordId: "application_1",
     });
+  });
+
+  it("retries the existing failed application instead of reopening its closed question step", () => {
+    const onStartApplyCopilot = vi.fn();
+    const onOpenNeedsYou = vi.fn();
+    const { getByRole, queryByRole, queryByText } = renderSection({
+      canRestageAutoRun: false,
+      onStartApplyCopilot,
+      onOpenNeedsYou,
+      pausedQuestionCount: 4,
+      visibleApplyResult: buildResult({
+        state: "failed",
+        blockerReason: "required_human_input",
+        latestQuestionCount: 4,
+        detail: "The person closed this step. Choose Try again to continue.",
+      }),
+    });
+
+    expect(queryByRole("button", { name: "Answer the questions" })).toBeNull();
+    expect(queryByText("The form asks 4 questions.")).toBeNull();
+    fireEvent.click(getByRole("button", { name: "Try again" }));
+    expect(onStartApplyCopilot).toHaveBeenCalledExactlyOnceWith({
+      jobId: "job_1",
+      applicationRecordId: "application_1",
+    });
+    expect(onOpenNeedsYou).not.toHaveBeenCalled();
   });
 
   it("shows a progress sentence with a spinner and no button while preparing", () => {
@@ -281,6 +344,20 @@ describe("ApplicationsDetailPanelRecoveryActionsSection", () => {
       ).toBe("opened_application_page");
     });
 
+    it("tells the person to send a filled-in form themselves once it is open", () => {
+      const { getByTestId, getByRole } = renderSection({
+        onFinishInBrowser: () => ({ kind: "opened_application_page" }),
+        visibleApplyResult: buildResult({ state: "awaiting_review" }),
+      });
+
+      fireEvent.click(
+        getByRole("button", { name: "Open the Job Finder browser" }),
+      );
+      expect(getByTestId("manual-field-finish-status").textContent).toMatch(
+        /press the site's own send button/i,
+      );
+    });
+
     it("says only the window opened when the page was not reopened", () => {
       const { getByTestId, getByRole } = renderHandoff(() => ({
         kind: "opened_browser_only",
@@ -289,9 +366,9 @@ describe("ApplicationsDetailPanelRecoveryActionsSection", () => {
       fireEvent.click(
         getByRole("button", { name: "Open the Job Finder browser" }),
       );
-      expect(
-        getByTestId("manual-field-finish-status").textContent,
-      ).toMatch(/this application page was not reopened/i);
+      expect(getByTestId("manual-field-finish-status").textContent).toMatch(
+        /this application page was not reopened/i,
+      );
     });
 
     it("reports a rejected hand-off with its reason instead of claiming success", async () => {
@@ -341,14 +418,14 @@ describe("ApplicationsDetailPanelRecoveryActionsSection", () => {
         getByRole("button", { name: "Open the Job Finder browser" }),
       );
       await waitFor(() => {
-        expect(
-          getByTestId("confirm-finished-in-browser").className,
-        ).toContain("font-semibold");
+        expect(getByTestId("confirm-finished-in-browser").className).toContain(
+          "font-semibold",
+        );
       });
     });
   });
 
-  it("offers only Answer in Needs you when the form is waiting on an answer", () => {
+  it("offers only Answer the questions when the form is waiting on an answer", () => {
     const onOpenNeedsYou = vi.fn();
     const { container, getByRole, getByTestId, queryByRole } = renderSection({
       onOpenNeedsYou,
@@ -360,12 +437,12 @@ describe("ApplicationsDetailPanelRecoveryActionsSection", () => {
       }),
     });
 
-    expect(primaryButtonLabels(container)).toEqual(["Answer in Needs you"]);
+    expect(primaryButtonLabels(container)).toEqual(["Answer the questions"]);
     expect(getByTestId("applications-recovery-reason").textContent).toBe(
       "The form asks: How many years of Kubernetes do you have?",
     );
     expect(queryByRole("button", { name: "Try again" })).toBeNull();
-    fireEvent.click(getByRole("button", { name: "Answer in Needs you" }));
+    fireEvent.click(getByRole("button", { name: "Answer the questions" }));
     expect(onOpenNeedsYou).toHaveBeenCalled();
   });
 
@@ -382,10 +459,24 @@ describe("ApplicationsDetailPanelRecoveryActionsSection", () => {
       }),
     });
 
-    expect(
-      getByTestId("confirm-finished-in-browser-status").textContent,
-    ).toBe(
+    expect(getByTestId("confirm-finished-in-browser-status").textContent).toBe(
       "Your answer did not fit this question; choose one of the options in Needs you.",
+    );
+  });
+
+  it("keeps the chosen apply mode clear while checking an answered step", () => {
+    const { getByTestId } = renderSection({
+      canConfirmFinishedInBrowser: true,
+      confirmFinishedInBrowserStatus: "checking",
+      onConfirmFinishedInBrowser: vi.fn(),
+      visibleApplyResult: buildResult({
+        state: "blocked",
+        blockerReason: "required_human_input",
+      }),
+    });
+
+    expect(getByTestId("confirm-finished-in-browser-status").textContent).toBe(
+      "Checking this step in the Job Finder browser… When it is complete, Job Finder continues in your chosen apply mode.",
     );
   });
 });

@@ -2271,6 +2271,90 @@ describe("matching helpers", () => {
     expect(locationEvidence?.detail).not.toMatch(/outside the saved areas/);
   });
 
+  test("with remote not counting as any location, a remote listing must name a saved place", () => {
+    const berlin = ["Berlin, Germany"];
+    const off = { remoteCountsAsAnyLocation: false };
+
+    // On (the default): a remote region or the whole world covers Berlin.
+    expect(assessLocationCompatibility("Remote, Europe", berlin)).toBe(
+      "compatible",
+    );
+    expect(assessLocationCompatibility("Remote, Worldwide", berlin)).toBe(
+      "compatible",
+    );
+    // Off: only the place the listing names counts.
+    expect(assessLocationCompatibility("Remote, Europe", berlin, off)).toBe(
+      "incompatible",
+    );
+    expect(assessLocationCompatibility("Remote, Worldwide", berlin, off)).toBe(
+      "incompatible",
+    );
+    expect(
+      assessLocationCompatibility("Berlin, Germany (Remote)", berlin, off),
+    ).toBe("compatible");
+    // A listing that says only "Remote" names no place either way.
+    expect(assessLocationCompatibility("Remote", berlin, off)).toBe("unknown");
+    // A person who saved "Remote, Worldwide" as a place keeps those listings.
+    expect(
+      assessLocationCompatibility(
+        "Remote, Worldwide",
+        [...berlin, "Remote, Worldwide"],
+        off,
+      ),
+    ).toBe("compatible");
+    // Off also stops a remote work-mode preference from settling the place.
+    expect(
+      assessPostingLocationCompatibility(
+        { location: "Remote (Chicago, IL)", workMode: ["remote"] },
+        { locations: ["Austin, TX"], workModes: ["remote"] },
+        off,
+      ),
+    ).toEqual({ state: "incompatible", remotePreferenceApplied: false });
+  });
+
+  test("scores a remote-region listing lower when remote does not count as any location", () => {
+    const seed = createSeed();
+    const preferences = {
+      ...seed.searchPreferences,
+      targetRoles: ["Senior Software Engineer"],
+      locations: ["Berlin, Germany"],
+      workModes: [],
+    };
+    const posting = {
+      ...seed.savedJobs[0]!,
+      title: "Senior Software Engineer",
+      location: "Remote, Europe",
+      workMode: ["remote" as const],
+      detailQuality: "detail_enriched" as const,
+      screeningHints: {
+        ...seed.savedJobs[0]!.screeningHints,
+        remoteGeographies: [],
+        requiresSecurityClearance: null,
+      },
+    };
+
+    const on = createMatchAssessment(seed.profile, preferences, posting);
+    const off = createMatchAssessment(
+      seed.profile,
+      {
+        ...preferences,
+        discovery: {
+          ...preferences.discovery,
+          remoteCountsAsAnyLocation: false,
+        },
+      },
+      posting,
+    );
+
+    expect(on.gaps).not.toContain(
+      "Location falls outside the preferred search areas.",
+    );
+    expect(off.score).toBeLessThan(on.score);
+    expect(off.gaps).toContain(
+      "Location falls outside the preferred search areas.",
+    );
+  });
+
   test("keeps geographically unspecified listings out of location evidence claims", () => {
     const seed = createSeed();
     const profile = {

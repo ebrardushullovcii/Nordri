@@ -85,9 +85,7 @@ function panel(queue: readonly ReviewQueueItem[]) {
       <ReviewQueueListPanel
         isJobPending={(jobId) => jobId === "never"}
         onSelectItem={(jobId) => void jobId}
-        onToggleQueueSelection={(jobId, checked) => void [jobId, checked]}
         queue={queue}
-        queueSelection={[]}
         selectedItem={null}
       />
     </MemoryRouter>
@@ -148,7 +146,7 @@ describe("ReviewQueueListPanel row memoisation", () => {
     expect(container.querySelector('[data-collection-item-id="job_1"]')).toBe(
       untouchedRowBefore,
     );
-    expect(container.textContent).toContain("Ready to prepare");
+    expect(container.textContent).toContain("Ready to apply");
   });
 
   it("re-renders only the newly selected row and the one it replaced", () => {
@@ -163,10 +161,8 @@ describe("ReviewQueueListPanel row memoisation", () => {
         <ReviewQueueListPanel
           isJobPending={() => false}
           onSelectItem={vi.fn()}
-          onToggleQueueSelection={vi.fn()}
           queue={queue}
-          queueSelection={[]}
-          selectedItem={queue[0] ?? null}
+            selectedItem={queue[0] ?? null}
         />
       </MemoryRouter>,
     );
@@ -178,10 +174,8 @@ describe("ReviewQueueListPanel row memoisation", () => {
         <ReviewQueueListPanel
           isJobPending={() => false}
           onSelectItem={vi.fn()}
-          onToggleQueueSelection={vi.fn()}
           queue={queue}
-          queueSelection={[]}
-          selectedItem={queue[2] ?? null}
+            selectedItem={queue[2] ?? null}
         />
       </MemoryRouter>,
     );

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { ApplicationReviewCard } from "@unemployed/contracts";
 import { Button } from "@renderer/components/ui/button";
+import { ExternalUrlLink } from "../../components/open-outside-links";
 import {
   TECHNICAL_DETAILS_LABEL,
   describeFailure,
@@ -76,7 +77,7 @@ export function ApplicationsReviewCard({
         </p>
         {card.pageUrl ? (
           <p className="break-all text-(length:--text-small) leading-5 text-foreground-soft">
-            Page: {card.pageUrl}
+            Page: <ExternalUrlLink url={card.pageUrl} />
           </p>
         ) : null}
       </div>

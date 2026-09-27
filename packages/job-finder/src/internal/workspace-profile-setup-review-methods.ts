@@ -244,6 +244,7 @@ export function createWorkspaceProfileSetupReviewMethods(input: {
             currentSetupContext.latestResumeImportRun?.analysisProviderLabel ??
             null,
           analysisWarnings: nextProfile.baseResume.analysisWarnings,
+          confirmedCandidateId: linkedCandidate.id,
         },
       );
 

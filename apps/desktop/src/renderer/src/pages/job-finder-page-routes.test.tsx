@@ -1,18 +1,38 @@
 // @vitest-environment jsdom
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { MemoryRouter, Outlet, Route, Routes } from "react-router-dom";
 import type { JobFinderWorkspaceSnapshot } from "@unemployed/contracts";
 import type { FinishInBrowserInput } from "@renderer/features/job-finder/screens/applications/applications-detail-panel-recovery-actions-section";
 import type { JobFinderPageContext } from "./job-finder-page-context";
 import {
   JobFinderApplicationsRoute,
+  getUnavailableApplicationMessage,
   runJobFinderApplicationBrowserHandoff,
   selectCampaignApplicationsScope,
   selectOutcomeAnalyticsScope,
   selectRapidReviewScope,
 } from "./job-finder-page-routes";
+
+describe("getUnavailableApplicationMessage", () => {
+  it("keeps the exact start failure visible after navigation outruns record creation", () => {
+    expect(
+      getUnavailableApplicationMessage(
+        "The approved answer snapshot could not be read.",
+      ),
+    ).toBe("The approved answer snapshot could not be read.");
+    expect(getUnavailableApplicationMessage("  ")).toBe(
+      "The requested application is no longer available or is not unique, so no other application was selected.",
+    );
+  });
+});
 
 // Only the props Applications hands its screen matter here, so the screen
 // itself is replaced by a recorder. That keeps this a test of the route's
@@ -22,6 +42,9 @@ const { applicationsScreenProps } = vi.hoisted(() => ({
     current: null as {
       canConfirmFinishedInBrowser?: boolean;
       onConfirmFinishedInBrowser?: (input: FinishInBrowserInput) => void;
+      onSubmitPreparedApplication?: (jobId: string) => Promise<void>;
+      onPrepareApplicationAgain?: (jobId: string) => Promise<void>;
+      onSelectRecord?: (recordId: string) => void;
       selectedRecord?: { id: string } | null;
     } | null,
   },
@@ -369,6 +392,41 @@ describe("runJobFinderApplicationBrowserHandoff", () => {
     expect(onOpenBrowserSession).toHaveBeenCalledTimes(1);
   });
 
+  it("focuses the exact prepared result when review has no pending step", async () => {
+    const onFocusPreparedApplicationPage = vi.fn(() => Promise.resolve(true));
+    const onOpenBrowserSession = vi.fn();
+    const onPerformUserAction = vi.fn();
+
+    const outcome = await runJobFinderApplicationBrowserHandoff({
+      onFocusPreparedApplicationPage,
+      onOpenBrowserSession,
+      onPerformUserAction,
+      requests: [],
+      target,
+    });
+
+    expect(outcome).toEqual({ kind: "opened_application_page" });
+    expect(onFocusPreparedApplicationPage).toHaveBeenCalledWith(target);
+    expect(onOpenBrowserSession).not.toHaveBeenCalled();
+    expect(onPerformUserAction).not.toHaveBeenCalled();
+  });
+
+  it("reports a missing prepared-result binding without opening an arbitrary browser tab", async () => {
+    const onFocusPreparedApplicationPage = vi.fn(() => Promise.resolve(false));
+    const onOpenBrowserSession = vi.fn();
+
+    const outcome = await runJobFinderApplicationBrowserHandoff({
+      onFocusPreparedApplicationPage,
+      onOpenBrowserSession,
+      onPerformUserAction: vi.fn(),
+      requests: [],
+      target,
+    });
+
+    expect(outcome).toEqual({ kind: "failed", reason: "" });
+    expect(onOpenBrowserSession).not.toHaveBeenCalled();
+  });
+
   it("reports a failure with its reason instead of claiming the page opened", async () => {
     const outcome = await runJobFinderApplicationBrowserHandoff({
       onOpenBrowserSession: vi.fn(),
@@ -573,18 +631,30 @@ describe("Applications browser-step confirmation", () => {
   }
 
   function renderApplicationsRoute(input: {
+    actionMessage?: string;
+    expectUnavailable?: boolean;
+    initialEntry?: string;
+    isPending?: (scope: string) => boolean;
     onPerformUserAction: ReturnType<typeof vi.fn>;
+    onSelectApplicationRecord?: ReturnType<typeof vi.fn>;
+    onSelectCampaign?: ReturnType<typeof vi.fn>;
+    onSubmitPreparedApplication?: (jobId: string) => Promise<void>;
+    onStartApplyCopilot?: JobFinderPageContext["onStartApplyCopilot"];
     workspace: JobFinderWorkspaceSnapshot;
   }) {
     const handlerStubs = new Map<string | symbol, () => undefined>();
     const base = {
-      actionState: { message: null },
+      actionState: { message: input.actionMessage ?? null },
       isAnyPending: () => false,
-      isPending: () => false,
+      isPending: input.isPending ?? (() => false),
       liveDiscoveryEvents: [],
       onNavigateSafely: vi.fn(),
       onPerformUserAction: input.onPerformUserAction,
-      onSelectApplicationRecord: vi.fn(),
+      onStartApplyCopilot: input.onStartApplyCopilot ?? vi.fn(),
+      onSubmitPreparedApplication:
+        input.onSubmitPreparedApplication ?? vi.fn(() => Promise.resolve()),
+      onSelectApplicationRecord: input.onSelectApplicationRecord ?? vi.fn(),
+      onSelectCampaign: input.onSelectCampaign ?? vi.fn(),
       saveState: { state: "idle", version: 0 },
       selectedApplicationAttempt: null,
       selectedApplicationRecord: null,
@@ -607,7 +677,9 @@ describe("Applications browser-step confirmation", () => {
     }) as unknown as JobFinderPageContext;
 
     render(
-      <MemoryRouter initialEntries={["/job-finder/applications"]}>
+      <MemoryRouter
+        initialEntries={[input.initialEntry ?? "/job-finder/applications"]}
+      >
         <Routes>
           <Route path="/job-finder" element={<Outlet context={context} />}>
             <Route
@@ -620,11 +692,11 @@ describe("Applications browser-step confirmation", () => {
     );
 
     const props = applicationsScreenProps.current;
-    if (!props) {
+    if (!props && !input.expectUnavailable) {
       throw new Error("Applications did not render its screen.");
     }
 
-    return props;
+    return props ?? {};
   }
 
   beforeEach(() => {
@@ -639,6 +711,190 @@ describe("Applications browser-step confirmation", () => {
     cleanup();
     applicationsScreenProps.current = null;
     vi.unstubAllGlobals();
+  });
+
+  it("shows the start failure and retries the exact job with one press when no record was created", () => {
+    const current = selectedRecordWorkspace([]);
+    current.applicationRecords = [];
+    current.applyRuns = [];
+    current.applyJobResults = [];
+    const onStartApplyCopilot = vi.fn();
+    renderApplicationsRoute({
+      actionMessage: "The AI provider key is missing.",
+      expectUnavailable: true,
+      initialEntry: "/job-finder/applications?jobId=job_a",
+      onPerformUserAction: vi.fn(),
+      onStartApplyCopilot,
+      workspace: current,
+    });
+
+    expect(screen.getByText("The AI provider key is missing.")).toBeTruthy();
+    expect(
+      screen.getByRole("heading", { name: "Could not start application" }),
+    ).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(onStartApplyCopilot).toHaveBeenCalledExactlyOnceWith({
+      jobId: "job_a",
+    });
+  });
+
+  it.each([
+    "/job-finder/applications?jobId=missing_job",
+    "/job-finder/applications?jobId=job_a&applicationRecordId=missing_record",
+  ])(
+    "does not start a replacement for an unavailable target at %s",
+    (initialEntry) => {
+      const onStartApplyCopilot = vi.fn();
+      renderApplicationsRoute({
+        expectUnavailable: true,
+        initialEntry,
+        onPerformUserAction: vi.fn(),
+        onStartApplyCopilot,
+        workspace: selectedRecordWorkspace([]),
+      });
+      expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+      expect(
+        screen.getByRole("button", { name: "Show all applications" }),
+      ).toBeTruthy();
+      expect(onStartApplyCopilot).not.toHaveBeenCalled();
+    },
+  );
+
+  it("opens a linked application in its own search plan", async () => {
+    const current = selectedRecordWorkspace([]);
+    current.campaigns.push({
+      id: "campaign_2",
+      name: "Campaign Two",
+      jobIds: ["job_b"],
+    } as JobFinderWorkspaceSnapshot["campaigns"][number]);
+    current.discoveryJobs.push({
+      id: "job_b",
+      title: "Job B",
+    } as JobFinderWorkspaceSnapshot["discoveryJobs"][number]);
+    current.applicationRecords.push({
+      id: "record_b",
+      jobId: "job_b",
+    } as JobFinderWorkspaceSnapshot["applicationRecords"][number]);
+    const onSelectCampaign = vi.fn(() => new Promise<boolean>(() => undefined));
+
+    renderApplicationsRoute({
+      expectUnavailable: true,
+      initialEntry: "/job-finder/applications?applicationRecordId=record_b",
+      onPerformUserAction: vi.fn(),
+      onSelectCampaign,
+      workspace: current,
+    });
+
+    await waitFor(() =>
+      expect(onSelectCampaign).toHaveBeenCalledExactlyOnceWith("campaign_2"),
+    );
+    expect(screen.queryByText("Application unavailable")).toBeNull();
+  });
+
+  it("does not switch plans for a stale application ID", () => {
+    const onSelectCampaign = vi.fn();
+    renderApplicationsRoute({
+      expectUnavailable: true,
+      initialEntry:
+        "/job-finder/applications?applicationRecordId=missing_record",
+      onPerformUserAction: vi.fn(),
+      onSelectCampaign,
+      workspace: selectedRecordWorkspace([]),
+    });
+
+    expect(screen.getByText("Application unavailable")).toBeTruthy();
+    expect(onSelectCampaign).not.toHaveBeenCalled();
+  });
+
+  it("retries a declined switch for a linked application", async () => {
+    const current = selectedRecordWorkspace([]);
+    current.campaigns.push({
+      id: "campaign_2",
+      name: "Campaign Two",
+      jobIds: ["job_b"],
+    } as JobFinderWorkspaceSnapshot["campaigns"][number]);
+    current.applicationRecords.push({
+      id: "record_b",
+      jobId: "job_b",
+    } as JobFinderWorkspaceSnapshot["applicationRecords"][number]);
+    const onSelectCampaign = vi.fn(() => Promise.resolve(false));
+    renderApplicationsRoute({
+      expectUnavailable: true,
+      initialEntry: "/job-finder/applications?applicationRecordId=record_b",
+      onPerformUserAction: vi.fn(),
+      onSelectCampaign,
+      workspace: current,
+    });
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Switch to Campaign Two" }),
+    );
+    await waitFor(() => expect(onSelectCampaign).toHaveBeenCalledTimes(2));
+  });
+
+  it("does not show an older same-job record while a new application is starting", () => {
+    const onSelectApplicationRecord = vi.fn();
+    const props = renderApplicationsRoute({
+      initialEntry: "/job-finder/applications?jobId=job_a",
+      isPending: () => true,
+      onPerformUserAction: vi.fn(),
+      onSelectApplicationRecord,
+      workspace: selectedRecordWorkspace([]),
+    });
+
+    expect(props.selectedRecord).toBeNull();
+    props.onSelectRecord?.("record_a");
+    expect(onSelectApplicationRecord).not.toHaveBeenCalled();
+  });
+
+  it("selects the record owned by the newest active same-job result", () => {
+    const current = selectedRecordWorkspace([], { secondRecord: true });
+    current.applicationRecords = [
+      {
+        id: "record_a",
+        jobId: "job_a",
+        lastUpdatedAt: "2026-09-22T01:00:00.000Z",
+      },
+      {
+        id: "record_b",
+        jobId: "job_a",
+        lastUpdatedAt: "2026-09-22T02:00:00.000Z",
+      },
+    ] as typeof current.applicationRecords;
+    current.applyRuns = [
+      {
+        id: "run_current",
+        campaignId: "campaign_1",
+        jobIds: ["job_a"],
+        state: "running",
+      },
+    ] as typeof current.applyRuns;
+    current.applyJobResults = [
+      {
+        id: "result_a",
+        runId: "run_current",
+        jobId: "job_a",
+        applicationRecordId: "record_a",
+        state: "cancelled",
+        updatedAt: "2026-09-22T01:00:00.000Z",
+      },
+      {
+        id: "result_b",
+        runId: "run_current",
+        jobId: "job_a",
+        applicationRecordId: "record_b",
+        state: "filling",
+        updatedAt: "2026-09-22T02:00:00.000Z",
+      },
+    ] as typeof current.applyJobResults;
+
+    const props = renderApplicationsRoute({
+      initialEntry: "/job-finder/applications?jobId=job_a",
+      onPerformUserAction: vi.fn(),
+      workspace: current,
+    });
+
+    expect(props.selectedRecord?.id).toBe("record_b");
   });
 
   it("sends the confirmation for the pending request the control is enabled by, even when it came from an earlier run", () => {
@@ -674,6 +930,39 @@ describe("Applications browser-step confirmation", () => {
       submitAuthorized: false,
       accountCreationAuthorized: false,
     });
+  });
+
+  it("reprepares a closed review page on the selected application record in one action", async () => {
+    const onStartApplyCopilot = vi.fn();
+    const props = renderApplicationsRoute({
+      onPerformUserAction: vi.fn(),
+      workspace: selectedRecordWorkspace([], { secondRecord: true }),
+      onStartApplyCopilot,
+    });
+
+    expect(props.onPrepareApplicationAgain).toBeTypeOf("function");
+    await props.onPrepareApplicationAgain?.("job_a");
+    expect(onStartApplyCopilot).toHaveBeenCalledExactlyOnceWith({
+      jobId: "job_a",
+      applicationRecordId: "record_a",
+    });
+    await expect(
+      props.onPrepareApplicationAgain?.("different_job"),
+    ).rejects.toThrow("Select this application again before retrying.");
+    expect(onStartApplyCopilot).toHaveBeenCalledTimes(1);
+  });
+
+  it("wires the Ask-before-sending action into Applications", async () => {
+    const onSubmitPreparedApplication = vi.fn(() => Promise.resolve());
+    const props = renderApplicationsRoute({
+      onPerformUserAction: vi.fn(),
+      workspace: selectedRecordWorkspace([]),
+      onSubmitPreparedApplication,
+    });
+
+    await props.onSubmitPreparedApplication?.("job_a");
+
+    expect(onSubmitPreparedApplication).toHaveBeenCalledWith("job_a");
   });
 
   it("still sends the confirmation when the pending request came from the visible run", () => {

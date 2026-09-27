@@ -6,6 +6,7 @@ import type {
   ApplicationCrmSettings,
   BrowserSessionState,
   JobFinderSettings,
+  UpdateAiBehaviorInput,
   UpdateApplicationDefaultsInput,
   UpdateWorkspaceBehaviorInput,
 } from "@unemployed/contracts";
@@ -25,9 +26,11 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { SettingsScreen } from "./settings-screen";
 
-// Plain-language section label. The rename changes the tab name only; the
+// Plain-language section labels. The renames change the tab names only; the
 // prepare-only boundary is untouched.
 const WORKSPACE_BEHAVIOR_LABEL = "Browser & saved jobs";
+const AI_BEHAVIOR_LABEL = "AI behavior";
+const RESUME_LOOK_LABEL = "Resume look";
 
 const globalActScope = globalThis as typeof globalThis & {
   IS_REACT_ACT_ENVIRONMENT?: boolean;
@@ -65,6 +68,9 @@ function createCallbacks() {
     onResetWorkspace: vi.fn(),
     onSettingsDraftEdited: vi.fn(),
     // Production scoped saves resolve false when a save did not commit.
+    onUpdateAiBehavior: vi.fn<
+      (input: UpdateAiBehaviorInput) => Promise<boolean>
+    >(() => Promise.resolve(true)),
     onUpdateAppearanceTheme: vi.fn<
       (theme: AppearanceTheme) => Promise<boolean>
     >(() => Promise.resolve(true)),
@@ -91,6 +97,7 @@ function renderScreen(settings: JobFinderSettings, callbacks: Callbacks) {
         isWorkspaceResetPending={false}
         onResetWorkspace={callbacks.onResetWorkspace}
         onSettingsDraftEdited={callbacks.onSettingsDraftEdited}
+        onUpdateAiBehavior={(input) => callbacks.onUpdateAiBehavior(input)}
         onUpdateAppearanceTheme={(theme) =>
           callbacks.onUpdateAppearanceTheme(theme)
         }
@@ -101,6 +108,7 @@ function renderScreen(settings: JobFinderSettings, callbacks: Callbacks) {
         onUpdateWorkspaceBehavior={(input) =>
           callbacks.onUpdateWorkspaceBehavior(input)
         }
+        searchPreferences={{ tailoringMode: "balanced" }}
         settings={currentSettings}
       />
     </MemoryRouter>
@@ -116,6 +124,28 @@ function renderScreen(settings: JobFinderSettings, callbacks: Callbacks) {
     },
   };
 }
+
+const defaultAiBehaviorInput = {
+  aiBehavior: {
+    profileAssistant: { initiative: "suggest", replyStyle: "brief" },
+    jobSearch: { selectivity: "balanced", remoteCountsAsAnyLocation: true },
+    applying: {
+      coverLetterPolicy: "when_required",
+      writtenAnswerLength: "short",
+      preApprovedDeclarations: [
+        "truthfulness_certification",
+        "privacy_notice_acknowledgement",
+        "terms_acceptance",
+      ],
+    },
+  },
+  coverLetter: {
+    tone: "plain_professional",
+    length: "standard",
+    language: null,
+    sample: null,
+  },
+} satisfies UpdateAiBehaviorInput;
 
 describe("SettingsScreen scoped section saves", () => {
   afterEach(() => {
@@ -170,18 +200,19 @@ describe("SettingsScreen scoped section saves", () => {
       expect(callbacks.onUpdateAppearanceTheme).toHaveBeenCalledWith("dark"),
     );
     expect(callbacks.onUpdateApplicationDefaults).not.toHaveBeenCalled();
+    expect(callbacks.onUpdateAiBehavior).not.toHaveBeenCalled();
     expect(callbacks.onUpdateWorkspaceBehavior).not.toHaveBeenCalled();
 
     const workspace = screen.getByRole("region", {
       name: WORKSPACE_BEHAVIOR_LABEL,
     });
-    const defaults = screen.getByRole("region", {
-      name: "Application defaults",
+    const resumeLook = screen.getByRole("region", {
+      name: RESUME_LOOK_LABEL,
     });
 
     expect(
-      within(defaults).getByRole<HTMLButtonElement>("button", {
-        name: "Save resume preference",
+      within(resumeLook).getByRole<HTMLButtonElement>("button", {
+        name: "Save resume look",
       }).disabled,
     ).toBe(true);
 
@@ -192,7 +223,7 @@ describe("SettingsScreen scoped section saves", () => {
     const workspaceSave = within(workspace).getByRole<HTMLButtonElement>(
       "button",
       {
-        name: "Save workspace behavior",
+        name: "Save browser & saved jobs",
       },
     );
     expect(workspaceSave.disabled).toBe(false);
@@ -204,37 +235,35 @@ describe("SettingsScreen scoped section saves", () => {
         keepSessionAlive: true,
       }),
     );
-    // The application defaults save was never triggered by the workspace save.
+    // No other section's save was triggered by the workspace save.
     expect(callbacks.onUpdateApplicationDefaults).not.toHaveBeenCalled();
+    expect(callbacks.onUpdateAiBehavior).not.toHaveBeenCalled();
 
     view.unmount();
   });
 
-  it("keeps staged resume choices across an external settings refresh and sends only defaults-owned fields", async () => {
+  it("keeps a staged AI behavior choice across an external settings refresh and sends only AI-owned fields", async () => {
     const callbacks = createCallbacks();
     const initialSettings = parseSettings();
     const view = renderScreen(initialSettings, callbacks);
 
-    const defaultsRegion = screen.getByRole("region", {
-      name: "Application defaults",
+    const aiRegion = screen.getByRole("region", { name: AI_BEHAVIOR_LABEL });
+    const originalChoice = within(aiRegion).getByRole("radio", {
+      name: /^Original/,
     });
-    const originalCvChoice = within(defaultsRegion).getByRole("radio", {
-      name: /Use my original resume unchanged/,
-    });
-    fireEvent.click(originalCvChoice);
-    expect(originalCvChoice.getAttribute("aria-checked")).toBe("true");
+    fireEvent.click(originalChoice);
+    expect(originalChoice.getAttribute("aria-checked")).toBe("true");
 
     // External refresh: persisted workspace behavior changed elsewhere.
     view.rerender(parseSettings({ keepSessionAlive: true }));
 
-    const refreshedDefaultsRegion = screen.getByRole("region", {
-      name: "Application defaults",
+    const refreshedAiRegion = screen.getByRole("region", {
+      name: AI_BEHAVIOR_LABEL,
     });
-    const stillStagedChoice = within(refreshedDefaultsRegion).getByRole(
-      "radio",
-      { name: /Use my original resume unchanged/ },
-    );
-    // The staged resume choice survived the external settings prop refresh.
+    const stillStagedChoice = within(refreshedAiRegion).getByRole("radio", {
+      name: /^Original/,
+    });
+    // The staged choice survived the external settings prop refresh.
     expect(stillStagedChoice.getAttribute("aria-checked")).toBe("true");
 
     const refreshedWorkspaceRegion = screen.getByRole("region", {
@@ -247,46 +276,45 @@ describe("SettingsScreen scoped section saves", () => {
     ).toBe("true");
     expect(
       within(refreshedWorkspaceRegion).getByRole<HTMLButtonElement>("button", {
-        name: "Save workspace behavior",
+        name: "Save browser & saved jobs",
       }).disabled,
     ).toBe(true);
 
-    const defaultsSave = within(
-      refreshedDefaultsRegion,
-    ).getByRole<HTMLButtonElement>("button", {
-      name: "Save resume preference",
-    });
-    expect(defaultsSave.disabled).toBe(false);
-    fireEvent.click(defaultsSave);
+    const aiSave = within(refreshedAiRegion).getByRole<HTMLButtonElement>(
+      "button",
+      { name: "Save AI behavior" },
+    );
+    expect(aiSave.disabled).toBe(false);
+    fireEvent.click(aiSave);
 
     await waitFor(() =>
-      expect(callbacks.onUpdateApplicationDefaults).toHaveBeenCalledTimes(1),
+      expect(callbacks.onUpdateAiBehavior).toHaveBeenCalledTimes(1),
     );
-    expect(callbacks.onUpdateApplicationDefaults).toHaveBeenCalledWith({
-      fontPreset: "inter_requisite",
-      resumeApplicationMode: "original_resume",
-      resumeTemplateId: "classic_ats",
-    } satisfies UpdateApplicationDefaultsInput);
+    expect(callbacks.onUpdateAiBehavior).toHaveBeenCalledWith({
+      ...defaultAiBehaviorInput,
+      resumeApproach: "original_resume",
+    } satisfies UpdateAiBehaviorInput);
     // No whole JobFinderSettings payload and no workspace fields leaked.
-    const payload = callbacks.onUpdateApplicationDefaults.mock
-      .calls[0]?.[0] as UpdateApplicationDefaultsInput;
+    const payload = callbacks.onUpdateAiBehavior.mock
+      .calls[0]?.[0] as UpdateAiBehaviorInput;
     expect(Object.keys(payload).sort()).toEqual([
-      "fontPreset",
-      "resumeApplicationMode",
-      "resumeTemplateId",
+      "aiBehavior",
+      "coverLetter",
+      "resumeApproach",
     ]);
     expect(callbacks.onUpdateWorkspaceBehavior).not.toHaveBeenCalled();
+    expect(callbacks.onUpdateApplicationDefaults).not.toHaveBeenCalled();
 
     view.unmount();
   });
 
   it("reports saved then failed save truth for a scoped section without touching others", async () => {
-    let rejectDefaults: ((error: unknown) => void) | null = null;
+    let rejectAi: ((error: unknown) => void) | null = null;
     const callbacks = createCallbacks();
-    callbacks.onUpdateApplicationDefaults.mockImplementationOnce(
+    callbacks.onUpdateAiBehavior.mockImplementationOnce(
       () =>
         new Promise<boolean>((_resolve, reject) => {
-          rejectDefaults = reject;
+          rejectAi = reject;
         }),
     );
     const view = renderScreen(
@@ -294,49 +322,36 @@ describe("SettingsScreen scoped section saves", () => {
       callbacks,
     );
 
-    const defaultsRegion = screen.getByRole("region", {
-      name: "Application defaults",
-    });
-    fireEvent.click(
-      within(defaultsRegion).getByRole("radio", {
-        name: /Use my original resume unchanged/,
-      }),
-    );
+    const aiRegion = screen.getByRole("region", { name: AI_BEHAVIOR_LABEL });
+    fireEvent.click(within(aiRegion).getByRole("radio", { name: /^Original/ }));
 
-    const pendingSave = within(defaultsRegion).getByRole<HTMLButtonElement>(
+    const pendingSave = within(aiRegion).getByRole<HTMLButtonElement>(
       "button",
-      {
-        name: "Save resume preference",
-      },
+      { name: "Save AI behavior" },
     );
     fireEvent.click(pendingSave);
     expect(
-      within(defaultsRegion).queryByRole("button", {
-        name: "Retry resume preference",
-      }),
+      within(aiRegion).queryByRole("button", { name: "Retry AI behavior" }),
     ).toBeNull();
 
     await act(() => {
-      rejectDefaults?.(new Error("save rejected"));
+      rejectAi?.(new Error("save rejected"));
       return Promise.resolve();
     });
 
-    const retrySave = within(defaultsRegion).getByRole<HTMLButtonElement>(
-      "button",
-      {
-        name: "Retry resume preference",
-      },
-    );
+    const retrySave = within(aiRegion).getByRole<HTMLButtonElement>("button", {
+      name: "Retry AI behavior",
+    });
     expect(retrySave.disabled).toBe(false);
     expect(
-      within(defaultsRegion).getByText(
-        "Resume preference was not saved. Retry before leaving this page.",
+      within(aiRegion).getByText(
+        "AI behavior was not saved. Retry before leaving this page.",
       ),
     ).toBeTruthy();
 
     fireEvent.click(retrySave);
     await waitFor(() =>
-      expect(callbacks.onUpdateApplicationDefaults).toHaveBeenCalledTimes(2),
+      expect(callbacks.onUpdateAiBehavior).toHaveBeenCalledTimes(2),
     );
 
     view.unmount();
@@ -369,6 +384,7 @@ describe("SettingsScreen scoped section saves", () => {
       }),
     );
     expect(callbacks.onUpdateApplicationDefaults).not.toHaveBeenCalled();
+    expect(callbacks.onUpdateAiBehavior).not.toHaveBeenCalled();
     expect(callbacks.onUpdateWorkspaceBehavior).not.toHaveBeenCalled();
 
     view.unmount();
@@ -439,47 +455,35 @@ describe("SettingsScreen scoped section saves", () => {
     view.unmount();
   });
 
-  it("reports a resolved false resume-preference save as failed instead of saved", async () => {
+  it("reports a resolved false AI behavior save as failed instead of saved", async () => {
     const callbacks = createCallbacks();
-    callbacks.onUpdateApplicationDefaults.mockResolvedValueOnce(false);
+    callbacks.onUpdateAiBehavior.mockResolvedValueOnce(false);
     const view = renderScreen(parseSettings(), callbacks);
 
-    const defaultsRegion = screen.getByRole("region", {
-      name: "Application defaults",
-    });
+    const aiRegion = screen.getByRole("region", { name: AI_BEHAVIOR_LABEL });
+    fireEvent.click(within(aiRegion).getByRole("radio", { name: /^Original/ }));
     fireEvent.click(
-      within(defaultsRegion).getByRole("radio", {
-        name: /Use my original resume unchanged/,
-      }),
-    );
-    fireEvent.click(
-      within(defaultsRegion).getByRole<HTMLButtonElement>("button", {
-        name: "Save resume preference",
+      within(aiRegion).getByRole<HTMLButtonElement>("button", {
+        name: "Save AI behavior",
       }),
     );
 
     await waitFor(() =>
       expect(
-        within(defaultsRegion).queryByRole("button", {
-          name: "Retry resume preference",
-        }),
+        within(aiRegion).queryByRole("button", { name: "Retry AI behavior" }),
       ).not.toBeNull(),
     );
     expect(
-      within(defaultsRegion).getByText(
-        "Resume preference was not saved. Retry before leaving this page.",
+      within(aiRegion).getByText(
+        "AI behavior was not saved. Retry before leaving this page.",
       ),
     ).toBeTruthy();
     // No local saved message may appear for a resolved false.
-    expect(
-      within(defaultsRegion).queryByText(
-        "Resume preference saved for newly shortlisted jobs.",
-      ),
-    ).toBeNull();
+    expect(within(aiRegion).queryByText(/AI behavior saved/)).toBeNull();
     // The staged choice survives the failed save.
     expect(
-      within(defaultsRegion)
-        .getByRole("radio", { name: /Use my original resume unchanged/ })
+      within(aiRegion)
+        .getByRole("radio", { name: /^Original/ })
         .getAttribute("aria-checked"),
     ).toBe("true");
 
@@ -503,21 +507,21 @@ describe("SettingsScreen scoped section saves", () => {
     fireEvent.click(within(workspace).getAllByRole("switch")[0]!);
     fireEvent.click(
       within(workspace).getByRole<HTMLButtonElement>("button", {
-        name: "Save workspace behavior",
+        name: "Save browser & saved jobs",
       }),
     );
 
     expect(
       within(workspace)
         .getByRole<HTMLButtonElement>("button", {
-          name: "Saving workspace behavior",
+          name: "Saving browser & saved jobs",
         })
         .hasAttribute("disabled"),
     ).toBe(false);
     expect(
       within(workspace)
         .getByRole<HTMLButtonElement>("button", {
-          name: "Saving workspace behavior",
+          name: "Saving browser & saved jobs",
         })
         .getAttribute("aria-disabled"),
     ).toBe("true");
@@ -529,7 +533,7 @@ describe("SettingsScreen scoped section saves", () => {
 
     expect(
       within(workspace).getByText(
-        "Workspace behavior was not saved. Retry before leaving this page.",
+        "Browser & saved jobs were not saved. Retry before leaving this page.",
       ),
     ).toBeTruthy();
     expect(

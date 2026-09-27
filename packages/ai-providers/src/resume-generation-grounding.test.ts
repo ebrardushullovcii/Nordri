@@ -1397,6 +1397,44 @@ describe("compactJobDescriptionForModel", () => {
 });
 
 describe("collectListingRequestedSkills", () => {
+  it.each([
+    "Practical knowledge of Terraform and Kubernetes.",
+    "Experience with practical Terraform and Kubernetes skills.",
+  ])(
+    "keeps technologies without the qualification adjective in %s",
+    (qualification) => {
+      expect(
+        collectListingRequestedSkills({
+          keySkills: [],
+          minimumQualifications: [qualification],
+        }).sort(),
+      ).toEqual(["Kubernetes", "Terraform"]);
+    },
+  );
+  it("does not take a word of the posting title or employer name for a skill", () => {
+    const description = [
+      "Cloud Garden Workshop · Remote, Europe · Posted 12d ago",
+      "Full-stack Engineer, Cloud Gardens",
+      "Work with a small team on accessible interfaces, APIs, data pipelines and developer tools.",
+    ].join("\n");
+
+    const collected = collectListingRequestedSkills({
+      title: "Full-stack Engineer, Cloud Gardens",
+      company: "Cloud Garden Workshop",
+      description,
+    });
+
+    expect(collected).not.toContain("Gardens");
+    expect(collected).toContain("APIs");
+    expect(
+      collectListingRequestedSkills({
+        title: "Backend Engineer, Willow APIs",
+        company: "Willow Circuit House",
+        description: `Backend Engineer, Willow APIs\n${description}`,
+      }),
+    ).toContain("APIs");
+  });
+
   it("collects a technology named only in qualifications, not keySkills", () => {
     const collected = collectListingRequestedSkills({
       keySkills: ["TypeScript"],
@@ -1540,7 +1578,13 @@ describe("collectListingRequestedSkills", () => {
     });
 
     expect(collected).toEqual(
-      expect.arrayContaining(["TypeScript", "React", "Terraform", "Kubernetes", "Postgres"]),
+      expect.arrayContaining([
+        "TypeScript",
+        "React",
+        "Terraform",
+        "Kubernetes",
+        "Postgres",
+      ]),
     );
     expect(collected.join(" | ")).not.toMatch(
       /kitchen display|restaurant operations|manifests reviewable|delivery pipeline|storefronts|settlement|typescript services/i,
@@ -1606,6 +1650,26 @@ describe("mergeAggressiveVisibleSkills", () => {
 });
 
 describe("buildGroundedResumeRewriteModelPayload", () => {
+  it("does not turn clear communication into a requested technology", () => {
+    const payload = buildGroundedResumeRewriteModelPayload({
+      profile: createProfile(),
+      searchPreferences: createPreferences(),
+      settings: createSettings(),
+      job: {
+        ...createJobPosting(),
+        keySkills: ["TypeScript"],
+        minimumQualifications: [
+          "Professional software development experience.",
+          "Clear communication and an interest in learning.",
+        ],
+      },
+      resumeText: "Resume text",
+    });
+
+    expect(payload.targetJob.listingRequestedSkills).toContain("TypeScript");
+    expect(payload.targetJob.listingRequestedSkills).not.toContain("Clear");
+  });
+
   it("puts qualification-only listing skills on the target job for the model", () => {
     const payload = buildGroundedResumeRewriteModelPayload({
       profile: createProfile(),
@@ -1642,7 +1706,9 @@ describe("describeAggressiveResumeEditPolicy", () => {
     const policy = describeAggressiveResumeEditPolicy("aggressive");
     expect(policy).toMatch(/first interview/);
     expect(policy).toMatch(/listing asks for/);
-    expect(policy).not.toMatch(/\b(lie|lies|lying|liar|dishonest|unethical|fraud)\b/i);
+    expect(policy).not.toMatch(
+      /\b(lie|lies|lying|liar|dishonest|unethical|fraud)\b/i,
+    );
     expect(describeAggressiveResumeEditPolicy("conservative")).toBeNull();
     expect(describeAggressiveResumeEditPolicy("balanced")).toBeNull();
   });

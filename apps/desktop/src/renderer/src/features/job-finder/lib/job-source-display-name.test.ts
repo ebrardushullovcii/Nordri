@@ -1,10 +1,28 @@
 import { describe, expect, test } from "vitest";
 
 import {
+  deriveJobSourceLabel,
   UNNAMED_JOB_SOURCE_NAME,
   jobSourceLabel,
   recordedJobSourceName,
 } from "./job-source-display-name";
+
+describe("deriveJobSourceLabel", () => {
+  test("keeps local replica sources distinguishable by path", () => {
+    expect(deriveJobSourceLabel("http://127.0.0.1:47950/greenhouse/")).toBe(
+      "127.0.0.1:47950/greenhouse",
+    );
+    expect(deriveJobSourceLabel("http://localhost:47950/lever/jobs")).toBe(
+      "localhost:47950/lever",
+    );
+  });
+
+  test("uses the hostname for ordinary public sources", () => {
+    expect(deriveJobSourceLabel("https://www.example.com/jobs")).toBe(
+      "example.com",
+    );
+  });
+});
 
 const targets = [
   { id: "target_tzhl5nit", label: "RemoteOK" },

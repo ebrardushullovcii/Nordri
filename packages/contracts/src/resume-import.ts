@@ -377,6 +377,53 @@ export type ResumeParserWorkerResponse = z.infer<
   typeof ResumeParserWorkerResponseSchema
 >;
 
+/**
+ * What a text import left marked in progress says once the app has restarted
+ * without it. Shared so every surface that shows the run tells the same
+ * story and offers the same way back: import the file again.
+ */
+export const RESUME_IMPORT_INTERRUPTED_MESSAGE =
+  "This import stopped before it finished, most likely because the app closed while it was reading your resume. Nothing from it was applied. Import the file again to finish it.";
+
+export const resumeImportRunFailureKindValues = ["interrupted"] as const;
+export const ResumeImportRunFailureKindSchema = z.enum(
+  resumeImportRunFailureKindValues,
+);
+export type ResumeImportRunFailureKind = z.infer<
+  typeof ResumeImportRunFailureKindSchema
+>;
+
+/**
+ * True for a text import the app closed on. Runs saved before
+ * `failureKind` existed are recognised by their message.
+ */
+export function isInterruptedResumeImportRun(
+  run: {
+    status: string;
+    errorMessage?: string | null | undefined;
+    failureKind?: ResumeImportRunFailureKind | null | undefined;
+  } | null,
+): boolean {
+  return (
+    run?.status === "failed" &&
+    (run.failureKind === "interrupted" ||
+      run.errorMessage === RESUME_IMPORT_INTERRUPTED_MESSAGE)
+  );
+}
+
+/**
+ * The renderer's request to import a resume. `requestId` names the progress
+ * channel and the picker a cancel press refers to; `retryInterrupted` imports
+ * again the working copy a stopped import saved, with no file picker.
+ */
+export const ImportResumeRequestSchema = z
+  .object({
+    requestId: NonEmptyStringSchema.optional(),
+    retryInterrupted: z.boolean().optional(),
+  })
+  .strict();
+export type ImportResumeRequest = z.infer<typeof ImportResumeRequestSchema>;
+
 export const resumeImportRunStatusValues = [
   "queued",
   "parsing",
@@ -409,6 +456,9 @@ export const resumeImportTargetSectionValues = [
   "proof_point",
   "answer_bank",
   "application_identity",
+  // Only ever produced from a sentence the resume states outright ("EU
+  // citizen", "no visa sponsorship required"); the model stages never emit it.
+  "work_eligibility",
 ] as const;
 export const ResumeImportTargetSectionSchema = z.enum(
   resumeImportTargetSectionValues,
@@ -849,6 +899,11 @@ export const ResumeImportRunSchema = z.object({
     .optional(),
   warnings: z.array(NonEmptyStringSchema).default([]),
   errorMessage: NonEmptyStringSchema.nullable().default(null),
+  /**
+   * Why a failed run failed, as data. `errorMessage` is copy and may be
+   * reworded; surfaces that offer "import again" read this instead.
+   */
+  failureKind: ResumeImportRunFailureKindSchema.nullable().optional(),
   candidateCounts: ResumeImportRunCandidateCountsSchema.default({}),
   timelineRepairProposals: z
     .array(ResumeTimelineRepairProposalSchema)

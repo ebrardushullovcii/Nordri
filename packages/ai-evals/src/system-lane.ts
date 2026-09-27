@@ -8,7 +8,12 @@ import {
   runProfileCopilotAgentTask,
   runResumeEditAgentTask,
 } from "@unemployed/ai-providers";
-import { runAgentDiscovery, type AgentConfig } from "@unemployed/browser-agent";
+import {
+  createApplyPageHands,
+  runJobSearchAgent,
+  type AgentConfig,
+} from "@unemployed/browser-agent";
+import { createPlaywrightApplyPageMechanics } from "@unemployed/browser-runtime";
 import {
   BrowserVisualAnalysisInputSchema,
   JobDiscoveryTargetSchema,
@@ -187,7 +192,7 @@ function createPrimaryClient(
 
 async function finalizeSyntheticSourceInstruction(input: {
   readonly client: ReturnType<typeof createPrimaryClient>;
-  readonly workerResult: Awaited<ReturnType<typeof runAgentDiscovery>>;
+  readonly workerResult: Awaited<ReturnType<typeof runJobSearchAgent>>;
   readonly runId: string;
   readonly startingUrl: string;
 }) {
@@ -1379,7 +1384,13 @@ export async function runBrowserAgentSystemCase(input: {
     };
     const runWorker = () =>
       withQuietAgentConsole(() =>
-        runAgentDiscovery(page, config, client, client),
+        runJobSearchAgent({
+          hands: createApplyPageHands(createPlaywrightApplyPageMechanics(page)),
+          page,
+          config,
+          llmClient: client,
+          jobExtractor: client,
+        }),
       );
     if (isSourceDebug) {
       const captured = await withCapturedModelFetch({

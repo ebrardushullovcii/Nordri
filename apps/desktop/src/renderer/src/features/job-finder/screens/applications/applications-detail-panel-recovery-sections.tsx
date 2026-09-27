@@ -4,6 +4,8 @@ import type {
   JobFinderWorkspaceSnapshot,
 } from "@unemployed/contracts";
 import type { QueueEntry } from "./applications-detail-panel-helpers";
+import type { ApplicationAnswerStep } from "./applications-answer-step";
+import type { ApplyRunContext } from "./applications-recovery-state";
 import {
   ApplicationsDetailPanelRecoveryActionsSection,
   type ConfirmFinishedInBrowserStatus,
@@ -25,6 +27,7 @@ export function ApplicationsDetailPanelRecoverySections(props: {
   onStartAutoApplyQueue: (jobIds: string[]) => void;
   onOpenSafeguards?: () => void;
   onOpenNeedsYou?: () => void;
+  answerStep?: ApplicationAnswerStep | null;
   onAllowSiteSaves?: (host: string | null) => void;
   /**
    * Pass-through only. The declared return type has to match the leaf's, or
@@ -34,6 +37,7 @@ export function ApplicationsDetailPanelRecoverySections(props: {
   onFinishInBrowser?: FinishInBrowserHandler;
   onConfirmFinishedInBrowser?: (input: FinishInBrowserInput) => void;
   canConfirmFinishedInBrowser?: boolean;
+  browserStepContinuesOnItsOwn?: boolean;
   confirmFinishedInBrowserStatus?: ConfirmFinishedInBrowserStatus;
   confirmFinishedInBrowserBlockerText?: string | null;
   selectedQueueOutcomeEntries: QueueEntry[];
@@ -42,7 +46,10 @@ export function ApplicationsDetailPanelRecoverySections(props: {
   pausedQuestionCount?: number | null;
   selectedRecordJobId: string;
   selectedApplicationRecordId: string;
+  selectedRecordLatestBlockerCode?: string | null;
   selectedRun: JobFinderWorkspaceSnapshot["applyRuns"][number] | null;
+  /** What the visible result's run is doing (a planned job's standing). */
+  visibleApplyRunContext?: ApplyRunContext | null;
   visibleApplyResult:
     | JobFinderWorkspaceSnapshot["applyJobResults"][number]
     | null;
@@ -57,19 +64,23 @@ export function ApplicationsDetailPanelRecoverySections(props: {
     onStartAutoApplyQueue,
     onOpenSafeguards,
     onOpenNeedsYou,
+    answerStep = null,
     onAllowSiteSaves,
     onFinishInBrowser,
     onConfirmFinishedInBrowser,
     canConfirmFinishedInBrowser,
+    browserStepContinuesOnItsOwn,
     confirmFinishedInBrowserStatus,
     confirmFinishedInBrowserBlockerText,
     selectedQueueOutcomeEntries,
     selectedQueueRecoveryEntries,
     selectedQueueRecoveryJobIds,
     selectedApplicationRecordId,
+    selectedRecordLatestBlockerCode,
     pausedQuestionCount,
     selectedRecordJobId,
     selectedRun,
+    visibleApplyRunContext = null,
     visibleApplyResult,
   } = props;
 
@@ -84,10 +95,12 @@ export function ApplicationsDetailPanelRecoverySections(props: {
       onStartAutoApplyQueue={onStartAutoApplyQueue}
       {...(onOpenSafeguards ? { onOpenSafeguards } : {})}
       {...(onOpenNeedsYou ? { onOpenNeedsYou } : {})}
+      answerStep={answerStep}
       {...(onAllowSiteSaves ? { onAllowSiteSaves } : {})}
       {...(onFinishInBrowser ? { onFinishInBrowser } : {})}
       {...(onConfirmFinishedInBrowser ? { onConfirmFinishedInBrowser } : {})}
       canConfirmFinishedInBrowser={canConfirmFinishedInBrowser ?? false}
+      browserStepContinuesOnItsOwn={browserStepContinuesOnItsOwn ?? false}
       confirmFinishedInBrowserStatus={confirmFinishedInBrowserStatus ?? "idle"}
       confirmFinishedInBrowserBlockerText={
         confirmFinishedInBrowserBlockerText ?? null
@@ -96,9 +109,13 @@ export function ApplicationsDetailPanelRecoverySections(props: {
       selectedQueueRecoveryEntries={selectedQueueRecoveryEntries}
       selectedQueueRecoveryJobIds={selectedQueueRecoveryJobIds}
       selectedApplicationRecordId={selectedApplicationRecordId}
+      {...(selectedRecordLatestBlockerCode !== undefined
+        ? { selectedRecordLatestBlockerCode }
+        : {})}
       pausedQuestionCount={pausedQuestionCount ?? null}
       selectedRecordJobId={selectedRecordJobId}
       selectedRun={selectedRun}
+      visibleApplyRunContext={visibleApplyRunContext}
       visibleApplyResult={visibleApplyResult}
     />
   );

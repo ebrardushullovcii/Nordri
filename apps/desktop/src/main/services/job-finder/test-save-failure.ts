@@ -17,6 +17,7 @@ import { isDesktopTestApiEnabled } from "./test-api";
  * setup save of whichever surface was armed is exactly the intent.
  */
 const JOB_FINDER_TEST_SAVE_SURFACE_CHANNELS = {
+  campaign: ["job-finder:save-campaign"],
   profile: [
     "job-finder:save-profile",
     "job-finder:save-search-preferences",
@@ -31,12 +32,14 @@ const JOB_FINDER_TEST_SAVE_SURFACE_CHANNELS = {
     "job-finder:save-settings",
     "job-finder:update-application-defaults",
     "job-finder:update-workspace-behavior",
+    "job-finder:update-ai-behavior",
     "job-finder:update-appearance-theme",
     "job-finder:update-tracker-crm",
   ],
   resume: [
     "job-finder:save-resume-draft",
     "job-finder:restore-resume-draft-revision",
+    "job-finder:undo-resume-assistant-edit",
     "job-finder:apply-resume-patch",
   ],
 } as const satisfies Record<JobFinderTestSaveSurface, readonly string[]>;

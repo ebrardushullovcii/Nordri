@@ -131,6 +131,7 @@ export function createWorkspaceIntelligenceMethods(input: {
   }
 
   return {
+    refreshCompanyIntelligenceState: refreshCompanyState,
     async refreshCompanyIntelligence(): Promise<JobFinderWorkspaceSnapshot> {
       await refreshCompanyState();
       return input.getWorkspaceSnapshot();

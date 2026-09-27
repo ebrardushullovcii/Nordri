@@ -7,6 +7,12 @@ import type {
   SafeguardMutationInput,
 } from "@unemployed/contracts";
 import type { BadgeTone } from "../../lib/job-finder-types";
+import { buildJobFinderContextRoute } from "../../lib/job-finder-context-navigation";
+import {
+  hasPendingSampleReview,
+  listApplyRunsStoppedBySafeguard,
+} from "../../lib/apply-run-pause-state";
+import { AUTOMATIC_APPLICATION_FAILURE_PAUSE_ID } from "@unemployed/job-finder/plan-safeguard-pauses";
 
 /**
  * Stable per-mutation key used for pending-action scopes so the Safeguards
@@ -132,6 +138,7 @@ export interface SafeguardRow {
   tags: readonly string[];
   controls: readonly SafeguardControl[];
   recoveryLink: SafeguardRecoveryLink | null;
+  sampleLinks?: readonly SafeguardRecoveryLink[];
   searchText: string;
 }
 
@@ -585,7 +592,11 @@ export function buildSafeguardsPresentationModel(
         `sample:${pause.minimumSample}`,
       ],
       controls,
-      recoveryLink: RECOVERY_LINKS.pauses,
+      recoveryLink: pause.id.startsWith(
+        `${AUTOMATIC_APPLICATION_FAILURE_PAUSE_ID}:`,
+      )
+        ? { href: "/job-finder/applications", label: "Open Applications" }
+        : RECOVERY_LINKS.pauses,
       searchText: [
         pause.explanation,
         pause.recoveryGuidance,
@@ -602,19 +613,21 @@ export function buildSafeguardsPresentationModel(
   // the safeguard records, so this page never knew about it. Read it from the
   // same runs the Tasks card reads, so both surfaces name the same pause and
   // the counters agree.
-  for (const run of workspace.applyRuns ?? []) {
-    if (run.state !== "paused_for_user_review") {
-      continue;
-    }
+  // Only runs a safety limit actually stopped. A run waiting on the person
+  // is in Needs you, a filled-in one is Ready to send, and an old run whose
+  // jobs were all sent or ended keeps its "paused" state from before later
+  // fixes but is finished (the same classifier Activity reads).
+  for (const run of listApplyRunsStoppedBySafeguard(workspace)) {
     const finishedJobs = Math.max(0, run.totalJobs - run.pendingJobs);
     const remainingJobs = Math.max(0, run.pendingJobs);
     const explanation =
       run.detail?.trim() ||
       run.summary?.trim() ||
       "Job Finder stopped preparing this batch because one of your safety limits was reached.";
-    const recoveryGuidance =
-      remainingJobs > 0
-        ? "It will not carry on by itself. Open Applications, review the prepared sample, then press Prepare remaining jobs to finish the ones it did not get to. Nothing is sent or submitted."
+    const recoveryGuidance = hasPendingSampleReview(workspace, run.id)
+      ? "It will not carry on by itself. Review the prepared sample below, then press Prepare remaining jobs in Applications to finish the ones it did not get to. Nothing is sent or submitted."
+      : remainingJobs > 0
+        ? "It will not carry on by itself. Settle the limit above, then press Prepare remaining jobs in Applications to finish the ones it did not get to. Nothing is sent or submitted."
         : "It will not carry on by itself. Open Applications to review what it prepared. Nothing is sent or submitted.";
     pushRow({
       key: `apply-run-pause-${run.id}`,
@@ -643,7 +656,25 @@ export function buildSafeguardsPresentationModel(
     });
   }
 
-  for (const review of safeguards.preparedBatchSampleReviews) {
+  for (const review of [...safeguards.preparedBatchSampleReviews].sort(
+    (left, right) =>
+      Number(left.reviewCompleted) - Number(right.reviewCompleted),
+  )) {
+    const sampleLinks = review.sampledItemIds.flatMap((resultId) => {
+      const result = workspace.applyJobResults.find(
+        (candidate) => candidate.id === resultId,
+      );
+      if (!result?.applicationRecordId) return [];
+      return [
+        {
+          href: buildJobFinderContextRoute("/job-finder/applications", {
+            applicationRecordId: result.applicationRecordId,
+            jobId: result.jobId,
+          }),
+          label: jobLabel(workspace, result.jobId),
+        },
+      ];
+    });
     const dismissal = findDismissal(
       safeguards,
       "batch_sample_review_pending",
@@ -696,7 +727,7 @@ export function buildSafeguardsPresentationModel(
       kind: "reviews",
       title: "Quality sample review",
       subtitle: `${review.reviewedCount}/${review.sampleCount} reviewed of ${review.preparedCount} prepared`,
-      explanation: review.explanation,
+      explanation: describeSampleReviewExplanation(review.explanation),
       recoveryGuidance: review.recoveryGuidance,
       statusLabel: active ? (dismissal ? "Dismissed" : "Pending") : "Completed",
       statusTone: active ? (dismissal ? "muted" : "critical") : "positive",
@@ -704,9 +735,10 @@ export function buildSafeguardsPresentationModel(
       blocked: active && !dismissal,
       dismissed: Boolean(dismissal),
       lineage: baseLineage([], []),
+      sampleLinks,
       tags: [`batch:${review.batchId}`],
       controls,
-      recoveryLink: RECOVERY_LINKS.reviews,
+      recoveryLink: sampleLinks.length === 0 ? RECOVERY_LINKS.reviews : null,
       searchText: [
         review.batchId,
         review.explanation,
@@ -861,4 +893,17 @@ export function filterSafeguardRows(
     if (normalized.length === 0) return true;
     return row.searchText.includes(normalized);
   });
+}
+
+/**
+ * Sample reviews saved before the wording changed still carry "A
+ * deterministic sample of this prepared queue must be reviewed…"; they read
+ * in the current plain words.
+ */
+export function describeSampleReviewExplanation(explanation: string): string {
+  return /^a deterministic sample of this prepared queue\b/iu.test(
+    explanation.trim(),
+  )
+    ? "Look over a few of these prepared applications before Job Finder prepares more on its own."
+    : explanation;
 }

@@ -338,7 +338,7 @@ describe("ProfileCopilotTranscript", () => {
     );
     expect(container?.textContent).toContain("Set locations to New York");
     expect(container?.textContent).toContain(
-      "Set compensation to 3,000–4,000 / month (currency not set — confirmation needed)",
+      "Set minimum compensation to 3,000 and target compensation to 4,000 / month (currency not set — confirmation needed)",
     );
     expect(container?.textContent).not.toContain("Nothing changed yet.");
   });
@@ -752,9 +752,9 @@ describe("ProfileCopilotTranscript inline proposals", () => {
     const failedTurn = container.querySelector<HTMLElement>(
       '[data-profile-copilot-failed-turn="true"]',
     );
-    const retry = failedTurn?.querySelector<HTMLButtonElement>(
-      'button[aria-label="Retry failed message"]',
-    );
+    const retry = [
+      ...(failedTurn?.querySelectorAll<HTMLButtonElement>("button") ?? []),
+    ].find((button) => button.textContent === "Ask again");
 
     expect(failedTurn?.textContent).toContain("Please update my headline.");
     expect(failedTurn?.textContent).toContain(
@@ -762,6 +762,97 @@ describe("ProfileCopilotTranscript inline proposals", () => {
     );
     act(() => retry?.click());
     expect(onRetryFailedRequest).toHaveBeenCalledTimes(1);
+  });
+
+  const savedQuestion = {
+    id: "profile_copilot_user_message_saved",
+    role: "user" as const,
+    content: "Change my headline to Principal Engineer.",
+    context: { surface: "profile" as const, section: "basics" as const },
+    patchGroups: [],
+    createdAt: "2026-09-23T10:00:00.000Z",
+  };
+
+  function renderTranscript(
+    overrides: Partial<Parameters<typeof ProfileCopilotTranscript>[0]> = {},
+  ) {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    act(() => {
+      root?.render(
+        <ProfileCopilotTranscript
+          busy={false}
+          emptyStateDescription="Ask a question."
+          emptyStateTitle="What would you like to improve?"
+          isPendingHere={false}
+          messages={[savedQuestion]}
+          onUsePrompt={vi.fn()}
+          suggestedPrompts={[]}
+          transcriptRef={createRef<HTMLDivElement>()}
+          {...overrides}
+        />,
+      );
+    });
+    return container;
+  }
+
+  test("offers Ask again under a saved question that never got an answer", () => {
+    // The app closed while the Assistant was working: the question was saved
+    // first, and used to vanish with no way back but retyping it.
+    const onAskAgain = vi.fn();
+    const view = renderTranscript({ onAskAgain });
+
+    const note = view.querySelector<HTMLElement>(
+      '[data-profile-copilot-unanswered="true"]',
+    );
+    expect(note?.textContent).toContain(
+      "No answer yet: the Assistant stopped before it replied.",
+    );
+    const askAgain = [...(note?.querySelectorAll("button") ?? [])].find(
+      (button) => button.textContent === "Ask again",
+    );
+    act(() => askAgain?.click());
+    expect(onAskAgain).toHaveBeenCalledWith(
+      "Change my headline to Principal Engineer.",
+      { surface: "profile", section: "basics" },
+    );
+  });
+
+  test("shows a failed request once, under its saved copy, with the reason", () => {
+    const view = renderTranscript({
+      failedRequest: {
+        content: "Change my headline to Principal Engineer.",
+        context: { surface: "profile", section: "basics" },
+        message:
+          "Could not get an answer from the Assistant. The writing assistant did not answer. Try again in a few minutes.",
+      },
+      onAskAgain: vi.fn(),
+      onRetryFailedRequest: vi.fn(),
+    });
+
+    expect(
+      view.querySelector('[data-profile-copilot-failed-turn="true"]'),
+    ).toBeNull();
+    expect(
+      view.querySelector('[data-profile-copilot-unanswered="true"]')
+        ?.textContent,
+    ).toContain("The writing assistant did not answer.");
+    expect(view.textContent?.match(/Change my headline/g)).toHaveLength(1);
+  });
+
+  test("says nothing about an answer while the Assistant is still working", () => {
+    const pending = renderTranscript({ isPendingHere: true });
+    expect(
+      pending.querySelector('[data-profile-copilot-unanswered="true"]'),
+    ).toBeNull();
+    act(() => root?.unmount());
+    container?.remove();
+
+    const busy = renderTranscript({ busy: true });
+    expect(
+      busy.querySelector('[data-profile-copilot-unanswered="true"]'),
+    ).toBeNull();
   });
 });
 
@@ -842,7 +933,9 @@ describe("describePatchOperation compensation clear truth", () => {
         currencyStatus: "needs_clarification",
       },
     } as never);
-    expect(description).toContain("Set compensation to 3,000–4,000");
+    expect(description).toContain(
+      "Set minimum compensation to 3,000 and target compensation to 4,000",
+    );
   });
 });
 

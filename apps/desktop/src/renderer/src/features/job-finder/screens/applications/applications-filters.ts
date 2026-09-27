@@ -20,7 +20,7 @@ export const APPLICATION_FILTER_LABELS: Record<ApplicationsViewFilter, string> =
     needs_action: "Waiting on you",
     in_progress: "In progress",
     submitted: "Submitted",
-    manual_only: "Manual only",
+    manual_only: "On the site",
   };
 
 /**

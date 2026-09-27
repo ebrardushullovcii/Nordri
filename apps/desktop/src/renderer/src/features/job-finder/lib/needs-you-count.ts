@@ -4,6 +4,7 @@ import type {
 } from "@unemployed/contracts";
 import { projectPlanSafeguardPauses } from "@unemployed/job-finder/plan-safeguard-pauses";
 import { applicationRecordAwaitsUser } from "../screens/applications/applications-status";
+import { resolveApplyStatePresentation } from "../screens/applications/apply-state";
 
 /**
  * The one renderer-side owner of the "Needs you" population.
@@ -37,6 +38,9 @@ export interface NeedsYouCountInput {
   applicationRecords?:
     | readonly JobFinderWorkspaceSnapshot["applicationRecords"][number][]
     | undefined;
+  applyJobResults?:
+    | readonly JobFinderWorkspaceSnapshot["applyJobResults"][number][]
+    | undefined;
   groupedDecisions?: readonly GroupedManualAnswerDecision[] | undefined;
   requests?:
     | readonly JobFinderWorkspaceSnapshot["userActionRequests"][number][]
@@ -44,10 +48,9 @@ export interface NeedsYouCountInput {
 }
 
 /** The application-record ledger is the one application population. */
-export function countApplicationLedgerEntries<TRecord extends { jobId: string }>(
-  records: readonly TRecord[],
-  jobIds?: ReadonlySet<string>,
-): number {
+export function countApplicationLedgerEntries<
+  TRecord extends { jobId: string },
+>(records: readonly TRecord[], jobIds?: ReadonlySet<string>): number {
   return jobIds
     ? records.filter((record) => jobIds.has(record.jobId)).length
     : records.length;
@@ -59,13 +62,26 @@ export function countApplicationLedgerEntries<TRecord extends { jobId: string }>
  */
 export function listApplicationsAwaitingUser({
   applicationRecords,
+  applyJobResults,
   requests,
 }: Pick<
   NeedsYouCountInput,
-  "applicationRecords" | "requests"
+  "applicationRecords" | "applyJobResults" | "requests"
 >): readonly JobFinderWorkspaceSnapshot["applicationRecords"][number][] {
   const records = applicationRecords ?? [];
   if (records.length === 0) return records;
+
+  const latestResultByRecordId = new Map<
+    string,
+    JobFinderWorkspaceSnapshot["applyJobResults"][number]
+  >();
+  for (const result of applyJobResults ?? []) {
+    if (!result.applicationRecordId) continue;
+    const previous = latestResultByRecordId.get(result.applicationRecordId);
+    if (!previous || previous.updatedAt < result.updatedAt) {
+      latestResultByRecordId.set(result.applicationRecordId, result);
+    }
+  }
 
   const coveredRecordIds = new Set(
     (requests ?? [])
@@ -78,14 +94,36 @@ export function listApplicationsAwaitingUser({
       ),
   );
 
-  return records.filter(
-    (record) =>
-      !coveredRecordIds.has(record.id) && applicationRecordAwaitsUser(record),
-  );
+  return records.filter((record) => {
+    if (coveredRecordIds.has(record.id)) return false;
+    const result = latestResultByRecordId.get(record.id);
+    if (!result) return applicationRecordAwaitsUser(record);
+    return (
+      resolveApplyStatePresentation({
+        mode:
+          record.automationMode === "autonomous_submit"
+            ? "apply_for_me"
+            : "fill_only",
+        result,
+        pendingQuestionCount: Math.max(
+          0,
+          record.questionSummary.total - record.questionSummary.answered,
+        ),
+        recordFailure:
+          record.lastAttemptState === "failed"
+            ? {
+                lastActionLabel: record.lastActionLabel,
+                lastUpdatedAt: record.lastUpdatedAt,
+              }
+            : null,
+      }).kind === "needs_you"
+    );
+  });
 }
 
 export function countNeedsYouItems({
   applicationRecords,
+  applyJobResults,
   groupedDecisions,
   requests,
 }: NeedsYouCountInput): number {
@@ -110,7 +148,11 @@ export function countNeedsYouItems({
   return (
     unrepresentedRequests.length +
     pendingDecisions.length +
-    listApplicationsAwaitingUser({ applicationRecords, requests }).length
+    listApplicationsAwaitingUser({
+      applicationRecords,
+      applyJobResults,
+      requests,
+    }).length
   );
 }
 
@@ -127,6 +169,7 @@ export function countNeedsYouItems({
  */
 export function countApplyRunItemsNeedingYou({
   applicationRecords,
+  applyJobResults,
   requests,
   runId,
   runJobIds,
@@ -150,6 +193,7 @@ export function countApplyRunItemsNeedingYou({
     unresolvedRunRequests.length +
     listApplicationsAwaitingUser({
       applicationRecords: runApplications,
+      applyJobResults,
       requests: runRequests,
     }).length
   );
@@ -159,9 +203,16 @@ export function countApplyRunItemsNeedingYou({
 export function countWorkspaceNeedsYouItems(
   workspace: JobFinderWorkspaceSnapshot,
 ): number {
-  return projectPlanSafeguardPauses(workspace.intelligence?.safeguards, workspace.campaigns).length + countNeedsYouItems({
-    applicationRecords: workspace.applicationRecords ?? [],
-    groupedDecisions: workspace.intelligence?.groupedDecisions ?? [],
-    requests: workspace.userActionRequests ?? [],
-  });
+  return (
+    projectPlanSafeguardPauses(
+      workspace.intelligence?.safeguards,
+      workspace.campaigns,
+    ).length +
+    countNeedsYouItems({
+      applicationRecords: workspace.applicationRecords ?? [],
+      applyJobResults: workspace.applyJobResults ?? [],
+      groupedDecisions: workspace.intelligence?.groupedDecisions ?? [],
+      requests: workspace.userActionRequests ?? [],
+    })
+  );
 }

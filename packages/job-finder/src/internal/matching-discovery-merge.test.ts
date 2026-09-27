@@ -464,6 +464,68 @@ describe("mergeDiscoveredPostings detail-quality monotonicity", () => {
     ).toEqual([]);
   });
 
+  test("an access-gate sighting cannot replace the real listing url or detail", () => {
+    const existing = createSavedJob(
+      createThinRecrawl({
+        sourceJobId: "8",
+        canonicalUrl: "https://jobs.example.test/jobs/8",
+        applicationUrl: "https://jobs.example.test/jobs/8/apply",
+        title: "Frontend Engineer, Dusk Design Systems",
+        description: "Full-time 6d",
+      }),
+    );
+    const accessGate = createThinRecrawl({
+      sourceJobId: "8",
+      canonicalUrl: "https://jobs.example.test/security/8",
+      applicationUrl: "https://jobs.example.test/security/8",
+      title: "Frontend Engineer, Dusk Design Systems",
+      description: "Security check",
+    });
+
+    const result = mergeWithExisting([existing], [accessGate]);
+
+    expect(result.duplicatesMerged).toBe(1);
+    expect(result.mergedJobs).toHaveLength(1);
+    expect(result.mergedJobs[0]).toMatchObject({
+      id: existing.id,
+      title: existing.title,
+      canonicalUrl: existing.canonicalUrl,
+      applicationUrl: existing.applicationUrl,
+      description: existing.description,
+    });
+  });
+
+  test("merges an exact cross-source body with a shortened title and preserves the full title", () => {
+    const existing = createSavedJob(
+      createRecrawl({
+        sourceJobId: "board_5",
+        canonicalUrl: "https://jobs.example.test/board/5",
+        applicationUrl: "https://jobs.example.test/board/5/apply",
+        title: "Data Engineer, Meadow Pipelines",
+        company: "Meadow Byte Guild",
+        location: "Remote, Worldwide",
+      }),
+    );
+    const duplicate = createRecrawl({
+      sourceJobId: "gatekeeper_5",
+      canonicalUrl: "https://jobs.example.test/gatekeeper/5",
+      applicationUrl: "https://jobs.example.test/gatekeeper/apply/5",
+      title: "Data Engineer",
+      company: "Meadow Byte Guild",
+      location: "Remote, Worldwide",
+    });
+
+    const result = mergeWithExisting([existing], [duplicate]);
+
+    expect(result.newJobs).toEqual([]);
+    expect(result.duplicatesMerged).toBe(1);
+    expect(result.mergedJobs).toHaveLength(1);
+    expect(result.mergedJobs[0]?.id).toBe(existing.id);
+    expect(result.mergedJobs[0]?.title).toBe(
+      "Data Engineer, Meadow Pipelines",
+    );
+  });
+
   test("never persists pagination or an empty non-detail site section", () => {
     const result = mergeWithExisting(
       [],

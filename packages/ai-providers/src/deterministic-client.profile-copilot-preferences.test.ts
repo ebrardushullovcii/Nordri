@@ -475,6 +475,19 @@ describe("deterministic ai client profile copilot preferences", () => {
       operation: "replace_search_preferences_fields",
       value: { tailoringMode: "aggressive" },
     });
+
+    const lightReply = await client.reviseCandidateProfile({
+      profile: createProfile(),
+      searchPreferences: createPreferences(),
+      context: { surface: "profile", section: "preferences" },
+      relevantReviewItems: [],
+      request: "Set my default resume approach to Light.",
+    });
+
+    expect(lightReply.patchGroups[0]?.operations[0]).toEqual({
+      operation: "replace_search_preferences_fields",
+      value: { tailoringMode: "conservative" },
+    });
   });
 
   test("understands conversational currency and salary-range requests without copying prose", async () => {

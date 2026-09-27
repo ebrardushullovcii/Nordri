@@ -1,10 +1,13 @@
 import {
   ApplicationQuestionRecordSchema,
+  ApplicationAnswerRecordSchema,
   ApplicationRecordSchema,
   ApplyJobResultSchema,
   ApplyRunSchema,
   CandidateAssetSchema,
+  ApplicationAttemptBlockerSchema,
   type ApplicationQuestionKind,
+  type UserActionCommand,
 } from "@unemployed/contracts";
 import { createInMemoryJobFinderRepository } from "@unemployed/db";
 import { describe, expect, it, vi } from "vitest";
@@ -12,6 +15,7 @@ import { createSeed } from "../workspace-service.test-fixtures";
 import { createWorkspaceApplicationAnswerMethods } from "./workspace-application-answer-methods";
 import { createWorkspaceApplyRunStoreMethods } from "./workspace-apply-run-store-methods";
 import type { WorkspaceServiceContext } from "./workspace-service-context";
+import { persistApplicationUserAction } from "./workspace-application-user-action";
 
 function createHarness(
   options: {
@@ -19,6 +23,7 @@ function createHarness(
     answerOptions?: string[];
     candidateAssetResolver?: WorkspaceServiceContext["candidateAssetResolver"];
     questionKind?: ApplicationQuestionKind;
+    performUserAction?: (command: UserActionCommand) => Promise<unknown>;
   } = {},
 ) {
   const now = "2026-08-10T10:00:00.000Z";
@@ -91,6 +96,7 @@ function createHarness(
   const methods = createWorkspaceApplicationAnswerMethods(
     ctx,
     runStore.getApplyRunDetails,
+    options.performUserAction,
   );
   return { job, methods, repository, runStore };
 }
@@ -111,6 +117,131 @@ function saveCommand(commandId: string, expectedAnswerRevision: number) {
 }
 
 describe("workspace application answer methods", () => {
+  it.each(["blocked", "awaiting_review"] as const)(
+    "continues the exact %s step once after its last required answer is saved",
+    async (state) => {
+      const performUserAction = vi.fn().mockResolvedValue(undefined);
+      const { job, repository, methods } = createHarness({ performUserAction });
+      const result = (await repository.listApplyJobResults())[0]!;
+      await repository.upsertApplyJobResult({ ...result, state });
+      await persistApplicationUserAction({
+        repository,
+        applicationRecordId: result.applicationRecordId!,
+        job,
+        runId: result.runId,
+        resultId: result.id,
+        replayCheckpointId: "checkpoint-answers",
+        blocker: ApplicationAttemptBlockerSchema.parse({
+          code: "missing_candidate_answer",
+          userActionKind: "manual_answer",
+          summary: "Answer the employer question.",
+          questionIds: ["question-sponsorship"],
+          url: job.applicationUrl ?? job.canonicalUrl,
+        }),
+        occurredAt: "2026-08-10T10:00:00.000Z",
+      });
+      const question = (await repository.listApplicationQuestionRecords())[0]!;
+      await repository.upsertApplicationQuestionRecord({
+        ...question,
+        id: "question-second",
+        prompt: "A second required answer",
+      });
+      await repository.upsertApplicationQuestionRecord({
+        ...question,
+        id: "question-profile",
+        prompt: "An already answered profile question",
+        status: "answered",
+        selectedAnswerId: "answer-profile",
+        submittedAnswer: "No",
+      });
+      await repository.upsertApplicationAnswerRecord(
+        ApplicationAnswerRecordSchema.parse({
+          id: "answer-profile",
+          runId: result.runId,
+          jobId: job.id,
+          resultId: result.id,
+          questionId: "question-profile",
+          applicationRecordId: result.applicationRecordId,
+          text: "No",
+          value: { type: "single_choice", value: "No" },
+          sourceKind: "profile",
+          sourceId: "profile-eligibility",
+          createdAt: "2026-08-10T10:00:00.000Z",
+        }),
+      );
+      await methods.saveApplicationAnswer({
+        ...saveCommand("save-first", 0),
+        jobId: job.id,
+      });
+      expect(performUserAction).not.toHaveBeenCalled();
+      const last = {
+        ...saveCommand("save-last", 0),
+        jobId: job.id,
+        questionId: "question-second",
+      };
+      await Promise.all([
+        methods.saveApplicationAnswer(last),
+        methods.saveApplicationAnswer(last),
+      ]);
+      expect(performUserAction).toHaveBeenCalledTimes(1);
+      const request = (await repository.listUserActionRequests())[0]!;
+      expect(performUserAction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: "confirm_done",
+          requestId: request.id,
+          expectedRevision: request.revision,
+          submitAuthorized: false,
+          accountCreationAuthorized: false,
+        }),
+      );
+    },
+  );
+
+  it("does not resume a ready form just because a historical answer was edited", async () => {
+    const performUserAction = vi.fn().mockResolvedValue(undefined);
+    const { job, methods } = createHarness({ performUserAction });
+    await methods.saveApplicationAnswer({
+      ...saveCommand("save-ready", 0),
+      jobId: job.id,
+    });
+    expect(performUserAction).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["legal_consent", "result-answers"],
+    ["login", "result-answers"],
+    ["manual_answer", "another-result"],
+  ])(
+    "does not complete %s on %s when saving an answer",
+    async (kind, resultId) => {
+      const performUserAction = vi.fn().mockResolvedValue(undefined);
+      const { job, repository, methods } = createHarness({ performUserAction });
+      const result = (await repository.listApplyJobResults())[0]!;
+      await repository.upsertApplyJobResult({ ...result, state: "blocked" });
+      await persistApplicationUserAction({
+        repository,
+        applicationRecordId: result.applicationRecordId!,
+        job,
+        runId: result.runId,
+        resultId,
+        replayCheckpointId: "checkpoint-answers",
+        blocker: ApplicationAttemptBlockerSchema.parse({
+          code: "missing_candidate_answer",
+          userActionKind: kind,
+          summary: "A separate person-owned step remains.",
+          questionIds: ["question-sponsorship"],
+          url: job.applicationUrl ?? job.canonicalUrl,
+        }),
+        occurredAt: "2026-08-10T10:00:00.000Z",
+      });
+      await methods.saveApplicationAnswer({
+        ...saveCommand("save-isolated", 0),
+        jobId: job.id,
+      });
+      expect(performUserAction).not.toHaveBeenCalled();
+    },
+  );
+
   it("saves, replaces, and clears an exact application answer by revision", async () => {
     const { job, methods } = createHarness();
     const command = { ...saveCommand("save-1", 0), jobId: job.id };

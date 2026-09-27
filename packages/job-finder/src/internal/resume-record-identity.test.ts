@@ -3,9 +3,61 @@ import { describe, expect, test } from "vitest";
 import {
   areEquivalentEducationRecords,
   areEquivalentExperienceRecords,
+  canonicalizeRecordDateText,
 } from "./resume-record-identity";
 
 describe("resume record identity", () => {
+  test("treats a skeleton with no employer as the same role when title and start month match", () => {
+    expect(
+      areEquivalentExperienceRecords(
+        {
+          companyName: null,
+          title: "Marketing Manager",
+          startDate: "2021-03",
+          endDate: null,
+          isCurrent: false,
+        },
+        {
+          companyName: "Northstar Learning Tools",
+          title: "Marketing Manager",
+          startDate: "March 2021",
+          endDate: null,
+          isCurrent: true,
+        },
+      ),
+    ).toBe(true);
+  });
+
+  test("keeps two roles with the same title apart when both name different employers", () => {
+    expect(
+      areEquivalentExperienceRecords(
+        {
+          companyName: "Acme",
+          title: "Engineer",
+          startDate: "2021-03",
+          endDate: null,
+          isCurrent: true,
+        },
+        {
+          companyName: "Globex",
+          title: "Engineer",
+          startDate: "2021-03",
+          endDate: null,
+          isCurrent: true,
+        },
+      ),
+    ).toBe(false);
+  });
+
+  test("canonicalizes month names and keeps non-date text", () => {
+    expect(canonicalizeRecordDateText("March 2021")).toBe("2021-03");
+    expect(canonicalizeRecordDateText("2021-03-01")).toBe("2021-03");
+    expect(canonicalizeRecordDateText("Summer internship")).toBe(
+      "Summer internship",
+    );
+    expect(canonicalizeRecordDateText("")).toBeNull();
+  });
+
   test("treats M/D/YYYY slash dates as month-first when the first capture is a valid month", () => {
     expect(
       areEquivalentExperienceRecords(

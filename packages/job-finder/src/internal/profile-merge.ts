@@ -79,10 +79,74 @@ export function buildPreviewSectionsFromDraft(draft: TailoredResumeDraft) {
   ].filter((section) => section.lines.length > 0);
 }
 
-export function normalizeProfileBeforeSave(
+/**
+ * The email and phone applications use usually repeat the primary ones. When
+ * the primary changes in a save that leaves the application one alone, and
+ * the application one was that old value (or empty), it follows. Otherwise
+ * the person chose a different address on purpose and it stays. Without this
+ * "my email is now ..." changed the profile while every application kept
+ * sending the old address.
+ */
+export function followPrimaryContacts(
   currentProfile: CandidateProfile,
   nextProfile: CandidateProfile,
 ): CandidateProfile {
+  const follow = (input: {
+    currentPrimary: string | null;
+    nextPrimary: string | null;
+    currentPreferred: string | null;
+    nextPreferred: string | null;
+    normalize: (value: string | null) => string;
+  }): string | null => {
+    const primaryChanged =
+      input.normalize(input.currentPrimary) !==
+      input.normalize(input.nextPrimary);
+    const preferredUntouched =
+      input.normalize(input.currentPreferred) ===
+      input.normalize(input.nextPreferred);
+    const preferredMirroredPrimary =
+      !input.normalize(input.currentPreferred) ||
+      input.normalize(input.currentPreferred) ===
+        input.normalize(input.currentPrimary);
+    return primaryChanged && preferredUntouched && preferredMirroredPrimary
+      ? input.nextPrimary
+      : input.nextPreferred;
+  };
+  const preferredEmail = follow({
+    currentPrimary: currentProfile.email,
+    nextPrimary: nextProfile.email,
+    currentPreferred: currentProfile.applicationIdentity.preferredEmail,
+    nextPreferred: nextProfile.applicationIdentity.preferredEmail,
+    normalize: (value) => normalizeText(value ?? ""),
+  });
+  const preferredPhone = follow({
+    currentPrimary: currentProfile.phone,
+    nextPrimary: nextProfile.phone,
+    currentPreferred: currentProfile.applicationIdentity.preferredPhone,
+    nextPreferred: nextProfile.applicationIdentity.preferredPhone,
+    normalize: (value) => (value ?? "").replace(/\D/gu, ""),
+  });
+  if (
+    preferredEmail === nextProfile.applicationIdentity.preferredEmail &&
+    preferredPhone === nextProfile.applicationIdentity.preferredPhone
+  ) {
+    return nextProfile;
+  }
+  return {
+    ...nextProfile,
+    applicationIdentity: {
+      ...nextProfile.applicationIdentity,
+      preferredEmail,
+      preferredPhone,
+    },
+  };
+}
+
+export function normalizeProfileBeforeSave(
+  currentProfile: CandidateProfile,
+  proposedProfile: CandidateProfile,
+): CandidateProfile {
+  const nextProfile = followPrimaryContacts(currentProfile, proposedProfile);
   const resumeChanged =
     currentProfile.baseResume.id !== nextProfile.baseResume.id ||
     currentProfile.baseResume.storagePath !==
@@ -120,6 +184,52 @@ export function buildExtractionId(
     .slice(0, 48);
 
   return `${prefix}_${slug || index + 1}`;
+}
+
+/**
+ * An id no other card in the list already has. Ids are built from the
+ * record's own words, so a card the person reworded (a split role keeps its
+ * old id) and the resume's original reading of it used to get the same id,
+ * and the Profile editor could no longer tell the two cards apart.
+ */
+export function uniqueRecordId(
+  records: ReadonlyArray<{ id: string }>,
+  id: string,
+): string {
+  const taken = new Set(records.map((record) => record.id));
+  if (!taken.has(id)) {
+    return id;
+  }
+  let suffix = 2;
+  while (taken.has(`${id}_${suffix}`)) {
+    suffix += 1;
+  }
+  return `${id}_${suffix}`;
+}
+
+function keepMostCompleteInPlace<TRecord>(
+  records: readonly TRecord[],
+  isSameRecord: (left: TRecord, right: TRecord) => boolean,
+  completeness: (record: TRecord) => number,
+): TRecord[] {
+  const kept: TRecord[] = [];
+  for (const record of records) {
+    const duplicateIndex = kept.findIndex((existing) =>
+      isSameRecord(existing, record),
+    );
+    if (duplicateIndex === -1) {
+      kept.push(record);
+      continue;
+    }
+    const existing = kept[duplicateIndex];
+    if (
+      existing !== undefined &&
+      completeness(record) > completeness(existing)
+    ) {
+      kept[duplicateIndex] = record;
+    }
+  }
+  return kept;
 }
 
 export function normalizeRecordKey(
@@ -262,25 +372,13 @@ export function mergeExperienceRecords(
   existing: CandidateProfile["experiences"],
   extracted: ResumeProfileExtraction["experiences"],
 ): CandidateProfile["experiences"] {
-  const normalizedExisting = [...existing].sort(
-    (left, right) =>
-      scoreExperienceRecordCompleteness(right) -
-      scoreExperienceRecordCompleteness(left),
-  );
-  const merged = normalizedExisting.reduce<CandidateProfile["experiences"]>(
-    (accumulator, entry) => {
-      if (
-        accumulator.some((existingEntry) =>
-          areEquivalentExperienceRecords(existingEntry, entry),
-        )
-      ) {
-        return accumulator;
-      }
-
-      accumulator.push(entry);
-      return accumulator;
-    },
-    [],
+  // Duplicate saved cards collapse into the more complete one, in the place
+  // the first of them held: sorting by completeness first reordered the
+  // person's whole work history on every import.
+  const merged = keepMostCompleteInPlace(
+    existing,
+    areEquivalentExperienceRecords,
+    scoreExperienceRecordCompleteness,
   );
 
   extracted.forEach((entry, index) => {
@@ -301,11 +399,14 @@ export function mergeExperienceRecords(
     const nextEntry = {
       id:
         match?.id ??
-        buildExtractionId("experience", index, [
-          entry.companyName,
-          entry.title,
-          entry.startDate,
-        ]),
+        uniqueRecordId(
+          merged,
+          buildExtractionId("experience", index, [
+            entry.companyName,
+            entry.title,
+            entry.startDate,
+          ]),
+        ),
       companyName: entry.companyName ?? match?.companyName ?? null,
       companyUrl: entry.companyUrl ?? match?.companyUrl ?? null,
       title: entry.title ?? match?.title ?? null,
@@ -351,25 +452,10 @@ export function mergeEducationRecords(
   existing: CandidateProfile["education"],
   extracted: ResumeProfileExtraction["education"],
 ): CandidateProfile["education"] {
-  const normalizedExisting = [...existing].sort(
-    (left, right) =>
-      scoreEducationRecordCompleteness(right) -
-      scoreEducationRecordCompleteness(left),
-  );
-  const merged = normalizedExisting.reduce<CandidateProfile["education"]>(
-    (accumulator, entry) => {
-      if (
-        accumulator.some((existingEntry) =>
-          areEquivalentEducationRecords(existingEntry, entry),
-        )
-      ) {
-        return accumulator;
-      }
-
-      accumulator.push(entry);
-      return accumulator;
-    },
-    [],
+  const merged = keepMostCompleteInPlace(
+    existing,
+    areEquivalentEducationRecords,
+    scoreEducationRecordCompleteness,
   );
 
   extracted.forEach((entry, index) => {
@@ -390,11 +476,14 @@ export function mergeEducationRecords(
     const nextEntry = {
       id:
         match?.id ??
-        buildExtractionId("education", index, [
-          entry.schoolName,
-          entry.degree,
-          entry.startDate,
-        ]),
+        uniqueRecordId(
+          merged,
+          buildExtractionId("education", index, [
+            entry.schoolName,
+            entry.degree,
+            entry.startDate,
+          ]),
+        ),
       schoolName: entry.schoolName ?? match?.schoolName ?? null,
       degree: entry.degree ?? match?.degree ?? null,
       fieldOfStudy: preferLongerText(match?.fieldOfStudy, entry.fieldOfStudy),
@@ -416,56 +505,94 @@ export function mergeEducationRecords(
   return merged;
 }
 
+/**
+ * The saved record an imported one updates: an exact match first; failing
+ * that, the one record with the same name, when exactly one not already
+ * matched in this import has it. Taking the first same-name card overwrote
+ * a 2019 certificate with the 2022 one saved beside it.
+ */
+function findMatchingRecordIndex<T>(
+  records: readonly T[],
+  claimed: ReadonlySet<number>,
+  isExactMatch: (record: T) => boolean,
+  hasSameName: (record: T) => boolean,
+): number {
+  const exactIndex = records.findIndex(isExactMatch);
+  if (exactIndex !== -1) {
+    return exactIndex;
+  }
+  const sameName = records.flatMap((record, index) =>
+    !claimed.has(index) && hasSameName(record) ? [index] : [],
+  );
+  return sameName.length === 1 ? (sameName[0] ?? -1) : -1;
+}
+
+/**
+ * The import reads certificates; it never takes away the ones the person
+ * already has. A second import used to replace the whole list with the
+ * resume's, so a certificate added in Profile or by the Assistant vanished.
+ * A reading that matches a saved certificate updates it; a new one is added.
+ */
 export function mergeCertificationRecords(
   existing: CandidateProfile["certifications"],
   extracted: ResumeProfileExtraction["certifications"],
 ): CandidateProfile["certifications"] {
-  if (extracted.length === 0) {
-    return existing;
-  }
-
-  const existingByKey = new Map(
-    existing.map((entry) => [
-      normalizeRecordKey([entry.name, entry.issuer, entry.issueDate]),
-      entry,
-    ]),
-  );
-
-  return extracted.map((entry, index) => {
-    const key = normalizeRecordKey([entry.name, entry.issuer, entry.issueDate]);
-    const match = existingByKey.get(key);
-
-    return {
+  const next = [...existing];
+  const claimed = new Set<number>();
+  extracted.forEach((entry, index) => {
+    const fullKey = normalizeRecordKey([
+      entry.name,
+      entry.issuer,
+      entry.issueDate,
+    ]);
+    const nameKey = normalizeRecordKey([entry.name]);
+    const matchIndex = findMatchingRecordIndex(
+      next,
+      claimed,
+      (saved) =>
+        normalizeRecordKey([saved.name, saved.issuer, saved.issueDate]) ===
+        fullKey,
+      (saved) =>
+        nameKey.length > 0 && normalizeRecordKey([saved.name]) === nameKey,
+    );
+    const match = matchIndex === -1 ? null : (next[matchIndex] ?? null);
+    const name = entry.name ?? match?.name ?? null;
+    const record = {
       id:
         match?.id ??
-        buildExtractionId("certification", index, [
-          entry.name,
-          entry.issuer,
-          entry.issueDate,
-        ]),
-      name: entry.name,
-      issuer: entry.issuer,
-      issueDate: entry.issueDate,
-      expiryDate: entry.expiryDate,
-      credentialUrl: toValidUrlOrNull(entry.credentialUrl),
-      isDraft: !entry.name,
+        uniqueRecordId(
+          next,
+          buildExtractionId("certification", index, [
+            entry.name,
+            entry.issuer,
+            entry.issueDate,
+          ]),
+        ),
+      name,
+      issuer: entry.issuer ?? match?.issuer ?? null,
+      issueDate: entry.issueDate ?? match?.issueDate ?? null,
+      expiryDate: entry.expiryDate ?? match?.expiryDate ?? null,
+      credentialUrl:
+        toValidUrlOrNull(entry.credentialUrl) ?? match?.credentialUrl ?? null,
+      isDraft: !name,
     };
+    if (matchIndex === -1) {
+      claimed.add(next.length);
+      next.push(record);
+    } else {
+      claimed.add(matchIndex);
+      next.splice(matchIndex, 1, record);
+    }
   });
+  return next;
 }
 
+/** Additive, like certificates: an import never drops a saved link. */
 export function mergeLinkRecords(
   existing: CandidateProfile["links"],
   extracted: ResumeProfileExtraction["links"],
 ): CandidateProfile["links"] {
-  if (extracted.length === 0) {
-    return existing;
-  }
-
-  const existingByKey = new Map(
-    existing.map((entry) => [normalizeRecordKey([entry.url]), entry]),
-  );
-  const nextLinks: CandidateProfile["links"] = [];
-
+  const next = [...existing];
   extracted.forEach((entry, index) => {
     const url = toValidUrlOrNull(entry.url);
 
@@ -474,101 +601,123 @@ export function mergeLinkRecords(
     }
 
     const key = normalizeRecordKey([url]);
-    const match = existingByKey.get(key);
-
-    nextLinks.push({
-      id: match?.id ?? buildExtractionId("link", index, [entry.label, url]),
-      label: entry.label,
+    const matchIndex = next.findIndex(
+      (saved) => normalizeRecordKey([saved.url]) === key,
+    );
+    const match = matchIndex === -1 ? null : (next[matchIndex] ?? null);
+    const label = entry.label ?? match?.label ?? null;
+    const record = {
+      id:
+        match?.id ??
+        uniqueRecordId(
+          next,
+          buildExtractionId("link", index, [entry.label, url]),
+        ),
+      label,
       url,
-      kind: entry.kind,
-      isDraft: !entry.label || !url,
-    });
+      kind: entry.kind ?? match?.kind ?? null,
+      isDraft: !label || !url,
+    };
+    if (matchIndex === -1) {
+      next.push(record);
+    } else {
+      next.splice(matchIndex, 1, record);
+    }
   });
 
-  return nextLinks.length === 0 ? existing : nextLinks;
+  return next;
 }
 
+/** Additive, like certificates: an import never drops a saved project. */
 export function mergeProjectRecords(
   existing: CandidateProfile["projects"],
   extracted: ResumeProfileExtraction["projects"],
 ): CandidateProfile["projects"] {
-  if (extracted.length === 0) {
-    return existing;
-  }
+  const next = [...existing];
+  const claimed = new Set<number>();
+  extracted.forEach((entry, index) => {
+    if (!entry.name) {
+      return;
+    }
 
-  const existingByKey = new Map(
-    existing.map((entry) => [
-      normalizeRecordKey([entry.name, entry.role]),
-      entry,
-    ]),
-  );
-
-  const nextProjects = extracted
-    .map((entry, index) => {
-      if (!entry.name) {
-        return null;
-      }
-
-      const key = normalizeRecordKey([entry.name, entry.role]);
-      const match = existingByKey.get(key);
-
-      return {
-        id:
-          match?.id ??
-          buildExtractionId("project", index, [entry.name, entry.role]),
-        name: entry.name,
-        projectType: entry.projectType,
-        summary: entry.summary,
-        role: entry.role,
-        skills: uniqueStrings(safeStringArray(entry.skills)),
-        outcome: entry.outcome,
-        projectUrl: entry.projectUrl,
-        repositoryUrl: entry.repositoryUrl,
-        caseStudyUrl: entry.caseStudyUrl,
-      };
-    })
-    .filter(
-      (entry): entry is CandidateProfile["projects"][number] => entry !== null,
+    const key = normalizeRecordKey([entry.name, entry.role]);
+    const nameKey = normalizeRecordKey([entry.name]);
+    const matchIndex = findMatchingRecordIndex(
+      next,
+      claimed,
+      (saved) => normalizeRecordKey([saved.name, saved.role]) === key,
+      (saved) => normalizeRecordKey([saved.name]) === nameKey,
     );
+    const match = matchIndex === -1 ? null : (next[matchIndex] ?? null);
+    const record = {
+      id:
+        match?.id ??
+        uniqueRecordId(
+          next,
+          buildExtractionId("project", index, [entry.name, entry.role]),
+        ),
+      name: entry.name,
+      projectType: entry.projectType ?? match?.projectType ?? null,
+      summary: entry.summary ?? match?.summary ?? null,
+      role: entry.role ?? match?.role ?? null,
+      skills: uniqueStrings([
+        ...safeStringArray(match?.skills),
+        ...safeStringArray(entry.skills),
+      ]),
+      outcome: entry.outcome ?? match?.outcome ?? null,
+      projectUrl: entry.projectUrl ?? match?.projectUrl ?? null,
+      repositoryUrl: entry.repositoryUrl ?? match?.repositoryUrl ?? null,
+      caseStudyUrl: entry.caseStudyUrl ?? match?.caseStudyUrl ?? null,
+    };
+    if (matchIndex === -1) {
+      claimed.add(next.length);
+      next.push(record);
+    } else {
+      claimed.add(matchIndex);
+      next.splice(matchIndex, 1, record);
+    }
+  });
 
-  return nextProjects.length === 0 ? existing : nextProjects;
+  return next;
 }
 
+/** Additive, like certificates: an import never drops a saved language. */
 export function mergeLanguageRecords(
   existing: CandidateProfile["spokenLanguages"],
   extracted: ResumeProfileExtraction["spokenLanguages"],
 ): CandidateProfile["spokenLanguages"] {
-  if (extracted.length === 0) {
-    return existing;
-  }
+  const next = [...existing];
+  extracted.forEach((entry, index) => {
+    if (!entry.language) {
+      return;
+    }
 
-  const existingByKey = new Map(
-    existing.map((entry) => [normalizeRecordKey([entry.language]), entry]),
-  );
-
-  const nextLanguages = extracted
-    .map((entry, index) => {
-      if (!entry.language) {
-        return null;
-      }
-
-      const key = normalizeRecordKey([entry.language]);
-      const match = existingByKey.get(key);
-
-      return {
-        id: match?.id ?? buildExtractionId("language", index, [entry.language]),
-        language: entry.language,
-        proficiency: entry.proficiency,
-        interviewPreference: entry.interviewPreference,
-        notes: entry.notes,
-      };
-    })
-    .filter(
-      (entry): entry is CandidateProfile["spokenLanguages"][number] =>
-        entry !== null,
+    const key = normalizeRecordKey([entry.language]);
+    const matchIndex = next.findIndex(
+      (saved) => normalizeRecordKey([saved.language]) === key,
     );
+    const match = matchIndex === -1 ? null : (next[matchIndex] ?? null);
+    const record = {
+      id:
+        match?.id ??
+        uniqueRecordId(
+          next,
+          buildExtractionId("language", index, [entry.language]),
+        ),
+      language: entry.language,
+      proficiency: entry.proficiency ?? match?.proficiency ?? null,
+      interviewPreference:
+        entry.interviewPreference || (match?.interviewPreference ?? false),
+      notes: entry.notes ?? match?.notes ?? null,
+    };
+    if (matchIndex === -1) {
+      next.push(record);
+    } else {
+      next.splice(matchIndex, 1, record);
+    }
+  });
 
-  return nextLanguages.length === 0 ? existing : nextLanguages;
+  return next;
 }
 
 export function mergeResumeExtractionIntoWorkspace(

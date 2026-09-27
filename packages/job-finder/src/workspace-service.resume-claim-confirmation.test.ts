@@ -174,7 +174,7 @@ describe("resume claim confirmation commands", () => {
     const draftBefore = await repository.getResumeDraftByJobId("job_ready");
 
     await expect(workspaceService.exportResumePdf("job_ready")).rejects.toThrow(
-      /blocking candidate-claim validation issues/i,
+      /still need your decision/i,
     );
 
     const confirmed = await confirmAllOutstandingClaims(harness);
@@ -206,6 +206,27 @@ describe("resume claim confirmation commands", () => {
     expect(
       approved.resumeDrafts.find((draft) => draft.jobId === "job_ready"),
     ).toMatchObject({ status: "approved" });
+  });
+
+  test("the review queue says the resume has lines to decide until they are decided, so Apply never calls it ready", async () => {
+    const harness = createClaimHarness({ bullets: [WEAK_CLAIM_TEXT] });
+    const { workspaceService } = harness;
+
+    await workspaceService.generateResume("job_ready");
+    const before = await workspaceService.getWorkspaceSnapshot();
+    const itemBefore = before.reviewQueue.find(
+      (item) => item.jobId === "job_ready",
+    );
+    expect(itemBefore?.resumeLinesToDecide ?? 0).toBeGreaterThan(0);
+
+    await confirmAllOutstandingClaims(harness);
+
+    const after = await workspaceService.getWorkspaceSnapshot();
+    const itemAfter = after.reviewQueue.find(
+      (item) => item.jobId === "job_ready",
+    );
+    expect(itemAfter).toBeDefined();
+    expect(itemAfter?.resumeLinesToDecide ?? 0).toBe(0);
   });
 
   test("rejects stale revisions, cross-draft ids, wrong hashes, unknown locators, and forged statements", async () => {
@@ -413,7 +434,7 @@ describe("resume claim confirmation commands", () => {
     });
 
     await expect(workspaceService.exportResumePdf("job_ready")).rejects.toThrow(
-      /blocking candidate-claim validation issues/i,
+      /still need your decision/i,
     );
 
     // An exact confirmation of the current wording unblocks everything.
@@ -465,7 +486,7 @@ describe("resume claim confirmation commands", () => {
     );
 
     await expect(workspaceService.exportResumePdf("job_ready")).rejects.toThrow(
-      /blocking candidate-claim validation issues/i,
+      /still need your decision/i,
     );
   });
 
@@ -537,7 +558,7 @@ describe("resume claim confirmation commands", () => {
 
     // Without the confirmations the fresh export blocks again.
     await expect(workspaceService.exportResumePdf("job_ready")).rejects.toThrow(
-      /blocking candidate-claim validation issues/i,
+      /still need your decision/i,
     );
   });
 
@@ -713,7 +734,7 @@ describe("resume claim confirmation commands", () => {
     });
 
     await expect(workspaceService.exportResumePdf("job_ready")).rejects.toThrow(
-      /blocking candidate-claim validation issues/i,
+      /still need your decision/i,
     );
     const after = await workspaceService.getResumeWorkspace("job_ready");
     expect(

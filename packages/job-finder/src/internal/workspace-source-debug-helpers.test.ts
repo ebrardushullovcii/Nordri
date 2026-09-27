@@ -372,14 +372,7 @@ describe("resolveSourceDebugPhases", () => {
         target: createPublicProviderTarget(),
         instructionArtifact: null,
       }),
-    ).toEqual([
-      "access_auth_probe",
-      "site_structure_mapping",
-      "search_filter_probe",
-      "job_detail_validation",
-      "apply_path_validation",
-      "replay_verification",
-    ]);
+    ).toEqual(["site_structure_mapping", "replay_verification"]);
   });
 
   test("falls back to inferred intelligence when persisted intelligence is malformed", () => {
@@ -447,14 +440,7 @@ describe("resolveSourceDebugPhases", () => {
         target: createPublicProviderTarget(),
         instructionArtifact,
       }),
-    ).toEqual([
-      "access_auth_probe",
-      "site_structure_mapping",
-      "search_filter_probe",
-      "job_detail_validation",
-      "apply_path_validation",
-      "replay_verification",
-    ]);
+    ).toEqual(["site_structure_mapping", "replay_verification"]);
   });
 });
 

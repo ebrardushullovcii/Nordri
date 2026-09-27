@@ -230,36 +230,11 @@ describe("DiscoveryResultsPanel result sorting", () => {
     ).toHaveLength(50);
   });
 
-  it("reverses the active sort direction in place", () => {
-    renderResults(createJobs());
-
-    fireEvent.change(screen.getByRole("combobox", { name: "Sort results" }), {
-      target: { value: "company" },
-    });
-    expect(getFirstResultJobId()).toBe("sort_job_059");
-
-    fireEvent.click(
-      screen.getByRole("button", {
-        name: "Sort direction: lowest first. Select to sort highest first.",
-      }),
-    );
-    // Descending companies order the Mega group by their flipped title
-    // tie-break, so Engineer 058 leads while Aardvark sinks to the last page.
-    expect(getFirstResultJobId()).toBe("sort_job_058");
-    expect(
-      screen.getByRole("button", {
-        name: "Sort direction: highest first. Select to sort lowest first.",
-      }),
-    ).toBeTruthy();
-    // The direction is readable without decoding a bare arrow.
-    expect(screen.getByText("Highest first")).toBeTruthy();
-  });
-
   it("orders recency newest-first using available listing dates", () => {
     renderResults(createJobs(12));
 
     expect(
-      screen.getByRole("option", { name: "Newest listing date" }),
+      screen.getByRole("option", { name: "Newest first" }),
     ).toBeTruthy();
 
     fireEvent.change(screen.getByRole("combobox", { name: "Sort results" }), {

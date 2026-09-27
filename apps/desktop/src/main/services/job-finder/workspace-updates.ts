@@ -21,3 +21,29 @@ export function publishJobFinderWorkspaceUpdate(target?: WebContents): void {
     }
   }
 }
+
+const FIRST_UPDATE_DELAY_MS = 500;
+
+/** Keep active work visible while its IPC response waits for the browser. */
+export async function withJobFinderWorkspaceUpdates<T>(
+  target: WebContents,
+  operation: () => Promise<T>,
+): Promise<T> {
+  // The first write of an operation (a step moving to checking, a run
+  // starting) lands within moments; show it then, not after the first beat.
+  const first = setTimeout(
+    () => publishJobFinderWorkspaceUpdate(target),
+    FIRST_UPDATE_DELAY_MS,
+  );
+  const heartbeat = setInterval(
+    () => publishJobFinderWorkspaceUpdate(target),
+    3_000,
+  );
+  try {
+    return await operation();
+  } finally {
+    clearTimeout(first);
+    clearInterval(heartbeat);
+    publishJobFinderWorkspaceUpdate(target);
+  }
+}

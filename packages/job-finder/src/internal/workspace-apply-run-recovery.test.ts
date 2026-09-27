@@ -1,5 +1,8 @@
 import {
   ApplySubmitApprovalSchema,
+  ApplyRunSchema,
+  ApplyJobResultSchema,
+  JobFinderActivityControlSchema,
   type ApplySubmitApproval,
 } from "@unemployed/contracts";
 import { describe, expect, it } from "vitest";
@@ -8,9 +11,99 @@ import {
   describeRemainingBatchPreparation,
   describeUnstartedBatchReason,
   selectReusableBatchApproval,
+  isSafelyParkedApplyQueue,
 } from "./workspace-apply-run-recovery";
 
 const now = "2026-08-15T10:00:00.000Z";
+
+describe("parked Home apply queue recovery", () => {
+  it("preserves only a paused queue between jobs, never an in-flight or uncertain send", () => {
+    const run = ApplyRunSchema.parse({
+      id: "run_parked",
+      mode: "queue_auto",
+      state: "running",
+      jobIds: ["job_1", "job_2"],
+      createdAt: now,
+      updatedAt: now,
+      totalJobs: 2,
+      pendingJobs: 1,
+      summary: "Applying",
+      detail: "Waiting between jobs.",
+    });
+    const settled = ApplyJobResultSchema.parse({
+      id: "result_1",
+      runId: run.id,
+      jobId: "job_1",
+      state: "awaiting_review",
+      summary: "Prepared",
+      detail: "Review the form.",
+      startedAt: now,
+      updatedAt: now,
+    });
+    const planned = ApplyJobResultSchema.parse({
+      id: "result_2",
+      runId: run.id,
+      jobId: "job_2",
+      state: "planned",
+      summary: "Waiting",
+      detail: "Not started.",
+      startedAt: now,
+      updatedAt: now,
+    });
+    const control = JobFinderActivityControlSchema.parse({
+      paused: true,
+      pausedAt: now,
+      reason: "Paused by you.",
+      pauseBehavior: "finish_current",
+    });
+    expect(
+      isSafelyParkedApplyQueue({ run, results: [settled, planned], control }),
+    ).toBe(true);
+    expect(
+      isSafelyParkedApplyQueue({
+        run,
+        results: [{ ...settled, state: "filling" }, planned],
+        control,
+      }),
+    ).toBe(false);
+    expect(
+      isSafelyParkedApplyQueue({
+        run,
+        results: [
+          settled,
+          {
+            ...planned,
+            applicationPreparationStartedAt: now,
+            applicationPreparationStartedLocalDate: "2026-08-15",
+          },
+        ],
+        control,
+      }),
+    ).toBe(false);
+    expect(
+      isSafelyParkedApplyQueue({
+        run,
+        results: [settled, planned],
+        control: { ...control, paused: false },
+      }),
+    ).toBe(false);
+    expect(
+      isSafelyParkedApplyQueue({
+        run,
+        results: [
+          {
+            ...settled,
+            privacyReceipt: {
+              submissionOutcome: { outcome: "outcome_uncertain" },
+            },
+          } as typeof settled,
+          planned,
+        ],
+        control,
+      }),
+    ).toBe(false);
+  });
+});
 
 function approval(
   overrides: Partial<ApplySubmitApproval> = {},
@@ -37,7 +130,8 @@ function select(
   return selectReusableBatchApproval({
     approvals,
     jobIds,
-    campaignId: options.campaignId === undefined ? "campaign_1" : options.campaignId,
+    campaignId:
+      options.campaignId === undefined ? "campaign_1" : options.campaignId,
     unfinishedApprovalRunIds: new Set(options.unfinished ?? ["run_1"]),
     now,
   });
@@ -82,7 +176,12 @@ describe("selectReusableBatchApproval", () => {
     ).toBe("no_batch_approval");
     expect(
       select(
-        [approval({ status: "revoked", revokedAt: "2026-08-15T09:30:00.000Z" })],
+        [
+          approval({
+            status: "revoked",
+            revokedAt: "2026-08-15T09:30:00.000Z",
+          }),
+        ],
         ["job_1"],
       ).refusal,
     ).toBe("no_batch_approval");
@@ -188,7 +287,9 @@ describe("selectReusableBatchApproval", () => {
     expect(describeRemainingBatchPreparation(1)).toBe(
       "Prepare the remaining job",
     );
-    expect(describeRemainingBatchPreparation(4)).toBe("Prepare the remaining 4");
+    expect(describeRemainingBatchPreparation(4)).toBe(
+      "Prepare the remaining 4",
+    );
   });
 
   it("says in one plain sentence why a staged batch never started", () => {

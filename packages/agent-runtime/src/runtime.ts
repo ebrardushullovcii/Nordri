@@ -90,6 +90,8 @@ export interface AgentTaskRunOptions<TState, TDraft> {
   }) => unknown;
   readonly signal?: AbortSignal;
   readonly timeBudgetMs?: number;
+  /** Maximum time for one provider turn; also capped by the task time left. */
+  readonly modelTurnTimeoutMs?: number;
   /** A provider-call ceiling used as the deterministic cost guard. */
   readonly providerCallBudget?: number;
   readonly noProgressLimit?: number;
@@ -103,7 +105,36 @@ export interface AgentTaskRunResult<TDraft> {
   readonly receipt: AgentTaskExecutionReceipt;
 }
 
+/** Keep a bounded recent tail without ever starting on an orphaned tool result.
+ * Chat-completions providers reject a `tool` message unless the matching
+ * assistant `tool_calls` message is still present immediately before its
+ * result group. */
+function takeProtocolSafeRecentMessages(
+  messages: readonly AgentTaskMessage[],
+  limit: number,
+): AgentTaskMessage[] {
+  let start = Math.max(0, messages.length - limit);
+  if (messages[start]?.role === "tool") {
+    for (let index = start - 1; index >= 0; index -= 1) {
+      const candidate = messages[index];
+      if (candidate?.role === "assistant" && candidate.toolCalls?.length) {
+        start = index;
+        break;
+      }
+      if (candidate?.role !== "tool") break;
+    }
+  }
+  return messages.slice(start);
+}
+
+/** A provider adapter that already owns retries can use this to avoid nesting
+ * another three-attempt retry loop while preserving the original message. */
+export class AgentTaskNonRetryableProviderError extends Error {
+  override readonly name = "AgentTaskNonRetryableProviderError";
+}
+
 export function classifyAgentTaskFailure(error: unknown): AgentTaskFailureKind {
+  if (error instanceof AgentTaskNonRetryableProviderError) return "permanent";
   if (error instanceof DOMException && error.name === "AbortError") {
     return "cancelled";
   }
@@ -149,6 +180,16 @@ async function waitForBackoff(attempt: number, signal?: AbortSignal) {
   });
 }
 
+function parseToolArguments(
+  text: string | undefined,
+): { ok: true; value: unknown } | { ok: false } {
+  try {
+    return { ok: true, value: JSON.parse(text || "{}") };
+  } catch {
+    return { ok: false };
+  }
+}
+
 function issueFromZod(error: z.ZodError): AgentTaskValidationIssue[] {
   return error.issues.map((issue) => ({
     code: issue.code,
@@ -163,6 +204,10 @@ export async function runAgentTask<TState, TDraft>(
   const startedAtMs = Date.now();
   const startedAt = new Date(startedAtMs).toISOString();
   const timeBudgetMs = Math.max(1_000, options.timeBudgetMs ?? 90_000);
+  const modelTurnTimeoutMs = Math.max(
+    10,
+    options.modelTurnTimeoutMs ?? timeBudgetMs,
+  );
   const noProgressLimit = Math.max(1, options.noProgressLimit ?? 4);
   const providerCallBudget = Math.max(1, options.providerCallBudget ?? 24);
   const emergencyCeiling = Math.max(4, options.emergencyCeiling ?? 32);
@@ -247,7 +292,7 @@ export async function runAgentTask<TState, TDraft>(
         role: "user",
         content: JSON.stringify(taskPayload),
       },
-      ...recentMessages.slice(-8),
+      ...takeProtocolSafeRecentMessages(recentMessages, 8),
     ];
 
     emitProgress("thinking", "Working on the next useful change");
@@ -257,29 +302,71 @@ export async function runAgentTask<TState, TDraft>(
         stopReason = "cost_budget";
         break;
       }
+      let turnTimeout: AbortController | null = null;
       try {
         providerCalls += 1;
-        response = await options.model.chat({
-          messages,
-          tools: options.tools.map((tool) => ({
-            type: "function",
-            function: {
-              name: tool.name,
-              description: tool.description,
-              parameters: tool.parameters,
-            },
-          })),
-          ...(options.signal ? { signal: options.signal } : {}),
-        });
+        const turnController = new AbortController();
+        turnTimeout = turnController;
+        const remainingMs = Math.max(
+          1,
+          timeBudgetMs - (Date.now() - startedAtMs),
+        );
+        const turnTimer = setTimeout(
+          () => turnController.abort(),
+          Math.min(modelTurnTimeoutMs, remainingMs),
+        );
+        const turnSignal = options.signal
+          ? AbortSignal.any([options.signal, turnController.signal])
+          : turnController.signal;
+        try {
+          response = await Promise.race([
+            options.model.chat({
+              messages,
+              tools: options.tools.map((tool) => ({
+                type: "function",
+                function: {
+                  name: tool.name,
+                  description: tool.description,
+                  parameters: tool.parameters,
+                },
+              })),
+              signal: turnSignal,
+            }),
+            new Promise<never>((_resolve, reject) => {
+              turnController.signal.addEventListener(
+                "abort",
+                () => reject(new DOMException("Timed out", "AbortError")),
+                { once: true },
+              );
+            }),
+          ]);
+        } finally {
+          clearTimeout(turnTimer);
+        }
         break;
       } catch (error) {
+        if (options.signal?.aborted) throw error;
+        if (turnTimeout?.signal.aborted) {
+          emitProgress(
+            "timed_out",
+            "The assistant did not answer before this turn's time limit",
+          );
+          stopReason = "time_budget";
+          break;
+        }
+        if (Date.now() - startedAtMs >= timeBudgetMs) {
+          stopReason = "time_budget";
+          break;
+        }
         const failureKind = classifyAgentTaskFailure(error);
         if (!shouldRetry(failureKind) || attempt === 2) throw error;
         await waitForBackoff(attempt, options.signal);
       }
     }
     if (!response) {
-      if (stopReason !== "cost_budget") stopReason = "permanent_failure";
+      if (stopReason !== "cost_budget" && stopReason !== "time_budget") {
+        stopReason = "permanent_failure";
+      }
       break;
     }
     recentMessages.push({
@@ -328,15 +415,33 @@ export async function runAgentTask<TState, TDraft>(
         };
       } else {
         try {
-          const rawArgs: unknown = JSON.parse(call.function.arguments || "{}");
-          const parsed = tool.inputSchema.safeParse(rawArgs);
-          if (!parsed.success) {
+          const rawArgs = parseToolArguments(call.function.arguments);
+          const parsed = rawArgs.ok
+            ? tool.inputSchema.safeParse(rawArgs.value)
+            : null;
+          if (!rawArgs.ok) {
+            // Arguments that are not JSON are usually a reply cut off in the
+            // middle of the call. That is the model's to repair, not a reason
+            // to stop the whole run.
+            outcome = "rejected";
+            failureKind = "validation";
+            issues = [
+              {
+                code: "invalid_tool_arguments",
+                message:
+                  "The tool arguments were not valid JSON (they may have been cut off). Send the complete call again, shorter if needed.",
+                path: [],
+              },
+            ];
+            repairAttempts += 1;
+            toolContent = { ok: false, validationIssues: issues };
+          } else if (parsed && !parsed.success) {
             outcome = "rejected";
             failureKind = "validation";
             issues = issueFromZod(parsed.error);
             repairAttempts += 1;
             toolContent = { ok: false, validationIssues: issues };
-          } else {
+          } else if (parsed) {
             const execution = await tool.execute(parsed.data, {
               state: options.state,
               draft,
@@ -370,10 +475,23 @@ export async function runAgentTask<TState, TDraft>(
         } catch (error) {
           outcome = "failed";
           failureKind = classifyAgentTaskFailure(error);
+          const errorMessage =
+            error instanceof Error && error.message.trim()
+              ? error.message
+              : "Tool failed";
+          // The receipt keeps the cause, so a stopped run can say which tool
+          // failed and why instead of only "permanent_failure".
+          issues = [
+            {
+              code: "tool_error",
+              message: errorMessage.slice(0, 300),
+              path: [],
+            },
+          ];
           toolContent = {
             ok: false,
             failureKind,
-            error: error instanceof Error ? error.message : "Tool failed",
+            error: errorMessage,
           };
         }
       }
@@ -427,6 +545,11 @@ export async function runAgentTask<TState, TDraft>(
         ].includes(receipt.failureKind ?? ""),
       );
     if (terminalFailure) {
+      console.warn(
+        `[agent-runtime] ${options.capability} stopped: ${terminalFailure.toolName} failed (${terminalFailure.failureKind}): ${
+          terminalFailure.validationIssues[0]?.message ?? "no detail"
+        }`,
+      );
       stopReason =
         terminalFailure.failureKind === "user_action_required"
           ? "user_action_required"
@@ -438,8 +561,21 @@ export async function runAgentTask<TState, TDraft>(
       break;
     }
 
+    // A write refused in this same turn left nothing in the draft. Finishing
+    // on top of it silently dropped what the model meant to do (a profile
+    // split whose proposal was refused finished with no proposal at all), so
+    // the model first hears what was refused and gets one turn to repair it.
+    const refusedWriteIssues = toolReceipts
+      .slice(receiptStart)
+      .filter(
+        (receipt) =>
+          receipt.outcome === "rejected" &&
+          receipt.failureKind === "validation" &&
+          receipt.permission === "draft_write",
+      )
+      .flatMap((receipt) => receipt.validationIssues);
     if (finishRequested) {
-      if (validationIssues.length === 0) {
+      if (validationIssues.length === 0 && refusedWriteIssues.length === 0) {
         stopReason = "completed";
         break;
       }
@@ -448,8 +584,12 @@ export async function runAgentTask<TState, TDraft>(
         role: "user",
         content: JSON.stringify({
           finishRejected: true,
-          validationIssues,
-          instruction: "Repair these issues before finishing.",
+          validationIssues:
+            validationIssues.length > 0 ? validationIssues : refusedWriteIssues,
+          instruction:
+            validationIssues.length > 0
+              ? "Repair these issues before finishing."
+              : "A change you sent in this turn was refused, so nothing from it was kept. Send it again with these issues repaired, or finish without it if it is not needed.",
         }),
       });
     }

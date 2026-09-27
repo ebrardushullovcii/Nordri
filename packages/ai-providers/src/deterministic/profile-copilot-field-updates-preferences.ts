@@ -276,7 +276,13 @@ export const preferenceFieldDescriptors = [
     title: "salary currency",
   },
   {
-    aliases: ["tailoring mode", "resume tailoring style", "tailoring style"],
+    aliases: [
+      "tailoring mode",
+      "resume tailoring style",
+      "tailoring style",
+      "default resume approach",
+      "resume approach",
+    ],
     applyMode: "applied",
     key: "tailoringMode",
     operation: "replace_search_preferences_fields",

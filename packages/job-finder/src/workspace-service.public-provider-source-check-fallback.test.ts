@@ -90,14 +90,10 @@ describe("public provider source check fallback", () => {
       phaseLabels.some((label) => /site structure mapping/i.test(label)),
     ).toBe(true);
     expect(
-      phaseLabels.some((label) => /search filter probe/i.test(label)),
+      phaseLabels.some((label) => /replay verification/i.test(label)),
     ).toBe(true);
     expect(snapshot.recentSourceDebugRuns[0]?.phases).toEqual([
-      "access_auth_probe",
       "site_structure_mapping",
-      "search_filter_probe",
-      "job_detail_validation",
-      "apply_path_validation",
       "replay_verification",
     ]);
   });

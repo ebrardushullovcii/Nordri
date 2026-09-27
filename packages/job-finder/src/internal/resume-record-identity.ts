@@ -184,11 +184,38 @@ export function areEquivalentExperienceRecords(
   const startCompatible = fieldsCompatible(leftStart, rightStart, "date");
   const endCompatible = fieldsCompatible(leftEnd, rightEnd, "date");
 
+  // A role read twice rarely agrees on every field: one reading keeps the
+  // title and dates but loses the employer line, the other has the employer
+  // and the bullets. Same title, same month, and an employer named on at
+  // most one side is the same role, not a second one.
+  const employerMissingOnOneSide = !leftCompany || !rightCompany;
+  const skeletonOfSameRole =
+    strongTitle &&
+    employerMissingOnOneSide &&
+    (strongStart || (strongEnd && startCompatible));
+
   return (
     (strongTitle && strongStart && companyCompatible && (strongCompany || strongLocation)) ||
     (strongCompany && strongStart && titleCompatible && (strongTitle || strongEnd || strongLocation)) ||
-    (strongTitle && strongCompany && (strongStart || strongEnd) && startCompatible && endCompatible)
+    (strongTitle && strongCompany && (strongStart || strongEnd) && startCompatible && endCompatible) ||
+    skeletonOfSameRole
   );
+}
+
+/**
+ * "March 2021", "3/2021", "2021-03-01" → "2021-03". Text that is not a date
+ * comes back unchanged so a person's own wording is never thrown away.
+ */
+export function canonicalizeRecordDateText(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const normalized = normalizeRecordDate(trimmed);
+  return /^\d{4}(?:-\d{2})?$/.test(normalized) ? normalized : trimmed;
 }
 
 export function areEquivalentEducationRecords(

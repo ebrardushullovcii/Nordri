@@ -731,11 +731,14 @@ export async function runSourceDebugWorkflow(
         ).length;
         const hostname = new URL(normalizedTarget.startingUrl).hostname;
         const canonicalUrlBehavior =
-          phase === "job_detail_validation" || phase === "replay_verification"
+          phase === "site_structure_mapping" ||
+          phase === "job_detail_validation" ||
+          phase === "replay_verification"
             ? summarizeCanonicalUrlBehavior(debugResult.jobs, hostname)
             : [];
         const applyPathBehavior =
-          phase === "apply_path_validation" &&
+          (phase === "site_structure_mapping" ||
+            phase === "apply_path_validation") &&
           !warningSuggestsAuthRestriction(debugResult.warning)
             ? summarizeApplyPathBehavior(debugResult.jobs)
             : [];
@@ -911,10 +914,14 @@ export async function runSourceDebugWorkflow(
           ],
         });
 
-        const shouldStopEarly = shouldFinishSourceDebugEarly({
-          attempts: [...attempts, finalizedAttempt],
-          currentPhase: phase,
-        });
+        // The replay is what turns guidance from draft into validated, and
+        // it is short. It is never skipped for having "enough" evidence.
+        const shouldStopEarly =
+          phase !== "site_structure_mapping" &&
+          shouldFinishSourceDebugEarly({
+            attempts: [...attempts, finalizedAttempt],
+            currentPhase: phase,
+          });
 
         if (shouldStopEarly) {
           finishedEarlyAfterUsefulDraft = true;
@@ -1301,7 +1308,7 @@ function describeSourceCheckPhaseActivity(phase: SourceDebugPhase): string {
     case "access_auth_probe":
       return "checking whether the site opens without a sign-in";
     case "site_structure_mapping":
-      return "looking for where the job list lives";
+      return "learning how the site works: where the jobs are, how search behaves, and how applying starts";
     case "search_filter_probe":
       return "trying the site's search and filters";
     case "job_detail_validation":

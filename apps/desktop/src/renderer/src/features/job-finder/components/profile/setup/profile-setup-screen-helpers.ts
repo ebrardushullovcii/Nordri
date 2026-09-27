@@ -14,6 +14,7 @@ import {
   type ProfileSetupStep,
 } from "@unemployed/contracts";
 import { profileSetupStepDefinitions } from "./profile-setup-steps";
+import { deriveJobSourceLabel } from "../../../lib/job-source-display-name";
 
 /** Keep setup source editing bounded while leaving the complete catalog searchable. */
 export const PROFILE_SETUP_SOURCE_PAGE_SIZE = 25;
@@ -48,11 +49,7 @@ export function isValidProfileSetupSourceUrl(value: string): boolean {
 }
 
 export function getProfileSetupSourceHost(startingUrl: string): string {
-  try {
-    return new URL(startingUrl.trim()).hostname.replace(/^www\./, "");
-  } catch {
-    return startingUrl.trim() || "URL not set";
-  }
+  return deriveJobSourceLabel(startingUrl);
 }
 
 /** Hedged sign-in/public access expectation for known starter sources. */
@@ -114,12 +111,27 @@ export type ProfileSetupReviewItemDisplay = ProfileSetupReviewItem & {
 };
 
 export function getProfileSetupReviewItemCopy(
-  item: Pick<ProfileSetupReviewItem, "label" | "reason" | "target">,
+  item: Pick<ProfileSetupReviewItem, "label" | "reason" | "target"> &
+    Partial<Pick<ProfileSetupReviewItem, "sourceCandidateId">>,
 ): { label: string; reason: string } {
   if (item.target.domain === "work_eligibility") {
+    if (item.sourceCandidateId) {
+      return { label: item.label, reason: item.reason };
+    }
+    if (
+      item.target.key === "authorizedWorkCountries" ||
+      item.target.key === "requiresVisaSponsorship"
+    ) {
+      return {
+        label: "Work eligibility",
+        reason:
+          "Answer where you can work and whether you need visa sponsorship before finishing setup. Nothing is inferred from where you live.",
+      };
+    }
     return {
-      label: "Check legal work details",
-      reason: `${item.reason} If no legal work-authorization fact is available, leave this Not set; Job Finder will not guess.`,
+      label: "Work details",
+      reason:
+        "Optional. Relocation, travel, and remote eligibility help matching and applications. Leave anything you do not know as Not set; nothing here is guessed.",
     };
   }
 
@@ -165,17 +177,11 @@ export function isFinishBlockingReviewItem(
     return true;
   }
 
-  return (
-    item.severity !== "optional" &&
-    item.target !== undefined &&
-    isProfileSetupMissingFieldReviewItem({
-      proposedValue: item.proposedValue ?? null,
-      sourceCandidateId: item.sourceCandidateId ?? null,
-      sourceRunId: item.sourceRunId ?? null,
-      sourceSnippet: item.sourceSnippet ?? null,
-      target: item.target,
-    })
-  );
+  // Finishing needs a name, a way to be contacted, and a job source (ADR
+  // 0024). A recommended field that the resume did not fill (location, years
+  // of experience, work eligibility) is a hint, not a gate: it must not stand
+  // between a person with a resume and their first search.
+  return false;
 }
 
 /** Pending items that do not gate finishing: recommended imports and optional hints. */
@@ -196,19 +202,40 @@ const PROFILE_SETUP_READINESS_BLOCKER_LABELS: Record<
   string
 > = {
   background: "Add work history",
-  discovery_source: "Enable a job source (on the Job targets step)",
+  discovery_source: "Add a job source",
   // Any one work or location answer satisfies this gate, so the label must
   // not promise that a location was saved.
   eligibility_preferences: "Answer one work or location detail",
   identity_contact: "Add your name and an email or phone",
   work_mode_preference:
     "Pick where you want to work (remote, hybrid, onsite, or flexible)",
+  work_eligibility_answers:
+    "Say where you can work and whether you need visa sponsorship",
 };
 
 export function getProfileSetupReadinessBlockerLabel(
   blockerId: ProfileSetupReadinessBlockerId,
 ): string {
   return PROFILE_SETUP_READINESS_BLOCKER_LABELS[blockerId];
+}
+
+/** The step whose editor fills each blocker, so the footer can say where to go. */
+const PROFILE_SETUP_READINESS_BLOCKER_STEPS: Record<
+  ProfileSetupReadinessBlockerId,
+  ProfileSetupStep
+> = {
+  background: "background",
+  discovery_source: "targeting",
+  eligibility_preferences: "targeting",
+  identity_contact: "essentials",
+  work_mode_preference: "targeting",
+  work_eligibility_answers: "targeting",
+};
+
+export function getProfileSetupReadinessBlockerStep(
+  blockerId: ProfileSetupReadinessBlockerId,
+): ProfileSetupStep {
+  return PROFILE_SETUP_READINESS_BLOCKER_STEPS[blockerId];
 }
 
 /**
@@ -226,6 +253,7 @@ export function buildProfileSetupReadinessPresentation(input: {
     | "hasEligibilityPreferences"
     | "hasWorkModePreference"
     | "hasDiscoverySource"
+    | "hasWorkEligibilityAnswers"
   >;
   reviewItems: readonly ProfileSetupFinishGateReviewItem[];
 }): ProfileSetupReadinessPresentation {
@@ -796,6 +824,7 @@ export type ProfileSetupPathStepReadiness = Pick<
   | "hasEligibilityPreferences"
   | "hasMeaningfulBackground"
   | "hasNarrative"
+  | "hasWorkEligibilityAnswers"
   | "hasWorkModePreference"
 >;
 
@@ -829,6 +858,7 @@ function hasProfileSetupPathStepEvidence(input: {
     case "targeting":
       return (
         input.readiness.hasEligibilityPreferences &&
+        input.readiness.hasWorkEligibilityAnswers &&
         input.readiness.hasWorkModePreference &&
         input.readiness.hasDiscoverySource
       );

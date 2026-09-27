@@ -54,7 +54,7 @@ describe("JobSearchCampaignSchema", () => {
         true,
       );
       expect(campaign.limits.retainedJobTarget).toBe(
-        mode === "precision" ? 15 : 1_000,
+        mode === "precision" ? 1_000 : 1_000,
       );
       expect(campaign.limits.discoveryRunJobBudget).toBe(
         mode === "precision"

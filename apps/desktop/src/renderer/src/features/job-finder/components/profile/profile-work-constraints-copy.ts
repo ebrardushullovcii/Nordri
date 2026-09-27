@@ -37,7 +37,7 @@ export const PROFILE_WORK_CONSTRAINT_COPY = {
     // preference and a work-history card's "Work mode" were both called work
     // mode, and neither said hours. This one is about where you work.
     description:
-      "Where you want to work: remote, hybrid, onsite, or flexible. This is not about hours — full-time and part-time are set under Hours.",
+      "Remote, hybrid, onsite, or flexible. Tick every one you would accept; hours are set under Hours.",
     label: "Where you want to work",
   },
 } as const;

@@ -11,6 +11,7 @@ import {
 } from "@unemployed/contracts";
 import {
   extractListingDetailFromHtml,
+  findApplyLinkInHtml,
   normalizeListingText,
   stripPictographGlyphs,
   type ExtractedListingDetail,
@@ -21,6 +22,7 @@ import {
   looksLikePlaceValue,
 } from "./listing-field-shapes";
 import { enrichDiscoveredPosting } from "./matching";
+import { listUnreadSightings } from "./listing-sightings";
 import { reconcileSalaryTextWithListingBody } from "./matching-compensation";
 
 /**
@@ -44,6 +46,8 @@ export interface ListingHtmlFetchResult {
   status: number;
   html: string;
   finalUrl: string;
+  /** Server-requested pause after a 429, already parsed and bounded. */
+  retryAfterMs?: number;
 }
 
 export type ListingHtmlFetcher = (
@@ -63,6 +67,11 @@ export interface ListingDetailEnrichmentSummary {
 }
 
 export interface EnrichSavedJobListingDetailsInput {
+  /**
+   * Read again even inside the retry back-off after a failed attempt. Used
+   * when the person acts on a job right now and the body matters at once.
+   */
+  ignoreRetryBackoff?: boolean;
   jobs: readonly SavedJob[];
   fetchHtml: ListingHtmlFetcher;
   /** Re-scores a posting; the discovery pipeline's assessment session. */
@@ -86,6 +95,15 @@ export interface EnrichSavedJobListingDetailsResult {
 
 const DEFAULT_CONCURRENCY = 4;
 const DEFAULT_PER_REQUEST_TIMEOUT_MS = 8_000;
+const DEFAULT_RATE_LIMIT_PAUSE_MS = 1_000;
+const MAX_RATE_LIMIT_PAUSE_MS = 30_000;
+const MAX_DEFERRED_RATE_LIMIT_MS = 24 * 60 * 60 * 1_000;
+/** Each rate-limited page is asked again this many times after the pause. */
+const RATE_LIMIT_RETRIES_PER_JOB = 2;
+/** And the whole pass never asks again more often than this. */
+const RATE_LIMIT_RETRIES_PER_PASS = 40;
+/** Nor waits on rate limits for longer than this in total. */
+const RATE_LIMIT_WAIT_BUDGET_MS = 90_000;
 /** Exported so the run log can say how many of the candidates this pass reads. */
 export const LISTING_DETAIL_READS_PER_RUN = 60;
 const DEFAULT_MAX_JOBS = LISTING_DETAIL_READS_PER_RUN;
@@ -117,8 +135,54 @@ export function createDefaultListingHtmlFetcher(): ListingHtmlFetcher {
           ? text.slice(0, MAX_RESPONSE_CHARACTERS)
           : text,
       finalUrl: response.url || url,
+      ...(response.status === 429
+        ? {
+            retryAfterMs: parseRetryAfterMs(
+              response.headers.get("retry-after"),
+            ),
+          }
+        : {}),
     };
   };
+}
+
+function parseRetryAfterMs(value: string | null): number {
+  if (!value) {
+    return DEFAULT_RATE_LIMIT_PAUSE_MS;
+  }
+  const seconds = Number(value);
+  const requestedMs = Number.isFinite(seconds)
+    ? seconds * 1_000
+    : Date.parse(value) - Date.now();
+  if (!Number.isFinite(requestedMs)) {
+    return DEFAULT_RATE_LIMIT_PAUSE_MS;
+  }
+  return Math.min(
+    MAX_DEFERRED_RATE_LIMIT_MS,
+    Math.max(0, Math.round(requestedMs)),
+  );
+}
+
+async function waitForRateLimitPause(
+  delayMs: number,
+  signal: AbortSignal | undefined,
+): Promise<void> {
+  if (delayMs <= 0) return;
+  await new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(resolve, delayMs);
+    signal?.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(timeout);
+        reject(
+          signal.reason instanceof Error
+            ? signal.reason
+            : new DOMException("The listing read was cancelled.", "AbortError"),
+        );
+      },
+      { once: true },
+    );
+  });
 }
 
 function isHttpUrl(value: string | null | undefined): boolean {
@@ -161,6 +225,12 @@ export function jobNeedsListingDetail(
   }
   if (attempt.outcome === "unsupported_url") {
     return false;
+  }
+  if (attempt.retryAfterAt) {
+    // A rate limit names its own wait. Once it has passed the page is due
+    // again; the hour-long back-off below is for pages that failed without
+    // saying when to come back.
+    return Date.parse(nowIso) >= Date.parse(attempt.retryAfterAt);
   }
   const since = Date.parse(nowIso) - Date.parse(attempt.attemptedAt);
   if (!Number.isFinite(since)) {
@@ -312,9 +382,9 @@ export function applyListingDetailToJob(input: {
         ? "The page's record carried only a sentence or two, not a listing body."
         : detail.descriptionLikelyTruncated
           ? "Read partial listing text; the page response ended before the description was complete."
-        : detail.method === "json_ld"
-          ? "Read the listing's structured JobPosting record from its page."
-          : "Read the visible text of the listing page; no structured record was published.",
+          : detail.method === "json_ld"
+            ? "Read the listing's structured JobPosting record from its page."
+            : "Read the visible text of the listing page; no structured record was published.",
   };
   const enrichedPosting = enrichDiscoveredPosting(
     { ...candidate, detailQuality: quality, listingDetailFetch: fetchRecord },
@@ -323,6 +393,15 @@ export function applyListingDetailToJob(input: {
   const nextJob = SavedJobSchema.parse({
     ...job,
     ...enrichedPosting,
+    // The page just read is this sighting's own listing: keep the apply link
+    // it shows, so a job seen on several sources can be pointed at the
+    // employer's own form (ADR 0030).
+    provenance: recordSightingApplyLink(
+      job.provenance,
+      job.canonicalUrl,
+      detail.directApplyUrl,
+      input.attemptedAt,
+    ),
     detailQuality: quality,
     listingDetailFetch: fetchRecord,
     listingDetailCapture: deriveListingDetailCapture({
@@ -340,17 +419,111 @@ export function applyListingDetailToJob(input: {
   };
 }
 
+function recordSightingApplyLink(
+  provenance: SavedJob["provenance"],
+  listingUrl: string,
+  pageApplyUrl: string | null,
+  readAt: string,
+): SavedJob["provenance"] {
+  return provenance.map((entry) =>
+    entry.listingUrl === listingUrl
+      ? { ...entry, pageApplyUrl: pageApplyUrl ?? null, routeReadAt: readAt }
+      : entry,
+  );
+}
+
+export interface SightingRouteReadSummary {
+  read: number;
+  rateLimited: boolean;
+}
+
+/**
+ * Reads the other listings of jobs seen on several sources, once each, for
+ * the apply link each page shows. Nothing else from those pages is used; the
+ * job's content still comes from its own listing. Bounded like the body read
+ * and polite about rate limits: the first 429 ends the pass, and the rest are
+ * read on the next search.
+ */
+export async function readSightingApplyRoutes(input: {
+  jobs: readonly SavedJob[];
+  fetchHtml: ListingHtmlFetcher;
+  now?: () => string;
+  signal?: AbortSignal;
+  perRequestTimeoutMs?: number;
+  maxReads?: number;
+}): Promise<{
+  jobs: SavedJob[];
+  changedJobIds: string[];
+  summary: SightingRouteReadSummary;
+}> {
+  const now = input.now ?? (() => new Date().toISOString());
+  const perRequestTimeoutMs =
+    input.perRequestTimeoutMs ?? DEFAULT_PER_REQUEST_TIMEOUT_MS;
+  let budget = input.maxReads ?? LISTING_DETAIL_READS_PER_RUN;
+  const summary: SightingRouteReadSummary = { read: 0, rateLimited: false };
+  const changed = new Set<string>();
+  const nextJobs: SavedJob[] = [];
+
+  for (const job of input.jobs) {
+    let current = job;
+    for (const sighting of listUnreadSightings(job.provenance)) {
+      if (budget <= 0 || summary.rateLimited || input.signal?.aborted) break;
+      const listingUrl = sighting.listingUrl;
+      if (!listingUrl || !isHttpUrl(listingUrl)) continue;
+      budget -= 1;
+      let response: ListingHtmlFetchResult;
+      try {
+        response = await input.fetchHtml(listingUrl, {
+          signal: combineSignals(input.signal, perRequestTimeoutMs),
+        });
+      } catch {
+        // Unreachable this time; it stays unread and is tried next search.
+        continue;
+      }
+      if (response.status === 429) {
+        summary.rateLimited = true;
+        break;
+      }
+      const pageApplyUrl =
+        response.status < 400
+          ? (extractListingDetailFromHtml({
+              html: response.html,
+              url: response.finalUrl,
+              expectedTitle: job.title,
+            })?.directApplyUrl ??
+            findApplyLinkInHtml(response.html, response.finalUrl))
+          : null;
+      summary.read += 1;
+      current = SavedJobSchema.parse({
+        ...current,
+        provenance: recordSightingApplyLink(
+          current.provenance,
+          listingUrl,
+          pageApplyUrl,
+          now(),
+        ),
+      });
+      changed.add(job.id);
+    }
+    nextJobs.push(current);
+  }
+
+  return { jobs: nextJobs, changedJobIds: [...changed], summary };
+}
+
 function recordFailedAttempt(
   job: SavedJob,
   attemptedAt: string,
   outcome: Exclude<ListingDetailFetchOutcome, "enriched" | "partial">,
   detail: string,
+  retryAfterAt?: string,
 ): SavedJob {
   const listingDetailFetch = {
     attemptedAt,
     outcome,
     method: null,
     detail,
+    ...(retryAfterAt ? { retryAfterAt } : {}),
   } as const;
   return SavedJobSchema.parse({
     ...job,
@@ -415,8 +588,46 @@ export async function enrichSavedJobListingDetails(
     elapsedMs: 0,
   };
   const updated = new Map<string, SavedJob>();
+  let rateLimitPauseUntilMs = 0;
+  let rateLimitRetryAfterAtMs = 0;
+  let rateLimitRetriesLeft = RATE_LIMIT_RETRIES_PER_PASS;
+  let firstRateLimitAtMs: number | null = null;
+  let deferRemainingForRateLimit = false;
+  const registerRateLimit = (response: ListingHtmlFetchResult): number => {
+    const pauseMs = Math.min(
+      MAX_DEFERRED_RATE_LIMIT_MS,
+      Math.max(0, response.retryAfterMs ?? DEFAULT_RATE_LIMIT_PAUSE_MS),
+    );
+    rateLimitPauseUntilMs = Math.max(
+      rateLimitPauseUntilMs,
+      Date.now() + pauseMs,
+    );
+    const responseAtMs = Date.parse(now());
+    rateLimitRetryAfterAtMs = Math.max(
+      rateLimitRetryAfterAtMs,
+      (Number.isFinite(responseAtMs) ? responseAtMs : Date.now()) + pauseMs,
+    );
+    if (pauseMs > MAX_RATE_LIMIT_PAUSE_MS) {
+      deferRemainingForRateLimit = true;
+    }
+    return pauseMs;
+  };
+  const waitForSharedRateLimit = async (): Promise<boolean> => {
+    while (!deferRemainingForRateLimit) {
+      input.signal?.throwIfAborted();
+      const delayMs = rateLimitPauseUntilMs - Date.now();
+      if (delayMs <= 0) return true;
+      await waitForRateLimitPause(delayMs, input.signal);
+    }
+    return false;
+  };
   const queue = input.jobs.filter((job) => {
-    const needs = jobNeedsListingDetail(job, now());
+    const needs = input.ignoreRetryBackoff
+      ? !(
+          job.detailQuality === "detail_enriched" &&
+          job.listingDetailFetch?.outcome === "enriched"
+        ) && job.listingDetailFetch?.outcome !== "unsupported_url"
+      : jobNeedsListingDetail(job, now());
     if (!needs) {
       summary.skipped += 1;
     }
@@ -428,7 +639,7 @@ export async function enrichSavedJobListingDetails(
   let cursor = 0;
   const worker = async (): Promise<void> => {
     while (cursor < capped.length) {
-      if (input.signal?.aborted) {
+      if (input.signal?.aborted || deferRemainingForRateLimit) {
         return;
       }
       const job = capped[cursor];
@@ -436,12 +647,38 @@ export async function enrichSavedJobListingDetails(
       if (!job) {
         return;
       }
-      summary.attempted += 1;
-      const attemptedAt = now();
+      let attemptedAt: string | null = null;
       try {
-        const response = await input.fetchHtml(job.canonicalUrl, {
+        if (!(await waitForSharedRateLimit())) return;
+        summary.attempted += 1;
+        attemptedAt = now();
+        let response = await input.fetchHtml(job.canonicalUrl, {
           signal: combineSignals(input.signal, perRequestTimeoutMs),
         });
+        // A short rate limit is waited out and the page asked again, a
+        // bounded number of times per page and per pass, all sharing one
+        // pause so the site sees one polite reader. A long one defers the
+        // rest of the queue to the next search.
+        let retriesForJob = 0;
+        while (response.status === 429) {
+          const pauseMs = registerRateLimit(response);
+          firstRateLimitAtMs ??= Date.now();
+          if (
+            pauseMs > MAX_RATE_LIMIT_PAUSE_MS ||
+            Date.now() + pauseMs - firstRateLimitAtMs >
+              RATE_LIMIT_WAIT_BUDGET_MS ||
+            retriesForJob >= RATE_LIMIT_RETRIES_PER_JOB ||
+            rateLimitRetriesLeft <= 0 ||
+            !(await waitForSharedRateLimit())
+          ) {
+            break;
+          }
+          retriesForJob += 1;
+          rateLimitRetriesLeft -= 1;
+          response = await input.fetchHtml(job.canonicalUrl, {
+            signal: combineSignals(input.signal, perRequestTimeoutMs),
+          });
+        }
         if (
           response.status === 401 ||
           response.status === 403 ||
@@ -454,7 +691,12 @@ export async function enrichSavedJobListingDetails(
               job,
               attemptedAt,
               "blocked",
-              `The page answered ${response.status}; it wants a signed-in visitor or is rate-limited.`,
+              response.status === 429
+                ? "The site asked Job Finder to slow down (HTTP 429). The listing is read again on the next search."
+                : `The page answered ${response.status}; it may require access or a signed-in visitor.`,
+              response.status === 429
+                ? new Date(rateLimitRetryAfterAtMs).toISOString()
+                : undefined,
             ),
           );
           continue;
@@ -477,10 +719,16 @@ export async function enrichSavedJobListingDetails(
           url: response.finalUrl,
           expectedTitle: job.title,
         });
-        if (detail?.descriptionLikelyTruncated) {
+        if (
+          detail?.descriptionLikelyTruncated &&
+          (await waitForSharedRateLimit())
+        ) {
           const retryResponse = await input.fetchHtml(job.canonicalUrl, {
             signal: combineSignals(input.signal, perRequestTimeoutMs),
           });
+          if (retryResponse.status === 429) {
+            registerRateLimit(retryResponse);
+          }
           if (retryResponse.status < 400) {
             const retryDetail = extractListingDetailFromHtml({
               html: retryResponse.html,
@@ -532,7 +780,7 @@ export async function enrichSavedJobListingDetails(
           job.id,
           recordFailedAttempt(
             job,
-            attemptedAt,
+            attemptedAt ?? now(),
             "fetch_failed",
             describeError(error),
           ),
@@ -546,6 +794,8 @@ export async function enrichSavedJobListingDetails(
       worker(),
     ),
   );
+
+  summary.skipped += capped.length - summary.attempted;
 
   summary.elapsedMs = Date.now() - startedAtMs;
   return {
@@ -571,7 +821,9 @@ export function describeListingDetailEnrichment(
     parts.push(`${summary.noDetail} had no listing text`);
   }
   if (summary.blocked > 0) {
-    parts.push(`${summary.blocked} wanted a sign-in`);
+    parts.push(
+      `${summary.blocked} ${summary.blocked === 1 ? "was" : "were"} blocked or rate-limited`,
+    );
   }
   if (summary.failed > 0) {
     parts.push(`${summary.failed} could not be reached`);

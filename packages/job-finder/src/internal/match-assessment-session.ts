@@ -33,9 +33,16 @@ import {
  * Revision 10 (scorer version 11): occupation, career-stage, explicit hours,
  * and travel-evidence scoring changed. Returning workspaces must not reuse a
  * version-10 score just because the profile and posting text are unchanged.
+ *
+ * Revision 11 (scorer version 12): US country aliases now compare as the same
+ * place, and explicit occupations take precedence over a shared head noun.
+ * Retire cached location conflicts and wrong-family recommendations.
+ *
+ * Revision 12 (scorer version 13): explicit summary language evidence and
+ * customer implementation requirements now participate in assessment.
  */
-export const MATCH_ASSESSMENT_SCORER_VERSION = 11;
-const MATCH_ASSESSMENT_LOGIC_REVISION = 10;
+export const MATCH_ASSESSMENT_SCORER_VERSION = 13;
+const MATCH_ASSESSMENT_LOGIC_REVISION = 12;
 
 function stableSerialize(value: unknown): string {
   if (value === null || typeof value !== "object") {

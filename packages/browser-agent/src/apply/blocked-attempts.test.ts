@@ -115,16 +115,34 @@ describe("blocked attempts", () => {
     }
   });
 
-  test("a popup, a new window, or a download always stops the run", () => {
-    for (const kind of ["popup_open", "window_open", "download"] as const) {
+  test("a download always stops the run", () => {
+    const judgement = judgeBlockedAttempt({
+      attempt: attempt({ kind: "download" }),
+      acknowledged: new Set(),
+      hasWritten: false,
+      pageUrl: PAGE_URL,
+      lastFieldLabel: null,
+    });
+    expect(judgement.stop).toBe(true);
+  });
+
+  test("a popup or a new window hands back where it was going instead of stopping", () => {
+    for (const kind of ["popup_open", "window_open"] as const) {
       const judgement = judgeBlockedAttempt({
-        attempt: attempt({ kind }),
+        attempt: attempt({ kind, url: "https://jobs.employer.test/apply/123" }),
         acknowledged: new Set(),
         hasWritten: false,
         pageUrl: PAGE_URL,
         lastFieldLabel: null,
       });
-      expect(judgement.stop).toBe(true);
+      expect(judgement.stop).toBe(false);
+      if (!judgement.stop) {
+        expect(judgement.tolerated).toBe(true);
+        expect(judgement.openedWindow).toEqual({
+          url: "https://jobs.employer.test/apply/123",
+        });
+        expect(judgement.note).toContain("jobs.employer.test");
+      }
     }
   });
 

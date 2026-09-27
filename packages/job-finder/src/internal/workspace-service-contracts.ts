@@ -9,10 +9,13 @@ import type {
   ApplicationCrmExportResult,
   ApplicationCrmMutationInput,
   ApplicationCrmSettings,
+  ApplicationAutomationMode,
   AppearanceTheme,
   ApplicationPacket,
   CampaignRuleFunnelProjection,
   CandidateAsset,
+  CandidateAssetListInput,
+  CandidateAssetListResult,
   ClearApplicationAnswerCommandInput,
   CompanyIntelligenceMutationInput,
   ApplyRunDetails,
@@ -35,13 +38,16 @@ import type {
   ResumeTimelineRepairAction,
   ResumeImportVisionArtifact,
   ResumeApplicationMode,
+  TailoringMode,
   ResumeSourceDocument,
   JobFinderResumeWorkspace,
   JobFinderSettings,
+  JobFinderSearchRequest,
   JobFinderWorkspaceSnapshot,
   JobFinderSetWorkHistoryReviewAcknowledgmentInput,
   JobFinderSetResumeClaimConfirmationInput,
   JobSearchPreferences,
+  JobSearchCampaignMode,
   MarkAllCampaignNotificationsReadInput,
   MarkCampaignNotificationReadInput,
   ProfileCopilotContext,
@@ -76,6 +82,7 @@ import type {
   SaveCampaignRuleRouteInput,
   SaveJobSearchCampaignInput,
   JobFinderActivityControl,
+  JobFinderPreparedApplicationPageInput,
   SetJobFinderActivityControlInput,
   SaveApplicationAnswerCommandInput,
   SourceDebugProgressEvent,
@@ -84,7 +91,9 @@ import type {
   ToggleCampaignRuleInput,
   UpdateApplicationDefaultsInput,
   UpdateWorkspaceBehaviorInput,
+  UpdateAiBehaviorInput,
   UserActionCommandInput,
+  CandidateAssetKind,
 } from "@unemployed/contracts";
 import type {
   JobFinderRepository,
@@ -139,6 +148,15 @@ export interface JobFinderWorkspaceService {
   clearApplicationAnswer(
     command: ClearApplicationAnswerCommandInput,
   ): Promise<ApplyRunDetails>;
+  /**
+   * Carries on applications waiting on a file question once a fitting file is
+   * restored or added in Profile > Files. Returns how many were continued;
+   * the continuations run in the background.
+   */
+  continueApplicationsWaitingForFiles(input: {
+    assetId: string;
+    assetKind: CandidateAssetKind;
+  }): Promise<number>;
   resetWorkspace(
     seed: JobFinderRepositorySeed,
     options?: JobFinderWorkspaceResetOptions,
@@ -208,6 +226,17 @@ export interface JobFinderWorkspaceService {
     input: UpdateWorkspaceBehaviorInput,
   ): Promise<JobFinderWorkspaceSnapshot>;
   /**
+   * Saves the AI behavior section of Settings in one action: the behavior
+   * preference and cover-letter preference into settings, and the resume
+   * approach into both `settings.resumeApplicationMode` and
+   * `searchPreferences.tailoringMode`. The search selectivity also drives
+   * `searchPreferences.discovery.collectOnlyHardCriteriaMatches`, so search
+   * preferences go through the ordinary save path (active plan kept in sync).
+   */
+  updateAiBehavior(
+    input: UpdateAiBehaviorInput,
+  ): Promise<JobFinderWorkspaceSnapshot>;
+  /**
    * Replaces the tracker CRM settings in the transaction-current settings and
    * only then offers the due-based no-response automation run. Automation
    * failures are reported separately and never roll the committed settings
@@ -243,6 +272,7 @@ export interface JobFinderWorkspaceService {
     onActivity?: (event: DiscoveryActivityEvent) => void,
     signal?: AbortSignal,
     targetId?: string,
+    searchRequest?: JobFinderSearchRequest,
   ): Promise<JobFinderWorkspaceSnapshot>;
   runDiscoveryForTarget(
     targetId: string,
@@ -335,6 +365,7 @@ export interface JobFinderWorkspaceService {
   setJobResumeApplicationMode(
     jobId: string,
     resumeApplicationMode: ResumeApplicationMode,
+    resumeTailoringMode?: TailoringMode | null,
   ): Promise<JobFinderWorkspaceSnapshot>;
   removeJobFromReview(jobId: string): Promise<JobFinderWorkspaceSnapshot>;
   dismissDiscoveryJob(
@@ -415,6 +446,14 @@ export interface JobFinderWorkspaceService {
     jobId: string,
     revisionId: string,
   ): Promise<JobFinderWorkspaceSnapshot>;
+  /**
+   * Removes one accepted AI edit and keeps every edit made after it. Unlike
+   * restoring a revision, later manual edits survive.
+   */
+  undoResumeAssistantEdit(
+    jobId: string,
+    revisionId: string,
+  ): Promise<JobFinderWorkspaceSnapshot>;
   regenerateResumeDraft(jobId: string): Promise<JobFinderWorkspaceSnapshot>;
   regenerateResumeSection(
     jobId: string,
@@ -491,6 +530,7 @@ export interface JobFinderWorkspaceService {
   ): Promise<JobFinderWorkspaceSnapshot>;
   startAutoApplyQueueRun(
     jobIds: readonly string[],
+    applicationAutomationMode?: ApplicationAutomationMode,
   ): Promise<JobFinderWorkspaceSnapshot>;
   approveApplyRun(runId: string): Promise<JobFinderWorkspaceSnapshot>;
   cancelApplyRun(runId: string): Promise<JobFinderWorkspaceSnapshot>;
@@ -499,6 +539,14 @@ export interface JobFinderWorkspaceService {
     action: "approve" | "decline",
   ): Promise<JobFinderWorkspaceSnapshot>;
   revokeApplyRunApproval(runId: string): Promise<JobFinderWorkspaceSnapshot>;
+  focusPreparedApplicationPage(
+    input: JobFinderPreparedApplicationPageInput,
+  ): Promise<JobFinderWorkspaceSnapshot>;
+  /**
+   * Records filled-in applications the person sent themselves on the page
+   * they were handed (the site showed its confirmation). Returns how many.
+   */
+  recordApplicationsSentByPerson(): Promise<number>;
   /**
    * Sends one application the person already looked over.
    *
@@ -507,9 +555,7 @@ export interface JobFinderWorkspaceService {
    * on its own, so an application cannot be sent twice by taking a different
    * route to it.
    */
-  submitPreparedApplication(
-    jobId: string,
-  ): Promise<JobFinderWorkspaceSnapshot>;
+  submitPreparedApplication(jobId: string): Promise<JobFinderWorkspaceSnapshot>;
   approveApply(
     jobId: string,
     applicationRecordId?: string | null,
@@ -538,6 +584,8 @@ type DiscoveryTargetPipelineSharedOptions = {
   useAgentRuntime?: boolean;
   /** Explicit campaign context; discovery then uses the campaign's preferences. */
   campaign?: CampaignRunContext;
+  /** The person's instruction and run-scoped search knobs. */
+  searchRequest?: JobFinderSearchRequest;
 };
 
 export type DiscoveryTargetPipelineOptions =
@@ -573,6 +621,7 @@ export interface RenderedResumeArtifact {
  */
 export interface CampaignRunContext {
   campaignId: string;
+  mode: JobSearchCampaignMode;
   searchPreferences: JobSearchPreferences;
   runJobBudget?: number | null;
 }
@@ -613,7 +662,7 @@ export interface JobFinderDocumentManager {
     profile: CandidateProfile;
     settings: JobFinderSettings;
     /** A type the form insisted on. Null means the renderer may choose. */
-    fileType: "pdf" | "docx" | null;
+    fileType: "pdf" | "docx" | "txt" | null;
   }): Promise<RenderedLetterArtifact>;
 }
 
@@ -645,6 +694,8 @@ export interface ResolvedApplicationCandidateAsset {
 }
 
 export interface CandidateAssetResolver {
+  /** Lists assets the local library may offer to an application. */
+  list?(input: CandidateAssetListInput): Promise<CandidateAssetListResult>;
   resolveForApplication(
     assetId: string,
   ): Promise<ResolvedApplicationCandidateAsset>;
@@ -669,4 +720,12 @@ export interface CreateJobFinderWorkspaceServiceOptions {
   onActivityControlChanged?: (
     control: JobFinderActivityControl,
   ) => void | Promise<void>;
+  /** Publishes the terminal snapshot of a queue resumed after restart. */
+  onDetachedApplyRunFinished?: () => void;
+  /**
+   * Called when the person deliberately starts work (Search now, Apply, Run
+   * now). The desktop host lifts a browser pause the person caused there
+   * (closing the browser mid-run), so the start is not refused.
+   */
+  onExplicitUserStart?: () => void | Promise<void>;
 }

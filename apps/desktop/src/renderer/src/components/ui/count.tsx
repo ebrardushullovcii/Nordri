@@ -19,13 +19,16 @@ import { cn } from "@renderer/lib/utils";
  * The caller decides whether a count exists at all; this primitive will not
  * silently paint a zero pill on its behalf.
  */
-export type CountVariant = "inline" | "rail-marker";
+export type CountVariant = "inline" | "pill" | "rail-marker";
 
 const COUNT_VARIANT_CLASS = {
   inline:
     "inline-flex h-5 min-w-7 items-center justify-end bg-transparent px-0 text-(length:--text-tiny) tabular-nums text-foreground-muted",
+  // A quiet pill for navigation rows: the figure sits in its own soft shape
+  // so it reads as belonging to the row instead of floating at the far edge.
+  pill: "inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-(--input) px-1.5 text-(length:--text-tiny) font-medium tabular-nums text-foreground",
   "rail-marker":
-    "inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-(--input) px-1 text-(length:--text-tiny) tabular-nums text-foreground",
+    "inline-flex h-4 min-w-4 items-center justify-center rounded-full border border-(--surface-panel-border) bg-(--input) px-1 text-(length:--text-tiny) tabular-nums text-foreground",
 } as const satisfies Record<CountVariant, string>;
 
 function Count({

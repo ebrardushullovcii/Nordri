@@ -1,6 +1,6 @@
 import type { JobPosting } from '@unemployed/contracts'
+import type { AgentLoopToolDefinition } from '@unemployed/agent-runtime'
 import type { AgentMessage, ToolCall } from '../types'
-import type { getToolDefinitions } from '../tools'
 
 export type AgentExtractorPageType = 'search_results' | 'job_detail'
 
@@ -11,7 +11,7 @@ export type AgentExtractorPageType = 'search_results' | 'job_detail'
 export interface LLMClient {
   chatWithTools: (
     messages: AgentMessage[],
-    tools: ReturnType<typeof getToolDefinitions>,
+    tools: AgentLoopToolDefinition[],
     options?: {
       signal?: AbortSignal
       maxOutputTokens?: number

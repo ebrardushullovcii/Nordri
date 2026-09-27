@@ -239,6 +239,32 @@ afterEach(() => {
 });
 
 describe("DiscoveryScreen Search now truthful feedback", () => {
+  it("replaces an earlier failed source banner after its resumed plan completes", () => {
+    const failedFeedback = {
+      ...createDiscoveryRunFailedFeedback({
+        detail: "The source needed a sign-in.",
+        targetLabel: "Example Board",
+      }),
+      recordedAtMs: Date.parse("2026-08-28T10:01:00.000Z"),
+    };
+    renderScreen({
+      discoveryRunFeedback: failedFeedback,
+      recentRuns: [
+        {
+          ...cleanRun,
+          completedAt: "2026-08-28T10:02:00.000Z",
+        },
+      ],
+    });
+
+    expect(screen.getByTestId("discovery-run-feedback").textContent).toContain(
+      "Search finished",
+    );
+    expect(
+      screen.getByTestId("discovery-run-feedback").textContent,
+    ).not.toContain("Search could not start");
+  });
+
   it("replaces a finished banner with the active plan's safeguard pause", () => {
     const pausedRun = {
       ...cleanRun,
@@ -266,7 +292,9 @@ describe("DiscoveryScreen Search now truthful feedback", () => {
     );
     expect(status.textContent).not.toContain("Search finished");
     expect(
-      screen.getByRole("link", { name: "Open Safeguards" }).getAttribute("href"),
+      screen
+        .getByRole("link", { name: "Open Safeguards" })
+        .getAttribute("href"),
     ).toBe("/job-finder/safeguards");
   });
 

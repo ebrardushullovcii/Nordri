@@ -145,7 +145,9 @@ describe("ApplicationsDetailPanelPrivacyReceiptSection", () => {
     expect(screen.getByText("Written to the site")).not.toBeNull();
     expect(screen.getByText("The resume that was used")).not.toBeNull();
     expect(
-      screen.getByText(/No file fingerprint was recorded for this preparation/i),
+      screen.getByText(
+        /No file fingerprint was recorded for this preparation/i,
+      ),
     ).not.toBeNull();
     expect(screen.getByText("Safety record")).not.toBeNull();
     expect(screen.getByText(/Final submit stayed disabled/)).not.toBeNull();
@@ -154,11 +156,13 @@ describe("ApplicationsDetailPanelPrivacyReceiptSection", () => {
     ).not.toBeNull();
     expect(
       screen.getByText(
-        /This record shows what Job Finder stored during preparation/i,
+        /This record shows what Job Finder stored for this application/i,
       ),
     ).not.toBeNull();
     expect(
-      screen.getByText(/Job Finder never submits applications/i),
+      screen.getByText(
+        /A submission is confirmed only when the employer site reports receipt/i,
+      ),
     ).not.toBeNull();
     fireEvent.click(
       screen.getByRole("button", { name: "Download preparation record" }),
@@ -258,10 +262,10 @@ describe("ApplicationsDetailPanelPrivacyReceiptSection", () => {
       ),
     ).not.toBeNull();
     expect(
-      screen.getByText(/do not represent a capability in the current product/),
+      screen.getByText(/employer-site outcome above is the record/),
     ).not.toBeNull();
     expect(document.body.textContent ?? "").toMatch(
-      /Job Finder never submits applications/i,
+      /This receipt records a final-submit action\. The employer-site confirmation determines whether the application was sent/i,
     );
   });
 
@@ -350,10 +354,10 @@ describe("ApplicationsDetailPanelPrivacyReceiptSection", () => {
     expect(
       screen.getByText("Fingerprint 0123456789ab…456789abcdef"),
     ).not.toBeNull();
-    expect(screen.getByLabelText(`Resume file fingerprint ${sha256}`)).not.toBeNull();
     expect(
-      screen.getByText(/exact PDF you approved/i),
+      screen.getByLabelText(`Resume file fingerprint ${sha256}`),
     ).not.toBeNull();
+    expect(screen.getByText(/exact PDF you approved/i)).not.toBeNull();
   });
 
   it("names the original file by what it actually is, not as a PDF", () => {

@@ -139,11 +139,14 @@ export function ResumeImportProgress(props: {
         </div>
       ) : null}
       <p className="text-sm leading-6 text-foreground-soft">{message}</p>
+      {/* Timing only. The stage message above already says saved details
+          wait for review, and this card is shown where nothing can be edited
+          (setup's import screens) or where editing is paused (Profile), so
+          the old "you can keep editing this step" was untrue everywhere it
+          appeared. */}
       {stageExpectation ? (
         <p className="text-(length:--text-small) leading-5 text-foreground-muted">
-          {stageExpectation} You can keep editing this step while it finishes —
-          saving is paused until it lands, and nothing is applied without your
-          review.
+          {stageExpectation}
         </p>
       ) : null}
       {elapsedSeconds >= 45 ? (

@@ -3,6 +3,7 @@ import {
   browserDisplayUrl,
   browserUserAgent,
   isBrowserNavigationAllowed,
+  isSameBrowserNavigation,
   normalizeBrowserNavigation,
 } from "./browser-navigation";
 
@@ -30,6 +31,26 @@ describe("embedded browser navigation boundary", () => {
       ),
     ).toBe("https://accounts.example.com/callback");
     expect(browserDisplayUrl("about:blank")).toBe("about:blank");
+  });
+  test("matches an exact existing destination without dropping query or fragment state", () => {
+    expect(
+      isSameBrowserNavigation(
+        "https://example.com/apply?id=job_1#review",
+        " https://example.com/apply?id=job_1#review ",
+      ),
+    ).toBe(true);
+    expect(
+      isSameBrowserNavigation(
+        "https://example.com/apply?id=job_1#review",
+        "https://example.com/apply?id=job_2#review",
+      ),
+    ).toBe(false);
+    expect(
+      isSameBrowserNavigation(
+        "https://example.com/apply?id=job_1#review",
+        "https://example.com/apply?id=job_1#send",
+      ),
+    ).toBe(false);
   });
   test("removes packaging tokens without inventing a different browser or platform", () => {
     expect(

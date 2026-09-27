@@ -8,6 +8,7 @@ import type {
   CandidateProfile,
   ProfileCopilotRelevantReviewItem,
 } from "@unemployed/contracts";
+import { ProfileCopilotUnfinishedError } from "./openai-compatible";
 import { ResumeGenerationStrategyPolicySchema } from "./shared";
 import {
   createEnvironment,
@@ -90,11 +91,8 @@ describe("openai-compatible chat and draft behavior", () => {
     });
 
     try {
-      const client = createOpenAiCompatibleJobFinderAiClient({
-        apiKey: "test-key",
-        baseUrl: "https://example.com/v1",
-        model: "test-model",
-      });
+      const client =
+        createJobFinderAiClientFromEnvironment(createEnvironment());
 
       const input = {
         profile: createProfile(),
@@ -144,14 +142,19 @@ describe("openai-compatible chat and draft behavior", () => {
         deterministicFallback.compatibilityScore,
       );
       expect(result.notes).toEqual([
-        ...deterministicFallback.notes,
-        "AI could not produce usable rewrite suggestions this time.",
+        "AI completed the review without proposing wording changes, so your wording stayed unchanged.",
+        ...deterministicFallback.notes.filter(
+          (note) => note !== "Used the built-in deterministic resume tailorer.",
+        ),
+        "Generated with Primary AI (test-model).",
       ]);
       expect(result.generationProvenance).toEqual({
-        method: "deterministic",
-        reason: "provider_output_unverified",
-        detail: "AI could not produce usable rewrite suggestions this time.",
+        method: "ai",
+        reason: null,
+        detail:
+          "AI completed the review without proposing wording changes, so your wording stayed unchanged.",
       });
+      expect(result.notes.join(" ")).toContain("Generated with Primary AI");
       expect(result.fullText).not.toContain("Model draft partial");
     } finally {
       restoreFetch();
@@ -304,13 +307,19 @@ describe("openai-compatible chat and draft behavior", () => {
         educationEntries: deterministicFallback.educationEntries,
         certificationEntries: deterministicFallback.certificationEntries,
         languages: deterministicFallback.languages,
+        // The model answered and every rewrite was held back, so the wording
+        // is the person's own. That is still a draft the model shaped, and the
+        // note says so instead of pointing at a "built-in generator".
         notes: [
-          ...deterministicFallback.notes,
-          "AI proposed 2 rewrites, but none could be verified against your saved evidence.",
+          "Created with AI, keeping your own wording: it proposed 2 rewrites, none matched your saved evidence closely enough to use, so the sentences come from your profile and the structure and emphasis from the model.",
+          ...deterministicFallback.notes.filter(
+            (note) =>
+              note !== "Used the built-in deterministic resume tailorer.",
+          ),
         ],
         generationProvenance: {
-          method: "deterministic",
-          reason: "provider_output_unverified",
+          method: "ai",
+          reason: null,
         },
         compatibilityScore: 91,
       });
@@ -1793,7 +1802,10 @@ describe("openai-compatible chat and draft behavior", () => {
         `Job description ${"requirement ".repeat(5000)}`.length,
       );
       expect(body.messages?.[0]?.content).toContain(
-        "Return {} when the cited evidence is already as clear and professional",
+        "Compose {} when the cited evidence is already as clear and professional",
+      );
+      expect(body.messages?.[0]?.content).not.toContain(
+        "Return one JSON object",
       );
       expect(body.messages?.[0]?.content).toContain('"profileRecordId":"..."');
     } finally {
@@ -1820,44 +1832,51 @@ describe("openai-compatible chat and draft behavior", () => {
         createJobFinderAiClientFromEnvironment(createEnvironment());
       const request = `change my experience to only 5 years ${"conversation fact ".repeat(5000)}`;
 
-      await client.reviseCandidateProfile({
-        profile: {
-          ...createProfile(),
-          summary: `Candidate summary ${"background ".repeat(4000)}`,
-        },
-        searchPreferences: {
-          ...createPreferences(),
-          targetRoles: Array.from(
+      // The stub never calls a tool, so both runs stop without a change and
+      // the Assistant reports that it could not finish; only the payload the
+      // model received matters here.
+      await client
+        .reviseCandidateProfile({
+          profile: {
+            ...createProfile(),
+            summary: `Candidate summary ${"background ".repeat(4000)}`,
+          },
+          searchPreferences: {
+            ...createPreferences(),
+            targetRoles: Array.from(
+              { length: 20 },
+              (_, index) => `Role ${index + 1} ${"detail ".repeat(40)}`,
+            ),
+            locations: Array.from(
+              { length: 20 },
+              (_, index) => `Location ${index + 1} ${"detail ".repeat(40)}`,
+            ),
+          },
+          context: { surface: "profile", section: "preferences" },
+          relevantReviewItems: Array.from({ length: 20 }, (_, index) => ({
+            id: `review_${index + 1}`,
+            step: "essentials",
+            target: { domain: "identity", key: "headline", recordId: null },
+            label: `Review item ${index + 1}`,
+            reason: `Reason ${index + 1} ${"detail ".repeat(60)}`,
+            severity: "recommended",
+            status: "pending",
+            proposedValue: `Proposed ${index + 1}`,
+            sourceSnippet: `Snippet ${index + 1} ${"source ".repeat(40)}`,
+            sourceCandidateId: `candidate_${index + 1}`,
+            sourceRunId: `run_${index + 1}`,
+            createdAt: "2026-04-14T10:00:00.000Z",
+            resolvedAt: null,
+          })),
+          request,
+          conversationFacts: Array.from(
             { length: 20 },
-            (_, index) => `Role ${index + 1} ${"detail ".repeat(40)}`,
+            (_, index) => `Fact ${index + 1} ${"detail ".repeat(80)}`,
           ),
-          locations: Array.from(
-            { length: 20 },
-            (_, index) => `Location ${index + 1} ${"detail ".repeat(40)}`,
-          ),
-        },
-        context: { surface: "profile", section: "preferences" },
-        relevantReviewItems: Array.from({ length: 20 }, (_, index) => ({
-          id: `review_${index + 1}`,
-          step: "essentials",
-          target: { domain: "identity", key: "headline", recordId: null },
-          label: `Review item ${index + 1}`,
-          reason: `Reason ${index + 1} ${"detail ".repeat(60)}`,
-          severity: "recommended",
-          status: "pending",
-          proposedValue: `Proposed ${index + 1}`,
-          sourceSnippet: `Snippet ${index + 1} ${"source ".repeat(40)}`,
-          sourceCandidateId: `candidate_${index + 1}`,
-          sourceRunId: `run_${index + 1}`,
-          createdAt: "2026-04-14T10:00:00.000Z",
-          resolvedAt: null,
-        })),
-        request,
-        conversationFacts: Array.from(
-          { length: 20 },
-          (_, index) => `Fact ${index + 1} ${"detail ".repeat(80)}`,
-        ),
-      });
+        })
+        .catch((error: unknown) => {
+          expect(error).toBeInstanceOf(ProfileCopilotUnfinishedError);
+        });
 
       const body = JSON.parse(fetchMock.getCapturedBody()) as {
         messages?: Array<{ content?: string }>;
@@ -1943,7 +1962,12 @@ describe("openai-compatible chat and draft behavior", () => {
 
       expect(originalPayloadSize).toBeGreaterThan(1_000_000);
 
-      await client.reviseCandidateProfile(largePayload);
+      // The stub never calls a tool; see the test above.
+      await client
+        .reviseCandidateProfile(largePayload)
+        .catch((error: unknown) => {
+          expect(error).toBeInstanceOf(ProfileCopilotUnfinishedError);
+        });
 
       const body = JSON.parse(fetchMock.getCapturedBody()) as {
         messages?: Array<{ content?: string }>;
@@ -2292,6 +2316,7 @@ describe("openai-compatible chat and draft behavior", () => {
           keySkills: ["TypeScript"],
           minimumQualifications: [
             "Hands-on experience with Terraform and CI/CD.",
+            "Practical knowledge of Terraform and Kubernetes.",
           ],
         },
         resumeText: "Resume text",
@@ -2317,8 +2342,10 @@ describe("openai-compatible chat and draft behavior", () => {
         },
       });
       expect(aggressive.coreSkills).toEqual(
-        expect.arrayContaining(["Terraform", "CI/CD"]),
+        expect.arrayContaining(["Terraform", "CI/CD", "Kubernetes"]),
       );
+      expect(aggressive.coreSkills).not.toContain("Practical");
+      expect(aggressive.additionalSkills).not.toContain("Practical");
       expect(aggressive.notes.join(" ")).toMatch(/Terraform/);
 
       const balanced = await buildClient().createResumeDraft({

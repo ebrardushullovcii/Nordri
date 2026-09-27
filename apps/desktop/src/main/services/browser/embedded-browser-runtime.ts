@@ -8,7 +8,41 @@ import type {
   DiscoveryRunResult,
   JobSource,
 } from "@unemployed/contracts";
+import {
+  classifySourceAccess,
+  collectVisibleAccessSignals,
+  type VisibleAccessSignals,
+} from "@unemployed/browser-runtime";
+import { describeApplicationPreparationProgress } from "@unemployed/job-finder";
+import { browserDisplayUrl } from "./browser-navigation";
 import type { EmbeddedBrowser } from "./embedded-browser";
+
+// The same read the runtime runs through Playwright, run directly in one tab.
+const VISIBLE_ACCESS_SIGNALS_SCRIPT = `(${collectVisibleAccessSignals.toString()})()`;
+
+function tabOriginKey(url: string): string | null {
+  try {
+    return `${new URL(url).origin}/`;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The tab a source-access check reads: the parked tab while it is open,
+ * otherwise the only open tab on the expected site (none when two share it).
+ */
+export function resolveSourceAccessProbeTab(
+  tabs: ReadonlyArray<{ id: string; url: string }>,
+  input: { expectedOrigin: string; tabId?: string | null | undefined },
+): string | null {
+  if (input.tabId && tabs.some((tab) => tab.id === input.tabId))
+    return input.tabId;
+  const sameSite = tabs.filter(
+    (tab) => tabOriginKey(tab.url) === input.expectedOrigin,
+  );
+  return sameSite.length === 1 ? sameSite[0]!.id : null;
+}
 
 /**
  * Desktop activity/lifecycle adapter; workflow and authority remain in the
@@ -37,7 +71,7 @@ export function withEmbeddedBrowserActivity(
         kind: "sign_in",
         title: "Sign in to continue",
         detail:
-          "This application needs you to sign in. Your password stays with you; run preparation again afterwards.",
+          "This application needs you to sign in. Your password stays with you; Job Finder carries on by itself once you're in.",
       });
     else if (code === "requires_manual_review" && result.blocker?.summary)
       browser.requestAttention({
@@ -47,13 +81,31 @@ export function withEmbeddedBrowserActivity(
       });
     return result;
   };
-  const attachParkedTab = (result: DiscoveryRunResult): DiscoveryRunResult => {
+  const attachParkedTab = (
+    result: DiscoveryRunResult,
+    claimedTabIds: readonly string[] = [],
+  ): DiscoveryRunResult => {
     const parked = result.agentMetadata?.parkedTab;
     if (!parked) return result;
-    const tab = browser
-      .getState()
-      .tabs.find((candidate) => candidate.url === parked.url);
-    browser.requestAttention({
+    // The run's own tab is the parked one: the runtime leaves it open, and
+    // the tab it claimed through the automation connection is that page.
+    // Several sources search at once, so the active tab or another tab at
+    // the same address is only a fallback. Tab addresses in the browser
+    // state drop the query and fragment; the run reports the full address.
+    const state = browser.getState();
+    const parkedDisplayUrl = browserDisplayUrl(parked.url);
+    const claimed = state.tabs.filter((candidate) =>
+      claimedTabIds.includes(candidate.id),
+    );
+    const matches = state.tabs.filter(
+      (candidate) => candidate.url === parkedDisplayUrl,
+    );
+    const tab =
+      claimed.find((candidate) => candidate.url === parkedDisplayUrl) ??
+      matches.find((candidate) => candidate.id === state.activeTabId) ??
+      matches.at(-1) ??
+      claimed.at(-1);
+    const attention = {
       kind:
         result.agentMetadata?.accessBlockerReason === "auth_required"
           ? "sign_in"
@@ -64,8 +116,10 @@ export function withEmbeddedBrowserActivity(
           : "This page needs a human",
       detail:
         result.warning?.slice(0, 500) ??
-        "Finish the step in this browser tab, then search this source again.",
-    });
+        "Finish the step in this browser tab; Job Finder carries on with this source by itself.",
+    } as const;
+    if (tab) browser.parkTab(tab.id, attention);
+    else browser.requestAttention(attention, null);
     return {
       ...result,
       agentMetadata: result.agentMetadata
@@ -114,11 +168,36 @@ export function withEmbeddedBrowserActivity(
           runtime.openSession(source, options).then(flagSession),
         );
       }
-      await browser.takeControl();
-      await browser.command({
-        type: "open",
-        ...(options?.targetUrl ? { url: options.targetUrl } : {}),
-      });
+      // Opening the shared browser is observation or task-local help, not a
+      // request to stop every other discovery or preparation. A tab parked
+      // for this step is shown as it is; its address may have moved on since
+      // it was parked, and opening that address again would make a second tab.
+      const shown = options?.tabId ? browser.showTab(options.tabId) : false;
+      if (!shown && options?.parkedFor && options.targetUrl)
+        // The parked tab is gone (a restart, or it was closed): open the
+        // address again as that parked tab, bound to the same request.
+        browser.reopenParkedTab(
+          options.targetUrl,
+          options.tabId ?? null,
+          options.parkedFor === "sign_in"
+            ? {
+                kind: "sign_in",
+                title: "Sign in to continue",
+                detail:
+                  "Sign in here; Job Finder carries on with this source by itself once you're in.",
+              }
+            : {
+                kind: "challenge",
+                title: "This page needs a human",
+                detail:
+                  "Finish the step in this tab; Job Finder carries on with this source by itself.",
+              },
+        );
+      else if (!shown)
+        await browser.command({
+          type: "open",
+          ...(options?.targetUrl ? { url: options.targetUrl } : {}),
+        });
       // Human sign-in remains usable while agent activity is paused.
       return {
         ...(await runtime.getSessionState(source)),
@@ -143,14 +222,69 @@ export function withEmbeddedBrowserActivity(
       browser.runAutomation("Preparing application", undefined, () =>
         runtime.executeEasyApply(source, input).then(flagResult),
       ),
+    async inspectSourceAccess(source, input) {
+      // A parked tab is read in place, and only that tab: another tab on the
+      // same site never stands in for it. Without a live parked tab (none
+      // was recorded, or a restart closed it), the one tab open on the
+      // expected site is read, and only when exactly one is: the person may
+      // have signed in in a tab they opened themselves, which automation
+      // cannot see.
+      const probeTabId = resolveSourceAccessProbeTab(
+        browser.getState().tabs,
+        input,
+      );
+      if (probeTabId) {
+        const read = await browser
+          .readTab<VisibleAccessSignals>(
+            probeTabId,
+            VISIBLE_ACCESS_SIGNALS_SCRIPT,
+          )
+          .catch(() => null);
+        if (!read)
+          return {
+            state: "inconclusive" as const,
+            checkedAt: new Date().toISOString(),
+            currentOrigin: null,
+            signals: [],
+          };
+        return classifySourceAccess({
+          currentUrl: read.url,
+          input,
+          readSignals: () => Promise.resolve(read.value),
+        });
+      }
+      return runtime.inspectSourceAccess
+        ? runtime.inspectSourceAccess(source, input)
+        : {
+            state: "inconclusive" as const,
+            checkedAt: new Date().toISOString(),
+            currentOrigin: null,
+            signals: [],
+          };
+    },
     executeApplicationFlow: (source, input, options) =>
       browser.runAutomation(
         "Preparing application",
         options?.signal,
-        (signal) =>
+        (signal, updateActivity, claimPage) =>
           runtime
-            .executeApplicationFlow(source, input, { ...options, signal })
+            .executeApplicationFlow(
+              source,
+              {
+                ...input,
+                prepareApplicationForm: (formInput) =>
+                  input.prepareApplicationForm({
+                    ...formInput,
+                    onProgress: (progress) =>
+                      updateActivity(
+                        `Preparing application · Step ${progress.step}: ${describeApplicationPreparationProgress(progress.note)}`,
+                      ),
+                  }),
+              },
+              { ...options, signal, onAutomationPage: claimPage },
+            )
             .then(flagResult),
+        { owner: input.applicationPageBindingKey ?? null },
       ),
     ...(runtime.runAgentDiscovery
       ? ({
@@ -158,7 +292,7 @@ export function withEmbeddedBrowserActivity(
             browser.runAutomation(
               `Browsing ${options.siteLabel}`.slice(0, 200),
               options.signal,
-              (signal) => {
+              (signal, _updateActivity, claimPage, claimedTabs) => {
                 const currentTabs = browser.getState().tabs;
                 const protectedPages = (options.protectedPages ?? []).map(
                   (protectedPage) => {
@@ -178,13 +312,19 @@ export function withEmbeddedBrowserActivity(
                 );
                 return flagAfter(
                   source,
-                  runtime
-                    .runAgentDiscovery!(source, {
-                      ...options,
-                      protectedPages,
-                      signal,
-                    })
-                    .then(attachParkedTab),
+                  runtime.runAgentDiscovery!(source, {
+                    ...options,
+                    protectedPages,
+                    signal,
+                    onAutomationPage: claimPage,
+                  }).then(async (result) =>
+                    attachParkedTab(
+                      result,
+                      result.agentMetadata?.parkedTab
+                        ? await claimedTabs()
+                        : [],
+                    ),
+                  ),
                 );
               },
             ),
@@ -196,6 +336,12 @@ export function withEmbeddedBrowserActivity(
             browser.runAutomation("Reading application", undefined, () =>
               runtime.observeApplicationForm!(source, options),
             ),
+        } satisfies Partial<BrowserSessionRuntime>)
+      : {}),
+    ...(runtime.hasApplicationPageBinding
+      ? ({
+          hasApplicationPageBinding: (source, pageBindingKey) =>
+            runtime.hasApplicationPageBinding!(source, pageBindingKey),
         } satisfies Partial<BrowserSessionRuntime>)
       : {}),
     ...(runtime.executeExactlyOneFinalAction

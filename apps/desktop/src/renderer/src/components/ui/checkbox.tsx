@@ -22,7 +22,7 @@ function Checkbox({
         // `disabled:data-[state=checked]:` selectors outrank the single-variant
         // checked rules, so a disabled checked box keeps its shape instead of
         // staying a washed-out --primary block.
-        "peer size-4 shrink-0 rounded-none border border-(--control-border) bg-input outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring disabled:cursor-not-allowed disabled:border-(--disabled-border) disabled:bg-(--disabled-surface) disabled:text-(--disabled-foreground) data-[state=checked]:border-primary data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground disabled:data-[state=checked]:border-(--disabled-border) disabled:data-[state=checked]:bg-(--disabled-surface) disabled:data-[state=checked]:text-(--disabled-foreground)",
+        "peer size-4 shrink-0 rounded-none border border-(--control-border) bg-input outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring disabled:cursor-not-allowed disabled:border-(--disabled-border) disabled:bg-(--disabled-surface) disabled:text-(--disabled-foreground) data-[state=checked]:border-primary-fill data-[state=checked]:bg-primary-fill data-[state=checked]:text-primary-fill-foreground disabled:data-[state=checked]:border-(--disabled-border) disabled:data-[state=checked]:bg-(--disabled-surface) disabled:data-[state=checked]:text-(--disabled-foreground)",
         className,
       )}
       {...props}

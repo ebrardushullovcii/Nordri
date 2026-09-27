@@ -235,4 +235,39 @@ describe("public provider ATS acceptance matrix", () => {
     expect(result.jobs).toHaveLength(1);
     expect(result.jobs[0]?.canonicalUrl).toBe(target.startingUrl);
   });
+
+  test("uses the provider board identity when the saved source label is generic", async () => {
+    const target = createTarget(
+      "default_target",
+      "Primary target",
+      "https://job-boards.greenhouse.io/livefront/jobs/4215612009",
+    );
+    const intelligence = inferSourceIntelligenceFromTarget({
+      target,
+      currentArtifact: null,
+    });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          jobs: [
+            {
+              id: 4215612009,
+              title: "Product Designer",
+              absolute_url: target.startingUrl,
+              location: { name: "Remote" },
+              content: "<p>Design digital products.</p>",
+            },
+          ],
+        }),
+    } as Response);
+
+    const result = await collectPublicProviderJobs({
+      target,
+      artifact: { intelligence },
+      source: "target_site",
+    });
+
+    expect(result.jobs[0]?.company).toBe("Livefront");
+  });
 });

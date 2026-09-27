@@ -24,6 +24,7 @@ function createHarness() {
     get: vi.fn(() => Promise.resolve(null)),
     create: vi.fn(),
     update: vi.fn(),
+    replaceUsed: vi.fn(),
     revoke: vi.fn(),
     resolveSubmissionOutcome: vi.fn(),
   } satisfies JobFinderApplicationAuthorityService;

@@ -23,7 +23,7 @@ import {
   getDiscoveryRunPhase,
   workModeValues,
 } from "@unemployed/contracts";
-import { ArrowDown, ArrowUp, ChevronDown } from "lucide-react";
+import { ChevronDown } from "lucide-react";
 import { Badge } from "@renderer/components/ui/badge";
 import { Button } from "@renderer/components/ui/button";
 import { SelectableRow } from "@renderer/components/ui";
@@ -32,7 +32,6 @@ import {
   jobFinderListRegionClassName,
   jobFinderListRowBadgeSlotClassName,
   jobFinderListRowClassName,
-  jobFinderListRowCompactClassName,
   jobFinderListRowLinesClassName,
   jobFinderListRowMetaClassName,
   jobFinderListRowStatusClassName,
@@ -56,10 +55,6 @@ import {
   formatJobEmployerLocationLine,
   scrubJobAbsencePlaceholders,
 } from "@renderer/features/job-finder/lib/job-employer-location-display";
-import {
-  formatDiscoveryResultBandLabel,
-  formatDiscoveryResultBandTotal,
-} from "@renderer/features/job-finder/lib/discovery-run-count-label";
 import { cn } from "@renderer/lib/cn";
 import {
   formatStatusLabel,
@@ -84,7 +79,6 @@ import {
 import {
   buildDiscoveryHeadedGroupByJobId,
   buildDiscoveryResultGroupHeadings,
-  countDiscoveryUncheckedResults,
   orderDiscoveryResultsByGroup,
 } from "./discovery-result-groups";
 // One name for that window, from the one module that owns it.
@@ -115,9 +109,14 @@ interface DiscoveryResultsPanelProps {
   facetScopeId?: string | null;
   hasCompletedSearch?: boolean;
   hiddenAlsoFoundCount?: number;
-  focusedHiddenCount?: number;
   inAreaJobCount?: number;
   isSearchInProgress?: boolean;
+  /**
+   * What the running search is doing right now, in the agent's words: the
+   * source it is on, its latest note and how long ago it said it. A search
+   * takes minutes per source, so the page must never look idle meanwhile.
+   */
+  liveStatusLine?: string | null;
   jobs: readonly SavedJob[];
   preferredLocations?: readonly string[];
   remoteIncluded?: boolean;
@@ -131,8 +130,13 @@ interface DiscoveryResultsPanelProps {
    * vanished.
    */
   latestRun?: Pick<DiscoveryRunRecord, "runPhase" | "state" | "summary"> | null;
-  latestRunReportLabel?: string | null;
   latestRunVerdict?: DiscoveryLatestRunVerdict | null;
+  /**
+   * The run-failure callout above the results names the cause and the next
+   * step (for example, a source address that leads to a missing page). The
+   * empty state then defers to it instead of saying "Search now" beside it.
+   */
+  failureCalloutShown?: boolean;
   /** Starts a fresh search from where the interrupted one stopped. */
   onSearchAgain?: (() => void) | null;
   onDisplayedSelectedJobIdChange?: (selectedJobId: string | null) => void;
@@ -158,16 +162,18 @@ type DiscoveryResultJob = SavedJob &
   Partial<Pick<DiscoveryJobView, "listingActivity">>;
 
 export const DISCOVERY_RESULTS_PAGE_SIZE = 50;
-const DISCOVERY_RESULT_DENSITIES = ["compact", "comfortable"] as const;
 export const DISCOVERY_OFFLINE_CATALOG_NOTICE_ID =
   "discovery-offline-catalog-notice";
 export const DISCOVERY_SEARCH_SETUP_BLOCKER_ID =
   "discovery-search-setup-blocker";
 
+// Each option carries its own direction ("Newest first", "A to Z"), so the
+// separate flip control that used to sit beside the select is gone: "Best
+// match, lowest first" was never a view anyone wanted.
 const DISCOVERY_RESULTS_SORT_OPTIONS = [
   { field: "fit", label: "Best match" },
-  { field: "recent", label: "Newest listing date" },
-  { field: "company", label: "Company" },
+  { field: "recent", label: "Newest first" },
+  { field: "company", label: "Company A to Z" },
 ] as const satisfies readonly {
   readonly field: DiscoveryResultsSortField;
   readonly label: string;
@@ -175,14 +181,11 @@ const DISCOVERY_RESULTS_SORT_OPTIONS = [
 
 /**
  * One box metric for every control on the results toolbar row (Filters
- * disclosure, sort field, sort direction). They used to disagree on all three
- * of height, radius and weight: the direction toggle rendered at the `xs`
- * button size — 24px tall with `rounded-md` — beside a 32px `h-8` select, and
- * the Filters disclosure used `min-h-8` rather than a fixed height, so a row
- * of three sibling controls read as three unrelated boxes. Border colour is
- * deliberately not folded in here: the sort field keeps the editable-field
- * trio it shares with the search input above, while the two non-field
- * controls carry the interactive `--control-border`. Pinned by
+ * disclosure, sort field). They used to disagree on height, radius and
+ * weight, so a row of sibling controls read as unrelated boxes. Border colour
+ * is deliberately not folded in here: the sort field keeps the editable-field
+ * trio it shares with the search input above, while the Filters disclosure
+ * carries the interactive `--control-border`. Pinned by
  * `discovery-results-panel.toolbar-metrics.test.tsx`.
  */
 export const DISCOVERY_RESULTS_TOOLBAR_CONTROL_CLASS =
@@ -438,10 +441,11 @@ export function getDiscoveryProgressCountLabel(
 /**
  * Truthful listing-date badge for a results row, kept consistent with the
  * shared recency key: when the only posting evidence is a relative source
- * label ("2 days ago"), the badge keeps the provider's wording but marks the
- * row as "not date-ranked" instead of implying that Newest sort ranked it by
- * a posting date it cannot derive (and never by the hidden provider-update
- * time either).
+ * label ("2 days ago"), the badge keeps the provider's wording and reports
+ * `rankable: false` so the row can explain (in its tooltip) that Newest
+ * cannot rank it by a posting date it cannot derive. The badge text itself
+ * stays the plain label; "not date-ranked" on every such row was a sorting
+ * footnote printed where a person reads what the job is.
  */
 export function getDiscoveryListingDateBadge(input: {
   postedAt: string | null;
@@ -457,13 +461,11 @@ export function getDiscoveryListingDateBadge(input: {
   }
 
   const recency = getDiscoveryListingRecencyKey(input);
-  const unrankedRelativeLabel =
-    recency.basis === null && listingDate.label === "Posted";
 
   return {
     rankable: recency.basis !== null,
     shown: true,
-    text: `${listingDate.label} ${listingDate.value}${unrankedRelativeLabel ? " · not date-ranked" : ""}`,
+    text: `${listingDate.label} ${listingDate.value}`,
   };
 }
 
@@ -589,17 +591,17 @@ export function DiscoveryResultsPanel({
   facetScopeId = null,
   hasCompletedSearch = false,
   hiddenAlsoFoundCount = 0,
-  focusedHiddenCount = 0,
   inAreaJobCount: completeInAreaJobCount,
   isSearchInProgress = false,
+  liveStatusLine = null,
   jobs,
   preferredLocations = [],
   remoteIncluded = false,
   totalLocationJobCount,
   editPlanHref = null,
   latestRun = null,
-  latestRunReportLabel = null,
   latestRunVerdict = null,
+  failureCalloutShown = false,
   onSearchAgain = null,
   onDisplayedSelectedJobIdChange,
   onRecoveryAction,
@@ -616,11 +618,9 @@ export function DiscoveryResultsPanel({
   const resultsScrollRegionRef = useRef<HTMLDivElement | null>(null);
   const runtimeProjection = getDiscoveryRuntimeProjection(browserSession);
   const isOfflineRuntime = runtimeProjection.isOffline;
+  // One row shape. The compact/comfortable switch was a second decision on a
+  // page whose only real decision is which jobs to shortlist.
   const view = usePersistedCollectionView("discovery-results", "comfortable");
-  // Two row shapes, two options. A third density produced a visibly different
-  // row layout for the same list, so a stored "detailed" normalizes back to
-  // the comfortable row instead of stranding an unreachable state.
-  const density = view.density === "detailed" ? "comfortable" : view.density;
   const deferredQuery = useDeferredValue(view.query);
   // One bounded snapshot read per mount feeds every facet's initial value;
   // route remounts re-read it, which is what makes selections survive
@@ -688,6 +688,23 @@ export function DiscoveryResultsPanel({
     ],
     [jobs],
   );
+  // Like every other facet, only the statuses the current results carry:
+  // five checkboxes for a list where every row is "Unknown" filter nothing.
+  const activityOptions = useMemo(
+    () =>
+      listingActivityStatuses.filter((status) =>
+        jobs.some((job) => getListingActivity(job).status === status),
+      ),
+    [jobs],
+  );
+  // A facet with one value cannot narrow anything, so it is not offered.
+  const filterGroups = {
+    activity: activityOptions.length > 1,
+    recommendation: recommendationOptions.length > 1,
+    source: sourceOptions.length > 1,
+    workMode: workModeOptions.length > 1,
+  };
+  const hasFilterGroups = Object.values(filterGroups).some(Boolean);
   // Restored selections stay active only while they name an option still
   // present in the current result set ("restore only what is still valid").
   // An empty result set defines no scope, so pruning waits until results
@@ -707,7 +724,13 @@ export function DiscoveryResultsPanel({
     setWorkModeFilters((current) =>
       pruneFilterSelection(current, workModeScope),
     );
+    const activityScope = new Set<string>(activityOptions);
+    setActivityFilters((current) =>
+      pruneFilterSelection(current, activityScope),
+    );
   }, [
+    activityFilters,
+    activityOptions,
     jobs.length,
     recommendationFilters,
     recommendationOptions,
@@ -1025,44 +1048,17 @@ export function DiscoveryResultsPanel({
     browserSession.driver !== "catalog_seed" &&
     recoveryActionPending;
   const allResultsHidden = jobs.length === 0 && hiddenAlsoFoundCount > 0;
-  // Three populations, one arithmetic. Title-only rows are never hidden
-  // behind the also-found reveal, so every one of them is already in `jobs`
-  // and counting them here yields the same population the bands, the Home
-  // badge, and the dividers all derive from.
-  const titleMatchCount = countDiscoveryUncheckedResults(jobs);
-  // The honest headline: how many results are actually worth opening. Weaker
-  // rows and clear mismatches are one "also found" pool, and rows checked no
-  // further than their title are their own band; neither is ever added into
-  // the number that describes the search.
-  const strongMatchCount = Math.max(
-    0,
-    jobs.length - (alsoFoundCount - hiddenAlsoFoundCount) - titleMatchCount,
-  );
-  const bandCounts = {
-    worthOpening: strongMatchCount,
-    titleMatches: titleMatchCount,
-    alsoFound: alsoFoundCount,
-  };
+  // One number: the jobs on this list. The band arithmetic ("6 worth opening
+  // · 3 title matches · 2 also found · 11 kept in this search plan") now
+  // lives where it is explained — the dividers in the list and the finished
+  // search's own banner — instead of being repeated as a sentence of counts
+  // above a list that already shows them.
   const isCountFiltered =
     deferredQuery.trim().length > 0 || activeFilterCount > 0;
-  const resultCountLabel =
-    latestRunReportLabel ??
-    (isCountFiltered
-      ? `${filteredJobs.length} of ${jobs.length} results`
-      : formatDiscoveryResultBandLabel(bandCounts));
-  const filteredResultCountLabel =
-    latestRunReportLabel && isCountFiltered
-      ? `${filteredJobs.length} of ${jobs.length} shown`
-      : null;
-  // Home and Search history describe the same run as "n new jobs saved". This
-  // states the total the bands add up to, so the two vocabularies visibly
-  // reconcile instead of reading as three different numbers.
-  const resultCountTotalLabel =
-    !latestRunReportLabel &&
-    !isCountFiltered &&
-    (alsoFoundCount > 0 || titleMatchCount > 0)
-      ? formatDiscoveryResultBandTotal(bandCounts)
-      : null;
+  const jobNoun = jobs.length === 1 ? "job" : "jobs";
+  const resultCountLabel = isCountFiltered
+    ? `${filteredJobs.length} of ${jobs.length} ${jobNoun}`
+    : `${jobs.length} ${jobNoun}`;
   // Terminal empty-state truth: prefer the explicit newest-run verdict; when a
   // caller does not provide one, fall back to the legacy completed-search flag
   // so existing behavior is unchanged.
@@ -1078,8 +1074,6 @@ export function DiscoveryResultsPanel({
   // flush, bottom-ruled row. Nothing here varies with selection, which is what
   // the primitive's dev-time guard enforces.
   const baseButtonClasses = jobFinderListRowClassName;
-  const densityClasses =
-    density === "compact" ? jobFinderListRowCompactClassName : null;
   const handleListKeyDown = useCallback(
     (event: KeyboardEvent<HTMLButtonElement>, jobId: string) => {
       const nextId = getAdjacentCollectionItemId(
@@ -1116,31 +1110,21 @@ export function DiscoveryResultsPanel({
             className="text-(--text-headline)"
             id="discovery-job-results-heading"
           >
-            Job results
+            Results
           </h2>
-          <span
-            aria-atomic="true"
-            aria-live="polite"
-            className="text-(length:--text-small) tabular-nums text-foreground-muted"
-            data-testid="discovery-result-count"
-          >
-            {resultCountLabel}
-            {/* Visible, not sr-only: this is the sentence that reconciles the
-                banded headline with the "kept" count Home prints. */}
-            {resultCountTotalLabel ? (
-              <span> · {resultCountTotalLabel}</span>
-            ) : null}
-            {filteredResultCountLabel ? (
-              <span> · {filteredResultCountLabel}</span>
-            ) : null}
-            {locationCountLabel ? <span> · {locationCountLabel}</span> : null}
-            {focusedHiddenCount > 0 ? (
-              <span>
-                {" "}· Focused search hid {focusedHiddenCount}{" "}
-                {focusedHiddenCount === 1 ? "result" : "results"}
-              </span>
-            ) : null}
-          </span>
+          {/* An empty list explains itself below; "0 jobs" beside "Ready for
+              your first search" only repeats the empty state as a number. */}
+          {jobs.length > 0 ? (
+            <span
+              aria-atomic="true"
+              aria-live="polite"
+              className="text-(length:--text-small) tabular-nums text-foreground-muted"
+              data-testid="discovery-result-count"
+            >
+              {resultCountLabel}
+              {locationCountLabel ? <span> · {locationCountLabel}</span> : null}
+            </span>
+          ) : null}
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
           {/* One reveal control for one pool. Its accessible name is exactly
@@ -1157,8 +1141,8 @@ export function DiscoveryResultsPanel({
               variant={areAlsoFoundShown ? "secondary" : "outline"}
             >
               {areAlsoFoundShown
-                ? `Hide also found (${alsoFoundCount})`
-                : `Show also found (${alsoFoundCount})`}
+                ? `Hide weaker matches (${alsoFoundCount})`
+                : `Show weaker matches (${alsoFoundCount})`}
             </Button>
           ) : null}
         </div>
@@ -1168,11 +1152,8 @@ export function DiscoveryResultsPanel({
         <>
           <CollectionSearchToolbar
             compact
-            densities={DISCOVERY_RESULT_DENSITIES}
-            density={density}
             hideCompactCount
             label="Find a job"
-            onDensityChange={view.setDensity}
             onQueryChange={(query) => {
               view.setQuery(query);
               moveToPage(0);
@@ -1190,11 +1171,12 @@ export function DiscoveryResultsPanel({
             className="flex min-w-0 flex-wrap items-start justify-between gap-2 border-b border-(--surface-panel-border) px-4 py-2"
             data-testid="discovery-results-toolbar"
           >
+            {hasFilterGroups ? (
             <details className="group relative min-w-0 [&[open]]:w-full [&[open]]:order-last">
               {/* `--control-border` rather than the inert
                   `--surface-panel-border`: this border is the disclosure's
                   entire boundary, so it has to read as a control beside the
-                  sort field and direction toggle. */}
+                  sort field. */}
               <summary
                 className={cn(
                   DISCOVERY_RESULTS_TOOLBAR_CONTROL_CLASS,
@@ -1211,10 +1193,17 @@ export function DiscoveryResultsPanel({
                   </span>
                 ) : null}
               </summary>
-              <div className="mt-2 grid gap-3 rounded-(--radius-field) border border-(--surface-panel-border) bg-(--surface-panel-raised) p-3 sm:grid-cols-2 xl:grid-cols-4">
+              {/* Columns follow the groups actually shown: a lone Source group
+                  used to get a quarter of the row and broke source addresses
+                  mid-word. */}
+              <div
+                className="mt-2 grid grid-cols-[repeat(auto-fit,minmax(15rem,1fr))] gap-3 rounded-(--radius-field) border border-(--surface-panel-border) bg-(--surface-panel-raised) p-3"
+                data-testid="discovery-results-filter-groups"
+              >
+                {filterGroups.recommendation ? (
                 <fieldset className="min-w-0">
                   <legend className="mb-2 text-xs font-semibold text-foreground">
-                    Recommendation
+                    Fit
                   </legend>
                   <div className="grid gap-2">
                     {recommendationOptions.map((recommendation) => (
@@ -1240,6 +1229,8 @@ export function DiscoveryResultsPanel({
                     ))}
                   </div>
                 </fieldset>
+                ) : null}
+                {filterGroups.source ? (
                 <fieldset className="min-w-0">
                   <legend className="mb-2 text-xs font-semibold text-foreground">
                     Source
@@ -1267,6 +1258,8 @@ export function DiscoveryResultsPanel({
                     ))}
                   </div>
                 </fieldset>
+                ) : null}
+                {filterGroups.workMode ? (
                 <fieldset className="min-w-0">
                   <legend className="mb-2 text-xs font-semibold text-foreground">
                     Work mode
@@ -1297,12 +1290,14 @@ export function DiscoveryResultsPanel({
                     ))}
                   </div>
                 </fieldset>
+                ) : null}
+                {filterGroups.activity ? (
                 <fieldset className="min-w-0">
                   <legend className="mb-2 text-xs font-semibold text-foreground">
-                    Listing activity
+                    Listing status
                   </legend>
                   <div className="grid gap-2">
-                    {listingActivityStatuses.map((status) => (
+                    {activityOptions.map((status) => (
                       <label
                         className="flex min-w-0 items-start gap-2 text-xs leading-6 text-foreground-soft"
                         key={status}
@@ -1323,6 +1318,7 @@ export function DiscoveryResultsPanel({
                     ))}
                   </div>
                 </fieldset>
+                ) : null}
                 {activeFilterCount > 0 ? (
                   <div className="sm:col-span-2 xl:col-span-4">
                     <Button
@@ -1337,6 +1333,9 @@ export function DiscoveryResultsPanel({
                 ) : null}
               </div>
             </details>
+            ) : (
+              <span />
+            )}
             <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">
               <select
                 aria-label="Sort results"
@@ -1360,35 +1359,6 @@ export function DiscoveryResultsPanel({
                   </option>
                 ))}
               </select>
-              {/* A lone arrow says nothing about what it reorders, so the
-                    direction is spelled out beside it. */}
-              <Button
-                aria-label={
-                  sortDirection === "desc"
-                    ? "Sort direction: highest first. Select to sort lowest first."
-                    : "Sort direction: lowest first. Select to sort highest first."
-                }
-                className={cn(
-                  DISCOVERY_RESULTS_TOOLBAR_CONTROL_CLASS,
-                  "whitespace-nowrap",
-                )}
-                onClick={() => {
-                  resultsSort.toggleSortDirection();
-                  moveToPage(0);
-                }}
-                size="compact"
-                type="button"
-                variant="outline"
-              >
-                {sortDirection === "desc" ? (
-                  <ArrowDown aria-hidden="true" className="size-3.5" />
-                ) : (
-                  <ArrowUp aria-hidden="true" className="size-3.5" />
-                )}
-                <span aria-hidden="true">
-                  {sortDirection === "desc" ? "Highest first" : "Lowest first"}
-                </span>
-              </Button>
             </div>
           </div>
         </>
@@ -1428,7 +1398,7 @@ export function DiscoveryResultsPanel({
             {...(onShowAlsoFound !== undefined
               ? { onRecoveryAction: onShowAlsoFound }
               : {})}
-            recoveryActionLabel={`Show also found (${hiddenAlsoFoundCount})`}
+            recoveryActionLabel={`Show weaker matches (${hiddenAlsoFoundCount})`}
             recoveryActionNextStep="Open a job to judge it yourself; a low score alone is not a reason to skip it."
             title="Nothing scored close to your targets"
           />
@@ -1461,7 +1431,10 @@ export function DiscoveryResultsPanel({
         <div className="px-5 pt-4">
           <ResultsEmptyState
             className={emptyClassName ?? "min-h-56"}
-            description="Results will appear here as each saved source finishes. You can follow the live run in Search history."
+            description={
+              liveStatusLine ??
+              "Results will appear here as each source finishes."
+            }
             title="Searching your sources"
           />
         </div>
@@ -1576,8 +1549,8 @@ export function DiscoveryResultsPanel({
             <strong>
               {getDiscoveryProgressCountLabel(filteredJobs.length, jobs.length)}
             </strong>{" "}
-            Search is still checking the remaining sources; stronger matches may
-            move to the top.
+            {liveStatusLine ??
+              "Search is still checking the remaining sources; stronger matches may move to the top."}
           </div>
         </div>
       ) : null}
@@ -1593,13 +1566,20 @@ export function DiscoveryResultsPanel({
         <div className="px-5 pt-4">
           <ResultsEmptyState
             className={emptyClassName ?? "min-h-56"}
-            description={
+            description={`${
               emptyRunVerdict.interruptState === "cancelled"
-                ? "The newest search was cancelled before every enabled source was checked. An empty list here does not prove your sources have no matches. Select Search now to try again."
+                ? "The newest search was cancelled before every enabled source was checked. An empty list here does not prove your sources have no matches."
                 : emptyRunVerdict.interruptState === "sources_failed"
-                  ? "The newest search finished, but at least one enabled source failed, so an empty list here does not prove your sources have no matches. Select Search now to try again."
-                  : "The newest search stopped before every enabled source was checked. An empty list here does not prove your sources have no matches. Select Search now to try again."
-            }
+                  ? "The newest search finished, but at least one enabled source failed, so an empty list here does not prove your sources have no matches."
+                  : "The newest search stopped before every enabled source was checked. An empty list here does not prove your sources have no matches."
+            } ${
+              // The callout above already says what to do; a second, generic
+              // "Search now" beside it pointed at the wrong fix when the cause
+              // was an address to correct.
+              failureCalloutShown
+                ? "The message above says what to do next."
+                : "Select Search now to try again."
+            }`}
             title={
               emptyRunVerdict.interruptState === "cancelled"
                 ? "The last search was cancelled"
@@ -1632,11 +1612,11 @@ export function DiscoveryResultsPanel({
       jobs.length === 0 ? (
         <div className="px-5 pt-4">
           <ResultsEmptyState
-            actionHref={editPlanHref ?? JOB_FINDER_ROUTE_PATHS.campaigns}
+            actionHref={editPlanHref ?? JOB_FINDER_ROUTE_PATHS.profileWorkModes}
             className={emptyClassName ?? "min-h-56"}
             description="No saved source returned a role that met this search. Broaden a role or location, enable another source, then run it again."
-            recoveryActionLabel="Edit this plan's places"
-            recoveryActionNextStep="Review this plan's places, then return here and search again."
+            recoveryActionLabel="Edit your places"
+            recoveryActionNextStep="Review your places and work modes on Profile, then return here and search again."
             title="No matches from this search"
           />
         </div>
@@ -1653,7 +1633,7 @@ export function DiscoveryResultsPanel({
         <div className="px-5 pt-4">
           <ResultsEmptyState
             className={emptyClassName ?? "min-h-56"}
-            description="Your search setup is ready. Select Search now to check every enabled source."
+            description="Press Search now. Job Finder searches every enabled source using your profile, then lists what it found here. Shortlist the jobs you want to apply to."
             title="Ready for your first search"
           />
         </div>
@@ -1709,7 +1689,9 @@ export function DiscoveryResultsPanel({
                 type="button"
                 variant="secondary"
               >
-                Shortlist selected
+                {bulkSelectedJobIds.size > 0
+                  ? `Shortlist ${bulkSelectedJobIds.size} selected`
+                  : "Shortlist selected"}
               </Button>
               <Button
                 onClick={() => void shortlistAllShown()}
@@ -1855,7 +1837,7 @@ export function DiscoveryResultsPanel({
                     <SelectableRow
                       aria-controls={DISCOVERY_DETAIL_REGION_ID}
                       data-job-result-id={job.id}
-                      className={cn(baseButtonClasses, densityClasses)}
+                      className={baseButtonClasses}
                       aria-keyshortcuts="ArrowUp ArrowDown Home End"
                       data-collection-item-id={job.id}
                       onClick={(event) => {
@@ -1915,11 +1897,9 @@ export function DiscoveryResultsPanel({
                                 {recommendation.label}
                               </StatusBadge>
                             ) : null}
-                            {assessment.isProvisional ? (
-                              <Badge variant="outline">
-                                Provisional assessment
-                              </Badge>
-                            ) : null}
+                            {/* No "Provisional assessment" badge: the headline
+                                already reads "Fit not assessed" and the row's
+                                reason line says why. */}
                             {listingActivity.status !== "active" ? (
                               <Badge
                                 aria-label={`${activity.label} listing status${activity.observedDate ? ` observed ${activity.observedDate}` : ""}. ${activityDescription}`}
@@ -1944,7 +1924,7 @@ export function DiscoveryResultsPanel({
                                 {formatStatusLabel(job.status)}
                               </StatusBadge>
                             ) : null}
-                            {listingDateBadge.shown && density !== "compact" ? (
+                            {listingDateBadge.shown ? (
                               <Badge
                                 {...(listingDateExplanation
                                   ? { title: listingDateExplanation }
@@ -2044,7 +2024,7 @@ export function DiscoveryResultsPanel({
                               ? `${assessment.headlineScoreAriaLabel}. ${rowReason}`
                               : assessment.headlineScoreAriaLabel}
                           </span>
-                        ) : rowReason && density !== "compact" ? (
+                        ) : rowReason ? (
                           <span
                             className={cn(
                               jobFinderListRowStatusClassName,

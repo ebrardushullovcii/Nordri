@@ -20,6 +20,8 @@ import type {
   JobFinderApplyRunDetailsQuery,
   JobFinderApplicationStartTarget,
   JobFinderOpenBrowserSessionInput,
+  JobFinderPreparedApplicationPageInput,
+  JobFinderSearchRequest,
   JobFinderResumePreview,
   JobFinderResumeWorkspace,
   JobFinderSetResumeClaimConfirmationInput,
@@ -36,6 +38,7 @@ import type {
   ResumeStrategyRecommendation,
   ResumeImportProgressEvent,
   ResumeApplicationMode,
+  TailoringMode,
   ResumeTimelineRepairAction,
   SaveApplicationAnswerCommandInput,
   SaveCampaignRuleInput,
@@ -49,6 +52,7 @@ import type {
   SnoozeGroupedDecisionInput,
   UpdateApplicationDefaultsInput,
   UpdateWorkspaceBehaviorInput,
+  UpdateAiBehaviorInput,
   ResumeAssistantMessage,
   ResumeDraft,
   ResumeDraftPatch,
@@ -90,7 +94,7 @@ export interface JobFinderPageContext {
   isPending: (scope: PendingActionScope) => boolean;
   resumeOperationStarts?: Readonly<Record<string, number>>;
   isAnyPending: (scopes: readonly PendingActionScope[]) => boolean;
-  onPrepareTailoredDrafts: () => void;
+  onPrepareTailoredDrafts: (jobIds?: readonly string[]) => void;
   onStopTailoredDraftPreparation: () => void;
   tailoredDraftPreparation: TailoredDraftPreparationViewState;
   profileCopilotBusy: boolean;
@@ -109,8 +113,17 @@ export interface JobFinderPageContext {
   onStartAutoApply: (input: JobFinderApplicationStartTarget) => void;
   onStartAutoApplyQueue: (
     jobIds: JobFinderApplyQueueActionInput["jobIds"],
+    applicationAutomationMode?: JobFinderApplyQueueActionInput["applicationAutomationMode"],
+    options?: { stayOnCurrentPage?: boolean },
   ) => Promise<JobFinderAutoApplyQueueStartOutcome>;
   onStartApplyCopilot: (input: JobFinderApplicationStartTarget) => void;
+  /** Sends one finished application after the person presses Send. */
+  onSubmitPreparedApplication: (jobId: string) => Promise<void>;
+  /**
+   * Send for me: presses Send on each filled-in form, one after another,
+   * including forms filled in before Send for me was chosen.
+   */
+  onSendPreparedApplications: (jobIds: readonly string[]) => Promise<void>;
   onApplyProfileCopilotPatchGroup: (patchGroupId: string) => void;
   onApplyProfileSetupReviewAction: (
     reviewItemId: string,
@@ -143,6 +156,8 @@ export interface JobFinderPageContext {
   onMutateRapidReview: (input: RapidReviewMutationInput) => Promise<void>;
   onMutateSafeguards: (input: SafeguardMutationInput) => Promise<boolean>;
   onApproveCurrentResume: (jobId: string) => void;
+  /** Approves a Light or Tailored draft and starts the application in one press. */
+  onApproveResumeAndApply: (jobId: string) => void;
   onApproveResume: (jobId: string, exportId: string) => void;
   onClearResumeApproval: (jobId: string) => void;
   onSetWorkHistoryReviewAcknowledgment: (
@@ -207,7 +222,8 @@ export interface JobFinderPageContext {
     decision: "accepted" | "rejected";
   }) => Promise<void>;
   onGetSourceDebugRunDetails: (runId: string) => Promise<SourceDebugRunDetails>;
-  onImportResume: () => void;
+  /** `retryInterrupted` imports again the file a stopped import saved. */
+  onImportResume: (options?: { retryInterrupted?: boolean }) => void;
   onCancelImportResume: () => void;
   /**
    * Opens or focuses the Job Finder browser and resolves with whether that
@@ -219,6 +235,10 @@ export interface JobFinderPageContext {
 
   onOpenBrowserSession: (
     input?: JobFinderOpenBrowserSessionInput,
+    options?: JobFinderActionFailureReporting,
+  ) => Promise<boolean>;
+  onFocusPreparedApplicationPage: (
+    input: JobFinderPreparedApplicationPageInput,
     options?: JobFinderActionFailureReporting,
   ) => Promise<boolean>;
   onOpenProfile: () => void;
@@ -237,6 +257,7 @@ export interface JobFinderPageContext {
     command: ProjectGroupedManualAnswerCommand,
   ) => void;
   onProfileSurfaceDirtyChange: (dirty: boolean) => void;
+  onSearchPlanSurfaceDirtyChange: (dirty: boolean) => void;
   /**
    * Reports each user-authored Profile or setup draft edit — including edits
    * made while the surface was already dirty, when no dirty transition
@@ -250,11 +271,12 @@ export interface JobFinderPageContext {
   onSetJobResumeApplicationMode: (
     jobId: string,
     resumeApplicationMode: ResumeApplicationMode,
+    resumeTailoringMode?: TailoringMode | null,
   ) => void;
   onRejectProfileCopilotPatchGroup: (patchGroupId: string) => void;
   onResetWorkspace: () => void;
   onResumeProfileSetup: (step?: ProfileSetupStep) => void;
-  onRunAgentDiscovery?: () => void;
+  onRunAgentDiscovery?: (searchRequest?: JobFinderSearchRequest) => void;
   /**
    * Cancels the active discovery run through the same fenced preload request
    * the shell Task Center uses; when absent, no surface offers a stop action.
@@ -272,6 +294,11 @@ export interface JobFinderPageContext {
   onRegenerateResumeDraft: (jobId: string) => void;
   onRegenerateResumeSection: (jobId: string, sectionId: string) => void;
   onRestoreResumeDraftRevision: (jobId: string, revisionId: string) => void;
+  onUndoResumeAssistantEdit: (jobId: string, revisionId: string) => void;
+  onWriteEditableResumeForOriginalJob: (
+    jobId: string,
+    pendingRequest: string | null,
+  ) => void;
   onSaveResumeDraft: (draft: ResumeDraft) => void;
   onSaveResumeDraftAndThen: (
     draft: ResumeDraft,
@@ -354,6 +381,7 @@ export interface JobFinderPageContext {
   onUpdateWorkspaceBehavior: (
     input: UpdateWorkspaceBehaviorInput,
   ) => Promise<boolean>;
+  onUpdateAiBehavior: (input: UpdateAiBehaviorInput) => Promise<boolean>;
   onUpdateAppearanceTheme: (
     appearanceTheme: AppearanceTheme,
   ) => Promise<boolean>;

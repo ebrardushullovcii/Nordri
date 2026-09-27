@@ -263,7 +263,7 @@ describe("createJobFinderWorkspaceService", () => {
     });
     expect(executionInput).toMatchObject({
       mode: "prepare_only",
-      intermediateMutationsAuthorized: false,
+      intermediateMutationsAuthorized: true,
       accountCreationAuthorized: false,
       submitAuthorized: false,
     });
@@ -1780,7 +1780,9 @@ describe("createJobFinderWorkspaceService", () => {
                 newBullets: [
                   {
                     ...targetBullet,
-                    text: "Maintained legacy services.",
+                    // A real change: a proposal that sets the text the
+                    // bullet already has is left out as a no-op.
+                    text: "Kept legacy services running.",
                   },
                   ...targetEntry.bullets.slice(1),
                 ],
@@ -2204,7 +2206,7 @@ describe("createJobFinderWorkspaceService", () => {
     expect(snapshot.applicationRecords[0]).toMatchObject({
       jobId: "job_ready",
       nextActionLabel: expect.stringMatching(
-        /pending submit approval/i,
+        /watch it in applications/i,
       ) as string,
     });
     const preparationEvent = snapshot.applicationRecords[0]?.events.find(
@@ -2599,6 +2601,31 @@ describe("createJobFinderWorkspaceService", () => {
       jobIds: ["job_consent_queue", "job_ready"],
     });
   });
+
+  test.each([
+    ["prepare_only", "leaves it open for you to send"],
+    ["confirm_before_submit", "stops at the send button"],
+    ["autonomous_submit", "sends it when the employer's form is complete"],
+  ] as const)(
+    "queue detail follows the selected %s mode",
+    async (mode, expected) => {
+      const seed = createSeed();
+      seed.savedJobs = [
+        { ...seed.savedJobs[0]!, resumeApplicationMode: "original_resume" },
+      ];
+      seed.settings = {
+        ...seed.settings,
+        resumeApplicationMode: "original_resume",
+        applicationAutomationMode: "prepare_only",
+      };
+      const { workspaceService } = createWorkspaceServiceHarness({ seed });
+      const snapshot = await workspaceService.startAutoApplyQueueRun(
+        ["job_ready"],
+        mode,
+      );
+      expect(snapshot.applyRuns[0]?.detail).toContain(expected);
+    },
+  );
 
   test("approved queue run isolates a consent blocker and prepares later jobs", async () => {
     const seed = createSeed();
@@ -3084,30 +3111,34 @@ describe("createJobFinderWorkspaceService", () => {
     });
   });
 
-  test("cancelling an active queue aborts browser work and never starts the next job", async () => {
+  test("cancelling an active queue aborts every active preparation and never starts the next job", async () => {
+    // Apply to all prepares two jobs at once (ADR 0036), so Stop must abort
+    // both active preparations, not only the first, and the third job must
+    // never be launched.
     const seed = createSeed();
     const readyJob = seed.savedJobs.find((job) => job.id === "job_ready")!;
+    const extraJob = (suffix: string) =>
+      SavedJobSchema.parse({
+        ...readyJob,
+        id: `job_${suffix}`,
+        sourceJobId: `linkedin_signal_${suffix}`,
+        canonicalUrl: `https://www.linkedin.com/jobs/view/linkedin_signal_${suffix}`,
+        applicationUrl: `https://www.linkedin.com/jobs/view/linkedin_signal_${suffix}/apply`,
+        resumeApplicationMode: "original_resume",
+      });
     seed.savedJobs = [
       SavedJobSchema.parse({
         ...readyJob,
         resumeApplicationMode: "original_resume",
       }),
-      SavedJobSchema.parse({
-        ...readyJob,
-        id: "job_second",
-        sourceJobId: "linkedin_signal_second",
-        canonicalUrl:
-          "https://www.linkedin.com/jobs/view/linkedin_signal_second",
-        applicationUrl:
-          "https://www.linkedin.com/jobs/view/linkedin_signal_second/apply",
-        resumeApplicationMode: "original_resume",
-      }),
+      extraJob("second"),
+      extraJob("third"),
     ];
 
     const baseRuntime = createBrowserRuntime();
-    let releaseFirstRun: (() => void) | null = null;
-    const firstRunStarted = new Promise<void>((resolve) => {
-      releaseFirstRun = resolve;
+    let markBothStarted: (() => void) | null = null;
+    const bothStarted = new Promise<void>((resolve) => {
+      markBothStarted = resolve;
     });
     const executeApplicationFlow = vi.fn(
       async (
@@ -3117,7 +3148,7 @@ describe("createJobFinderWorkspaceService", () => {
           BrowserSessionRuntime["executeApplicationFlow"]
         >[2],
       ): ReturnType<BrowserSessionRuntime["executeApplicationFlow"]> => {
-        releaseFirstRun?.();
+        if (executeApplicationFlow.mock.calls.length === 2) markBothStarted?.();
         return new Promise((resolve, reject) => {
           const abort = () =>
             reject(new DOMException("Cancelled", "AbortError"));
@@ -3134,27 +3165,32 @@ describe("createJobFinderWorkspaceService", () => {
     const staged = await workspaceService.startAutoApplyQueueRun([
       "job_ready",
       "job_second",
+      "job_third",
     ]);
     const runId = staged.applyRuns[0]!.id;
     const execution = workspaceService.approveApplyRun(runId);
-    await firstRunStarted;
+    await bothStarted;
 
     await workspaceService.cancelApplyRun(runId);
     await execution;
 
-    expect(executeApplicationFlow).toHaveBeenCalledTimes(1);
-    expect(executeApplicationFlow.mock.calls[0]?.[2]?.signal?.aborted).toBe(
-      true,
-    );
+    expect(
+      executeApplicationFlow.mock.calls.map((call) => call[1].job.id),
+    ).toEqual(["job_ready", "job_second"]);
+    for (const call of executeApplicationFlow.mock.calls) {
+      expect(call[2]?.signal?.aborted).toBe(true);
+    }
     expect((await repository.listApplyRuns())[0]).toMatchObject({
       id: runId,
       state: "cancelled",
     });
+    const results = await repository.listApplyJobResults({ runId });
     expect(
-      (await repository.listApplyJobResults({ runId })).find(
-        (result) => result.jobId === "job_second",
-      ),
-    ).toMatchObject({ state: "planned" });
+      results.find((result) => result.jobId === "job_third"),
+    ).toMatchObject({ state: "failed" });
+    for (const result of results) {
+      expect(result.completedAt).not.toBeNull();
+    }
   });
 
   test("an immediate cancellation wins the startup race and remains durable", async () => {
@@ -4248,7 +4284,7 @@ describe("createJobFinderWorkspaceService", () => {
     });
     renderResumeArtifact.mockClear();
     await expect(workspaceService.exportResumePdf("job_ready")).rejects.toThrow(
-      /blocking candidate-claim validation issues/i,
+      /still need your decision/i,
     );
     expect(renderResumeArtifact).not.toHaveBeenCalled();
     expect(

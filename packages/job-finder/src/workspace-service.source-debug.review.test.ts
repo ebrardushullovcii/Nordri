@@ -466,7 +466,7 @@ describe("createJobFinderWorkspaceService", () => {
     expect(latestArtifact?.status).toBe("draft");
     expect(
       latestArtifact?.warnings.some((warning) =>
-        /timed out before structured conclusion/i.test(warning),
+        /ran out of time before it could finish its report/i.test(warning),
       ),
     ).toBe(true);
 

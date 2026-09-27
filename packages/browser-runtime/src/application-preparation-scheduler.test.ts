@@ -1,0 +1,93 @@
+import { describe, expect, test } from "vitest";
+import {
+  applicationSiteKey,
+  createApplicationPreparationScheduler,
+} from "./application-preparation-scheduler";
+
+const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+describe("application preparation ownership", () => {
+  test("different sites overlap within the configured limit", async () => {
+    const scheduler = createApplicationPreparationScheduler(2);
+    const first = await scheduler.acquire("https://jobs.alpha.example/apply");
+    const second = await scheduler.acquire("https://jobs.beta.test/apply");
+    const third = scheduler.acquire("https://gamma.example/apply");
+    let started = false;
+    void third.then(() => {
+      started = true;
+    });
+    await tick();
+    expect(started).toBe(false);
+    first.release();
+    const thirdLease = await third;
+    expect(started).toBe(true);
+    second.release();
+    thirdLease.release();
+  });
+
+  test("subdomains of one site serialize", async () => {
+    const scheduler = createApplicationPreparationScheduler(2);
+    expect(applicationSiteKey("https://apply.example.com/a")).toBe(
+      "example.com",
+    );
+    expect(applicationSiteKey("http://127.0.0.1:8080/apply")).toBe("127.0.0.1");
+    expect(applicationSiteKey("http://127.0.0.2:8080/apply")).toBe("127.0.0.2");
+    expect(applicationSiteKey("http://[::1]:8080/apply")).toBe("[::1]");
+    const first = await scheduler.acquire("https://jobs.example.com/apply");
+    const second = scheduler.acquire("https://account.example.com/form");
+    let started = false;
+    void second.then(() => {
+      started = true;
+    });
+    await tick();
+    expect(started).toBe(false);
+    first.release();
+    const secondLease = await second;
+    expect(started).toBe(true);
+    secondLease.release();
+  });
+
+  test("a redirect waits before work on the shared destination site", async () => {
+    const scheduler = createApplicationPreparationScheduler(2);
+    const first = await scheduler.acquire("https://one.example/apply");
+    const second = await scheduler.acquire("https://two.test/apply");
+    const redirected = second.moveTo("https://account.one.example/form");
+    let moved = false;
+    void redirected.then(() => {
+      moved = true;
+    });
+    await tick();
+    expect(moved).toBe(false);
+    first.release();
+    await redirected;
+    expect(moved).toBe(true);
+    second.release();
+  });
+
+  test("crossed redirects release old sites and do not deadlock", async () => {
+    const scheduler = createApplicationPreparationScheduler(2);
+    const first = await scheduler.acquire("https://one.example/apply");
+    const second = await scheduler.acquire("https://two.test/apply");
+    await Promise.all([
+      first.moveTo("https://two.test/form"),
+      second.moveTo("https://one.example/form"),
+    ]);
+    first.release();
+    second.release();
+  });
+
+  test("an aborted waiter leaves capacity available", async () => {
+    const scheduler = createApplicationPreparationScheduler(1);
+    const first = await scheduler.acquire("https://one.example/apply");
+    const controller = new AbortController();
+    const waiting = scheduler.acquire(
+      "https://two.test/apply",
+      controller.signal,
+    );
+    controller.abort();
+    await expect(waiting).rejects.toMatchObject({ name: "AbortError" });
+    first.release();
+    const next = await scheduler.acquire("https://three.example/apply");
+    next.release();
+  });
+});

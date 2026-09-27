@@ -73,7 +73,13 @@ export function ApplicationsCrmSettingsEditor(props: {
     name: "customStages",
   });
 
-  useEffect(() => reset(props.settings), [props.settings, reset]);
+  // IPC refreshes can return an equal object after another section saves.
+  // Only changed persisted values should replace a staged tracker draft.
+  const savedKey = JSON.stringify(props.settings);
+  useEffect(
+    () => reset(JSON.parse(savedKey) as ApplicationCrmSettings),
+    [savedKey, reset],
+  );
 
   // Observe staged tracker edits without owning the form: every value change
   // while the form is dirty reports upward so an exact-request shell retry
@@ -150,6 +156,7 @@ export function ApplicationsCrmSettingsEditor(props: {
       <fieldset className="grid min-w-0 gap-3 rounded-(--radius-field) border border-(--surface-panel-border) p-4 sm:grid-cols-[minmax(0,1fr)_8rem] sm:items-end">
         <label className="flex min-w-0 items-start gap-3 text-sm text-foreground">
           <input
+            disabled={isSubmitting}
             type="checkbox"
             {...register("noResponseAutomation.enabled")}
           />
@@ -165,8 +172,10 @@ export function ApplicationsCrmSettingsEditor(props: {
           After days
           <input
             className={fieldClassName}
+            disabled={isSubmitting}
             max={365}
             min={1}
+            required
             type="number"
             {...register("noResponseAutomation.afterDays", {
               valueAsNumber: true,
@@ -193,6 +202,7 @@ export function ApplicationsCrmSettingsEditor(props: {
             </p>
           </div>
           <Button
+            disabled={isSubmitting}
             onClick={() => append(createCustomStage(fields.length))}
             size="sm"
             type="button"
@@ -221,6 +231,7 @@ export function ApplicationsCrmSettingsEditor(props: {
                   Name
                   <input
                     className={fieldClassName}
+                    disabled={isSubmitting}
                     required
                     {...register(`customStages.${index}.label`)}
                   />
@@ -229,6 +240,7 @@ export function ApplicationsCrmSettingsEditor(props: {
                   Reports as
                   <select
                     className={fieldClassName}
+                    disabled={isSubmitting}
                     {...register(`customStages.${index}.baseStage`)}
                   >
                     {APPLICATION_CRM_STAGE_ORDER.map((stage) => (
@@ -242,6 +254,7 @@ export function ApplicationsCrmSettingsEditor(props: {
                   Color
                   <select
                     className={fieldClassName}
+                    disabled={isSubmitting}
                     {...register(`customStages.${index}.color`)}
                   >
                     {colors.map((color) => (
@@ -254,7 +267,7 @@ export function ApplicationsCrmSettingsEditor(props: {
                 <div className="flex min-w-0 flex-wrap gap-1">
                   <Button
                     aria-label={`Move ${field.label} up`}
-                    disabled={index === 0}
+                    disabled={isSubmitting || index === 0}
                     onClick={() => move(index, index - 1)}
                     size="sm"
                     type="button"
@@ -264,7 +277,7 @@ export function ApplicationsCrmSettingsEditor(props: {
                   </Button>
                   <Button
                     aria-label={`Move ${field.label} down`}
-                    disabled={index === fields.length - 1}
+                    disabled={isSubmitting || index === fields.length - 1}
                     onClick={() => move(index, index + 1)}
                     size="sm"
                     type="button"
@@ -274,6 +287,7 @@ export function ApplicationsCrmSettingsEditor(props: {
                   </Button>
                   <Button
                     aria-label={`Remove ${field.label}`}
+                    disabled={isSubmitting}
                     onClick={() => remove(index)}
                     size="sm"
                     type="button"
@@ -284,6 +298,7 @@ export function ApplicationsCrmSettingsEditor(props: {
                 </div>
                 <label className="flex min-w-0 items-center gap-2 text-sm text-foreground lg:col-span-4">
                   <input
+                    disabled={isSubmitting}
                     type="checkbox"
                     {...register(`customStages.${index}.isTerminal`)}
                   />

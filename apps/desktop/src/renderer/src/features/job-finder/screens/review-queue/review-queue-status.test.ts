@@ -5,9 +5,9 @@ import type {
 } from "@unemployed/contracts";
 import { describe, expect, it, vi } from "vitest";
 import {
+  collectInProgressApplicationJobIds,
   collectPreparedApplicationJobIds,
   countQueueStageReady,
-  describeQueueStagePreparationBlocker,
   describeTailoredDraftPreparationBlocker,
   getApplyReadinessStatus,
   getReviewQueueResumePolicyCaption,
@@ -17,7 +17,8 @@ import {
   hasResumeGenerationFailure,
   isQueueStageReady,
   isTailoredDraftPreparationEligible,
-  prepareTailoredDraftsSequentially,
+  needsPersonResumeReview,
+  prepareTailoredDraftBatch,
   type TailoredDraftPreparationViewState,
 } from "./review-queue-status";
 
@@ -30,8 +31,110 @@ it("lets a ready tailored draft join an application preparation batch", () => {
 
   expect(isQueueStageReady(draft)).toBe(true);
   expect(getReviewQueueResumePolicyCaption(draft)).toBe(
-    "Tailored draft ready for your review",
+    "Resume ready — Apply approves it",
   );
+});
+
+it("holds an Aggressive draft back for the person's review before Apply", () => {
+  const draft = createItem("aggressive", {
+    assetStatus: "ready",
+    resumeAssetId: "resume_aggressive",
+    resumeTailoringMode: "aggressive",
+    resumeReview: { status: "needs_review" },
+  });
+
+  expect(isQueueStageReady(draft)).toBe(false);
+  expect(getReviewQueueWorkflowStatus(draft)).toEqual({
+    label: "Review resume",
+    tone: "active",
+  });
+  expect(getReviewQueueResumePolicyCaption(draft)).toBe(
+    "Resume ready — review it before applying",
+  );
+});
+
+it("holds a Tailored draft with a line still to decide back from Apply, whatever its level", () => {
+  const draft = createItem("tailored_undecided", {
+    assetStatus: "ready",
+    resumeAssetId: "resume_tailored",
+    resumeTailoringMode: "balanced",
+    resumeLinesToDecide: 1,
+    resumeReview: { status: "needs_review" },
+  });
+  const asset = {
+    id: "resume_tailored",
+    generationMethod: "deterministic",
+    generationReason: "listing_text_missing",
+  } as const;
+
+  expect(needsPersonResumeReview(draft)).toBe(true);
+  // Even a resume that kept the person's wording is blocked by the line.
+  expect(needsPersonResumeReview(draft, asset)).toBe(true);
+  expect(isQueueStageReady(draft)).toBe(false);
+  expect(getReviewQueueWorkflowStatus(draft)).toEqual({
+    label: "Review resume",
+    tone: "active",
+  });
+  expect(getReviewQueueResumePolicyCaption(draft)).toBe(
+    "A line in this resume needs your decision",
+  );
+  expect(
+    getReviewQueueResumePolicyCaption({ ...draft, resumeLinesToDecide: 3 }),
+  ).toBe("3 lines in this resume need your decision");
+});
+
+it("asks for no flagged-line review when the listing text was never read", () => {
+  const draft = createItem("aggressive_untailored", {
+    assetStatus: "ready",
+    resumeAssetId: "resume_untailored",
+    resumeTailoringMode: "aggressive",
+    resumeReview: { status: "needs_review" },
+  });
+  const asset = {
+    id: "resume_untailored",
+    generationMethod: "deterministic",
+    generationReason: "listing_text_missing",
+  } as const;
+
+  expect(needsPersonResumeReview(draft)).toBe(true);
+  expect(needsPersonResumeReview(draft, asset)).toBe(false);
+});
+
+it("does not describe an Aggressive resume as ready before a draft exists", () => {
+  const draft = createItem("aggressive_missing", {
+    assetStatus: "not_started",
+    resumeAssetId: null,
+    resumeTailoringMode: "aggressive",
+    resumeReview: { status: "not_started" },
+  });
+
+  expect(needsPersonResumeReview(draft)).toBe(false);
+  expect(getReviewQueueWorkflowStatus(draft)).toEqual({
+    label: "No resume yet",
+    tone: "muted",
+  });
+  expect(getReviewQueueResumePolicyCaption(draft)).toBe("No resume yet");
+});
+
+it("names an AI outage in the row instead of calling the built-in resume ready", () => {
+  const draft = createItem("outage", {
+    assetStatus: "ready",
+    resumeAssetId: "resume_outage",
+    resumeReview: { status: "needs_review" },
+  });
+
+  expect(
+    getReviewQueueResumePolicyCaption(draft, {
+      generationMethod: "deterministic",
+      generationReason: "provider_failed",
+    } as TailoredAsset),
+  ).toBe("Your saved wording — AI was unavailable");
+  expect(
+    getReviewQueueResumePolicyCaption(draft, {
+      generationMethod: "ai_assisted",
+      generationReason: null,
+    } as TailoredAsset),
+  ).toBe("Resume ready — Apply approves it");
 });
 
 function createItem(
@@ -103,42 +206,42 @@ describe("tailored draft preparation", () => {
     expect(getTailoredDraftPreparationCandidates(queue, 50)).toHaveLength(10);
   });
 
-  it("awaits each generation before scheduling the next job", async () => {
-    const firstStarted = vi.fn();
-    let resolveFirst: ((value: boolean) => void) | undefined;
-    const onGenerateResume = vi.fn<(jobId: string) => Promise<boolean>>(
-      (jobId) => {
-        if (jobId === "job-1") {
-          firstStarted();
-          return new Promise<boolean>((resolve) => {
-            resolveFirst = resolve;
-          });
-        }
-
-        return Promise.resolve(true);
-      },
+  it("runs at most two drafts, accounts for out-of-order failures, and stops new work", async () => {
+    const settle = new Map<string, (success: boolean) => void>();
+    const generate = vi.fn(
+      (id: string) =>
+        new Promise<boolean>((resolve) => settle.set(id, resolve)),
     );
-    const runPromise = prepareTailoredDraftsSequentially(
-      [createItem("job-1"), createItem("job-2")],
-      onGenerateResume,
+    const progress = vi.fn();
+    let stop = false;
+    const promise = prepareTailoredDraftBatch(
+      ["1", "2", "3", "4"].map((id) => createItem(id)),
+      generate,
+      { onProgress: progress, shouldStop: () => stop },
     );
-
-    await vi.waitFor(() => expect(firstStarted).toHaveBeenCalledOnce());
-    expect(onGenerateResume).toHaveBeenCalledTimes(1);
-    resolveFirst?.(true);
-
-    await expect(runPromise).resolves.toMatchObject({
-      attemptedCount: 2,
-      completedCount: 2,
-      failedCount: 0,
-      failedJobIds: [],
-      stopped: false,
-      totalCount: 2,
+    expect(generate.mock.calls).toEqual([["1"], ["2"]]);
+    settle.get("2")!(false);
+    await vi.waitFor(() =>
+      expect(generate.mock.calls).toEqual([["1"], ["2"], ["3"]]),
+    );
+    expect(progress).toHaveBeenLastCalledWith({
+      completedCount: 0,
+      currentIndex: 3,
+      failedCount: 1,
+      totalCount: 4,
     });
-    expect(onGenerateResume.mock.calls.map(([jobId]) => jobId)).toEqual([
-      "job-1",
-      "job-2",
-    ]);
+    stop = true;
+    settle.get("3")!(true);
+    settle.get("1")!(true);
+    await expect(promise).resolves.toEqual({
+      attemptedCount: 3,
+      completedCount: 2,
+      failedCount: 1,
+      failedJobIds: ["2"],
+      stopped: true,
+      totalCount: 4,
+    });
+    expect(generate).toHaveBeenCalledTimes(3);
   });
 
   it("stops scheduling after the current draft finishes", async () => {
@@ -151,7 +254,7 @@ describe("tailored draft preparation", () => {
     });
 
     await expect(
-      prepareTailoredDraftsSequentially(
+      prepareTailoredDraftBatch(
         [createItem("job-1"), createItem("job-2")],
         onGenerateResume,
         { shouldStop: () => stopRequested },
@@ -171,7 +274,7 @@ describe("tailored draft preparation", () => {
     const onGenerateResume = vi.fn((jobId: string) =>
       Promise.resolve(jobId !== "job-2"),
     );
-    const result = await prepareTailoredDraftsSequentially(
+    const result = await prepareTailoredDraftBatch(
       [createItem("job-1"), createItem("job-2"), createItem("job-3")],
       onGenerateResume,
     );
@@ -201,7 +304,7 @@ describe("tailored draft preparation", () => {
     });
 
     await expect(
-      prepareTailoredDraftsSequentially(
+      prepareTailoredDraftBatch(
         [createItem("job-1"), createItem("job-2"), createItem("job-3")],
         onGenerateResume,
       ),
@@ -226,7 +329,7 @@ describe("tailored draft preparation", () => {
     });
 
     await expect(
-      prepareTailoredDraftsSequentially(
+      prepareTailoredDraftBatch(
         [createItem("job-1"), createItem("job-2")],
         onGenerateResume,
         { shouldStop: () => stopRequested },
@@ -243,7 +346,7 @@ describe("tailored draft preparation", () => {
 
   it("treats an empty candidate list as a finished, unstopped run", async () => {
     await expect(
-      prepareTailoredDraftsSequentially([], vi.fn(), {
+      prepareTailoredDraftBatch([], vi.fn(), {
         shouldStop: () => true,
       }),
     ).resolves.toEqual({
@@ -303,11 +406,11 @@ describe("restored resume states stay distinct from generation failures", () => 
     // failure copy; surfaces holding the tailored asset resolve the restored
     // state precisely.
     expect(getReviewQueueWorkflowStatus(restoredItem)).toEqual({
-      label: "Resume issue",
+      label: "Resume failed",
       tone: "critical",
     });
     expect(getReviewQueueWorkflowStatus(restoredItem, restoredAsset)).toEqual({
-      label: "Needs approval",
+      label: "Review resume",
       tone: "active",
     });
     expect(
@@ -317,7 +420,7 @@ describe("restored resume states stay distinct from generation failures", () => 
         failedAt: "2026-08-21T00:00:00.000Z",
       }),
     ).toEqual({
-      label: "Resume issue",
+      label: "Resume failed",
       tone: "critical",
     });
   });
@@ -337,13 +440,13 @@ describe("restored resume states stay distinct from generation failures", () => 
         ...readinessInput,
         hasGenerationFailure: false,
       }).label,
-    ).toBe("Needs approval");
+    ).toBe("Review resume");
     expect(
       getApplyReadinessStatus({
         ...readinessInput,
         hasGenerationFailure: true,
       }).label,
-    ).toBe("Resume issue");
+    ).toBe("Resume failed");
   });
 });
 
@@ -364,16 +467,15 @@ describe("safe application presentation labels", () => {
     });
   }
 
-  it("presents a fully prepared job as Ready to prepare, never Ready to apply", () => {
+  it("presents a fully prepared job as Ready to apply", () => {
     const status = getReviewQueueWorkflowStatus(createReadyApprovedItem());
 
-    expect(status).toEqual({ label: "Ready to prepare", tone: "positive" });
-    expect(status.label).not.toMatch(/ready to apply/i);
+    expect(status).toEqual({ label: "Ready to apply", tone: "positive" });
   });
 
-  it("captions an approved tailored PDF as ready, never future-tense creation", () => {
+  it("captions an approved resume as approved, never future-tense creation", () => {
     expect(getReviewQueueResumePolicyCaption(createReadyApprovedItem())).toBe(
-      "Approved resume ready",
+      "Resume approved",
     );
     expect(
       getReviewQueueResumePolicyCaption(
@@ -383,7 +485,7 @@ describe("safe application presentation labels", () => {
           resumeReview: { status: "not_started" },
         }),
       ),
-    ).toBe("Needs a tailored resume");
+    ).toBe("No resume yet");
   });
 
   it("never captions a draft as tailored when the listing text was not captured", () => {
@@ -418,7 +520,7 @@ describe("safe application presentation labels", () => {
       "Original wording — the listing text was not captured",
     );
     expect(getReviewQueueResumePolicyCaption(item)).toBe(
-      "Tailored draft ready for your review",
+      "Resume ready — Apply approves it",
     );
   });
 
@@ -437,9 +539,9 @@ describe("safe application presentation labels", () => {
       }),
     );
 
-    expect(status.label).toBe("Original resume ready");
+    expect(status.label).toBe("Ready to apply");
     expect(status.label).not.toMatch(BANNED_OPERATION_COPY);
-    expect(status.label).not.toMatch(/ready to (apply|submit)/i);
+    expect(status.label).not.toMatch(/submit/i);
   });
 
   it("keeps every readiness badge free of legacy operation names and submission claims", () => {
@@ -463,7 +565,7 @@ describe("safe application presentation labels", () => {
     }
   });
 
-  it("reports the all-clear mission state as Ready to prepare", () => {
+  it("reports the all-clear mission state as Ready to apply", () => {
     const status = getApplyReadinessStatus({
       applySupportState: "supported",
       browserSession: { status: "ready" } as BrowserSessionState,
@@ -475,7 +577,7 @@ describe("safe application presentation labels", () => {
       selectedItem: createReadyApprovedItem(),
     });
 
-    expect(status).toEqual({ label: "Ready to prepare", tone: "positive" });
+    expect(status).toEqual({ label: "Ready to apply", tone: "positive" });
   });
 });
 
@@ -514,9 +616,7 @@ describe("getTailoredDraftPreparationResultMessage", () => {
           totalCount: 1,
         }),
       ),
-    ).toBe(
-      "Prepared 1 tailored draft. Each draft still needs your review and approval. Nothing was approved, queued, submitted, or sent.",
-    );
+    ).toBe("Wrote 1 resume. Nothing was sent.");
   });
 
   it("singularizes the remainder sentence for exactly one eligible job left over", () => {
@@ -531,7 +631,7 @@ describe("getTailoredDraftPreparationResultMessage", () => {
         }),
       ),
     ).toBe(
-      "Prepared 10 tailored drafts. 1 eligible job remains for another run. Each draft still needs your review and approval. Nothing was approved, queued, submitted, or sent.",
+      "Wrote 10 resumes. 1 more job still needs a resume; run it again. Nothing was sent.",
     );
   });
 
@@ -547,7 +647,7 @@ describe("getTailoredDraftPreparationResultMessage", () => {
         }),
       ),
     ).toBe(
-      "Prepared 10 tailored drafts. 20 eligible jobs remain for another run. Each draft still needs your review and approval. Nothing was approved, queued, submitted, or sent.",
+      "Wrote 10 resumes. 20 more jobs still need a resume; run it again. Nothing was sent.",
     );
   });
 
@@ -564,7 +664,7 @@ describe("getTailoredDraftPreparationResultMessage", () => {
     );
 
     expect(message).toBe(
-      "Prepared 7 tailored drafts; 3 failed. 4 eligible jobs remain for another run. Fix the failed jobs and rerun to target only remaining eligible jobs. Nothing was approved, queued, submitted, or sent.",
+      "Wrote 7 resumes; 3 failed. 4 more jobs still need a resume; run it again. Run it again to retry the failed jobs. Nothing was sent.",
     );
     expect(message).not.toMatch(/stopped/i);
   });
@@ -582,7 +682,7 @@ describe("getTailoredDraftPreparationResultMessage", () => {
     );
 
     expect(message).toBe(
-      "Prepared 0 tailored drafts; 1 failed. 1 eligible job remains for another run. Fix the failed job and rerun to target only remaining eligible jobs. Nothing was approved, queued, submitted, or sent.",
+      "Wrote 0 resumes; 1 failed. 1 more job still needs a resume; run it again. Run it again to retry the failed job. Nothing was sent.",
     );
   });
 
@@ -600,7 +700,7 @@ describe("getTailoredDraftPreparationResultMessage", () => {
         }),
       ),
     ).toBe(
-      "Stopped after 2 completed drafts; 1 failed. 8 eligible jobs remain for another run. Fix the failed job and rerun to target only remaining eligible jobs. Nothing was approved, queued, submitted, or sent.",
+      "Stopped after 2 resumes; 1 failed. 8 more jobs still need a resume; run it again. Run it again to retry the failed job. Nothing was sent.",
     );
     expect(
       getTailoredDraftPreparationResultMessage(
@@ -613,7 +713,7 @@ describe("getTailoredDraftPreparationResultMessage", () => {
           totalCount: 10,
         }),
       ),
-    ).toMatch(/^Stopped after 1 completed draft; 1 failed\./);
+    ).toMatch(/^Stopped after 1 resume; 1 failed\./);
   });
 
   it("keeps a user-stopped run without failures on its own truthful copy", () => {
@@ -626,9 +726,7 @@ describe("getTailoredDraftPreparationResultMessage", () => {
           totalCount: 2,
         }),
       ),
-    ).toBe(
-      "Stopped after 1 completed draft. Nothing was approved, queued, submitted, or sent.",
-    );
+    ).toBe("Stopped after 1 resume. Nothing was sent.");
     expect(
       getTailoredDraftPreparationResultMessage(
         createState({
@@ -638,9 +736,7 @@ describe("getTailoredDraftPreparationResultMessage", () => {
           totalCount: 5,
         }),
       ),
-    ).toBe(
-      "Stopped after 3 completed drafts. Nothing was approved, queued, submitted, or sent.",
-    );
+    ).toBe("Stopped after 3 resumes. Nothing was sent.");
   });
 });
 
@@ -667,28 +763,51 @@ describe("already prepared applications", () => {
 
     expect(countQueueStageReady(queue)).toBe(3);
     expect(countQueueStageReady(queue, prepared)).toBe(1);
-    expect(getReviewQueueWorkflowStatus(queue[0]!, null, false, prepared).label)
-      .toBe("Application prepared");
-    expect(getReviewQueueWorkflowStatus(queue[2]!, null, false, prepared).label)
-      .toBe("Ready to prepare");
+    expect(
+      getReviewQueueWorkflowStatus(queue[0]!, null, false, prepared).label,
+    ).toBe("In Applications");
+    expect(
+      getReviewQueueWorkflowStatus(queue[2]!, null, false, prepared).label,
+    ).toBe("Ready to apply");
   });
 
-  it("keeps a job preparable when its record never reached preparation", () => {
+  it("keeps staged applications out of the Shortlisted apply batch", () => {
     const queue = [readyItem("a"), readyItem("b"), readyItem("c")];
-    // A run stopped before the draft existed leaves a staged record behind.
+    // A staged record already has a destination and recovery in Applications.
     const prepared = collectPreparedApplicationJobIds([
       { jobId: "a", status: "shortlisted" },
       { jobId: "b", status: "drafting" },
       { jobId: "c", status: "discovered" },
     ]);
 
-    expect(prepared.size).toBe(0);
-    expect(countQueueStageReady(queue, prepared)).toBe(3);
-    expect(getReviewQueueWorkflowStatus(queue[0]!, null, false, prepared).label)
-      .toBe("Ready to prepare");
+    expect(prepared.size).toBe(3);
+    expect(countQueueStageReady(queue, prepared)).toBe(0);
+    expect(
+      getReviewQueueWorkflowStatus(queue[0]!, null, false, prepared).label,
+    ).toBe("In Applications");
   });
 
-  it("does not treat failed, paused, or merely staged approved records as prepared", () => {
+  it("shows an Original resume job in Applications even though no generated asset exists", () => {
+    const item = createItem("original-prepared", {
+      assetStatus: "not_started",
+      resumeAssetId: null,
+      resumeApplicationMode: "original_resume",
+    });
+    const prepared = collectPreparedApplicationJobIds([
+      {
+        jobId: item.jobId,
+        status: "ready_for_review",
+        lastAttemptState: "ready",
+      },
+    ]);
+    expect(getReviewQueueWorkflowStatus(item, null, false, prepared)).toEqual({
+      label: "In Applications",
+      tone: "positive",
+    });
+    expect(countQueueStageReady([item], prepared)).toBe(0);
+  });
+
+  it("routes failed, paused, and staged applications to their existing records", () => {
     const prepared = collectPreparedApplicationJobIds([
       { jobId: "failed", status: "approved", lastAttemptState: "failed" },
       { jobId: "paused", status: "approved", lastAttemptState: "paused" },
@@ -696,7 +815,46 @@ describe("already prepared applications", () => {
       { jobId: "ready", status: "ready_for_review", lastAttemptState: null },
     ]);
 
-    expect([...prepared]).toEqual(["ready"]);
+    expect([...prepared]).toEqual(["failed", "paused", "staged", "ready"]);
+  });
+
+  it("counts only new jobs when failed and paused applications remain shortlisted", () => {
+    const queue = [readyItem("failed"), readyItem("paused"), readyItem("new")];
+    const prepared = collectPreparedApplicationJobIds([
+      { jobId: "failed", status: "approved", lastAttemptState: "failed" },
+      { jobId: "paused", status: "approved", lastAttemptState: "paused" },
+    ]);
+
+    expect(countQueueStageReady(queue, prepared)).toBe(1);
+    expect(
+      getReviewQueueWorkflowStatus(queue[0]!, null, false, prepared).label,
+    ).toBe("In Applications");
+    expect(
+      getReviewQueueWorkflowStatus(queue[2]!, null, false, prepared).label,
+    ).toBe("Ready to apply");
+  });
+
+  it("shows an active application run instead of the older prepared label", () => {
+    const queue = [readyItem("running")];
+    const records = [
+      {
+        jobId: "running",
+        status: "ready_for_review" as const,
+        lastAttemptState: "in_progress" as const,
+      },
+    ];
+    const prepared = collectPreparedApplicationJobIds(records);
+    const inProgress = collectInProgressApplicationJobIds(records);
+
+    expect(
+      getReviewQueueWorkflowStatus(
+        queue[0]!,
+        null,
+        false,
+        prepared,
+        inProgress,
+      ),
+    ).toEqual({ label: "Applying", tone: "active" });
   });
 });
 
@@ -714,12 +872,6 @@ describe("a shortlist that is all on the original resume", () => {
     expect(countQueueStageReady(originalResumeQueue)).toBe(6);
   });
 
-  it("does not tell the batch there is nothing to prepare", () => {
-    expect(
-      describeQueueStagePreparationBlocker(originalResumeQueue),
-    ).toBeNull();
-  });
-
   it("still excludes a job whose application is already prepared", () => {
     expect(
       isQueueStageReady(
@@ -730,10 +882,8 @@ describe("a shortlist that is all on the original resume", () => {
   });
 
   it("keeps the tailored-draft batch honest about having no draft to write", () => {
-    expect(
-      describeTailoredDraftPreparationBlocker(originalResumeQueue),
-    ).toBe(
-      "Every shortlisted job is set to use your original resume, so there is no draft to write. Switch a job to a tailored resume to use this.",
+    expect(describeTailoredDraftPreparationBlocker(originalResumeQueue)).toBe(
+      "Every job here uses your original resume, so there is nothing to write.",
     );
   });
 });

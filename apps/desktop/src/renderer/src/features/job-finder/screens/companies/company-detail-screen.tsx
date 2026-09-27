@@ -24,6 +24,7 @@ import { ArrowLeft, Plus, Trash2 } from "lucide-react";
 import { Button } from "@renderer/components/ui/button";
 import { Input } from "@renderer/components/ui/input";
 import { EmptyState } from "../../components/empty-state";
+import { ExternalUrlLink } from "../../components/open-outside-links";
 import { StatusBadge } from "../../components/status-badge";
 import {
   formatStatusLabel,
@@ -969,7 +970,15 @@ export function CompanyDetailScreen(props: CompanyDetailScreenProps) {
           </h1>
           {company.domains.length > 0 ? (
             <p className="min-w-0 break-all text-(length:--text-tiny) text-foreground-muted">
-              {company.domains.map((domain) => domain.domain).join(", ")}
+              {company.domains.map((domain, index) => (
+                <span key={domain.domain}>
+                  {index > 0 ? ", " : null}
+                  <ExternalUrlLink
+                    label={domain.domain}
+                    url={`https://${domain.domain}`}
+                  />
+                </span>
+              ))}
             </p>
           ) : null}
         </div>

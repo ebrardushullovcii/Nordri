@@ -8,8 +8,44 @@ import {
   type ApplicationRecord,
   type ApplyJobResult,
   type ApplyRun,
+  type JobFinderActivityControl,
   type ApplySubmitApproval,
 } from "@unemployed/contracts";
+
+/** A paused queue may be resumed after restart only between jobs. */
+export function isSafelyParkedApplyQueue(input: {
+  run: ApplyRun;
+  results: readonly ApplyJobResult[];
+  control: JobFinderActivityControl;
+}): boolean {
+  const { run, results, control } = input;
+  if (
+    !control.paused ||
+    control.pauseBehavior !== "finish_current" ||
+    run.mode !== "queue_auto" ||
+    run.state !== "running" ||
+    results.length !== run.jobIds.length
+  )
+    return false;
+  if (new Set(results.map((result) => result.jobId)).size !== run.jobIds.length)
+    return false;
+  if (!results.some((result) => result.state === "planned")) return false;
+  return results.every(
+    (result) =>
+      result.runId === run.id &&
+      run.jobIds.includes(result.jobId) &&
+      (result.state !== "planned" ||
+        (result.applicationPreparationStartedAt == null &&
+          result.applicationPreparationStartedLocalDate == null)) &&
+      (result.state === "planned" ||
+        result.state === "awaiting_review" ||
+        result.state === "submitted" ||
+        result.state === "blocked" ||
+        result.state === "failed" ||
+        result.state === "skipped") &&
+      result.privacyReceipt?.submissionOutcome?.outcome !== "outcome_uncertain",
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Reusing one batch approval across a retry of part of that batch
@@ -79,8 +115,7 @@ function resolveAuthorityApproval(
     if (!parent) return null;
     if (
       parent.batchId !== current.batchId ||
-      (parent.batchCampaignId ?? null) !==
-        (current.batchCampaignId ?? null) ||
+      (parent.batchCampaignId ?? null) !== (current.batchCampaignId ?? null) ||
       !current.jobIds.every((jobId) => parent.jobIds.includes(jobId))
     ) {
       return null;
@@ -371,10 +406,7 @@ export function refreshTerminalizedApplyRunCounters(
   runResults: readonly ApplyJobResult[],
   completedAt: string,
 ): ApplyRun | null {
-  if (
-    run.state !== "failed" ||
-    run.summary !== INTERRUPTED_APPLY_RUN_SUMMARY
-  ) {
+  if (run.state !== "failed" || run.summary !== INTERRUPTED_APPLY_RUN_SUMMARY) {
     return null;
   }
 
@@ -498,6 +530,43 @@ export function recoverInterruptedApplyJobResult(
     detail: hasPairedBegunPreparationMark
       ? "The app closed while this job's application preparation was underway, so it never reached its review checkpoint. No final submit action occurred."
       : "The app closed before this queued job's preparation began, so no browser action was taken for this job. No final submit action occurred.",
+  });
+}
+
+/**
+ * The same terminalization for a run the person cancelled: an in-flight
+ * result under a cancelled run is not "still filling", it stopped. Without
+ * this the Applications screen kept showing "filling in the form (791 min)"
+ * beside "run cancelled" for as long as the row existed.
+ */
+export function cancelInterruptedApplyJobResult(
+  result: ApplyJobResult,
+  cancelledAt: string,
+): ApplyJobResult | null {
+  if (!isInterruptedApplyJobState(result.state)) {
+    return null;
+  }
+  const hasPairedBegunPreparationMark =
+    typeof result.applicationPreparationStartedAt === "string" &&
+    typeof result.applicationPreparationStartedLocalDate === "string";
+  return ApplyJobResultSchema.parse({
+    ...result,
+    ...(result.state === "planned"
+      ? {
+          applicationPreparationStartedAt: hasPairedBegunPreparationMark
+            ? result.applicationPreparationStartedAt
+            : null,
+          applicationPreparationStartedLocalDate: hasPairedBegunPreparationMark
+            ? result.applicationPreparationStartedLocalDate
+            : null,
+        }
+      : {}),
+    state: "failed",
+    updatedAt: cancelledAt,
+    completedAt: cancelledAt,
+    summary: "Application preparation was cancelled.",
+    detail:
+      "You cancelled the run before this job reached its review checkpoint. No final submit action occurred. Prepare it again when you want to continue.",
   });
 }
 

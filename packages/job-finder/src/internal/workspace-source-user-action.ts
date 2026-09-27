@@ -1,12 +1,18 @@
 import {
   JOB_FINDER_BROWSER_LABEL,
   UserActionRequestSchema,
+  type ParkedBrowserTabReference,
+  type UserActionRequest,
   type DiscoveryTargetExecution,
   type JobDiscoveryTarget,
   type SourceDebugRunRecord,
 } from "@unemployed/contracts";
 import type { JobFinderRepository } from "@unemployed/db";
 
+import {
+  isUserActionTerminal,
+  reduceUserActionSuperseded,
+} from "../user-action-domain";
 import { deriveSourceAccessPrompts } from "./workspace-source-access-prompts";
 import { resolveAdapterKind } from "./workspace-helpers";
 
@@ -25,7 +31,7 @@ export async function persistDiscoveryRunBlockerUserAction(input: {
   target: JobDiscoveryTarget;
   execution: DiscoveryTargetExecution;
   occurredAt: string;
-}): Promise<void> {
+}): Promise<ParkedBrowserTabReference[]> {
   const { accessBlockerReason: reason, parkedTab } = input.execution;
   // Raised from the observed wall, not from how the run happened to end.
   // Requiring a failed execution meant a source that showed "Verify you are
@@ -34,7 +40,7 @@ export async function persistDiscoveryRunBlockerUserAction(input: {
   // reading "Nothing needs you right now" while the browser sat on the check.
   // The parked tab is what the person is asked to open, so it is still
   // required: without one there is nowhere to send them.
-  if (!reason || !parkedTab) return;
+  if (!reason || !parkedTab) return [];
 
   const occurrenceFingerprint = stableFingerprint(
     [input.target.id, input.runId, reason].join("|"),
@@ -43,7 +49,7 @@ export async function persistDiscoveryRunBlockerUserAction(input: {
   const existingRequest = (
     await input.repository.listUserActionRequests()
   ).find((request) => request.dedupeKey === dedupeKey);
-  if (existingRequest) return;
+  if (existingRequest) return [];
 
   const isLogin = reason === "auth_required";
   // A step only the person can take covers both a hold-to-verify puzzle and a
@@ -87,7 +93,9 @@ export async function persistDiscoveryRunBlockerUserAction(input: {
           : `${input.target.label} stopped at a human-verification page before it could read any jobs.`,
       instructions: [
         `Open the saved ${input.target.label} tab in ${JOB_FINDER_BROWSER_LABEL} and finish the step yourself.`,
-        "Then return here and choose Done before searching this source again.",
+        isLogin
+          ? "Job Finder watches that tab and searches this source again by itself once you are signed in."
+          : "Then choose Check whether this step is done here, and Job Finder searches this source again.",
       ],
       actionUrl: parkedTab.url,
       displayOrigin: expectedOrigin,
@@ -103,6 +111,126 @@ export async function persistDiscoveryRunBlockerUserAction(input: {
       expiresAt: null,
     }),
   );
+  return supersedeOlderSourceAccessRequests({
+    repository: input.repository,
+    targetId: input.target.id,
+    newRequestId: `discovery_access_${occurrenceFingerprint}`,
+    newParkedTab: parkedTab,
+    occurredAt: input.occurredAt,
+  });
+}
+
+/**
+ * A later search read this source without meeting its wall (the person
+ * signed in, in the parked tab or in a tab of their own): the open sign-in or
+ * check card for it is done. It is closed as replaced by that search, so the
+ * header, Needs you and Home drop it with no press, and its parked tab is
+ * returned for closing. A card being checked right now finishes on its own.
+ */
+/** The run read listings off the source (new, known, or merged ones). */
+function readAnyListing(execution: DiscoveryTargetExecution): boolean {
+  return (
+    execution.jobsFound +
+      execution.jobsReviewed +
+      execution.jobsSkippedByLedger +
+      execution.jobsSkippedByTitleTriage +
+      execution.duplicatesMerged +
+      execution.encounteredJobIds.length >
+    0
+  );
+}
+
+export async function resolveSourceAccessRequestsAfterCompletedRun(input: {
+  repository: JobFinderRepository;
+  runId: string;
+  target: JobDiscoveryTarget;
+  execution: DiscoveryTargetExecution;
+  occurredAt: string;
+}): Promise<ParkedBrowserTabReference[]> {
+  if (
+    input.execution.state !== "completed" ||
+    input.execution.accessBlockerReason ||
+    !readAnyListing(input.execution)
+  ) {
+    return [];
+  }
+  const open = (await input.repository.listUserActionRequests()).filter(
+    (request) =>
+      request.scope.type === "discovery_source" &&
+      request.scope.targetId === input.target.id &&
+      request.verification.type === "source_access" &&
+      !isUserActionTerminal(request.state) &&
+      request.state !== "verifying",
+  );
+  const closedTabs: ParkedBrowserTabReference[] = [];
+  for (const request of open) {
+    const transition = reduceUserActionSuperseded(
+      request,
+      `discovery_run_${input.runId}`,
+      input.occurredAt,
+    );
+    if (transition.status !== "applied") continue;
+    const commit = await input.repository.commitUserActionTransition({
+      request: transition.request,
+      event: transition.event,
+    });
+    if (
+      commit.status !== "stale" &&
+      request.scope.type === "discovery_source" &&
+      request.scope.parkedTab
+    ) {
+      closedTabs.push(request.scope.parkedTab);
+    }
+  }
+  return closedTabs;
+}
+
+/**
+ * A newer search stopped at the same source's wall: that card replaces the
+ * older ones, so Needs you shows one step per source and the older parked
+ * tabs can be closed. Returns the older tabs.
+ */
+async function supersedeOlderSourceAccessRequests(input: {
+  repository: JobFinderRepository;
+  targetId: string;
+  newRequestId: string;
+  newParkedTab: ParkedBrowserTabReference;
+  occurredAt: string;
+}): Promise<ParkedBrowserTabReference[]> {
+  const older = (await input.repository.listUserActionRequests()).filter(
+    (request): request is UserActionRequest =>
+      request.id !== input.newRequestId &&
+      request.scope.type === "discovery_source" &&
+      request.scope.targetId === input.targetId &&
+      request.verification.type === "source_access" &&
+      !isUserActionTerminal(request.state) &&
+      request.state !== "verifying",
+  );
+  const closedTabs: ParkedBrowserTabReference[] = [];
+  for (const request of older) {
+    const transition = reduceUserActionSuperseded(
+      request,
+      input.newRequestId,
+      input.occurredAt,
+    );
+    if (transition.status !== "applied") continue;
+    const commit = await input.repository.commitUserActionTransition({
+      request: transition.request,
+      event: transition.event,
+    });
+    const tab =
+      request.scope.type === "discovery_source"
+        ? request.scope.parkedTab
+        : null;
+    // Never the tab the new card is parked on.
+    const sameTab =
+      tab &&
+      (tab.tabId
+        ? tab.tabId === input.newParkedTab.tabId
+        : tab.url === input.newParkedTab.url);
+    if (commit.status !== "stale" && tab && !sameTab) closedTabs.push(tab);
+  }
+  return closedTabs;
 }
 
 export async function persistDiscoveryLoginUserAction(input: {
@@ -168,7 +296,7 @@ export async function persistDiscoveryLoginUserAction(input: {
       summary: prompt.summary,
       instructions: [
         `Complete sign-in in the ${JOB_FINDER_BROWSER_LABEL}. Job Finder never receives or stores your credentials.`,
-        "Return to the action inbox and choose Done only after the browser step is complete.",
+        "Then return to Needs you and choose Check whether this step is done.",
       ],
       actionUrl: prompt.targetUrl,
       displayOrigin: expectedOrigin,

@@ -399,7 +399,7 @@ describe("DiscoveryScreen established-results layout", () => {
     }
 
     // Search setup is a disclosure opened from the bar, not a peer tab.
-    fireEvent.click(screen.getByRole("button", { name: /search target/iu }));
+    fireEvent.click(screen.getByRole("button", { name: "Roles, places & sources" }));
     expect(screen.getByRole("region", { name: "Current search" })).toBeTruthy();
     expect(screen.queryByRole("region", { name: "Job results" })).toBeNull();
   });

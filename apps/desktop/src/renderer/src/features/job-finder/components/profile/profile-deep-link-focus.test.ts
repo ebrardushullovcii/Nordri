@@ -443,8 +443,14 @@ describe("focusProfileDeepLink", () => {
   it("waits when the requested Preferences content has not rendered yet", () => {
     expect(focusProfileDeepLink("target-roles")).toBe(false);
   });
-  it("returns a newly selected profile tab to the top of its own panel", () => {
-    document.body.innerHTML = `<div id="${PROFILE_SECTION_SCROLL_AREA_ID}"></div>`;
+  it("returns a newly selected profile tab to the top of both scroll owners", () => {
+    document.body.innerHTML = `<div data-locked-screen-scroll-area><div id="${PROFILE_SECTION_SCROLL_AREA_ID}"></div></div>`;
+    const routeScroller = document.querySelector<HTMLElement>(
+      "[data-locked-screen-scroll-area]",
+    )!;
+    const routeScrollTo = vi.fn();
+    routeScroller.scrollTo = routeScrollTo;
+    routeScroller.scrollTop = 800;
     const sectionScroller = document.getElementById(
       PROFILE_SECTION_SCROLL_AREA_ID,
     );
@@ -456,6 +462,11 @@ describe("focusProfileDeepLink", () => {
     sectionScroller.scrollTop = 540;
     expect(resetProfileSectionScroll()).toBe(true);
     expect(scrollTo).toHaveBeenCalledWith({
+      behavior: "auto",
+      left: 0,
+      top: 0,
+    });
+    expect(routeScrollTo).toHaveBeenCalledWith({
       behavior: "auto",
       left: 0,
       top: 0,

@@ -27,6 +27,24 @@ describe("ProfileSaveFooter", () => {
     cleanup();
   });
 
+  it("does not accuse the person of unsaved work when only an import filled the page", () => {
+    render(
+      <ProfileSaveFooter
+        actionMessage={null}
+        hasUnsavedChanges
+        hasUserEdits={false}
+        isSavePending={false}
+        onSave={vi.fn()}
+        validationMessage={null}
+      />,
+    );
+
+    expect(
+      screen.getByText("Imported details on this page are not saved yet."),
+    ).toBeTruthy();
+    expect(screen.queryByText("Unsaved changes on this page.")).toBeNull();
+  });
+
   it("keeps Save changes disabled until the form is dirty", () => {
     const onSave = vi.fn();
     const { rerender } = render(

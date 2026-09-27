@@ -145,12 +145,15 @@ function summarizeTargetExecutions(
     },
   );
   const sourceHealth = targetExecutions.map((execution) => {
-    // A source that completed with nothing to show is not healthy, warning or
-    // not: reporting it as healthy is what let Home call a search that found
-    // no jobs anywhere "Completed" with every source green.
+    // A source whose listing was empty is marked "warning" so Home can say,
+    // neutrally, that it found nothing. Listings it skipped because they are
+    // already saved count as found: a quiet re-run did find them.
     const health =
       execution.state === "completed"
-        ? execution.jobsFound + execution.duplicatesMerged === 0
+        ? execution.jobsFound +
+            execution.duplicatesMerged +
+            execution.jobsSkippedByLedger ===
+          0
           ? "warning"
           : "healthy"
         : execution.state === "failed"
@@ -257,7 +260,16 @@ export function buildDiscoveryRunReport(
   // Legacy and checkpoint-only executions can report no reviewed volume at
   // all. Claiming fewer listings reviewed than the run demonstrably merged
   // would be its own contradiction, so the merged population is the floor.
-  const found = Math.max(reviewed, run.summary.validJobsFound + duplicates);
+  // Listings skipped because an unchanged earlier search already kept them
+  // were found too: leaving them out made a quiet re-run read "0 found ·
+  // 10 already here" beside a source list saying 10 were found.
+  const skippedAsSaved = run.targetExecutions.reduce(
+    (total, execution) => total + execution.jobsSkippedByLedger,
+    0,
+  );
+  const found =
+    Math.max(reviewed, run.summary.validJobsFound + duplicates) +
+    Math.max(skippedAsSaved, run.summary.jobsSkippedByLedger);
 
   return DiscoveryRunReportSchema.parse({
     version: 1,
@@ -391,11 +403,19 @@ export function recoverInterruptedDiscoveryRun(
  * entry. `resolveDiscoveryTargetBudget` supplies every per-position invariant
  * (caps, floors, step ceilings).
  */
+export interface DiscoveryTargetBudget {
+  /** Collection planning hint; an uncapped run does not stop at this count. */
+  targetJobCount: number;
+  /** Retention share, enforced only when the person specified a run budget. */
+  retentionJobCount: number;
+  maxSteps: number;
+}
+
 export function resolveDiscoveryBudgetPlan(input: {
   targetIds: readonly string[];
   runJobBudget?: number | null;
-}): ReadonlyMap<string, { targetJobCount: number; maxSteps: number }> {
-  const plan = new Map<string, { targetJobCount: number; maxSteps: number }>();
+}): ReadonlyMap<string, DiscoveryTargetBudget> {
+  const plan = new Map<string, DiscoveryTargetBudget>();
   let plannedJobsFoundSoFar = 0;
 
   for (let index = 0; index < input.targetIds.length; index += 1) {
@@ -411,15 +431,22 @@ export function resolveDiscoveryBudgetPlan(input: {
       );
     }
 
-    const budget = resolveDiscoveryTargetBudget({
+    const allocation = resolveDiscoveryTargetBudget({
       targetsRemaining: input.targetIds.length - index,
       validJobsFoundSoFar: plannedJobsFoundSoFar,
       ...(input.runJobBudget != null
         ? { runJobBudget: input.runJobBudget }
         : {}),
     });
+    const budget: DiscoveryTargetBudget = {
+      ...allocation,
+      // Even when this source has no remaining save allocation, give the
+      // agent a one-job sampling target so selected sources are attempted.
+      targetJobCount: Math.max(1, allocation.targetJobCount),
+      retentionJobCount: allocation.targetJobCount,
+    };
     plan.set(targetId, budget);
-    plannedJobsFoundSoFar += budget.targetJobCount;
+    plannedJobsFoundSoFar += budget.retentionJobCount;
   }
 
   return plan;
@@ -438,20 +465,14 @@ const DISCOVERY_TARGET_STEP_CEILING = 120;
 /**
  * Resolves the per-target discovery budget for one position in a run.
  *
- * The total run budget is the explicit `runJobBudget` when configured
- * (campaign limit or discovery preference, schema-capped at
- * `DISCOVERY_RUN_JOB_BUDGET_MAX`), otherwise the interactive precision default
- * of `DEFAULT_TARGET_JOB_COUNT`. The budget is split deterministically across
- * the remaining targets: every non-final target takes the floor fair share of
- * the remaining total and the final target absorbs the exact remainder, so a
- * fully yielding run requests exactly the configured total. Shares are
- * non-negative integers; when the remaining budget cannot fund every
- * remaining target, one-job units are granted from the highest-priority
- * position forward and later positions receive zero, so scarce budgets land
- * on the leading sources instead of the trailing one. Explicit budgets also
- * raise the crawl step ceilings proportionally;
- * interactive runs keep the existing 36/60-step ceilings and the 50-job
- * single-target cap unchanged.
+ * A configured `runJobBudget` is an explicit result cap. Its shares sum to
+ * the requested total, with scarce slots assigned in source-priority order.
+ * Each source still receives a nonzero sampling opportunity from the planner.
+ *
+ * With no configured cap, the legacy 100-job total / 50-job single-source
+ * figures are collection planning hints only. The pipeline retains every
+ * eligible listing collected and tells the agent there is no numeric cap.
+ * Default and explicitly scaled runs retain their separate safety ceilings.
  */
 export function resolveDiscoveryTargetBudget(input: {
   targetsRemaining: number;

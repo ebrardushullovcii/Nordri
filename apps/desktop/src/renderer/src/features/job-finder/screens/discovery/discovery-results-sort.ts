@@ -38,12 +38,6 @@ function isSortField(value: unknown): value is DiscoveryResultsSortField {
   return value === "fit" || value === "recent" || value === "company";
 }
 
-function isSortDirection(
-  value: unknown,
-): value is DiscoveryResultsSortDirection {
-  return value === "asc" || value === "desc";
-}
-
 function readPersistedSort(): DiscoveryResultsSort {
   try {
     const raw = window.localStorage.getItem(SORT_STORAGE_KEY);
@@ -52,8 +46,11 @@ function readPersistedSort(): DiscoveryResultsSort {
       direction?: unknown;
       field?: unknown;
     };
-    return isSortField(parsed.field) && isSortDirection(parsed.direction)
-      ? { direction: parsed.direction, field: parsed.field }
+    // Each field has one sensible direction and the toolbar offers only
+    // that, so a direction persisted by the older flip control is ignored:
+    // "Best match, lowest first" is not a view anyone asked for.
+    return isSortField(parsed.field)
+      ? { direction: DEFAULT_DIRECTION_BY_FIELD[parsed.field], field: parsed.field }
       : DISCOVERY_RESULTS_DEFAULT_SORT;
   } catch {
     // Unreadable preferences fall back to the shipped fit ranking.
@@ -73,8 +70,6 @@ export function useDiscoveryResultsSort() {
   }, [sort]);
 
   return {
-    setSortDirection: (direction: DiscoveryResultsSortDirection) =>
-      setSort((current) => ({ ...current, direction })),
     setSortField: (field: DiscoveryResultsSortField) =>
       setSort((current) =>
         current.field === field
@@ -82,11 +77,6 @@ export function useDiscoveryResultsSort() {
           : { direction: DEFAULT_DIRECTION_BY_FIELD[field], field },
       ),
     sort,
-    toggleSortDirection: () =>
-      setSort((current) => ({
-        ...current,
-        direction: current.direction === "desc" ? "asc" : "desc",
-      })),
   };
 }
 

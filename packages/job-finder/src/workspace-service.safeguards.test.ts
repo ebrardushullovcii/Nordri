@@ -341,7 +341,49 @@ describe("workspace service high-volume safeguards", () => {
     );
   });
 
-  test("batch sample reviews: pending reviews block discovery and preparation until reviewed", async () => {
+  test("a failure-rate pause lets the person's Try again of the failed jobs through", async () => {
+    const harness = createWorkspaceServiceHarness({
+      seed: seedWithCompanies(),
+    });
+    const { workspaceService } = harness;
+    await workspaceService.mutateSafeguards({
+      type: "record_abnormal_failure_evidence",
+      pauseId: "pause_1",
+      windowStartedAt: day0,
+      evidence: [true, true, false, false, false].map((failed, index) => ({
+        attemptId: `attempt_${index}`,
+        failed,
+        occurredAt: `2026-08-0${index + 1}T10:00:00.000Z`,
+      })),
+      config: {
+        windowDays: 7,
+        failureRateThresholdPercent: 40,
+        minimumSample: 5,
+        explanation: "Elevated application failure rate.",
+        recoveryGuidance: "Review the failed attempts, then retry.",
+      },
+    });
+    await harness.repository.upsertApplyJobResult({
+      id: "result_failed_before",
+      runId: "run_before",
+      jobId: "job_ready",
+      state: "failed",
+      summary: "Not sent: the site could not be reached",
+      detail: "Nothing was sent.",
+      startedAt: "2026-08-05T10:00:00.000Z",
+      updatedAt: "2026-08-05T10:01:00.000Z",
+      completedAt: "2026-08-05T10:01:00.000Z",
+      blockerReason: "application_page_unreachable",
+    } as never);
+
+    const outcome = await workspaceService
+      .startAutoApplyRun("job_ready")
+      .then(() => "started")
+      .catch((error: unknown) => String(error));
+    expect(outcome).not.toMatch(/Open Safeguards to resolve/u);
+  });
+
+  test("batch sample reviews block application preparation but leave discovery available", async () => {
     const harness = createWorkspaceServiceHarness({
       seed: seedWithCompanies(),
     });
@@ -367,9 +409,9 @@ describe("workspace service high-volume safeguards", () => {
         "job_ready",
       ]),
     ).toHaveLength(1);
-    expect(
-      await workspaceService.evaluateDiscoverySafeguardBlockers(),
-    ).toHaveLength(1);
+    expect(await workspaceService.evaluateDiscoverySafeguardBlockers()).toEqual(
+      [],
+    );
 
     await workspaceService.mutateSafeguards({
       type: "update_batch_sample_review",
@@ -544,50 +586,77 @@ describe("workspace service high-volume safeguards", () => {
     },
   );
 
-  test("a blocker appearing after job one pauses before launching job two", async () => {
+  test("a blocker appearing while jobs run stops new launches and lets the running job finish", async () => {
+    // Apply to all prepares two jobs at once (ADR 0036). Job two is already
+    // running when job one's blocker for job three appears: job two may
+    // finish, job three must never be launched.
     const seed = seedWithCompanies();
     seed.settings = {
       ...seed.settings,
       resumeApplicationMode: "original_resume",
     };
+    const secondJob = seed.savedJobs.find(
+      (entry) => entry.id === "job_generating",
+    );
+    if (!secondJob) throw new Error("Test seed is missing job_generating.");
+    seed.savedJobs = [
+      ...seed.savedJobs,
+      createSavedJob({
+        ...secondJob,
+        id: "job_third",
+        sourceJobId: "linkedin_northwind_third",
+        canonicalUrl:
+          "https://www.linkedin.com/jobs/view/linkedin_northwind_third",
+      }),
+    ];
     const baseRuntime = createBrowserRuntime();
-    let addSecondJobBlocker: () => Promise<unknown> = () =>
+    let addThirdJobBlocker: () => Promise<unknown> = () =>
       Promise.reject(new Error("Safeguard test harness not initialized."));
+    let markBlockerRecorded: () => void = () => undefined;
+    const blockerRecorded = new Promise<void>((resolve) => {
+      markBlockerRecorded = resolve;
+    });
     const launchedJobIds: string[] = [];
     const browserRuntime: BrowserSessionRuntime = {
       ...baseRuntime,
       async executeApplicationFlow(source, input, options) {
         launchedJobIds.push(input.job.id);
+        if (input.job.id === "job_generating") {
+          // The job running alongside finishes only after the blocker exists.
+          await blockerRecorded;
+        }
         const result = await baseRuntime.executeApplicationFlow(
           source,
           input,
           options,
         );
-        if (launchedJobIds.length === 1) {
-          await addSecondJobBlocker();
+        if (input.job.id === "job_ready") {
+          await addThirdJobBlocker();
+          markBlockerRecorded();
         }
         return result;
       },
     };
     const harness = createWorkspaceServiceHarness({ seed, browserRuntime });
     const workspaceService = harness.workspaceService;
-    addSecondJobBlocker = () =>
+    addThirdJobBlocker = () =>
       workspaceService.mutateSafeguards({
         type: "record_listing_signal",
-        signalId: "signal_job_two_mid_run",
-        jobId: "job_generating",
+        signalId: "signal_job_three_mid_run",
+        jobId: "job_third",
         signal: "closed",
         detail: null,
         detectedAt: now,
         confidence: 1,
         provenance: "provider",
-        explanation: "The second listing closed while job one ran.",
+        explanation: "The third listing closed while jobs one and two ran.",
         recoveryGuidance: "Re-verify the listing before continuing.",
       });
     await workspaceService.getWorkspaceSnapshot();
     const staged = await workspaceService.startAutoApplyQueueRun([
       "job_ready",
       "job_generating",
+      "job_third",
     ]);
     const run = staged.applyRuns.find(
       (candidate) => candidate.mode === "queue_auto",
@@ -595,19 +664,20 @@ describe("workspace service high-volume safeguards", () => {
     if (!run) throw new Error("Expected a staged queue run.");
 
     const snapshot = await workspaceService.approveApplyRun(run.id);
-    expect(launchedJobIds).toEqual(["job_ready"]);
+    expect([...launchedJobIds].sort()).toEqual(["job_generating", "job_ready"]);
     expect(
       snapshot.applyRuns.find((candidate) => candidate.id === run.id),
     ).toMatchObject({
       state: "paused_for_user_review",
-      currentJobId: "job_generating",
+      currentJobId: "job_third",
     });
-    expect(
+    const resultState = (jobId: string) =>
       snapshot.applyJobResults.find(
-        (result) =>
-          result.runId === run.id && result.jobId === "job_generating",
-      )?.state,
-    ).toBe("planned");
+        (result) => result.runId === run.id && result.jobId === jobId,
+      )?.state;
+    expect(resultState("job_third")).toBe("planned");
+    expect(resultState("job_ready")).toBe(resultState("job_generating"));
+    expect(["planned", "filling"]).not.toContain(resultState("job_generating"));
   });
 
   test("contradictory answers are advisory and never block preparation", async () => {

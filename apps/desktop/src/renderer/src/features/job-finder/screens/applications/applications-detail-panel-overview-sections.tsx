@@ -4,6 +4,7 @@ import type {
   JobFinderWorkspaceSnapshot,
 } from "@unemployed/contracts";
 import { ApplicationsDetailFactStrip } from "./applications-detail-fact-strip";
+import type { PlannedApplyStanding } from "./applications-recovery-state";
 
 export function ApplicationsDetailPanelOverviewSections(props: {
   selectedAttempt: ApplicationAttempt | null;
@@ -14,6 +15,7 @@ export function ApplicationsDetailPanelOverviewSections(props: {
   visibleApplyRunId: string | null;
   showFactStrip?: boolean;
   waitingOnSafetyLimitReview?: boolean;
+  plannedStanding?: PlannedApplyStanding | null;
 }) {
   const {
     selectedAttempt,
@@ -34,11 +36,11 @@ export function ApplicationsDetailPanelOverviewSections(props: {
           selectedRecord={selectedRecord}
           visibleApplyResult={visibleApplyResult}
           visibleApplyRunId={visibleApplyRunId}
+          plannedStanding={props.plannedStanding ?? null}
           {...(props.waitingOnSafetyLimitReview === undefined
             ? {}
             : {
-                waitingOnSafetyLimitReview:
-                  props.waitingOnSafetyLimitReview,
+                waitingOnSafetyLimitReview: props.waitingOnSafetyLimitReview,
               })}
         />
       ) : null}

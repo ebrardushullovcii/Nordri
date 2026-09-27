@@ -197,11 +197,11 @@ export function parseTailoringMode(
 ): "conservative" | "balanced" | "aggressive" | undefined {
   const normalized = normalizeFactText(detail ?? normalizedRequest);
 
-  if (normalized.includes("conservative")) {
+  if (normalized.includes("conservative") || normalized.includes("light")) {
     return "conservative";
   }
 
-  if (normalized.includes("balanced")) {
+  if (normalized.includes("balanced") || normalized.includes("tailored")) {
     return "balanced";
   }
 

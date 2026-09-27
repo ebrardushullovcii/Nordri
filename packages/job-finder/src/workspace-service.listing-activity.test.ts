@@ -267,6 +267,10 @@ describe("workspace listing activity snapshots", () => {
       pendingDiscoveryJobs: [pendingJob],
     });
     const repository = createInMemoryJobFinderRepository(seed);
+    await repository.saveSearchPreferences({
+      ...(await repository.getSearchPreferences()),
+      tailoringMode: "conservative",
+    });
     const service = createJobFinderWorkspaceService({
       repository,
       browserRuntime: createBrowserRuntime(),
@@ -295,6 +299,14 @@ describe("workspace listing activity snapshots", () => {
       (await repository.listSavedJobs()).find((job) => job.id === pendingJob.id)
         ?.status,
     ).toBe("drafting");
+    expect(
+      (await repository.listSavedJobs()).find((job) => job.id === pendingJob.id)
+        ?.resumeTailoringMode,
+    ).toBe("conservative");
+    expect(
+      snapshot.reviewQueue.find((item) => item.jobId === pendingJob.id)
+        ?.resumeTailoringMode,
+    ).toBe("conservative");
     expect(snapshot.reviewQueue.map((item) => item.jobId)).toContain(
       pendingJob.id,
     );

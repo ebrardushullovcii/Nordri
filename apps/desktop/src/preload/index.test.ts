@@ -49,6 +49,7 @@ type ExposedJobFinderApi = {
   startAutoApplyRun: (input: unknown) => Promise<unknown>;
   cancelApplyRun: (input: unknown) => Promise<unknown>;
   resolveApplyConsentRequest: (input: unknown) => Promise<unknown>;
+  focusPreparedApplicationPage: (input: unknown) => Promise<unknown>;
   markAllCampaignNotificationsRead: () => Promise<unknown>;
   mutateSafeguards: (input: unknown) => Promise<unknown>;
   mutateCompanyIntelligence: (input: unknown) => Promise<unknown>;
@@ -395,6 +396,31 @@ describe("preload jobFinder grouped manual-answer boundary", () => {
     expect(mockInvoke).toHaveBeenLastCalledWith(
       "job-finder:remove-employer-exclusion",
       { jobId: "job-1", normalizedCompanyName: "example co" },
+    );
+  });
+});
+
+describe("preload prepared application page boundary", () => {
+  beforeEach(() => {
+    mockInvoke.mockClear();
+  });
+
+  it("forwards the exact result lineage over its typed channel", async () => {
+    const snapshot = { generatedAt: "2026-09-21T22:00:00.000Z" };
+    mockInvoke.mockResolvedValueOnce(snapshot);
+    const input = {
+      runId: "run-1",
+      jobId: "job-1",
+      resultId: "result-1",
+      applicationRecordId: "application-1",
+    };
+
+    await expect(
+      exposedJobFinder.focusPreparedApplicationPage(input),
+    ).resolves.toEqual(snapshot);
+    expect(mockInvoke).toHaveBeenCalledWith(
+      "job-finder:focus-prepared-application-page",
+      input,
     );
   });
 });

@@ -1,12 +1,9 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import { useForm } from "react-hook-form";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  JobSearchPreferencesSchema,
-  type ResumeApplicationMode,
-} from "@unemployed/contracts";
+import { JobSearchPreferencesSchema } from "@unemployed/contracts";
 import {
   createSearchPreferencesEditorValues,
   type SearchPreferencesEditorValues,
@@ -21,21 +18,12 @@ const preferences = JobSearchPreferencesSchema.parse({
   discovery: { targets: [] },
 });
 
-function Harness(props: {
-  resumeApplicationMode: ResumeApplicationMode;
-  onSelectResumeApplicationMode: (mode: ResumeApplicationMode) => void;
-}) {
+function Harness() {
   const preferencesForm = useForm<SearchPreferencesEditorValues>({
     defaultValues: createSearchPreferencesEditorValues(preferences),
   });
 
-  return (
-    <ProfilePreferencesTargetingSection
-      preferencesForm={preferencesForm}
-      resumeApplicationMode={props.resumeApplicationMode}
-      onSelectResumeApplicationMode={props.onSelectResumeApplicationMode}
-    />
-  );
+  return <ProfilePreferencesTargetingSection preferencesForm={preferencesForm} />;
 }
 
 beforeEach(() => {
@@ -48,58 +36,16 @@ afterEach(() => {
 });
 
 describe("Preferences resume approach", () => {
-  it("offers the unchanged original as one of the approaches", () => {
-    render(
-      <Harness
-        resumeApplicationMode="tailored_per_job"
-        onSelectResumeApplicationMode={vi.fn()}
-      />,
-    );
+  it("no longer offers the resume approach or strict collection here; both live under Settings, AI behavior", () => {
+    render(<Harness />);
 
-    const trigger = screen.getByLabelText("Default resume tailoring style");
-    fireEvent.keyDown(trigger, { key: "ArrowDown" });
-
+    expect(screen.queryByLabelText("Default resume tailoring style")).toBeNull();
     expect(
-      screen.getByRole("option", { name: "Keep my resume as it is" }),
-    ).toBeTruthy();
-    // The dropdown no longer sends people to Settings for the fourth choice.
-    expect(screen.queryByText(/Settings/)).toBeNull();
-  });
-
-  it("shows the saved unchanged choice and its own description", () => {
-    render(
-      <Harness
-        resumeApplicationMode="original_resume"
-        onSelectResumeApplicationMode={vi.fn()}
-      />,
-    );
-
+      screen.queryByText(/How broadly should Job Finder collect/),
+    ).toBeNull();
     expect(
-      screen.getByLabelText("Default resume tailoring style").textContent,
-    ).toContain("Keep my resume as it is");
-    expect(
-      screen.getByText(/uses the exact file you imported/),
-    ).toBeTruthy();
-  });
-
-  it("writes the same stored choice Settings writes", () => {
-    const onSelectResumeApplicationMode = vi.fn();
-    render(
-      <Harness
-        resumeApplicationMode="tailored_per_job"
-        onSelectResumeApplicationMode={onSelectResumeApplicationMode}
-      />,
-    );
-
-    const trigger = screen.getByLabelText("Default resume tailoring style");
-    fireEvent.keyDown(trigger, { key: "ArrowDown" });
-    fireEvent.click(
-      screen.getByRole("option", { name: "Keep my resume as it is" }),
-    );
-
-    expect(onSelectResumeApplicationMode).toHaveBeenCalledWith(
-      "original_resume",
-    );
+      screen.queryByLabelText(/Collect only jobs that meet my hard/),
+    ).toBeNull();
   });
 });
 
@@ -107,12 +53,7 @@ describe("Preferences resume approach", () => {
 // "Two things with the same name meaning different things" about work mode.
 describe("Preferences hours and where you work", () => {
   it("gives hours their own labelled control, separate from where you work", () => {
-    render(
-      <Harness
-        resumeApplicationMode="tailored_per_job"
-        onSelectResumeApplicationMode={vi.fn()}
-      />,
-    );
+    render(<Harness />);
 
     expect(screen.queryByText("Employment types")).toBeNull();
     expect(screen.getByText("Hours (full-time, part-time)")).toBeTruthy();

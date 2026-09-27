@@ -56,20 +56,19 @@ export function ResumeSectionEditor(props: {
   );
   const handleSectionFocusCapture = (event: FocusEvent<HTMLElement>) => {
     const target = event.target as HTMLElement | null;
+    if (target?.closest("button")) {
+      return;
+    }
     if (target?.dataset.resumeEditorTarget === props.selectedTargetId) {
       return;
     }
 
     props.onSelectSection(props.section.id);
   };
-  // Selecting a section expands it, so the disclosure toggle must not first
-  // re-select the section it is about to collapse.
+  // Selecting a section scrolls it into place. Keep action buttons still
+  // between pointer down and up, and let the disclosure own its expansion.
   const handleSectionMouseDownCapture = (event: MouseEvent<HTMLElement>) => {
-    if (
-      (event.target as HTMLElement | null)?.closest(
-        "[data-resume-section-toggle]",
-      )
-    ) {
+    if ((event.target as HTMLElement | null)?.closest("button")) {
       return;
     }
 

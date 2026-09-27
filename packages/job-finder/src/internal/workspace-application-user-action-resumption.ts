@@ -1,12 +1,22 @@
 import type { ExecuteApplicationFlowInput } from "@unemployed/browser-runtime";
 import {
+  completeTaskLocalSignIn,
+  createApplyPageHands,
+} from "@unemployed/browser-agent";
+import type { ApplyPageSession } from "@unemployed/contracts";
+import {
   buildApplyLetterDependencies,
   createApplyFormPreparer,
   resolveApplySiteLabel,
 } from "./agent-application-preparation";
 import {
+  persistApplicationPreparationProgress,
+  persistApplicationWaitingForBrowserTab,
+} from "./application-preparation-progress";
+import {
   ApplyExecutionResultSchema,
   ApplyJobResultSchema,
+  ApplyRunSchema,
   ApplyRecoveryContextSchema,
   ApplicationAttemptConsentDecisionSchema,
   ApplicationAttemptQuestionSchema,
@@ -14,6 +24,7 @@ import {
   UserActionVerificationResultSchema,
   ApplicationRecordSchema,
   type ApplicationAttempt,
+  type ApplicationReviewCard,
   type ApplicationResumeArtifact,
   type ApplyExecutionResult,
   type ApplyJobResult,
@@ -22,18 +33,25 @@ import {
   type SavedJob,
   type UserActionRequest,
 } from "@unemployed/contracts";
-import { reduceUserActionVerification } from "../user-action-domain";
+import {
+  isUserActionTerminal,
+  reduceUserActionCommand,
+  reduceUserActionVerification,
+} from "../user-action-domain";
 
 import {
   buildApplicationBlockerFingerprint,
   isApplicationAuthenticationUserActionKind,
   isApplicationPrepareOnlyUserAction,
+  handApplicationPageToPersonForAccessStep,
   persistApplicationUserAction,
+  releaseApplicationRecordAfterDismissedUserAction,
 } from "./workspace-application-user-action";
 import {
-  enforcePrepareOnlyExecutionResult,
+  buildApplyCopilotArtifacts,
   mapExecutionResultToApplyBlockerReason,
   mapExecutionResultToApplyJobState,
+  reconcileApplyRunAfterConfirmedSubmission,
 } from "./workspace-apply-run-support";
 import {
   buildConsentSummary,
@@ -50,11 +68,25 @@ import {
   resolveActiveSourceInstructionArtifact,
 } from "./workspace-helpers";
 import { uniqueStrings } from "./shared";
+import { selectApplicationSighting } from "./listing-sightings";
 import { withApplicationRecordTransition } from "./application-crm";
 import { mergeApplicationAnswersIntoExecutionProfile } from "./workspace-application-answer-execution";
 import { resolveApplicationAttachmentsForExecution } from "./workspace-application-attachments";
 import { persistAutomaticApplicationSafeguards } from "./automatic-safeguards";
-import type { WorkspaceServiceContext } from "./workspace-service-context";
+import { resolveApplyAuthorityForJob } from "./apply-authority-resolution";
+import {
+  enforceResolvedApplyAuthorityResult,
+  type ApplySubmissionHandoff,
+} from "./apply-submission-handoff";
+import {
+  notSentAfterError,
+  recordPreparedApplicationNotSent,
+  sendPreparedApplicationIfAllowed,
+} from "./apply-submission-run-step";
+import type {
+  TaskLocalApplicationCredentials,
+  WorkspaceServiceContext,
+} from "./workspace-service-context";
 
 type ExactApplicationScope = {
   runId: string;
@@ -100,8 +132,8 @@ async function isActivityPaused(
 function getExactApplicationScope(
   request: UserActionRequest,
 ): ExactApplicationScope | null {
-  const isResolvedSourceAccess =
-    request.state === "resolved" &&
+  const isApplicationSourceAccess =
+    (request.state === "verifying" || request.state === "resolved") &&
     request.verification.type === "source_access" &&
     isApplicationAuthenticationUserActionKind(request.kind);
   const isPrepareOnlyVerification =
@@ -113,7 +145,7 @@ function getExactApplicationScope(
     !request.scope.applicationRecordId ||
     !request.scope.resultId ||
     !request.scope.replayCheckpointId ||
-    (!isResolvedSourceAccess && !isPrepareOnlyVerification)
+    (!isApplicationSourceAccess && !isPrepareOnlyVerification)
   ) {
     return null;
   }
@@ -179,7 +211,6 @@ function createResumptionAttempt(input: {
   const executionResult = input.executionResult;
   const completedState =
     executionResult?.state === "not_started" ||
-    executionResult?.state === "ready" ||
     executionResult?.state === "in_progress"
       ? "paused"
       : (executionResult?.state ?? input.state);
@@ -340,7 +371,7 @@ function createFailedExecutionResult(error: unknown): ApplyExecutionResult {
     visualEvidence: [],
     visualObservationSets: [],
     visualCheckpoints: [],
-    nextActionLabel: "Start Apply Copilot again when you are ready.",
+    nextActionLabel: "Try again when you are ready.",
     executionTimings: [],
   });
 }
@@ -356,13 +387,19 @@ function getPrepareOnlyVerificationOutcome(
     return null;
   }
 
+  if (executionResult.state === "unsupported") return "still_blocked";
+  if (executionResult.state === "failed") {
+    // A technical failure cannot verify the old browser question. Persist the
+    // failed attempt below so its exact handoff is retired and retry is offered.
+    return null;
+  }
+  // A continued run that the person's permission let send is the clearest
+  // proof the step they finished is behind them.
   if (
-    executionResult.state === "failed" ||
-    executionResult.state === "unsupported" ||
     executionResult.state === "submitted" ||
     executionResult.submittedAt !== null
   ) {
-    return "still_blocked";
+    return "verified";
   }
 
   const expectedFingerprint =
@@ -376,6 +413,34 @@ function getPrepareOnlyVerificationOutcome(
       expectedFingerprint
     ? "verified"
     : "still_blocked";
+}
+
+function getTaskLocalCredentialVerificationOutcome(
+  request: UserActionRequest,
+  executionResult: ApplyExecutionResult,
+  credentialStepCompleted: boolean,
+): "verified" | "still_blocked" | null {
+  if (
+    request.state !== "verifying" ||
+    request.kind !== "login" ||
+    request.scope.type !== "application" ||
+    request.verification.type !== "source_access"
+  ) {
+    return null;
+  }
+  if (!credentialStepCompleted) {
+    return "still_blocked";
+  }
+  const nextUserActionKind = executionResult.blocker?.userActionKind ?? null;
+  return executionResult.blocker?.code === "site_login_required" ||
+    nextUserActionKind === "login" ||
+    nextUserActionKind === "signup" ||
+    nextUserActionKind === "mfa" ||
+    nextUserActionKind === "captcha" ||
+    nextUserActionKind === "email_verification" ||
+    nextUserActionKind === "existing_account_choice"
+    ? "still_blocked"
+    : "verified";
 }
 
 async function settlePrepareOnlyVerification(input: {
@@ -427,12 +492,111 @@ async function settlePrepareOnlyVerification(input: {
   return commit.request;
 }
 
+/**
+ * Closes a step whose run already ended and puts its application at Could
+ * not apply with Try again. After a restart the prepared page is gone, so the
+ * application is prepared again from the start; the person's answers are
+ * already saved and are reused.
+ */
+async function closeStepOfEndedRun(input: {
+  ctx: WorkspaceServiceContext;
+  request: UserActionRequest;
+  scope: ExactApplicationScope;
+}): Promise<void> {
+  const current = await input.ctx.repository.getUserActionRequest(
+    input.request.id,
+  );
+  if (!current || isUserActionTerminal(current.state)) return;
+  const occurredAt = new Date().toISOString();
+  const transition = reduceUserActionCommand(
+    current,
+    {
+      requestId: current.id,
+      commandId: `${current.id}_run_ended_r${current.revision}`,
+      expectedRevision: current.revision,
+      action: "cancel",
+      reason:
+        "This application's run ended before the step could be checked. Nothing was sent; choose Try again to prepare it again.",
+      credentialsPolicy: "browser_only",
+      submitAuthorized: false,
+      accountCreationAuthorized: false,
+    },
+    occurredAt,
+  );
+  if (transition.status !== "applied") return;
+  const commit = await input.ctx.repository.commitUserActionTransition({
+    request: transition.request,
+    event: transition.event,
+  });
+  if (commit.status === "stale") return;
+  await withApplicationRecordTransition(
+    input.ctx.repository,
+    input.scope.applicationRecordId,
+    () =>
+      releaseApplicationRecordAfterDismissedUserAction({
+        repository: input.ctx.repository,
+        request: commit.request,
+        occurredAt,
+        eventId: `event_${current.id}_run_ended`,
+        dismissal: "cancelled",
+        unavailablePreparedPage: true,
+      }),
+  );
+}
+
+async function settleTaskLocalCredentialVerification(input: {
+  ctx: WorkspaceServiceContext;
+  outcome: "verified" | "still_blocked";
+  request: UserActionRequest;
+}): Promise<UserActionRequest | null> {
+  if (
+    input.request.state !== "verifying" ||
+    input.request.kind !== "login" ||
+    input.request.scope.type !== "application" ||
+    input.request.verification.type !== "source_access"
+  ) {
+    return null;
+  }
+
+  const currentRequest = await input.ctx.repository.getUserActionRequest(
+    input.request.id,
+  );
+  if (
+    !currentRequest ||
+    currentRequest.state !== "verifying" ||
+    currentRequest.revision !== input.request.revision
+  ) {
+    return null;
+  }
+
+  const checkedAt = new Date().toISOString();
+  const reduction = reduceUserActionVerification(
+    currentRequest,
+    UserActionVerificationResultSchema.parse({
+      requestId: currentRequest.id,
+      verificationId: getVerificationEventId(currentRequest),
+      expectedRevision: currentRequest.revision,
+      outcome: input.outcome,
+      checkedAt,
+      credentialsPolicy: "browser_only",
+      submitAuthorized: false,
+      accountCreationAuthorized: false,
+    }),
+  );
+  if (reduction.status === "stale" || !reduction.event) return null;
+  const commit = await input.ctx.repository.commitUserActionTransition({
+    request: reduction.request,
+    event: reduction.event,
+  });
+  return commit.request;
+}
+
 async function readExactLineage(input: {
   ctx: WorkspaceServiceContext;
   scope: ExactApplicationScope;
 }): Promise<
   | { status: "current"; lineage: ApplicationResumptionLineage }
-  | { status: "stale"; detail: string }
+  | { status: "stale"; detail: string; runEnded?: boolean }
 > {
   const [runs, results, checkpoints, savedJobs, applicationRecords] =
     await Promise.all([
@@ -480,6 +644,7 @@ async function readExactLineage(input: {
     return {
       status: "stale",
       detail: `The exact apply run is already ${run.state}.`,
+      runEnded: true,
     };
   }
   if (!result || results.length !== 1) {
@@ -561,6 +726,11 @@ async function persistApplicationRecord(input: {
 
       await input.ctx.repository.upsertApplicationRecord(
         ApplicationRecordSchema.parse({
+          // Continuation updates the attempt projection, not the person's
+          // application policy. Keep the mode and every other durable field
+          // from the exact record instead of letting schema defaults silently
+          // turn Ask before sending back into Fill in only.
+          ...existing,
           id: existing.id,
           jobId: input.job.id,
           title: input.job.title,
@@ -593,14 +763,89 @@ async function persistApplicationRecord(input: {
   );
 }
 
+export function reconcileReadyRunAfterApplicationResumption(input: {
+  run: ApplyRun;
+  results: readonly ApplyJobResult[];
+  resumedRun: ApplyRun;
+  resumedJobId: string;
+  completedAt: string;
+  summary: string;
+  detail: string;
+}): ApplyRun {
+  const reconciled = reconcileApplyRunAfterConfirmedSubmission({
+    run: input.run,
+    results: input.results,
+    submittedAt: input.completedAt,
+    submittedSummary: input.summary,
+    submittedDetail: input.detail,
+  });
+  const singleCopilot =
+    input.run.mode === "copilot" &&
+    input.run.jobIds.length === 1 &&
+    input.run.jobIds[0] === input.resumedJobId;
+  const remaining = reconciled.pendingJobs + reconciled.blockedJobs;
+  return ApplyRunSchema.parse({
+    ...reconciled,
+    ...(singleCopilot
+      ? {
+          state: input.resumedRun.state,
+          currentJobId: input.resumedRun.currentJobId,
+          completedAt: input.resumedRun.completedAt,
+          pendingJobs: input.resumedRun.pendingJobs,
+          submittedJobs: input.resumedRun.submittedJobs,
+          skippedJobs: input.resumedRun.skippedJobs,
+          blockedJobs: input.resumedRun.blockedJobs,
+          failedJobs: input.resumedRun.failedJobs,
+        }
+      : {}),
+    summary:
+      singleCopilot || reconciled.state === "completed"
+        ? input.summary
+        : reconciled.state === "running"
+          ? input.run.summary
+          : `${input.summary} ${remaining} ${remaining === 1 ? "application still needs" : "applications still need"} review.`,
+    detail:
+      singleCopilot || reconciled.state === "completed"
+        ? input.detail
+        : reconciled.state === "running"
+          ? input.run.detail
+          : "The other applications keep their own pending steps and review state.",
+  });
+}
+
+/**
+ * Resumption attempts this process is running, per workspace store. A claimed
+ * attempt that is not in here was left by an earlier run of the app (a
+ * restart mid-way) or by a flight that ended without settling it; nothing
+ * will ever finish it, so it is taken over instead of leaving its step on
+ * "Checking" for ever. Shared across service instances on one store, so a
+ * second instance still joins the first one's live attempt.
+ */
+const liveResumptionAttemptIds = new WeakMap<object, Set<string>>();
+
+function getLiveResumptionAttemptIds(repository: object): Set<string> {
+  let ids = liveResumptionAttemptIds.get(repository);
+  if (!ids) {
+    ids = new Set<string>();
+    liveResumptionAttemptIds.set(repository, ids);
+  }
+  return ids;
+}
+
 export function createApplicationUserActionResumer(
   ctx: WorkspaceServiceContext,
   dependencies: ApplicationResumptionDependencies,
-): (request: UserActionRequest) => Promise<void> {
-  return async (requestInput) => {
-    const request = requestInput;
-    const scope = getExactApplicationScope(request);
-    if (!scope) return;
+): (
+  request: UserActionRequest,
+  taskLocalCredentials?: TaskLocalApplicationCredentials,
+) => Promise<void> {
+  const liveAttemptIds = getLiveResumptionAttemptIds(ctx.repository);
+  const resume = async (
+    request: UserActionRequest,
+    scope: ExactApplicationScope,
+    attemptId: string,
+    taskLocalCredentials?: TaskLocalApplicationCredentials,
+  ): Promise<void> => {
     const isPrepareOnlyVerification =
       request.state === "verifying" &&
       isApplicationPrepareOnlyUserAction(request);
@@ -614,6 +859,7 @@ export function createApplicationUserActionResumer(
         ? requestEvents.some(
             (event) =>
               (event.operation === "confirm_done" ||
+                event.operation === "submit_task_local_credentials" ||
                 event.operation === "submit_manual_answer" ||
                 event.operation === "record_legal_decision") &&
               event.resultingRevision === request.revision,
@@ -626,7 +872,43 @@ export function createApplicationUserActionResumer(
           );
     if (!hasTransitionEvidence) return;
 
-    const attemptId = getResumptionAttemptId(request);
+    // A typed answer is committed in two writes: the request moves to
+    // verifying, then the answer is stored. If the second write failed, the
+    // application must not carry on without it (the agent would write its
+    // own answer instead). Hand the question back so the person can answer
+    // again. A grouped answer is stored in the same write as its transition.
+    if (request.state === "verifying") {
+      const answerEvent = requestEvents.find(
+        (event) =>
+          event.operation === "submit_manual_answer" &&
+          event.resultingRevision === request.revision &&
+          !event.id.endsWith(":grouped_manual_answer"),
+      );
+      if (answerEvent && scope.resultId) {
+        const recordPrefix = `manual_answer_${request.id}_${request.revision}`;
+        const storedAnswers =
+          await ctx.repository.listApplicationAnswerRecords({
+            runId: scope.runId,
+            jobId: scope.jobId,
+            resultId: scope.resultId,
+            applicationRecordId: scope.applicationRecordId,
+          });
+        const answerStored = storedAnswers.some(
+          (record) =>
+            record.id === recordPrefix ||
+            record.id.startsWith(`${recordPrefix}_`),
+        );
+        if (!answerStored) {
+          await settlePrepareOnlyVerification({
+            ctx,
+            outcome: "still_blocked",
+            request,
+          });
+          return;
+        }
+      }
+    }
+
     const attempts = await ctx.repository.listApplicationAttempts();
     const existingAttempt =
       attempts.find((attempt) => attempt.id === attemptId) ?? null;
@@ -645,6 +927,14 @@ export function createApplicationUserActionResumer(
     }
     if (existingAttempt?.completedAt) return;
 
+    // This continuation works on the kept page: take back anything the
+    // person was allowed to press there (their sign-in, their own send)
+    // before Job Finder touches it.
+    await ctx.browserRuntime.closeApplicationFormAction?.(
+      scope.source,
+      scope.resultId,
+    );
+
     const scheduledAt = new Date().toISOString();
     const scheduledAttempt = createResumptionAttempt({
       request,
@@ -661,6 +951,26 @@ export function createApplicationUserActionResumer(
     });
 
     const lineageResult = await readExactLineage({ ctx, scope });
+    if (lineageResult.status === "stale" && lineageResult.runEnded) {
+      // The run ended under this check (the app closed mid-check, or the
+      // person stopped the batch). The step cannot carry on, so it must not
+      // stay in Needs you asking for something already done: close it and
+      // leave the application as Could not apply with Try again.
+      await closeStepOfEndedRun({ ctx, request, scope });
+      await ctx.repository.upsertApplicationAttempt(
+        createResumptionAttempt({
+          request,
+          scope,
+          existingAttempt: existingAttempt ?? scheduledAttempt,
+          now: new Date().toISOString(),
+          state: "unsupported",
+          summary: "Application check stopped because its run ended",
+          detail: lineageResult.detail,
+          completed: true,
+        }),
+      );
+      return;
+    }
     if (lineageResult.status === "stale") {
       const staleAt = new Date().toISOString();
       await settlePrepareOnlyVerification({
@@ -720,8 +1030,12 @@ export function createApplicationUserActionResumer(
       return;
     }
 
-    if (existingAttempt) {
-      return;
+    // Still unfinished here means orphaned (see liveAttemptIds): carry it on.
+    const orphanedAttempt = existingAttempt;
+    if (orphanedAttempt) {
+      console.warn(
+        `[apply] taking over application step '${request.id}': its earlier check never finished (started ${orphanedAttempt.startedAt}).`,
+      );
     }
 
     let prerequisites: ApplicationPrerequisites;
@@ -814,7 +1128,10 @@ export function createApplicationUserActionResumer(
       idPrefix: `application_${request.id}`,
     });
     const provenanceTargetId =
-      job.provenance.at(-1)?.targetId ?? job.provenance[0]?.targetId ?? null;
+      selectApplicationSighting(job)?.targetId ??
+      job.provenance.at(-1)?.targetId ??
+      job.provenance[0]?.targetId ??
+      null;
     const provenanceTarget = provenanceTargetId
       ? (searchPreferences.discovery.targets.find(
           (target) => target.id === provenanceTargetId,
@@ -844,6 +1161,18 @@ export function createApplicationUserActionResumer(
         (evidence) => evidence.retention !== "temporary",
       ),
     });
+    // The person's answers, spelled out beside the questions they answer.
+    // Merged into the profile they would still have to be found; named here
+    // the agent can go straight to those fields, fill them and carry on
+    // instead of working the whole form a second time.
+    const answeredQuestionLines = questionRecords.flatMap((question) => {
+      const latest = [...answerRecords]
+        .filter((answer) => answer.questionId === question.id)
+        .sort((left, right) => right.revision - left.revision)[0];
+      return latest
+        ? [`Answer to "${question.prompt.trim()}": ${latest.text.trim()}`]
+        : [];
+    });
     const instructions = uniqueStrings([
       ...buildInstructionGuidance(activeInstruction),
       ...buildRecoveryInstructions({
@@ -852,6 +1181,12 @@ export function createApplicationUserActionResumer(
         checkpointUrl: checkpoint.url,
         blockerSummary: result.blockerSummary,
       }),
+      ...(answeredQuestionLines.length > 0
+        ? [
+            "The form was already filled in before it stopped for these questions. Do not retype fields that already hold the right value; answer only the questions below, then carry on to the review step.",
+            ...answeredQuestionLines,
+          ]
+        : []),
     ]);
 
     let applicationAttachments: Awaited<
@@ -876,8 +1211,12 @@ export function createApplicationUserActionResumer(
     // resumable instead of leaving an in-progress receipt that later runs
     // cannot safely adopt.
     if (await isActivityPaused(ctx)) return;
-    const ownsClaim =
-      await ctx.repository.claimApplicationAttempt(scheduledAttempt);
+    let ownsClaim = true;
+    if (orphanedAttempt) {
+      await ctx.repository.upsertApplicationAttempt(scheduledAttempt);
+    } else {
+      ownsClaim = await ctx.repository.claimApplicationAttempt(scheduledAttempt);
+    }
     if (!ownsClaim) {
       const claimedAttempt = (
         await ctx.repository.listApplicationAttempts()
@@ -897,6 +1236,29 @@ export function createApplicationUserActionResumer(
       return;
     }
 
+    // The continued run works inside the same permission the first run
+    // did. It used to be pinned to fill-in-only, so a person who had chosen
+    // "Send for me" answered the one question, watched the form fill in
+    // again, and still had to send it themselves.
+    const applyAuthority = await resolveApplyAuthorityForJob({
+      repository: ctx.repository,
+      job: { id: job.id, campaignId: run.campaignId ?? null },
+      resumeSha256: prerequisites.resumeArtifact.sha256,
+      applicationUrl: job.applicationUrl ?? job.canonicalUrl,
+      now: new Date().toISOString(),
+    });
+    const siteLabel = resolveApplySiteLabel({
+      targetLabel: provenanceTarget?.label ?? null,
+      applicationUrl:
+        prerequisites.job.applicationUrl ?? prerequisites.job.canonicalUrl,
+    });
+    let preparedHandoff: ApplySubmissionHandoff | null = null;
+    let preparedReviewCard: ApplicationReviewCard | null = null;
+    let taskLocalCredentialStepCompleted = false;
+    // Start on the page the run stopped on, in the tab that is already open
+    // there, so whatever the person did on it is still done.
+    const continueFromUrl = checkpoint.url ?? null;
+
     let executionResult: ApplyExecutionResult;
     try {
       if (preparationError) {
@@ -910,6 +1272,7 @@ export function createApplicationUserActionResumer(
       // The browser layer opens the page; Job Finder decides what goes in the
       // form and whether anything may be sent.
       const applyFlowFacts = {
+        applicationPageBindingKey: result.id,
         job: prerequisites.job,
         resumeArtifact: prerequisites.resumeArtifact,
         profile: executionProfile,
@@ -917,12 +1280,48 @@ export function createApplicationUserActionResumer(
           ? { applicationAttachments }
           : {}),
         settings,
-        mode: "prepare_only" as const,
+        mode:
+          applyAuthority.authority.mode === "autonomous_submit"
+            ? ("submit_when_ready" as const)
+            : ("prepare_only" as const),
         idempotencyKey: attemptId,
         accountCreationAuthorized: false as const,
-        intermediateMutationsAuthorized: false as const,
-        applyAutomationMode: "prepare_only" as const,
-        submitAuthorized: false as const,
+        // Field saves are allowed by default (ADR 0024).
+        intermediateMutationsAuthorized: true as const,
+        intermediateMutationAllowedOrigins: [],
+        applyAutomationMode: applyAuthority.authority.mode,
+        submitAuthorized: applyAuthority.authority.submitAuthorized,
+        preApprovedAttestationKinds:
+          applyAuthority.authority.preApprovedAttestationKinds,
+        salaryDisclosure: applyAuthority.authority.salaryDisclosure,
+        applyAllowedOrigins: [...applyAuthority.authority.allowedOrigins],
+        ...(continueFromUrl ? { startingUrl: continueFromUrl } : {}),
+        ...(taskLocalCredentials
+          ? {
+              prepareTaskLocalCredentials: async (input: {
+                session: ApplyPageSession;
+              }) => {
+                try {
+                  await completeTaskLocalSignIn({
+                    hands: createApplyPageHands(input.session),
+                    clickAuthorizedFormAction: (ref) =>
+                      input.session.clickAuthorizedFormAction(ref),
+                    credential: {
+                      reference: taskLocalCredentials.reference,
+                      load: () => ({
+                        identifier: taskLocalCredentials.identifier,
+                        password: taskLocalCredentials.password,
+                      }),
+                    },
+                  });
+                  taskLocalCredentialStepCompleted = true;
+                } finally {
+                  taskLocalCredentials.identifier = "";
+                  taskLocalCredentials.password = "";
+                }
+              },
+            }
+          : {}),
         recoveryContext,
         ...(instructions.length > 0 ? { instructions } : {}),
         ...buildVisualExecutionOptions({
@@ -931,12 +1330,35 @@ export function createApplicationUserActionResumer(
           source: scope.source,
         }),
       };
-      const rawResult = enforcePrepareOnlyExecutionResult(
+      const rawResult = enforceResolvedApplyAuthorityResult(
+        applyAuthority.authority,
         await ctx.browserRuntime.executeApplicationFlow(scope.source, {
           ...applyFlowFacts,
+          onWaitingForBrowserTab: () =>
+            persistApplicationWaitingForBrowserTab({
+              repository: ctx.repository,
+              resultId: result.id,
+              runId: run.id,
+              jobId: job.id,
+            }),
           prepareApplicationForm: createApplyFormPreparer({
             executionInput: applyFlowFacts,
             aiClient: ctx.aiClient,
+            onProgress: (progress) =>
+              persistApplicationPreparationProgress({
+                repository: ctx.repository,
+                resultId: result.id,
+                runId: run.id,
+                jobId: job.id,
+                progress,
+              }),
+            ...(applyAuthority.envelope
+              ? { envelope: applyAuthority.envelope }
+              : {}),
+            onPrepared: ({ handoff, reviewCard }) => {
+              preparedHandoff = handoff;
+              preparedReviewCard = reviewCard;
+            },
             letters: buildApplyLetterDependencies({
               aiClient: ctx.aiClient,
               documentManager: ctx.documentManager,
@@ -944,12 +1366,7 @@ export function createApplicationUserActionResumer(
               profile: applyFlowFacts.profile,
               settings: applyFlowFacts.settings,
             }),
-            siteLabel: resolveApplySiteLabel({
-              targetLabel: provenanceTarget?.label ?? null,
-              applicationUrl:
-                prerequisites.job.applicationUrl ??
-                prerequisites.job.canonicalUrl,
-            }),
+            siteLabel,
           }),
         }),
       );
@@ -1054,16 +1471,31 @@ export function createApplicationUserActionResumer(
       return;
     }
 
-    const verificationOutcome = getPrepareOnlyVerificationOutcome(
+    const prepareOnlyVerificationOutcome = getPrepareOnlyVerificationOutcome(
       request,
       executionResult,
     );
+    const taskLocalCredentialVerificationOutcome = taskLocalCredentials
+      ? getTaskLocalCredentialVerificationOutcome(
+          request,
+          executionResult,
+          taskLocalCredentialStepCompleted,
+        )
+      : null;
+    const verificationOutcome =
+      prepareOnlyVerificationOutcome ?? taskLocalCredentialVerificationOutcome;
     if (verificationOutcome) {
-      const settledRequest = await settlePrepareOnlyVerification({
-        ctx,
-        outcome: verificationOutcome,
-        request,
-      });
+      const settledRequest = prepareOnlyVerificationOutcome
+        ? await settlePrepareOnlyVerification({
+            ctx,
+            outcome: verificationOutcome,
+            request,
+          })
+        : await settleTaskLocalCredentialVerification({
+            ctx,
+            outcome: verificationOutcome,
+            request,
+          });
       if (!settledRequest) {
         const staleAt = new Date().toISOString();
         await ctx.repository.upsertApplicationAttempt(
@@ -1101,47 +1533,87 @@ export function createApplicationUserActionResumer(
       }
     }
 
+    const finalExecutionResult =
+      verificationOutcome === "verified" &&
+      executionResult.blocker === null &&
+      executionResult.state === "ready"
+        ? ApplyExecutionResultSchema.parse({
+            ...executionResult,
+            summary:
+              "The browser step is complete and this application is ready for you.",
+            detail:
+              "Job Finder verified the exact step on the retained application page and continued the form without sending it.",
+          })
+        : executionResult;
     const completedAt = new Date().toISOString();
     const finalAttempt = createResumptionAttempt({
       request,
       scope,
       existingAttempt: existingAttempt ?? scheduledAttempt,
       now: completedAt,
-      state: executionResult.state,
-      summary: executionResult.summary,
-      detail: executionResult.detail,
+      state: finalExecutionResult.state,
+      summary: finalExecutionResult.summary,
+      detail: finalExecutionResult.detail,
       completed: true,
-      executionResult,
+      executionResult: finalExecutionResult,
     });
+    const resumedArtifacts = buildApplyCopilotArtifacts({
+      applicationRecordId: scope.applicationRecordId,
+      job,
+      executionResult: finalExecutionResult,
+      resumeArtifact: prerequisites.resumeArtifact,
+      detectedAt: completedAt,
+      runId: run.id,
+      resultId: result.id,
+      visualCheckpointsEnabled: run.visualCheckpointsEnabled,
+    });
+    const existingQuestionIds = new Set(
+      questionRecords.map((record) => record.id),
+    );
+    const blockedQuestionIds = new Set(
+      (finalExecutionResult.blocker?.questionIds ?? []).map(
+        (questionId) =>
+          `apply_question_${scope.applicationRecordId}_${questionId}`,
+      ),
+    );
+    const newQuestionRecords = resumedArtifacts.questionRecords.filter(
+      (record) =>
+        blockedQuestionIds.has(record.id) &&
+        !existingQuestionIds.has(record.id),
+    );
+    const newQuestionIds = new Set(
+      newQuestionRecords.map((record) => record.id),
+    );
+    const newAnswerRecords = resumedArtifacts.answerRecords.filter((record) =>
+      newQuestionIds.has(record.questionId),
+    );
     const isConsentBlocked =
-      executionResult.blocker?.code === "missing_consent";
+      finalExecutionResult.blocker?.code === "missing_consent";
     const nextResultState = isConsentBlocked
       ? "blocked"
       : mapExecutionResultToApplyJobState({
           consentRequests: [],
-          executionResult,
+          executionResult: finalExecutionResult,
         });
     const nextResult = ApplyJobResultSchema.parse({
       ...result,
       state: nextResultState,
-      summary: executionResult.summary,
-      detail: executionResult.detail,
+      summary: finalExecutionResult.summary,
+      detail: finalExecutionResult.detail,
       updatedAt: completedAt,
       completedAt: getResultCompletedAt({ executionResult, now: completedAt }),
       blockerReason: mapExecutionResultToApplyBlockerReason(
-        executionResult.blocker,
+        finalExecutionResult.blocker,
       ),
-      blockerSummary: executionResult.blocker?.summary ?? null,
-      visualObservationSets: executionResult.visualObservationSets,
-      visualCheckpoints: executionResult.visualCheckpoints,
-      latestQuestionCount: executionResult.questions.length,
-      latestAnswerCount: executionResult.questions.reduce(
-        (count, question) => count + question.suggestedAnswers.length,
-        0,
-      ),
+      blockerSummary: finalExecutionResult.blocker?.summary ?? null,
+      visualObservationSets: finalExecutionResult.visualObservationSets,
+      visualCheckpoints: finalExecutionResult.visualCheckpoints,
+      latestQuestionCount: resumedArtifacts.questionRecords.length,
+      latestAnswerCount: resumedArtifacts.answerRecords.length,
       pendingConsentRequestCount: isConsentBlocked ? 1 : 0,
       latestCheckpointId: checkpoint.id,
       lastUserActionResumptionId: attemptId,
+      reviewCard: preparedReviewCard ?? result.reviewCard,
     });
 
     await ctx.repository.upsertApplicationAttempt({
@@ -1170,7 +1642,15 @@ export function createApplicationUserActionResumer(
       );
       return;
     }
-    await ctx.repository.upsertApplicationAttempt(finalAttempt);
+    await Promise.all([
+      ctx.repository.upsertApplicationAttempt(finalAttempt),
+      ...newQuestionRecords.map((record) =>
+        ctx.repository.upsertApplicationQuestionRecord(record),
+      ),
+      ...newAnswerRecords.map((record) =>
+        ctx.repository.upsertApplicationAnswerRecord(record),
+      ),
+    ]);
     await persistApplicationRecord({
       ctx,
       job,
@@ -1188,9 +1668,142 @@ export function createApplicationUserActionResumer(
       resultState: nextResult.state,
       resultStartedAt: nextResult.startedAt,
       replayCheckpointId: checkpoint.id,
-      blocker: executionResult.blocker,
+      blocker: finalExecutionResult.blocker,
       occurredAt: completedAt,
     });
+    await handApplicationPageToPersonForAccessStep({
+      browserRuntime: ctx.browserRuntime,
+      source: job.source,
+      resultId: nextResult.id,
+      blocker: finalExecutionResult.blocker,
+    });
+    if (
+      nextResult.state === "awaiting_review" &&
+      nextResult.blockerReason === null
+    ) {
+      const [currentRuns, currentResults] = await Promise.all([
+        ctx.repository.listApplyRuns({ id: run.id }),
+        ctx.repository.listApplyJobResults({ runId: run.id }),
+      ]);
+      const currentRun = currentRuns[0];
+      if (
+        currentRun &&
+        !["cancelled", "failed", "completed"].includes(currentRun.state) &&
+        currentResults.some(
+          (candidate) =>
+            candidate.id === nextResult.id &&
+            candidate.lastUserActionResumptionId === attemptId &&
+            candidate.state === "awaiting_review" &&
+            candidate.blockerReason === null,
+        )
+      ) {
+        await ctx.repository.upsertApplyRun(
+          reconcileReadyRunAfterApplicationResumption({
+            run: currentRun,
+            results: currentResults,
+            resumedRun: resumedArtifacts.run,
+            resumedJobId: job.id,
+            completedAt,
+            summary: finalExecutionResult.summary,
+            detail: finalExecutionResult.detail,
+          }),
+        );
+      }
+    }
+    if (nextResult.state === "failed") {
+      const [currentRuns, currentResults] = await Promise.all([
+        ctx.repository.listApplyRuns({ id: run.id }),
+        ctx.repository.listApplyJobResults({ runId: run.id }),
+      ]);
+      const currentRun = currentRuns[0];
+      if (currentRun && currentRun.state !== "cancelled") {
+        await ctx.repository.upsertApplyRun(
+          reconcileApplyRunAfterConfirmedSubmission({
+            run: currentRun,
+            results: currentResults,
+            submittedAt: completedAt,
+            submittedSummary: finalExecutionResult.summary,
+            submittedDetail: finalExecutionResult.detail,
+          }),
+        );
+      }
+    }
+    // Sending happens after the preparation is on record, the same way an
+    // ordinary run does it; only a permission that covers this exact
+    // application ever reaches the send.
+    const sent = await sendPreparedApplicationIfAllowed({
+      ctx,
+      handoff: preparedHandoff,
+      envelope: applyAuthority.envelope,
+      source: scope.source,
+      lineage: {
+        runId: run.id,
+        jobId: job.id,
+        resultId: nextResult.id,
+        applicationRecordId: scope.applicationRecordId,
+        campaignId: run.campaignId ?? null,
+      },
+      resumeArtifact: prerequisites.resumeArtifact,
+      siteLabel,
+    }).catch((sendError: unknown) => {
+      console.error("Failed to send the continued application.", sendError);
+      return notSentAfterError(sendError);
+    });
+    await recordPreparedApplicationNotSent({
+      repository: ctx.repository,
+      lineage: {
+        runId: run.id,
+        jobId: job.id,
+        resultId: nextResult.id,
+        applicationRecordId: scope.applicationRecordId,
+        campaignId: run.campaignId ?? null,
+      },
+      attempt: sent,
+    }).catch(() => undefined);
+    if (sent) {
+      if (sent.confirmedSubmitted) {
+        const [currentRuns, currentResults] = await Promise.all([
+          ctx.repository.listApplyRuns({ id: run.id }),
+          ctx.repository.listApplyJobResults({ runId: run.id }),
+        ]);
+        const currentRun = currentRuns[0];
+        if (currentRun && currentRun.state !== "cancelled") {
+          await ctx.repository.upsertApplyRun(
+            reconcileApplyRunAfterConfirmedSubmission({
+              run: currentRun,
+              results: currentResults,
+              submittedAt: new Date().toISOString(),
+              submittedSummary: sent.summary,
+              submittedDetail: sent.detail,
+            }),
+          );
+        }
+      }
+      const currentRecord = (
+        await ctx.repository.listApplicationRecords()
+      ).find((record) => record.id === scope.applicationRecordId);
+      await persistApplicationRecord({
+        ctx,
+        job,
+        applicationRecordId: scope.applicationRecordId,
+        attempt: {
+          ...finalAttempt,
+          // The submission runtime has already written the durable outcome.
+          // Do not overwrite that authoritative submitted/uncertain state
+          // with the preparation attempt's earlier "ready" state.
+          state: sent.confirmedSubmitted
+            ? "submitted"
+            : sent.pageClosed || sent.formGone
+              ? "failed"
+              : (currentRecord?.lastAttemptState ?? finalAttempt.state),
+          summary: sent.summary,
+          detail: sent.detail,
+          nextActionLabel: sent.nextActionLabel,
+        },
+        eventId: `event_${attemptId}_sent`,
+        now: new Date().toISOString(),
+      });
+    }
     await persistAutomaticApplicationSafeguards({
       ctx,
       run,
@@ -1203,5 +1816,18 @@ export function createApplicationUserActionResumer(
         safeguardError,
       );
     });
+  };
+
+  return async (request, taskLocalCredentials) => {
+    const scope = getExactApplicationScope(request);
+    if (!scope) return;
+    const attemptId = getResumptionAttemptId(request);
+    if (liveAttemptIds.has(attemptId)) return;
+    liveAttemptIds.add(attemptId);
+    try {
+      await resume(request, scope, attemptId, taskLocalCredentials);
+    } finally {
+      liveAttemptIds.delete(attemptId);
+    }
   };
 }

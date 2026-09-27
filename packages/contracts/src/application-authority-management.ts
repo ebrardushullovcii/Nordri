@@ -77,27 +77,23 @@ function addIntermediateMutationInputIssues(
       path: ["expiresAt"],
     });
   }
-  if (value.scope.campaignId !== null || value.scope.jobIds.length !== 1) {
+  if (
+    (value.scope.campaignId === null && value.scope.jobIds.length === 0) ||
+    (value.scope.campaignId !== null && value.scope.jobIds.length > 0)
+  ) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       message:
-        "Bounded ATS autosave requires exactly one job and no campaign scope.",
+        "Bounded ATS autosave requires either an explicit campaign or explicit jobs.",
       path: ["scope"],
     });
   }
-  if (value.allowedResumeSha256.length !== 1) {
+  if (value.allowedResumeSha256.length === 0) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       message:
-        "Bounded ATS autosave requires exactly one resume SHA-256 digest.",
+        "Bounded ATS autosave requires at least one resume SHA-256 digest.",
       path: ["allowedResumeSha256"],
-    });
-  }
-  if (value.allowedOrigins.length !== 1) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: "Bounded ATS autosave requires exactly one canonical origin.",
-      path: ["allowedOrigins"],
     });
   }
 }

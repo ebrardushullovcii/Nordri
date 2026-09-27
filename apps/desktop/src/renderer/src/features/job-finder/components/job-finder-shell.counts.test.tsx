@@ -185,26 +185,26 @@ describe("shell destination counts", () => {
     const findJobs = within(sidebar).getByRole("button", {
       name: /^Find jobs/,
     });
-    const companies = within(sidebar).getByRole("button", {
-      name: /^Companies/,
-    });
+    const needsYou = screen.getByRole("button", { name: /^Needs you:/ });
 
-    const inventoryBadge = findJobs.querySelector("span:last-child");
-    const attentionBadge = companies.querySelector("span.tabular-nums");
+    const inventoryBadge = findJobs.querySelector('[data-slot="count"]');
+    const attentionBadge = needsYou.querySelector("span.tabular-nums");
 
-    // The shape is the shared `<Count variant="inline">` primitive; the shell
+    // The shape is the shared `<Count variant="pill">` primitive; the shell
     // adds only its own row placement. Composed the same way the component
     // does, so the exact painted string is still pinned.
     expect(inventoryBadge?.className).toBe(
-      cn(COUNT_VARIANT_CLASS.inline, DESTINATION_COUNT_INLINE_LAYOUT_CLASS),
+      cn(COUNT_VARIANT_CLASS.pill, DESTINATION_COUNT_INLINE_LAYOUT_CLASS),
     );
     expect(attentionBadge?.className).toBe(DESTINATION_COUNT_ATTENTION_CLASS);
     expect(inventoryBadge?.className).not.toBe(attentionBadge?.className);
 
     // A bare number always means inventory, so the attention count also
     // carries a noun rather than standing alone beside the destination name.
-    expect(attentionBadge?.textContent).toContain("to review");
-    expect(companies.getAttribute("aria-label")).toBe("Companies: 1 to review");
+    expect(attentionBadge?.textContent).toContain("unresolved");
+    expect(needsYou.getAttribute("aria-label")).toMatch(
+      /^Needs you: \d+ unresolved$/,
+    );
     // The inventory count stays visual-only; the destination name is the sole
     // announced content.
     expect(inventoryBadge?.getAttribute("aria-hidden")).toBe("true");
@@ -271,7 +271,7 @@ describe("shell destination counts", () => {
     // pill at 1439 — one number, two shapes, one breakpoint apart.
     expect(compactCount?.className).toBe(wideCount?.className);
     expect(compactCount?.className).toBe(
-      cn(COUNT_VARIANT_CLASS.inline, DESTINATION_COUNT_INLINE_LAYOUT_CLASS),
+      cn(COUNT_VARIANT_CLASS.pill, DESTINATION_COUNT_INLINE_LAYOUT_CLASS),
     );
   });
 
@@ -331,7 +331,7 @@ describe("shell chrome ownership", () => {
     expect(getSidebar().className).toBe(SHELL_SIDEBAR_CLASS);
     expect(
       within(getSidebar())
-        .getByRole("button", { name: /^Documents/ })
+        .getByRole("button", { name: /^Settings/ })
         .className.startsWith(SHELL_SIDEBAR_ROW_CLASS),
     ).toBe(true);
   });

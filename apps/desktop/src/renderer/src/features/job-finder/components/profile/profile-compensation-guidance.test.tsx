@@ -118,7 +118,7 @@ describe("profile compensation guidance", () => {
     render(<TargetingHarness />);
 
     expect(container?.textContent).toContain("Minimum worth considering");
-    expect(container?.textContent).toContain("Search range maximum (optional)");
+    expect(container?.textContent).toContain("Target compensation (optional)");
     expect(container?.textContent).toContain(
       "The minimum is your consideration floor",
     );

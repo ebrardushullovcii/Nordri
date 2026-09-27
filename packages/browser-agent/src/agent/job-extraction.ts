@@ -1,5 +1,6 @@
 import {
   formatEmployerLabelFromSlug,
+  isAgeTokenMisreadAsCompany,
   sanitizeObservedEmployerLabel,
   type JobPosting,
 } from "@unemployed/contracts";
@@ -107,8 +108,11 @@ const WORK_MODE_VALUES = ["remote", "hybrid", "onsite"] as const;
 const EASY_APPLY_PATTERN =
   /\b(easy apply|quick apply|one[- ]click apply|apply instantly|instant apply)\b/i;
 const APPLY_PATTERN = /\bapply\b/i;
+// A bare age badge ("12d", "3h", "2w", "1mo", "5m") is how boards print how
+// long ago a card was posted. It used to pass every guard and end up as the
+// employer of the job.
 const POSTED_PATTERN =
-  /\b(posted|ago|today|yesterday|just posted|sot|dje|\d+\s*(?:day|days|week|weeks|month|months|hour|hours|hr|hrs|dit[eë]?|jav[eë]?|jave|muaj(?:sh)?|ore?))\b/iu;
+  /\b(posted|ago|today|yesterday|just posted|sot|dje|\d+\s*(?:day|days|week|weeks|month|months|hour|hours|hr|hrs|dit[eë]?|jav[eë]?|jave|muaj(?:sh)?|ore?)|\d{1,3}\s?(?:d|h|w|mo|m|y))\b/iu;
 /**
  * Text that can honestly be reported as a posting date: it carries a number, a
  * month name, or a relative-time word.
@@ -1476,38 +1480,80 @@ export function buildSearchResultCardMergeKey(input: {
  * (plus any id-shaped query values) as one slug. Every extraction path uses
  * this same fallback so the same listing reached twice gets the same id.
  */
+function buildPathBasedGenericJobId(parsed: URL): string {
+  const interestingParamKeys = [
+    "id",
+    "job",
+    "jobid",
+    "job_id",
+    "gh_jid",
+    "req",
+    "reqid",
+    "opening",
+  ];
+  const interestingParams = interestingParamKeys
+    .map((key) => parsed.searchParams.get(key))
+    .filter((value): value is string => Boolean(cleanLine(value)))
+    .join("_");
+  const rawValue = [parsed.hostname, parsed.pathname, interestingParams]
+    .filter(Boolean)
+    .join("_");
+
+  return rawValue
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 160);
+}
+
 export function buildGenericJobId(url: string): string {
   try {
     const parsed = new URL(url);
-    const interestingParamKeys = [
-      "id",
-      "job",
-      "jobid",
-      "job_id",
-      "gh_jid",
-      "req",
-      "reqid",
-      "opening",
-    ];
-    const interestingParams = interestingParamKeys
-      .map((key) => parsed.searchParams.get(key))
-      .filter((value): value is string => Boolean(cleanLine(value)))
-      .join("_");
-    const rawValue = [parsed.hostname, parsed.pathname, interestingParams]
+    const pathSegments = parsed.pathname
+      .split("/")
       .filter(Boolean)
-      .join("_");
-
-    return rawValue
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "_")
-      .replace(/^_+|_+$/g, "")
-      .slice(0, 160);
+      .map(safeDecodeUriComponent);
+    const detailId = pathSegments.at(-1);
+    const detailRoute = pathSegments.at(-2);
+    if (
+      detailId &&
+      detailRoute &&
+      /^(?:jobs?|positions?|openings?|requisitions?|vacanc(?:y|ies))$/iu.test(
+        detailRoute,
+      )
+    ) {
+      return detailId.slice(0, 160);
+    }
+    return buildPathBasedGenericJobId(parsed);
   } catch {
     return url
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, "_")
       .replace(/^_+|_+$/g, "")
       .slice(0, 160);
+  }
+}
+
+/**
+ * Replaces only the legacy host-plus-path fallback with the semantic detail
+ * route id. Provider-supplied ids stay authoritative.
+ */
+export function normalizeExtractedJobSourceId<T extends ExtractedJobInput>(
+  job: T,
+): T {
+  try {
+    const parsed = new URL(job.canonicalUrl);
+    const legacyFallback = buildPathBasedGenericJobId(parsed);
+    const semanticFallback = buildGenericJobId(job.canonicalUrl);
+    if (
+      job.sourceJobId !== legacyFallback ||
+      semanticFallback === legacyFallback
+    ) {
+      return job;
+    }
+    return { ...job, sourceJobId: semanticFallback };
+  } catch {
+    return job;
   }
 }
 
@@ -1882,7 +1928,9 @@ function splitTrailingCompanyLocation(value: string): {
       COMPANY_NOISE_PATTERN.test(companyCandidate) ||
       SALARY_PATTERN.test(companyCandidate) ||
       POSTED_PATTERN.test(companyCandidate) ||
-      isRoleLikePhrase(companyCandidate)
+      isRoleLikePhrase(companyCandidate) ||
+      // "12d" beside a card is how long ago it was posted, not who posted it.
+      isAgeTokenMisreadAsCompany(companyCandidate)
     ) {
       continue;
     }
@@ -3638,6 +3686,29 @@ export function isLikelyDocumentAttachmentJob(input: {
   return !hasEmployer && !hasJobBody;
 }
 
+/**
+ * Whether an address points at a transient access step rather than a listing.
+ *
+ * Match complete path segments only. A role such as `/jobs/security-engineer`
+ * is a listing; `/security/123` is an access step whose eventual destination
+ * must be observed before the job can be saved.
+ */
+export function isLikelyAccessGateUrl(value: string): boolean {
+  try {
+    return new URL(value).pathname
+      .split("/")
+      .map((segment) => cleanLine(decodeURIComponent(segment)).toLowerCase())
+      .filter(Boolean)
+      .some((segment) =>
+        /^(?:auth|captcha|challenge|login|security|sign-?in|verify|verification)$/u.test(
+          segment,
+        ),
+      );
+  } catch {
+    return false;
+  }
+}
+
 export function isLikelySiteUtilityJob(input: {
   canonicalUrl: string;
   title?: string | null;
@@ -3658,6 +3729,10 @@ export function isLikelySiteUtilityJob(input: {
   }
 
   if (isLikelyDocumentAttachmentJob(input)) {
+    return true;
+  }
+
+  if (isLikelyAccessGateUrl(input.canonicalUrl)) {
     return true;
   }
 

@@ -33,6 +33,7 @@ import "./index";
 type ExposedTestApi = {
   failNextSave: (surface: string) => Promise<unknown>;
   loadApplyQueueDemo: () => Promise<unknown>;
+  loadWorkHistoryReviewDemo: () => Promise<unknown>;
 };
 
 const exposedTestApi = (() => {
@@ -68,5 +69,6 @@ describe("preload desktop test API surface when enabled", () => {
 
   it("keeps the apply-queue demo loader on the same gated surface", () => {
     expect(exposedTestApi?.loadApplyQueueDemo).toBeTypeOf("function");
+    expect(exposedTestApi?.loadWorkHistoryReviewDemo).toBeTypeOf("function");
   });
 });

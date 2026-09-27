@@ -1,12 +1,15 @@
 import { describe, expect, test } from "vitest";
 import {
   buildStructuredCandidateJobs,
+  buildGenericJobId,
   inferEmployerFromCompanyProfileHref,
   isJobPreferenceAligned,
+  isLikelyAccessGateUrl,
   isLikelyDocumentAttachmentJob,
   isLikelyJobListingHubUrl,
   isLikelySiteUtilityJob,
   isListingIndexPageRecord,
+  normalizeExtractedJobSourceId,
   stripCompanyMarketingBadges,
   observeLearnedSearchSurfaceRoutes,
   repairExtractedJobTitle,
@@ -1017,6 +1020,26 @@ describe("buildStructuredCandidateJobs", () => {
         location: "Pristina (On-site)",
       }),
     ]);
+  });
+
+  test("never takes a card's age badge as the employer", () => {
+    const jobs = buildStructuredCandidateJobs({
+      pageUrl: "https://weworkremotely.com/categories/remote-full-stack-programming-jobs",
+      maxJobs: 5,
+      cardCandidates: [
+        {
+          canonicalUrl:
+            "https://weworkremotely.com/remote-jobs/lemon-io-senior-net-full-stack-developer-1",
+          anchorText: "Senior .NET Full-stack Developer 12d",
+          headingText: "Senior .NET Full-stack Developer",
+          lines: ["Senior .NET Full-stack Developer", "12d"],
+        },
+      ],
+    });
+
+    // A card with nothing but a title and an age badge has no employer to
+    // report; whatever comes out, the badge is never it.
+    expect(jobs.every((job) => job.company !== "12d")).toBe(true);
   });
 
   test("prefers the fuller LinkedIn dismiss-title when the visible heading is truncated", () => {
@@ -2388,6 +2411,33 @@ describe("shouldCanonicalizeSearchSurfaceDetailRoute", () => {
 });
 
 describe("isLikelySiteUtilityJob", () => {
+  test("treats only whole access-gate path segments as transient pages", () => {
+    expect(
+      isLikelyAccessGateUrl("https://jobs.example.test/security/42"),
+    ).toBe(true);
+    expect(
+      isLikelySiteUtilityJob({
+        canonicalUrl: "https://jobs.example.test/security/42",
+        title: "Security Engineer",
+        company: "Example Co",
+        description: "Build secure systems.",
+      }),
+    ).toBe(true);
+    expect(
+      isLikelyAccessGateUrl(
+        "https://jobs.example.test/jobs/security-engineer",
+      ),
+    ).toBe(false);
+    expect(
+      isLikelySiteUtilityJob({
+        canonicalUrl: "https://jobs.example.test/jobs/security-engineer",
+        title: "Security Engineer",
+        company: "Example Co",
+        description: "Build secure systems.",
+      }),
+    ).toBe(false);
+  });
+
   test("rejects pagination and empty site-section records before extraction", () => {
     for (const title of ["Go to page 1000", "Next", "Previous", "Page 12"]) {
       expect(
@@ -3196,6 +3246,30 @@ function extractedJob(
           "https://boards.example.test/job/marketing-manager-emea-growth/42",
       }).title,
     ).toBe("Marketing Manager");
+  });
+
+  test("uses a short semantic detail-route id as the generic posting id", () => {
+    expect(buildGenericJobId("https://careers.example.test/jobs/4")).toBe(
+      "4",
+    );
+    expect(
+      buildGenericJobId("https://careers.example.test/openings/design-lead"),
+    ).toBe("design-lead");
+  });
+
+  test("normalizes only a legacy URL-derived id on a semantic detail route", () => {
+    const legacy = extractedJob({
+      sourceJobId: "careers_example_test_jobs_4",
+      canonicalUrl: "https://careers.example.test/jobs/4",
+      title: "Frontend Engineer",
+    });
+    expect(normalizeExtractedJobSourceId(legacy).sourceJobId).toBe("4");
+    expect(
+      normalizeExtractedJobSourceId({
+        ...legacy,
+        sourceJobId: "provider-requisition-004",
+      }).sourceJobId,
+    ).toBe("provider-requisition-004");
   });
 
   test("leaves a complete title and a plain employer untouched", () => {

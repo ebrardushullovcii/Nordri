@@ -1147,6 +1147,12 @@ function createBenchmarkContext(input: {
           "Workspace snapshots are not available in the benchmark harness.",
         ),
       ),
+    readWorkspaceSnapshot: () =>
+      Promise.reject(
+        new Error(
+          "Workspace snapshots are not available in the benchmark harness.",
+        ),
+      ),
     getActiveCampaignId: () => Promise.resolve(null),
     resumeApplicationUserAction: () => Promise.resolve(undefined),
     continueDiscoveryForSource: () =>
@@ -1168,6 +1174,7 @@ function createBenchmarkContext(input: {
     closeRunBrowserSession: () => Promise.resolve(undefined),
     closeParkedBrowserTab: () => Promise.resolve(undefined),
     hasActiveBrowserWorkflow: () => false,
+    resumeActivityForExplicitStart: () => Promise.resolve(),
     updateJob: () => Promise.resolve(undefined),
   };
 }

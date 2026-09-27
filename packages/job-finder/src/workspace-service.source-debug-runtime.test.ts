@@ -538,7 +538,7 @@ describe("createJobFinderWorkspaceService", () => {
     ).toBe(true);
   });
 
-  test("skips late source-debug phases and AI final review after enough auth-limited draft evidence is proven", async () => {
+  test("runs replay and final review after a completed learning phase", async () => {
     const baseRuntime = createCatalogBrowserSessionRuntime({
       sessions: [],
       catalog: [],
@@ -649,15 +649,10 @@ describe("createJobFinderWorkspaceService", () => {
     ).at(-1);
 
     expect(phaseCalls).toEqual([
-      "access_auth_probe",
       "site_structure_mapping",
-      "search_filter_probe",
-      "job_detail_validation",
+      "replay_verification",
     ]);
     expect(snapshot.recentSourceDebugRuns[0]?.state).toBe("completed");
-    expect(snapshot.recentSourceDebugRuns[0]?.finalSummary).toContain(
-      "useful draft route",
-    );
     expect(latestArtifact?.status).toBe("draft");
     expect(latestRunId).toBeTruthy();
 
@@ -665,13 +660,13 @@ describe("createJobFinderWorkspaceService", () => {
       latestRunId!,
     );
 
-    expect(latestRun.run.timing?.finalReviewMs).toBeNull();
+    expect(latestRun.run.timing?.finalReviewMs).not.toBeNull();
     expect(latestRun.attempts.map((attempt) => attempt.phase)).toEqual(
       phaseCalls,
     );
   });
 
-  test("skips replay verification and AI final review after enough non-auth evidence is proven", async () => {
+  test("does not skip replay when the learning phase already has enough evidence", async () => {
     const baseRuntime = createCatalogBrowserSessionRuntime({
       sessions: [],
       catalog: [],
@@ -773,11 +768,8 @@ describe("createJobFinderWorkspaceService", () => {
     ).at(-1);
 
     expect(phaseCalls).toEqual([
-      "access_auth_probe",
       "site_structure_mapping",
-      "search_filter_probe",
-      "job_detail_validation",
-      "apply_path_validation",
+      "replay_verification",
     ]);
     expect(snapshot.recentSourceDebugRuns[0]?.state).toBe("completed");
     expect(latestArtifact?.status).toBe("draft");
@@ -787,7 +779,7 @@ describe("createJobFinderWorkspaceService", () => {
       latestRunId!,
     );
 
-    expect(latestRun.run.timing?.finalReviewMs).toBeNull();
+    expect(latestRun.run.timing?.finalReviewMs).not.toBeNull();
     expect(latestRun.attempts.map((attempt) => attempt.phase)).toEqual(
       phaseCalls,
     );
@@ -994,7 +986,7 @@ describe("createJobFinderWorkspaceService", () => {
       await repository.listSourceInstructionArtifacts()
     ).at(-1);
 
-    expect(snapshot.recentSourceDebugRuns[0]?.state).toBe("completed");
+    expect(snapshot.recentSourceDebugRuns[0]?.state).toBe("failed");
     expect(latestArtifact?.status).toBe("draft");
     expect(latestRunId).toBeTruthy();
 
@@ -1003,11 +995,7 @@ describe("createJobFinderWorkspaceService", () => {
     );
 
     expect(phaseCalls).toEqual([
-      "access_auth_probe",
       "site_structure_mapping",
-      "search_filter_probe",
-      "job_detail_validation",
-      "apply_path_validation",
       "replay_verification",
     ]);
     expect(latestRun.run.timing?.finalReviewMs).toBeNull();

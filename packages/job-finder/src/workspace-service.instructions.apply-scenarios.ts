@@ -102,11 +102,11 @@ describe("createJobFinderWorkspaceService", () => {
 
     await workspaceService.runSourceDebug("target_linkedin_default");
 
-    expect(capturedPhaseInputs.get("Search Filter Probe")).toEqual({
+    expect(capturedPhaseInputs.get("Site Structure Mapping")).toEqual({
       startingUrls: [
+        "https://www.linkedin.com/jobs/",
         "https://www.linkedin.com/jobs/?keywords=software&location=Remote",
         "https://www.linkedin.com/jobs/search/?keywords=frontend&location=kosovo",
-        "https://www.linkedin.com/jobs/",
       ],
       maxSteps: 60,
     });
@@ -209,14 +209,7 @@ describe("createJobFinderWorkspaceService", () => {
       startingUrls: [
         "https://www.linkedin.com/jobs/collections/recommended/",
         "https://www.linkedin.com/jobs/",
-      ],
-      maxSteps: 60,
-    });
-    expect(capturedPhaseInputs.get("Search Filter Probe")).toEqual({
-      startingUrls: [
         "https://www.linkedin.com/jobs/?keywords=software&location=Remote",
-        "https://www.linkedin.com/jobs/",
-        "https://www.linkedin.com/jobs/collections/recommended/",
       ],
       maxSteps: 60,
     });
@@ -312,12 +305,12 @@ describe("createJobFinderWorkspaceService", () => {
 
     await workspaceService.runSourceDebug("target_linkedin_default");
 
-    expect(capturedPhaseInputs.get("Search Filter Probe")).toEqual({
+    expect(capturedPhaseInputs.get("Site Structure Mapping")).toEqual({
       startingUrls: [
+        "https://www.linkedin.com/jobs/collections/recommended/",
+        "https://www.linkedin.com/jobs/",
         "https://www.linkedin.com/jobs/?keywords=software&location=Remote",
         "https://www.linkedin.com/jobs/search/?keywords=React+Next.js+Developer&location=Pristina%2C+Kosovo",
-        "https://www.linkedin.com/jobs/",
-        "https://www.linkedin.com/jobs/collections/recommended/",
       ],
       maxSteps: 60,
     });
@@ -425,11 +418,11 @@ describe("createJobFinderWorkspaceService", () => {
 
     await workspaceService.runSourceDebug("target_example_query_detail");
 
-    expect(capturedPhaseInputs.get("Search Filter Probe")).toEqual({
+    expect(capturedPhaseInputs.get("Site Structure Mapping")).toEqual({
       startingUrls: [
-        "https://example.com/careers/search?team=product",
         "https://example.com/careers/open-roles/",
         "https://example.com/careers/",
+        "https://example.com/careers/search?team=product",
       ],
       maxSteps: 60,
     });

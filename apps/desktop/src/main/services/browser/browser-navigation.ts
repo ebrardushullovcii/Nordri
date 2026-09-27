@@ -27,6 +27,25 @@ export function isBrowserNavigationAllowed(value: string): boolean {
   }
 }
 
+/**
+ * Opening a URL already held by the browser must reveal that tab without
+ * reloading it. Application forms can contain prepared values and file
+ * attachments that a reload or duplicate tab would lose.
+ */
+export function isSameBrowserNavigation(
+  currentUrl: string,
+  requestedUrl: string,
+): boolean {
+  try {
+    return (
+      normalizeBrowserNavigation(currentUrl) ===
+      normalizeBrowserNavigation(requestedUrl)
+    );
+  } catch {
+    return false;
+  }
+}
+
 /** Query strings and fragments can contain OAuth codes. They never enter UI state. */
 export function browserDisplayUrl(value: string): string {
   if (!value || value === "about:blank") return "about:blank";

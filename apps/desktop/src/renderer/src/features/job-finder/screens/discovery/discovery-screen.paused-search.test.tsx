@@ -158,7 +158,7 @@ describe("DiscoveryScreen paused search availability", () => {
 
     const banner = screen.getByTestId("discovery-paused-banner");
     expect(banner.getAttribute("role")).toBe("status");
-    expect(banner.textContent).toMatch(/search paused/i);
+    expect(banner.textContent).toMatch(/paused/i);
 
     const searchButton = screen.getByRole("button", { name: "Search now" });
     expect(searchButton.hasAttribute("disabled")).toBe(true);

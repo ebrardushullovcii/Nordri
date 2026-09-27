@@ -95,6 +95,22 @@ describe("ResumeSectionHeaderActions", () => {
     expect(screen.getByText("Manual order")).toBeTruthy();
   });
 
+  it("requires unlocking before hiding a section", () => {
+    const { onPatch } = renderHeader(buildSection({ locked: true }));
+    const hide = screen.getByRole("button", { name: "Hide section" });
+    expect(hide.hasAttribute("disabled")).toBe(true);
+    expect(hide.getAttribute("title")).toBe(
+      "Unlock this section before hiding it",
+    );
+    fireEvent.click(hide);
+    expect(onPatch).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Unlock section" }));
+    expect(onPatch).toHaveBeenCalledWith(
+      expect.objectContaining({ operation: "set_lock", newLocked: false }),
+      "Unlocked section",
+    );
+  });
+
   it("keeps every once-per-section action visibly labelled with a tooltip", () => {
     renderHeader(buildSection({ entryOrderMode: "manual" }));
 

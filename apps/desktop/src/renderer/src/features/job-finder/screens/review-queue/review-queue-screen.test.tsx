@@ -10,8 +10,10 @@ import {
 } from "@testing-library/react";
 import { ApplicationRecordSchema } from "@unemployed/contracts";
 import type {
+  ApplicationAutomationMode,
   ApplicationRecord,
   BrowserSessionState,
+  GlobalDailyApplicationPreparationCapacity,
   ResumeSourceDocument,
   ReviewQueueItem,
   SavedJob,
@@ -91,7 +93,9 @@ function createOriginalResume(): ResumeSourceDocument {
 }
 
 function renderScreen(props: {
+  applicationAutomationMode?: ApplicationAutomationMode;
   applicationRecords?: readonly ApplicationRecord[];
+  dailyCapacity?: GlobalDailyApplicationPreparationCapacity;
   resumeOperationStarts?: Readonly<Record<string, number>>;
   browserSession?: BrowserSessionState;
   isJobPending?: (jobId: string) => boolean;
@@ -104,6 +108,7 @@ function renderScreen(props: {
   onPrepareTailoredDrafts?: () => void;
   onStartAutoApplyQueue?: (
     jobIds: string[],
+    applicationAutomationMode?: ApplicationAutomationMode,
   ) => Promise<JobFinderAutoApplyQueueStartOutcome>;
   onStopTailoredDraftPreparation?: () => void;
   onSelectItem?: (jobId: string) => void;
@@ -115,6 +120,9 @@ function renderScreen(props: {
   return render(
     <MemoryRouter>
       <ReviewQueueScreen
+        applicationAutomationMode={
+          props.applicationAutomationMode ?? "prepare_only"
+        }
         resumeOperationStarts={props.resumeOperationStarts}
         applicationRecords={props.applicationRecords ?? []}
         actionState={{ message: null }}
@@ -123,10 +131,9 @@ function renderScreen(props: {
         draftPreparation={
           props.draftPreparation ?? createIdleDraftPreparation()
         }
-        globalDailyApplicationPreparationCapacity={null}
+        globalDailyApplicationPreparationCapacity={props.dailyCapacity ?? null}
         isApplyPending={false}
         isJobPending={props.isJobPending ?? (() => false)}
-        isResumeStrategyPending={() => false}
         onPrepareTailoredDrafts={props.onPrepareTailoredDrafts ?? vi.fn()}
         onStopTailoredDraftPreparation={
           props.onStopTailoredDraftPreparation ?? vi.fn()
@@ -153,25 +160,17 @@ function renderScreen(props: {
         onOpenBrowserSession={vi.fn()}
         onOpenJobDetails={vi.fn()}
         onOpenProfile={vi.fn()}
-        onRecommendResumeStrategy={vi.fn()}
         onRemoveReviewJob={vi.fn()}
-        onSelectResumeStrategy={vi.fn()}
         onSetJobResumeApplicationMode={vi.fn()}
         onSelectItem={props.onSelectItem ?? vi.fn()}
         originalResume={createOriginalResume()}
         queue={props.queue}
-        resumeStrategies={[]}
-        resumeStrategySelections={[]}
         selectedAsset={props.selectedAsset ?? null}
         selectedItem={props.selectedItem ?? null}
         selectedJob={props.selectedJob ?? null}
       />
     </MemoryRouter>,
   );
-}
-
-function openBatchActions(): void {
-  fireEvent.click(screen.getByText("Batch actions"));
 }
 
 describe("ReviewQueueScreen tailored draft preparation (controlled)", () => {
@@ -256,18 +255,14 @@ describe("ReviewQueueScreen tailored draft preparation (controlled)", () => {
 
     renderScreen({ queue: [selectedItem], selectedItem });
 
-    // A ready tailored draft is queue-ready now: `isQueueStageReady` accepts
-    // "draft" and "needs_review", because approving happens in the resume
-    // workspace and is no longer a gate on entering preparation. The point
-    // this test guards is unchanged — the row and the detail header must name
-    // the same canonical state, never two names for one job.
-    // Once on the selected row (rows keep their badge when selected) and once
-    // in the detail header.
-    expect(screen.getAllByText("Ready to prepare").length).toBe(2);
-    expect(screen.queryByText("Needs approval")).toBeNull();
+    // The row and the detail header must name the same canonical state,
+    // never two names for one job. Once on the selected row (rows keep their
+    // badge when selected) and once in the detail header.
+    expect(screen.getAllByText("Ready to apply").length).toBe(2);
+    expect(screen.queryByText("Review resume")).toBeNull();
   });
 
-  it("delegates batch start to the page controller without owning the run", () => {
+  it("delegates the create-all run to the page controller without owning it", () => {
     const onPrepareTailoredDrafts = vi.fn();
     const onGenerateResume = vi
       .fn<
@@ -284,12 +279,9 @@ describe("ReviewQueueScreen tailored draft preparation (controlled)", () => {
         createEligibleItem("job_3"),
       ],
     });
-    openBatchActions();
 
     fireEvent.click(
-      screen.getByRole("button", {
-        name: "Prepare up to 10 drafts (review required)",
-      }),
+      screen.getByRole("button", { name: "Create 3 missing resumes" }),
     );
 
     expect(onPrepareTailoredDrafts).toHaveBeenCalledTimes(1);
@@ -316,12 +308,11 @@ describe("ReviewQueueScreen tailored draft preparation (controlled)", () => {
         createEligibleItem("job_3"),
       ],
     });
-    openBatchActions();
 
-    expect(screen.getByText(/Writing resume 2 of 3/)).toBeTruthy();
+    expect(screen.getByText(/Writing resumes · 1 of 3 finished/)).toBeTruthy();
 
     fireEvent.click(
-      screen.getByRole("button", { name: "Stop after current draft" }),
+      screen.getByRole("button", { name: "Stop new resumes" }),
     );
 
     expect(onStopTailoredDraftPreparation).toHaveBeenCalledTimes(1);
@@ -344,37 +335,125 @@ describe("ReviewQueueScreen tailored draft preparation (controlled)", () => {
         createEligibleItem("job_3"),
       ],
     });
-    openBatchActions();
 
-    expect(screen.getByText(/Prepared 3 tailored drafts/)).toBeTruthy();
+    expect(screen.getByText(/Wrote 3 resumes/)).toBeTruthy();
   });
 
-  it("keeps the ten-job cap affordance driven by the queue and defers the run", () => {
+  it("caps one create-all run at ten and says how many are left", () => {
     const onPrepareTailoredDrafts = vi.fn();
     const queue = Array.from({ length: 12 }, (_, index) =>
       createEligibleItem(`job_${index}`),
     );
 
     renderScreen({ onPrepareTailoredDrafts, queue });
-    openBatchActions();
-
-    expect(
-      screen.getByRole("button", {
-        name: "Prepare up to 10 drafts (review required)",
-      }),
-    ).toBeTruthy();
-    expect(
-      screen.getByText(/only the next 10 eligible jobs run now/i),
-    ).toBeTruthy();
-    expect(screen.getByText(/2 more remain/)).toBeTruthy();
 
     fireEvent.click(
-      screen.getByRole("button", {
-        name: "Prepare up to 10 drafts (review required)",
-      }),
+      screen.getByRole("button", { name: "Create 10 missing resumes" }),
     );
+    expect(screen.getByText(/2 more after that/)).toBeTruthy();
     expect(onPrepareTailoredDrafts).toHaveBeenCalledTimes(1);
   });
+
+  it.each([0, 1, 2])(
+    "keeps a ready batch within %i remaining daily slots",
+    async (remaining) => {
+      const onStartAutoApplyQueue = vi
+        .fn<
+          (jobIds: string[]) => Promise<JobFinderAutoApplyQueueStartOutcome>
+        >()
+        .mockResolvedValue({ status: "confirmed" });
+      renderScreen({
+        dailyCapacity: {
+          limit: 2,
+          used: 2 - remaining,
+          legacyUncertain: 0,
+          remaining,
+          localDate: "2026-09-26",
+          resetsAt: "2026-09-27T00:00:00.000Z",
+        },
+        onStartAutoApplyQueue,
+        queue: ["job_a", "job_b"].map((jobId) => ({
+          ...createEligibleItem(jobId),
+          assetStatus: "ready",
+          resumeAssetId: `asset_${jobId}`,
+          resumeReview: { status: "needs_review" },
+        })),
+      });
+
+      if (remaining === 0) {
+        expect(screen.queryByTestId("apply-all-ready")).toBeNull();
+        expect(onStartAutoApplyQueue).not.toHaveBeenCalled();
+        return;
+      }
+      await act(async () => {
+        fireEvent.click(
+          screen.getByRole("button", {
+            name:
+              remaining === 1
+                ? "Apply to the 1 ready job"
+                : "Apply to all 2 ready jobs",
+          }),
+        );
+        await Promise.resolve();
+      });
+      expect(onStartAutoApplyQueue).toHaveBeenCalledWith(
+        ["job_a", "job_b"].slice(0, remaining),
+        "prepare_only",
+      );
+    },
+  );
+
+  it.each([
+    "prepare_only",
+    "confirm_before_submit",
+    "autonomous_submit",
+  ] as const)(
+    "applies to every ready job in one press with %s, leaving jobs already in Applications alone",
+    async (applicationAutomationMode) => {
+      const onStartAutoApplyQueue = vi
+        .fn<
+          (jobIds: string[]) => Promise<JobFinderAutoApplyQueueStartOutcome>
+        >()
+        .mockResolvedValue({ status: "confirmed" });
+      const ready = (jobId: string): ReviewQueueItem => ({
+        ...createEligibleItem(jobId),
+        assetStatus: "ready",
+        resumeAssetId: `asset_${jobId}`,
+        resumeReview: { status: "needs_review" },
+      });
+
+      renderScreen({
+        applicationAutomationMode,
+        applicationRecords: [
+          ApplicationRecordSchema.parse({
+            id: "application_done",
+            jobId: "job_done",
+            title: "Role job_done",
+            company: "Acme",
+            status: "ready_for_review",
+            lastAttemptState: null,
+            lastActionLabel: "Prepared",
+            nextActionLabel: "Send",
+            lastUpdatedAt: "2026-08-30T10:00:00.000Z",
+          }),
+        ],
+        onStartAutoApplyQueue,
+        queue: [ready("job_a"), ready("job_b"), ready("job_done")],
+      });
+
+      await act(async () => {
+        fireEvent.click(
+          screen.getByRole("button", { name: "Apply to all 2 ready jobs" }),
+        );
+        await Promise.resolve();
+      });
+
+      expect(onStartAutoApplyQueue).toHaveBeenCalledWith(
+        ["job_a", "job_b"],
+        applicationAutomationMode,
+      );
+    },
+  );
 });
 
 describe("ReviewQueueScreen single-column workspace", () => {
@@ -556,313 +635,6 @@ describe("ReviewQueueScreen locked pane scroll regions", () => {
   });
 });
 
-describe("ReviewQueueScreen batch selection persistence", () => {
-  function batchSelectionKey(campaignId: string): string {
-    return `unemployed.job-finder.review-queue.batch-selection.v1.${campaignId}`;
-  }
-
-  function seedStoredSelection(
-    campaignId: string,
-    jobIds: readonly string[],
-  ): void {
-    window.localStorage.setItem(
-      batchSelectionKey(campaignId),
-      JSON.stringify(jobIds),
-    );
-  }
-
-  function readStoredSelection(campaignId: string): unknown {
-    return JSON.parse(
-      window.localStorage.getItem(batchSelectionKey(campaignId)) ?? "null",
-    );
-  }
-
-  function createReadyItem(jobId: string): ReviewQueueItem {
-    return {
-      ...createEligibleItem(jobId),
-      assetStatus: "ready",
-      progressPercent: 100,
-      resumeAssetId: `asset_${jobId}`,
-      resumeReview: {
-        status: "approved",
-        approvedAt: "2026-08-20T12:00:00.000Z",
-        approvedExportId: `export_${jobId}`,
-        approvedFormat: "pdf",
-        approvedFilePath: `/tmp/${jobId}.pdf`,
-      },
-    };
-  }
-
-  function getCheckedBatchBoxes(): HTMLElement[] {
-    return screen
-      .getAllByRole("checkbox", { name: "Select for batch" })
-      .filter((box) => box.getAttribute("aria-checked") === "true");
-  }
-
-  it("restores the curated ready selection after a remount and reopens batch actions", () => {
-    seedStoredSelection("campaign_1", ["job_a", "job_b"]);
-
-    renderScreen({
-      queue: [createReadyItem("job_a"), createReadyItem("job_b")],
-    });
-
-    // The persisted curation reopens the batch panel without a manual click.
-    expect(screen.getByText("2 selected for batch preparation")).toBeTruthy();
-    expect(getCheckedBatchBoxes()).toHaveLength(2);
-    expect(readStoredSelection("campaign_1")).toEqual(["job_a", "job_b"]);
-  });
-
-  it("drops persisted ids whose jobs disappeared or lost batch eligibility", () => {
-    seedStoredSelection("campaign_1", ["job_ready", "job_stale", "job_gone"]);
-
-    renderScreen({
-      queue: [createReadyItem("job_ready"), createEligibleItem("job_stale")],
-    });
-
-    expect(screen.getByText("1 selected for batch preparation")).toBeTruthy();
-    expect(getCheckedBatchBoxes()).toHaveLength(1);
-    // The pruned curation is mirrored back to storage.
-    expect(readStoredSelection("campaign_1")).toEqual(["job_ready"]);
-  });
-
-  it("caps a restored selection at the ten-job batch limit", () => {
-    const storedIds = Array.from({ length: 12 }, (_, index) => `job_${index}`);
-    seedStoredSelection("campaign_1", storedIds);
-
-    renderScreen({ queue: storedIds.map(createReadyItem) });
-
-    expect(screen.getByText("10 selected for batch preparation")).toBeTruthy();
-    expect(getCheckedBatchBoxes()).toHaveLength(10);
-    expect(readStoredSelection("campaign_1")).toEqual(storedIds.slice(0, 10));
-  });
-
-  it("keeps curated selections isolated per active campaign", () => {
-    seedStoredSelection("campaign_2", ["job_shared"]);
-
-    renderScreen({
-      campaignId: "campaign_1",
-      queue: [createReadyItem("job_shared"), createReadyItem("job_other")],
-    });
-
-    // Another campaign's curation never leaks into this one.
-    expect(screen.queryByText(/selected for batch preparation/)).toBeNull();
-
-    cleanup();
-    renderScreen({
-      campaignId: "campaign_2",
-      queue: [createReadyItem("job_shared"), createReadyItem("job_other")],
-    });
-
-    expect(screen.getByText("1 selected for batch preparation")).toBeTruthy();
-    // Viewing the empty campaign did not clobber campaign_2's curation.
-    expect(readStoredSelection("campaign_2")).toEqual(["job_shared"]);
-  });
-
-  it("clears the persisted curation when the user explicitly clears it", () => {
-    const queue = [createReadyItem("job_a"), createReadyItem("job_b")];
-
-    renderScreen({ queue });
-    openBatchActions();
-    fireEvent.click(
-      screen.getAllByRole("checkbox", { name: "Select for batch" })[0]!,
-    );
-    fireEvent.click(
-      screen.getAllByRole("checkbox", { name: "Select for batch" })[1]!,
-    );
-    expect(screen.getByText("2 selected for batch preparation")).toBeTruthy();
-
-    fireEvent.click(screen.getByRole("button", { name: "Clear selection" }));
-
-    expect(screen.getByText("0 selected for batch preparation")).toBeTruthy();
-    expect(readStoredSelection("campaign_1")).toEqual([]);
-
-    cleanup();
-    // A remount does not resurrect an explicitly cleared selection.
-    renderScreen({ queue });
-
-    expect(screen.queryByText(/selected for batch preparation/)).toBeNull();
-  });
-
-  it("removes staged jobs from the curation when queuing selected applications", async () => {
-    const onStartAutoApplyQueue = vi
-      .fn<
-        NonNullable<Parameters<typeof renderScreen>[0]["onStartAutoApplyQueue"]>
-      >()
-      .mockResolvedValue({ status: "confirmed" });
-    seedStoredSelection("campaign_1", ["job_stage", "job_keep"]);
-    const selectedItem = createReadyItem("job_stage");
-
-    renderScreen({
-      onStartAutoApplyQueue,
-      queue: [createReadyItem("job_stage"), createReadyItem("job_keep")],
-      selectedItem,
-      selectedJob: {
-        id: selectedItem.jobId,
-        title: selectedItem.title,
-        company: selectedItem.company,
-        location: selectedItem.location,
-        summary: "Build dependable hiring tooling.",
-        description: "Build dependable hiring tooling.",
-        matchAssessment: {
-          score: 82,
-          reasons: ["Relevant experience"],
-          gaps: [],
-          recommendation: "review_before_applying",
-          recommendationRationale: null,
-          requirements: [],
-        },
-      } as unknown as SavedJob,
-    });
-    // The restored curation keeps batch actions open; the workspace shows the
-    // staged run affordance for the selected ready job.
-    fireEvent.click(
-      screen.getByRole("button", { name: "Prepare selected jobs (2)" }),
-    );
-
-    expect(onStartAutoApplyQueue).toHaveBeenCalledTimes(1);
-    expect(onStartAutoApplyQueue).toHaveBeenCalledWith([
-      "job_stage",
-      "job_keep",
-    ]);
-    // Staging consumes its curation; nothing implies the run resumes here.
-    await vi.waitFor(() =>
-      expect(screen.getByText("0 selected for batch preparation")).toBeTruthy(),
-    );
-    expect(readStoredSelection("campaign_1")).toEqual([]);
-  });
-
-  it("preserves the staged curation when the daily capacity refuses the queue start", async () => {
-    const onStartAutoApplyQueue = vi
-      .fn<
-        NonNullable<Parameters<typeof renderScreen>[0]["onStartAutoApplyQueue"]>
-      >()
-      .mockResolvedValue({
-        status: "refused",
-        reason: "daily_capacity_exhausted",
-        message:
-          "Today's application preparation limit is reached: 20 of 20 used today. New preparations reset at local midnight (4:00 AM).",
-      });
-    seedStoredSelection("campaign_1", ["job_stage", "job_keep"]);
-    const selectedItem = createReadyItem("job_stage");
-
-    renderScreen({
-      onStartAutoApplyQueue,
-      queue: [createReadyItem("job_stage"), createReadyItem("job_keep")],
-      selectedItem,
-      selectedJob: {
-        id: selectedItem.jobId,
-        title: selectedItem.title,
-        company: selectedItem.company,
-        location: selectedItem.location,
-        summary: "Build dependable hiring tooling.",
-        description: "Build dependable hiring tooling.",
-        matchAssessment: {
-          score: 82,
-          reasons: ["Relevant experience"],
-          gaps: [],
-          recommendation: "review_before_applying",
-          recommendationRationale: null,
-          requirements: [],
-        },
-      } as unknown as SavedJob,
-    });
-    fireEvent.click(
-      screen.getByRole("button", { name: "Prepare selected jobs (2)" }),
-    );
-
-    await vi.waitFor(() =>
-      expect(onStartAutoApplyQueue).toHaveBeenCalledTimes(1),
-    );
-    // The refusal must not consume curation: exact staged ids stay selected.
-    expect(screen.getByText("2 selected for batch preparation")).toBeTruthy();
-    expect(readStoredSelection("campaign_1")).toEqual([
-      "job_stage",
-      "job_keep",
-    ]);
-  });
-
-  it("preserves the staged curation when staging reports a handled failure", async () => {
-    const onStartAutoApplyQueue = vi
-      .fn<
-        NonNullable<Parameters<typeof renderScreen>[0]["onStartAutoApplyQueue"]>
-      >()
-      .mockResolvedValue({ status: "failed", message: null });
-    seedStoredSelection("campaign_1", ["job_stage"]);
-    const selectedItem = createReadyItem("job_stage");
-
-    renderScreen({
-      onStartAutoApplyQueue,
-      queue: [createReadyItem("job_stage"), createReadyItem("job_keep")],
-      selectedItem,
-      selectedJob: {
-        id: selectedItem.jobId,
-        title: selectedItem.title,
-        company: selectedItem.company,
-        location: selectedItem.location,
-        summary: "Build dependable hiring tooling.",
-        description: "Build dependable hiring tooling.",
-        matchAssessment: {
-          score: 82,
-          reasons: ["Relevant experience"],
-          gaps: [],
-          recommendation: "review_before_applying",
-          recommendationRationale: null,
-          requirements: [],
-        },
-      } as unknown as SavedJob,
-    });
-    fireEvent.click(
-      screen.getByRole("button", { name: "Prepare selected jobs (1)" }),
-    );
-
-    await vi.waitFor(() =>
-      expect(onStartAutoApplyQueue).toHaveBeenCalledTimes(1),
-    );
-    expect(screen.getByText("1 selected for batch preparation")).toBeTruthy();
-    expect(readStoredSelection("campaign_1")).toEqual(["job_stage"]);
-  });
-
-  it("preserves the staged curation on an unknown ending instead of guessing", async () => {
-    const onStartAutoApplyQueue = vi
-      .fn<
-        NonNullable<Parameters<typeof renderScreen>[0]["onStartAutoApplyQueue"]>
-      >()
-      .mockResolvedValue({ status: "unknown" });
-    seedStoredSelection("campaign_1", ["job_stage"]);
-    const selectedItem = createReadyItem("job_stage");
-
-    renderScreen({
-      onStartAutoApplyQueue,
-      queue: [createReadyItem("job_stage"), createReadyItem("job_stage_two")],
-      selectedItem,
-      selectedJob: {
-        id: selectedItem.jobId,
-        title: selectedItem.title,
-        company: selectedItem.company,
-        location: selectedItem.location,
-        summary: "Build dependable hiring tooling.",
-        description: "Build dependable hiring tooling.",
-        matchAssessment: {
-          score: 82,
-          reasons: ["Relevant experience"],
-          gaps: [],
-          recommendation: "review_before_applying",
-          recommendationRationale: null,
-          requirements: [],
-        },
-      } as unknown as SavedJob,
-    });
-    fireEvent.click(
-      screen.getByRole("button", { name: "Prepare selected jobs (1)" }),
-    );
-
-    await vi.waitFor(() =>
-      expect(onStartAutoApplyQueue).toHaveBeenCalledTimes(1),
-    );
-    expect(screen.getByText("1 selected for batch preparation")).toBeTruthy();
-  });
-});
-
 describe("ReviewQueueScreen job details honesty", () => {
   function buildJob(input: {
     jobId: string;
@@ -1033,7 +805,7 @@ describe("ReviewQueueScreen job details honesty", () => {
 
 describe("ReviewQueueScreen readiness agreement", () => {
   it("badges an already-prepared job the same way in the list and the header", () => {
-    // The panel saw "RESUME NEEDS REVIEW" and "READY TO PREPARE" for one job
+    // The panel saw "RESUME NEEDS REVIEW" and "READY TO APPLY" for one job
     // seconds apart: the row read the prepared-application set and the
     // workspace header computed its own verdict without it.
     const item: ReviewQueueItem = {
@@ -1066,8 +838,8 @@ describe("ReviewQueueScreen readiness agreement", () => {
       selectedItem: item,
     });
 
-    const badges = screen.getAllByText("Application prepared");
+    const badges = screen.getAllByText("In Applications");
     expect(badges.length).toBeGreaterThanOrEqual(2);
-    expect(screen.queryByText("Ready to prepare")).toBeNull();
+    expect(screen.queryByText("Ready to apply")).toBeNull();
   });
 });

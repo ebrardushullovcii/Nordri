@@ -117,6 +117,12 @@ export type BrowserSourceAccessProbeSignal = z.infer<
 export const BrowserSourceAccessProbeInputSchema = z
   .object({
     expectedOrigin: UserActionBrowserOriginSchema,
+    /**
+     * The host's id for the exact tab parked for this request. When given,
+     * only that tab is read; another tab on the same origin never stands in
+     * for it.
+     */
+    tabId: z.string().trim().min(1).max(200).optional(),
   })
   .strict();
 export type BrowserSourceAccessProbeInput = z.infer<
@@ -414,6 +420,22 @@ export type ConfirmUserActionDoneCommand = z.infer<
   typeof ConfirmUserActionDoneCommandSchema
 >;
 
+/**
+ * One-use credentials the person explicitly supplied for this exact sign-in
+ * step. The command crosses the typed bridge, but its secret fields are never
+ * copied into a user-action request, event, answer record, or repository.
+ */
+export const SubmitTaskLocalCredentialsCommandSchema =
+  UserActionCommandBaseSchema.extend({
+    action: z.literal("submit_task_local_credentials"),
+    identifier: z.string().trim().min(1).max(320),
+    password: z.string().min(1).max(4_096),
+    taskLocalUseAuthorized: z.literal(true),
+  });
+export type SubmitTaskLocalCredentialsCommand = z.infer<
+  typeof SubmitTaskLocalCredentialsCommandSchema
+>;
+
 export const userActionAccountPathValues = [
   "use_existing_account",
   "create_account_in_browser",
@@ -435,6 +457,21 @@ export const SubmitUserActionManualAnswerCommandSchema =
   UserActionCommandBaseSchema.extend({
     action: z.literal("submit_manual_answer"),
     answer: z.string().trim().min(1).max(4_000),
+    /**
+     * Every answer of a multi-question step in one command, each tied to the
+     * question it answers. `answer` alone still serves a single-question
+     * step. One command means one revision, one rerun, and no answer lost
+     * between calls.
+     */
+    answers: z
+      .array(
+        z.object({
+          questionId: z.string().trim().min(1),
+          answer: z.string().trim().min(1).max(4_000),
+        }),
+      )
+      .max(50)
+      .optional(),
     saveForFuture: z.boolean().default(false),
   });
 export type SubmitUserActionManualAnswerCommand = z.infer<
@@ -478,6 +515,7 @@ export type CancelUserActionCommand = z.infer<
 export const UserActionCommandSchema = z.discriminatedUnion("action", [
   OpenUserActionPageCommandSchema,
   ConfirmUserActionDoneCommandSchema,
+  SubmitTaskLocalCredentialsCommandSchema,
   ChooseUserActionAccountPathCommandSchema,
   SubmitUserActionManualAnswerCommandSchema,
   RecordUserActionLegalDecisionCommandSchema,
@@ -520,6 +558,7 @@ export const userActionEventOperationValues = [
   "created",
   "open_page",
   "confirm_done",
+  "submit_task_local_credentials",
   "choose_account_path",
   "submit_manual_answer",
   "record_legal_decision",

@@ -1,6 +1,6 @@
 import { formatElapsedMinutes } from "../applications/applications-recovery-state";
-import { CheckCircle2, CircleDashed, TriangleAlert } from "lucide-react";
 import type {
+  ApplicationAutomationMode,
   BrowserSessionState,
   ReviewQueueItem,
   SavedJob,
@@ -8,24 +8,16 @@ import type {
 } from "@unemployed/contracts";
 import { JOB_FINDER_BROWSER_NAME } from "../../lib/job-finder-browser-handoff-copy";
 import {
+  AI_UNAVAILABLE_RESUME_RESULT_MESSAGE,
   getApplyReadinessStatus,
   hasResumeGenerationFailure,
-  isQueueStageReady,
   isResumeGenerationInProgress,
+  countResumeLinesToDecide,
+  needsPersonResumeReview,
   needsResumeGeneration,
   type ApplySupportState,
 } from "./review-queue-status";
 
-export interface ApplyChecklistItem {
-  description: string;
-  label: string;
-  state: "attention" | "complete" | "in_progress" | "blocked";
-}
-export interface ApplicationReadinessFact {
-  detail: string;
-  label: string;
-  value: string;
-}
 export type PrimaryApplicationRecoveryKind =
   | "open_browser"
   | "open_job_details"
@@ -43,7 +35,10 @@ const INTERNAL_CODE_PARENTHETICAL = /\s*\((?=[^)]*[_:])[a-z0-9_:.\-\s,]+\)/gi;
 
 /** The blocker sentence as a person should read it: no internal codes. */
 export function stripInternalCodeParenthetical(value: string): string {
-  return value.replace(INTERNAL_CODE_PARENTHETICAL, "").replace(/\s{2,}/g, " ").trim();
+  return value
+    .replace(INTERNAL_CODE_PARENTHETICAL, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
 }
 export interface PrimaryApplicationRecovery {
   kind: PrimaryApplicationRecoveryKind;
@@ -52,7 +47,7 @@ export interface PrimaryApplicationRecovery {
 export interface PrimaryApplicationAction {
   blocker: string | null;
   /**
-   * `info` marks a blocker that is an ordinary next step (approve the
+   * `info` marks a blocker that is an ordinary next step (review the
    * resume) rather than a problem; the panel renders it as status, not as a
    * destructive alert. Absent means the blocker needs attention.
    */
@@ -60,6 +55,7 @@ export interface PrimaryApplicationAction {
   enabled: boolean;
   kind:
     | "approve_resume"
+    | "approve_and_apply"
     | "blocked"
     | "generate_resume"
     | "open_safeguards"
@@ -67,188 +63,6 @@ export interface PrimaryApplicationAction {
     | "waiting";
   label: string;
   recovery: PrimaryApplicationRecovery | null;
-}
-function getFileName(filePath: string): string {
-  return filePath.split(/[\\/]/).filter(Boolean).at(-1) ?? filePath;
-}
-function getDestinationLabel(selectedJob: SavedJob): string {
-  const destinationUrl = selectedJob.applicationUrl ?? selectedJob.canonicalUrl;
-  try {
-    return new URL(destinationUrl).hostname.replace(/^www\./, "");
-  } catch {
-    return selectedJob.atsProvider ?? selectedJob.company;
-  }
-}
-function getSafeDestinationUrl(selectedJob: SavedJob): string {
-  const destinationUrl = selectedJob.applicationUrl ?? selectedJob.canonicalUrl;
-  try {
-    const parsedUrl = new URL(destinationUrl);
-    return `${parsedUrl.origin}${parsedUrl.pathname}`;
-  } catch {
-    return getDestinationLabel(selectedJob);
-  }
-}
-function getResumeFact(
-  selectedItem: ReviewQueueItem,
-  selectedAsset: TailoredAsset | null,
-): Pick<ApplicationReadinessFact, "detail" | "value"> {
-  if (selectedItem.resumeReview.status === "original_resume") {
-    return {
-      value: selectedItem.resumeReview.fileName,
-      detail:
-        "Original resume selected. Job Finder will attach this imported file unchanged.",
-    };
-  }
-  if (selectedItem.resumeReview.status === "approved") {
-    return {
-      value: getFileName(selectedItem.resumeReview.approvedFilePath),
-      detail: "Approved tailored PDF selected for this job.",
-    };
-  }
-  return {
-    value: selectedAsset?.label ?? "No approved file",
-    detail: "Approve an exact resume file before preparation can start.",
-  };
-}
-function getAccountExpectation(
-  selectedJob: SavedJob,
-  browserSession: BrowserSessionState,
-): Pick<ApplicationReadinessFact, "detail" | "value"> {
-  if (browserSession.status === "login_required") {
-    return {
-      value: "Sign-in required now",
-      detail: `Credentials stay in ${JOB_FINDER_BROWSER_NAME}. Job Finder waits for you to confirm when sign-in is complete.`,
-    };
-  }
-  if (selectedJob.screeningHints?.requiresConsentInterrupt === true) {
-    const value =
-      selectedJob.screeningHints?.requiresConsentInterruptKind === "signup"
-        ? "Sign-up may be required"
-        : selectedJob.screeningHints?.requiresConsentInterruptKind ===
-            "existing_account_decision"
-          ? "Account choice likely"
-          : "Manual verification likely";
-    return {
-      value,
-      detail:
-        "Job Finder will pause for you and will not create an account or handle a security challenge.",
-    };
-  }
-  return {
-    value: "Not confirmed yet",
-    detail:
-      "The live application may still request sign-in, an account choice, or manual verification.",
-  };
-}
-/** Labels kept visible when the job is already ready to prepare. */
-export const READY_APPLICATION_READINESS_PRIMARY_LABELS = [
-  "Resume file",
-  "Destination",
-  "Final submit",
-] as const;
-
-export function getApplicationReadinessFacts(input: {
-  browserSession: BrowserSessionState;
-  selectedAsset: TailoredAsset | null;
-  selectedItem: ReviewQueueItem;
-  selectedJob: SavedJob;
-}): ApplicationReadinessFact[] {
-  const { browserSession, selectedAsset, selectedItem, selectedJob } = input;
-  const resume = getResumeFact(selectedItem, selectedAsset);
-  const account = getAccountExpectation(selectedJob, browserSession);
-  const safeDestinationUrl = getSafeDestinationUrl(selectedJob);
-  return [
-    {
-      label: "Resume file",
-      ...resume,
-    },
-    {
-      label: "Destination",
-      value: getDestinationLabel(selectedJob),
-      detail: `${safeDestinationUrl} | ${selectedJob.atsProvider ?? "Application system not identified"}`,
-    },
-    {
-      label: "Sign-in or account",
-      ...account,
-    },
-    {
-      label: "Required answers",
-      value: "Checked on the live form",
-      detail:
-        "Unsupported or missing answers pause the run for your review instead of being invented.",
-    },
-    {
-      label: "What gets typed into the site",
-      value: "Fills fields, never submits",
-      detail:
-        "Job Finder may enter your confirmed answers, attach the selected resume, and let the site autosave. It never clicks the final submit; you do that yourself.",
-    },
-    {
-      label: "Final submit",
-      value: "Disabled for this run",
-      detail:
-        "Job Finder stops before the employer's send control. Reading the application and sending it stays yours.",
-    },
-  ];
-}
-
-/** Split readiness facts for the ready-to-prepare compact strip. */
-export function partitionApplicationReadinessFacts(
-  facts: ApplicationReadinessFact[],
-): {
-  primary: ApplicationReadinessFact[];
-  secondary: ApplicationReadinessFact[];
-} {
-  const primaryLabels = new Set<string>(
-    READY_APPLICATION_READINESS_PRIMARY_LABELS,
-  );
-  const primary: ApplicationReadinessFact[] = [];
-  const secondary: ApplicationReadinessFact[] = [];
-
-  for (const fact of facts) {
-    if (primaryLabels.has(fact.label)) {
-      primary.push(fact);
-    } else {
-      secondary.push(fact);
-    }
-  }
-
-  return { primary, secondary };
-}
-
-function assertChecklistStateUnreachable(value: never): never {
-  void value;
-  throw new Error("Unhandled checklist state.");
-}
-
-export function getChecklistTone(state: ApplyChecklistItem["state"]) {
-  switch (state) {
-    case "complete":
-      return "positive" as const;
-    case "attention":
-      return "active" as const;
-    case "in_progress":
-      return "active" as const;
-    case "blocked":
-      return "critical" as const;
-  }
-
-  return assertChecklistStateUnreachable(state);
-}
-
-export function getChecklistIcon(state: ApplyChecklistItem["state"]) {
-  switch (state) {
-    case "complete":
-      return CheckCircle2;
-    case "in_progress":
-      return CircleDashed;
-    case "attention":
-      return TriangleAlert;
-    case "blocked":
-      return TriangleAlert;
-  }
-
-  return assertChecklistStateUnreachable(state);
 }
 
 export function getApplySupportState(
@@ -266,25 +80,56 @@ export function getApplySupportState(
     : "manual_follow_up";
 }
 
-export function getChecklistStateLabel(state: ApplyChecklistItem["state"]) {
-  switch (state) {
-    case "complete":
-      return "Ready";
-    case "in_progress":
-      return "In progress";
-    case "attention":
-      return "Heads-up";
-    case "blocked":
-      return "Blocked";
+/**
+ * One sentence under Apply that says what pressing it does, in the mode the
+ * person chose once in Settings (ADR 0022). It replaces the readiness facts,
+ * the four-item checklist and the "What happens when you prepare" disclosure
+ * that used to say the same thing across three cards.
+ */
+export function describeApplyOutcome(
+  mode: ApplicationAutomationMode,
+  usesOriginalResume: boolean,
+): string {
+  const resume = usesOriginalResume
+    ? "attaches your original resume"
+    : "attaches this resume";
+  switch (mode) {
+    case "autonomous_submit":
+      return `Job Finder opens the application, fills it in, ${resume}, and sends it. It stops and asks you only when the site needs you.`;
+    case "confirm_before_submit":
+      return `Job Finder opens the application, fills it in, ${resume}, then waits for your go-ahead before sending.`;
+    default:
+      return `Job Finder opens the application, fills it in, ${resume}, and leaves the browser open for you to send.`;
   }
+}
 
-  return assertChecklistStateUnreachable(state);
+/**
+ * The same promise for the list's "Apply to all" row, which starts several
+ * applications at once in the mode saved in Settings. A person about to send
+ * five applications reads which mode they will run in before pressing.
+ */
+export function describeApplyAllOutcome(
+  mode: ApplicationAutomationMode,
+): string {
+  switch (mode) {
+    case "autonomous_submit":
+      return "Apply to all fills in and sends each application, and stops only for one that needs you.";
+    case "confirm_before_submit":
+      return "Apply to all fills in each form, then waits for your go-ahead before sending each one.";
+    default:
+      return "Apply to all fills in each form and attaches its resume; you press Send on each one.";
+  }
 }
 
 export function getPrimaryApplicationAction(input: {
   applySupportState: ApplySupportState;
   browserSession: BrowserSessionState;
   hasGenerationFailure: boolean;
+  /**
+   * Why the last attempt failed, in the words the service recorded. The box
+   * used to print a generic "did not finish" above the actual reason.
+   */
+  generationFailureDetail?: string | null;
   hasReadyApprovedAsset: boolean;
   isApplyPending: boolean;
   isGenerating: boolean;
@@ -299,11 +144,17 @@ export function getPrimaryApplicationAction(input: {
   runElapsedLabel?: string | null;
   /**
    * A safeguard that is holding preparation back, in plain words. When one is
-   * present the Prepare control is replaced rather than merely disabled: the
+   * present the Apply control is replaced rather than merely disabled: the
    * dialog used to open, close itself, and leave the page exactly as it was.
    */
   safeguardBlocker?: string | null;
   usesOriginalResume: boolean;
+  /**
+   * True when the draft has to be read by the person before it is used: an
+   * Aggressive draft (ADR 0018). Light and Tailored keep every fact, so
+   * Apply is their approval.
+   */
+  draftNeedsPersonReview?: boolean;
 }): PrimaryApplicationAction {
   const {
     applySupportState,
@@ -328,17 +179,21 @@ export function getPrimaryApplicationAction(input: {
       blocker: null,
       enabled: false,
       kind: "waiting",
-      label: "Creating tailored resume…",
+      label: "Writing the resume…",
       recovery: null,
     };
   }
 
   if (hasGenerationFailure) {
+    const failureDetail = input.generationFailureDetail?.trim()
+      ? stripInternalCodeParenthetical(input.generationFailureDetail)
+      : "";
     return {
-      blocker: "The last tailored resume attempt did not finish.",
+      blocker:
+        failureDetail || "The last attempt to write this resume did not finish.",
       enabled: !isSelectedJobPending,
       kind: "generate_resume",
-      label: "Retry tailored resume",
+      label: "Try again",
       recovery: null,
     };
   }
@@ -348,7 +203,7 @@ export function getPrimaryApplicationAction(input: {
       blocker: null,
       enabled: !isSelectedJobPending,
       kind: "generate_resume",
-      label: "Create tailored resume",
+      label: "Create the resume",
       recovery: null,
     };
   }
@@ -356,17 +211,16 @@ export function getPrimaryApplicationAction(input: {
   if (!hasReadyApprovedAsset) {
     if (usesOriginalResume) {
       return {
-        blocker:
-          "The original resume file is missing or could not be verified for this job.",
+        blocker: "Your original resume is missing. Import it in Profile.",
         enabled: false,
         kind: "blocked",
-        label: "Fill it in",
+        label: "Apply",
         recovery: { kind: "open_profile", label: "Import original resume" },
       };
     }
 
     // One status sentence for one artifact: the ordinary "not approved yet"
-    // case is already stated once by Current state and by this action's own
+    // case is already stated once by the state line and by this action's own
     // label, so it does not also get a blocker box that names the same file
     // a second time with a different noun.
     const blocker =
@@ -375,17 +229,30 @@ export function getPrimaryApplicationAction(input: {
         : resumeReviewStatus === "approved"
           ? "The approved resume no longer matches the current version."
           : null;
+    if (
+      !input.draftNeedsPersonReview &&
+      blocker === null &&
+      resumeReviewStatus === "needs_review"
+    ) {
+      return {
+        blocker: null,
+        enabled: !isSelectedJobPending,
+        kind: "approve_and_apply",
+        label: "Apply",
+        recovery: null,
+      };
+    }
     return {
       blocker,
       enabled: !isSelectedJobPending,
       kind: "approve_resume",
-      label: "Review and approve resume",
+      label: "Review the resume",
       recovery: null,
     };
   }
 
   // Nothing downstream can start while a safeguard holds preparation, so the
-  // start control is the safeguard control instead of a Prepare button that
+  // start control is the safeguard control instead of an Apply button that
   // opens a dialog and then does nothing.
   if (safeguardSentence) {
     return {
@@ -402,8 +269,8 @@ export function getPrimaryApplicationAction(input: {
       blocker: "This job does not have a usable application link.",
       enabled: false,
       kind: "blocked",
-      label: "Fill it in",
-      recovery: { kind: "open_job_details", label: "Review job details" },
+      label: "Apply",
+      recovery: { kind: "open_job_details", label: "Check the job details" },
     };
   }
 
@@ -411,17 +278,20 @@ export function getPrimaryApplicationAction(input: {
     return {
       blocker:
         browserSession.detail?.trim() ||
-        "The application browser is blocked and needs attention.",
+        `${JOB_FINDER_BROWSER_NAME} is blocked and needs attention.`,
       enabled: false,
       kind: "blocked",
-      label: "Fill it in",
-      recovery: { kind: "open_browser", label: "Fix browser connection" },
+      label: "Apply",
+      recovery: {
+        kind: "open_browser",
+        label: `Open ${JOB_FINDER_BROWSER_NAME}`,
+      },
     };
   }
 
   // While the run is in flight the button says so, and it keeps saying so
   // for as long as the run record is running. The label used to revert to
-  // "Fill it in" after about ninety seconds of a seven-minute run.
+  // "Apply" after about ninety seconds of a seven-minute run.
   if (runElapsedLabel || isApplyPending) {
     return {
       blocker: null,
@@ -438,7 +308,7 @@ export function getPrimaryApplicationAction(input: {
     blocker: null,
     enabled: !isSelectedJobPending,
     kind: "start_apply",
-    label: "Fill it in",
+    label: "Apply",
     recovery: null,
   };
 }
@@ -448,31 +318,20 @@ function getBrowserActionMessage(browserSession: BrowserSessionState) {
     case "ready":
       return null;
     case "login_required":
-      return "Job Finder can open the destination and wait while you sign in.";
+      return `${JOB_FINDER_BROWSER_NAME} will open the site and wait while you sign in.`;
     case "blocked":
-      return "Resolve the browser issue before you start.";
+      return `${JOB_FINDER_BROWSER_NAME} needs attention before you can apply.`;
     case "unknown":
-      return "Job Finder will open and check the destination when you start.";
+      return null;
     default:
-      return "Wait for the browser to finish starting before you start.";
+      return `${JOB_FINDER_BROWSER_NAME} is still starting.`;
   }
 }
 
-export function getNextChecklistItem(checklist: readonly ApplyChecklistItem[]) {
-  return checklist.find((item) => item.state !== "complete") ?? null;
-}
-
-export function summarizeSelectedQueueTitles(
-  items: readonly ReviewQueueItem[],
-): string {
-  const visibleTitles = items.slice(0, 3).map((item) => item.title);
-  const remainingCount = items.length - visibleTitles.length;
-
-  return remainingCount > 0
-    ? `${visibleTitles.join(" • ")} +${remainingCount} more`
-    : visibleTitles.join(" • ");
-}
-
+/**
+ * The one line of state above the button: what this job is waiting on, or
+ * that it is ready. Null when the button's own label already says it all.
+ */
 export function getReadinessDescription(input: {
   selectedItem: ReviewQueueItem | null;
   selectedJob: SavedJob | null;
@@ -483,8 +342,9 @@ export function getReadinessDescription(input: {
   resumeReviewStatus: ReviewQueueItem["resumeReview"]["status"] | "not_started";
   applySupportState: ApplySupportState;
   browserActionMessage: string | null;
+  draftNeedsPersonReview?: boolean;
   isSelectedJobPendingTooLong?: boolean;
-}) {
+}): string | null {
   const {
     selectedItem,
     selectedJob,
@@ -495,64 +355,62 @@ export function getReadinessDescription(input: {
     resumeReviewStatus,
     applySupportState,
     browserActionMessage,
+    draftNeedsPersonReview = false,
     isSelectedJobPendingTooLong = false,
   } = input;
 
-  if (!selectedItem) {
-    return "Select a shortlisted job to see what needs attention before you apply.";
-  }
-
-  if (!selectedJob) {
-    return "";
+  if (!selectedItem || !selectedJob) {
+    return null;
   }
 
   if (hasGenerationFailure) {
-    return "The last tailored resume run failed. Try again or open the resume workspace before you continue.";
+    return "The resume could not be written. Try again, or open it to see what happened.";
   }
 
   if (isGenerating) {
     return isSelectedJobPendingTooLong
-      ? "This resume is taking longer than expected. The request is still running. Open Resume Studio and use Reload workspace to check for a saved result; do not start another request yet."
-      : "Job Finder is still preparing the latest resume for this job.";
+      ? "This is taking longer than usual. It is still running and will update here when ready. You can leave this page."
+      : "Writing the resume for this job. You can leave this page; it finishes on its own.";
   }
 
   if (needsGeneration) {
-    return "Create a tailored resume first.";
+    return null;
   }
 
   if (!hasReadyApprovedAsset) {
-    return resumeReviewStatus === "stale"
-      ? "The approved resume is out of date and needs a fresh approval."
-      : selectedItem.resumeApplicationMode === "original_resume"
-        ? "The unchanged original resume is not ready for this job. Import or verify it in Profile before applying."
-        : resumeReviewStatus === "not_started"
-          ? "Open the resume workspace to review this resume and approve it. Approving unlocks Fill it in."
-          : "This resume is ready for your review. Approving it unlocks Fill it in.";
+    if (resumeReviewStatus === "stale") {
+      return "The approved resume is out of date. Open it and approve the current version.";
+    }
+    if (selectedItem.resumeApplicationMode === "original_resume") {
+      return "Your original resume is missing. Import it in Profile before applying.";
+    }
+    const linesToDecide = countResumeLinesToDecide(selectedItem);
+    if (linesToDecide > 0) {
+      return linesToDecide === 1
+        ? "A line in this resume is waiting for your decision. Open the resume, keep or change it, and Apply can go ahead."
+        : `${linesToDecide} lines in this resume are waiting for your decision. Open the resume, keep or change each one, and Apply can go ahead.`;
+    }
+    if (draftNeedsPersonReview) {
+      return "Aggressive resumes stretch a little past your saved evidence. Read it, keep or remove the flagged lines, then approve it.";
+    }
+    return "The resume is ready. Apply approves it and starts the application.";
   }
 
   if (applySupportState === "incomplete") {
-    return `${selectedItem.resumeReview.status === "original_resume" ? "The original resume" : "The approved tailored PDF"} is ready, but this selection is missing apply-path data. Refresh the job details before starting.`;
+    return "This job has no usable application link. Check the job details.";
   }
 
   if (browserActionMessage) {
     return browserActionMessage;
   }
 
-  if (applySupportState === "manual_follow_up") {
-    return `${selectedItem.resumeReview.status === "original_resume" ? "The original resume" : "The approved tailored PDF"} is ready. This job opens an employer form, so Job Finder will check it live, fill supported fields, and pause for anything that needs you.`;
-  }
-
-  return selectedItem.resumeReview.status === "original_resume"
-    ? "Your original resume is ready to use unchanged. Job Finder can attach it and prepare the application, then pause before final submit."
-    : "The approved tailored PDF is ready to use. Job Finder can prepare the application and pause before final submit if the live form asks for unsupported information.";
+  return null;
 }
 
 export function buildMissionPanelState(input: {
   browserSession: BrowserSessionState;
   isApplyPending: boolean;
   isJobPending: (jobId: string) => boolean;
-  queue: readonly ReviewQueueItem[];
-  queueSelection: readonly string[];
   selectedAsset: TailoredAsset | null;
   selectedItem: ReviewQueueItem | null;
   selectedJob: SavedJob | null;
@@ -565,8 +423,6 @@ export function buildMissionPanelState(input: {
     browserSession,
     isApplyPending,
     isJobPending,
-    queue,
-    queueSelection,
     selectedAsset,
     selectedItem,
     selectedJob,
@@ -600,10 +456,15 @@ export function buildMissionPanelState(input: {
       selectedItem?.resumeAssetId === selectedAsset.id &&
       approvedResumeReview !== null &&
       selectedAsset.storagePath === approvedResumeReview.approvedFilePath;
+  const draftNeedsPersonReview = needsPersonResumeReview(
+    selectedItem,
+    selectedAsset,
+  );
   const primaryApplicationAction = getPrimaryApplicationAction({
     applySupportState,
     browserSession,
     hasGenerationFailure,
+    generationFailureDetail: selectedAsset?.failureMessage ?? null,
     hasReadyApprovedAsset,
     isApplyPending,
     isGenerating,
@@ -613,6 +474,7 @@ export function buildMissionPanelState(input: {
     runElapsedLabel: formatElapsedMinutes(selectedApplyResult?.startedAt),
     safeguardBlocker,
     usesOriginalResume,
+    draftNeedsPersonReview,
   });
   const canApproveApply =
     primaryApplicationAction.kind === "start_apply" &&
@@ -628,176 +490,68 @@ export function buildMissionPanelState(input: {
     resumeReviewStatus,
     selectedItem,
   });
-  const readinessFacts =
-    selectedItem && selectedJob
-      ? getApplicationReadinessFacts({
-          browserSession,
-          selectedAsset,
-          selectedItem,
-          selectedJob,
-        })
-      : [];
-  const checklist: ApplyChecklistItem[] = [
-    {
-      label: usesOriginalResume
-        ? "Original resume ready"
-        : "Tailored resume ready",
-      state: hasGenerationFailure
-        ? "blocked"
-        : isGenerating
-          ? "in_progress"
-          : needsGeneration
-            ? "blocked"
-            : "complete",
-      description: hasGenerationFailure
-        ? "The last resume run failed. Try again or open the workspace to fix it."
-        : needsGeneration
-          ? "Create the first tailored resume for this job."
-          : isGenerating
-            ? "Job Finder is still preparing the latest draft."
-            : usesOriginalResume
-              ? "The unchanged resume imported in Profile is available for this job."
-              : "A tailored resume exists for this job.",
-    },
-    {
-      label: usesOriginalResume
-        ? "Original file selected"
-        : "Approved tailored PDF ready",
-      state: hasReadyApprovedAsset ? "complete" : "blocked",
-      description: (() => {
-        if (hasReadyApprovedAsset) {
-          return usesOriginalResume
-            ? "Job Finder will attach the original file shown on Shortlisted."
-            : "The current approved tailored PDF will be used when you start.";
-        }
-        if (resumeReviewStatus === "approved") {
-          return "The approved resume no longer matches the current version. Reopen the workspace and approve again.";
-        }
-        if (resumeReviewStatus === "stale") {
-          return "Your approved resume is out of date. Reopen it and approve the current version.";
-        }
-        if (
-          resumeReviewStatus === "needs_review" ||
-          resumeReviewStatus === "draft"
-        ) {
-          return "Approve this resume to unlock Fill it in.";
-        }
-        return "Open the workspace, review the resume, and approve it.";
-      })(),
-    },
-    {
-      label: "Apply path",
-      state:
-        applySupportState === "incomplete"
-          ? "blocked"
-          : applySupportState === "manual_follow_up"
-            ? "attention"
-            : "complete",
-      description:
-        applySupportState === "incomplete"
-          ? "This selection is missing saved apply-path data. Refresh the job details before you start."
-          : applySupportState === "manual_follow_up"
-            ? "This job opens an employer form. Job Finder will verify it live, fill supported fields, and pause before any unsupported or final step."
-            : "Saved job data still points to a supported Easy Apply path. Live questions can still pause Job Finder before final submit.",
-    },
-    {
-      label: "Browser handoff",
-      state:
-        browserSession.status === "ready"
-          ? "complete"
-          : browserSession.status === "blocked"
-            ? "blocked"
-            : "attention",
-      description:
-        browserSession.status === "ready"
-          ? "The browser is ready for supported preparation steps."
-          : (browserActionMessage ??
-            "Open or refresh the browser before continuing."),
-    },
-  ];
-  const nextBlockedChecklistItem = getNextChecklistItem(checklist);
-  // Fully ready: resume approved, no checklist blockers, Prepare is enabled.
-  // Mission UI collapses Current state / checklist noise in this state.
-  const isReadyToPrepare = canApproveApply && nextBlockedChecklistItem === null;
-  // Current state must say the thing that is actually stopping the run. It
-  // used to keep reading "Job Finder will open and check the destination when
-  // you start" while a safeguard was refusing every start.
+  // The state line must say the thing that is actually stopping the run. It
+  // used to keep reading a browser sentence while a safeguard was refusing
+  // every start.
   const readinessDescription =
     primaryApplicationAction.kind === "open_safeguards"
-      ? (primaryApplicationAction.blocker ?? "")
-      : getReadinessDescription({
-    selectedItem,
-    selectedJob,
-    hasGenerationFailure,
-    needsGeneration,
-    isGenerating,
-    hasReadyApprovedAsset,
-    resumeReviewStatus,
-    applySupportState,
-    browserActionMessage,
-    isSelectedJobPendingTooLong,
+      ? (primaryApplicationAction.blocker ?? null)
+      : hasGenerationFailure && selectedAsset?.failureMessage?.trim()
+        ? // The failure box names the cause; a generic "could not be
+          // written… open it to see what happened" above it sent people
+          // looking for a reason that was already on screen.
+          null
+        : getReadinessDescription({
+          selectedItem,
+          selectedJob,
+          hasGenerationFailure,
+          needsGeneration,
+          isGenerating,
+          hasReadyApprovedAsset,
+          resumeReviewStatus,
+          applySupportState,
+          browserActionMessage,
+          draftNeedsPersonReview,
+          isSelectedJobPendingTooLong,
         });
-  const selectionSet = new Set(queueSelection);
-  const selectedQueueItems: ReviewQueueItem[] = [];
-  const selectedQueueReadyItems: ReviewQueueItem[] = [];
-  let selectedQueueBlockedCount = 0;
-  let queueReadyCount = 0;
-
-  for (const item of queue) {
-    const queueItemReady = isQueueStageReady(item);
-
-    if (queueItemReady) {
-      queueReadyCount += 1;
-    }
-
-    if (!selectionSet.has(item.jobId)) {
-      continue;
-    }
-
-    selectedQueueItems.push(item);
-    if (queueItemReady) {
-      selectedQueueReadyItems.push(item);
-    } else {
-      selectedQueueBlockedCount += 1;
-    }
-  }
-
-  const canStageSelectedQueue =
-    selectedQueueReadyItems.length > 0 && selectedQueueBlockedCount === 0;
-  const isSelectedQueuePending = selectedQueueReadyItems.some((item) =>
-    isJobPending(item.jobId),
-  );
   const isGenerationAction = needsGeneration || hasGenerationFailure;
   const isPrimaryApplyPending = isApplyPending && !isGenerationAction;
-  const queueSummary =
-    selectedQueueItems.length === 0
-      ? queueReadyCount === 0
-        ? "No shortlisted jobs currently have a ready resume file (approved tailored PDF or unchanged original resume) for a preparation run."
-        : `Select up to ${queueReadyCount} shortlisted jobs with a ready resume file (approved tailored PDF or unchanged original resume) to prepare them in one bounded run.`
-      : selectedQueueBlockedCount > 0
-        ? "Only jobs with a ready resume file (approved tailored PDF or unchanged original resume) can be prepared. Remove the blocked selection to continue."
-        : `${selectedQueueReadyItems.length} selected job${selectedQueueReadyItems.length === 1 ? "" : "s"} will join one safe non-submitting preparation run.`;
 
   return {
     applyReadinessStatus,
     canApproveApply,
-    canStageSelectedQueue,
-    checklist,
     hasGenerationFailure,
+    hasReadyApprovedAsset,
     isGenerating,
     isGenerationAction,
     isPrimaryApplyPending,
-    isReadyToPrepare,
     isSelectedJobPending,
-    isSelectedQueuePending,
     needsGeneration,
-    nextBlockedChecklistItem,
     primaryApplicationAction,
-    queueReadyCount,
-    queueSummary,
-    readinessFacts,
     readinessDescription,
-    selectedQueueItems,
-    selectedQueueReadyItems,
+    usesOriginalResume,
   };
+}
+
+/**
+ * Whether the Next step box repeats the last action's result line. It is
+ * left out when the box already says the same thing: the failure cause, or
+ * the "AI was unavailable" result under the line that already explains the
+ * resume keeps the saved wording.
+ */
+export function shouldShowMissionActionMessage(input: {
+  actionMessage: string | null | undefined;
+  blocker: string | null | undefined;
+  aiUnavailableLine: string | null | undefined;
+}): boolean {
+  const message = input.actionMessage?.trim();
+  if (!message) {
+    return false;
+  }
+  if (message === input.blocker?.trim()) {
+    return false;
+  }
+  return !(
+    input.aiUnavailableLine && message === AI_UNAVAILABLE_RESUME_RESULT_MESSAGE
+  );
 }

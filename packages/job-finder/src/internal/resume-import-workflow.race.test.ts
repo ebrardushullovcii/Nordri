@@ -18,6 +18,7 @@ import {
   createTestBundle,
 } from "../workspace-service.resume-analysis.shared";
 import { RESUME_IMPORT_VISION_SUPERSEDED_MESSAGE } from "./resume-import-workflow";
+import { interruptedTextImportMessage } from "./resume-import-recovery";
 
 const RESUME_ID = "resume_vision_race";
 const VISION_HEADLINE = "Staff Platform Engineer";
@@ -444,5 +445,102 @@ describe("resume import multi-stage revision race", () => {
     expect(profile.headline).not.toBe(VISION_HEADLINE);
     expect(profile.summary).toBe("Manual edit 3");
     expect(profile.baseResume.extractionStatus).toBe("ready");
+  });
+});
+
+describe("resume import while the deferred visual scan runs", () => {
+  test("a snapshot read during the visual scan keeps the applied text import", async () => {
+    const seed = createFreshStartSeed();
+    const base = createInMemoryJobFinderRepository(seed);
+    const seenDuringVisionStage: string[] = [];
+    let workspaceService: ReturnType<typeof createService> | null = null;
+    let textStageFinalized = false;
+    const repository: JobFinderRepository = {
+      ...base,
+      finalizeResumeImportRun: async (input) => {
+        textStageFinalized = true;
+        return base.finalizeResumeImportRun(input);
+      },
+      replaceResumeImportRunArtifacts: async (input) => {
+        await base.replaceResumeImportRunArtifacts(input);
+        if (textStageFinalized && workspaceService) {
+          // Any setup save or refresh while the visual scan reconciles goes
+          // through a snapshot read.
+          const snapshot = await workspaceService.getWorkspaceSnapshot();
+          seenDuringVisionStage.push(
+            `${snapshot.latestResumeImportRun?.status}:${snapshot.latestResumeImportRun?.errorMessage ?? ""}`,
+          );
+        }
+      },
+    };
+    workspaceService = createService(repository);
+
+    const snapshot = await runImport(workspaceService, seed);
+    const textStageStatus = snapshot.latestResumeImportRun?.status;
+    expect(["applied", "review_ready"]).toContain(textStageStatus);
+
+    await vi.waitFor(
+      async () => {
+        const run = await base.getLatestResumeImportRun();
+        expect(run?.modelRoles?.vision.status).toBe("completed");
+      },
+      { timeout: 1000, interval: 10 },
+    );
+
+    expect(seenDuringVisionStage.length).toBeGreaterThan(0);
+    for (const seen of seenDuringVisionStage) {
+      expect(seen).not.toMatch(/^failed/);
+      expect(seen).not.toContain(interruptedTextImportMessage);
+    }
+    const run = await base.getLatestResumeImportRun();
+    expect(run?.status).not.toBe("failed");
+    expect(run?.errorMessage).toBeNull();
+  });
+
+  test("a visual scan that fails midway leaves the text import applied, not stopped", async () => {
+    const seed = createFreshStartSeed();
+    const base = createInMemoryJobFinderRepository(seed);
+    let textStageFinalized = false;
+    let failedOnce = false;
+    const repository: JobFinderRepository = {
+      ...base,
+      finalizeResumeImportRun: async (input) => {
+        textStageFinalized = true;
+        return base.finalizeResumeImportRun(input);
+      },
+      replaceResumeImportRunArtifacts: async (input) => {
+        if (
+          textStageFinalized &&
+          !failedOnce &&
+          input.run.modelRoles?.adjudication.status !== "not_started" &&
+          input.run.modelRoles?.vision.status !== "running"
+        ) {
+          failedOnce = true;
+          throw new Error("Disk full while saving the visual scan.");
+        }
+        await base.replaceResumeImportRunArtifacts(input);
+      },
+    };
+    const workspaceService = createService(repository);
+
+    const snapshot = await runImport(workspaceService, seed);
+    const textStageStatus = snapshot.latestResumeImportRun?.status;
+    expect(["applied", "review_ready"]).toContain(textStageStatus);
+
+    await vi.waitFor(
+      async () => {
+        const run = await base.getLatestResumeImportRun();
+        expect(run?.modelRoles?.vision.status).toBe("failed");
+      },
+      { timeout: 1000, interval: 10 },
+    );
+    expect(failedOnce).toBe(true);
+
+    const after = await workspaceService.getWorkspaceSnapshot();
+    expect(after.latestResumeImportRun?.status).toBe(textStageStatus);
+    expect(after.latestResumeImportRun?.errorMessage).toBeNull();
+    expect(after.latestResumeImportRun?.warnings).not.toContain(
+      interruptedTextImportMessage,
+    );
   });
 });

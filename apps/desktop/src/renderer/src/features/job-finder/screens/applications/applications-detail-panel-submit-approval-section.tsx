@@ -29,9 +29,7 @@ export function isAwaitingPreparationApproval(
  * screen is labelled approve or revoke.
  */
 export function preparationApprovalActionLabel(jobCount: number): string {
-  return jobCount === 1
-    ? "Start preparing this job"
-    : `Start preparing ${jobCount} jobs`;
+  return jobCount === 1 ? "Apply now" : `Apply to ${jobCount} jobs now`;
 }
 
 export function ApplicationsDetailPanelSubmitApprovalSection(props: {
@@ -73,8 +71,8 @@ export function ApplicationsDetailPanelSubmitApprovalSection(props: {
     >
       <p className="text-(length:--text-small) leading-6 text-foreground-soft">
         {jobCount === 1
-          ? "Job Finder is waiting for you before it fills this application in. It never sends an application, creates an account, or answers a security check."
-          : `Job Finder is waiting for you before it fills in these ${jobCount} applications. It never sends an application, creates an account, or answers a security check.`}
+          ? "This application is waiting for you to start it. Sign-in, account creation and security checks are always yours."
+          : `These ${jobCount} applications are waiting for you to start them. Sign-in, account creation and security checks are always yours.`}
       </p>
       <Button
         className="w-fit max-w-full"

@@ -32,6 +32,8 @@ export function deriveGlobalDailyApplicationPreparationCapacity(input: {
   applyRuns: readonly ApplyRun[];
   applyJobResults: readonly ApplyJobResult[];
   applicationRecords?: readonly ApplicationRecord[];
+  /** The person's saved daily limit. Twenty remains the default from ADR 0012. */
+  limit?: number;
   /**
    * Jobs whose slot a live in-flight reservation already holds. A record is
    * created the moment preparation begins, a beat before the run's apply-job
@@ -42,6 +44,10 @@ export function deriveGlobalDailyApplicationPreparationCapacity(input: {
   now?: Date;
 }): DailyCapacity {
   const now = input.now ?? new Date();
+  const limit = Math.max(
+    1,
+    Math.trunc(input.limit ?? MAX_BEGUN_EMPLOYER_APPLICATIONS_PER_LOCAL_DAY),
+  );
   const localDate = localDateKey(now);
   const localDayStart = new Date(
     now.getFullYear(),
@@ -133,13 +139,10 @@ export function deriveGlobalDailyApplicationPreparationCapacity(input: {
   ).toISOString();
 
   return {
-    limit: MAX_BEGUN_EMPLOYER_APPLICATIONS_PER_LOCAL_DAY,
+    limit,
     used,
     legacyUncertain,
-    remaining: Math.max(
-      0,
-      MAX_BEGUN_EMPLOYER_APPLICATIONS_PER_LOCAL_DAY - used - legacyUncertain,
-    ),
+    remaining: Math.max(0, limit - used - legacyUncertain),
     localDate,
     resetsAt,
   };

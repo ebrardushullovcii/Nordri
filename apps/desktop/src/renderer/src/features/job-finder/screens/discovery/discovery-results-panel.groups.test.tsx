@@ -89,22 +89,23 @@ afterEach(() => {
 });
 
 describe("discovery result bands", () => {
-  it("quotes the same frozen report label in the run banner and results header", () => {
+  it("keeps the header to a plain count and leaves the run report to the banner", () => {
     const runReportLabel =
       "57 found · 35 new · 15 kept · 47 duplicates merged";
     render(
       <DiscoveryResultsPanel
         browserSession={browserSession}
         jobs={[job({ id: "report", score: 72 })]}
-        latestRunReportLabel={runReportLabel}
         onSelectJob={vi.fn()}
         selectedJob={null}
       />,
     );
     const banner = createDiscoveryRunSucceededFeedback(null, runReportLabel);
 
+    // The list says how many rows it holds; the finished search's own
+    // banner is where its frozen accounting is quoted.
     expect(screen.getByTestId("discovery-result-count").textContent).toBe(
-      runReportLabel,
+      "1 job",
     );
     expect(banner.headline).toContain(runReportLabel);
   });
@@ -121,7 +122,6 @@ describe("discovery result bands", () => {
     render(
       <DiscoveryResultsPanel
         browserSession={browserSession}
-        focusedHiddenCount={14}
         inAreaJobCount={2}
         jobs={[inArea]}
         onSelectJob={vi.fn()}
@@ -132,7 +132,6 @@ describe("discovery result bands", () => {
     );
 
     expect(screen.getByText(/2 of 15 in or near Chicago, IL/u)).toBeTruthy();
-    expect(screen.getByText(/Focused search hid 14 results/u)).toBeTruthy();
   });
 
   it("bands rows by verified score and never demotes a withheld one", () => {
@@ -295,7 +294,7 @@ describe("discovery result bands", () => {
       id: "weaker",
       // The divider names the pool the summary line and the reveal control
       // name, then the part inside it.
-      label: "Also found · Weaker matches",
+      label: "Weaker matches",
     });
     expect(ranked.has("a")).toBe(false);
     expect(ranked.has("d")).toBe(false);
@@ -379,8 +378,8 @@ describe("discovery result bands", () => {
         .map((heading) => heading.textContent?.split(")")[0] ?? ""),
     ).toEqual([
       "Matches your role, not yet scored (1",
-      "Also found · Weaker matches (1",
-      "Also found · Clear mismatches (1",
+      "Weaker matches (1",
+      "Clear mismatches (1",
     ]);
     // Each divider sits inside the row it heads, so the resumed band is no
     // longer drawn underneath the weaker divider.
@@ -412,7 +411,7 @@ describe("discovery result bands", () => {
       ),
     ).toEqual([
       ["Matches your role, not yet scored", 2],
-      ["Also found · Weaker matches", 1],
+      ["Weaker matches", 1],
     ]);
   });
 
@@ -467,11 +466,11 @@ describe("discovery result bands", () => {
 
     // Page 1 shows 10 matches then the first 40 of 60 weaker rows. A
     // page-scoped "(40)" here and "(20)" on page 2 sat under one control
-    // reading "Hide also found (60)", with nothing on screen reconciling
+    // reading "Hide weaker matches (60)", with nothing on screen reconciling
     // them; the divider names the band, and pagination is the pager's story.
     expect(
       screen.getByTestId("discovery-results-group-weaker").textContent,
-    ).toContain("Also found · Weaker matches (60)");
+    ).toContain("Weaker matches (60)");
   });
 
   it("still draws the band divider on a page that opens mid-band", () => {
@@ -484,7 +483,7 @@ describe("discovery result bands", () => {
     // the count is the same band total it carried on page 1.
     expect(
       screen.getByTestId("discovery-results-group-weaker").textContent,
-    ).toContain("Also found · Weaker matches (60)");
+    ).toContain("Weaker matches (60)");
   });
 
   it("makes revealing the also-found pool change the count, the label, and the list", () => {
@@ -506,11 +505,11 @@ describe("discovery result bands", () => {
       />,
     );
 
-    expect(screen.getByText("1 worth opening · 1 also found")).toBeTruthy();
+    expect(screen.getByText("1 job")).toBeTruthy();
     // The accessible name is exactly the visible label, so the reveal is
     // reachable by the name a user actually reads.
     fireEvent.click(
-      screen.getByRole("button", { name: "Show also found (1)" }),
+      screen.getByRole("button", { name: "Show weaker matches (1)" }),
     );
     expect(onToggleAlsoFound).toHaveBeenCalledTimes(1);
 
@@ -529,9 +528,9 @@ describe("discovery result bands", () => {
     );
 
     expect(
-      screen.getByRole("button", { name: "Hide also found (1)" }),
+      screen.getByRole("button", { name: "Hide weaker matches (1)" }),
     ).toBeTruthy();
-    expect(screen.getByText("1 worth opening · 1 also found")).toBeTruthy();
+    expect(screen.getByText("2 jobs")).toBeTruthy();
     expect(
       screen.getByTestId("discovery-results-group-mismatches").textContent,
     ).toContain("Clear mismatches (1)");
@@ -562,18 +561,18 @@ describe("discovery result bands", () => {
     );
 
     expect(screen.getByTestId("discovery-result-count").textContent).toContain(
-      "1 worth opening · 2 also found",
+      "3 jobs",
     );
     expect(
-      screen.getByRole("button", { name: "Hide also found (2)" }),
+      screen.getByRole("button", { name: "Hide weaker matches (2)" }),
     ).toBeTruthy();
     // The pool first, then the part it splits into.
     expect(
       screen.getByTestId("discovery-results-group-weaker").textContent,
-    ).toContain("Also found · Weaker matches (1)");
+    ).toContain("Weaker matches (1)");
     expect(
       screen.getByTestId("discovery-results-group-mismatches").textContent,
-    ).toContain("Also found · Clear mismatches (1)");
+    ).toContain("Clear mismatches (1)");
     // The unchecked band is deliberately NOT in that pool, so it must never
     // borrow its name.
     expect(screen.queryAllByText(/^Also found · Matches your role/u)).toEqual(
@@ -605,12 +604,10 @@ describe("discovery three-band result counts", () => {
       />,
     );
 
+    // The header counts the rows on the list; the band divider below it is
+    // where "matched on the title alone" is said.
     expect(screen.getByTestId("discovery-result-count").textContent).toContain(
-      "13 matched your role, not scored yet · 2 also found",
-    );
-    // The three numbers must add up to the population the list belongs to.
-    expect(screen.getByTestId("discovery-result-count").textContent).toContain(
-      "15 jobs kept in this search plan.",
+      "13 jobs",
     );
   });
 
@@ -634,7 +631,7 @@ describe("discovery three-band result counts", () => {
     );
 
     expect(screen.getByTestId("discovery-result-count").textContent).toContain(
-      "1 worth opening · 14 title matches · 0 also found",
+      "15 jobs",
     );
     // Home's badge reads the same populations through the same predicates, so
     // the sidebar count and this headline can never disagree: the badge is
@@ -674,7 +671,7 @@ describe("discovery three-band result counts", () => {
       "Matched on the title alone; the full requirements have not been assessed.",
     );
     expect(screen.getByTestId("discovery-result-count").textContent).toContain(
-      "14 matched your role, not scored yet · 0 also found",
+      "14 jobs",
     );
     // The divider makes the claim once for the run it heads, so the rows
     // beneath it no longer repeat it fourteen times over. Only the visible
@@ -860,7 +857,7 @@ describe("discovery three-band result counts", () => {
     // …and the weaker band that follows it on the same page is headed too.
     expect(
       screen.getByTestId("discovery-results-group-weaker").textContent,
-    ).toContain("Also found · Weaker matches (10)");
+    ).toContain("Weaker matches (10)");
   });
 
   it("returns to the first page when the also-found pool is revealed", () => {
@@ -908,7 +905,7 @@ describe("discovery three-band result counts", () => {
 
     expect(firstRowId()).toBe("strong_0");
     expect(
-      screen.getByRole("button", { name: "Hide also found (1)" }),
+      screen.getByRole("button", { name: "Hide weaker matches (1)" }),
     ).toBeTruthy();
   });
 });

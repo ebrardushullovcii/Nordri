@@ -28,6 +28,7 @@ import {
 } from "./review-queue-progress";
 import { formatTimestamp } from "./resume-workspace-utils";
 import { ResumeAssistantProposalCard } from "./resume-assistant-proposal-card";
+import { isLinesToConfirmBlocker } from "./resume-proposal-verdict";
 
 /**
  * The one Assistant implementation in Resume Studio, rendered in exactly one
@@ -70,6 +71,39 @@ export interface ResumeAssistantPanelProps {
   validation?: ResumeValidationResult | null;
 }
 
+/** Ready questions for an empty thread; each is sent as typed. */
+export const RESUME_ASSISTANT_STARTER_PROMPTS: readonly string[] = [
+  "What would you change to fit this job better?",
+  "Make the summary sharper and more specific.",
+  "Use the posting's own words where my experience backs them.",
+];
+
+/**
+ * A typed yes to the proposal on screen is the same decision as pressing its
+ * Accept, so it is taken locally instead of asking the model to propose the
+ * same change again. A proposal whose wording the evidence does not back is
+ * not accepted this way ("do it" may mean "fix it"); that reply, and anything
+ * else ("the second one", "only the summary"), goes to the Assistant, which
+ * sees the recent turns and each proposal's status.
+ */
+export const RESUME_ASSISTANT_ACCEPT_REPLY =
+  /^(?:(?:ok(?:ay)?|yes|yep|sure|great|perfect)[,!. ]+)?(?:yes(?: please)?|yep|sure|ok(?:ay)?|go ahead|do it|please do(?: it)?|apply (?:it|them|that|those|all)|make (?:that|those|the) changes?|accept (?:it|them|that|those|all)|sounds good|looks good|do (?:that|those|both|all of them))[.! ]*$/iu;
+
+export function findAcceptableAssistantProposal(
+  messages: readonly ResumeAssistantMessage[],
+): ResumeAssistantMessage | undefined {
+  const latestAssistantResponse = [...messages]
+    .reverse()
+    .find((message) => message.role === "assistant");
+  return latestAssistantResponse?.proposalStatus === "pending" &&
+    latestAssistantResponse.patches.length > 0 &&
+    (latestAssistantResponse.approvalBlockers ?? []).every(
+      isLinesToConfirmBlocker,
+    )
+    ? latestAssistantResponse
+    : undefined;
+}
+
 export function ResumeAssistantPanel(props: ResumeAssistantPanelProps) {
   const [input, setInput] = useState("");
   const [isRegenerateConfirmOpen, setIsRegenerateConfirmOpen] = useState(false);
@@ -85,6 +119,9 @@ export function ResumeAssistantPanel(props: ResumeAssistantPanelProps) {
   const hasPendingProposal = props.assistantMessages.some(
     (message) =>
       message.role === "assistant" && message.proposalStatus === "pending",
+  );
+  const latestAcceptableProposal = findAcceptableAssistantProposal(
+    props.assistantMessages,
   );
 
   // The proposal's Accept/Reject controls are the last thing in the transcript,
@@ -163,8 +200,30 @@ export function ResumeAssistantPanel(props: ResumeAssistantPanelProps) {
       return;
     }
 
-    props.onSendAssistantMessage(nextInput);
+    if (
+      latestAcceptableProposal &&
+      props.onResolveProposal &&
+      RESUME_ASSISTANT_ACCEPT_REPLY.test(nextInput)
+    ) {
+      props.onResolveProposal(
+        latestAcceptableProposal.id,
+        "accept",
+        latestAcceptableProposal.patches.map((patch) => patch.id),
+      );
+    } else {
+      props.onSendAssistantMessage(nextInput);
+    }
     setInput("");
+  }
+
+  // The empty thread used to be a description of what one could type. Three
+  // ready questions are faster than composing one, and the first is the one
+  // most people actually want: what would you change.
+  function sendStarterPrompt(prompt: string) {
+    if (props.isWorkspacePending || props.assistantPending) {
+      return;
+    }
+    props.onSendAssistantMessage(prompt);
   }
 
   function handleComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
@@ -292,17 +351,37 @@ export function ResumeAssistantPanel(props: ResumeAssistantPanelProps) {
               })
             ) : (
               <div className="flex min-h-48 items-center justify-center">
-                <div className="grid max-w-72 gap-3 text-center">
+                <div className="grid max-w-80 gap-3 text-center">
                   <div className="surface-card-tint mx-auto flex size-11 items-center justify-center rounded-full border border-(--surface-panel-border) text-muted-foreground">
                     <MessageSquare className="size-4" />
                   </div>
                   <p className="font-display text-sm text-foreground">
-                    No edit requests yet
+                    Ask for a change, or ask what to change
                   </p>
                   <p className="text-sm leading-6 text-foreground-soft">
-                    Ask for a tighter summary, stronger bullets, or clearer
-                    job-specific wording.
+                    Every suggestion shows up as a before-and-after you accept
+                    or reject. Nothing changes until you accept.
                   </p>
+                  <div
+                    className="flex flex-wrap justify-center gap-1.5"
+                    data-resume-assistant-starters
+                  >
+                    {RESUME_ASSISTANT_STARTER_PROMPTS.map((prompt) => (
+                      <Button
+                        className="h-auto max-w-full whitespace-normal px-2.5 py-1 text-left text-xs font-medium normal-case tracking-normal"
+                        disabled={
+                          props.isWorkspacePending || props.assistantPending
+                        }
+                        key={prompt}
+                        onClick={() => sendStarterPrompt(prompt)}
+                        size="compact"
+                        type="button"
+                        variant="secondary"
+                      >
+                        {prompt}
+                      </Button>
+                    ))}
+                  </div>
                 </div>
               </div>
             )}
@@ -395,7 +474,7 @@ export function ResumeAssistantPanel(props: ResumeAssistantPanelProps) {
                 type="button"
                 variant="secondary"
               >
-                Try the AI draft again — this replaces your edits
+                Create a new AI draft — this replaces your edits
               </Button>
             )}
           </div>

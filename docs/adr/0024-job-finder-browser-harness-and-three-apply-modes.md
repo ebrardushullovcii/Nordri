@@ -1,0 +1,47 @@
+# ADR 0024: Job Finder browser harness and three apply modes
+
+Status: accepted
+
+Date: 2026-09-16
+
+Supersedes ADR 0022. Clarifies ADRs 0012, 0013, 0017 and 0023. ADR 0018 remains unchanged.
+
+## Context
+
+Job Finder must work for both selective searches and the owner's primary high-volume workflow: add hundreds of sources, search them with a plain-language goal, make resumes in bulk, apply in bulk and track the outcomes. Source checks are useful guidance but cannot be a prerequisite. Fixed site-flow rules, zero-budget sources, navigation allowlists that also acted as submit permission and two apply modes made ordinary employer and ATS handoffs fail or require unnecessary setup.
+
+## Decision
+
+- Search runs receive one request containing the person's plain-language intent, Wide or Best only breadth, optional Fresh preference and all or selected sources. The search agent receives that request verbatim together with the useful profile, experience, education, skills and bounded resume text. Every selected source gets a non-zero opportunity to run; shortfalls and failed sources are reported rather than hidden.
+- Source checks remain optional. Sources can be added in bulk and searched unchecked. A check learns reusable guidance; it does not grant permission to search.
+- Browser agents use one generic page-tool model across sites. It includes owned popup adoption, frames, accessible shadow content, keyboard actions and hidden file inputs or dropzones. A move from a listing site to an employer or ATS page is allowed only after the agent states a reason and the move reviewer accepts it. That navigation decision is separate from application submission authority.
+- Application automation has three modes: `prepare_only` (Prepare for me), `confirm_before_submit` (Ask before sending) and `autonomous_submit` (Send for me). A saved default can be overridden for one batch. The active task authority is scoped to the selected jobs, their resumes, the current daily limit and origins reviewed during that task. Final submit still requires ADR 0012 preflight and idempotency.
+- An application is `submitted` only when the employer page visibly confirms receipt. A click without confirmation remains uncertain and is never automatically retried. Intermediate employer-site writes do not prove submission.
+- Intermediate employer-site writes (a form that saves each answer as it is typed) are allowed by default, without a saved permission, to whichever origin the form's frame saves to (an embedded ATS answers from its own host), for any write that is not a final send; the write window stays open ten seconds after each field change and is re-asserted on every document the page navigates to. A run never stops because a site saved a field. The submit guard is separate and unchanged. A saved permission envelope may still narrow the allowed origins.
+- A pointer resting over the embedded browser is not the person stepping in; only a page focus with a pointer that moved there just now hands the browser over. Stop search stops at once, with no confirm dialog.
+- The person stepping into the embedded browser hands over that browser: the run using it ends with that reason, and nothing else pauses. Pausing all Job Finder activity is an explicit control, never a side effect of looking at or clicking a page. Service workers registering on a site are ordinary and do not stop a run.
+- A task that needs the person persists its exact reason, browser handoff and replay checkpoint. It can wait across a restart while unrelated tasks continue. Credentials are never requested or persisted by the agent. If the person voluntarily supplies task-local credentials and explicitly authorizes their use, they may be used only for that task; CAPTCHA, MFA, account creation, legal consent and final authority choices remain person-owned.
+- Browser-agent turns and page reads run at a low reasoning effort (`UNEMPLOYED_AI_AGENT_REASONING_EFFORT`, default `low`); resume writing keeps its own effort. Each turn is a "what do I press next" decision, and deep reasoning on every one made a page take minutes.
+- Every tool call inside an agent loop has a deadline (90 seconds by default). A hung page read is handed back to the model as a fact and counted like a dead page; a stop request lands even while a call hangs. Long model or tool work is always visible: Find jobs shows the agent's latest note with the source it is on, and Applications rows show what a running preparation is doing.
+- A source that was never checked is healthy. Only a failure on the site itself (not a lost network or a run that ran out of time) marks it for attention. Sources are added from one Add sources box and saved at once.
+- Sources are searched three at a time, each in its own browser tab (`UNEMPLOYED_SEARCH_CONCURRENCY` overrides the number). A search keeps everything it finds: the fifteen-job retention cap is gone, and plans that still carry it read as uncapped.
+- Apply is one press, and for Original, Light and Tailored resumes it is also the approval: pressing Apply builds the PDF, approves the draft and starts the application. Only an Aggressive draft goes through review first (ADR 0018). A batch control writes missing tailored resumes; selected jobs and bounded parallel generation are defined in [ADR 0035](0035-selected-resume-batches.md).
+- Apply is one press. The per-application consent dialog is gone; the apply mode is a setting, and screenshots are off unless turned on.
+- The question step is answerable on the application itself as well as on Needs you; an answered step shows that it was answered instead of the form again; the resumed run is told each answer beside its question and not to retype what is already filled.
+- A Needs you step with several questions is answered in one command that ties each answer to its question; the answers are persisted before the run resumes, so the same questions are never asked twice.
+- Creating a resume reads the job's listing first, ignoring any retry back-off, so a card-only job from a fast search is tailored against the real posting.
+- The permission grant that authorizes those writes is one growing grant per person, covering every job, resume digest and origin applied to in the session; it is no longer pinned to exactly one of each, which made the second application of a session fail before it started.
+- Claim confirmations and issue approvals on a resume draft are server-owned like work-history acknowledgments: a plain draft save keeps the stored lists instead of writing back the editor's copy, so an approval made moments earlier can never be reverted by the save that follows it.
+- Apply mode (Settings and per batch) and search breadth are chosen on the same card picker as the four resume levels.
+- Importing a resume into an empty profile fills it: the winner of every extracted group is applied (name, contact, headline, jobs, education, skills, languages, links, projects, target roles and location), the two extraction passes are merged into one record per job, and only shared-memory suggestions, identity mismatches and a first-person "About me" wait as suggestions. A profile write that lands during the import no longer downgrades everything to review; the import re-reads the profile and applies once more, unless a newer resume or a different person's details arrived meanwhile.
+- Guided setup finishes with a name, one contact method and one job source. Work history, targeting, eligibility and work mode remain hints on their steps. The resume level is chosen per job on Shortlisted, so setup no longer asks for a default. A job source needs only its address; the name is derived from the site.
+- Stepping into the browser means a real click or keypress on the page with the pointer over it; focus alone, or the pointer resting over the view while watching, never ends a run.
+- The shared browser is released only by the last run that used it, so a search finishing seconds after an apply started never closes the browser under that apply.
+- Aggressive resume behavior from ADR 0018 is preserved. The four person-facing resume choices remain Original, Light, Tailored and Aggressive; this decision adds no new aggressive-mode gate or prompt restriction.
+
+## Consequences
+
+- ADR 0022's two-mode surface and removal of confirm-before-submit are obsolete. The authority envelope from ADR 0012 remains the safety contract underneath the simpler controls.
+- ADR 0013's model-escalated discovery wording is obsolete where ADR 0023 gives the model ownership of search and source-check runs. Deterministic extraction, canonical merge, deduplication, receipts and policy execution remain tools and safety boundaries, not workflow policy.
+- ADR 0017's embedded-browser isolation remains. Task-owned popup adoption and reviewed cross-origin navigation do not expose Electron or Node primitives to remote pages.
+- Large live-site runs remain bounded by practical concurrency, time ceilings and durable progress. Synthetic scale tests prove scheduling and list behavior, not universal site compatibility.

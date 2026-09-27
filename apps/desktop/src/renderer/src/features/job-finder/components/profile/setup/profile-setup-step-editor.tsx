@@ -48,6 +48,10 @@ export function ProfileSetupStepEditor(props: {
   focusedReviewRequestKey?: number;
   hasUnsavedChanges: boolean;
   importDisabledReason?: string | null;
+  /** Set when the last import was cut off by the app closing. */
+  interruptedImportMessage?: string | null;
+  interruptedImportFileName?: string | null;
+  onRetryInterruptedImport?: () => void;
   /** When false, Save/Continue lives in the locked sticky footer instead. */
   inlineFooter?: boolean;
   isImportResumePending: boolean;
@@ -71,6 +75,7 @@ export function ProfileSetupStepEditor(props: {
   preferencesForm: UseFormReturn<SearchPreferencesEditorValues>;
   resumeApplicationMode?: ResumeApplicationMode;
   recentSourceDebugRuns?: readonly SourceDebugRunRecord[];
+  registerPendingSourceFlush?: (flush: (() => void) | null) => void;
   searchPreferences: JobSearchPreferences;
   validationMessage: string | null;
 }) {
@@ -158,6 +163,11 @@ export function ProfileSetupStepEditor(props: {
       return (
         <ProfileSetupImportStep
           importDisabledReason={props.importDisabledReason ?? null}
+          interruptedImportMessage={props.interruptedImportMessage ?? null}
+          interruptedImportFileName={props.interruptedImportFileName ?? null}
+          {...(props.onRetryInterruptedImport
+            ? { onRetryInterruptedImport: props.onRetryInterruptedImport }
+            : {})}
           isImportResumePending={props.isImportResumePending}
           isProfileSetupPending={props.isProfileSetupPending}
           latestResumeImportReviewCandidates={
@@ -230,7 +240,15 @@ export function ProfileSetupStepEditor(props: {
             : {})}
           renderFooter={renderFooter}
           recentSourceDebugRuns={props.recentSourceDebugRuns ?? []}
+          {...(props.registerPendingSourceFlush
+            ? { registerPendingSourceFlush: props.registerPendingSourceFlush }
+            : {})}
           savedDiscoveryTargets={props.searchPreferences.discovery.targets}
+          suggestedWorkCountry={
+            props.draftProfile.currentCountry?.trim() ||
+            props.profile.currentCountry?.trim() ||
+            null
+          }
         />
       );
     case "extras":

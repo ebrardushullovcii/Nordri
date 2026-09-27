@@ -30,12 +30,14 @@ import {
  */
 export function SettingsSectionSaveControl({
   hasUnsavedChanges,
+  isSaveDisabled = false,
   onSave,
   saveState,
   subject,
   effect,
 }: {
   hasUnsavedChanges: boolean;
+  isSaveDisabled?: boolean;
   onSave: () => void;
   saveState: SettingsSectionSaveState;
   /** Lowercase noun phrase naming what commits, for example "appearance". */
@@ -67,7 +69,7 @@ export function SettingsSectionSaveControl({
     <div className="grid min-w-0 max-w-full justify-items-end gap-1.5">
       <Button
         aria-describedby={isSavePending ? undefined : feedbackId}
-        disabled={!isOutstanding || isSavePending}
+        disabled={!isOutstanding || isSavePending || isSaveDisabled}
         onClick={onSave}
         pending={isSavePending}
         type="button"

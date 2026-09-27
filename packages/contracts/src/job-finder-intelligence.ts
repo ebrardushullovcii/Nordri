@@ -980,6 +980,8 @@ export function sanitizeObservedEmployerLabel(
   if (
     isLikelyUtilitySiteChromeName(trimmed) ||
     isUrlDerivedEmployerLabel(trimmed) ||
+    // "12d" beside a card says when it was posted, not who posted it.
+    isAgeTokenMisreadAsCompany(trimmed) ||
     /^[A-Z][a-z]{12,}$/.test(trimmed)
   ) {
     return null;

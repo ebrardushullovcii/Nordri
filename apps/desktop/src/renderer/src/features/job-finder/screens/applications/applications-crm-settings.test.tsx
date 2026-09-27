@@ -174,3 +174,81 @@ describe("ApplicationsCrmSettingsEditor", () => {
     }
   });
 });
+
+describe("tracker draft recovery", () => {
+  afterEach(cleanup);
+  const settings: ApplicationCrmSettings = {
+    noResponseAutomation: { enabled: true, afterDays: 14 },
+    customStages: [],
+  };
+
+  it("preserves a dirty tracker draft through an unrelated settings refresh", async () => {
+    const onSave = vi.fn(() => Promise.resolve(undefined));
+    const view = render(
+      <ApplicationsCrmSettingsEditor settings={settings} onSave={onSave} />,
+    );
+    fireEvent.change(screen.getByLabelText("After days"), {
+      target: { value: "21" },
+    });
+    view.rerender(
+      <ApplicationsCrmSettingsEditor
+        settings={structuredClone(settings)}
+        onSave={onSave}
+      />,
+    );
+    expect(screen.getByLabelText<HTMLInputElement>("After days").value).toBe(
+      "21",
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Save tracker settings" }),
+    );
+    await waitFor(() =>
+      expect(onSave).toHaveBeenCalledWith({
+        ...settings,
+        noResponseAutomation: { enabled: true, afterDays: 21 },
+      }),
+    );
+  });
+
+  it("holds all tracker edits while saving and restores controls after a failed save", async () => {
+    let rejectSave: (error: Error) => void = () => undefined;
+    const onSave = vi.fn(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectSave = reject;
+        }),
+    );
+    render(
+      <ApplicationsCrmSettingsEditor settings={settings} onSave={onSave} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Add stage" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Save tracker settings" }),
+    );
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+    await waitFor(() => {
+      for (const element of document.querySelectorAll<
+        HTMLInputElement | HTMLSelectElement | HTMLButtonElement
+      >('input:not([type="hidden"]), select, button')) {
+        expect(
+          element.disabled || element.getAttribute("aria-disabled") === "true",
+          element.outerHTML,
+        ).toBe(true);
+      }
+    });
+    rejectSave(new Error("Temporary write failure"));
+    await waitFor(() =>
+      expect(screen.getByText("Temporary write failure")).toBeTruthy(),
+    );
+    expect(screen.getByLabelText<HTMLInputElement>("Name").value).toBe(
+      "New stage",
+    );
+    expect(screen.getByLabelText<HTMLInputElement>("After days").disabled).toBe(
+      false,
+    );
+    expect(
+      screen.getByRole<HTMLButtonElement>("button", { name: "Add stage" })
+        .disabled,
+    ).toBe(false);
+  });
+});

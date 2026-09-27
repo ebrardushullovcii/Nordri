@@ -31,6 +31,7 @@ import type {
 import { SourceIntelligenceArtifactSchema } from "@unemployed/contracts";
 
 import type { JobFinderDocumentManager } from "./internal/workspace-service-contracts";
+import type { SourceDebugPhase } from "@unemployed/contracts";
 import type { SourceDebugPhaseMap } from "./workspace-service.test-fixtures";
 
 export type AgentDebugFindingsInput = Omit<
@@ -239,29 +240,47 @@ export function createAgentBrowserRuntime(
       options: AgentDiscoveryOptions,
     ): Promise<DiscoveryRunResult> {
       const phaseId = options.taskPacket?.phase ?? null;
-      const debugFindings = phaseId
-        ? runtimeOptions?.debugFindingsByPhase?.[phaseId]
-          ? createAgentDebugFindings(
-              runtimeOptions.debugFindingsByPhase[phaseId],
-            )
-          : null
+      // One learning run now does what the old access, structure, search,
+      // detail, and apply phases did between them (ADR 0023). A fixture that
+      // still describes those phases separately is read as one answer: what
+      // that run would have learned.
+      const findingsInput = phaseId
+        ? mergeLearningPhaseFindings(
+            runtimeOptions?.debugFindingsByPhase,
+            phaseId,
+          )
+        : null;
+      const debugFindings = findingsInput
+        ? createAgentDebugFindings(findingsInput)
         : null;
       const phaseCompletionMode = phaseId
-        ? (runtimeOptions?.phaseCompletionModeByPhase?.[phaseId] ??
-          "structured_finish")
+        ? (resolveLearningPhaseValue(
+            runtimeOptions?.phaseCompletionModeByPhase,
+            phaseId,
+            (value) => value !== null && value !== "structured_finish",
+          ) ?? "structured_finish")
         : "structured_finish";
       const phaseCompletionReason = phaseId
-        ? (runtimeOptions?.phaseCompletionReasonByPhase?.[phaseId] ?? null)
+        ? (resolveLearningPhaseValue(
+            runtimeOptions?.phaseCompletionReasonByPhase,
+            phaseId,
+            (value) => value !== null,
+          ) ?? null)
         : null;
-      const phaseEvidence = phaseId
-        ? runtimeOptions?.phaseEvidenceByPhase?.[phaseId]
-          ? createSourceDebugPhaseEvidence(
-              runtimeOptions.phaseEvidenceByPhase[phaseId],
-            )
-          : null
+      const evidenceInput = phaseId
+        ? mergeLearningPhaseEvidence(
+            runtimeOptions?.phaseEvidenceByPhase,
+            phaseId,
+          )
+        : null;
+      const phaseEvidence = evidenceInput
+        ? createSourceDebugPhaseEvidence(evidenceInput)
         : null;
       const reviewTranscript = phaseId
-        ? (runtimeOptions?.reviewTranscriptByPhase?.[phaseId] ?? [])
+        ? (mergeLearningPhaseTranscript(
+            runtimeOptions?.reviewTranscriptByPhase,
+            phaseId,
+          ) ?? [])
         : [];
       const emitProgress = (progress: AgentDiscoveryProgress) => {
         options.onProgress?.(progress);
@@ -321,6 +340,96 @@ export function createAgentBrowserRuntime(
       };
     },
   };
+}
+
+/** The old phases whose work the one learning run now does. */
+const LEARNING_PHASES: readonly SourceDebugPhase[] = [
+  "access_auth_probe",
+  "site_structure_mapping",
+  "search_filter_probe",
+  "job_detail_validation",
+  "apply_path_validation",
+];
+
+function learningPhaseKeys(phaseId: SourceDebugPhase): readonly SourceDebugPhase[] {
+  return phaseId === "site_structure_mapping" ? LEARNING_PHASES : [phaseId];
+}
+
+function resolveLearningPhaseValue<T>(
+  map: Partial<Record<SourceDebugPhase, T>> | undefined,
+  phaseId: SourceDebugPhase,
+  isDecisive: (value: T) => boolean,
+): T | undefined {
+  if (!map) return undefined;
+  const keys = learningPhaseKeys(phaseId);
+  for (const key of keys) {
+    const value = map[key];
+    if (value !== undefined && isDecisive(value)) return value;
+  }
+  return map[phaseId];
+}
+
+function mergeLearningPhaseFindings(
+  map: SourceDebugPhaseMap<AgentDebugFindingsInput | null> | undefined,
+  phaseId: SourceDebugPhase,
+): AgentDebugFindingsInput | null {
+  if (!map) return null;
+  const parts = learningPhaseKeys(phaseId)
+    .map((key) => map[key])
+    .filter((value): value is AgentDebugFindingsInput => Boolean(value));
+  if (parts.length === 0) return null;
+  const merged: Record<string, unknown> = {};
+  for (const part of parts) {
+    for (const [key, value] of Object.entries(part)) {
+      const current = merged[key];
+      if (Array.isArray(value)) {
+        const currentValues: unknown[] = Array.isArray(current)
+          ? Array.from(current as unknown[])
+          : [];
+        const values: unknown[] = Array.from(value as unknown[]);
+        merged[key] = currentValues.concat(values);
+      } else if (current === undefined || current === null) {
+        merged[key] = value;
+      }
+    }
+  }
+  return merged as AgentDebugFindingsInput;
+}
+
+function mergeLearningPhaseEvidence(
+  map: SourceDebugPhaseMap<SourceDebugPhaseEvidenceInput | null> | undefined,
+  phaseId: SourceDebugPhase,
+): SourceDebugPhaseEvidenceInput | null {
+  if (!map) return null;
+  const parts = learningPhaseKeys(phaseId)
+    .map((key) => map[key])
+    .filter((value): value is SourceDebugPhaseEvidenceInput => Boolean(value));
+  if (parts.length === 0) return null;
+  const merged: Record<string, unknown> = {};
+  for (const part of parts) {
+    for (const [key, value] of Object.entries(part)) {
+      const current = merged[key];
+      if (Array.isArray(value)) {
+        const currentValues: unknown[] = Array.isArray(current)
+          ? Array.from(current as unknown[])
+          : [];
+        const values: unknown[] = Array.from(value as unknown[]);
+        merged[key] = currentValues.concat(values);
+      } else {
+        merged[key] = current ?? value;
+      }
+    }
+  }
+  return merged as SourceDebugPhaseEvidenceInput;
+}
+
+function mergeLearningPhaseTranscript(
+  map: SourceDebugPhaseMap<string[]> | undefined,
+  phaseId: SourceDebugPhase,
+): string[] | undefined {
+  if (!map) return undefined;
+  const parts = learningPhaseKeys(phaseId).flatMap((key) => map[key] ?? []);
+  return parts.length > 0 ? parts : map[phaseId];
 }
 
 export function createExtractionAiClient(

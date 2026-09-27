@@ -206,6 +206,77 @@ describe("workspace manual-answer persistence races", () => {
     );
   });
 
+  test("a bare answer goes to the one question still waiting when earlier ones were already answered", async () => {
+    const seed = createSeed();
+    seed.applicationRecords = [
+      ApplicationRecordSchema.parse({
+        id: "application_a",
+        jobId: "job_ready",
+        title: "Senior Product Designer",
+        company: "Signal Systems",
+        status: "ready_for_review",
+        lastActionLabel: "Manual answer needed",
+        nextActionLabel: "Review answer",
+        lastUpdatedAt: now,
+      }),
+    ];
+    seed.applyRuns = [
+      ApplyRunSchema.parse({
+        id: "run_manual",
+        campaignId: null,
+        state: "completed",
+        jobIds: ["job_ready"],
+        currentJobId: null,
+        createdAt: now,
+        updatedAt: now,
+        completedAt: now,
+        summary: "Manual answer needed.",
+        detail: "The exact application remains reviewable.",
+        totalJobs: 1,
+        pendingJobs: 0,
+      }),
+    ];
+    seed.applyJobResults = [
+      ApplyJobResultSchema.parse({
+        id: "result_a",
+        runId: "run_manual",
+        jobId: "job_ready",
+        applicationRecordId: "application_a",
+        state: "blocked",
+        summary: "Manual answer needed.",
+        detail: "A required question needs review.",
+        startedAt: now,
+        updatedAt: now,
+      }),
+    ];
+    seed.userActionRequests = [createManualAnswerRequest()];
+    // The postal code was answered on an earlier step of this same
+    // application; its question record stays detected.
+    seed.applicationQuestionRecords = [
+      createQuestion(),
+      ApplicationQuestionRecordSchema.parse({
+        ...createQuestion(),
+        id: "question_notice",
+        prompt: "What is your notice period?",
+        kind: "other",
+      }),
+    ];
+    seed.applicationAnswerRecords = [
+      createAnswer({ id: "earlier_answer", questionId: "question_a" }),
+    ];
+    const harness = createWorkspaceServiceHarness({ seed });
+
+    await harness.workspaceService.performUserAction({
+      ...submitManualAnswerCommand(),
+      answer: "Two weeks",
+    });
+
+    const answers = await harness.repository.listApplicationAnswerRecords();
+    expect(
+      answers.find((answer) => answer.questionId === "question_notice"),
+    ).toEqual(expect.objectContaining({ text: "Two weeks" }));
+  });
+
   test("advances the revision and supersedes the actual latest record for the question", async () => {
     const seed = createSeed();
     seed.userActionRequests = [createManualAnswerRequest()];
@@ -340,6 +411,121 @@ describe("workspace manual-answer persistence races", () => {
         text: "conflicting answer",
       }),
     );
+  });
+
+  test("an answer whose store failed after the step moved on is asked again, never skipped", async () => {
+    const seed = createSeed();
+    seed.userActionRequests = [
+      createManualAnswerRequest({
+        scope: {
+          type: "application",
+          runId: "run_manual",
+          jobId: "job_ready",
+          applicationRecordId: "application_a",
+          resultId: "result_a",
+          replayCheckpointId: "checkpoint_a",
+          source: "target_site",
+        },
+      }),
+    ];
+    seed.applicationQuestionRecords = [createQuestion()];
+    const harness = createWorkspaceServiceHarness({ seed });
+    const originalUpsert =
+      harness.repository.upsertApplicationAnswerRecord.bind(harness.repository);
+    let failNext = true;
+    harness.repository.upsertApplicationAnswerRecord = async (record) => {
+      if (failNext) {
+        failNext = false;
+        throw new Error("disk full");
+      }
+      return originalUpsert(record);
+    };
+
+    await expect(
+      harness.workspaceService.performUserAction(submitManualAnswerCommand()),
+    ).rejects.toThrow("disk full");
+    // The step committed, the answer did not.
+    expect(await harness.repository.getUserActionRequest("request_a")).toEqual(
+      expect.objectContaining({ state: "verifying", revision: 2 }),
+    );
+
+    // The person presses again: the application must not carry on without
+    // the answer; the question comes back to them instead.
+    await harness.workspaceService.performUserAction(
+      submitManualAnswerCommand("command_submit_again"),
+    );
+    expect(await harness.repository.getUserActionRequest("request_a")).toEqual(
+      expect.objectContaining({ state: "still_blocked" }),
+    );
+    expect(await harness.repository.listApplicationAttempts()).toEqual([]);
+  });
+
+  test("a snapshot taken while the answer is being stored leaves the step alone", async () => {
+    const seed = createSeed();
+    seed.userActionRequests = [
+      createManualAnswerRequest({
+        scope: {
+          type: "application",
+          runId: "run_manual",
+          jobId: "job_ready",
+          applicationRecordId: "application_a",
+          resultId: "result_a",
+          replayCheckpointId: "checkpoint_a",
+          source: "target_site",
+        },
+      }),
+    ];
+    seed.applicationQuestionRecords = [createQuestion()];
+    const harness = createWorkspaceServiceHarness({ seed });
+    const originalUpsert =
+      harness.repository.upsertApplicationAnswerRecord.bind(harness.repository);
+    let releaseStore!: () => void;
+    const storeGate = new Promise<void>((resolve) => {
+      releaseStore = resolve;
+    });
+    let storeStarted!: () => void;
+    const storing = new Promise<void>((resolve) => {
+      storeStarted = resolve;
+    });
+    harness.repository.upsertApplicationAnswerRecord = async (record) => {
+      storeStarted();
+      await storeGate;
+      return originalUpsert(record);
+    };
+
+    const answering = harness.workspaceService
+      .performUserAction(submitManualAnswerCommand())
+      .catch(() => undefined);
+    await storing;
+    // The step is verifying and its answer is not stored yet.
+    await harness.workspaceService.getWorkspaceSnapshot();
+    // Read as a lost write, the snapshot used to hand the question back
+    // here, before the answer ever landed.
+    expect(await harness.repository.getUserActionRequest("request_a")).toEqual(
+      expect.objectContaining({ state: "verifying", revision: 2 }),
+    );
+    expect(
+      (
+        await harness.repository.listUserActionEvents({
+          requestId: "request_a",
+        })
+      ).map((event) => event.operation),
+    ).toEqual(["submit_manual_answer"]);
+    releaseStore();
+    await answering;
+
+    // The answer's own continuation then checks the step (this harness has
+    // no retained page, so it ends there).
+    const attempts = await harness.repository.listApplicationAttempts();
+    expect(attempts).toHaveLength(1);
+    expect(
+      await harness.repository.listApplicationAnswerRecords({
+        runId: "run_manual",
+        jobId: "job_ready",
+        resultId: "result_a",
+        applicationRecordId: "application_a",
+      }),
+    ).toHaveLength(1);
   });
 
   test("a commit race returning stale never persists the answer", async () => {

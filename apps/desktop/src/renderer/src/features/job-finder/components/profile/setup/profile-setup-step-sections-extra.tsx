@@ -316,7 +316,8 @@ function ProfileSetupScreenerAnswersSection(props: {
         </h3>
         <p className="text-sm leading-6 text-foreground-soft">
           Application forms ask the same few questions. Answer them once here
-          and Job Finder fills them in for you to check, never to send.
+          and Job Finder reuses them when filling applications in your chosen
+          apply mode.
         </p>
       </div>
       <div className="grid gap-4 pt-4">

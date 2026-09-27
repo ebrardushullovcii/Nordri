@@ -45,6 +45,13 @@ export type ApplySubmissionHandoff =
       status: "send_now";
       finalAction: { actionRef: string; actionLabel: string };
       envelope: ApplicationAuthorityEnvelope;
+      /**
+       * True when the person pressed Send themselves on an application
+       * prepared under "Ask before sending". That press is the confirmation
+       * the mode asks for, and it becomes the execution grant the submission
+       * path requires.
+       */
+      confirmedByPerson?: boolean;
     };
 
 /**
@@ -114,8 +121,13 @@ export interface ApplySubmissionFacts {
   idempotencyKey: string;
   preflightId: string;
   now: string;
+  /** The person pressed Send on an "Ask before sending" application. */
+  confirmedByPerson?: boolean;
   signal?: AbortSignal;
 }
+
+/** How long the person's press stays good for; the send starts at once. */
+const PERSON_CONFIRMATION_GRANT_MS = 10 * 60_000;
 
 /**
  * Runs the submission path for one prepared application.
@@ -132,6 +144,22 @@ export async function sendPreparedApplication(
   ) => Promise<ApplicationSubmissionRuntimeResult>,
 ): Promise<ApplicationSubmissionRuntimeResult> {
   const policy = facts.envelope.decisionPolicy;
+  // "Ask before sending" needs the person's own press on record before the
+  // runtime will act. The press is that record: the runtime issues a grant
+  // bound to the exact attempt once its preflight exists, good for a few
+  // minutes.
+  const grantedAtMs = Date.parse(facts.now);
+  const personConfirmation =
+    facts.envelope.mode === "confirm_before_submit" &&
+    facts.confirmedByPerson === true
+      ? {
+          grantedAt: facts.now,
+          expiresAt: new Date(
+            (Number.isFinite(grantedAtMs) ? grantedAtMs : Date.now()) +
+              PERSON_CONFIRMATION_GRANT_MS,
+          ).toISOString(),
+        }
+      : null;
   return runSubmission({
     repository: facts.repository,
     browserRuntime: facts.browserRuntime,
@@ -141,6 +169,7 @@ export async function sendPreparedApplication(
     authorityRevision: facts.envelope.revision,
     preflightId: facts.preflightId,
     idempotencyKey: facts.idempotencyKey,
+    ...(personConfirmation ? { personConfirmation } : {}),
     lineage: facts.lineage,
     resumeBytes: facts.resumeBytes,
     answers: policy
@@ -168,46 +197,85 @@ export async function sendPreparedApplication(
 /**
  * What the person is told after a submission attempt.
  *
- * A browser click is never proof that an employer received anything, so a
- * sent application is only ever "we sent it, check the site" until the person
- * confirms it themselves. Nothing here ever offers to try again: an attempt
- * whose outcome is unknown must not be repeated.
+ * An employer-site receipt confirmation counts as submitted. A click without
+ * that confirmation stays uncertain and is never retried automatically.
  */
-export function describeSubmissionOutcome(input: {
-  result: ApplicationSubmissionRuntimeResult;
+/**
+ * What a send that did not go out says, by the reason the browser gave.
+ * Home reads the part after "Not sent: " as the reason, so it must name one.
+ */
+function describeNotSubmittedOutcome(input: {
+  reason: string | null;
   siteLabel: string;
-  /**
-   * Whether the page showed the words a site uses after taking an
-   * application. Descriptive only: it changes what the person is told, never
-   * whether the outcome counts as confirmed.
-   */
-  confirmationSeen?: boolean;
 }): { summary: string; detail: string; nextActionLabel: string } {
-  switch (input.result.status) {
-    case "outcome_uncertain":
-      return input.confirmationSeen
-        ? {
-            summary: "Submitted — confirmation seen",
-            detail: `Job Finder sent this application to ${input.siteLabel} and its page then showed a confirmation. That is what was on screen, not proof the employer received it, so it counts as unconfirmed until you check. Job Finder will not send it again.`,
-            nextActionLabel: "Check the site and confirm",
-          }
-        : {
-            summary: "Sent — check it arrived",
-            detail: `Job Finder sent this application to ${input.siteLabel}. Its site did not confirm it arrived, and Job Finder will not send it again. Open ${input.siteLabel} to check, then tell Job Finder what you found.`,
-            nextActionLabel: "Check the site and confirm",
-          };
-    case "recorded_not_submitted":
+  switch (input.reason) {
+    case SITE_UNREACHABLE_REASON:
       return {
-        summary: "Not sent",
-        detail: `Nothing was sent to ${input.siteLabel}. The application is filled in and waiting for you.`,
-        nextActionLabel: "Open the application and finish it",
+        summary: `Not sent: ${input.siteLabel} could not be reached`,
+        detail: `The connection to ${input.siteLabel} was refused before the form went out, so nothing was sent. Try again prepares the application again once the site is back.`,
+        nextActionLabel: "Try again",
+      };
+    case "action_error":
+      return {
+        summary: "Not sent: the send button could not be pressed",
+        detail: `Job Finder could not press the send button on the form, so nothing was sent to ${input.siteLabel}. The form is still filled in; Send tries again.`,
+        nextActionLabel: "Send it",
       };
     default:
       return {
-        summary: "Not sent",
-        detail: `Job Finder did not send this application to ${input.siteLabel}, and nothing on the site was changed.`,
+        summary: input.reason
+          ? `Not sent: the form was not ready to send (${input.reason.replace(/_/gu, " ")})`
+          : "Not sent: the form was not ready to send",
+        detail: `Nothing was sent to ${input.siteLabel}. The application is filled in and waiting for you.`,
         nextActionLabel: "Open the application and finish it",
       };
+  }
+}
+
+/** The browser's reason when the site refused the connection before the send. */
+export const SITE_UNREACHABLE_REASON = "site_unreachable";
+
+export function describeSubmissionOutcome(input: {
+  result: ApplicationSubmissionRuntimeResult;
+  siteLabel: string;
+}): { summary: string; detail: string; nextActionLabel: string } {
+  switch (input.result.status) {
+    case "submitted":
+      return {
+        summary: "Application submitted",
+        detail: `${input.siteLabel} confirmed that it received this application. Job Finder will not send it again.`,
+        nextActionLabel: "View application",
+      };
+    case "outcome_uncertain":
+      return {
+        summary: "Check whether this application was sent",
+        detail: `Job Finder sent this application to ${input.siteLabel}. Its site did not confirm it arrived, and Job Finder will not send it again. Open ${input.siteLabel} to check, then tell Job Finder what you found.`,
+        nextActionLabel: "Check the site and confirm",
+      };
+    case "recorded_not_submitted":
+      return describeNotSubmittedOutcome({
+        reason: input.result.outcome?.browserAction?.reason ?? null,
+        siteLabel: input.siteLabel,
+      });
+    default: {
+      // Say why. A bare "did not send" left the person, and the developer,
+      // guessing which check refused; the orchestrator always knows.
+      const why =
+        "detail" in input.result && typeof input.result.detail === "string"
+          ? input.result.detail.trim()
+          : "";
+      const reason =
+        "reason" in input.result && typeof input.result.reason === "string"
+          ? input.result.reason.replace(/_/gu, " ")
+          : "";
+      return {
+        summary: reason
+          ? `Not sent: ${reason}`
+          : "Not sent: Job Finder stopped before sending",
+        detail: `Job Finder did not send this application to ${input.siteLabel}, and nothing on the site was changed.${reason ? ` It stopped because: ${reason}.` : ""}${why ? ` ${why}` : ""}`,
+        nextActionLabel: "Open the application and finish it",
+      };
+    }
   }
 }
 
@@ -257,18 +325,26 @@ export function applySubmissionPreflightId(lineage: {
  * How much of the person's allowance is left.
  *
  * Counted from attempts that actually happened rather than from intentions, so
- * a run that was interrupted does not quietly spend a slot. Both numbers stop
- * at zero: a negative allowance is still no allowance.
+ * a run that was interrupted does not quietly spend a slot. A send on record
+ * as not sent reached nothing, so it spends no slot either: counting it made
+ * the person's Try again after a blocked send button fail with "capacity
+ * invalid". Both numbers stop at zero: a negative allowance is still no
+ * allowance.
  */
 export function deriveApplySubmissionCapacity(input: {
   envelope: ApplicationAuthorityEnvelope;
   outcomes: readonly {
     runId: string;
     attemptedAt: string;
+    outcome?: string;
   }[];
   runId: string;
   now: string;
 }): SubmissionPreflightCapacityFacts {
+  const outcomes = input.outcomes.filter(
+    (outcome) => outcome.outcome !== "not_submitted",
+  );
+  input = { ...input, outcomes };
   const attemptedToday = (() => {
     const now = new Date(input.now);
     if (Number.isNaN(now.getTime())) {
@@ -311,7 +387,12 @@ export type SubmitPreparedApplicationRepository =
     listSubmissionOutcomeRecords: (options?: {
       jobId?: string;
     }) => Promise<
-      readonly { runId: string; attemptedAt: string }[]
+      readonly {
+        runId: string;
+        attemptedAt: string;
+        idempotencyKey: string;
+        outcome: string;
+      }[]
     >;
   };
 
@@ -323,6 +404,65 @@ export type SubmitPreparedApplicationRepository =
  * the person allowed that, and the "Submit application" action calls it when
  * they chose to look first. Same checks, same record, same single attempt.
  */
+/**
+ * The key and preflight for this send. One per prepared result, so pressing
+ * Send twice can never send twice. The one exception: when an earlier attempt
+ * on this result is on record as not sent (nothing reached the site, for
+ * example the button could not be clicked), the person's own Send press tries
+ * again under the next key instead of replaying that refusal for ever. A sent
+ * or uncertain attempt is never tried again.
+ */
+export function selectSubmissionAttemptIds(input: {
+  lineage: { runId: string; jobId: string; resultId: string };
+  outcomes: readonly { idempotencyKey: string; outcome: string }[];
+  personRetry: boolean;
+  /** Keys that already have a preflight, with their idempotency status. */
+  attempts?: readonly { idempotencyKey: string; status: string }[];
+}): { idempotencyKey: string; preflightId: string } {
+  const baseKey = applySubmissionIdempotencyKey(input.lineage);
+  const basePreflightId = applySubmissionPreflightId(input.lineage);
+  if (!input.personRetry)
+    return { idempotencyKey: baseKey, preflightId: basePreflightId };
+  for (let retry = 0; retry < SUBMISSION_RETRY_KEY_LIMIT; retry += 1) {
+    const suffix = retry === 0 ? "" : `_retry${retry}`;
+    const key = `${baseKey}${suffix}`;
+    const prior = input.outcomes.find(
+      (outcome) => outcome.idempotencyKey === key,
+    );
+    if (prior?.outcome === "not_submitted") continue;
+    // A key whose attempt stopped before it was armed never pressed
+    // anything, and its preflight cannot be written again: use the next one.
+    // An armed key is returned as it is, so its recovery decides.
+    const used = prior
+      ? null
+      : input.attempts?.find((attempt) => attempt.idempotencyKey === key);
+    if (used && (used.status === "available" || used.status === "revoked"))
+      continue;
+    return { idempotencyKey: key, preflightId: `${basePreflightId}${suffix}` };
+  }
+  return { idempotencyKey: baseKey, preflightId: basePreflightId };
+}
+
+const SUBMISSION_RETRY_KEY_LIMIT = 50;
+
+async function listSubmissionAttemptKeys(
+  repository: Pick<
+    SyntheticSubmissionAuthorityRepository,
+    "getSubmissionIdempotencyRecord"
+  >,
+  lineage: { runId: string; jobId: string; resultId: string },
+): Promise<{ idempotencyKey: string; status: string }[]> {
+  const baseKey = applySubmissionIdempotencyKey(lineage);
+  const attempts: { idempotencyKey: string; status: string }[] = [];
+  for (let retry = 0; retry < SUBMISSION_RETRY_KEY_LIMIT; retry += 1) {
+    const key = retry === 0 ? baseKey : `${baseKey}_retry${retry}`;
+    const record = await repository.getSubmissionIdempotencyRecord(key);
+    if (!record) break;
+    attempts.push({ idempotencyKey: key, status: record.status });
+  }
+  return attempts;
+}
+
 export async function submitPreparedApplication(input: {
   repository: SubmitPreparedApplicationRepository;
   browserRuntime: ApplicationSubmissionBrowserRuntime;
@@ -331,6 +471,7 @@ export async function submitPreparedApplication(input: {
   lineage: SubmissionPreflightLineageFacts;
   loadResumeBytes: () => Promise<Uint8Array>;
   now: string;
+  confirmedByPerson?: boolean;
   signal?: AbortSignal;
   runSubmission: (
     runtimeInput: ApplicationSubmissionRuntimeInput,
@@ -353,9 +494,21 @@ export async function submitPreparedApplication(input: {
       lineage: input.lineage,
       capacity,
       resumeBytes: await input.loadResumeBytes(),
-      idempotencyKey: applySubmissionIdempotencyKey(input.lineage),
-      preflightId: applySubmissionPreflightId(input.lineage),
+      ...selectSubmissionAttemptIds({
+        lineage: input.lineage,
+        outcomes,
+        personRetry: input.confirmedByPerson === true,
+        ...(input.confirmedByPerson === true
+          ? {
+              attempts: await listSubmissionAttemptKeys(
+                input.repository,
+                input.lineage,
+              ),
+            }
+          : {}),
+      }),
       now: input.now,
+      ...(input.confirmedByPerson ? { confirmedByPerson: true } : {}),
       ...(input.signal ? { signal: input.signal } : {}),
     },
     input.runSubmission,

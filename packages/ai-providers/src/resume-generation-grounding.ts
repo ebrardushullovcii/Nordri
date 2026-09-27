@@ -1665,6 +1665,24 @@ export interface ListingRequestedSkillJob {
   responsibilities?: readonly string[] | null;
   description?: string | null;
   summary?: string | null;
+  /** The job title and employer name are names, not skills the job asks for. */
+  title?: string | null;
+  company?: string | null;
+}
+
+function listingTextMentions(text: string, phrase: string): boolean {
+  const escaped = phrase.trim().replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  return (
+    escaped.length > 0 &&
+    new RegExp(`(^|[^A-Za-z0-9])${escaped}(?![A-Za-z0-9])`, "iu").test(text)
+  );
+}
+
+function stripListingNames(text: string, names: readonly string[]): string {
+  return names.reduce(
+    (current, name) => current.split(name).join(" "),
+    text,
+  );
 }
 
 const LISTING_SKILL_PROMPT_PATTERN =
@@ -1714,6 +1732,7 @@ const LISTING_SKILL_FLUFF_TOKENS = new Set([
   "excellent",
   "outstanding",
   "proven",
+  "practical",
   "required",
   "preferred",
   "plus",
@@ -1747,6 +1766,7 @@ const LISTING_SKILL_FLUFF_TOKENS = new Set([
   "has",
   "communication",
   "communications",
+  "clear",
   "teamwork",
   "collaboration",
   "collaborative",
@@ -2006,11 +2026,7 @@ function looksLikeListingTechnology(
   ) {
     return false;
   }
-  if (
-    /[+#]/u.test(trimmed) ||
-    /\./u.test(trimmed) ||
-    /\//u.test(trimmed)
-  ) {
+  if (/[+#]/u.test(trimmed) || /\./u.test(trimmed) || /\//u.test(trimmed)) {
     return true;
   }
   if (tokens.length === 1 && /[A-Z][a-z]+[A-Z]/u.test(trimmed)) {
@@ -2038,7 +2054,9 @@ function looksLikeListingTechnology(
   );
 }
 
-function collectPromptCapturedListingSkills(lines: readonly string[]): string[] {
+function collectPromptCapturedListingSkills(
+  lines: readonly string[],
+): string[] {
   const captured: string[] = [];
   for (const line of lines) {
     const matches = line.matchAll(LISTING_SKILL_PROMPT_PATTERN);
@@ -2097,11 +2115,29 @@ export function collectListingRequestedSkills(
     job.description ?? "",
   ].filter((line) => line.trim().length > 0);
 
-  return uniqueListingSkillNames([
-    ...structured,
+  // A page's description repeats the posting title and the employer name
+  // ("Full-stack Engineer, Cloud Gardens"). A word that only appears there is
+  // a name, not a requested skill, so it never becomes an Aggressive skill.
+  const names = [job.title, job.company]
+    .map((name) => name?.trim() ?? "")
+    .filter((name) => name.length > 0);
+  const textWithoutNames = stripListingNames(
+    skillPromptLines.join("\n"),
+    names,
+  );
+  const inferred = [
     ...collectPromptCapturedListingSkills(skillPromptLines),
     ...collectTitleCaseListingSkills(qualificationLines),
-  ]).slice(0, MAX_LISTING_REQUESTED_SKILLS);
+  ].filter(
+    (skill) =>
+      !names.some((name) => listingTextMentions(name, skill)) ||
+      listingTextMentions(textWithoutNames, skill),
+  );
+
+  return uniqueListingSkillNames([...structured, ...inferred]).slice(
+    0,
+    MAX_LISTING_REQUESTED_SKILLS,
+  );
 }
 
 export function mergeAggressiveVisibleSkills(input: {
@@ -2165,7 +2201,12 @@ export function mergeAggressiveVisibleSkills(input: {
  * technologies the candidate still has to confirm.
  */
 export function describeAggressiveResumeEditPolicy(
-  tailoringStrength: "conservative" | "balanced" | "aggressive" | null | undefined,
+  tailoringStrength:
+    | "conservative"
+    | "balanced"
+    | "aggressive"
+    | null
+    | undefined,
 ): string | null {
   if (tailoringStrength !== "aggressive") {
     return null;

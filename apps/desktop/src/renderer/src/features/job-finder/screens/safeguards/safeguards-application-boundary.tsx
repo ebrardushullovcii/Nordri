@@ -2,15 +2,30 @@ import type { ApplicationAuthorityEnvelope } from "@unemployed/contracts";
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@renderer/components/ui/button";
 import { StatusBadge } from "@renderer/features/job-finder/components/status-badge";
+import { APPLY_MODE_OPTIONS } from "@renderer/features/job-finder/components/choice-cards";
+
+/**
+ * The permission's mode in the words Settings uses for it ("Send for me"),
+ * never the stored value.
+ */
+export function describeEnvelopeMode(
+  mode: ApplicationAuthorityEnvelope["mode"],
+): string {
+  if (mode === "prepare_only") return "Fill for review only";
+  return (
+    APPLY_MODE_OPTIONS.find((option) => option.id === mode)?.label ??
+    "Send for me"
+  );
+}
 
 /**
  * The whole boundary in one sentence, in the words a job seeker can check
- * against what they see the app do. Safeguards is where the product states
- * what it will never do, so this sentence lives here verbatim rather than
+ * against what they see the app do. Safeguards states the person's control
+ * over applications, so this sentence lives here verbatim rather than
  * being split across a configuration screen.
  */
 export const APPLICATION_BOUNDARY_SENTENCE =
-  "Job Finder fills applications for your review and never submits them, never creates an account, never enters a password, and never answers a security check.";
+  "Job Finder fills applications and sends them only with your permission. It never asks for your password or solves CAPTCHA or MFA.";
 
 type AuthorityApi = Window["unemployed"]["jobFinder"];
 
@@ -84,7 +99,7 @@ export function SafeguardsApplicationBoundary() {
       });
       setMessage(
         result.status === "applied"
-          ? "Permission revoked. Job Finder can no longer fill anything for that site."
+          ? "Permission revoked. Job Finder can no longer send applications using it."
           : "That permission changed elsewhere. The list was refreshed — review it and try again.",
       );
       await load();
@@ -111,7 +126,7 @@ export function SafeguardsApplicationBoundary() {
       data-testid="safeguards-application-boundary"
     >
       <h2 className="font-semibold text-(--text-headline)">
-        What Job Finder will never do
+        Your application permissions
       </h2>
       <p className="max-w-3xl text-(length:--text-small) leading-6 text-foreground">
         {APPLICATION_BOUNDARY_SENTENCE}
@@ -142,9 +157,7 @@ export function SafeguardsApplicationBoundary() {
                 <span className="grid min-w-0 gap-0.5">
                   <span className="flex flex-wrap items-center gap-2">
                     <StatusBadge tone="neutral">
-                      {envelope.mode === "prepare_only"
-                        ? "Fill for review only"
-                        : envelope.mode}
+                      {describeEnvelopeMode(envelope.mode)}
                     </StatusBadge>
                     {envelope.intermediateMutationsAuthorized ? (
                       <StatusBadge tone="active">
@@ -202,8 +215,9 @@ export function SafeguardsApplicationBoundary() {
           </p>
         ) : null}
         <p className="text-(length:--text-tiny) leading-5 text-foreground-muted">
-          Credentials, security checks, consent, account creation and the final
-          submit stay yours on every application.
+          You control the apply mode, declarations and account creation. If you
+          supply sign-in details and authorize their use, Job Finder can use
+          them for that task. Security checks stay with you.
         </p>
       </div>
     </section>

@@ -216,6 +216,7 @@ export const JobFinderActivityControlSchema = z.object({
   paused: z.boolean().default(false),
   pausedAt: IsoDateTimeSchema.nullable().default(null),
   reason: z.string().trim().max(500).nullable().default(null),
+  pauseBehavior: z.enum(["finish_current"]).optional(),
 });
 export type JobFinderActivityControl = z.infer<
   typeof JobFinderActivityControlSchema
@@ -224,6 +225,7 @@ export type JobFinderActivityControl = z.infer<
 export const SetJobFinderActivityControlInputSchema = z.object({
   paused: z.boolean(),
   reason: z.string().trim().max(500).nullable().optional(),
+  pauseBehavior: z.enum(["finish_current"]).optional(),
 });
 export type SetJobFinderActivityControlInput = z.infer<
   typeof SetJobFinderActivityControlInputSchema
@@ -300,7 +302,9 @@ export function getDefaultCampaignConfiguration(mode: JobSearchCampaignMode) {
   return mode === "precision"
     ? {
         limits: {
-          retainedJobTarget: 15,
+          // A search keeps what it finds. The old fifteen-job cap made a
+          // three-source search show ten results out of sixty-nine.
+          retainedJobTarget: 1_000,
           analysisConcurrency: 2,
           preparationBatchSize: 5,
           dailyPreparationLimit: 20,

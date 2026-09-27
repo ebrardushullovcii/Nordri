@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 
 import {
-  act,
   fireEvent,
   render,
   screen,
@@ -15,7 +14,6 @@ import {
   createKnownJobSourceTargetsForFixtures,
   evaluateProfileSetupReadiness,
   JobSearchPreferencesSchema,
-  SourceDebugRunRecordSchema,
   type JobSearchPreferences,
 } from "@unemployed/contracts";
 import { LockedScreenLayout } from "../../locked-screen-layout";
@@ -491,15 +489,16 @@ describe("ProfileSetupTargetingStep guided source catalog", () => {
   it("adds a manual URL fallback that is ready to search straight away", async () => {
     render(<SetupCatalogHarness targets={[]} />);
 
-    expect(screen.getByText(/Add the job sites you use\./)).toBeTruthy();
-    // With nothing saved, adding a site is the step: the form is already open
-    // and the toggle only closes it.
+    expect(screen.getByText(/Add at least one site to search/)).toBeTruthy();
+    // With nothing saved, adding a site is the step: the form is already open,
+    // so there is no button to open it, and Cancel closes it.
     expect(
       document.querySelector("[data-profile-setup-manual-source-form]"),
     ).toBeTruthy();
-    fireEvent.click(
-      screen.getByRole("button", { name: "Add a source URL manually" }),
-    );
+    expect(
+      screen.queryByRole("button", { name: "Add a source URL manually" }),
+    ).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(
       document.querySelector("[data-profile-setup-manual-source-form]"),
     ).toBeNull();
@@ -523,7 +522,7 @@ describe("ProfileSetupTargetingStep guided source catalog", () => {
     expect(urlInput.getAttribute("aria-invalid")).toBe("true");
     expect(addButton.hasAttribute("disabled")).toBe(true);
 
-    fireEvent.change(screen.getByLabelText("Source name"), {
+    fireEvent.change(screen.getByLabelText("Source name (optional)"), {
       target: { value: "Acme careers" },
     });
     fireEvent.change(urlInput, {
@@ -533,8 +532,20 @@ describe("ProfileSetupTargetingStep guided source catalog", () => {
 
     fireEvent.click(addButton);
 
+    // The form stays open for the next address: adding a second site used to
+    // take a press on "Add a source URL manually" first.
+    expect(
+      document.querySelector("[data-profile-setup-manual-source-form]"),
+    ).toBeTruthy();
+    expect(
+      document.querySelector("[data-profile-setup-source-added]")?.textContent,
+    ).toContain("Added Acme careers and turned it on.");
+    expect(
+      screen.getByLabelText<HTMLInputElement>("Careers or job-board URL").value,
+    ).toBe("");
+
     const acmeRowCandidate = screen
-      .getByText("Acme careers")
+      .getByText("Acme careers", { selector: "article *" })
       .closest("article");
     expect(acmeRowCandidate).toBeTruthy();
     const acmeRow = assertIsHTMLElement(
@@ -562,6 +573,34 @@ describe("ProfileSetupTargetingStep guided source catalog", () => {
         .getAttribute("aria-checked"),
     ).toBe("false");
     expect(getDiscoveryReady()).toBe(false);
+
+    fireEvent.click(screen.getByRole("button", { name: "Done adding" }));
+    expect(
+      document.querySelector("[data-profile-setup-manual-source-form]"),
+    ).toBeNull();
+  });
+
+  it("adds a second site with one press because the address form stays open", () => {
+    render(<SetupCatalogHarness targets={[]} />);
+
+    const urlInput = () =>
+      screen.getByLabelText<HTMLInputElement>("Careers or job-board URL");
+    fireEvent.change(urlInput(), {
+      target: { value: "http://127.0.0.1:47950/board/" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add and turn on" }));
+    fireEvent.change(urlInput(), {
+      target: { value: "http://127.0.0.1:47950/greenhouse/" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add and turn on" }));
+
+    expect(
+      screen.queryByRole("button", { name: "Add a source URL manually" }),
+    ).toBeNull();
+    expect(document.querySelectorAll("article").length).toBeGreaterThanOrEqual(
+      2,
+    );
+    expect(getDiscoveryReady()).toBe(true);
   });
 
   it("explains unsupported guidance and blocks enabling sources without valid URLs", () => {
@@ -648,7 +687,7 @@ describe("ProfileSetupTargetingStep guided source catalog", () => {
 
     render(<FooterHarness />);
 
-    fireEvent.change(screen.getByLabelText("Source name"), {
+    fireEvent.change(screen.getByLabelText("Source name (optional)"), {
       target: { value: "Acme careers" },
     });
     fireEvent.change(screen.getByLabelText("Careers or job-board URL"), {
@@ -669,14 +708,11 @@ describe("ProfileSetupTargetingStep guided source catalog", () => {
     expect(screen.getAllByText(/Acme careers/).length).toBeGreaterThan(0);
   });
 
-  it("adds immediately, saves, then shows the existing source-check result", async () => {
+  it("adds a source without checking it automatically", () => {
     const onRunSourceDebug = vi.fn();
     const onSaveAndGoToStep = vi.fn();
 
-    function SourceCheckHarness(props: {
-      recentRuns?: ReturnType<typeof SourceDebugRunRecordSchema.parse>[];
-      savedTargets?: DiscoveryTargetEditorValue[];
-    }) {
+    function SourceCheckHarness() {
       const profileForm = useForm<ProfileEditorValues>({
         defaultValues: createProfileEditorValues(profile),
       });
@@ -695,15 +731,15 @@ describe("ProfileSetupTargetingStep guided source catalog", () => {
           onSaveAndGoToStep={onSaveAndGoToStep}
           preferencesForm={preferencesForm}
           profileForm={profileForm}
-          recentSourceDebugRuns={props.recentRuns ?? []}
+          recentSourceDebugRuns={[]}
           renderFooter={() => null}
-          savedDiscoveryTargets={props.savedTargets ?? []}
+          savedDiscoveryTargets={[]}
         />
       );
     }
 
-    const view = render(<SourceCheckHarness />);
-    fireEvent.change(screen.getByLabelText("Source name"), {
+    render(<SourceCheckHarness />);
+    fireEvent.change(screen.getByLabelText("Source name (optional)"), {
       target: { value: "Acme careers" },
     });
     fireEvent.change(screen.getByLabelText("Careers or job-board URL"), {
@@ -711,84 +747,9 @@ describe("ProfileSetupTargetingStep guided source catalog", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Add and turn on" }));
 
-    expect(screen.getByText("Checking this site…")).toBeTruthy();
-    expect(onSaveAndGoToStep).toHaveBeenCalledWith("targeting");
+    expect(screen.queryByText("Checking this site…")).toBeNull();
+    expect(onSaveAndGoToStep).not.toHaveBeenCalled();
     expect(onRunSourceDebug).not.toHaveBeenCalled();
-
-    const sourceCard = document.querySelector<HTMLElement>(
-      "[data-profile-setup-source-card]",
-    );
-    const targetId = sourceCard?.dataset.profileSetupSourceCard;
-    if (!targetId) {
-      throw new Error("Expected the added source card to expose its target id.");
-    }
-    const savedTarget = createCatalogTarget(1, {
-      id: targetId,
-      label: "Acme careers",
-      startingUrl: "https://acme.example/careers",
-      enabled: true,
-    });
-
-    vi.useFakeTimers();
-    view.rerender(<SourceCheckHarness savedTargets={[savedTarget]} />);
-    await act(async () => Promise.resolve());
-    expect(onRunSourceDebug).toHaveBeenCalledWith(targetId, {
-      readabilityTimeoutMs: 15_000,
-    });
-    await act(async () => vi.advanceTimersByTimeAsync(15_000));
-    expect(
-      screen.getByText(
-        "Check timed out; Job Finder will try again during the next search",
-      ),
-    ).toBeTruthy();
-    vi.useRealTimers();
-
-    const completedRun = SourceDebugRunRecordSchema.parse({
-      id: "source_debug_added_acme",
-      targetId,
-      state: "completed",
-      startedAt: "2026-09-13T09:00:00.000Z",
-      updatedAt: "2026-09-13T09:00:04.000Z",
-      completedAt: "2026-09-13T09:00:04.000Z",
-      activePhase: null,
-      phases: ["site_structure_mapping"],
-      targetLabel: "Acme careers",
-      targetUrl: "https://acme.example/careers",
-      targetHostname: "acme.example",
-      finalSummary: "Readable: this site exposed 12 job listings.",
-      attemptIds: [],
-      phaseSummaries: [],
-      instructionArtifactId: null,
-    });
-    view.rerender(
-      <SourceCheckHarness
-        recentRuns={[completedRun]}
-        savedTargets={[savedTarget]}
-      />,
-    );
-
-    expect(
-      await screen.findByText(
-        "Readable · 12 job cards found",
-      ),
-    ).toBeTruthy();
-
-    const timedOutRun = SourceDebugRunRecordSchema.parse({
-      ...completedRun,
-      id: "source_debug_added_acme_timeout",
-      state: "cancelled",
-      finalSummary: "Source debug run was interrupted before completion.",
-    });
-    view.rerender(
-      <SourceCheckHarness
-        recentRuns={[timedOutRun]}
-        savedTargets={[savedTarget]}
-      />,
-    );
-    expect(
-      await screen.findByText(
-        "Check timed out; Job Finder will try again during the next search",
-      ),
-    ).toBeTruthy();
+    expect(screen.getByText("Acme careers")).toBeTruthy();
   });
 });

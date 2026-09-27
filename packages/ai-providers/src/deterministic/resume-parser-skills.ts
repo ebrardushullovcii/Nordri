@@ -47,7 +47,7 @@ export function inferSkills(
   );
   const rawSectionSkills = sectionLines
     .filter((line) => !skillCategoryHeadingPattern.test(line))
-    .flatMap((line) => line.split(/,|\||[\u2022\u25cf\u25aa\u25e6\u2023]/))
+    .flatMap((line) => line.split(/[,;]|\||[\u2022\u25cf\u25aa\u25e6\u2023]/))
     .map(cleanLine)
     .filter((entry) => entry.length >= 2 && entry.length <= 28)
     .filter((entry) => !looksLikeSpokenLanguageSkillEntry(entry))
@@ -88,7 +88,7 @@ export function inferSkills(
 
 function splitSkillLine(line: string): string[] {
   const rawEntries = line
-    .split(/,|\||[\u2022\u25cf\u25aa\u25e6\u2023]| {2,}/)
+    .split(/[,;]|\||[\u2022\u25cf\u25aa\u25e6\u2023]| {2,}/)
     .map(cleanLine)
     .filter((entry) => entry.length >= 2 && entry.length <= 40)
     .filter((entry) => !looksLikeSpokenLanguageSkillEntry(entry));

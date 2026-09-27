@@ -16,7 +16,6 @@ import {
   type ProfileEditorValues,
   type SearchPreferencesEditorValues,
 } from "../lib/profile-editor";
-import { buildComparableValueFingerprint } from "../lib/profile-editor-review-candidates";
 import { buildProfileScreenViewModel } from "../lib/profile-screen-view-model";
 
 export const backgroundMergedNoticeMessage =
@@ -291,6 +290,33 @@ export function mergeDirtyEditorValues<TValue>(
     : outcome;
 }
 
+function buildOrderedContentFingerprint(value: unknown): string {
+  return JSON.stringify(value) ?? "undefined";
+}
+
+export function buildCanonicalAwareProfilePayload(input: {
+  draftValues: ProfileEditorValues;
+  dirtyFields: unknown;
+  latestResumeImportReviewCandidates: readonly ResumeImportFieldCandidateSummary[];
+  profile: CandidateProfile;
+}) {
+  const mergeOutcome = mergeDirtyEditorValues(
+    createProfileEditorValues(
+      input.profile,
+      input.latestResumeImportReviewCandidates,
+    ),
+    input.draftValues,
+    input.dirtyFields,
+  );
+
+  return buildProfilePayload(
+    input.profile,
+    mergeOutcome.status === "merged"
+      ? (mergeOutcome.value as ProfileEditorValues)
+      : input.draftValues,
+  );
+}
+
 export function useProfileScreenForms(input: {
   latestResumeImportReviewCandidates: readonly ResumeImportFieldCandidateSummary[];
   onDraftEdited?: () => void;
@@ -340,25 +366,25 @@ export function useProfileScreenForms(input: {
   // them changed; content fingerprints, not identity, decide when a form may
   // be reseeded so unrelated commits cannot erase dirty drafts.
   const loadedProfileContentFingerprintRef = useRef(
-    buildComparableValueFingerprint(input.profile),
+    buildOrderedContentFingerprint(input.profile),
   );
   const loadedReviewCandidatesContentFingerprintRef = useRef(
-    buildComparableValueFingerprint(input.latestResumeImportReviewCandidates),
+    buildOrderedContentFingerprint(input.latestResumeImportReviewCandidates),
   );
   const loadedSearchPreferencesContentFingerprintRef = useRef(
-    buildComparableValueFingerprint(input.searchPreferences),
+    buildOrderedContentFingerprint(input.searchPreferences),
   );
   // Seen-fingerprints advance on every effect run (including conflicted
   // merges) so repeated snapshots cannot re-trigger handling, while the
   // loaded-fingerprints above only move when a form actually adopts content.
   const seenProfileContentFingerprintRef = useRef(
-    buildComparableValueFingerprint(input.profile),
+    buildOrderedContentFingerprint(input.profile),
   );
   const seenReviewCandidatesContentFingerprintRef = useRef(
-    buildComparableValueFingerprint(input.latestResumeImportReviewCandidates),
+    buildOrderedContentFingerprint(input.latestResumeImportReviewCandidates),
   );
   const seenSearchPreferencesContentFingerprintRef = useRef(
-    buildComparableValueFingerprint(input.searchPreferences),
+    buildOrderedContentFingerprint(input.searchPreferences),
   );
   // The newest canonical values seen from the workspace. Screens save against
   // these, so own-save echo detection matches the payload the save emitted
@@ -624,10 +650,10 @@ export function useProfileScreenForms(input: {
   );
 
   useEffect(() => {
-    const incomingProfileFingerprint = buildComparableValueFingerprint(
+    const incomingProfileFingerprint = buildOrderedContentFingerprint(
       input.profile,
     );
-    const incomingCandidatesFingerprint = buildComparableValueFingerprint(
+    const incomingCandidatesFingerprint = buildOrderedContentFingerprint(
       input.latestResumeImportReviewCandidates,
     );
     const profileChangedSinceSeen =
@@ -651,15 +677,15 @@ export function useProfileScreenForms(input: {
     const savedDraftEchoFingerprints = new Set(
       [savedDraftPayload, pendingCanonicalPayload]
         .filter((payload) => payload !== undefined)
-        .map((payload) => buildComparableValueFingerprint(payload)),
+        .map((payload) => buildOrderedContentFingerprint(payload)),
     );
-    const incomingProfileEditorFingerprint = buildComparableValueFingerprint(
+    const incomingProfileEditorFingerprint = buildOrderedContentFingerprint(
       createProfileEditorValues(
         input.profile,
         input.latestResumeImportReviewCandidates,
       ),
     );
-    const draftEditorFingerprint = buildComparableValueFingerprint(draftValues);
+    const draftEditorFingerprint = buildOrderedContentFingerprint(draftValues);
     const isSavedProfileDraftEcho =
       profileForm.formState.isDirty &&
       (savedDraftEchoFingerprints.has(incomingProfileFingerprint) ||
@@ -770,7 +796,7 @@ export function useProfileScreenForms(input: {
   ]);
 
   useEffect(() => {
-    const incomingPreferencesFingerprint = buildComparableValueFingerprint(
+    const incomingPreferencesFingerprint = buildOrderedContentFingerprint(
       input.searchPreferences,
     );
     const preferencesChangedSinceSeen =
@@ -788,7 +814,7 @@ export function useProfileScreenForms(input: {
     const savedPreferencesEchoFingerprints = new Set(
       [savedPreferencesPayload, pendingCanonicalPreferencesPayload]
         .filter((payload) => payload !== undefined)
-        .map((payload) => buildComparableValueFingerprint(payload)),
+        .map((payload) => buildOrderedContentFingerprint(payload)),
     );
     const isSavedPreferencesDraftEcho =
       preferencesForm.formState.isDirty &&
@@ -995,10 +1021,11 @@ export function useProfileScreenForms(input: {
       ),
     );
     latestProfileRef.current = input.profile;
-    loadedProfileContentFingerprintRef.current =
-      buildComparableValueFingerprint(input.profile);
+    loadedProfileContentFingerprintRef.current = buildOrderedContentFingerprint(
+      input.profile,
+    );
     loadedReviewCandidatesContentFingerprintRef.current =
-      buildComparableValueFingerprint(input.latestResumeImportReviewCandidates);
+      buildOrderedContentFingerprint(input.latestResumeImportReviewCandidates);
 
     runWithoutDraftEditSignal(() =>
       preferencesForm.reset(
@@ -1007,7 +1034,7 @@ export function useProfileScreenForms(input: {
     );
     latestSearchPreferencesRef.current = input.searchPreferences;
     loadedSearchPreferencesContentFingerprintRef.current =
-      buildComparableValueFingerprint(input.searchPreferences);
+      buildOrderedContentFingerprint(input.searchPreferences);
 
     applyBackgroundConflictSurface("profile", false);
     applyBackgroundConflictSurface("preferences", false);

@@ -13,10 +13,14 @@ import {
   summarizeReviewCandidates,
 } from "./profile-workspace-state";
 import { hasBlockingResumeImportCandidates } from "./resume-import-candidate-utils";
-import { countResumeImportCandidates } from "./resume-import-workflow";
+import {
+  countResumeImportCandidates,
+  isResumeImportActiveInProcess,
+} from "./resume-import-workflow";
 import {
   clearSettledVisionDeferredWarnings,
   recoverInterruptedDeferredVisionRun,
+  recoverInterruptedTextImportRun,
 } from "./resume-import-recovery";
 import { createUniqueId } from "./shared";
 import { normalizeSearchPreferences } from "./workspace-helpers";
@@ -217,9 +221,15 @@ export function createWorkspaceProfileSetupContextHelpers(
     ]);
     const searchPreferences = normalizeSearchPreferences(rawSearchPreferences);
     const latestResumeImportRun = persistedLatestResumeImportRun
-      ? recoverInterruptedDeferredVisionRun({
-          run: persistedLatestResumeImportRun,
-          isActiveInCurrentProcess: ctx.activeResumeVisionRunIds.has(
+      ? recoverInterruptedTextImportRun({
+          run: recoverInterruptedDeferredVisionRun({
+            run: persistedLatestResumeImportRun,
+            isActiveInCurrentProcess: ctx.activeResumeVisionRunIds.has(
+              persistedLatestResumeImportRun.id,
+            ),
+          }),
+          isImportActiveInCurrentProcess: isResumeImportActiveInProcess(ctx),
+          isVisionActiveInCurrentProcess: ctx.activeResumeVisionRunIds.has(
             persistedLatestResumeImportRun.id,
           ),
         })
@@ -245,8 +255,9 @@ export function createWorkspaceProfileSetupContextHelpers(
     if (
       latestResumeImportRun &&
       persistedLatestResumeImportRun &&
-      latestResumeImportRun.modelRoles?.vision.status !==
-        persistedLatestResumeImportRun.modelRoles?.vision.status
+      (latestResumeImportRun.modelRoles?.vision.status !==
+        persistedLatestResumeImportRun.modelRoles?.vision.status ||
+        latestResumeImportRun.status !== persistedLatestResumeImportRun.status)
     ) {
       await ctx.repository.replaceResumeImportRunArtifacts({
         run: latestResumeImportRun,

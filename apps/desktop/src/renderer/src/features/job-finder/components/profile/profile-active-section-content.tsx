@@ -1,7 +1,6 @@
 import type {
   DiscoveryRunRecord,
   EditableSourceInstructionArtifact,
-  ResumeApplicationMode,
   SourceAccessPrompt,
   SourceDebugRunDetails,
   SourceDebugRunRecord,
@@ -12,6 +11,7 @@ import type { UseFieldArrayReturn, UseFormReturn } from "react-hook-form";
 import { ProfileBackgroundTab } from "./profile-background-tab";
 import { ProfileCoreTab } from "./profile-core-tab";
 import { ProfileExperienceTab } from "./profile-experience-tab";
+import { ProfileFilesTab } from "./profile-files-tab";
 import { ProfileJobSourcesTab } from "./profile-job-sources-tab";
 import { ProfilePreferencesTab } from "./profile-preferences-tab";
 import type {
@@ -26,6 +26,8 @@ import type { ProfileSection } from "../../lib/profile-screen-progress";
 
 interface ProfileActiveSectionContentProps {
   activeSection: ProfileSection;
+  /** Profile › Files preselects this kind (`?kind=` from a file card). */
+  requestedFileKind?: string | null;
   backgroundArrays: ProfileBackgroundArrays;
   /** Discovery runs used to classify source health exactly like Home does. */
   activeDiscoveryRun?: DiscoveryRunRecord | null;
@@ -44,6 +46,7 @@ interface ProfileActiveSectionContentProps {
   onGetSourceDebugRunDetails: (runId: string) => Promise<SourceDebugRunDetails>;
   onOpenBrowserSessionForTarget: (targetId: string) => void;
   onRunDiscoveryForTarget?: (targetId: string) => void;
+  onSaveNow?: () => void;
   onRunSourceDebug: (
     targetId: string,
     options?: { readabilityTimeoutMs?: number },
@@ -55,9 +58,6 @@ interface ProfileActiveSectionContentProps {
   onVerifySourceInstructions: (targetId: string, instructionId: string) => void;
   preferencesForm: UseFormReturn<SearchPreferencesEditorValues>;
   profileForm: UseFormReturn<ProfileEditorValues>;
-  /** The saved application default, so Preferences can offer and change it. */
-  resumeApplicationMode?: ResumeApplicationMode;
-  onSelectResumeApplicationMode?: (mode: ResumeApplicationMode) => void;
   recentSourceDebugRuns: readonly SourceDebugRunRecord[];
   sourceAccessPrompts: readonly SourceAccessPrompt[];
   sourceInstructionArtifacts: readonly SourceInstructionArtifact[];
@@ -78,14 +78,14 @@ export function ProfileActiveSectionContent({
   onGetSourceDebugRunDetails,
   onOpenBrowserSessionForTarget,
   onRunDiscoveryForTarget,
+  onSaveNow,
   onRunSourceDebug,
   onSaveSourceInstructionArtifact,
   onVerifySourceInstructions,
   preferencesForm,
   profileForm,
-  resumeApplicationMode,
-  onSelectResumeApplicationMode,
   recentSourceDebugRuns,
+  requestedFileKind = null,
   sourceAccessPrompts,
   sourceInstructionArtifacts,
 }: ProfileActiveSectionContentProps) {
@@ -108,13 +108,10 @@ export function ProfileActiveSectionContent({
         busy={isProfileMutationPending}
         preferencesForm={preferencesForm}
         profileForm={profileForm}
-        {...(resumeApplicationMode ? { resumeApplicationMode } : {})}
-        {...(onSelectResumeApplicationMode
-          ? { onSelectResumeApplicationMode }
-          : {})}
         customAnswerArray={backgroundArrays.customAnswerArray}
       />
     ),
+    files: <ProfileFilesTab requestedKind={requestedFileKind ?? null} />,
     sources: (
       <ProfileJobSourcesTab
         activeDiscoveryRun={activeDiscoveryRun}
@@ -127,6 +124,7 @@ export function ProfileActiveSectionContent({
         onGetSourceDebugRunDetails={onGetSourceDebugRunDetails}
         onOpenBrowserSessionForTarget={onOpenBrowserSessionForTarget}
         {...(onRunDiscoveryForTarget ? { onRunDiscoveryForTarget } : {})}
+        {...(onSaveNow ? { onSaveNow } : {})}
         onRunSourceDebug={onRunSourceDebug}
         onSaveSourceInstructionArtifact={onSaveSourceInstructionArtifact}
         onVerifySourceInstructions={onVerifySourceInstructions}

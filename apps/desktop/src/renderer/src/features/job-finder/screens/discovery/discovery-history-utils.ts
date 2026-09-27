@@ -198,11 +198,14 @@ export function buildLiveRunRecord(
   ).length;
   const sourceHealth = targetExecutions.map((execution) => ({
     targetId: execution.targetId,
-    // Same rule the service applies: completing with nothing found is not a
-    // healthy source.
+    // Same rule the service applies: only an empty listing is marked, and
+    // jobs already saved count as found.
     health:
       execution.state === "completed"
-        ? execution.warning || execution.jobsFound === 0
+        ? execution.jobsFound +
+            execution.duplicatesMerged +
+            execution.jobsSkippedByLedger ===
+          0
           ? ("warning" as const)
           : ("healthy" as const)
         : execution.state === "failed"

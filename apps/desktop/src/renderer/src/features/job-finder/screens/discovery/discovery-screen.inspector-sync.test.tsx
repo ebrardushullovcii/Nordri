@@ -287,7 +287,7 @@ describe("DiscoveryScreen inspector sync across pagination and search", () => {
     await waitFor(() => {
       expect(detailProbe.latest?.selectedJob).toBeNull();
     });
-    expect(screen.getByText("0 of 60 results")).toBeTruthy();
+    expect(screen.getByText("0 of 60 jobs")).toBeTruthy();
   });
 
   it("inspects the strongest remaining job when a search narrows the pool", async () => {
@@ -300,7 +300,7 @@ describe("DiscoveryScreen inspector sync across pagination and search", () => {
     await waitFor(() => {
       expect(detailProbe.latest?.selectedJob?.id).toBe("sync_job_055");
     });
-    expect(screen.getByText("5 of 60 results")).toBeTruthy();
+    expect(screen.getByText("5 of 60 jobs")).toBeTruthy();
     expect(getResultButton("sync_job_055").getAttribute("aria-current")).toBe(
       "true",
     );

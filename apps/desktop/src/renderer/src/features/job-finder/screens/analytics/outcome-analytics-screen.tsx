@@ -15,7 +15,7 @@ import { Input } from "@renderer/components/ui/input";
 import { EmptyState } from "../../components/empty-state";
 import { Link } from "react-router-dom";
 import { JOB_FINDER_ROUTE_PATHS } from "../../lib/job-finder-route-hrefs";
-import { PageHeader } from "../../components/page-header";
+import { PageHeaderStack } from "../../components/page-header";
 import { StatusBadge } from "../../components/status-badge";
 import {
   CollectionPagination,
@@ -456,7 +456,7 @@ export function OutcomeAnalyticsScreen(props: {
   if (props.loading) {
     return (
       <section className="grid gap-4 pb-8">
-        <PageHeader
+        <PageHeaderStack
           description="Compare response and interview rates from outcomes you record. Suggestions are never applied automatically and never change job facts."
           title="Outcomes"
         />
@@ -487,7 +487,7 @@ export function OutcomeAnalyticsScreen(props: {
 
   return (
     <section className="grid gap-4 pb-8">
-      <PageHeader
+      <PageHeaderStack
         description="Compare response and interview rates from outcomes you record. Suggestions are never applied automatically and never change job facts."
         title="Outcomes"
       />

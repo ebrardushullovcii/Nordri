@@ -3,7 +3,8 @@ export type ProfileSection =
   | "experience"
   | "background"
   | "preferences"
-  | "sources";
+  | "sources"
+  | "files";
 
 export interface SectionProgress {
   filled: number;

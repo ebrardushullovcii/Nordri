@@ -166,6 +166,27 @@ export function reduceUserActionCommand(
           resolvedAt: null,
         },
       });
+    case "submit_task_local_credentials":
+      if (
+        request.kind !== "login" ||
+        request.scope.type !== "application" ||
+        !request.scope.resultId
+      ) {
+        throw new Error(
+          "Task-local credentials can only continue an exact sign-in request.",
+        );
+      }
+      return applyTransition({
+        request,
+        operationId: command.commandId,
+        operation: command.action,
+        occurredAt,
+        patch: {
+          state: "verifying",
+          attemptCount: incrementAttempt(request),
+          resolvedAt: null,
+        },
+      });
     case "choose_account_path":
       if (request.kind !== "existing_account_choice") {
         throw new Error(

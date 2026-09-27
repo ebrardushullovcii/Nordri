@@ -204,20 +204,9 @@ describe("DiscoveryScreen stop search action", () => {
     fireEvent.click(stop);
     expect(onCancelDiscovery).toHaveBeenCalledTimes(1);
     expect(onCancelDiscovery).toHaveBeenCalledWith("run_1");
-    expect(window.confirm).toHaveBeenCalledWith(
-      "Job Finder keeps the 15 best matches per this plan's rule; jobs beyond that limit are not kept as result rows. Stop this search?",
-    );
-  });
-
-  it("leaves the search running when the person declines the retention warning", () => {
-    vi.mocked(window.confirm).mockReturnValue(false);
-    const onCancelDiscovery = vi.fn(() => Promise.resolve(true));
-    render(buildScreen({ activeRun: runningRun, onCancelDiscovery }));
-
-    fireEvent.click(getStopSearchButton());
-
-    expect(onCancelDiscovery).not.toHaveBeenCalled();
-    expect(getStopSearchButton().getAttribute("data-pending")).toBeNull();
+    // Stop means stop: no confirm dialog stands between the press and the
+    // cancel request.
+    expect(window.confirm).not.toHaveBeenCalled();
   });
 
   it("makes a requested stop inert and focus-stable, then re-arms after the run leaves running", () => {
@@ -270,7 +259,7 @@ describe("DiscoveryScreen stop search action", () => {
       );
 
       // While the search may still be winding down the app says so and the
-      // plan dropdown stays held.
+      // search controls stay held.
       expect(
         screen
           .getByTestId("discovery-header-stop-search")
@@ -278,7 +267,7 @@ describe("DiscoveryScreen stop search action", () => {
       ).toBe("true");
       expect(
         screen
-          .getByRole("combobox", { name: "Search plan" })
+          .getByRole("button", { name: "Prefer recent" })
           .hasAttribute("disabled"),
       ).toBe(true);
 
@@ -291,7 +280,7 @@ describe("DiscoveryScreen stop search action", () => {
       expect(screen.queryByTestId("discovery-search-progress")).toBeNull();
       expect(
         screen
-          .getByRole("combobox", { name: "Search plan" })
+          .getByRole("button", { name: "Prefer recent" })
           .hasAttribute("disabled"),
       ).toBe(false);
       expect(

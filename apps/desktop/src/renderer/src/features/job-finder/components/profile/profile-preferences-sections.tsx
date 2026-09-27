@@ -1,10 +1,4 @@
-import {
-  RESUME_APPROACH_OPTIONS,
-  STRONG_REWRITE_WARNING,
-  TAILORING_MODE_DESCRIPTIONS,
-} from "./profile-tailoring-copy";
 import { workModeValues } from "@unemployed/contracts";
-import type { ResumeApplicationMode } from "@unemployed/contracts";
 import { useId } from "react";
 import type { UseFormReturn } from "react-hook-form";
 import { Controller } from "react-hook-form";
@@ -96,18 +90,8 @@ function revealExpectedSalaryAnswerField(documentRef: Document = document) {
 
 export function ProfilePreferencesTargetingSection(props: {
   preferencesForm: UseFormReturn<SearchPreferencesEditorValues>;
-  /**
-   * The saved application default. Preferences and Settings edit the same
-   * stored choice, so "Use original resume unchanged" is reachable from either
-   * without the two disagreeing.
-   */
-  resumeApplicationMode?: ResumeApplicationMode;
-  onSelectResumeApplicationMode?: (mode: ResumeApplicationMode) => void;
 }) {
   const { control, register, setValue, watch } = props.preferencesForm;
-  const resumeApplicationMode = props.resumeApplicationMode ?? "tailored_per_job";
-  const usesOriginalResume = resumeApplicationMode === "original_resume";
-  const tailoringModeId = useId();
   const minimumSalaryId = useId();
   const targetSalaryId = useId();
   const compensationIntervalId = useId();
@@ -356,55 +340,9 @@ export function ProfilePreferencesTargetingSection(props: {
             </div>
           </fieldset>
 
-          <Controller
-            control={control}
-            name="tailoringMode"
-            render={({ field }) => (
-              <div className="grid min-w-0 content-start gap-(--gap-field) h-full">
-                <FieldLabel htmlFor={tailoringModeId}>
-                  Default resume tailoring style
-                </FieldLabel>
-                <FormSelect
-                  onValueChange={(value) => {
-                    if (value === "original_resume") {
-                      props.onSelectResumeApplicationMode?.("original_resume");
-                      return;
-                    }
-
-                    if (usesOriginalResume) {
-                      props.onSelectResumeApplicationMode?.("tailored_per_job");
-                    }
-                    field.onChange(value);
-                  }}
-                  options={RESUME_APPROACH_OPTIONS.map((option) => ({
-                    label: option.label,
-                    value: option.value,
-                  }))}
-                  placeholder="Select a style"
-                  triggerClassName={profileSelectTriggerClassName}
-                  triggerId={tailoringModeId}
-                  value={usesOriginalResume ? "original_resume" : field.value}
-                />
-                {/* The same disclosure the setup screen gives; this dropdown
-                    could switch Strong rewrite on without a word about it. */}
-                <p className="text-(length:--text-small) leading-5 text-foreground-soft">
-                  {usesOriginalResume
-                    ? RESUME_APPROACH_OPTIONS[0].description
-                    : (TAILORING_MODE_DESCRIPTIONS[field.value] ??
-                      TAILORING_MODE_DESCRIPTIONS.balanced)}
-                </p>
-                {!usesOriginalResume && field.value === "aggressive" ? (
-                  <p
-                    className="text-sm leading-6 text-(--warning-text)"
-                    role="status"
-                  >
-                    {STRONG_REWRITE_WARNING}
-                  </p>
-                ) : null}
-              </div>
-            )}
-          />
-
+          {/* The resume approach (original, light, tailored, aggressive) and
+              how broadly a search collects live under Settings, AI behavior,
+              with every other choice about how the AI works. */}
           <div className="grid min-w-0 content-start gap-(--gap-field) h-full">
             <FieldLabel htmlFor={minimumSalaryId}>
               Minimum worth considering
@@ -423,7 +361,7 @@ export function ProfilePreferencesTargetingSection(props: {
           </div>
           <div className="grid min-w-0 content-start gap-(--gap-field) h-full">
             <FieldLabel htmlFor={targetSalaryId}>
-              Search range maximum (optional)
+              Target compensation (optional)
             </FieldLabel>
             <ProfileInput
               id={targetSalaryId}
@@ -433,7 +371,8 @@ export function ProfilePreferencesTargetingSection(props: {
               {...register("targetSalaryUsd")}
             />
             <p className="text-xs leading-relaxed text-foreground-muted">
-              Leave blank when higher compensation is always welcome.
+              Your preferred target. Matching still uses the minimum as the
+              floor, and higher compensation is always welcome.
             </p>
           </div>
           <Controller
@@ -480,35 +419,6 @@ export function ProfilePreferencesTargetingSection(props: {
             ) : null}
           </div>
         </div>
-      </article>
-
-      <article className="surface-card-tint grid gap-3 rounded-(--radius-panel) border border-(--surface-panel-border) p-4">
-        <div>
-          <h3 className="font-semibold text-(--text-headline)">
-            How broadly should Job Finder collect?
-          </h3>
-          <p className="mt-1 text-[0.9rem] leading-6 text-foreground-soft">
-            By default, Job Finder keeps jobs visible and explains where they
-            miss your preferences. Turn on strict collection only when your
-            target roles, preferred locations, and work modes are true
-            deal-breakers.
-          </p>
-        </div>
-        <Controller
-          control={control}
-          name="collectOnlyHardCriteriaMatches"
-          render={({ field }) => (
-            <CheckboxField
-              checked={field.value}
-              label="Collect only jobs that meet my hard role, location, and work-mode criteria"
-              onCheckedChange={field.onChange}
-            />
-          )}
-        />
-        <p className="text-xs leading-5 text-muted-foreground">
-          Strict collection can reduce application volume and may hide adjacent
-          roles. Explicitly excluded companies and locations are always skipped.
-        </p>
       </article>
     </section>
   );

@@ -12,7 +12,7 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SettingsApplicationDefaultsSection } from "./settings-application-defaults-section";
 
 function parseSettings(
@@ -29,49 +29,47 @@ function parseSettings(
   });
 }
 
+function chooseDisplayFont() {
+  fireEvent.keyDown(screen.getByLabelText("Resume font"), { key: "ArrowDown" });
+  fireEvent.click(screen.getByRole("option", { name: "Display sans" }));
+}
+
 describe("SettingsApplicationDefaultsSection", () => {
+  beforeEach(() => {
+    // jsdom has no layout, and the select popup scrolls its active item.
+    Element.prototype.scrollIntoView = vi.fn();
+  });
+
   afterEach(() => {
     cleanup();
     vi.clearAllMocks();
   });
 
-  it("keeps the explicit near-choice resume flow and stages without saving", () => {
-    const onUpdateApplicationDefaults = vi.fn<
-      (input: UpdateApplicationDefaultsInput) => Promise<void>
-    >(() => Promise.resolve());
-    const { container } = render(
+  it("owns only the look of a tailored resume; the approach lives under AI behavior", () => {
+    render(
       <SettingsApplicationDefaultsSection
         availableResumeTemplates={[]}
-        onUpdateApplicationDefaults={onUpdateApplicationDefaults}
+        onUpdateApplicationDefaults={vi.fn()}
         settings={parseSettings()}
       />,
     );
 
-    const originalCvChoice = screen.getByRole("radio", {
-      name: /Use my original resume unchanged/,
-    });
-    expect(originalCvChoice.getAttribute("aria-checked")).toBe("false");
-    expect(container.textContent).toContain("Saved default");
+    expect(screen.getByText("Resume look")).toBeTruthy();
+    expect(screen.getByText(/set under AI behavior/)).toBeTruthy();
+    expect(
+      screen.queryByRole("radio", { name: /Use my original resume unchanged/ }),
+    ).toBeNull();
     expect(
       screen.getByRole("group", { name: "Default resume template" }),
     ).toBeTruthy();
-
-    fireEvent.click(originalCvChoice);
-
-    expect(originalCvChoice.getAttribute("aria-checked")).toBe("true");
-    expect(container.textContent).toContain("Selected · save to apply");
-    expect(container.textContent).toContain(
-      "Save this preference before leaving Settings.",
-    );
-    expect(onUpdateApplicationDefaults).not.toHaveBeenCalled();
-
-    const saveButton = screen.getByRole<HTMLButtonElement>("button", {
-      name: "Save resume preference",
-    });
-    expect(saveButton.disabled).toBe(false);
+    expect(
+      screen.getByRole<HTMLButtonElement>("button", {
+        name: "Save resume look",
+      }).disabled,
+    ).toBe(true);
   });
 
-  it("sends only application-defaults fields and reports saved status", async () => {
+  it("sends only template and font and reports saved status", async () => {
     const onUpdateApplicationDefaults = vi.fn<
       (input: UpdateApplicationDefaultsInput) => Promise<void>
     >(() => Promise.resolve());
@@ -83,12 +81,13 @@ describe("SettingsApplicationDefaultsSection", () => {
       />,
     );
 
-    fireEvent.click(
-      screen.getByRole("radio", { name: /Use my original resume unchanged/ }),
-    );
+    chooseDisplayFont();
+    expect(
+      screen.getByText("You have unsaved resume look changes."),
+    ).toBeTruthy();
     fireEvent.click(
       screen.getByRole<HTMLButtonElement>("button", {
-        name: "Save resume preference",
+        name: "Save resume look",
       }),
     );
 
@@ -96,22 +95,12 @@ describe("SettingsApplicationDefaultsSection", () => {
       expect(onUpdateApplicationDefaults).toHaveBeenCalledTimes(1),
     );
     expect(onUpdateApplicationDefaults).toHaveBeenCalledWith({
-      fontPreset: "inter_requisite",
-      resumeApplicationMode: "original_resume",
+      fontPreset: "space_grotesk_display",
       resumeTemplateId: "classic_ats",
     });
-    const payload = onUpdateApplicationDefaults.mock.calls[0]?.[0];
-    expect(Object.keys(payload ?? {}).sort()).toEqual([
-      "fontPreset",
-      "resumeApplicationMode",
-      "resumeTemplateId",
-    ]);
-    // A committed save says so in the section that committed it. "No unsaved
-    // changes." is what an untouched section says, so it cannot also be the
-    // confirmation that a change landed.
     await waitFor(() =>
       expect(
-        screen.getByText("Resume preference saved for newly shortlisted jobs."),
+        screen.getByText("Resume look saved."),
       ).toBeTruthy(),
     );
     expect(screen.queryByText("No unsaved changes.")).toBeNull();
@@ -129,28 +118,26 @@ describe("SettingsApplicationDefaultsSection", () => {
       />,
     );
 
-    fireEvent.click(
-      screen.getByRole("radio", { name: /Use my original resume unchanged/ }),
-    );
+    chooseDisplayFont();
     expect(
-      screen.getByText("You have unsaved resume preference changes."),
+      screen.getByText("You have unsaved resume look changes."),
     ).toBeTruthy();
 
     view.rerender(
       <SettingsApplicationDefaultsSection
         availableResumeTemplates={[]}
         onUpdateApplicationDefaults={onUpdateApplicationDefaults}
-        settings={parseSettings({ resumeApplicationMode: "original_resume" })}
+        settings={parseSettings({ fontPreset: "space_grotesk_display" })}
       />,
     );
 
     expect(
       screen.getByRole<HTMLButtonElement>("button", {
-        name: "Save resume preference",
+        name: "Save resume look",
       }).disabled,
     ).toBe(true);
     expect(
-      screen.queryByText("You have unsaved resume preference changes."),
+      screen.queryByText("You have unsaved resume look changes."),
     ).toBeNull();
   });
 });

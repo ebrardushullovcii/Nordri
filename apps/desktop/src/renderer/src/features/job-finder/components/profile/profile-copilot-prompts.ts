@@ -116,6 +116,8 @@ const reviewDomainsByProfileSection: Record<
     "answer_bank",
   ],
   sources: ["search_preferences"],
+  // Files hold no profile facts, so the assistant has nothing to review there.
+  files: [],
 };
 
 export function buildProfileSectionStarterQuestion(

@@ -1,6 +1,7 @@
 import type { JobFinderWorkspaceSnapshot } from "@unemployed/contracts";
 import { describe, expect, it } from "vitest";
 import { buildJobFinderGlobalSearchEntries } from "./build-job-finder-global-search-entries";
+import { searchJobFinderEntries } from "./job-finder-global-search";
 
 function buildWorkspaceFixture(activeCampaignId: string | null) {
   return {
@@ -157,7 +158,7 @@ describe("buildJobFinderGlobalSearchEntries", () => {
     );
   });
 
-  it("excludes absence-placeholder company shells from search", () => {
+  it("keeps the retired company catalog out of global search", () => {
     const workspace = {
       campaigns: [],
       discoveryJobs: [],
@@ -192,7 +193,7 @@ describe("buildJobFinderGlobalSearchEntries", () => {
       .filter((entry) => entry.kind === "company")
       .map((entry) => entry.id);
 
-    expect(companyIds).toEqual(["company-real"]);
+    expect(companyIds).toEqual([]);
   });
 
   it("keeps every saved record searchable and labels the ones outside the active plan", () => {
@@ -207,6 +208,16 @@ describe("buildJobFinderGlobalSearchEntries", () => {
       entries.filter((entry) => entry.kind === kind).map((entry) => entry.id);
 
     expect(idsOf("campaign")).toEqual(["campaign-active", "campaign-other"]);
+    expect(entries.find((entry) => entry.id === "campaign-other")?.href).toBe(
+      "/job-finder/campaigns?campaignId=campaign-other",
+    );
+    expect(
+      searchJobFinderEntries(entries, "plan", {
+        campaignId: "campaign-other",
+      })
+        .flatMap((group) => group.entries)
+        .some((entry) => entry.id === "campaign-other"),
+    ).toBe(true);
     expect(idsOf("job")).toEqual(["job-active", "job-other", "job-unassigned"]);
     expect(idsOf("application")).toEqual([
       "application-active",

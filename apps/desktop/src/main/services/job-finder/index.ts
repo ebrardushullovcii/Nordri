@@ -23,7 +23,10 @@ export {
   setJobFinderWorkspaceServiceTestEnv,
   shutdownJobFinderWorkspaceService,
 } from "./workspace-service";
-export { importResumeFromSourcePath } from "./import-resume";
+export {
+  importResumeFromSourcePath,
+  retryInterruptedResumeImport,
+} from "./import-resume";
 export {
   runDesktopResumeImportBenchmark,
   defaultBenchmarkCases,
@@ -34,7 +37,9 @@ export {
 } from "./resume-quality-benchmark";
 export {
   loadApplyQueueDemoState,
+  loadAgentOwnedBrowserDriveState,
   loadResumeWorkspaceDemoState,
+  loadWorkHistoryReviewDriveState,
 } from "./load-demo-state";
 export {
   resetJobFinderWorkspace,

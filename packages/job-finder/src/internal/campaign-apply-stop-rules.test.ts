@@ -3,7 +3,10 @@ import type {
   ApplyBlockerReason,
   JobSearchCampaignStopRules,
 } from "@unemployed/contracts";
-import { evaluateCampaignApplyStopRules } from "./campaign-apply-stop-rules";
+import {
+  evaluateCampaignApplyStopRules,
+  isQuestionHandoffPauseReason,
+} from "./campaign-apply-stop-rules";
 
 function buildStopRules(
   overrides: Partial<JobSearchCampaignStopRules> = {},
@@ -37,6 +40,23 @@ function evaluate(
 }
 
 describe("campaign apply stop rules", () => {
+  test("a question hand-off is told apart from a safety limit", () => {
+    expect(
+      isQuestionHandoffPauseReason(
+        evaluate("required_human_input", { processedCount: 1 }),
+      ),
+    ).toBe(true);
+    expect(
+      isQuestionHandoffPauseReason(evaluate("auth_required", { processedCount: 1 })),
+    ).toBe(false);
+    expect(
+      isQuestionHandoffPauseReason(
+        evaluate(null, { processedCount: 5, failedCount: 5 }),
+      ),
+    ).toBe(false);
+    expect(isQuestionHandoffPauseReason(null)).toBe(false);
+  });
+
   test("pauses on login-required blockers when enabled", () => {
     for (const reason of [
       "auth_required",

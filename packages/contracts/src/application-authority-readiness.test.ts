@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   ApplicationAuthorityReadinessSchema,
+  ApplicationAnswerSnapshotSummarySchema,
   ApproveCurrentApplicationAnswersInputSchema,
 } from "./index";
 
@@ -32,6 +33,35 @@ const readiness = {
 };
 
 describe("application authority readiness", () => {
+  it("accepts an approved empty answer snapshot while rejecting negative counts", () => {
+    const approvedSnapshot = {
+      id: "answer_snapshot_empty",
+      revision: 1,
+      digest: "b".repeat(64),
+      sourceProfileRevision: 4,
+      approvedAt: readiness.generatedAt,
+      entryCount: 0,
+      kinds: [],
+    };
+    expect(
+      ApplicationAuthorityReadinessSchema.parse({
+        ...readiness,
+        approvedSnapshot,
+        currentAnswers: {
+          ...readiness.currentAnswers,
+          entryCount: 0,
+          kinds: [],
+        },
+      }).approvedSnapshot?.entryCount,
+    ).toBe(0);
+    expect(
+      ApplicationAnswerSnapshotSummarySchema.safeParse({
+        ...approvedSnapshot,
+        entryCount: -1,
+      }).success,
+    ).toBe(false);
+  });
+
   it("exposes content-free answer identity and an explicit prepare-only ceiling", () => {
     const parsed = ApplicationAuthorityReadinessSchema.parse(readiness);
     expect(parsed.executionCapability).toBe("prepare_only");

@@ -32,11 +32,31 @@ const confirmNeverSpy = vi
   .mockImplementation(() => false);
 
 it("replaces only the safeguarded plan's next run and restores it on dismissal", () => {
-  const props = { activeCampaignId: "one", campaigns: [campaign("one", "First", "precision"), campaign("two", "Second", "precision")],
-    onSaveCampaign: vi.fn(), onSelectCampaign: vi.fn(), pending: false };
-  const { rerender } = render(<CampaignsScreen {...props} safeguardPauses={[{
-    id: "pause", campaignId: "one", planName: "First", title: "Paused", explanation: "Review failures.", route: "/job-finder/safeguards",
-  }]} />);
+  const props = {
+    activeCampaignId: "one",
+    campaigns: [
+      campaign("one", "First", "precision"),
+      campaign("two", "Second", "precision"),
+    ],
+    onSaveCampaign: vi.fn(),
+    onSelectCampaign: vi.fn(),
+    pending: false,
+  };
+  const { rerender } = render(
+    <CampaignsScreen
+      {...props}
+      safeguardPauses={[
+        {
+          id: "pause",
+          campaignId: "one",
+          planName: "First",
+          title: "Paused",
+          explanation: "Review failures.",
+          route: "/job-finder/safeguards",
+        },
+      ]}
+    />,
+  );
   expect(screen.getAllByText("Paused by a safeguard")).toHaveLength(1);
   rerender(<CampaignsScreen {...props} safeguardPauses={[]} />);
   expect(screen.queryByText("Paused by a safeguard")).toBeNull();
@@ -149,9 +169,9 @@ it("prints one timestamp shape whether or not the plan saved a time zone", () =>
   const zoneSuffix = /\b[A-Z]{2,5}(?:[+-]\d{1,2}(?::\d{2})?)?$/u;
   expect(zoneSuffix.test(first.trim())).toBe(true);
   expect(zoneSuffix.test(second.trim())).toBe(true);
-  expect(screen.getAllByText(`Times shown in ${deviceTimeZone()}.`)).toHaveLength(
-    1,
-  );
+  expect(
+    screen.getAllByText(`Times shown in ${deviceTimeZone()}.`),
+  ).toHaveLength(1);
 });
 
 it("names each plan's selected share of job sites", () => {
@@ -345,28 +365,34 @@ function finishedRun(
 }
 
 describe("CampaignsScreen remote-only source warning", () => {
-  it("tells a plan that asked for a place that its sources only list remote jobs", () => {
-    render(
-      <CampaignsScreen
-        activeCampaignId="one"
-        campaigns={[localPlan("one", ["Chicago, IL"])]}
-        discoveryRuns={[
-          finishedRun("run_1", "one", "2026-09-11T10:00:00.000Z", [
-            "Your sources only list remote jobs; add a site that lists jobs in Chicago, IL.",
-          ]),
-        ]}
-        onSaveCampaign={vi.fn()}
-        onSelectCampaign={vi.fn()}
-        pending={false}
-      />,
-    );
+  it.each([
+    "This search returned only remote jobs",
+    "Your sources only list remote jobs",
+  ])(
+    "describes remote-only results from current or legacy notice: %s",
+    (opening) => {
+      render(
+        <CampaignsScreen
+          activeCampaignId="one"
+          campaigns={[localPlan("one", ["Chicago, IL"])]}
+          discoveryRuns={[
+            finishedRun("run_1", "one", "2026-09-11T10:00:00.000Z", [
+              `${opening}; try another search for jobs in Chicago, IL.`,
+            ]),
+          ]}
+          onSaveCampaign={vi.fn()}
+          onSelectCampaign={vi.fn()}
+          pending={false}
+        />,
+      );
 
-    expect(
-      screen.getByTestId("campaign-remote-only-sources-note").textContent,
-    ).toBe(
-      "Your sources only list remote jobs; add a site that lists jobs in Chicago, IL.",
-    );
-  });
+      expect(
+        screen.getByTestId("campaign-remote-only-sources-note").textContent,
+      ).toBe(
+        "This search returned only remote jobs; try another search for jobs in Chicago, IL.",
+      );
+    },
+  );
 
   it("names the plan's current places, not the ones the run was told about", () => {
     render(
@@ -375,7 +401,7 @@ describe("CampaignsScreen remote-only source warning", () => {
         campaigns={[localPlan("one", ["Belgrade", "Novi Sad"])]}
         discoveryRuns={[
           finishedRun("run_1", "one", "2026-09-11T10:00:00.000Z", [
-            "Your sources only list remote jobs; add a site that lists jobs in Chicago, IL.",
+            "This search returned only remote jobs; try another search for jobs in Chicago, IL.",
           ]),
         ]}
         onSaveCampaign={vi.fn()}
@@ -387,7 +413,7 @@ describe("CampaignsScreen remote-only source warning", () => {
     expect(
       screen.getByTestId("campaign-remote-only-sources-note").textContent,
     ).toBe(
-      "Your sources only list remote jobs; add a site that lists jobs in Belgrade or Novi Sad.",
+      "This search returned only remote jobs; try another search for jobs in Belgrade or Novi Sad.",
     );
   });
 
@@ -400,7 +426,7 @@ describe("CampaignsScreen remote-only source warning", () => {
         campaigns={[remotePlan]}
         discoveryRuns={[
           finishedRun("run_1", "one", "2026-09-11T10:00:00.000Z", [
-            "Your sources only list remote jobs; add a site that lists jobs in Worldwide remote.",
+            "This search returned only remote jobs; try another search for jobs in Worldwide remote.",
           ]),
         ]}
         onSaveCampaign={vi.fn()}
@@ -419,7 +445,7 @@ describe("CampaignsScreen remote-only source warning", () => {
         campaigns={[localPlan("one", ["Chicago, IL"])]}
         discoveryRuns={[
           finishedRun("run_other", "two", "2026-09-11T10:00:00.000Z", [
-            "Your sources only list remote jobs; add a site that lists jobs in Chicago, IL.",
+            "This search returned only remote jobs; try another search for jobs in Chicago, IL.",
           ]),
         ]}
         onSaveCampaign={vi.fn()}
@@ -440,7 +466,7 @@ describe("CampaignsScreen remote-only source warning", () => {
         campaigns={[localPlan("one", ["Chicago, IL"])]}
         discoveryRuns={[
           finishedRun("run_1", "one", "2026-09-11T10:00:00.000Z", [
-            "Your sources only list remote jobs; add a site that lists jobs in Chicago, IL.",
+            "This search returned only remote jobs; try another search for jobs in Chicago, IL.",
           ]),
           finishedRun("run_2", "one", "2026-09-12T10:00:00.000Z", []),
         ]}
@@ -739,8 +765,8 @@ describe("CampaignsScreen", () => {
 
     const badges = screen.getAllByText("Current");
     expect(badges).toHaveLength(1);
-    expect(badges[0]?.className).toContain("bg-primary");
-    expect(badges[0]?.className).toContain("text-primary-foreground");
+    expect(badges[0]?.className).toContain("bg-primary-fill");
+    expect(badges[0]?.className).toContain("text-primary-fill-foreground");
     expect(badges[0]?.className).not.toContain("text-accent");
   });
 
@@ -892,7 +918,9 @@ describe("CampaignsScreen", () => {
     fireEvent.change(screen.getByLabelText("Why not to run then"), {
       target: { value: "Offline" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Add a time not to run" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Add a time not to run" }),
+    );
     expect(screen.getByText(/Offline/)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Remove" })).toBeTruthy();
 
@@ -973,9 +1001,7 @@ describe("CampaignsScreen", () => {
     // Safety settings keep their own section and do not hide the run time.
     const safetyLimits = screen.getByText("Safety limits")
       .parentElement as HTMLElement;
-    expect(
-      within(safetyLimits).queryByLabelText("Start time"),
-    ).toBeNull();
+    expect(within(safetyLimits).queryByLabelText("Start time")).toBeNull();
     expect(
       within(safetyLimits).getByLabelText("Pause above failure rate (%)"),
     ).toBeTruthy();
@@ -1046,11 +1072,8 @@ describe("CampaignsScreen", () => {
     expect(screen.queryByRole("button", { name: "Remove" })).toBeNull();
   });
 
-  it("archives the current plan and reports success through the boolean save path", async () => {
-    const onSaveCampaign =
-      vi.fn<(campaign: SaveJobSearchCampaignInput) => Promise<boolean>>();
-    onSaveCampaign.mockResolvedValue(true);
-    const onSelectCampaign = vi.fn();
+  it("explains why the current plan cannot be archived and disables that choice", () => {
+    const onSaveCampaign = vi.fn();
     render(
       <CampaignsScreen
         activeCampaignId="one"
@@ -1059,56 +1082,48 @@ describe("CampaignsScreen", () => {
           campaign("two", "Broad engineering", "scale"),
         ]}
         onSaveCampaign={onSaveCampaign}
-        onSelectCampaign={onSelectCampaign}
-        pending={false}
-      />,
-    );
-
-    fireEvent.click(screen.getAllByRole("button", { name: "Edit" })[0]!);
-    fireEvent.change(screen.getByLabelText("Status"), {
-      target: { value: "archived" },
-    });
-    expect(
-      screen.getByText(/one of them becomes your current plan automatically/),
-    ).toBeTruthy();
-
-    const saveButton = screen.getByRole<HTMLButtonElement>("button", {
-      name: "Save search plan",
-    });
-    expect(saveButton.disabled).toBe(false);
-    fireEvent.click(saveButton);
-
-    const saved = onSaveCampaign.mock.calls.at(-1)?.[0];
-    expect(saved?.id).toBe("one");
-    expect(saved?.status).toBe("archived");
-    // The backend performs the active-plan switch; the screen never selects.
-    expect(onSelectCampaign).not.toHaveBeenCalled();
-    expect(await screen.findByText("Search plan archived.")).toBeTruthy();
-  });
-
-  it("shows the inline archive error when saving the current plan fails", async () => {
-    const onSaveCampaign =
-      vi.fn<(campaign: SaveJobSearchCampaignInput) => Promise<boolean>>();
-    onSaveCampaign.mockResolvedValue(false);
-    render(
-      <CampaignsScreen
-        activeCampaignId="one"
-        campaigns={[campaign("one", "Remote TypeScript", "precision")]}
-        onSaveCampaign={onSaveCampaign}
         onSelectCampaign={vi.fn()}
         pending={false}
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    fireEvent.click(screen.getAllByRole("button", { name: "Edit" })[0]!);
+    expect(
+      screen.getByRole<HTMLOptionElement>("option", { name: "Archived" })
+        .disabled,
+    ).toBe(true);
+    expect(screen.getByText(/make another plan current first/)).toBeTruthy();
+    expect(onSaveCampaign).not.toHaveBeenCalled();
+  });
+
+  it("blocks an archived draft if that plan becomes current before saving", () => {
+    const onSaveCampaign = vi.fn();
+    const props = {
+      campaigns: [
+        campaign("one", "Remote TypeScript", "precision"),
+        campaign("two", "Broad engineering", "scale"),
+      ],
+      onSaveCampaign,
+      onSelectCampaign: vi.fn(),
+      pending: false,
+    };
+    const { rerender } = render(
+      <CampaignsScreen {...props} activeCampaignId="one" />,
+    );
+    fireEvent.click(screen.getAllByRole("button", { name: "Edit" })[1]!);
     fireEvent.change(screen.getByLabelText("Status"), {
       target: { value: "archived" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Save search plan" }));
-
-    const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toContain("Archiving failed");
-    expect(onSaveCampaign).toHaveBeenCalledTimes(1);
+    rerender(<CampaignsScreen {...props} activeCampaignId="two" />);
+    expect(
+      screen.getByRole<HTMLButtonElement>("button", {
+        name: "Save search plan",
+      }).disabled,
+    ).toBe(true);
+    fireEvent.submit(
+      screen.getByRole("button", { name: "Save search plan" }).closest("form")!,
+    );
+    expect(onSaveCampaign).not.toHaveBeenCalled();
   });
 
   it("archives a non-current plan through the editor status", () => {
@@ -1328,7 +1343,9 @@ describe("CampaignsScreen", () => {
     ).toBeTruthy();
     // R6: the create form used to stay open, with a live "Save search plan"
     // button, while the banner below it said the plan was already created.
-    expect(screen.queryByRole("button", { name: "Save search plan" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Save search plan" }),
+    ).toBeNull();
     expect(onSelectCampaign).not.toHaveBeenCalled();
 
     view.rerender(
@@ -1345,7 +1362,9 @@ describe("CampaignsScreen", () => {
     );
     await screen.findByText(/Search plan "Focused frontend" created\./);
     expect(onSelectCampaign).not.toHaveBeenCalled();
-    fireEvent.click(screen.getAllByRole("button", { name: "Make current" })[0]!);
+    fireEvent.click(
+      screen.getAllByRole("button", { name: "Make current" })[0]!,
+    );
     expect(onSelectCampaign).toHaveBeenCalledWith("two");
   });
 
@@ -1576,7 +1595,7 @@ describe("CampaignsScreen", () => {
     ).toBeTruthy();
   });
 
-  it("requires an informed confirmation when no other usable plan exists", () => {
+  it("blocks deletion and explains the next step when no other usable plan exists", () => {
     const onDeleteCampaign = vi.fn<(campaignId: string) => Promise<boolean>>();
     render(
       <CampaignsScreen
@@ -1594,8 +1613,14 @@ describe("CampaignsScreen", () => {
       name: "Confirm deleting Remote TypeScript",
     });
     expect(
-      within(region).getByText(/no other non-archived plan exists/),
+      within(region).getByText(/Keep at least one non-archived plan/),
     ).toBeTruthy();
+    const deleteButton = within(region).getByRole<HTMLButtonElement>("button", {
+      name: "Delete plan",
+    });
+    expect(deleteButton.disabled).toBe(true);
+    fireEvent.click(deleteButton);
+    expect(onDeleteCampaign).not.toHaveBeenCalled();
   });
 
   it("reports failed deletion inline and keeps the confirmation open", async () => {
@@ -1996,11 +2021,12 @@ describe("a finished run reports one set of numbers", () => {
     ).toBeNull();
     expect(
       within(digest).getByText(
-        "50 looked at · 50 new · 15 kept · 0 already here · 15-job plan limit reached",
+        "50 found · 50 new · 15 kept · 15-job plan limit reached",
       ),
     ).toBeTruthy();
     // The tile reads the same record as the sentence above it.
-    const newTile = within(digest).getByText("New").parentElement as HTMLElement;
+    const newTile = within(digest).getByText("New")
+      .parentElement as HTMLElement;
     expect(newTile.textContent).toContain("50");
     expect(newTile.textContent).not.toContain("100");
   });
@@ -2033,7 +2059,7 @@ describe("a finished run reports one set of numbers", () => {
 
     expect(
       within(digest).getByText(
-        "50 looked at · 43 new · 15 kept · 7 already here · 15-job plan limit reached",
+        "50 found · 43 new · 15 kept · 7 already here · 15-job plan limit reached",
       ),
     ).toBeTruthy();
     const seenBeforeTile = within(digest).getByText("Seen before")
@@ -2136,7 +2162,7 @@ describe("a finished run reports one set of numbers", () => {
     fireEvent.click(screen.getByText("What the last run found"));
     expect(
       screen.getByText(
-        "94 looked at · 0 new · 15 kept · 0 already here · 15-job plan limit reached",
+        "94 found · 0 new · 15 kept · 15-job plan limit reached",
       ),
     ).toBeTruthy();
   });
@@ -2289,9 +2315,7 @@ describe("arriving from a Find jobs plan link", () => {
     );
 
     expect(screen.getByText("Edit search plan")).toBeTruthy();
-    expect(screen.getByLabelText<HTMLInputElement>("Name").value).toBe(
-      "First",
-    );
+    expect(screen.getByLabelText<HTMLInputElement>("Name").value).toBe("First");
   });
 
   it("leaves the plan list alone when no plan editor was requested", () => {
@@ -2394,4 +2418,32 @@ describe("a run that failed before it reached a source", () => {
 
     expect(screen.getByText("No source problems in this run.")).toBeTruthy();
   });
+});
+
+it("reports dirty plan edits to the navigation guard and clears them after save or unmount", async () => {
+  const onDirtyChange = vi.fn();
+  const view = render(
+    <CampaignsScreen
+      activeCampaignId="one"
+      campaigns={[campaign("one", "Original plan", "precision")]}
+      onDirtyChange={onDirtyChange}
+      onSaveCampaign={vi.fn(() => Promise.resolve(true))}
+      onSelectCampaign={vi.fn()}
+      pending={false}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+  fireEvent.change(screen.getByRole("textbox", { name: "Name" }), {
+    target: { value: "Edited plan" },
+  });
+  expect(onDirtyChange).toHaveBeenLastCalledWith(true);
+  fireEvent.click(screen.getByRole("button", { name: "Save search plan" }));
+  await waitFor(() => expect(onDirtyChange).toHaveBeenLastCalledWith(false));
+  fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+  fireEvent.change(screen.getByRole("textbox", { name: "Name" }), {
+    target: { value: "Another draft" },
+  });
+  expect(onDirtyChange).toHaveBeenLastCalledWith(true);
+  view.unmount();
+  expect(onDirtyChange).toHaveBeenLastCalledWith(false);
 });

@@ -445,7 +445,7 @@ describe("createJobFinderWorkspaceService", () => {
     expect(learnedLines).toContain(
       "may need scrolling into view before interaction",
     );
-    expect(learnedLines).toContain("easy apply");
+    expect(learnedLines).toContain("on-site apply entry");
     expect(learnedLines).not.toContain(
       "treat applications as manual until a reliable on-site apply entry is proven",
     );
@@ -578,10 +578,10 @@ describe("createJobFinderWorkspaceService", () => {
       .join("\n")
       .toLowerCase();
 
-    expect(learnedLines).toContain("changes the result set when submitted");
+    expect(learnedLines).toContain("change the result set reliably");
     expect(learnedLines).toContain("location filter");
     expect(learnedLines).toContain("industry filter");
-    expect(learnedLines).toContain("confirmed stable url pattern");
+    expect(learnedLines).toContain("stable slug-style paths");
     expect(learnedLines).toContain("on-site apply entry");
     expect(learnedLines).not.toContain(
       "did not prove it changes the result set reliably",

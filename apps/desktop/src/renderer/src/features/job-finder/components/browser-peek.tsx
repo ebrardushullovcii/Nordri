@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import { createPortal } from "react-dom";
 import {
   ArrowLeft,
@@ -92,7 +98,15 @@ function BrowserBrandMark({
   );
 }
 
-export function BrowserPeek(props: { hasUnresolvedAttention?: boolean }) {
+export function BrowserPeek(props: {
+  hasUnresolvedAttention?: boolean;
+  /**
+   * Width the expanded browser's toolbar keeps clear at its leading edge, for
+   * the native macOS traffic lights that paint above every overlay. Undefined
+   * on other platforms and in native fullscreen.
+   */
+  chromeInsetStart?: string | undefined;
+}) {
   const bridge = window.unemployed?.browser;
   const [state, setState] = useState(initialState);
   const [address, setAddress] = useState("");
@@ -421,6 +435,13 @@ export function BrowserPeek(props: { hasUnresolvedAttention?: boolean }) {
               aria-modal="true"
               aria-label={JOB_FINDER_BROWSER_LABEL}
               className={`browser-peek ${state.presentation === "expanded" ? "is-expanded" : ""} ${busy ? "is-working" : ""} ${needsYou ? "is-needs-you" : ""}`}
+              style={
+                props.chromeInsetStart
+                  ? ({
+                      "--browser-chrome-inset-start": props.chromeInsetStart,
+                    } as CSSProperties)
+                  : undefined
+              }
             >
               <div className="browser-toolbar">
                 <div className="browser-nav">

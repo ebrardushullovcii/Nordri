@@ -56,7 +56,7 @@ export function sanitizeSegment(value: string): string {
 
 function formatFontFamily(fontPreset: JobFinderSettings["fontPreset"]): string {
   if (fontPreset === "space_grotesk_display") {
-    return "'Space Grotesk', 'Segoe UI', sans-serif";
+    return "'Space Grotesk', 'Trebuchet MS', 'Segoe UI', sans-serif";
   }
 
   return "'IBM Plex Sans', 'Segoe UI', sans-serif";
@@ -420,7 +420,9 @@ export function stripBulletGlyphs(value: string): string {
 }
 
 function ensureTerminalPunctuation(value: string): string {
-  return value.length === 0 || /[.!?…]$/.test(value) ? value : `${value}.`;
+  return value.length === 0 || /[\p{Sentence_Terminal}…]$/u.test(value)
+    ? value
+    : `${value}.`;
 }
 
 /**
@@ -1694,6 +1696,15 @@ export function renderResumeTemplateHtml(
       size: Letter;
       margin: 0;
     }
+    /* Physical page margins repeat on continuation pages; article padding does not. */
+    @page resume-classic { margin: 0.52in 0.62in; }
+    @page resume-compact { margin: 0.44in 0.54in; }
+    @page resume-modern { margin: 0.54in 0.64in; }
+    @page resume-technical { margin: 0.48in 0.58in; }
+    @page resume-projects { margin: 0.56in 0.66in; }
+    @page resume-credentials { margin: 0.52in 0.64in; }
+    @page resume-longform { margin: 0.4in 0.52in; }
+    @page resume-pivot { margin: 0.52in 0.64in; }
     :root {
       color-scheme: light;
       --resume-font-family: var(--font-body, ${fontFamily});
@@ -1766,7 +1777,8 @@ export function renderResumeTemplateHtml(
     * { box-sizing: border-box; }
     html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     body { margin: 0; background: var(--resume-paper); color: var(--ink); font-family: var(--resume-font-family); }
-    .page { width: 8.5in; min-height: 11in; margin: 0 auto; background: var(--resume-paper); }
+    .page { width: 8.5in; min-height: 11in; margin: 0 auto; background: var(--resume-paper); overflow-wrap: anywhere; }
+    .page * { min-width: 0; }
     .page-classic { padding: var(--resume-page-padding-classic); }
     .page-compact { padding: var(--resume-page-padding-compact); }
     .page-modern { padding: var(--resume-page-padding-modern); }
@@ -1929,9 +1941,17 @@ export function renderResumeTemplateHtml(
     .page-pivot .name { font-size: 1.78rem; }
     .page-pivot .section-project-accent .entry-block { padding-left: 0.18rem; }
     @media print {
-      html, body { width: 8.5in; min-height: 11in; background: #ffffff; }
+      html, body { width: auto; min-height: 0; background: #ffffff; }
       body { margin: 0; }
-      .page { margin: 0; box-shadow: none !important; }
+      .page { width: auto; min-height: 0; padding: 0; margin: 0; box-shadow: none !important; }
+      .page-classic { page: resume-classic; }
+      .page-compact { page: resume-compact; }
+      .page-modern { page: resume-modern; }
+      .page-technical { page: resume-technical; }
+      .page-projects { page: resume-projects; }
+      .page-credentials { page: resume-credentials; }
+      .page-longform { page: resume-longform; }
+      .page-pivot { page: resume-pivot; }
       .header, .entry-block, h3, h4, .skill-group { break-inside: avoid; page-break-inside: avoid; }
       a { color: inherit; text-decoration: none; }
       /* Chromium prints a grid container as one unbreakable box. With the

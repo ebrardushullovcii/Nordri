@@ -32,6 +32,8 @@ import {
   ApplicationReplayCheckpointSchema,
 } from "./apply";
 import {
+  ApplicationAttestationKindSchema,
+  ApplicationAutomationModeSchema,
   ApplicationAuthorityEnvelopeSchema,
   SubmissionArmedMarkerSchema,
   SubmissionExecutionGrantSchema,
@@ -39,6 +41,7 @@ import {
   SubmissionOutcomeRecordSchema,
   SubmissionPreflightRecordSchema,
 } from "./application-authority";
+import type { ApplicationAttestationKind } from "./application-authority";
 import { ApprovedApplicationAnswerSnapshotSchema } from "./application-answer-snapshot";
 import {
   ApplicationAttemptSchema,
@@ -48,6 +51,7 @@ import {
   DiscoveryFeedbackReasonSchema,
   DiscoveryAdapterSessionStateSchema,
   DiscoveryRunRecordSchema,
+  JobFinderSearchRequestSchema,
   JobSearchPreferencesSchema,
   ReviewQueueItemSchema,
   SavedJobSchema,
@@ -123,6 +127,25 @@ export type JobFinderJobActionInput = z.infer<
   typeof JobFinderJobActionInputSchema
 >;
 
+/** Send for me: the filled-in forms the agent sends, one after another. */
+export const JobFinderSendPreparedApplicationsInputSchema = z.object({
+  jobIds: z.array(NonEmptyStringSchema).min(1).max(100),
+});
+export type JobFinderSendPreparedApplicationsInput = z.infer<
+  typeof JobFinderSendPreparedApplicationsInputSchema
+>;
+
+/** Durable identity of one prepared application page. */
+export const JobFinderPreparedApplicationPageInputSchema = z.object({
+  runId: NonEmptyStringSchema,
+  jobId: NonEmptyStringSchema,
+  resultId: NonEmptyStringSchema,
+  applicationRecordId: NonEmptyStringSchema,
+});
+export type JobFinderPreparedApplicationPageInput = z.infer<
+  typeof JobFinderPreparedApplicationPageInputSchema
+>;
+
 export const ResumePdfExportIntentSchema = z.enum(["approval", "download"]);
 export type ResumePdfExportIntent = z.infer<typeof ResumePdfExportIntentSchema>;
 
@@ -137,6 +160,8 @@ export type JobFinderExportResumePdfInput = z.infer<
 export const JobFinderJobResumeApplicationModeInputSchema =
   JobFinderJobActionInputSchema.extend({
     resumeApplicationMode: ResumeApplicationModeSchema,
+    /** Per-job tailoring level; omitted keeps the job's current level. */
+    resumeTailoringMode: TailoringModeSchema.nullable().optional(),
   });
 export type JobFinderJobResumeApplicationModeInput = z.infer<
   typeof JobFinderJobResumeApplicationModeInputSchema
@@ -281,6 +306,7 @@ export type JobFinderApplyCopilotActionInput = z.infer<
 
 export const JobFinderApplyQueueActionInputSchema = z.object({
   jobIds: z.array(NonEmptyStringSchema).min(1),
+  applicationAutomationMode: ApplicationAutomationModeSchema.optional(),
 });
 export type JobFinderApplyQueueActionInput = z.infer<
   typeof JobFinderApplyQueueActionInputSchema
@@ -330,7 +356,7 @@ export type JobFinderResumePreviewMode = z.infer<
 >;
 
 /**
- * The four save surfaces the renderer's save coordinator protects. A failed
+ * The save surfaces supported by the desktop fault-injection hook. A failed
  * save is a first-class product state (dismissable toast, navigation and
  * window-close guards, Settings keeping staged drafts), but a running build
  * offers no way to reach it: the preload bridge is frozen and the workspace
@@ -344,6 +370,7 @@ export const jobFinderTestSaveSurfaceValues = [
   "answers",
   "settings",
   "resume",
+  "campaign",
 ] as const;
 export const JobFinderTestSaveSurfaceSchema = z.enum(
   jobFinderTestSaveSurfaceValues,
@@ -462,6 +489,7 @@ export type JobFinderDiscoveryTargetActionInput = z.infer<
 export const JobFinderAgentDiscoveryActionInputSchema = z.object({
   requestId: NonEmptyStringSchema,
   targetId: NonEmptyStringSchema.nullable().default(null),
+  searchRequest: JobFinderSearchRequestSchema.optional(),
 });
 export type JobFinderAgentDiscoveryActionInput = z.infer<
   typeof JobFinderAgentDiscoveryActionInputSchema
@@ -737,6 +765,121 @@ export const CoverLetterPreferenceSchema = z
   .strict();
 export type CoverLetterPreference = z.infer<typeof CoverLetterPreferenceSchema>;
 
+/**
+ * How the AI behaves on each surface, chosen by the person in one place.
+ *
+ * Every value here changes what the model is told, never what it is allowed
+ * to do: the safety boundaries (ADR 0012, ADR 0022) and the resume grounding
+ * gate (ADR 0018) are unchanged by any choice below. Defaults are the
+ * behaviour the product had before the choices existed.
+ */
+export const profileAssistantInitiativeValues = [
+  "answer_only",
+  "suggest",
+  "proactive",
+] as const;
+export const ProfileAssistantInitiativeSchema = z.enum(
+  profileAssistantInitiativeValues,
+);
+export type ProfileAssistantInitiative = z.infer<
+  typeof ProfileAssistantInitiativeSchema
+>;
+
+export const profileAssistantReplyStyleValues = [
+  "brief",
+  "conversational",
+] as const;
+export const ProfileAssistantReplyStyleSchema = z.enum(
+  profileAssistantReplyStyleValues,
+);
+export type ProfileAssistantReplyStyle = z.infer<
+  typeof ProfileAssistantReplyStyleSchema
+>;
+
+export const jobSearchSelectivityValues = [
+  "best_matches",
+  "balanced",
+  "wide_net",
+] as const;
+export const JobSearchSelectivitySchema = z.enum(jobSearchSelectivityValues);
+export type JobSearchSelectivity = z.infer<typeof JobSearchSelectivitySchema>;
+
+export const coverLetterPolicyValues = [
+  "when_required",
+  "when_possible",
+  "never",
+] as const;
+export const CoverLetterPolicySchema = z.enum(coverLetterPolicyValues);
+export type CoverLetterPolicy = z.infer<typeof CoverLetterPolicySchema>;
+
+export const writtenAnswerLengthValues = ["short", "full"] as const;
+export const WrittenAnswerLengthSchema = z.enum(writtenAnswerLengthValues);
+export type WrittenAnswerLength = z.infer<typeof WrittenAnswerLengthSchema>;
+
+export const AiProfileAssistantBehaviorSchema = z
+  .object({
+    /** How much the Profile chat volunteers beyond what was asked. */
+    initiative: ProfileAssistantInitiativeSchema.default("suggest"),
+    /** How long its replies run. */
+    replyStyle: ProfileAssistantReplyStyleSchema.default("brief"),
+  })
+  .strict();
+export type AiProfileAssistantBehavior = z.infer<
+  typeof AiProfileAssistantBehaviorSchema
+>;
+
+export const AiJobSearchBehaviorSchema = z
+  .object({
+    /**
+     * How picky a search is. `best_matches` also turns on the strict
+     * collection filter (title, location, work mode must match); `wide_net`
+     * runs the search in its broad mode.
+     */
+    selectivity: JobSearchSelectivitySchema.default("balanced"),
+    /** Whether a remote posting counts as matching any preferred location. */
+    remoteCountsAsAnyLocation: z.boolean().default(true),
+  })
+  .strict();
+export type AiJobSearchBehavior = z.infer<typeof AiJobSearchBehaviorSchema>;
+
+/**
+ * The declarations Job Finder may tick for the person without asking each
+ * time. The routine three (the answers are true, the privacy notice, the
+ * site's terms) are on by default: every applicant must accept them to apply
+ * at all, and the answers they certify come from the person's own profile.
+ * Background-check consent, self-identification and marketing contact stay
+ * off until the person turns them on, because those say something about the
+ * person rather than about the form (ADR 0027).
+ */
+export const defaultPreApprovedDeclarations = [
+  "truthfulness_certification",
+  "privacy_notice_acknowledgement",
+  "terms_acceptance",
+] as const satisfies readonly ApplicationAttestationKind[];
+
+export const AiApplyingBehaviorSchema = z
+  .object({
+    /** When the apply agent writes a cover or motivation letter. */
+    coverLetterPolicy: CoverLetterPolicySchema.default("when_required"),
+    /** How long the answers it writes for open questions run. */
+    writtenAnswerLength: WrittenAnswerLengthSchema.default("short"),
+    /** Declaration kinds the run may tick for the person (ADR 0027). */
+    preApprovedDeclarations: z
+      .array(ApplicationAttestationKindSchema)
+      .default([...defaultPreApprovedDeclarations]),
+  })
+  .strict();
+export type AiApplyingBehavior = z.infer<typeof AiApplyingBehaviorSchema>;
+
+export const AiBehaviorPreferenceSchema = z
+  .object({
+    profileAssistant: AiProfileAssistantBehaviorSchema.default({}),
+    jobSearch: AiJobSearchBehaviorSchema.default({}),
+    applying: AiApplyingBehaviorSchema.default({}),
+  })
+  .strict();
+export type AiBehaviorPreference = z.infer<typeof AiBehaviorPreferenceSchema>;
+
 export const JobFinderSettingsSchema = z.object({
   resumeFormat: DocumentFormatSchema,
   resumeTemplateId: ResumeTemplateIdSchema,
@@ -744,6 +887,9 @@ export const JobFinderSettingsSchema = z.object({
   appearanceTheme: AppearanceThemeSchema.default("system"),
   humanReviewRequired: z.boolean(),
   allowAutoSubmitOverride: z.boolean(),
+  /** The person's ordinary default for new application runs. */
+  applicationAutomationMode: ApplicationAutomationModeSchema.optional(),
+  maxApplicationsPerLocalDay: z.number().int().min(1).optional(),
   keepSessionAlive: z.boolean(),
   discoveryOnly: z.boolean().default(false),
   resumeApplicationMode: ResumeApplicationModeSchema.optional(),
@@ -751,14 +897,22 @@ export const JobFinderSettingsSchema = z.object({
   // Optional so a workspace saved before letters existed still loads; every
   // read goes through the schema default.
   coverLetter: CoverLetterPreferenceSchema.default({}).optional(),
+  // Same reason: absent on older workspaces, defaulted on every read.
+  aiBehavior: AiBehaviorPreferenceSchema.default({}).optional(),
 });
 export type JobFinderSettings = z.infer<typeof JobFinderSettingsSchema>;
+
+const PersistedDiscoveryRunRecordSchema: z.ZodType<
+  z.output<typeof DiscoveryRunRecordSchema>,
+  z.ZodTypeDef,
+  z.input<typeof DiscoveryRunRecordSchema>
+> = DiscoveryRunRecordSchema;
 
 export const JobFinderDiscoveryStateSchema = z.object({
   sessions: z.array(DiscoveryAdapterSessionStateSchema).default([]),
   runState: DiscoveryRunStateSchema.default("idle"),
-  activeRun: DiscoveryRunRecordSchema.nullable().default(null),
-  recentRuns: z.array(DiscoveryRunRecordSchema).default([]),
+  activeRun: PersistedDiscoveryRunRecordSchema.nullable().default(null),
+  recentRuns: z.array(PersistedDiscoveryRunRecordSchema).default([]),
   activeSourceDebugRun: SourceDebugRunRecordSchema.nullable().default(null),
   recentSourceDebugRuns: z.array(SourceDebugRunRecordSchema).default([]),
   discoveryLedger: z.array(DiscoveryLedgerEntrySchema).default([]),
@@ -1360,6 +1514,7 @@ export const JobFinderWorkspaceEntityMutationSchema = z.discriminatedUnion(
         type: z.literal("set_job_resume_application_mode"),
         jobId: NonEmptyStringSchema,
         resumeApplicationMode: ResumeApplicationModeSchema,
+        resumeTailoringMode: TailoringModeSchema.nullable().optional(),
       })
       .strict(),
     z
@@ -1595,6 +1750,8 @@ export const UpdateApplicationDefaultsInputSchema = z.object({
   fontPreset: DocumentFontPresetSchema.optional(),
   /** How a letter Job Finder writes should read. */
   coverLetter: CoverLetterPreferenceSchema.optional(),
+  applicationAutomationMode: ApplicationAutomationModeSchema.optional(),
+  maxApplicationsPerLocalDay: z.number().int().min(1).optional(),
 });
 export type UpdateApplicationDefaultsInput = z.infer<
   typeof UpdateApplicationDefaultsInputSchema
@@ -1607,6 +1764,27 @@ export const UpdateWorkspaceBehaviorInputSchema = z.object({
 export type UpdateWorkspaceBehaviorInput = z.infer<
   typeof UpdateWorkspaceBehaviorInputSchema
 >;
+
+/**
+ * Everything the AI behavior section of Settings saves in one action.
+ *
+ * `resumeApproach` is the person's one four-way choice: keep the imported
+ * file, or tailor at one of three strengths. It writes two stored fields
+ * (`settings.resumeApplicationMode` and `searchPreferences.tailoringMode`)
+ * that older surfaces edited separately.
+ */
+export const ResumeApproachSchema = z.union([
+  z.literal("original_resume"),
+  TailoringModeSchema,
+]);
+export type ResumeApproach = z.infer<typeof ResumeApproachSchema>;
+
+export const UpdateAiBehaviorInputSchema = z.object({
+  aiBehavior: AiBehaviorPreferenceSchema.optional(),
+  coverLetter: CoverLetterPreferenceSchema.optional(),
+  resumeApproach: ResumeApproachSchema.optional(),
+});
+export type UpdateAiBehaviorInput = z.infer<typeof UpdateAiBehaviorInputSchema>;
 
 export const DesktopPlatformPingSchema = z.object({
   ok: z.literal(true),

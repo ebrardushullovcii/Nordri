@@ -10,6 +10,38 @@ import { EBRAR_IMPORTED_TEXT } from "../resume-import-fixtures";
 import { buildDeterministicTailoredResume } from "./tailoring";
 
 describe("buildDeterministicResumeProfileExtraction", () => {
+  test.each(["WORK ELIGIBILITY", "Work authorization:", "RIGHT TO WORK"])(
+    "keeps semicolon-separated nontechnical skills and stops before %s",
+    (heading) => {
+      const skills = [
+        "Guest service",
+        "reservation management",
+        "telephone support",
+        "complaint resolution",
+        "cash handling",
+      ];
+      const extraction = buildDeterministicResumeProfileExtraction(
+        {
+          existingProfile: createProfile(),
+          existingSearchPreferences: createPreferences(),
+          resumeText: [
+            "Morgan Ellis",
+            "SKILLS",
+            skills.join("; "),
+            heading,
+            "Authorized to work in Canada.",
+          ].join("\n"),
+        },
+        "deterministic",
+        "Test provider",
+      );
+
+      expect(extraction.skills).toEqual(skills);
+      expect(extraction.skillGroups.coreSkills).toEqual(skills);
+      expect(extraction.skills).not.toContain(heading);
+    },
+  );
+
   test("uses ABOUT ME content as the summary body", () => {
     const extraction = buildDeterministicResumeProfileExtraction(
       {
@@ -934,7 +966,10 @@ describe("buildDeterministicResumeProfileExtraction", () => {
 
     expect(extraction.spokenLanguages).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ language: "Albanian", proficiency: "Native" }),
+        expect.objectContaining({
+          language: "Albanian",
+          proficiency: "Native",
+        }),
         expect.objectContaining({ language: "English", proficiency: "C2" }),
       ]),
     );

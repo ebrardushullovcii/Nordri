@@ -43,6 +43,22 @@ describe("discovery run failure recovery classification", () => {
     );
   });
 
+  it("sends a source address that returned 404 to job sources instead of saying wait and retry", () => {
+    const recovery = getDiscoveryRunFailureRecovery(
+      "Agent discovery failed: Starting page returned HTTP 404: http://127.0.0.1:47954/nope/",
+    );
+
+    expect(recovery.kind).toBe("source_setup");
+    expect(recovery.headline).toBe(
+      "A job source's address leads to a page that does not exist.",
+    );
+    expect(recovery.actionLabel).toBe("Review job sources");
+    // A provider 404 that names no page stays with the generic retry.
+    expect(
+      getDiscoveryRunFailureRecovery("Provider answered HTTP 404").kind,
+    ).toBe("retry");
+  });
+
   it("names a sign-in wall and offers the browser", () => {
     const recovery = getDiscoveryRunFailureRecovery(
       "This site asks you to sign in before it shows job listings, so nothing could be read automatically. Open it in the Job Finder browser, sign in there, then search again.",
@@ -99,6 +115,7 @@ describe("discovery run failure recovery classification", () => {
       "fetch failed",
       "getaddrinfo ENOTFOUND jobs.example.com",
       "request to https://api.example.com timed out",
+      "The dedicated browser could not open https://jobs.example.com: page.goto: net::ERR_CONNECTION_REFUSED",
     ]) {
       expect(getDiscoveryRunFailureRecovery(detail).kind).toBe("connection");
     }

@@ -39,6 +39,7 @@ import {
 } from "@renderer/features/job-finder/lib/discovery-run-count-label";
 import type { TailoredDraftPreparationViewState } from "@renderer/features/job-finder/screens/review-queue/review-queue-status";
 import { safeguardMutationKey } from "@renderer/features/job-finder/screens/safeguards/safeguards-presentation";
+import { applicationSignInContinuesOnItsOwn } from "@renderer/features/job-finder/lib/application-sign-in-handoff";
 import type {
   PendingActionScope,
   PendingActionState,
@@ -127,6 +128,7 @@ type BuildJobFinderPageContextArgs = {
   setProfileCopilotBusy: Dispatch<SetStateAction<boolean>>;
   setProfileCopilotPendingContextKey: Dispatch<SetStateAction<string | null>>;
   setProfileSurfaceDirty: Dispatch<SetStateAction<boolean>>;
+  setSearchPlanSurfaceDirty: (dirty: boolean) => void;
   setResumeAssistantMessages: Dispatch<
     SetStateAction<readonly ResumeAssistantMessage[]>
   >;
@@ -202,6 +204,7 @@ export function buildJobFinderPageContext(
     setProfileCopilotBusy,
     setProfileCopilotPendingContextKey,
     setProfileSurfaceDirty,
+    setSearchPlanSurfaceDirty,
     setResumeAssistantMessages,
     setResumeAssistantPending,
     setResumeWorkspace,
@@ -289,6 +292,7 @@ export function buildJobFinderPageContext(
     saveState,
     ...primaryActions,
     onProfileSurfaceDirtyChange: setProfileSurfaceDirty,
+    onSearchPlanSurfaceDirtyChange: setSearchPlanSurfaceDirty,
     onProfileSurfaceDraftEdited,
     onCancelImportResume,
     onSettingsDraftEdited,
@@ -534,8 +538,14 @@ export function buildJobFinderPageContext(
     // Returns the run's settled outcome instead of discarding it: the
     // Applications hand-off reports what actually happened beside the control,
     // and a `void`-ed promise can only ever look like success there.
-    onPerformUserAction: (command, options) =>
-      runAction(
+    onPerformUserAction: (command, options) => {
+      const openedRequestContinuesOnItsOwn = (requestId: string) => {
+        const request = (workspace.userActionRequests ?? []).find(
+          (candidate) => candidate.id === requestId,
+        );
+        return request ? applicationSignInContinuesOnItsOwn(request) : false;
+      };
+      return runAction(
         async () => {
           const request = (workspace.userActionRequests ?? []).find(
             (candidate) => candidate.id === command.requestId,
@@ -546,16 +556,24 @@ export function buildJobFinderPageContext(
             request.scope.discoveryRunId
               ? request.scope.parkedTab
               : null;
+          // Opening the step opens its parked tab; when that tab is gone
+          // (a restart, or it was closed), main opens the address again as
+          // the parked tab for this request. Then show it, expanded.
+          const snapshot = await actions.performUserAction(command);
           if (parkedTab) {
             const browserState = await window.unemployed.browser.getState();
-            const tab = browserState.tabs.find((candidate) =>
-              parkedTab.tabId !== null
-                ? candidate.id === parkedTab.tabId
-                : candidate.url === parkedTab.url,
-            );
+            const tab =
+              browserState.tabs.find((candidate) =>
+                parkedTab.tabId !== null
+                  ? candidate.id === parkedTab.tabId
+                  : candidate.url === parkedTab.url,
+              ) ??
+              browserState.tabs.find(
+                (candidate) => candidate.id === browserState.activeTabId,
+              );
             if (!tab) {
               throw new Error(
-                "That saved browser tab is gone. Open the source again, then retry the search.",
+                `Job Finder could not open that page in its browser. Open ${JOB_FINDER_BROWSER_NAME} from the top bar and go to the site to sign in; Job Finder notices when you're done.`,
               );
             }
             await window.unemployed.browser.command({
@@ -567,7 +585,35 @@ export function buildJobFinderPageContext(
               expanded: true,
             });
           }
-          return actions.performUserAction(command);
+          const applicationScope =
+            request?.scope.type === "application" ? request.scope : null;
+          if (command.action === "open_page" && applicationScope) {
+            const latestRequest = (snapshot.userActionRequests ?? []).find(
+              (candidate) => candidate.id === command.requestId,
+            );
+            const applicationRecord = applicationScope.applicationRecordId
+              ? (snapshot.applicationRecords ?? []).find(
+                  (record) =>
+                    record.id === applicationScope.applicationRecordId,
+                )
+              : null;
+            if (
+              latestRequest?.state === "cancelled" ||
+              (applicationRecord?.lastAttemptState === "failed" &&
+                applicationRecord.lastActionLabel ===
+                  "The prepared application page is no longer open.")
+            ) {
+              throw new Error(
+                "That prepared application page is no longer open. Choose Try again in Applications to prepare it again.",
+              );
+            }
+            // The page is selected in the browser; show it, as a parked
+            // search tab is shown, instead of leaving the browser minimized.
+            await window.unemployed?.browser
+              ?.command({ type: "expand", expanded: true })
+              .catch(() => undefined);
+          }
+          return snapshot;
         },
         () => undefined,
         // "Action inbox" is not a destination this app has — the page is
@@ -583,7 +629,9 @@ export function buildJobFinderPageContext(
         command.action === "confirm_done"
           ? null
           : command.action === "open_page"
-            ? `Opened this application in ${JOB_FINDER_BROWSER_NAME}, right here in the app. Finish the step there, then come back and choose "${CONFIRM_STEP_DONE_ACTION}".`
+            ? openedRequestContinuesOnItsOwn(command.requestId)
+              ? `Opened this application in ${JOB_FINDER_BROWSER_NAME}, right here in the app. Sign in there; Job Finder carries on by itself once you're in.`
+              : `Opened this application in ${JOB_FINDER_BROWSER_NAME}, right here in the app. Finish the step there, then come back and choose "${CONFIRM_STEP_DONE_ACTION}".`
             : "Saved. Needs you is up to date.",
         {
           scope: jobFinderPendingActions.userAction(command.requestId),
@@ -594,7 +642,8 @@ export function buildJobFinderPageContext(
           // either way, and every other caller keeps resolving `false`.
           ...(options?.rethrowError ? { rethrowError: true } : {}),
         },
-      ),
+      );
+    },
     onPreviewResumeDraft: actions.previewResumeDraft,
     onSaveCampaign: (campaign: SaveJobSearchCampaignInput) =>
       runAction(

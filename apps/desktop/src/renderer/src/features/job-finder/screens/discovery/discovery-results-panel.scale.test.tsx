@@ -574,14 +574,15 @@ describe("DiscoveryResultsPanel workspace scale", () => {
       />,
     );
 
-    expect(screen.getByText("0 worth opening · 3 also found")).toBeTruthy();
+    // No count beside an empty list; the empty state below says it all.
+    expect(screen.queryByTestId("discovery-result-count")).toBeNull();
     expect(
       screen.getByText("Nothing scored close to your targets"),
     ).toBeTruthy();
     expect(screen.queryByText("No matches from this search")).toBeNull();
 
     fireEvent.click(
-      screen.getByRole("button", { name: "Show also found (3)" }),
+      screen.getByRole("button", { name: "Show weaker matches (3)" }),
     );
 
     expect(onShowAlsoFound).toHaveBeenCalledTimes(1);

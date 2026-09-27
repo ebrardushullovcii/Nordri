@@ -15,7 +15,7 @@ export const ApplicationAnswerSnapshotSummarySchema = z
     digest: Sha256HexSchema,
     sourceProfileRevision: z.number().int().positive(),
     approvedAt: IsoDateTimeSchema,
-    entryCount: z.number().int().positive(),
+    entryCount: z.number().int().nonnegative(),
     kinds: z.array(CandidateAnswerKindSchema).max(10),
   })
   .strict();

@@ -15,19 +15,22 @@ export function StatusBadge({ children, className, tone }: StatusBadgeProps) {
   // the status grammar collapsed. The fills and borders below keep the same
   // hue families but survive both themes.
   //
-  // The tinted borders are /75, not /65. The /65 alpha was measured for the
-  // warning family alone and inherited by the rest, where it fell below the
-  // 3:1 non-text floor against each chip's OWN tint: 2.97:1 for positive and
-  // 2.86:1 for active in light. Re-measured per tone, /75 is the lowest alpha
-  // that clears 3:1 for every tone in both themes (min 3.48). Pinned by
-  // styles/globals.test.ts.
+  // The tinted borders take --badge-border-alpha: 75% in light, where /65
+  // fell below 3:1 against each chip's own tint (2.97:1 positive, 2.86:1
+  // active), and 40% in dark. A badge is an inert label whose text (>= 4.5:1
+  // on its tint) carries the status; at 75% every row of a dark list wore a
+  // bright coloured outline and the columns read as a stack of boxes. Pinned
+  // per theme by styles/globals.test.ts.
   const toneClassName = {
-    active: "border-primary/75 bg-primary/15 text-primary",
-    critical: "border-critical/75 bg-critical/15 text-critical",
-    muted: "border-(--control-border) bg-secondary text-muted-foreground",
-    neutral: "border-(--control-border) bg-surface text-foreground-soft",
-    positive: "border-positive/75 bg-positive/15 text-positive",
-    warning: "border-warning/75 bg-(--warning-surface) text-(--warning-text)",
+    active: "border-primary/(--badge-border-alpha) bg-primary/15 text-primary",
+    critical:
+      "border-critical/(--badge-border-alpha) bg-critical/15 text-critical",
+    muted: "border-(--surface-panel-border) bg-secondary text-muted-foreground",
+    neutral: "border-(--surface-panel-border) bg-surface text-foreground-soft",
+    positive:
+      "border-positive/(--badge-border-alpha) bg-positive/15 text-positive",
+    warning:
+      "border-warning/(--badge-border-alpha) bg-(--warning-surface) text-(--warning-text)",
   }[tone];
 
   return (

@@ -525,7 +525,27 @@ describe("createJobFinderWorkspaceService – profile copilot preferences and ex
         section: "preferences",
       },
     );
-    expect(tailoringModeSnapshot.searchPreferences.tailoringMode).toBe("aggressive");
+    // The strength is half of the resume level (Settings > AI behavior >
+    // Resumes, and it can move a person off Original), so it arrives as a
+    // resume-level card that waits for Apply & save instead of applying
+    // itself.
+    expect(tailoringModeSnapshot.searchPreferences.tailoringMode).toBe("balanced");
+    const tailoringPatchGroup = tailoringModeSnapshot.profileCopilotMessages
+      .flatMap((message) => message.patchGroups)
+      .find((patchGroup) =>
+        patchGroup.operations.some(
+          (operation) => operation.operation === "set_resume_approach",
+        ),
+      );
+    expect(tailoringPatchGroup).toEqual(
+      expect.objectContaining({
+        applyMode: "needs_review",
+        operations: [{ operation: "set_resume_approach", value: "aggressive" }],
+      }),
+    );
+    const tailoringAppliedSnapshot =
+      await workspaceService.applyProfileCopilotPatchGroup(tailoringPatchGroup!.id);
+    expect(tailoringAppliedSnapshot.searchPreferences.tailoringMode).toBe("aggressive");
 
     const reviewModeSnapshot = await workspaceService.sendProfileCopilotMessage(
       "set my preferred locations to Berlin, Prishtina, Remote",
