@@ -3,6 +3,7 @@ import type { JobFinderWorkspaceSnapshot } from "@unemployed/contracts";
 import { JobFinderIntelligenceSafeguardsSchema } from "@unemployed/contracts";
 import {
   buildSafeguardsPresentationModel,
+  describeSampleReviewExplanation,
   filterSafeguardRows,
   formatSafeguardTimestamp,
   type SafeguardRow,
@@ -572,5 +573,20 @@ describe("filterSafeguardRows", () => {
     expect(filterSafeguardRows(rows, "all", "failure")).toHaveLength(1);
     expect(filterSafeguardRows(rows, "all", "signal systems")).toHaveLength(1);
     expect(filterSafeguardRows(rows, "all", "no match")).toHaveLength(0);
+  });
+});
+
+describe("describeSampleReviewExplanation", () => {
+  it("reads a sample saved with the old wording in plain words", () => {
+    expect(
+      describeSampleReviewExplanation(
+        "A deterministic sample of this prepared queue must be reviewed before more automatic preparation continues.",
+      ),
+    ).toBe(
+      "Look over a few of these prepared applications before Job Finder prepares more on its own.",
+    );
+    expect(describeSampleReviewExplanation("A company cap was reached.")).toBe(
+      "A company cap was reached.",
+    );
   });
 });

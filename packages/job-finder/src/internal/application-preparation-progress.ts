@@ -76,3 +76,39 @@ export async function persistApplicationPreparationProgress(input: {
     }
   }
 }
+
+/** Written on an application waiting for a free tab in the Job Finder browser. */
+export const WAITING_FOR_BROWSER_TAB_SUMMARY = "Waiting for a free browser tab";
+
+/**
+ * Says on the application that it is waiting for a tab, instead of failing
+ * it after 20 seconds with "close tabs you no longer need".
+ */
+export async function persistApplicationWaitingForBrowserTab(input: {
+  repository: Pick<
+    JobFinderRepository,
+    "listApplyJobResults" | "compareAndSwapApplyJobResult"
+  >;
+  resultId: string;
+  runId: string;
+  jobId: string;
+}): Promise<void> {
+  const current = (
+    await input.repository.listApplyJobResults({
+      runId: input.runId,
+      jobId: input.jobId,
+    })
+  ).find((result) => result.id === input.resultId);
+  if (!current || !ACTIVE_PREPARATION_STATES.has(current.state)) return;
+  await input.repository.compareAndSwapApplyJobResult({
+    expected: current,
+    result: ApplyJobResultSchema.parse({
+      ...current,
+      summary: WAITING_FOR_BROWSER_TAB_SUMMARY,
+      detail:
+        "The Job Finder browser has as many tabs open as it allows. This application starts as soon as one frees up: close a tab you no longer need, or send a filled-in application.",
+      updatedAt: new Date().toISOString(),
+      completedAt: null,
+    }),
+  });
+}

@@ -41,7 +41,10 @@ import {
   OPEN_PROFILE_FILES_ACTION,
   applicationSignInContinuesOnItsOwn,
 } from "../../lib/application-sign-in-handoff";
-import { JOB_FINDER_ROUTE_PATHS } from "../../lib/job-finder-route-hrefs";
+import {
+  inferFileKindForQuestion,
+  profileFilesHref,
+} from "../../lib/job-finder-route-hrefs";
 import {
   getApplicationNextStepLabel,
   listPendingApplicationQuestions,
@@ -327,6 +330,56 @@ function TaskLocalCredentialsForm(props: {
   );
 }
 
+/** A check still running after this long says why it may be waiting. */
+const CHECK_SLOW_MINUTES = 3;
+/** After this long a check is treated as lost and offers a fresh start. */
+const CHECK_STALLED_MINUTES = 12;
+
+/** Whole minutes since `since`, re-read every half minute; null when unset. */
+function siteHostOf(job: {
+  applicationUrl?: string | null;
+  canonicalUrl: string;
+}): string | null {
+  try {
+    return new URL(job.applicationUrl ?? job.canonicalUrl).hostname;
+  } catch {
+    return null;
+  }
+}
+
+/** True when another job on this job's site is being filled in right now. */
+export function isSameSiteApplicationActive(
+  job: { id: string; applicationUrl?: string | null; canonicalUrl: string },
+  applyJobResults: readonly { jobId: string; state: string }[],
+  jobsById: ReadonlyMap<
+    string,
+    { id: string; applicationUrl?: string | null; canonicalUrl: string }
+  >,
+): boolean {
+  const host = siteHostOf(job);
+  if (!host) return false;
+  return applyJobResults.some((result) => {
+    if (result.jobId === job.id) return false;
+    if (!["filling", "question_capture", "submitting"].includes(result.state))
+      return false;
+    const other = jobsById.get(result.jobId);
+    return other ? siteHostOf(other) === host : false;
+  });
+}
+
+function useMinutesSince(since: string | null): number | null {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!since) return;
+    const timer = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(timer);
+  }, [since]);
+  if (!since) return null;
+  const started = Date.parse(since);
+  if (Number.isNaN(started)) return null;
+  return Math.max(0, Math.floor((now - started) / 60_000));
+}
+
 function ActionCard(props: {
   isGroupedProjectPending: (groupKey: string) => boolean;
   isPending: boolean;
@@ -345,10 +398,36 @@ function ActionCard(props: {
   profile: CandidateProfile | null;
   questions: readonly ApplicationAttemptQuestion[];
   request: UserActionRequest;
+  /**
+   * Closes a check that never finished and prepares the application again,
+   * in one press. Absent where the application cannot be started from here.
+   */
+  onStartOver?: (cancel: UserActionCommandInput) => void | Promise<void>;
+  /**
+   * Another application on the same site is being filled in right now. A
+   * checked step waits for it (one application per site at a time).
+   */
+  sameSiteApplicationActive?: boolean;
 }) {
   const { isPending, jobLabel, onCommand, onOpenScope, questions, request } =
     props;
   const isVerifying = request.state === "verifying";
+  const checkingMinutes = useMinutesSince(
+    isVerifying ? request.updatedAt : null,
+  );
+  const waitsForSameSite =
+    request.scope.type === "application" &&
+    Boolean(props.sameSiteApplicationActive) &&
+    checkingMinutes !== null &&
+    checkingMinutes >= 1;
+  const checkingStalled =
+    request.scope.type === "application" &&
+    checkingMinutes !== null &&
+    checkingMinutes >= CHECK_STALLED_MINUTES;
+  const checkingWaits =
+    !checkingStalled &&
+    checkingMinutes !== null &&
+    checkingMinutes >= CHECK_SLOW_MINUTES;
   // Older runs could misclassify a password input as an ordinary application
   // question. Never render a reusable-answer editor for that persisted data.
   // It stays a browser handoff so the person can open, check, or cancel it.
@@ -478,7 +557,15 @@ function ActionCard(props: {
                   ? // Being checked (or answered from a saved answer): saying
                     // "do it in the browser, then come back and confirm" here
                     // told the person to do what Job Finder was doing.
-                    "Job Finder is checking this step and carries on by itself once it is done. Nothing is needed from you unless it asks again."
+                    waitsForSameSite && !checkingStalled
+                    ? "Waiting for the other application on this site to finish. It carries on by itself after that; nothing is needed from you."
+                    : checkingStalled
+                    ? `This check has not finished after ${checkingMinutes} minutes, so Job Finder has probably lost track of it. Nothing was sent. Prepare it again to start this application afresh with your answers.`
+                    : checkingWaits
+                      ? request.scope.type === "application"
+                        ? `Still checking after ${checkingMinutes} minutes. Another application on the same site is probably ahead of it; it carries on by itself when that one finishes.`
+                        : `Still checking after ${checkingMinutes} minutes. Another search is still running; this source is searched as soon as it ends.`
+                      : "Job Finder is checking this step and carries on by itself once it is done. Nothing is needed from you unless it asks again."
                   : stripScrapedGlyphs(summaryParts.message)}
           </p>
         </div>
@@ -504,7 +591,12 @@ function ActionCard(props: {
       {stepHostLabel ? (
         <p className="text-xs text-muted-foreground">On: {stepHostLabel}</p>
       ) : null}
-      {instructionParts.length > 0 && !isQuestionStep && !isBlockerStep ? (
+      {/* While Job Finder is checking the step, the person's instructions
+          ("confirm completion ...") contradict "Nothing is needed from you". */}
+      {instructionParts.length > 0 &&
+      !isQuestionStep &&
+      !isBlockerStep &&
+      !isVerifying ? (
         <ol className="grid list-decimal gap-1 pl-5 text-sm leading-6 text-foreground-soft">
           {instructionParts.map((part) => (
             <li key={part.message}>{part.message}</li>
@@ -579,7 +671,10 @@ function ActionCard(props: {
         >
           {APPLICATION_SIGN_IN_CONTINUES_NOTE}
         </p>
-      ) : isQuestionStep || isBlockerStep ? null : waitsForFile ? (
+      ) : isQuestionStep ||
+        isBlockerStep ||
+        isVerifying ? // answer the question in the browser" contradicted the line above. // A step being checked needs nothing from the person; "Review and
+      null : waitsForFile ? (
         // Requests written before the file hand-off carried this sentence
         // still get it once; newer ones already say it above.
         request.summary.includes("Profile › Files") ? null : (
@@ -602,6 +697,19 @@ function ActionCard(props: {
         role="group"
         aria-label={`Actions for ${displayedTitle}`}
       >
+        {checkingStalled && props.onStartOver ? (
+          <Button
+            data-testid="needs-you-start-over"
+            onClick={() => {
+              void props.onStartOver?.(createCommand(request, "cancel"));
+            }}
+            pending={isPending}
+            size="compact"
+            type="button"
+          >
+            Prepare it again
+          </Button>
+        ) : null}
         {waitsForFile && props.onOpenFiles ? (
           <Button
             data-testid="needs-you-open-files"
@@ -994,6 +1102,11 @@ export function ActionsScreen(props: {
     command: ProjectGroupedManualAnswerCommand,
   ) => void;
   onSnoozeGroupedDecision?: (input: SnoozeGroupedDecisionInput) => void;
+  /** See ActionCard's onStartOver: cancel the lost check, prepare again. */
+  onStartOver?: (
+    request: UserActionRequest,
+    cancel: UserActionCommandInput,
+  ) => void | Promise<void>;
   profile?: CandidateProfile;
   requests: readonly UserActionRequest[];
 }) {
@@ -1320,6 +1433,13 @@ export function ActionsScreen(props: {
                             }
                             key={request.id}
                             onCommand={props.onCommand}
+                            {...(props.onStartOver
+                              ? {
+                                  onStartOver: (
+                                    cancel: UserActionCommandInput,
+                                  ) => props.onStartOver?.(request, cancel),
+                                }
+                              : {})}
                             onProjectGroupedManualAnswer={
                               props.onProjectGroupedManualAnswer ??
                               (() => undefined)
@@ -1334,9 +1454,28 @@ export function ActionsScreen(props: {
                                 ),
                               )
                             }
+                            sameSiteApplicationActive={
+                              job
+                                ? isSameSiteApplicationActive(
+                                    job,
+                                    props.applyJobResults ?? [],
+                                    jobsById,
+                                  )
+                                : false
+                            }
                             onOpenFiles={() =>
+                              // Every kind the form asks for; Files starts on
+                              // the first one the person has no file of yet.
                               props.onNavigate(
-                                JOB_FINDER_ROUTE_PATHS.profileFiles,
+                                profileFilesHref(
+                                  questions
+                                    .filter(
+                                      (question) =>
+                                        question.answerControlType ===
+                                          "file" && question.kind !== "resume",
+                                    )
+                                    .map(inferFileKindForQuestion),
+                                ),
                               )
                             }
                             request={request}

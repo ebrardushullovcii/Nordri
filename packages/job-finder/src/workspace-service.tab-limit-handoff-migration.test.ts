@@ -35,7 +35,8 @@ function tabLimitHandoff(id: string, jobId: string) {
       blockerFingerprint: `blocker_${id}`,
       expectedPageFingerprint: null,
     },
-    title: "Complete the browser step to continue the Marble Finch Systems application",
+    title:
+      "Complete the browser step to continue the Marble Finch Systems application",
     summary:
       "The live application page needs manual review. The runtime stopped without submitting after browser preparation failed: browserContext.newPage: Protocol error (Target.createTarget): Close a browser tab before opening another one. Complete this manual step in the Job Finder browser, then come back here and confirm so Job Finder can check the page again.",
     instructions: [],
@@ -106,7 +107,9 @@ describe("hand-offs older builds made from the browser's tab limit", () => {
     const snapshot = await harness.workspaceService.getWorkspaceSnapshot();
 
     expect(
-      snapshot.userActionRequests.find((request) => request.id === "request_tabs"),
+      snapshot.userActionRequests.find(
+        (request) => request.id === "request_tabs",
+      ),
     ).toEqual(expect.objectContaining({ state: "cancelled" }));
     const record = (await harness.repository.listApplicationRecords()).find(
       (entry) => entry.id === "application_job_ready",
@@ -114,9 +117,9 @@ describe("hand-offs older builds made from the browser's tab limit", () => {
     expect(record).toEqual(
       expect.objectContaining({
         lastAttemptState: "failed",
-        lastActionLabel: expect.stringMatching(/too many tabs/),
       }),
     );
+    expect(record?.lastActionLabel).toMatch(/too many tabs/);
     const [result] = await harness.repository.listApplyJobResults({
       runId: "run_batch",
     });

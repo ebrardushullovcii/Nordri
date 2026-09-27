@@ -500,6 +500,47 @@ describe("buildJobSearchHomeModel · while something runs", () => {
     expect(model.stages?.[1]?.detail).toBe("1 in Applications");
   });
 
+  it("says a job waiting for a free browser tab is waiting, not being worked on", () => {
+    const ws = withJobs(workspace(), 1);
+    ws.applyRuns = [
+      {
+        id: "apply-1",
+        mode: "queue_auto",
+        state: "running",
+        jobIds: ["job_0"],
+        currentJobId: "job_0",
+        createdAt: "2026-08-15T11:58:00.000Z",
+        updatedAt: "2026-08-15T11:59:00.000Z",
+        completedAt: null,
+        summary: "Applying",
+        detail: "Applying",
+        totalJobs: 1,
+        pendingJobs: 1,
+        submittedJobs: 0,
+        skippedJobs: 0,
+        blockedJobs: 0,
+        failedJobs: 0,
+      },
+    ] as unknown as JobFinderWorkspaceSnapshot["applyRuns"];
+    ws.applyJobResults = [
+      {
+        id: "result-0",
+        runId: "apply-1",
+        jobId: "job_0",
+        applicationRecordId: null,
+        state: "filling",
+        summary: "Waiting for a free browser tab",
+        startedAt: "2026-08-15T11:58:30.000Z",
+        updatedAt: "2026-08-15T11:59:00.000Z",
+      },
+    ] as unknown as JobFinderWorkspaceSnapshot["applyJobResults"];
+    const model = build(ws);
+    expect(model.now[0]).toMatchObject({
+      title: "Waiting to apply: Employer · Job 0",
+    });
+    expect(model.now[0]?.detail).toContain("Waiting for a free browser tab");
+  });
+
   it("reports a paused workspace before anything else", () => {
     const ws = workspace();
     ws.activityControl = {
@@ -534,6 +575,30 @@ describe("buildJobSearchHomeModel · after a search", () => {
       "Last search finished 2 hours ago · 10 found · 10 new.",
     );
     expect(model.stages?.map((stage) => stage.count)).toEqual([10, 0, 0]);
+  });
+
+  it("names the source when the newest search covered only one of several", () => {
+    const ws = withJobs(workspace(), 10);
+    ws.searchPreferences.discovery.targets = [
+      ...ws.searchPreferences.discovery.targets,
+      {
+        id: "target-2",
+        label: "Sign-in board",
+        url: "http://localhost:47950/authboard/",
+        enabled: true,
+      },
+    ] as unknown as JobFinderWorkspaceSnapshot["searchPreferences"]["discovery"]["targets"];
+    ws.recentDiscoveryRuns = [
+      {
+        ...ws.recentDiscoveryRuns[0]!,
+        scope: "single_target",
+        targetIds: ["target-2"],
+      },
+    ] as unknown as JobFinderWorkspaceSnapshot["recentDiscoveryRuns"];
+    const model = build(ws);
+    expect(model.statusLine).toBe(
+      "Last search of Sign-in board finished 2 hours ago · 10 found · 10 new.",
+    );
   });
 
   it("counts exactly the rows Find jobs lists and names the hidden weaker matches", () => {
@@ -708,11 +773,100 @@ describe("buildJobSearchHomeModel · shortlist and applications", () => {
       }),
     ]);
     const model = build(ws);
+    // One resume to read: the press opens that resume, not the list.
     expect(model.next).toMatchObject({
       id: "review_resumes",
-      title: "Review 1 resume",
+      title: "Review the resume",
+      primary: {
+        label: "Review the resume",
+        action: {
+          kind: "navigate",
+          route: "/job-finder/review-queue/job_0/resume",
+        },
+      },
     });
     expect(model.stages?.[1]?.detail).toBe("1 to review");
+  });
+
+  it("holds back a Tailored resume with a line to decide, names it, and still applies to the ready ones", () => {
+    const ws = withShortlist(withJobs(workspace(), 3), [
+      queueItem("job_0", {
+        title: "Cedar Frontend Engineer",
+        company: "Cedar",
+        assetStatus: "ready",
+        resumeAssetId: "asset-0",
+        resumeTailoringMode: "balanced",
+        resumeLinesToDecide: 1,
+        resumeReview: {
+          status: "needs_review",
+        } as ReviewQueueItem["resumeReview"],
+      }),
+      queueItem("job_1", {
+        assetStatus: "ready",
+        resumeAssetId: "asset-1",
+        resumeReview: {
+          status: "needs_review",
+        } as ReviewQueueItem["resumeReview"],
+      }),
+      queueItem("job_2", {
+        assetStatus: "ready",
+        resumeAssetId: "asset-2",
+        resumeReview: { status: "approved" } as ReviewQueueItem["resumeReview"],
+      }),
+    ]);
+    const model = build(ws);
+    expect(model.next).toMatchObject({
+      id: "review_resumes",
+      title: "Review the resume",
+      primary: {
+        label: "Review the resume",
+        action: {
+          kind: "navigate",
+          route: "/job-finder/review-queue/job_0/resume",
+        },
+      },
+    });
+    expect(model.next.detail).toContain(
+      "A line in the resume for Cedar Frontend Engineer at Cedar is waiting for your decision.",
+    );
+    expect(model.next.detail).toContain(
+      '"Apply to all 2" starts the others; Cedar Frontend Engineer waits for this.',
+    );
+    const apply = model.next.secondary.find(
+      (button) => button.action.kind === "apply_all",
+    );
+    expect(apply?.label).toBe("Apply to all 2");
+    expect(apply?.action).toEqual({
+      kind: "apply_all",
+      jobIds: ["job_1", "job_2"],
+    });
+  });
+
+  it("keeps Create and Apply one press away beside an Aggressive review", () => {
+    const ws = withShortlist(withJobs(workspace(), 3), [
+      queueItem("job_0", {
+        assetStatus: "ready",
+        resumeAssetId: "asset-0",
+        resumeTailoringMode: "aggressive",
+        resumeReview: {
+          status: "needs_review",
+        } as ReviewQueueItem["resumeReview"],
+      }),
+      queueItem("job_1"),
+      queueItem("job_2", {
+        assetStatus: "ready",
+        resumeAssetId: "asset-2",
+        resumeReview: { status: "approved" } as ReviewQueueItem["resumeReview"],
+      }),
+    ]);
+    const model = build(ws);
+    expect(model.next).toMatchObject({
+      id: "review_resumes",
+      title: "Review the resume",
+    });
+    expect(
+      model.next.secondary.map((button) => button.label).slice(0, 2),
+    ).toEqual(["Create the resume", "Apply to 1 ready job"]);
   });
 
   it("leads with Create when most shortlisted jobs still need a resume, with Apply beside it", () => {
@@ -809,7 +963,7 @@ describe("buildJobSearchHomeModel · shortlist and applications", () => {
     });
     expect(model.stages?.[1]?.detail).toBe("1 in Applications");
     // Searching again stays one press for a returning person.
-    expect(model.next.secondary.map((button) => button.label)).toEqual([
+    expect(model.next.secondary.map((button) => button.label).slice(0, 2)).toEqual([
       "Search again",
     ]);
   });
@@ -851,6 +1005,71 @@ describe("buildJobSearchHomeModel · shortlist and applications", () => {
     });
     expect(model.next.detail).not.toMatch(/Press Send/);
     expect(model.next.secondary[0]?.label).toBe("Open Applications");
+  });
+
+  it("under Send for me, a Needs-you card that leads still offers Send in place", () => {
+    const ws = withShortlist(withJobs(workspace(), 3), []);
+    ws.applicationRecords = ["job_0", "job_1"].map((jobId, index) => ({
+      id: `record-${index}`,
+      jobId,
+      title: `Job ${index}`,
+      company: "Employer",
+      status: "ready_for_review",
+      lastAttemptState: "ready",
+      automationMode: "autonomous_submit",
+      questionSummary: { total: 0, answered: 0 },
+      lastActionLabel: "Filled in",
+      lastUpdatedAt: "2026-08-15T11:00:00.000Z",
+    })) as unknown as JobFinderWorkspaceSnapshot["applicationRecords"];
+    ws.applyJobResults = ["job_0", "job_1"].map((jobId, index) => ({
+      id: `result-${index}`,
+      runId: "apply-1",
+      jobId,
+      applicationRecordId: `record-${index}`,
+      state: "awaiting_review",
+      summary:
+        index === 0
+          ? "Not sent: your permission to send changed"
+          : "Apply form filled in",
+      detail: "Nothing was sent.",
+      blockerReason: null,
+      updatedAt: "2026-08-15T11:00:00.000Z",
+    })) as unknown as JobFinderWorkspaceSnapshot["applyJobResults"];
+    ws.userActionRequests = [
+      {
+        id: "action-1",
+        state: "pending",
+        kind: "login",
+        scope: {
+          type: "application",
+          runId: "run-1",
+          jobId: "job_2",
+          applicationRecordId: "record-2",
+        },
+        title: "Sign in required",
+        summary: "Sign in to continue.",
+        createdAt: "2026-08-15T10:00:00.000Z",
+        updatedAt: "2026-08-15T10:00:00.000Z",
+      },
+    ] as unknown as JobFinderWorkspaceSnapshot["userActionRequests"];
+
+    const model = build(ws, { applicationAutomationMode: "autonomous_submit" });
+
+    expect(model.next.id).toBe("needs_you");
+    expect(model.next.secondary).toContainEqual({
+      label: "Send all 2",
+      action: { kind: "send_prepared", jobIds: ["job_0", "job_1"] },
+    });
+
+    // Without the sign-in step the send card leads and says what was not sent.
+    ws.userActionRequests = [];
+    const sendFirst = build(ws, {
+      applicationAutomationMode: "autonomous_submit",
+    });
+    expect(sendFirst.next.id).toBe("send");
+    expect(sendFirst.next.detail).toBe(
+      "1 was not sent: your permission to send changed. Send all 2 tries again.",
+    );
   });
 
   it("offers to try failed applications again with the jobs Applications would retry", () => {
@@ -908,6 +1127,98 @@ describe("buildJobSearchHomeModel · shortlist and applications", () => {
       count: 1,
       detail: "1 could not apply",
     });
+  });
+
+  it("does not call a form filled in when its page closed while it waited on the person", () => {
+    const ws = withShortlist(withJobs(workspace(), 2), [
+      queueItem("job_0", {
+        assetStatus: "ready",
+        resumeAssetId: "asset-0",
+        resumeReview: { status: "approved" } as ReviewQueueItem["resumeReview"],
+      }),
+    ]);
+    ws.applicationRecords = [
+      {
+        id: "record-0",
+        jobId: "job_0",
+        title: "Job 0",
+        company: "Employer",
+        status: "ready_for_review",
+        lastAttemptState: "failed",
+        automationMode: "prepare_only",
+        questionSummary: { total: 0, answered: 0 },
+        lastActionLabel: "The prepared application page is no longer open.",
+        lastUpdatedAt: "2026-08-15T11:00:00.000Z",
+      },
+    ] as unknown as JobFinderWorkspaceSnapshot["applicationRecords"];
+    ws.applyJobResults = [
+      {
+        id: "result-0",
+        runId: "apply-1",
+        jobId: "job_0",
+        applicationRecordId: "record-0",
+        state: "failed",
+        blockerReason: "unexpected_navigation",
+        // It had stopped at its file question when Job Finder restarted.
+        reviewCard: {
+          waitingOnYou: ["Add your portfolio and academic transcript."],
+        },
+        updatedAt: "2026-08-15T11:00:00.000Z",
+      },
+    ] as unknown as JobFinderWorkspaceSnapshot["applyJobResults"];
+    const model = build(ws);
+    expect(model.next.id).toBe("retry");
+    expect(model.next.detail).not.toContain("was filled in");
+    expect(model.next.detail).toContain(
+      "The last attempt stopped before the form was finished.",
+    );
+  });
+
+  it("does not call a form whose send failed in an outage unfinished", () => {
+    const ws = withJobs(workspace(), 2);
+    ws.applicationRecords = ["job_0", "job_1"].map((jobId, index) => ({
+      id: `record-${index}`,
+      jobId,
+      title: `Job ${index}`,
+      company: "Employer",
+      status: "ready_for_review",
+      lastAttemptState: "failed",
+      automationMode: "autonomous_submit",
+      questionSummary: { total: 0, answered: 0 },
+      lastActionLabel: "Stopped",
+      lastUpdatedAt: "2026-08-15T11:00:00.000Z",
+    })) as unknown as JobFinderWorkspaceSnapshot["applicationRecords"];
+    ws.applyJobResults = [
+      {
+        id: "result-0",
+        runId: "apply-1",
+        jobId: "job_0",
+        applicationRecordId: "record-0",
+        state: "failed",
+        blockerReason: null,
+        summary: "Not sent: 127.0.0.1:47969 could not be reached",
+        updatedAt: "2026-08-15T11:00:00.000Z",
+      },
+      {
+        id: "result-1",
+        runId: "apply-1",
+        jobId: "job_1",
+        applicationRecordId: "record-1",
+        state: "failed",
+        blockerReason: null,
+        summary: "Job Finder could not open the application page",
+        updatedAt: "2026-08-15T11:00:00.000Z",
+      },
+    ] as unknown as JobFinderWorkspaceSnapshot["applyJobResults"];
+
+    const model = build(ws, {
+      applicationAutomationMode: "autonomous_submit",
+    });
+
+    expect(model.next.id).toBe("retry");
+    expect(model.next.detail).toContain(
+      "This form was filled in but not sent: 127.0.0.1:47969 could not be reached. One other attempt stopped before the form was finished.",
+    );
   });
 
   it("says an unfinished attempt stopped before the form was finished, and names sending under Send for me", () => {
@@ -1273,7 +1584,7 @@ describe("buildJobSearchHomeModel · round 2 matrix fixes", () => {
     failedApplications(ws, ["job_1", "job_2"]);
     const model = build(ws);
     expect(model.next.id).toBe("send");
-    expect(model.next.secondary.map((button) => button.label)).toEqual([
+    expect(model.next.secondary.map((button) => button.label).slice(0, 2)).toEqual([
       "Try again for all 2",
       "Search again",
     ]);
@@ -1304,7 +1615,7 @@ describe("buildJobSearchHomeModel · round 2 matrix fixes", () => {
     expect(model.next.id).toBe("needs_you");
     expect(model.next.detail).toContain("A job source wants you to sign in");
     expect(model.next.detail).not.toContain("An application is waiting");
-    expect(model.next.secondary.map((button) => button.label)).toEqual([
+    expect(model.next.secondary.map((button) => button.label).slice(0, 2)).toEqual([
       "Apply to all 2",
     ]);
   });

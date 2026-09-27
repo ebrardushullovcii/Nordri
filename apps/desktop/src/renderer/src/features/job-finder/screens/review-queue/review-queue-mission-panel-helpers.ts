@@ -12,6 +12,7 @@ import {
   getApplyReadinessStatus,
   hasResumeGenerationFailure,
   isResumeGenerationInProgress,
+  countResumeLinesToDecide,
   needsPersonResumeReview,
   needsResumeGeneration,
   type ApplySupportState,
@@ -382,6 +383,12 @@ export function getReadinessDescription(input: {
     }
     if (selectedItem.resumeApplicationMode === "original_resume") {
       return "Your original resume is missing. Import it in Profile before applying.";
+    }
+    const linesToDecide = countResumeLinesToDecide(selectedItem);
+    if (linesToDecide > 0) {
+      return linesToDecide === 1
+        ? "A line in this resume is waiting for your decision. Open the resume, keep or change it, and Apply can go ahead."
+        : `${linesToDecide} lines in this resume are waiting for your decision. Open the resume, keep or change each one, and Apply can go ahead.`;
     }
     if (draftNeedsPersonReview) {
       return "Aggressive resumes stretch a little past your saved evidence. Read it, keep or remove the flagged lines, then approve it.";

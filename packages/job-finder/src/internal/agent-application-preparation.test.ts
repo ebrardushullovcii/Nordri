@@ -1285,7 +1285,7 @@ describe("toApplyDocuments", () => {
           fileName: "letter.pdf",
           mime: "application/pdf",
           sha256: "b".repeat(64),
-          loadVerifiedBytes: async () => new Uint8Array(),
+          loadVerifiedBytes: () => Promise.resolve(new Uint8Array()),
         },
         {
           assetId: "asset_portfolio",
@@ -1295,7 +1295,7 @@ describe("toApplyDocuments", () => {
           fileName: "portfolio.pdf",
           mime: "application/pdf",
           sha256: "c".repeat(64),
-          loadVerifiedBytes: async () => new Uint8Array(),
+          loadVerifiedBytes: () => Promise.resolve(new Uint8Array()),
         },
       ],
     } as unknown as Parameters<typeof toApplyDocuments>[0]);

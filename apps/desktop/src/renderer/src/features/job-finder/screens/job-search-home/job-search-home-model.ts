@@ -37,7 +37,11 @@ import {
 } from "../../lib/discovery-run-count-label";
 import { JOB_FINDER_ROUTE_PATHS } from "../../lib/job-finder-route-hrefs";
 import { getProfileSetupReadinessBlockerLabel } from "../../components/profile/setup/profile-setup-screen-helpers";
-import { resolveApplyStatePresentation } from "../applications/apply-state";
+import {
+  WAITING_FOR_BROWSER_TAB_SUMMARY,
+  describeNotSentResult,
+  resolveApplyStatePresentation,
+} from "../applications/apply-state";
 import { buildApplyRunContextReader } from "../applications/applications-recovery-state";
 import { isDiscoveryAlsoFoundResult } from "../discovery/discovery-result-groups";
 import { getDiscoveryRunFailureRecovery } from "../discovery/discovery-run-feedback";
@@ -45,10 +49,12 @@ import {
   APPLICATION_PREPARATION_BATCH_LIMIT,
   collectInProgressApplicationJobIds,
   collectPreparedApplicationJobIds,
+  countResumeLinesToDecide,
   countTailoredDraftPreparationEligible,
   isQueueStageReady,
   needsPersonResumeReview,
 } from "../review-queue/review-queue-status";
+import { buildResumeWorkspaceRoute } from "../../lib/resume-workspace-route";
 import {
   formatDiscoveryRunSourceProblemSummary,
   selectNewestSettledDiscoveryRun,
@@ -284,6 +290,7 @@ function describeRetryReason(
   closedFilledFormJobIds: readonly string[],
   takenOverJobIds: readonly string[] = [],
   notStartedJobIds: readonly string[] = [],
+  notSentRetryReasons: ReadonlyMap<string, string> = new Map(),
 ): string {
   const takenOver = retryJobIds.filter((jobId) =>
     takenOverJobIds.includes(jobId),
@@ -302,7 +309,17 @@ function describeRetryReason(
   const closed = retryJobIds.filter((jobId) =>
     closedFilledFormJobIds.includes(jobId),
   ).length;
-  if (closed === 0) {
+  // A form filled in whose send failed (the site went down mid-send) was
+  // finished too; "stopped before the form was finished" was wrong for it.
+  const notSentReasons = retryJobIds.flatMap((jobId) =>
+    closedFilledFormJobIds.includes(jobId)
+      ? []
+      : [notSentRetryReasons.get(jobId)].filter(
+          (reason): reason is string => Boolean(reason),
+        ),
+  );
+  const notSent = notSentReasons.length;
+  if (closed === 0 && notSent === 0) {
     const notStarted = retryJobIds.filter((jobId) =>
       notStartedJobIds.includes(jobId),
     ).length;
@@ -313,14 +330,26 @@ function describeRetryReason(
     }
     return "The last attempt stopped before the form was finished. A fresh attempt starts from the listing again.";
   }
-  const filledIn =
-    closed === 1
-      ? "This form was filled in, but its page closed before it was sent (closing Job Finder closes it), so nothing was sent."
-      : `${closed} forms were filled in, but their pages closed before they were sent (closing Job Finder closes them), so nothing was sent.`;
-  if (closed === retryJobIds.length) {
-    return `${filledIn} Trying again fills ${closed === 1 ? "it" : "them"} in again from the listing.`;
+  const notSentReason = (notSentReasons[0] ?? "")
+    .replace(/^Not sent:\s*/u, "")
+    .replace(/\.$/u, "");
+  const filledIn = [
+    closed === 0
+      ? null
+      : closed === 1
+        ? "This form was filled in, but its page closed before it was sent (closing Job Finder closes it), so nothing was sent."
+        : `${closed} forms were filled in, but their pages closed before they were sent (closing Job Finder closes them), so nothing was sent.`,
+    notSent === 0
+      ? null
+      : `${notSent === 1 ? (closed === 0 ? "This form was" : "One more form was") : `${notSent} forms were`} filled in but not sent: ${notSentReason}.`,
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const finished = closed + notSent;
+  if (finished === retryJobIds.length) {
+    return `${filledIn} Trying again fills ${finished === 1 ? "it" : "them"} in again from the listing.`;
   }
-  const unfinished = retryJobIds.length - closed;
+  const unfinished = retryJobIds.length - finished;
   return `${filledIn} ${unfinished === 1 ? "One other attempt" : `${unfinished} other attempts`} stopped before the form was finished. Trying again starts each one from the listing.`;
 }
 
@@ -373,6 +402,8 @@ interface ApplicationCounts {
   readyToSend: number;
   /** The jobs whose filled-in form is waiting to be sent. */
   readyToSendJobIds: readonly string[];
+  /** Why a send that was asked for did not happen, one per such job. */
+  notSentReasons: readonly string[];
   applied: number;
   needsYou: number;
   couldNotApply: number;
@@ -383,6 +414,11 @@ interface ApplicationCounts {
    * sent, usually because Job Finder was closed. They are not unfinished.
    */
   closedFilledFormJobIds: readonly string[];
+  /**
+   * Retry jobs whose form was filled in but whose send failed, with the
+   * reason ("Not sent: the site could not be reached"). Not unfinished either.
+   */
+  notSentRetryReasons: ReadonlyMap<string, string>;
   /** Retry jobs the person stepped into in the browser (see above). */
   takenOverJobIds: readonly string[];
   /** Retry jobs a stopped batch never got to. */
@@ -402,9 +438,11 @@ function countApplications(
 ): ApplicationCounts {
   const retryJobIds: string[] = [];
   const closedFilledFormJobIds: string[] = [];
+  const notSentRetryReasons = new Map<string, string>();
   const takenOverJobIds: string[] = [];
   const notStartedJobIds: string[] = [];
   const readyToSendJobIds: string[] = [];
+  const notSentReasons: string[] = [];
   const counts: ApplicationCounts = {
     fillingIn: 0,
     paused: 0,
@@ -412,11 +450,13 @@ function countApplications(
     notStarted: 0,
     readyToSend: 0,
     readyToSendJobIds,
+    notSentReasons,
     applied: 0,
     needsYou: 0,
     couldNotApply: 0,
     retryJobIds,
     closedFilledFormJobIds,
+    notSentRetryReasons,
     takenOverJobIds,
     notStartedJobIds,
     heldForResumeReview: 0,
@@ -488,6 +528,7 @@ function countApplications(
       case "ready_to_send":
         counts.readyToSend += 1;
         readyToSendJobIds.push(record.jobId);
+        if (describeNotSentResult(result)) notSentReasons.push(result.summary);
         break;
       case "applied":
         counts.applied += 1;
@@ -520,12 +561,18 @@ function countApplications(
             takenOverJobIds.push(record.jobId);
           }
           // The one failure that means the form was finished: the prepared
-          // page was gone when it was next needed (after a restart).
+          // page was gone when it was next needed (after a restart). A page
+          // that closed while the form still waited on the person (a file or
+          // question it stopped at) was never filled in; its review card
+          // still lists what it was waiting on.
           if (
             result.state === "failed" &&
-            result.blockerReason === "unexpected_navigation"
+            result.blockerReason === "unexpected_navigation" &&
+            (result.reviewCard?.waitingOnYou.length ?? 0) === 0
           ) {
             closedFilledFormJobIds.push(record.jobId);
+          } else if (describeNotSentResult(result)) {
+            notSentRetryReasons.set(record.jobId, result.summary);
           }
         }
         break;
@@ -538,6 +585,14 @@ interface ShortlistCounts {
   missingResumes: number;
   writing: number;
   reviewResumes: number;
+  /** The jobs behind `reviewResumes`, in queue order. */
+  reviewJobs: readonly {
+    jobId: string;
+    title: string;
+    company: string;
+    /** Lines waiting for a decision; 0 for an Aggressive read-through. */
+    linesToDecide: number;
+  }[];
   readyToApply: number;
   readyJobIds: readonly string[];
   inApplications: number;
@@ -570,6 +625,7 @@ function countShortlist(
   ];
   let writing = 0;
   let reviewResumes = 0;
+  const reviewJobs: ShortlistCounts["reviewJobs"][number][] = [];
   let inApplications = 0;
   const seen = new Set<string>();
   for (const item of queue) {
@@ -588,6 +644,12 @@ function countShortlist(
       )
     ) {
       reviewResumes += 1;
+      reviewJobs.push({
+        jobId: item.jobId,
+        title: item.title,
+        company: item.company,
+        linesToDecide: countResumeLinesToDecide(item),
+      });
     }
   }
   const missingResumes = countTailoredDraftPreparationEligible(queue, prepared);
@@ -595,6 +657,7 @@ function countShortlist(
     missingResumes,
     writing,
     reviewResumes,
+    reviewJobs,
     readyToApply: readyJobIds.length,
     readyJobIds,
     inApplications,
@@ -642,22 +705,37 @@ function buildNowItem(
     case "tailored_drafts":
       return {
         id: item.id,
-        title: "Writing resumes",
-        detail: joinParts([item.countLabel, "about a minute each"]) ?? "",
-        stop: {
-          label: "Stop after this one",
-          action: { kind: "stop_resumes" },
-        },
+        title: item.canCancel ? "Writing resumes" : "Stopping resumes",
+        detail:
+          joinParts([
+            item.countLabel,
+            item.canCancel
+              ? "up to two at once"
+              : "finishing the ones already started",
+          ]) ?? "",
+        stop: item.canCancel
+          ? {
+              label: "Stop new resumes",
+              action: { kind: "stop_resumes" },
+            }
+          : null,
         open: {
           label: "Open Shortlisted",
           action: { kind: "navigate", route: reviewQueueRoute },
         },
       };
-    case "apply":
+    case "apply": {
+      const waitingForTab =
+        item.status !== "paused" &&
+        item.stageLabel === WAITING_FOR_BROWSER_TAB_SUMMARY;
       return {
         id: item.id,
-        title: `${item.status === "paused" ? "Paused before" : "Applying:"} ${item.sourceLabel}`,
-        detail: item.stageLabel,
+        title: waitingForTab
+          ? `Waiting to apply: ${item.sourceLabel}`
+          : `${item.status === "paused" ? "Paused before" : "Applying:"} ${item.sourceLabel}`,
+        detail: waitingForTab
+          ? "Waiting for a free browser tab. It starts as soon as one frees up; close a tab you no longer need to start it now."
+          : item.stageLabel,
         stop: item.canCancel
           ? { label: "Stop", action: { kind: "stop_apply", runId: item.id } }
           : null,
@@ -666,6 +744,7 @@ function buildNowItem(
           action: { kind: "navigate", route: applicationsRoute },
         },
       };
+    }
     case "resume_import":
       return {
         id: item.id,
@@ -980,6 +1059,7 @@ export function buildJobSearchHomeModel(
                   applications.closedFilledFormJobIds,
                   applications.takenOverJobIds,
                   applications.notStartedJobIds,
+                  applications.notSentRetryReasons,
                 ),
               describeHeldForResumeReview(applications.heldForResumeReview),
               describeApplyMode(input.applicationAutomationMode),
@@ -1049,7 +1129,7 @@ export function buildJobSearchHomeModel(
           id: "create_resumes",
           title: `Create ${plural(shortlist.missingResumes, "resume")}`,
           detail:
-            "About a minute each, written here while you wait. To change a job's resume level first, open Shortlisted.",
+            "Written two at a time while you wait. To change a job's resume level first, open Shortlisted.",
           primary: {
             label:
               shortlist.missingResumes === 1
@@ -1067,7 +1147,43 @@ export function buildJobSearchHomeModel(
       : null;
   // While a batch of resumes is being written, applying waits for it (one
   // press for all instead of one now and another later).
+  // Send for me covers forms filled in before the person chose it: the agent
+  // presses Send on each kept page, one press for all of them. It is also the
+  // in-place second button on a card that leads (a Needs-you step), so the
+  // ready forms do not wait for that step to be cleared first.
+  const sendNext: HomeNextStep | null =
+    input.applicationAutomationMode === "autonomous_submit" &&
+    applications.readyToSendJobIds.length > 0
+      ? (() => {
+          const n = applications.readyToSend;
+          const notSent = applications.notSentReasons;
+          return {
+            id: "send",
+            title: `Send ${plural(n, "application")}`,
+            detail:
+              notSent.length > 0
+                ? `${notSent.length === 1 ? "1 was" : `${notSent.length} were`} not sent: ${notSent[0]!.replace(/^Not sent:\s*/u, "")}. ${n === 1 ? "Send it" : `Send all ${n}`} tries again.`
+                : n === 1
+                  ? "The form is filled in and you chose Send for me, so Job Finder presses Send on it."
+                  : "The forms are filled in and you chose Send for me, so Job Finder presses Send on each one.",
+            primary: {
+              label: n === 1 ? "Send it" : `Send all ${n}`,
+              action: {
+                kind: "send_prepared",
+                jobIds: applications.readyToSendJobIds,
+              },
+            },
+            secondary: [
+              {
+                label: "Open Applications",
+                action: { kind: "navigate", route: applicationsRoute },
+              },
+            ],
+          } satisfies HomeNextStep;
+        })()
+      : null;
   const nextInPlaceStep = [
+    sendNext,
     retryNext,
     resumesWriting ? null : applyNext,
     createNext,
@@ -1320,33 +1436,26 @@ export function buildJobSearchHomeModel(
           };
   } else if (applications.readyToSend > 0) {
     const n = applications.readyToSend;
-    // Send for me covers forms filled in before the person chose it: the
-    // agent presses Send on each kept page, one press for all of them.
-    next =
-      input.applicationAutomationMode === "autonomous_submit" &&
-      applications.readyToSendJobIds.length > 0
-        ? {
-            id: "send",
-            title: `Send ${plural(n, "application")}`,
-            detail:
-              n === 1
-                ? "The form is filled in and you chose Send for me, so Job Finder presses Send on it."
-                : "The forms are filled in and you chose Send for me, so Job Finder presses Send on each one.",
-            primary: {
-              label: n === 1 ? "Send it" : `Send all ${n}`,
-              action: {
-                kind: "send_prepared",
-                jobIds: applications.readyToSendJobIds,
-              },
-            },
-            secondary: [
-              {
-                label: "Open Applications",
-                action: { kind: "navigate", route: applicationsRoute },
-              },
-            ],
-          }
-        : {
+    next = sendNext
+      ? {
+          ...sendNext,
+          // Jobs that could not be finished stay one press away beside it.
+          secondary: [
+            ...(retryNext && retryNext.id === "retry"
+              ? [
+                  {
+                    ...retryNext.primary,
+                    label: describeSecondaryPress(
+                      retryNext,
+                      applications.retryJobIds.length,
+                    ),
+                  },
+                ]
+              : []),
+            ...sendNext.secondary,
+          ],
+        }
+      : {
             id: "send",
             title: `Send ${plural(n, "application")}`,
             detail:
@@ -1380,16 +1489,52 @@ export function buildJobSearchHomeModel(
     };
   } else if (shortlist.reviewResumes > 0) {
     const n = shortlist.reviewResumes;
+    const only = n === 1 ? shortlist.reviewJobs[0] : undefined;
+    const withLines = shortlist.reviewJobs.filter(
+      (job) => job.linesToDecide > 0,
+    );
+    const why =
+      withLines.length === 0
+        ? "Aggressive resumes stretch toward the posting. Confirm or remove each stretched line before applying."
+        : only
+          ? `${only.linesToDecide === 1 ? "A line" : `${only.linesToDecide} lines`} in the resume for ${only.title} at ${only.company} ${only.linesToDecide === 1 ? "is" : "are"} waiting for your decision. Keep or change ${only.linesToDecide === 1 ? "it" : "each one"}, and the job can be applied to.`
+          : withLines.length === n
+            ? "Some resumes have lines waiting for your decision. Keep or change each one, and those jobs can be applied to."
+            : "Some resumes have lines waiting for your decision, and Aggressive resumes stretch toward the posting. Decide each flagged line before applying.";
+    // The ready jobs do not wait on this review; say which ones do.
+    const pressCount =
+      applyNext?.primary.action.kind === "apply_all"
+        ? applyNext.primary.action.jobIds.length
+        : 0;
+    const heldBack =
+      applyNext?.id === "apply" && shortlist.readyToApply > 0
+        ? only
+          ? ` "${describeSecondaryPress(applyNext, shortlist.readyToApply)}" starts ${pressCount < shortlist.readyToApply ? `${pressCount} of the ${shortlist.readyToApply} ready jobs` : pressCount === 1 ? "the ready one" : "the others"}; ${only.title} waits for this.${pressCount < shortlist.readyToApply ? ` ${describePartialPress(pressCount, shortlist.readyToApply, "Shortlisted") ?? ""}`.trimEnd() : ""}`
+          : ` The ready jobs can start now; these ${n} wait for their review.`
+        : "";
     next = {
       id: "review_resumes",
-      title: `Review ${plural(n, "resume")}`,
-      detail:
-        "Aggressive resumes stretch toward the posting. Confirm or remove each stretched line before applying.",
-      primary: {
-        label: "Open Shortlisted",
-        action: { kind: "navigate", route: reviewQueueRoute },
-      },
-      secondary: [],
+      title: only ? "Review the resume" : `Review ${plural(n, "resume")}`,
+      detail: `${why}${heldBack}`,
+      primary: only
+        ? {
+            label: "Review the resume",
+            action: {
+              kind: "navigate",
+              route: buildResumeWorkspaceRoute(only.jobId),
+            },
+          }
+        : {
+            label: "Open Shortlisted",
+            action: { kind: "navigate", route: reviewQueueRoute },
+          },
+      // Jobs that do not wait on this review keep moving in one press here.
+      secondary: [
+        ...(createNext ? [createNext.primary] : []),
+        ...(nextInPlaceAction && nextInPlaceStep !== createNext
+          ? [nextInPlaceAction]
+          : []),
+      ],
     };
   } else if (
     applyNext &&
@@ -1664,7 +1809,17 @@ export function buildJobSearchHomeModel(
         ? "stopped early"
         : "failed"
       : "finished";
-    statusLine = `Last search ${verb} ${when}${runCounts ? ` · ${runCounts}` : ""}.`;
+    // A one-source pass (the source searched again after a sign-in, or
+    // "search this source") counts only that source; say which, so its
+    // numbers are not read as the whole search.
+    const singleSourceLabel =
+      newestRun.scope === "single_target" && enabledSourceCount > 1
+        ? (targets.find((target) => target.id === newestRun.targetIds[0])
+            ?.label ?? null)
+        : null;
+    statusLine = singleSourceLabel
+      ? `Last search of ${singleSourceLabel} ${verb} ${when}${runCounts ? ` · ${runCounts}` : ""}.`
+      : `Last search ${verb} ${when}${runCounts ? ` · ${runCounts}` : ""}.`;
   } else {
     statusLine = "Nothing is running.";
   }

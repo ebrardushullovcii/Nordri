@@ -1,5 +1,9 @@
 import { getEmbeddedBrowser } from "../browser/embedded-browser";
 import { publishJobFinderWorkspaceUpdate } from "./workspace-updates";
+import {
+  publishOnApplyStandingChanges,
+  publishOnUserActionChanges,
+} from "./user-action-update-push";
 import { continueApplicationsAfterHandback } from "./continue-after-browser-handback";
 import { withEmbeddedBrowserActivity } from "../browser/embedded-browser-runtime";
 import {
@@ -454,6 +458,7 @@ export function createDesktopBrowserRuntime(
               getOpenBrowser: () => embedded.getOpenBrowser(),
               close: () => embedded.releaseAutomationSession(),
               assertAutomationSafe: () => embedded.assertAutomationSafe(),
+              openTabCount: () => embedded.openTabCount(),
             },
           }
         : {}),
@@ -593,6 +598,12 @@ export async function createJobFinderWorkspaceServiceAsync(
   const usesEmbeddedBrowser =
     env.UNEMPLOYED_BROWSER_HOST !== "external" &&
     (!desktopTestApiEnabled || env.UNEMPLOYED_BROWSER_HOST === "embedded");
+  publishOnUserActionChanges(jobFinderRepository, () =>
+    publishJobFinderWorkspaceUpdate(),
+  );
+  publishOnApplyStandingChanges(jobFinderRepository, () =>
+    publishJobFinderWorkspaceUpdate(),
+  );
   const workspaceService = createJobFinderWorkspaceService({
     aiClient,
     visionProvider,

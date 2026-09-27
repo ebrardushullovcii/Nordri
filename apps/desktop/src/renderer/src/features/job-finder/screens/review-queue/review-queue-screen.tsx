@@ -62,7 +62,7 @@ export function ReviewQueueScreen(props: {
    */
   applyJobResults?: JobFinderWorkspaceSnapshot["applyJobResults"];
   isJobPending: (jobId: string) => boolean;
-  onPrepareTailoredDrafts: () => void;
+  onPrepareTailoredDrafts: (jobIds?: readonly string[]) => void;
   onStopTailoredDraftPreparation: () => void;
   onStartAutoApplyQueue: (
     jobIds: string[],
@@ -260,6 +260,14 @@ export function ReviewQueueScreen(props: {
   // order, up to the per-run cap. Jobs already in Applications and jobs whose
   // application is running are left alone (ADR 0022's "Apply to all").
   const [applyAllPending, setApplyAllPending] = useState(false);
+  const applicationBatchLimit = Math.min(
+    APPLICATION_PREPARATION_BATCH_LIMIT,
+    Math.max(
+      0,
+      globalDailyApplicationPreparationCapacity?.remaining ??
+        Number.POSITIVE_INFINITY,
+    ),
+  );
   const handleApplyToAllReady = useCallback(() => {
     const unavailable = new Set([
       ...preparedJobIds,
@@ -268,18 +276,18 @@ export function ReviewQueueScreen(props: {
     const readyJobIds = queue
       .filter((item) => isQueueStageReady(item, unavailable))
       .map((item) => item.jobId)
-      .slice(0, APPLICATION_PREPARATION_BATCH_LIMIT);
+      .slice(0, applicationBatchLimit);
     if (readyJobIds.length === 0) {
       return;
     }
     setApplyAllPending(true);
-    void onStartAutoApplyQueue(
-      readyJobIds,
-      applicationAutomationMode,
-    ).finally(() => {
-      setApplyAllPending(false);
-    });
+    void onStartAutoApplyQueue(readyJobIds, applicationAutomationMode).finally(
+      () => {
+        setApplyAllPending(false);
+      },
+    );
   }, [
+    applicationBatchLimit,
     applicationPreparingJobIds,
     applicationAutomationMode,
     onStartAutoApplyQueue,
@@ -323,8 +331,11 @@ export function ReviewQueueScreen(props: {
     >
       <div className="grid min-w-0 items-stretch gap-4 xl:h-full xl:min-h-0 xl:grid-cols-[minmax(24rem,0.72fr)_minmax(34rem,1fr)] xl:overflow-hidden">
         <ReviewQueueListPanel
+          key={props.campaignId}
+          campaignId={props.campaignId}
           draftPreparation={draftPreparation}
           isApplyToAllPending={applyAllPending || isApplyPending}
+          applicationBatchLimit={applicationBatchLimit}
           isJobPending={isJobPending}
           onApplyToAllReady={handleApplyToAllReady}
           applyAllOutcome={describeApplyAllOutcome(applicationAutomationMode)}
@@ -392,7 +403,9 @@ export function ReviewQueueScreen(props: {
                 isSelectedJobPendingTooLong={selectedJobPendingTooLong}
                 onStartApplyCopilot={onStartApplyCopilot}
                 onEditResumeWorkspace={onEditResumeWorkspace}
-                {...(onApproveResumeAndApply ? { onApproveResumeAndApply } : {})}
+                {...(onApproveResumeAndApply
+                  ? { onApproveResumeAndApply }
+                  : {})}
                 onGenerateResume={onGenerateResume}
                 onOpenBrowserSession={onOpenBrowserSession}
                 onOpenJobDetails={onOpenJobDetails}

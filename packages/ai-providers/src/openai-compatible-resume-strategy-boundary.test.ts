@@ -267,4 +267,38 @@ describe("configured resume strategy request boundary", () => {
       fetchMock.restore();
     }
   });
+
+  test("tells chat-completions providers to return JSON when requesting json_object", async () => {
+    const fetchMock = mockCapturingJsonFetch({
+      choices: [{ message: { content: "{}" } }],
+    });
+
+    try {
+      const client = createOpenAiCompatibleJobFinderAiClient({
+        apiKey: "test-key",
+        baseUrl: "https://example.com/v1",
+        model: "deepseek-v4.1-flash",
+        apiMode: "chat_completions",
+      });
+      const searchPreferences = createPreferences();
+      searchPreferences.tailoringMode = "aggressive";
+
+      await client.createResumeDraft({
+        profile: createProfile(),
+        searchPreferences,
+        settings: createSettings(),
+        job: createJobPosting(),
+        resumeText: "Resume text",
+      });
+
+      const body = JSON.parse(fetchMock.getCapturedBody()) as {
+        response_format?: { type?: string };
+        messages?: Array<{ content?: string }>;
+      };
+      expect(body.response_format?.type).toBe("json_object");
+      expect(body.messages?.[0]?.content).toMatch(/\bJSON\b/i);
+    } finally {
+      fetchMock.restore();
+    }
+  });
 });

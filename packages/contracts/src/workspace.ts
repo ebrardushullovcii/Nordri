@@ -356,7 +356,7 @@ export type JobFinderResumePreviewMode = z.infer<
 >;
 
 /**
- * The four save surfaces the renderer's save coordinator protects. A failed
+ * The save surfaces supported by the desktop fault-injection hook. A failed
  * save is a first-class product state (dismissable toast, navigation and
  * window-close guards, Settings keeping staged drafts), but a running build
  * offers no way to reach it: the preload bridge is frozen and the workspace
@@ -370,6 +370,7 @@ export const jobFinderTestSaveSurfaceValues = [
   "answers",
   "settings",
   "resume",
+  "campaign",
 ] as const;
 export const JobFinderTestSaveSurfaceSchema = z.enum(
   jobFinderTestSaveSurfaceValues,

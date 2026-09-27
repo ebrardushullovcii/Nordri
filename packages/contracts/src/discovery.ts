@@ -120,9 +120,9 @@ const JobDiscoveryPreferencesObjectSchema = z.object({
   collectOnlyHardCriteriaMatches: z.boolean().default(false),
   /**
    * Explicit total valid-job budget for one discovery run across all enabled
-   * targets. `null`/`undefined` keeps the interactive precision default; when
-   * set, the budget is split deterministically across targets and raises the
-   * bounded crawl step/time ceilings proportionally.
+   * targets. `null`/`undefined` retains all eligible listings collected with
+   * the normal crawl safety ceilings; when set, the budget is split across
+   * targets and raises the bounded crawl step/time ceilings proportionally.
    */
   runJobBudget: z
     .number()
@@ -1593,6 +1593,13 @@ export const ReviewQueueItemSchema = z.object({
   resumeReview: ReviewQueueResumeReviewStateSchema.default({
     status: "not_started",
   }),
+  /**
+   * Lines in the job's saved resume that still wait for the person's
+   * decision. The export gate refuses the resume until each one is decided,
+   * whatever the level, so a job with any is not ready to apply. Absent or 0
+   * when nothing is waiting.
+   */
+  resumeLinesToDecide: z.number().int().min(0).optional(),
   updatedAt: IsoDateTimeSchema,
 });
 export type ReviewQueueItem = z.infer<typeof ReviewQueueItemSchema>;

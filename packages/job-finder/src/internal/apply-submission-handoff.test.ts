@@ -6,7 +6,7 @@ import {
   serializeApplicationAuthorityDecisionPolicyForDigest,
 } from "@unemployed/contracts";
 import { createHash } from "node:crypto";
-import { describe, expect, test, vi } from "vitest";
+import { describe, expect, it, test, vi } from "vitest";
 
 import {
   decideApplySubmissionHandoff,
@@ -14,7 +14,9 @@ import {
   submitPreparedApplication,
   describeSubmissionOutcome,
   enforceResolvedApplyAuthorityResult,
+  selectSubmissionAttemptIds,
   sendPreparedApplication,
+  SITE_UNREACHABLE_REASON,
 } from "./apply-submission-handoff";
 
 /**
@@ -241,7 +243,8 @@ describe("what the person is told after an attempt", () => {
       result: { status: "recorded_not_submitted" } as never,
       siteLabel: "Northwind careers",
     });
-    expect(told.summary).toBe("Not sent");
+    // Home reads the words after "Not sent: " as the reason.
+    expect(told.summary).toBe("Not sent: the form was not ready to send");
     expect(told.detail).toContain("Nothing was sent");
   });
 });
@@ -379,5 +382,131 @@ describe("what the person is told when the page showed a confirmation", () => {
     expect(told.detail).toContain("confirmed that it received");
     expect(told.detail).toContain("will not send it again");
     expect(told.nextActionLabel).toBe("View application");
+  });
+});
+
+// Gate 3 fixes: retry keys, not-sent copy, and the allowance.
+const lineage = { runId: "run", jobId: "job", resultId: "result" };
+const base = "submission_run_job_result";
+
+describe("selectSubmissionAttemptIds", () => {
+  it("keeps the one key per result for the run's own send", () => {
+    expect(
+      selectSubmissionAttemptIds({
+        lineage,
+        outcomes: [{ idempotencyKey: base, outcome: "not_submitted" }],
+        personRetry: false,
+      }).idempotencyKey,
+    ).toBe(base);
+  });
+
+  it("gives the person's Send the next key after a not-sent attempt", () => {
+    expect(
+      selectSubmissionAttemptIds({
+        lineage,
+        outcomes: [{ idempotencyKey: base, outcome: "not_submitted" }],
+        personRetry: true,
+      }),
+    ).toEqual({
+      idempotencyKey: `${base}_retry1`,
+      preflightId: "preflight_run_job_result_retry1",
+    });
+  });
+
+  it("skips a key whose attempt stopped before it was armed", () => {
+    expect(
+      selectSubmissionAttemptIds({
+        lineage,
+        outcomes: [{ idempotencyKey: base, outcome: "not_submitted" }],
+        attempts: [
+          { idempotencyKey: base, status: "resolved" },
+          { idempotencyKey: `${base}_retry1`, status: "available" },
+        ],
+        personRetry: true,
+      }).idempotencyKey,
+    ).toBe(`${base}_retry2`);
+  });
+
+  it("never moves past an armed, sent or uncertain attempt", () => {
+    for (const attempts of [
+      [{ idempotencyKey: `${base}_retry1`, status: "armed" }],
+      [{ idempotencyKey: `${base}_retry1`, status: "outcome_uncertain" }],
+    ])
+      expect(
+        selectSubmissionAttemptIds({
+          lineage,
+          outcomes: [{ idempotencyKey: base, outcome: "not_submitted" }],
+          attempts,
+          personRetry: true,
+        }).idempotencyKey,
+      ).toBe(`${base}_retry1`);
+    expect(
+      selectSubmissionAttemptIds({
+        lineage,
+        outcomes: [{ idempotencyKey: base, outcome: "submitted" }],
+        personRetry: true,
+      }).idempotencyKey,
+    ).toBe(base);
+  });
+});
+
+function notSubmitted(reason: string | null) {
+  return {
+    status: "recorded_not_submitted",
+    outcome: reason ? { browserAction: { reason } } : {},
+  } as unknown as Parameters<typeof describeSubmissionOutcome>[0]["result"];
+}
+
+describe("describeSubmissionOutcome for a send that did not go out", () => {
+  it("names the site that could not be reached and offers Try again", () => {
+    expect(
+      describeSubmissionOutcome({
+        result: notSubmitted(SITE_UNREACHABLE_REASON),
+        siteLabel: "127.0.0.1:47967",
+      }),
+    ).toEqual({
+      summary: "Not sent: 127.0.0.1:47967 could not be reached",
+      detail:
+        "The connection to 127.0.0.1:47967 was refused before the form went out, so nothing was sent. Try again prepares the application again once the site is back.",
+      nextActionLabel: "Try again",
+    });
+  });
+
+  it("gives Home a reason after 'Not sent: ' every time", () => {
+    for (const reason of ["action_error", "stale_control", null])
+      expect(
+        describeSubmissionOutcome({
+          result: notSubmitted(reason),
+          siteLabel: "jobs.example.com",
+        }).summary,
+      ).toMatch(/^Not sent: \S/u);
+    expect(
+      describeSubmissionOutcome({
+        result: notSubmitted("action_error"),
+        siteLabel: "jobs.example.com",
+      }).summary,
+    ).toBe("Not sent: the send button could not be pressed");
+  });
+});
+
+describe("deriveApplySubmissionCapacity", () => {
+  it("does not spend the allowance on a send that reached nothing", () => {
+    const envelope = {
+      maxApplicationsPerRun: 2,
+      maxApplicationsPerLocalDay: 5,
+    } as Parameters<typeof deriveApplySubmissionCapacity>[0]["envelope"];
+    const at = "2026-09-27T10:00:00.000Z";
+    expect(
+      deriveApplySubmissionCapacity({
+        envelope,
+        outcomes: [
+          { runId: "run", attemptedAt: at, outcome: "not_submitted" },
+          { runId: "run", attemptedAt: at, outcome: "not_submitted" },
+          { runId: "run", attemptedAt: at, outcome: "submitted" },
+        ],
+        runId: "run",
+        now: at,
+      }),
+    ).toEqual({ remainingRunCapacity: 1, remainingDailyCapacity: 4 });
   });
 });

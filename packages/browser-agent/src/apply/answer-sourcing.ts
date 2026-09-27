@@ -156,26 +156,33 @@ function nameFieldAnswer(
   profile: CandidateProfile,
 ): ApplyAnswer | null {
   const signal = normalizeSignal(`${control.label} ${control.groupLabel}`);
+  const label = normalizeSignal(control.label);
   const kind: ApplicationQuestionKind = "personal_info";
-  if (/\b(first|given)\b/u.test(signal)) {
+  if (
+    /\b(first|given)\s+name\b/u.test(signal) ||
+    /^(first|given)$/u.test(label)
+  ) {
     const value = trimmedOrNull(profile.firstName);
     return value
       ? profileAnswer(value, kind, "profile.firstName", "your first name")
       : null;
   }
-  if (/\b(last|family|sur)\b/u.test(signal)) {
+  if (
+    /\b(last|family|sur)\s+name\b/u.test(signal) ||
+    /^(last|family|sur)$/u.test(label)
+  ) {
     const value = trimmedOrNull(profile.lastName);
     return value
       ? profileAnswer(value, kind, "profile.lastName", "your last name")
       : null;
   }
-  if (/\bmiddle\b/u.test(signal)) {
+  if (/\bmiddle\s+name\b/u.test(signal) || label === "middle") {
     const value = trimmedOrNull(profile.middleName);
     return value
       ? profileAnswer(value, kind, "profile.middleName", "your middle name")
       : null;
   }
-  if (/\bpreferred\b/u.test(signal)) {
+  if (/\bpreferred(?:\s+(?:full|display))?\s+name\b/u.test(signal)) {
     const value =
       trimmedOrNull(profile.preferredDisplayName) ??
       trimmedOrNull(profile.firstName);

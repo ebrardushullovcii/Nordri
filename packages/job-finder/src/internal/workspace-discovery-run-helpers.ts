@@ -404,9 +404,9 @@ export function recoverInterruptedDiscoveryRun(
  * (caps, floors, step ceilings).
  */
 export interface DiscoveryTargetBudget {
-  /** How many suitable jobs the agent should try to inspect on this source. */
+  /** Collection planning hint; an uncapped run does not stop at this count. */
   targetJobCount: number;
-  /** How many new identities this source may add to the run's saved results. */
+  /** Retention share, enforced only when the person specified a run budget. */
   retentionJobCount: number;
   maxSteps: number;
 }
@@ -465,20 +465,14 @@ const DISCOVERY_TARGET_STEP_CEILING = 120;
 /**
  * Resolves the per-target discovery budget for one position in a run.
  *
- * The total run budget is the explicit `runJobBudget` when configured
- * (campaign limit or discovery preference, schema-capped at
- * `DISCOVERY_RUN_JOB_BUDGET_MAX`), otherwise the interactive precision default
- * of `DEFAULT_TARGET_JOB_COUNT`. The budget is split deterministically across
- * the remaining targets: every non-final target takes the floor fair share of
- * the remaining total and the final target absorbs the exact remainder, so a
- * fully yielding run requests exactly the configured total. Shares are
- * non-negative integers; when the remaining budget cannot fund every
- * remaining target, one-job units are granted from the highest-priority
- * position forward and later positions receive zero, so scarce budgets land
- * on the leading sources instead of the trailing one. Explicit budgets also
- * raise the crawl step ceilings proportionally;
- * interactive runs keep the existing 36/60-step ceilings and the 50-job
- * single-target cap unchanged.
+ * A configured `runJobBudget` is an explicit result cap. Its shares sum to
+ * the requested total, with scarce slots assigned in source-priority order.
+ * Each source still receives a nonzero sampling opportunity from the planner.
+ *
+ * With no configured cap, the legacy 100-job total / 50-job single-source
+ * figures are collection planning hints only. The pipeline retains every
+ * eligible listing collected and tells the agent there is no numeric cap.
+ * Default and explicitly scaled runs retain their separate safety ceilings.
  */
 export function resolveDiscoveryTargetBudget(input: {
   targetsRemaining: number;

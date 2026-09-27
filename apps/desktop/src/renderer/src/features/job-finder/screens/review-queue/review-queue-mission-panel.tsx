@@ -96,7 +96,7 @@ const RESUME_LEVEL_OPTIONS: readonly {
   {
     id: "light",
     label: "Light",
-    detail: "Reorders and trims; wording stays yours.",
+    detail: "Light edits; stays close to your wording.",
     tailoringMode: "conservative",
   },
   {

@@ -25,6 +25,7 @@ import {
   type ToolCall,
 } from "@unemployed/contracts";
 import { z } from "zod";
+import { buildResumeImportStageInstructions } from "./openai-compatible-resume-import";
 
 import {
   ResumeAssistantReplySchema,
@@ -648,9 +649,7 @@ export async function runResumeGenerationAgentTask(input: {
             const repairCount = rendered?.requiredModelRepairs?.length ?? 0;
             if (repairCount === 0) {
               cleanRenderCount += 1;
-              lastCheckedProposal = structuredClone(
-                context.draft as Record<string, unknown>,
-              );
+              lastCheckedProposal = structuredClone(context.draft);
             } else {
               flaggedRenderCount += 1;
             }
@@ -833,7 +832,10 @@ export async function runResumeGenerationAgentTask(input: {
     )
   ) {
     const seconds = Math.max(1, Math.ceil(result.receipt.durationMs / 1_000));
-    const completed = completeTailoredResumeDraft(checkedProposal, input.request);
+    const completed = completeTailoredResumeDraft(
+      checkedProposal,
+      input.request,
+    );
     return TailoredResumeDraftSchema.parse({
       ...completed,
       notes: [
@@ -878,6 +880,7 @@ export async function runResumeImportStageAgentTask(input: {
       `You are importing the ${input.request.stage} portion of a resume into typed profile candidates.`,
       "Use the tools to inspect the parsed document blocks and any layout or vision evidence. Populate candidates only from evidence in the document, with exact source block ids, confidence, alternatives, and review notes when ambiguity remains.",
       "Resolve ambiguity by inspecting more document evidence before finishing. Do not overwrite the saved profile directly; the reconciliation layer will keep genuinely uncertain candidates available for user review.",
+      buildResumeImportStageInstructions(input.request.stage),
     ].join(" "),
     state: input.request,
     initialDraft,
@@ -1240,6 +1243,7 @@ export async function runProfileCopilotAgentTask(input: {
     model: createModelAdapter(
       input.client,
       modelConversationKeys.profileCopilot(input.request.profile),
+      { preventRuntimeRetries: true },
     ),
     tools: [
       {
@@ -1623,7 +1627,9 @@ function requireEditableResumeSection(
   draft: ReviseResumeDraftInput["draft"],
   sectionId: string,
 ): ResumeEditSection {
-  const section = draft.sections.find((candidate) => candidate.id === sectionId);
+  const section = draft.sections.find(
+    (candidate) => candidate.id === sectionId,
+  );
   if (!section) {
     throw invalidResumeTarget(
       `section '${sectionId}' does not exist. Section ids: ${draft.sections.map((candidate) => candidate.id).join(", ") || "none"}.`,
@@ -1707,7 +1713,8 @@ function withResumeEditPatch(
           !(
             existing.operation === patch.operation &&
             existing.targetSectionId === patch.targetSectionId &&
-            (existing.targetEntryId ?? null) === (patch.targetEntryId ?? null) &&
+            (existing.targetEntryId ?? null) ===
+              (patch.targetEntryId ?? null) &&
             (existing.targetBulletId ?? null) === (patch.targetBulletId ?? null)
           ),
       )
@@ -1715,7 +1722,9 @@ function withResumeEditPatch(
   return [...kept, patch];
 }
 
-function resumeEditPatchSignature(patches: readonly ResumeDraftPatch[]): string {
+function resumeEditPatchSignature(
+  patches: readonly ResumeDraftPatch[],
+): string {
   return JSON.stringify(
     patches.map((patch) => [
       patch.operation,
@@ -1784,12 +1793,12 @@ function describeResumeProposalCheck(input: {
         path: [drop.patchId],
       })),
       ...repairable.map((finding) => ({
-      code:
-        finding.kind === "needs_confirmation"
-          ? "needs_person_confirmation"
-          : "unsupported_by_saved_evidence",
-      message: `${finding.patchId ?? "A change"}: "${finding.flaggedText ?? "this wording"}" ${finding.message} ${finding.whatToDo}`,
-      path: finding.patchId ? [finding.patchId] : [],
+        code:
+          finding.kind === "needs_confirmation"
+            ? "needs_person_confirmation"
+            : "unsupported_by_saved_evidence",
+        message: `${finding.patchId ?? "A change"}: "${finding.flaggedText ?? "this wording"}" ${finding.message} ${finding.whatToDo}`,
+        path: finding.patchId ? [finding.patchId] : [],
       })),
     ],
     value: {
@@ -1920,8 +1929,9 @@ export async function runResumeEditAgentTask(input: {
       "recentConversation holds the last turns of this thread, oldest first, with each proposal's changes and status (waiting_for_review, accepted, rejected). Read the new request against it: 'do it', 'yes', 'go ahead', 'the second one' or 'that' refer to what was just said or proposed. When the person agrees to changes you described in words, make those changes now. When they pick some of several changes, propose only those. Never answer a follow-up by asking what they meant when the conversation already says it.",
       "Prefer replace_resume_section_text for section prose, replace_resume_entry_summary for a role's summary line, update_resume_bullet for one bullet (top-level or in an entry), insert_resume_bullet to add a bullet or skill, move_resume_bullet to reorder bullets or skills, and set_resume_item_included to hide or show a bullet, a skill, or a whole entry such as a role. A second change to the same text replaces your first one; remove_resume_patch drops a change. Use add_resume_patch only when no dedicated tool fits. You cannot reorder whole entries, change dates, or switch templates.",
       aggressive
-        ? (describeAggressiveResumeEditPolicy(input.request.tailoringStrength) ??
-          "")
+        ? (describeAggressiveResumeEditPolicy(
+            input.request.tailoringStrength,
+          ) ?? "")
         : "This is a Light or Tailored resume: never state a fact, metric, employer, tool, or date that the saved evidence does not carry. Job-only wording is not candidate evidence. If part of a request asks for one, do the grounded part and say plainly in the response which part you did not do and why.",
       "The person is the authority on their own facts. When they state a fact about themselves in this conversation (for example 'my accessibility focus' or 'I use Storybook'), you may write it even if the saved evidence lacks it. Say what validate_resume_draft reports for it: that it goes to Lines to confirm, that they approve it as accurate, or, when the check finds nothing to flag, nothing extra. A skill must be in their saved profile or the job listing to stay on the resume; when the check says a change is removed when saved, drop it and say so plainly, adding that a skill added to their Profile skills becomes available here.",
       "linesToConfirm lists lines already on the résumé that wait for the person's Keep or Remove under Lines to confirm (null when unknown). Use it when asked what still needs confirming; validate_resume_draft checks only your new changes.",
@@ -2083,7 +2093,10 @@ export async function runResumeEditAgentTask(input: {
             entryId: { type: ["string", "null"] },
             newText: { type: "string" },
             anchorBulletId: { type: ["string", "null"] },
-            position: { type: ["string", "null"], enum: ["before", "after", null] },
+            position: {
+              type: ["string", "null"],
+              enum: ["before", "after", null],
+            },
           },
           ["sectionId", "newText"],
         ),
@@ -2094,7 +2107,8 @@ export async function runResumeEditAgentTask(input: {
             context.state.draft,
             parsed.sectionId,
           );
-          if (parsed.entryId) requireEditableResumeEntry(section, parsed.entryId);
+          if (parsed.entryId)
+            requireEditableResumeEntry(section, parsed.entryId);
           if (parsed.anchorBulletId) {
             requireEditableResumeBullet(
               section,
@@ -2129,7 +2143,10 @@ export async function runResumeEditAgentTask(input: {
             entryId: { type: ["string", "null"] },
             bulletId: { type: "string" },
             anchorBulletId: { type: ["string", "null"] },
-            position: { type: ["string", "null"], enum: ["before", "after", null] },
+            position: {
+              type: ["string", "null"],
+              enum: ["before", "after", null],
+            },
           },
           ["sectionId", "bulletId"],
         ),
@@ -2292,7 +2309,9 @@ export async function runResumeEditAgentTask(input: {
         permission: "draft_write",
         execute(toolInput, context) {
           const parsed = ResumePatchIdInputSchema.parse(toolInput);
-          if (!context.draft.patches.some((patch) => patch.id === parsed.patchId)) {
+          if (
+            !context.draft.patches.some((patch) => patch.id === parsed.patchId)
+          ) {
             throw invalidResumeTarget(
               `no proposed change has id '${parsed.patchId}'. Proposed change ids: ${context.draft.patches.map((patch) => patch.id).join(", ") || "none"}.`,
             );
@@ -2311,8 +2330,7 @@ export async function runResumeEditAgentTask(input: {
       },
       {
         name: "add_resume_patch",
-        description:
-          "Add one bounded patch when no dedicated tool fits.",
+        description: "Add one bounded patch when no dedicated tool fits.",
         inputSchema: ResumePatchInputSchema,
         parameters: jsonObject(
           { patch: { type: "object", additionalProperties: true } },

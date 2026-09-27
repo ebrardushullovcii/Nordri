@@ -111,13 +111,27 @@ export type ProfileSetupReviewItemDisplay = ProfileSetupReviewItem & {
 };
 
 export function getProfileSetupReviewItemCopy(
-  item: Pick<ProfileSetupReviewItem, "label" | "reason" | "target">,
+  item: Pick<ProfileSetupReviewItem, "label" | "reason" | "target"> &
+    Partial<Pick<ProfileSetupReviewItem, "sourceCandidateId">>,
 ): { label: string; reason: string } {
   if (item.target.domain === "work_eligibility") {
+    if (item.sourceCandidateId) {
+      return { label: item.label, reason: item.reason };
+    }
+    if (
+      item.target.key === "authorizedWorkCountries" ||
+      item.target.key === "requiresVisaSponsorship"
+    ) {
+      return {
+        label: "Work eligibility",
+        reason:
+          "Answer where you can work and whether you need visa sponsorship before finishing setup. Nothing is inferred from where you live.",
+      };
+    }
     return {
       label: "Work details",
       reason:
-        "Optional. Countries where you can work, visa needs, relocation, or remote eligibility help matching and applications. Leave anything you do not know as Not set; nothing here is guessed.",
+        "Optional. Relocation, travel, and remote eligibility help matching and applications. Leave anything you do not know as Not set; nothing here is guessed.",
     };
   }
 

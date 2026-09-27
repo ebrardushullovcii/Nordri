@@ -20,6 +20,7 @@ import {
 } from "./workspace-service.test-support";
 afterEach(() => {
   vi.useRealTimers();
+  vi.unstubAllEnvs();
 });
 
 function createService(
@@ -36,6 +37,8 @@ function createService(
 
 describe("apply restart recovery", () => {
   test("shutdown preserves a live Home queue after its first result commits while paused", async () => {
+    // Exercise a deliberately parked queue with one unfinished job.
+    vi.stubEnv("UNEMPLOYED_APPLICATION_PREPARATION_CONCURRENCY", "1");
     const seed = createSeed();
     const now = "2026-03-20T10:05:00.000Z";
     seed.settings.resumeApplicationMode = "original_resume";

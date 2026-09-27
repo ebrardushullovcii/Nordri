@@ -9,7 +9,8 @@ import {
 import { reconcileApplyRunAfterConfirmedSubmission } from "./workspace-apply-run-support";
 import type { WorkspaceServiceContext } from "./workspace-service-context";
 
-const SENT_BY_PERSON_SUMMARY = "You sent this application yourself on the site.";
+const SENT_BY_PERSON_SUMMARY =
+  "You sent this application yourself on the site.";
 const SENT_BY_PERSON_DETAIL =
   "The site showed its confirmation after you sent the form Job Finder filled in. Job Finder did not press send.";
 
@@ -84,7 +85,9 @@ function buildSentByPersonReceipt(
 export async function recordApplicationsSentByPerson(
   ctx: Pick<WorkspaceServiceContext, "repository" | "browserRuntime">,
 ): Promise<number> {
-  const readWithPerson = ctx.browserRuntime.readApplicationPageWithPerson;
+  const readWithPerson = ctx.browserRuntime.readApplicationPageWithPerson?.bind(
+    ctx.browserRuntime,
+  );
   if (!readWithPerson) return 0;
 
   const [results, jobs] = await Promise.all([
@@ -107,10 +110,12 @@ export async function recordApplicationsSentByPerson(
     }
     const job = jobs.find((entry) => entry.id === result.jobId);
     if (!job) continue;
-    const page = await readWithPerson
-      .call(ctx.browserRuntime, job.source, result.id)
-      .catch(() => null);
-    if (!page || page.loading || !hasSubmissionConfirmationText(page.bodyText)) {
+    const page = await readWithPerson(job.source, result.id).catch(() => null);
+    if (
+      !page ||
+      page.loading ||
+      !hasSubmissionConfirmationText(page.bodyText)
+    ) {
       continue;
     }
 

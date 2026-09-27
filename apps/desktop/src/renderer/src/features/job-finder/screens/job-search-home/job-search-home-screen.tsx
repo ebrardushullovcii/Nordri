@@ -18,6 +18,7 @@ import { JOB_FINDER_ROUTE_PATHS } from "../../lib/job-finder-route-hrefs";
 import { listApplicationsAwaitingUser } from "../../lib/needs-you-count";
 import { DiscoveryRunFeedbackCallout } from "../discovery/discovery-run-feedback-callout";
 import type { DiscoveryRunFeedback } from "../discovery/discovery-run-feedback";
+import type { ActionState } from "../../lib/job-finder-types";
 import type { TailoredDraftPreparationViewState } from "../review-queue/review-queue-status";
 import {
   buildJobSearchHomeModel,
@@ -29,6 +30,12 @@ export { buildInterruptedSearchRetryRequest } from "./job-search-home-model";
 
 export interface JobSearchHomeScreenProps {
   workspace: JobFinderWorkspaceSnapshot;
+  /**
+   * What the last press on this page came to, in a sentence. A refusal
+   * (Apply held back by a resume, a send that could not start) is shown here
+   * instead of the press doing nothing visible.
+   */
+  actionState?: ActionState;
   activityPending: boolean;
   applicationAutomationMode?: ApplicationAutomationMode;
   browserSessionPending?: boolean;
@@ -71,7 +78,13 @@ export interface JobSearchHomeScreenProps {
  */
 export function listCurrentUnreadNotifications(
   notifications: readonly CampaignNotification[],
-  workspace: Pick<JobFinderWorkspaceSnapshot, "applicationRecords">,
+  workspace: Pick<
+    JobFinderWorkspaceSnapshot,
+    | "applicationRecords"
+    | "userActionRequests"
+    | "applyJobResults"
+    | "applyRuns"
+  >,
 ): CampaignNotification[] {
   const sentJobIds = new Set(
     (workspace.applicationRecords ?? [])
@@ -82,13 +95,73 @@ export function listCurrentUnreadNotifications(
       )
       .map((record) => record.jobId),
   );
+  // A source that asked for a sign-in and got it is searched again by
+  // itself; its "Blocked: sign in from Needs you" note is done with once
+  // that step resolved and none is open for the source.
+  const sourceSteps = (workspace.userActionRequests ?? []).flatMap((request) =>
+    request.scope.type === "discovery_source"
+      ? [{ request, targetId: request.scope.targetId }]
+      : [],
+  );
+  const sourceBlockResolved = (notification: CampaignNotification) => {
+    const targetId = notification.sourceTargetId;
+    if (!targetId) return false;
+    const steps = sourceSteps.filter((step) => step.targetId === targetId);
+    return (
+      steps.length > 0 &&
+      steps.every(
+        ({ request }) =>
+          request.state === "resolved" || request.state === "skipped",
+      ) &&
+      steps.some(
+        ({ request }) =>
+          request.state === "resolved" &&
+          Boolean(request.resolvedAt) &&
+          request.resolvedAt! >= notification.createdAt,
+      )
+    );
+  };
+  // A job's failure note describes one attempt. Once a newer attempt for
+  // that job has started, the note is about an attempt that is over; the
+  // newer attempt writes its own note if it fails too.
+  const latestAttemptStartByJobId = new Map<string, string>();
+  for (const result of workspace.applyJobResults ?? []) {
+    const previous = latestAttemptStartByJobId.get(result.jobId);
+    if (!previous || previous < result.startedAt) {
+      latestAttemptStartByJobId.set(result.jobId, result.startedAt);
+    }
+  }
+  const jobRetriedSince = (jobId: string, since: string) => {
+    const latestStart = latestAttemptStartByJobId.get(jobId);
+    return Boolean(latestStart && latestStart > since);
+  };
+  const supersededByNewerAttempt = (notification: CampaignNotification) => {
+    if (notification.jobId) {
+      return jobRetriedSince(notification.jobId, notification.createdAt);
+    }
+    // A run's own failure note (its id ends in `apply_run_<run id>`, see
+    // `deriveCampaignNotifications`) is over once every job of that run has
+    // been tried again.
+    const runId = /_apply_run_(.+)$/u.exec(notification.id)?.[1];
+    const run = runId
+      ? (workspace.applyRuns ?? []).find((entry) => entry.id === runId)
+      : undefined;
+    return Boolean(
+      run &&
+      run.jobIds.length > 0 &&
+      run.jobIds.every((jobId) =>
+        jobRetriedSince(jobId, notification.createdAt),
+      ),
+    );
+  };
   return notifications.filter(
     (notification) =>
       notification.unread &&
       !(
         notification.kind === "blocked_work" &&
-        notification.jobId &&
-        sentJobIds.has(notification.jobId)
+        ((notification.jobId && sentJobIds.has(notification.jobId)) ||
+          supersededByNewerAttempt(notification) ||
+          sourceBlockResolved(notification))
       ),
   );
 }
@@ -98,6 +171,13 @@ const PANEL_CLASS =
 
 export function JobSearchHomeScreen(props: JobSearchHomeScreenProps) {
   const [applyPending, setApplyPending] = useState(false);
+  const [dismissedActionState, setDismissedActionState] =
+    useState<ActionState | null>(null);
+  const actionMessage =
+    props.actionState?.message &&
+    props.actionState !== dismissedActionState
+      ? props.actionState.message
+      : null;
   const tasks = buildJobFinderTaskCenterModel({
     workspace: props.workspace,
     isDiscoveryPending: props.isDiscoveryPending ?? false,
@@ -427,6 +507,42 @@ export function JobSearchHomeScreen(props: JobSearchHomeScreenProps) {
           ) : null}
         </div>
       ))}
+
+      {actionMessage ? (
+        <div
+          aria-atomic="true"
+          className="flex min-w-0 items-start justify-between gap-3 rounded-(--radius-field) border border-(--surface-panel-border) bg-background px-3 py-2 text-sm leading-5 text-foreground"
+          data-testid="home-action-message"
+          role="status"
+        >
+          <p className="min-w-0 break-words">{actionMessage}</p>
+          <div className="flex shrink-0 items-center gap-1">
+            {props.actionState?.actionLink ? (
+              <Button
+                onClick={() =>
+                  props.actionState?.actionLink &&
+                  props.onNavigate(props.actionState.actionLink.route)
+                }
+                size="sm"
+                type="button"
+                variant="outline"
+              >
+                {props.actionState.actionLink.label}
+              </Button>
+            ) : null}
+            <Button
+              onClick={() =>
+                setDismissedActionState(props.actionState ?? null)
+              }
+              size="sm"
+              type="button"
+              variant="ghost"
+            >
+              Dismiss
+            </Button>
+          </div>
+        </div>
+      ) : null}
 
       <section
         aria-labelledby="home-next-step-title"

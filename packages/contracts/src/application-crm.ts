@@ -168,6 +168,7 @@ export type ApplicationCrmCompensation = z.infer<
 export const ApplicationCrmDataSchema = z.object({
   revision: z.number().int().nonnegative().default(0),
   stage: ApplicationCrmStageSchema,
+  stageSource: z.enum(["activity", "user"]).optional(),
   customStageId: NonEmptyStringSchema.nullable().default(null),
   stageChangedAt: IsoDateTimeSchema,
   tags: z.array(NonEmptyStringSchema).max(50).default([]),
@@ -182,6 +183,63 @@ export const ApplicationCrmDataSchema = z.object({
   appliedAt: IsoDateTimeSchema.nullable().default(null),
 });
 export type ApplicationCrmData = z.infer<typeof ApplicationCrmDataSchema>;
+
+const metadataEventKinds: ReadonlySet<ApplicationCrmEvent["kind"]> = new Set([
+  "tags_changed",
+  "note_changed",
+  "reminder_changed",
+  "interview_changed",
+  "contact_changed",
+  "attachment_changed",
+  "compensation_changed",
+]);
+
+/** Old payloads did not distinguish stage choices from tracking metadata. */
+export function resolveApplicationCrmStageSource(
+  crm: ApplicationCrmData | null | undefined,
+): "activity" | "user" {
+  if (!crm) return "activity";
+  if (crm.stageSource) return crm.stageSource;
+  if (crm.customStageId) return "user";
+  // Only a complete metadata-only history proves that nobody chose a stage.
+  // Missing or truncated history keeps the stored stage to protect old choices.
+  return crm.revision > 0 &&
+    crm.revision === crm.events.length &&
+    crm.events.every(
+      (event) =>
+        (metadataEventKinds.has(event.kind) &&
+          !event.fromStage &&
+          !event.toStage) ||
+        (event.kind === "automation" &&
+          event.source === "automation" &&
+          event.fromStage === "applied" &&
+          event.toStage === "no_response"),
+    )
+    ? "activity"
+    : "user";
+}
+
+export function resolveApplicationCrmTrackedStage(
+  crm: ApplicationCrmData | null | undefined,
+  activityStage: ApplicationCrmStage,
+): ApplicationCrmStage {
+  if (!crm) return activityStage;
+  if (resolveApplicationCrmStageSource(crm) === "user") return crm.stage;
+  // The configured follow-up automation remains useful while waiting for a
+  // response, but an actual interview/offer/etc. must move the tracker on.
+  if (crm.stage === "no_response" && activityStage === "applied") {
+    const lastStageEvent = [...crm.events]
+      .reverse()
+      .find((event) => event.toStage);
+    if (
+      lastStageEvent?.source === "automation" &&
+      lastStageEvent.toStage === "no_response"
+    ) {
+      return "no_response";
+    }
+  }
+  return activityStage;
+}
 
 export const ApplicationCrmSettingsSchema = z.object({
   noResponseAutomation: z

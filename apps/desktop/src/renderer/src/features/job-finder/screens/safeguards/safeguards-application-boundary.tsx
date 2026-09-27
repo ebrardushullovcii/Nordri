@@ -2,6 +2,21 @@ import type { ApplicationAuthorityEnvelope } from "@unemployed/contracts";
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@renderer/components/ui/button";
 import { StatusBadge } from "@renderer/features/job-finder/components/status-badge";
+import { APPLY_MODE_OPTIONS } from "@renderer/features/job-finder/components/choice-cards";
+
+/**
+ * The permission's mode in the words Settings uses for it ("Send for me"),
+ * never the stored value.
+ */
+export function describeEnvelopeMode(
+  mode: ApplicationAuthorityEnvelope["mode"],
+): string {
+  if (mode === "prepare_only") return "Fill for review only";
+  return (
+    APPLY_MODE_OPTIONS.find((option) => option.id === mode)?.label ??
+    "Send for me"
+  );
+}
 
 /**
  * The whole boundary in one sentence, in the words a job seeker can check
@@ -142,9 +157,7 @@ export function SafeguardsApplicationBoundary() {
                 <span className="grid min-w-0 gap-0.5">
                   <span className="flex flex-wrap items-center gap-2">
                     <StatusBadge tone="neutral">
-                      {envelope.mode === "prepare_only"
-                        ? "Fill for review only"
-                        : envelope.mode}
+                      {describeEnvelopeMode(envelope.mode)}
                     </StatusBadge>
                     {envelope.intermediateMutationsAuthorized ? (
                       <StatusBadge tone="active">

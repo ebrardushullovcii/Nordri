@@ -58,7 +58,9 @@ function trimStringToNull(value: string): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
-function trimOptionalStringToNull(value: string | null | undefined): string | null {
+function trimOptionalStringToNull(
+  value: string | null | undefined,
+): string | null {
   return typeof value === "string" ? trimStringToNull(value) : null;
 }
 
@@ -101,13 +103,27 @@ function stripTrailingPostedAtText(value: string): {
   };
 }
 
-function inferTrailingCompositeLocation(value: string): string | null {
+function inferTrailingCompositeLocation(
+  value: string,
+  knownLocation?: string | null,
+): string | null {
   const tokens = value.trim().split(/\s+/).filter(Boolean);
 
   for (let width = Math.min(3, tokens.length - 1); width >= 1; width -= 1) {
     const candidate = tokens.slice(-width).join(" ");
     const candidateTokens = tokens.slice(-width);
     const normalizedCandidate = candidate.replace(/[^\p{L}\p{N}]+/gu, "");
+    // A separately extracted location is stronger evidence than capitalization
+    // in a role title, especially in languages that capitalize every noun.
+    if (
+      knownLocation &&
+      !LOCATION_HINT_PATTERN.test(candidate) &&
+      !knownLocation
+        .split(",")
+        .some((part) => part.trim().toLowerCase() === candidate.toLowerCase())
+    ) {
+      continue;
+    }
     if (
       width > 1 &&
       candidateTokens.some((token) =>
@@ -138,14 +154,17 @@ function inferTrailingCompositeLocation(value: string): string | null {
  * `inferTrailingCompositeLocation` is content-agnostic and can otherwise treat a trailing
  * `at <Company>` segment as location text.
  */
-export function normalizeCompositeTitle(value: string): {
+export function normalizeCompositeTitle(
+  value: string,
+  knownLocation?: string | null,
+): {
   title: string;
   location: string | null;
   postedAtText: string | null;
 } {
   const normalized = trimStringToNull(value) ?? "";
   const { content, postedAtText } = stripTrailingPostedAtText(normalized);
-  const location = inferTrailingCompositeLocation(content);
+  const location = inferTrailingCompositeLocation(content, knownLocation);
   let title = content;
   if (location) {
     // Location comes from escaped trailing content tokens, so this regex should
@@ -194,16 +213,24 @@ export function normalizeTitleCompanyPair(input: {
 
   const beforeLooksRole = beforeAt
     .split(/\s+/)
-    .some((token) => ROLE_TOKEN_PATTERN.test(token.replace(/[^\p{L}\p{N}]+/gu, "")));
+    .some((token) =>
+      ROLE_TOKEN_PATTERN.test(token.replace(/[^\p{L}\p{N}]+/gu, "")),
+    );
   const afterLooksRole = afterAt
     .split(/\s+/)
-    .some((token) => ROLE_TOKEN_PATTERN.test(token.replace(/[^\p{L}\p{N}]+/gu, "")));
+    .some((token) =>
+      ROLE_TOKEN_PATTERN.test(token.replace(/[^\p{L}\p{N}]+/gu, "")),
+    );
 
   if (company && afterAt.toLowerCase() === company.toLowerCase()) {
     return { title: beforeAt, company };
   }
 
-  if (company && beforeAt.toLowerCase() === company.toLowerCase() && afterLooksRole) {
+  if (
+    company &&
+    beforeAt.toLowerCase() === company.toLowerCase() &&
+    afterLooksRole
+  ) {
     return { title: afterAt, company };
   }
 

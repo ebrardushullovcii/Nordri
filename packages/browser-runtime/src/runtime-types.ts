@@ -224,6 +224,11 @@ export interface ExecuteApplicationFlowInput extends ExecuteEasyApplyInput {
     ) => void | Promise<void>;
   }) => Promise<ApplyExecutionResult>;
   recoveryContext?: ApplyRecoveryContext;
+  /**
+   * Called once when the browser has no free tab for this application and it
+   * waits for one (a tab the person closes, or a sent application's page).
+   */
+  onWaitingForBrowserTab?: () => void | Promise<void>;
   captureVisualSnapshot?: (
     request: BrowserVisualSnapshotRequest,
   ) => Promise<BrowserVisualSnapshotRef>;
@@ -274,6 +279,13 @@ export interface BrowserSessionRuntime {
     input: ExecuteApplicationFlowInput,
     options?: BrowserApplicationExecutionOptions,
   ): Promise<ApplyExecutionResult>;
+  /** Hold the exact prepared page and its site while a final action is checked and run. */
+  withApplicationPageExecution?<T>(
+    source: JobSource,
+    pageBindingKey: string,
+    operation: () => Promise<T>,
+    signal?: AbortSignal,
+  ): Promise<T>;
   /** Whether the exact page retained for this preparation is still live. */
   hasApplicationPageBinding?(
     source: JobSource,
@@ -394,6 +406,10 @@ export interface BrowserApplicationExecutionOptions {
 }
 
 export interface AgentDiscoveryOptions {
+  /** No person-specified result cap; retain every suitable posting found. */
+  retainAllFound?: boolean;
+  /** Public feed postings available for the model to inspect and select. */
+  sourceCatalog?: JobPosting[];
   userProfile: CandidateProfile;
   searchPreferences: {
     targetRoles: string[];

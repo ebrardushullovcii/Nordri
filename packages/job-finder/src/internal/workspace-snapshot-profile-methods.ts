@@ -26,6 +26,7 @@ import {
   type JobSearchCampaign,
   type JobSearchPreferences,
   type JobSource,
+  isBlockingResumeClaimAssessment,
   isListableCompanyName,
   type ProfileSetupState,
   type ResumeApplicationMode,
@@ -52,6 +53,7 @@ import {
 import { resolvePendingReviewItemsAfterExplicitSave } from "./profile-setup-review-items";
 import { normalizeProfileBeforeSave } from "./profile-merge";
 import { runResumeImportWorkflow } from "./resume-import-workflow";
+import { hasBlockingResumeIdentityMismatch } from "./resume-workspace-helpers";
 import { persistResumeTimelineRepairAction } from "./resume-timeline-repair";
 import {
   hasResumeAffectingProfileChange,
@@ -1043,6 +1045,25 @@ export function createWorkspaceSnapshotProfileMethods(
         const projected = projectedJobById.get(job.id);
         return projected ? [projected] : [];
       });
+    // A draft not yet approved can hold lines the export gate refuses until
+    // the person decides them (a stretched line, or an Assistant edit kept
+    // with "Accept anyway"). The queue has to know, or it calls the resume
+    // ready and Apply's approval step refuses it with nothing on screen.
+    const linesToDecideByDraftId = new Map<string, number>();
+    for (const draft of normalizedResumeDrafts) {
+      if (draft.status !== "draft" && draft.status !== "needs_review") {
+        continue;
+      }
+      const latestValidation =
+        (await ctx.repository.listResumeValidationResults(draft.id))[0] ??
+        null;
+      if (!latestValidation) continue;
+      const count =
+        latestValidation.claimAssessments.filter((assessment) =>
+          isBlockingResumeClaimAssessment({ assessment, draft }),
+        ).length + (hasBlockingResumeIdentityMismatch(latestValidation) ? 1 : 0);
+      if (count > 0) linesToDecideByDraftId.set(draft.id, count);
+    }
     const reviewQueue = buildReviewQueue(
       savedJobs,
       tailoredAssets,
@@ -1050,6 +1071,7 @@ export function createWorkspaceSnapshotProfileMethods(
       resumeExportArtifacts,
       setupContext.profile,
       settings,
+      linesToDecideByDraftId,
     );
     const reconciledApplicationRecords =
       await reconcileStaleMissingResumeBlockers(ctx.repository, {

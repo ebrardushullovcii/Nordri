@@ -1,6 +1,6 @@
 # ADR 0026: Shortlisted is three steps per job, and one decision list in the resume
 
-Status: accepted (2026-09-20).
+Status: accepted (2026-09-20). Resume selection and batch concurrency are amended by [ADR 0035](0035-selected-resume-batches.md).
 
 ## Context
 

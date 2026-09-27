@@ -208,6 +208,27 @@ describe("resume claim confirmation commands", () => {
     ).toMatchObject({ status: "approved" });
   });
 
+  test("the review queue says the resume has lines to decide until they are decided, so Apply never calls it ready", async () => {
+    const harness = createClaimHarness({ bullets: [WEAK_CLAIM_TEXT] });
+    const { workspaceService } = harness;
+
+    await workspaceService.generateResume("job_ready");
+    const before = await workspaceService.getWorkspaceSnapshot();
+    const itemBefore = before.reviewQueue.find(
+      (item) => item.jobId === "job_ready",
+    );
+    expect(itemBefore?.resumeLinesToDecide ?? 0).toBeGreaterThan(0);
+
+    await confirmAllOutstandingClaims(harness);
+
+    const after = await workspaceService.getWorkspaceSnapshot();
+    const itemAfter = after.reviewQueue.find(
+      (item) => item.jobId === "job_ready",
+    );
+    expect(itemAfter).toBeDefined();
+    expect(itemAfter?.resumeLinesToDecide ?? 0).toBe(0);
+  });
+
   test("rejects stale revisions, cross-draft ids, wrong hashes, unknown locators, and forged statements", async () => {
     const harness = createClaimHarness({ bullets: [WEAK_CLAIM_TEXT] });
     const { workspaceService, repository } = harness;

@@ -1133,4 +1133,37 @@ describe("ApplicationsCrmDetail", () => {
     );
     await waitFor(() => expect(completeButton.disabled).toBe(false));
   });
+
+  test("keeps a note draft when saving fails so it can be retried", async () => {
+    stubCandidateAssets();
+    const onMutate = vi
+      .fn<(...args: [ApplicationCrmMutationInput]) => Promise<void>>()
+      .mockRejectedValueOnce(
+        new Error("The application changed elsewhere. Refresh."),
+      )
+      .mockResolvedValueOnce(undefined);
+    renderDetail(buildCrmRecord({ id: "application_note_retry" }), onMutate);
+    const note = screen.getByLabelText<HTMLTextAreaElement>("Add a note");
+    fireEvent.change(note, {
+      target: { value: "Recruiter requested a portfolio." },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Add note" }),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("alert").textContent).toContain(
+        "changed elsewhere",
+      ),
+    );
+    expect(note.value).toBe("Recruiter requested a portfolio.");
+    fireEvent.click(
+      screen.getByRole("button", { name: "Add note" }),
+    );
+    await waitFor(() => expect(note.value).toBe(""));
+    expect(onMutate).toHaveBeenCalledTimes(2);
+    expect(onMutate.mock.calls[1]?.[0].mutation).toMatchObject({
+      type: "add_note",
+      note: { body: "Recruiter requested a portfolio." },
+    });
+  });
 });

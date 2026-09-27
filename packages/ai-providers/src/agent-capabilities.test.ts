@@ -397,16 +397,18 @@ describe("tool-using AI capabilities", () => {
 
     expect(result.summary).toContain("Builds reliable automation");
     expect(repairGuidanceSeen).toBe(true);
+    expect(phases[0]?.validationIssues.map((issue) => issue.code)).toEqual(
+      expect.arrayContaining([
+        "resume_proposal_required",
+        "resume_preview_required",
+      ]),
+    );
     expect(phases).toEqual([
       expect.objectContaining({
         proposalComposed: false,
         previewRenderedForCurrentProposal: false,
         previewInspectedForCurrentProposal: false,
         readyToFinish: false,
-        validationIssues: expect.arrayContaining([
-          expect.objectContaining({ code: "resume_proposal_required" }),
-          expect.objectContaining({ code: "resume_preview_required" }),
-        ]),
       }),
       expect.objectContaining({
         proposalComposed: true,
@@ -578,7 +580,9 @@ describe("tool-using AI capabilities", () => {
     }).catch(() => null);
 
     const warned = toolResults.filter((content) =>
-      content.includes("Stop rewording: remove each line named in requiredModelRepairs"),
+      content.includes(
+        "Stop rewording: remove each line named in requiredModelRepairs",
+      ),
     );
     expect(warned.length).toBeGreaterThan(0);
     // Not on the first or second flagged render.
@@ -1039,83 +1043,97 @@ describe("tool-using AI capabilities", () => {
     expect(result.recommendedTemplateId).toBe("compact_exec");
   });
 
-  test("resume import exposes layout inspection and stage-specific typed candidates", async () => {
-    const deterministic = createDeterministicJobFinderAiClient();
-    let calls = 0;
-    let toolNames: string[] = [];
-    let sectionValues: string[] = [];
-    const client: AgentCapableJobFinderAiClient = {
-      ...deterministic,
-      chatWithTools(_messages, tools) {
-        toolNames = tools.map((tool) => tool.function.name);
-        const record = tools.find(
-          (tool) => tool.function.name === "record_import_candidates",
-        );
-        const parameters = record?.function.parameters as unknown as {
-          properties?: {
-            candidates?: {
-              items?: {
-                properties?: {
-                  target?: { properties?: { section?: { enum?: string[] } } };
+  test.each(["identity_summary", "experience", "background"] as const)(
+    "resume import exposes layout inspection and typed %s candidates",
+    async (stage) => {
+      const deterministic = createDeterministicJobFinderAiClient();
+      let calls = 0;
+      let toolNames: string[] = [];
+      let sectionValues: string[] = [];
+      let instructions = "";
+      const client: AgentCapableJobFinderAiClient = {
+        ...deterministic,
+        chatWithTools(messages, tools) {
+          instructions = JSON.stringify(messages);
+          toolNames = tools.map((tool) => tool.function.name);
+          const record = tools.find(
+            (tool) => tool.function.name === "record_import_candidates",
+          );
+          const parameters = record?.function.parameters as unknown as {
+            properties?: {
+              candidates?: {
+                items?: {
+                  properties?: {
+                    target?: { properties?: { section?: { enum?: string[] } } };
+                  };
                 };
               };
             };
           };
-        };
-        sectionValues =
-          parameters.properties?.candidates?.items?.properties?.target
-            ?.properties?.section?.enum ?? [];
-        calls += 1;
-        return Promise.resolve({
-          toolCalls: [
-            {
-              id: `import_${calls}`,
-              type: "function" as const,
-              function: {
-                name: calls === 1 ? "inspect_document_layout" : "finish_task",
-                arguments: "{}",
+          sectionValues =
+            parameters.properties?.candidates?.items?.properties?.target
+              ?.properties?.section?.enum ?? [];
+          calls += 1;
+          return Promise.resolve({
+            toolCalls: [
+              {
+                id: `import_${calls}`,
+                type: "function" as const,
+                function: {
+                  name: calls === 1 ? "inspect_document_layout" : "finish_task",
+                  arguments: "{}",
+                },
               },
-            },
-          ],
-        });
-      },
-    };
-
-    const result = await runResumeImportStageAgentTask({
-      client,
-      request: {
-        stage: "identity_summary",
-        existingProfile: createProfile(),
-        existingSearchPreferences: createPreferences(),
-        documentBundle: {
-          id: "bundle_1",
-          runId: "run_1",
-          sourceResumeId: "resume_1",
-          sourceFileKind: "pdf",
-          primaryParserKind: "pdfjs_text",
-          parserKinds: ["pdfjs_text"],
-          createdAt: "2026-09-14T10:00:00.000Z",
-          languageHints: ["en"],
-          warnings: [],
-          pages: [],
-          blocks: [],
-          fullText: "Robin Ashford\nPlatform engineer",
+            ],
+          });
         },
-      },
-    });
+      };
 
-    expect(toolNames).toContain("inspect_document_layout");
-    expect(sectionValues).toEqual([
-      "identity",
-      "contact",
-      "location",
-      "search_preferences",
-    ]);
-    expect(result).toMatchObject({
-      stage: "identity_summary",
-      candidates: [],
-    });
-  });
+      const result = await runResumeImportStageAgentTask({
+        client,
+        request: {
+          stage,
+          existingProfile: createProfile(),
+          existingSearchPreferences: createPreferences(),
+          documentBundle: {
+            id: "bundle_1",
+            runId: "run_1",
+            sourceResumeId: "resume_1",
+            sourceFileKind: "pdf",
+            primaryParserKind: "pdfjs_text",
+            parserKinds: ["pdfjs_text"],
+            createdAt: "2026-09-14T10:00:00.000Z",
+            languageHints: ["en"],
+            warnings: [],
+            pages: [],
+            blocks: [],
+            fullText: "Robin Ashford\nPlatform engineer",
+          },
+        },
+      });
+
+      expect(toolNames).toContain("inspect_document_layout");
+      expect(sectionValues).toContain(
+        stage === "identity_summary"
+          ? "identity"
+          : stage === "background"
+            ? "education"
+            : "experience",
+      );
+      if (stage === "experience") {
+        expect(instructions).toContain("achievements (array of strings)");
+        expect(instructions).toContain("every bullet under that role");
+      }
+      if (stage === "background") {
+        expect(instructions).toContain("complete skills array");
+        expect(instructions).toContain("schoolName, degree, fieldOfStudy");
+      }
+      expect(result).toMatchObject({
+        stage,
+        candidates: [],
+      });
+    },
+  );
 
   test("Profile Copilot repairs an invalid patch group before finishing", async () => {
     const client = createToolClient([
@@ -2095,7 +2113,11 @@ describe("tool-using AI capabilities", () => {
         recentConversation,
         currentPageCount: 1,
         availableTemplates: [
-          { id: "classic_ats", label: "Chronology Classic", density: "balanced" },
+          {
+            id: "classic_ats",
+            label: "Chronology Classic",
+            density: "balanced",
+          },
         ],
         linesToConfirm: [
           { text: "SQL", sectionId: "skills", entryId: null, bulletId: "b1" },

@@ -727,7 +727,7 @@ export function buildSafeguardsPresentationModel(
       kind: "reviews",
       title: "Quality sample review",
       subtitle: `${review.reviewedCount}/${review.sampleCount} reviewed of ${review.preparedCount} prepared`,
-      explanation: review.explanation,
+      explanation: describeSampleReviewExplanation(review.explanation),
       recoveryGuidance: review.recoveryGuidance,
       statusLabel: active ? (dismissal ? "Dismissed" : "Pending") : "Completed",
       statusTone: active ? (dismissal ? "muted" : "critical") : "positive",
@@ -893,4 +893,17 @@ export function filterSafeguardRows(
     if (normalized.length === 0) return true;
     return row.searchText.includes(normalized);
   });
+}
+
+/**
+ * Sample reviews saved before the wording changed still carry "A
+ * deterministic sample of this prepared queue must be reviewed…"; they read
+ * in the current plain words.
+ */
+export function describeSampleReviewExplanation(explanation: string): string {
+  return /^a deterministic sample of this prepared queue\b/iu.test(
+    explanation.trim(),
+  )
+    ? "Look over a few of these prepared applications before Job Finder prepares more on its own."
+    : explanation;
 }

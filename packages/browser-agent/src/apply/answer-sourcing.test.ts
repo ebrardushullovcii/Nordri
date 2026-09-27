@@ -96,6 +96,114 @@ function sources(
 }
 
 describe("fitting an answer to the choices a form offers", () => {
+  test.each([
+    "First available interview session",
+    "Last available interview session",
+    "Would you work a middle shift?",
+  ])(
+    "does not use a name for %s, and accepts the person's saved answer",
+    (label) => {
+      const input = sources([]);
+      input.profile.middleName = "Taylor";
+      const field = control({ label, options: ["Option A", "Option B"] });
+      expect(
+        resolveApplyAnswer({
+          control: field,
+          sources: input,
+          salaryDisclosure: "pause_for_user",
+        }),
+      ).toMatchObject({ status: "needs_you", suggestion: null });
+      expect(
+        resolveApplyAnswer({
+          control: field,
+          sources: {
+            ...input,
+            reusableAnswers: [savedAnswer(label, "Option B")],
+          },
+          salaryDisclosure: "pause_for_user",
+        }),
+      ).toMatchObject({
+        status: "answered",
+        answer: { value: "Option B", sourceKind: "answer_library" },
+      });
+    },
+  );
+
+  test.each([
+    ["First name", "", "Robin"],
+    ["Given name", "", "Robin"],
+    ["Last name", "", "Ashford"],
+    ["Family name", "", "Ashford"],
+    ["Middle name", "", "Taylor"],
+    ["First", "", "Robin"],
+    ["Given", "Name", "Robin"],
+    ["Last", "Name", "Ashford"],
+    ["Family", "", "Ashford"],
+    ["Middle", "Name", "Taylor"],
+  ])("preserves name field %s in group %s", (label, groupLabel, expected) => {
+    const input = sources([]);
+    input.profile.middleName = "Taylor";
+    expect(
+      resolveApplyAnswer({
+        control: control({ label, groupLabel, kind: "text", options: [] }),
+        sources: input,
+        salaryDisclosure: "pause_for_user",
+      }),
+    ).toMatchObject({
+      status: "answered",
+      answer: { value: expected, sourceKind: "profile" },
+    });
+  });
+
+  test("asks for an unknown preferred interview session instead of using the person's name", () => {
+    const result = resolveApplyAnswer({
+      control: control({
+        label: "Preferred interview session",
+        options: ["Thursday at 14:00", "Friday at 10:00"],
+      }),
+      sources: sources([]),
+      salaryDisclosure: "pause_for_user",
+    });
+
+    expect(result).toMatchObject({ status: "needs_you", suggestion: null });
+  });
+
+  test("uses the person's answer to a preferred interview session when continuing", () => {
+    const label = "Preferred interview session";
+    const result = resolveApplyAnswer({
+      control: control({
+        label,
+        options: ["Thursday at 14:00", "Friday at 10:00"],
+      }),
+      sources: sources([savedAnswer(label, "Thursday at 14:00")]),
+      salaryDisclosure: "pause_for_user",
+    });
+
+    expect(result).toMatchObject({
+      status: "answered",
+      answer: { value: "Thursday at 14:00", sourceKind: "answer_library" },
+    });
+  });
+
+  test.each([
+    "Preferred name",
+    "Preferred full name",
+    "Preferred display name",
+  ])("still fills %s from the preferred name", (label) => {
+    const input = sources([]);
+    input.profile.preferredDisplayName = "Rory";
+    const result = resolveApplyAnswer({
+      control: control({ label, kind: "text", options: [] }),
+      sources: input,
+      salaryDisclosure: "pause_for_user",
+    });
+
+    expect(result).toMatchObject({
+      status: "answered",
+      answer: { value: "Rory", sourceId: "profile.preferredDisplayName" },
+    });
+  });
+
   test("uses the posting for the location being applied to", () => {
     const result = resolveApplyAnswer({
       control: control({
@@ -754,7 +862,8 @@ describe("what the person is told when a question comes back", () => {
   test("an unsettled work-country question says which countries the profile has", () => {
     const base = sources([]);
     const control_ = control({
-      label: "Are you legally authorized to work in the country where this job is based?",
+      label:
+        "Are you legally authorized to work in the country where this job is based?",
       questionKind: "work_authorization",
       options: ["Yes", "No"],
     });
@@ -825,7 +934,9 @@ describe("a notice period or start date with nothing saved", () => {
         options: [],
         answerControlType: "text",
       }),
-      sources: sources([savedAnswer("What is your notice period?", "Two weeks")]),
+      sources: sources([
+        savedAnswer("What is your notice period?", "Two weeks"),
+      ]),
       salaryDisclosure: "pause_for_user",
     });
     expect(result).toMatchObject({

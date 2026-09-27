@@ -783,7 +783,7 @@ describe("ApplicationsDetailPanelRunHistorySection", () => {
 });
 
 describe("ApplicationsDetailPanel container contract", () => {
-  it("names the detail pane as a container and pairs its actions on wide panes", () => {
+  it("keeps the submitted detail pane bounded without offering recovery actions", () => {
     const run: ApplyRunSummary = {
       id: "run_latest01",
       campaignId: null,
@@ -878,15 +878,11 @@ describe("ApplicationsDetailPanel container contract", () => {
     expect(
       within(detailRegion).queryByRole("heading", { name: "Next step" }),
     ).toBeNull();
-    const recoveryActions = within(detailRegion).getByTestId(
-      "applications-recovery-actions",
-    );
-    const statusFacts = within(detailRegion).getByRole("region", {
-      name: "Application status",
-    });
-    expect(recoveryActions.compareDocumentPosition(statusFacts)).toBe(
-      Node.DOCUMENT_POSITION_FOLLOWING,
-    );
+    // A confirmed submission has no primary recovery action. The older
+    // paused record must not bring preparation controls back into this pane.
+    expect(
+      within(detailRegion).queryByTestId("applications-recovery-actions"),
+    ).toBeNull();
     expect(detailRegion?.className).toContain("overflow-y-auto");
 
     // Diagnostics collapse into one closed "Run details and history" block that

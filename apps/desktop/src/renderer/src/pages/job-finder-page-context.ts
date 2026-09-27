@@ -94,7 +94,7 @@ export interface JobFinderPageContext {
   isPending: (scope: PendingActionScope) => boolean;
   resumeOperationStarts?: Readonly<Record<string, number>>;
   isAnyPending: (scopes: readonly PendingActionScope[]) => boolean;
-  onPrepareTailoredDrafts: () => void;
+  onPrepareTailoredDrafts: (jobIds?: readonly string[]) => void;
   onStopTailoredDraftPreparation: () => void;
   tailoredDraftPreparation: TailoredDraftPreparationViewState;
   profileCopilotBusy: boolean;
@@ -257,6 +257,7 @@ export interface JobFinderPageContext {
     command: ProjectGroupedManualAnswerCommand,
   ) => void;
   onProfileSurfaceDirtyChange: (dirty: boolean) => void;
+  onSearchPlanSurfaceDirtyChange: (dirty: boolean) => void;
   /**
    * Reports each user-authored Profile or setup draft edit — including edits
    * made while the surface was already dirty, when no dirty transition

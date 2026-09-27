@@ -15,6 +15,7 @@ import {
   SavedJobSchema,
   type ApplyJobResult,
   type ApplyRun,
+  type ApplicationAutomationMode,
   type JobFinderDiscoveryState,
   type JobFinderWorkspaceSnapshot,
   type JobDiscoveryTarget,
@@ -118,13 +119,9 @@ export async function hasLiveUnresolvedApplicationPage(input: {
     for (const request of requests) {
       if (
         request.scope.type === "application" &&
-        ![
-          "resolved",
-          "skipped",
-          "cancelled",
-          "expired",
-          "superseded",
-        ].includes(request.state) &&
+        !["resolved", "skipped", "cancelled", "expired", "superseded"].includes(
+          request.state,
+        ) &&
         request.scope.resultId
       ) {
         bindingKeys.add(request.scope.resultId);
@@ -728,7 +725,10 @@ export function createJobFinderWorkspaceService(
     // workspace" for as long as the agent worked).
     const recovery = resumeVerifyingUserActions();
     recovery.catch((error: unknown) => {
-      console.error("[user-actions] recovery of a verifying step failed", error);
+      console.error(
+        "[user-actions] recovery of a verifying step failed",
+        error,
+      );
     });
     let timer: ReturnType<typeof setTimeout> | null = null;
     await Promise.race([
@@ -790,8 +790,36 @@ export function createJobFinderWorkspaceService(
         jobIds,
         savedJobs,
       );
-    safeguardMethods.requireNoBlockers(blockers);
+    // The failure-rate pause asks the person to look at the failed attempts
+    // and retry them. Their Try again for exactly those jobs is that retry,
+    // so the pause must not refuse it (it pointed back at Applications in a
+    // loop); new jobs still wait until the pause lifts or is dismissed.
+    const retriesFailedJobsOnly = await startRetriesOnlyFailedJobs(jobIds);
+    safeguardMethods.requireNoBlockers(
+      retriesFailedJobsOnly
+        ? blockers.filter(
+            (blocker) => blocker.kind !== "abnormal_failure_pause",
+          )
+        : blockers,
+    );
   };
+  async function startRetriesOnlyFailedJobs(
+    jobIds: readonly string[],
+  ): Promise<boolean> {
+    if (jobIds.length === 0) return false;
+    const results = await context.repository.listApplyJobResults();
+    // The retry's own queued placeholder is not an attempt yet; read the
+    // last attempt that actually ran.
+    return jobIds.every((jobId) => {
+      const latest = results
+        .filter(
+          (result) => result.jobId === jobId && result.state !== "planned",
+        )
+        .sort((left, right) => right.startedAt.localeCompare(left.startedAt))
+        .at(0);
+      return latest?.state === "failed";
+    });
+  }
 
   const sourceDebugMethods = createWorkspaceSourceDebugMethods(context);
   context.runSourceDebugWorkflow = sourceDebugMethods.runSourceDebugWorkflow;
@@ -1355,7 +1383,9 @@ export function createJobFinderWorkspaceService(
                 activeApplyRunIdSet.has(run.id) &&
                 isSafelyParkedApplyQueue({
                   run,
-                  results: applyResults.filter((result) => result.runId === run.id),
+                  results: applyResults.filter(
+                    (result) => result.runId === run.id,
+                  ),
                   control: activityControl,
                 }),
             )
@@ -1367,8 +1397,10 @@ export function createJobFinderWorkspaceService(
             run.state === "running" &&
             !parkedRunIds.has(run.id),
         );
-        const activeResults = applyResults.filter((result) =>
-          activeApplyRunIdSet.has(result.runId) && !parkedRunIds.has(result.runId),
+        const activeResults = applyResults.filter(
+          (result) =>
+            activeApplyRunIdSet.has(result.runId) &&
+            !parkedRunIds.has(result.runId),
         );
         const recoveredRuns = activeRunningRuns.map((run) =>
           recoverInterruptedApplyRun(
@@ -1640,7 +1672,10 @@ export function createJobFinderWorkspaceService(
           },
         );
       }),
-    startAutoApplyQueueRun: (jobIds) =>
+    startAutoApplyQueueRun: (
+      jobIds,
+      applicationAutomationMode?: ApplicationAutomationMode,
+    ) =>
       trackWorkspaceOperation("application preparation", async () => {
         return withApplicationPreparationReservation(
           () => ({ jobIds, run: null }),
@@ -1648,7 +1683,12 @@ export function createJobFinderWorkspaceService(
           // every job in it. Without the token each job the batch begins is
           // charged a second time, so the daily safeguard refuses partway
           // through and the batch stalls with nothing on screen.
-          (token) => applicationMethods.startAutoApplyQueueRun(jobIds, token),
+          (token) =>
+            applicationMethods.startAutoApplyQueueRun(
+              jobIds,
+              token,
+              applicationAutomationMode,
+            ),
         );
       }),
     approveApplyRun: (runId) =>

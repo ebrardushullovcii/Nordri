@@ -38,6 +38,7 @@ import type { WorkspaceServiceContext } from "./workspace-service-context";
 import {
   PERSON_TOOK_OVER_SUMMARY,
   PREPARED_PAGE_CLOSED_SUMMARY,
+  SITE_UNREACHABLE_SUMMARY,
 } from "./workspace-application-user-action";
 
 /** The replay window used for automatically-derived source/discovery pauses. */
@@ -583,6 +584,11 @@ function applicationResultIsUserOwnedBlocker(result: ApplyJobResult): boolean {
   );
 }
 
+/** How a result cut short by the app closing starts its detail. */
+const APP_CLOSED_DETAIL_PREFIX = "The app closed ";
+/** A check taken over after a restart whose prepared page was gone. */
+const RETRY_STOPPED_SAFELY_SUMMARY = "Application retry stopped safely";
+
 /** Returns true only for a submitted result with a matching final-submit receipt. */
 export function isVerifiedApplicationSubmission(
   result: ApplyJobResult,
@@ -612,6 +618,16 @@ export function deriveApplicationFailureEvidence(input: {
     if (run) runsById.set(run.id, run);
   }
 
+  // A job that was sent later is not a failure any more: the failure-rate
+  // pause measured on its earlier attempt lifts once the retries went out.
+  const lastSentAt = new Map<string, string>();
+  for (const rawResult of input.results) {
+    const result = parseApplyJobResult(rawResult);
+    if (!result || result.state !== "submitted") continue;
+    const at = result.completedAt ?? result.updatedAt;
+    const previous = lastSentAt.get(result.jobId);
+    if (!previous || previous < at) lastSentAt.set(result.jobId, at);
+  }
   const evidence: FailureAttemptEvidence[] = [];
   for (const rawResult of input.results) {
     const result = parseApplyJobResult(rawResult);
@@ -630,6 +646,20 @@ export function deriveApplicationFailureEvidence(input: {
     if (result.blockerSummary === PREPARED_PAGE_CLOSED_SUMMARY) continue;
     // Nor did an application the person stepped into.
     if (result.summary === PERSON_TOOK_OVER_SUMMARY) continue;
+    // Nor a send the site refused before anything reached it.
+    if (result.blockerSummary === SITE_UNREACHABLE_SUMMARY) continue;
+    // Nor work the app closing cut short (its pages close with it): a person
+    // restarting mid-batch paused all application work as "too many failed".
+    if (
+      result.detail.startsWith(APP_CLOSED_DETAIL_PREFIX) ||
+      result.summary === RETRY_STOPPED_SAFELY_SUMMARY
+    )
+      continue;
+    if (!succeeded) {
+      const sentAt = lastSentAt.get(result.jobId);
+      if (sentAt && sentAt >= (result.completedAt ?? result.updatedAt))
+        continue;
+    }
 
     const run = runsById.get(result.runId);
     if (
@@ -1153,7 +1183,7 @@ async function persistAutomaticPreparedBatchReview(input: {
       prepared: sample.prepared,
       requiredSampleRatio: sample.requiredSampleRatio,
       explanation:
-        "A deterministic sample of this prepared queue must be reviewed before more automatic preparation continues.",
+        "Look over a few of these prepared applications before Job Finder prepares more on its own.",
       recoveryGuidance:
         "Review every selected prepared application, then mark the sample complete from Safeguards before continuing the queue.",
       now: input.now,

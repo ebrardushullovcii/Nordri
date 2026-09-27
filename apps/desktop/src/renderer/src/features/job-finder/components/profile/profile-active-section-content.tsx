@@ -26,6 +26,8 @@ import type { ProfileSection } from "../../lib/profile-screen-progress";
 
 interface ProfileActiveSectionContentProps {
   activeSection: ProfileSection;
+  /** Profile › Files preselects this kind (`?kind=` from a file card). */
+  requestedFileKind?: string | null;
   backgroundArrays: ProfileBackgroundArrays;
   /** Discovery runs used to classify source health exactly like Home does. */
   activeDiscoveryRun?: DiscoveryRunRecord | null;
@@ -83,6 +85,7 @@ export function ProfileActiveSectionContent({
   preferencesForm,
   profileForm,
   recentSourceDebugRuns,
+  requestedFileKind = null,
   sourceAccessPrompts,
   sourceInstructionArtifacts,
 }: ProfileActiveSectionContentProps) {
@@ -108,7 +111,7 @@ export function ProfileActiveSectionContent({
         customAnswerArray={backgroundArrays.customAnswerArray}
       />
     ),
-    files: <ProfileFilesTab />,
+    files: <ProfileFilesTab requestedKind={requestedFileKind ?? null} />,
     sources: (
       <ProfileJobSourcesTab
         activeDiscoveryRun={activeDiscoveryRun}

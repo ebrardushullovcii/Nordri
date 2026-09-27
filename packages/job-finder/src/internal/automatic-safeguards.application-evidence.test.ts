@@ -70,4 +70,42 @@ describe("application failure-rate evidence", () => {
     expect(evidence).toHaveLength(7);
     expect(evidence.filter((entry) => entry.failed)).toHaveLength(2);
   });
+
+  test("drops a failure once the same job was sent later, a send the site refused, and work the app closing cut short", () => {
+    const later = "2026-09-24T10:00:00.000Z";
+    const evidence = deriveApplicationFailureEvidence({
+      results: [
+        result("a", "blocked", "submission_outcome_uncertain"),
+        ApplyJobResultSchema.parse({
+          ...result("a2", "submitted"),
+          jobId: "job_a",
+          completedAt: later,
+          updatedAt: later,
+        }),
+        ApplyJobResultSchema.parse({
+          ...result("b", "failed", "application_page_unreachable"),
+          blockerSummary:
+            "The site could not be reached when the application was sent.",
+        }),
+        result("c", "failed", "application_page_unreachable"),
+        // Cut short by the app closing, not by a site.
+        ApplyJobResultSchema.parse({
+          ...result("d", "failed"),
+          summary: "Application preparation stopped when the app closed.",
+          detail:
+            "The app closed while this job's application preparation was underway, so it never reached its review checkpoint. No final submit action occurred.",
+        }),
+        ApplyJobResultSchema.parse({
+          ...result("e", "failed"),
+          summary: "Application retry stopped safely",
+          detail: "The exact prepared application page is no longer open.",
+        }),
+      ],
+    });
+
+    expect(evidence.map((entry) => [entry.attemptId, entry.failed])).toEqual([
+      ["apply:a2", false],
+      ["apply:c", true],
+    ]);
+  });
 });

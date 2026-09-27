@@ -1,8 +1,12 @@
-import type { DiscoveryActivityEvent } from "@unemployed/contracts";
+import {
+  DiscoveryAgentMetadataSchema,
+  type DiscoveryActivityEvent,
+} from "@unemployed/contracts";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import {
   createSeed,
+  createAgentBrowserRuntime,
   createWorkspaceServiceHarness,
 } from "./workspace-service.test-support";
 
@@ -32,6 +36,7 @@ function createGreenhouseResponse(input: {
   id: number;
   title: string;
   board: string;
+  malformed?: boolean;
 }): Response {
   return {
     ok: true,
@@ -39,6 +44,7 @@ function createGreenhouseResponse(input: {
     json: () =>
       Promise.resolve({
         jobs: [
+          ...(input.malformed ? [null] : []),
           {
             id: input.id,
             title: input.title,
@@ -233,6 +239,120 @@ describe("progressive public API discovery", () => {
     expect(snapshot.recentDiscoveryRuns[0]?.summary.outcome).toBe("cancelled");
     pendingResponse.resolve(createFailedResponse(503));
   });
+
+  test.each([
+    {
+      intent: "Find design systems roles",
+      freshness: "any" as const,
+      sourceIds: "all" as const,
+    },
+    { intent: "", freshness: "recent" as const, sourceIds: "all" as const },
+    {
+      intent: "Find customer support roles instead",
+      freshness: "any" as const,
+      sourceIds: "all" as const,
+    },
+  ])(
+    "hands explicit search choices and the feed to the agent: %j",
+    async (request) => {
+      const strictConflict = request.intent.includes("customer support");
+      vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+        Promise.resolve(
+          createGreenhouseResponse({
+            id: 42,
+            title: strictConflict
+              ? "Customer Support"
+              : "Senior Product Designer",
+            board: "test",
+            malformed: request.freshness === "recent",
+          }),
+        ),
+      );
+      const seed = createSeed();
+      seed.savedJobs = [];
+      seed.discovery.pendingDiscoveryJobs = [];
+      seed.discovery.discoveryLedger = [];
+      seed.searchPreferences.companyWhitelist = [];
+      seed.searchPreferences.discovery.collectOnlyHardCriteriaMatches =
+        strictConflict;
+      seed.searchPreferences.targetRoles = ["Senior Product Designer"];
+      seed.searchPreferences.discovery.targets = [
+        {
+          ...seed.searchPreferences.discovery.targets[0]!,
+          id: "feed",
+          startingUrl: "https://job-boards.greenhouse.io/test",
+        },
+      ];
+      const runtime = createAgentBrowserRuntime([]);
+      const agent = vi.fn<NonNullable<typeof runtime.runAgentDiscovery>>(
+        (source, options) =>
+          Promise.resolve({
+            source,
+            startedAt: "2026-09-20T10:00:00Z",
+            completedAt: "2026-09-20T10:01:00Z",
+            querySummary: "Reviewed feed",
+            inventoryCompleteness: "complete",
+            warning: null,
+            jobs: options.sourceCatalog ?? [],
+            agentMetadata: DiscoveryAgentMetadataSchema.parse({
+              phaseCompletionReason: strictConflict
+                ? "Customer support conflicts with your saved Product Designer role. Change the saved role or search selectivity to find support jobs."
+                : "The catalog contains a matching design role.",
+            }),
+          }),
+      );
+      runtime.runAgentDiscovery = agent;
+      const { workspaceService } = createWorkspaceServiceHarness({
+        seed,
+        browserRuntime: runtime,
+      });
+      const snapshot = await workspaceService.runAgentDiscovery(
+        undefined,
+        undefined,
+        undefined,
+        request,
+      );
+      expect(agent).toHaveBeenCalledOnce();
+      expect(agent.mock.calls[0]?.[1]).toMatchObject({
+        searchRequest: request,
+        retainAllFound: true,
+        sourceCatalog: [
+          {
+            sourceJobId: "42",
+            providerKey: "greenhouse",
+            discoveryMethod: "public_api",
+          },
+        ],
+      });
+      if (strictConflict) {
+        expect(snapshot.discoveryJobs).toEqual([]);
+        expect(
+          snapshot.recentDiscoveryRuns[0]?.targetExecutions[0]
+            ?.jobsSkippedByTitleTriage,
+        ).toBe(1);
+        const run = snapshot.recentDiscoveryRuns[0];
+        expect(run?.state).toBe("completed");
+        expect(
+          run?.activity.some(
+            (event) =>
+              event.terminalState === "completed" &&
+              event.message.includes("Change the saved role"),
+          ),
+        ).toBe(true);
+      } else {
+        expect(snapshot.discoveryJobs[0]).toMatchObject({
+          providerKey: "greenhouse",
+          discoveryMethod: "public_api",
+          collectionMethod: "api",
+        });
+      }
+      if (request.freshness === "recent") {
+        expect(
+          snapshot.recentDiscoveryRuns[0]?.targetExecutions[0]?.warning,
+        ).toContain("Skipped 1 malformed");
+      }
+    },
+  );
 
   test("marks a run failed when every configured source fails", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(createFailedResponse(503));

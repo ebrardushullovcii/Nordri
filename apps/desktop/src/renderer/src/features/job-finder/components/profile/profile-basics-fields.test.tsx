@@ -58,7 +58,7 @@ function ProfileBasicsHarness() {
 const SHARED_BASICS_FIELD_LABELS = [
   "First name",
   "Last name",
-  "Preferred name",
+  "Preferred full name",
   "Headline",
   "Years of experience",
   "Email",

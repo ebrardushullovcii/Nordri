@@ -6,7 +6,7 @@ import {
   type SubmissionFinalControlIdentity,
   type SubmissionObservationIdentity,
 } from "@unemployed/contracts";
-import type { Page } from "playwright";
+import type { Page, Request } from "playwright";
 
 import {
   closePrepareOnlyFinalActionWindow,
@@ -78,7 +78,12 @@ export type ApplicationFinalActionBlockReason =
   | "origin_drift"
   | "stale_control"
   | "stale_observation"
-  | "vetoed";
+  | "vetoed"
+  /**
+   * The click went out, but the site refused the connection (or could not be
+   * found) and no response of any kind came back: nothing reached it.
+   */
+  | "site_unreachable";
 
 export interface ApplicationExternalActionFacts {
   /** True once the one-shot action boundary was attempted, even if Playwright
@@ -471,6 +476,21 @@ function clickWasNeverDispatched(error: unknown): boolean {
   );
 }
 
+/**
+ * Network errors raised before a connection to the site existed. A request
+ * that failed this way never delivered a byte, so the site cannot have
+ * received the application. A reset, a timeout or an empty response are not
+ * here: the site may have read the form before they happened.
+ */
+const SITE_UNREACHABLE_ERROR =
+  /ERR_(?:CONNECTION_REFUSED|NAME_NOT_RESOLVED|NAME_RESOLUTION_FAILED|ADDRESS_UNREACHABLE|INTERNET_DISCONNECTED|NETWORK_CHANGED)\b/;
+
+export function isSiteUnreachableError(errorText: string | undefined): boolean {
+  return (
+    typeof errorText === "string" && SITE_UNREACHABLE_ERROR.test(errorText)
+  );
+}
+
 function blockedResult(input: {
   reason: ApplicationFinalActionBlockReason;
   observation: ApplicationFormObservation | null;
@@ -504,6 +524,15 @@ function rememberIssuedAction(page: Page, key: string): void {
   const keys = pageActionKeys.get(page) ?? new Set<string>();
   keys.add(key);
   pageActionKeys.set(page, keys);
+}
+
+/**
+ * A click Playwright never dispatched reached nothing, so the tuple is free
+ * again: the person's Send after "the send button could not be pressed" must
+ * press it, not come back "stale observation" for ever.
+ */
+function forgetIssuedAction(page: Page, key: string): void {
+  pageActionKeys.get(page)?.delete(key);
 }
 
 async function withPageExecutionLock<TValue>(
@@ -990,6 +1019,30 @@ export async function executeExactlyOneFinalAction(
       requestsObservedDuringAction += 1;
     };
     page.on("request", requestListener);
+    // Kept through the confirmation wait: the form's own post starts after
+    // the click returns. Any response means something reached a server; a
+    // post that failed before connecting, with no response at all, did not.
+    let responsesAfterAction = 0;
+    let unreachableError: string | null = null;
+    const responseListener = (): void => {
+      responsesAfterAction += 1;
+    };
+    const requestFailedListener = (request: Request): void => {
+      const errorText = request.failure()?.errorText;
+      if (
+        isSiteUnreachableError(errorText) &&
+        (request.isNavigationRequest() || request.method() !== "GET")
+      )
+        unreachableError ??= errorText ?? null;
+    };
+    page.on("response", responseListener);
+    page.on("requestfailed", requestFailedListener);
+    const stopWatchingNetwork = (): void => {
+      page.off("response", responseListener);
+      page.off("requestfailed", requestFailedListener);
+    };
+    const siteNeverReached = (): boolean =>
+      unreachableError !== null && responsesAfterAction === 0;
     let actionCompleted = false;
     // The prepare-only guard stays on the page from preparation; this is the
     // one press it is opened for.
@@ -1003,6 +1056,7 @@ export async function executeExactlyOneFinalAction(
     } catch (clickError) {
       const pageAfterError = readSafePageUrl(page.url());
       page.off("request", requestListener);
+      stopWatchingNetwork();
       if (
         clickWasNeverDispatched(clickError) &&
         requestsObservedDuringAction === 0 &&
@@ -1013,6 +1067,8 @@ export async function executeExactlyOneFinalAction(
         // (for example a cookie banner over it), so no click reached the
         // page. Nothing was sent; the prepared form stays for another try
         // instead of an "uncertain" outcome that blocks every retry.
+        forgetIssuedAction(page, key);
+        await closePrepareOnlyFinalActionWindow(page).catch(() => undefined);
         return blockedResult({
           reason: "action_error",
           observation: finalObservation,
@@ -1061,9 +1117,11 @@ export async function executeExactlyOneFinalAction(
     };
     for (let attempt = 0; attempt < 10; attempt += 1) {
       if (input.signal?.aborted) break;
+      if (siteNeverReached()) break;
       try {
         const bodyText = await page.locator("body").innerText({ timeout: 250 });
         if (hasEmployerSubmissionConfirmation(bodyText)) {
+          stopWatchingNetwork();
           return {
             outcome: "submitted",
             reason: "employer_confirmation",
@@ -1089,7 +1147,16 @@ export async function executeExactlyOneFinalAction(
       }
       await page.waitForTimeout(100);
     }
+    stopWatchingNetwork();
     await closePrepareOnlyFinalActionWindow(page);
+    if (siteNeverReached()) {
+      return blockedResult({
+        reason: "site_unreachable",
+        observation: finalObservation,
+        control: finalControl,
+        facts: { ...facts, pageAfter: readSafePageUrl(page.url()) },
+      });
+    }
     return {
       outcome: "outcome_uncertain",
       reason: "action_issued",

@@ -14,6 +14,7 @@ import {
 } from "@unemployed/contracts";
 import { Badge } from "@renderer/components/ui/badge";
 import { Button } from "@renderer/components/ui/button";
+import { cn } from "@renderer/lib/cn";
 import { getJobFinderScrollBehavior } from "../../lib/job-finder-scroll-behavior";
 import {
   Tabs,
@@ -39,6 +40,12 @@ import { useDesktopStudioLayout } from "./use-desktop-studio-layout";
 export type ResumeStudioMobileTab = "preview" | "editor";
 
 interface ResumeWorkspaceStudioShellProps {
+  /**
+   * True while the Assistant is open. The studio then gives it a docked
+   * right-hand column (the dock slot below) and narrows the panes beside it,
+   * instead of letting a floating panel rest over the tools column.
+   */
+  assistantDocked?: boolean;
   approvalBlockedReason: string | null;
   approvalStateLabel: string | null;
   /**
@@ -1047,7 +1054,16 @@ export function ResumeWorkspaceStudioShell(
         </div>
       )}
 
-      {/* Below xl the studio is a bounded tab surface, not a growing page. The
+      {/* The studio body: the preview/tools panes, and — while the Assistant
+          is open — the Assistant docked as a right-hand column. It opens where
+          a chat is expected (the right edge, running to the bottom corner)
+          and the panes beside it narrow to make room, so it never rests over
+          the tools column's Save / template / editor controls, the preview,
+          or the approval row above. `ResumeGuidedEditsPopup` portals the
+          panel into the dock slot; closed, the slot renders nothing. */}
+      <div className="flex min-h-0 min-w-0 flex-1" data-resume-studio-body>
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          {/* Below xl the studio is a bounded tab surface, not a growing page. The
           Assistant is not one of these tabs: it is the same floating panel the
           desktop layout uses, so switching tabs never swaps it for a different
           layout and exactly one transcript is mounted at any width.
@@ -1058,99 +1074,105 @@ export function ResumeWorkspaceStudioShell(
           draft revision, two editor trees, and a duplicate
           `id="resume-proof-details"` whose hidden copy came first in document
           order, which is what made "Review blocked claims" inert at >= 1280px. */}
-      {isDesktopStudio ? null : (
-        <div className="min-h-0 min-w-0 flex-1 xl:hidden">
-          <Tabs
-            className="h-full min-h-0"
-            onValueChange={(value) =>
-              props.onSetMobileStudioTab(value as ResumeStudioMobileTab)
-            }
-            value={props.mobileStudioTab}
-          >
-            <TabsList
-              className="grid w-full grid-cols-2 border-b border-(--surface-panel-border) bg-transparent"
-              /* Below xl this strip is the only route to the editor, the
+          {isDesktopStudio ? null : (
+            <div className="min-h-0 min-w-0 flex-1 xl:hidden">
+              <Tabs
+                className="h-full min-h-0"
+                onValueChange={(value) =>
+                  props.onSetMobileStudioTab(value as ResumeStudioMobileTab)
+                }
+                value={props.mobileStudioTab}
+              >
+                <TabsList
+                  className="grid w-full grid-cols-2 border-b border-(--surface-panel-border) bg-transparent"
+                  /* Below xl this strip is the only route to the editor, the
                  template chooser and the approval controls, so the floating
                  Assistant treats it as a no-cover zone and anchors under it.
                  The marker exists so that placement can measure it. */
-              data-resume-studio-compact-tabs
-              variant="line"
-            >
-              <TabsTrigger value="preview">Preview</TabsTrigger>
-              <TabsTrigger value="editor">Tools</TabsTrigger>
-            </TabsList>
-            <div className="min-h-0 flex-1 overflow-hidden p-4">
-              <TabsContent
-                className="min-h-0 h-full overflow-hidden"
-                value="preview"
-              >
-                {props.previewPane}
-              </TabsContent>
-              {/* Compact widths sit below the locked-pane breakpoint, so this is
-                an ordinary scroll region rather than a wheel-chain owner. */}
-              <TabsContent
-                className="min-h-0 h-full overflow-y-auto overflow-x-hidden"
-                value="editor"
-              >
-                <div className="grid min-h-0 gap-4 xl:hidden">
-                  <div className="grid gap-2.5">
-                    <StudioToolbar
-                      canDownloadPdf={canDownloadPdf}
-                      isApproved={props.canClearApproval}
-                      isExportPending={isExportPending}
-                      isWorkspacePending={props.isWorkspacePending}
-                      onDownloadPdf={props.onExportPdf}
-                      onSaveDraft={props.onSaveDraft}
-                    />
-                  </div>
-                  {isDesktopStudio ? null : attentionPanel}
-                  <div
-                    aria-label="Apply-safe template choices"
-                    className="min-h-(--size-resume-workspace-panel) scroll-mt-4 outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    data-resume-template-chooser
-                    ref={mobileTemplatePanelRef}
-                    tabIndex={-1}
+                  data-resume-studio-compact-tabs
+                  variant="line"
+                >
+                  <TabsTrigger value="preview">Preview</TabsTrigger>
+                  <TabsTrigger value="editor">Tools</TabsTrigger>
+                </TabsList>
+                <div className="min-h-0 flex-1 overflow-hidden p-4">
+                  <TabsContent
+                    className="min-h-0 h-full overflow-hidden"
+                    value="preview"
                   >
-                    {props.templatePanel}
-                  </div>
-                  <div className="min-h-(--size-resume-workspace-panel)">
-                    {props.editorPanel}
-                  </div>
-                  <StudioHistoryDisclosure>
-                    {props.historyPanel}
-                  </StudioHistoryDisclosure>
-                  {props.supportingDetailsPanel}
+                    {props.previewPane}
+                  </TabsContent>
+                  {/* Compact widths sit below the locked-pane breakpoint, so this is
+                an ordinary scroll region rather than a wheel-chain owner. */}
+                  <TabsContent
+                    className="min-h-0 h-full overflow-y-auto overflow-x-hidden"
+                    value="editor"
+                  >
+                    <div className="grid min-h-0 gap-4 xl:hidden">
+                      <div className="grid gap-2.5">
+                        <StudioToolbar
+                          canDownloadPdf={canDownloadPdf}
+                          isApproved={props.canClearApproval}
+                          isExportPending={isExportPending}
+                          isWorkspacePending={props.isWorkspacePending}
+                          onDownloadPdf={props.onExportPdf}
+                          onSaveDraft={props.onSaveDraft}
+                        />
+                      </div>
+                      {isDesktopStudio ? null : attentionPanel}
+                      <div
+                        aria-label="Apply-safe template choices"
+                        className="min-h-(--size-resume-workspace-panel) scroll-mt-4 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        data-resume-template-chooser
+                        ref={mobileTemplatePanelRef}
+                        tabIndex={-1}
+                      >
+                        {props.templatePanel}
+                      </div>
+                      <div className="min-h-(--size-resume-workspace-panel)">
+                        {props.editorPanel}
+                      </div>
+                      <StudioHistoryDisclosure>
+                        {props.historyPanel}
+                      </StudioHistoryDisclosure>
+                      {props.supportingDetailsPanel}
+                    </div>
+                  </TabsContent>
                 </div>
-              </TabsContent>
+              </Tabs>
             </div>
-          </Tabs>
-        </div>
-      )}
+          )}
 
-      {/* Two columns, always. The Assistant used to become a real third grid
-          track while open, so opening it re-flowed the preview and tools panes
-          and moved every control the user was looking at. It is a floating
-          panel now, resting over this grid: the column template, the tools
-          pane's height reservation, and every class here are identical whether
-          the Assistant is open, minimized, or closed. */}
-      {isDesktopStudio ? (
-        <div
-          className="hidden min-h-[20rem] min-w-0 flex-1 p-2.5 xl:grid xl:h-full xl:min-h-0"
-          data-resume-studio-desktop-grid
-        >
-          <div
-            className="grid h-full min-h-[20rem] min-w-0 gap-2.5 xl:min-h-0 xl:grid-cols-[minmax(0,1.15fr)_minmax(26rem,0.85fr)]"
-            data-resume-studio-grid-columns="preview-tools"
-          >
+          {/* Two columns. The Assistant is not a track in this grid: it docks
+          beside the whole studio body (see the dock slot), so this grid only
+          narrows while it is open and never re-orders. A floating panel that
+          rested over the tools column hid Save, the template chooser and the
+          editor controls the person was using. */}
+          {isDesktopStudio ? (
             <div
-              className="h-full min-h-[18rem] min-w-0 overflow-hidden xl:min-h-0"
-              data-resume-studio-preview-pane="true"
+              className="hidden min-h-[20rem] min-w-0 flex-1 p-2.5 xl:grid xl:h-full xl:min-h-0"
+              data-resume-studio-desktop-grid
             >
-              {props.previewPane}
-            </div>
-            <div
-              aria-label="Resume studio tools"
-              /* This column runs the FULL studio height, exactly like the
+              <div
+                className={cn(
+                  "grid h-full min-h-[20rem] min-w-0 gap-2.5 xl:min-h-0",
+                  // With the Assistant docked the tools column may narrow further
+                  // so the preview keeps a readable share of what is left.
+                  props.assistantDocked
+                    ? "xl:grid-cols-[minmax(0,1fr)_minmax(19rem,0.8fr)]"
+                    : "xl:grid-cols-[minmax(0,1.15fr)_minmax(26rem,0.85fr)]",
+                )}
+                data-resume-studio-grid-columns="preview-tools"
+              >
+                <div
+                  className="h-full min-h-[18rem] min-w-0 overflow-hidden xl:min-h-0"
+                  data-resume-studio-preview-pane="true"
+                >
+                  {props.previewPane}
+                </div>
+                <div
+                  aria-label="Resume studio tools"
+                  /* This column runs the FULL studio height, exactly like the
                preview column beside it, and reserves nothing at its end.
 
                It carried two failed reservations before. Shortening it by the
@@ -1161,54 +1183,70 @@ export function ResumeWorkspaceStudioShell(
                the fixed pill. No reservation can hold for a scrolling column,
                so the collapsed launcher stopped floating over this column at
                all — it is an ordinary button in the sticky header above. */
-              className="flex h-full min-h-[18rem] min-w-0 flex-col gap-2.5 overflow-y-auto overflow-x-hidden pr-1 xl:min-h-0"
-              data-locked-pane-scroll-region
-              data-resume-studio-tools-pane="true"
-              data-resume-workspace-scroll-region
-              role="region"
-              tabIndex={0}
-            >
-              <div className="grid shrink-0 gap-2.5 rounded-(--radius-field) border border-(--surface-panel-border) px-4 py-2.5">
-                {/* No eyebrow or heading here: the job title above names the
+                  className="flex h-full min-h-[18rem] min-w-0 flex-col gap-2.5 overflow-y-auto overflow-x-hidden pr-1 xl:min-h-0"
+                  data-locked-pane-scroll-region
+                  data-resume-studio-tools-pane="true"
+                  data-resume-workspace-scroll-region
+                  role="region"
+                  tabIndex={0}
+                >
+                  <div className="grid shrink-0 gap-2.5 rounded-(--radius-field) border border-(--surface-panel-border) px-4 py-2.5">
+                    {/* No eyebrow or heading here: the job title above names the
                     screen and the status banner names the step. The column
                     opens on its controls. */}
-                <StudioToolbar
-                  canDownloadPdf={canDownloadPdf}
-                  isApproved={props.canClearApproval}
-                  isExportPending={isExportPending}
-                  isWorkspacePending={props.isWorkspacePending}
-                  onDownloadPdf={props.onExportPdf}
-                  onSaveDraft={props.onSaveDraft}
-                />
+                    <StudioToolbar
+                      canDownloadPdf={canDownloadPdf}
+                      isApproved={props.canClearApproval}
+                      isExportPending={isExportPending}
+                      isWorkspacePending={props.isWorkspacePending}
+                      onDownloadPdf={props.onExportPdf}
+                      onSaveDraft={props.onSaveDraft}
+                    />
 
-                <StudioStatusRow
-                  approvalStateLabel={props.approvalStateLabel}
-                  clearApprovalSlot={isDesktopStudio ? clearApprovalSlot : null}
-                  live={isDesktopStudio}
-                  message={studioStatusText}
-                />
+                    <StudioStatusRow
+                      approvalStateLabel={props.approvalStateLabel}
+                      clearApprovalSlot={
+                        isDesktopStudio ? clearApprovalSlot : null
+                      }
+                      live={isDesktopStudio}
+                      message={studioStatusText}
+                    />
+                  </div>
+                  {isDesktopStudio ? attentionPanel : null}
+                  <div
+                    aria-label="Apply-safe template choices"
+                    className="min-h-0 min-w-0 shrink-0 scroll-mt-2 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    data-resume-template-chooser
+                    ref={desktopTemplatePanelRef}
+                    tabIndex={-1}
+                  >
+                    {props.templatePanel}
+                  </div>
+                  <div className="min-h-0 min-w-0 shrink-0">
+                    {props.editorPanel}
+                  </div>
+                  <StudioHistoryDisclosure>
+                    {props.historyPanel}
+                  </StudioHistoryDisclosure>
+                  {props.supportingDetailsPanel}
+                </div>
               </div>
-              {isDesktopStudio ? attentionPanel : null}
-              <div
-                aria-label="Apply-safe template choices"
-                className="min-h-0 min-w-0 shrink-0 scroll-mt-2 outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                data-resume-template-chooser
-                ref={desktopTemplatePanelRef}
-                tabIndex={-1}
-              >
-                {props.templatePanel}
-              </div>
-              <div className="min-h-0 min-w-0 shrink-0">
-                {props.editorPanel}
-              </div>
-              <StudioHistoryDisclosure>
-                {props.historyPanel}
-              </StudioHistoryDisclosure>
-              {props.supportingDetailsPanel}
             </div>
-          </div>
+          ) : null}
         </div>
-      ) : null}
+        <div
+          className={cn(
+            "min-h-0 shrink-0",
+            props.assistantDocked
+              ? "flex w-(--resume-assistant-dock-width) py-2.5 pr-2.5"
+              : "hidden",
+          )}
+          data-resume-studio-assistant-dock-slot
+          data-resume-studio-assistant-docked={
+            props.assistantDocked ? "true" : "false"
+          }
+        />
+      </div>
     </div>
   );
 }

@@ -7,7 +7,7 @@ import {
 } from "@unemployed/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ActionsScreen } from "./actions-screen";
+import { ActionsScreen, isSameSiteApplicationActive } from "./actions-screen";
 
 afterEach(cleanup);
 
@@ -116,8 +116,9 @@ describe("Needs you application hand-offs that carry on by themselves", () => {
     fireEvent.click(
       getByRole("button", { name: "Choose a file in Profile › Files" }),
     );
+    // The card asked for a portfolio, so Files opens with Portfolio chosen.
     expect(onNavigate).toHaveBeenCalledWith(
-      "/job-finder/profile?section=files",
+      "/job-finder/profile?section=files&kind=portfolio",
     );
   });
 
@@ -164,5 +165,90 @@ describe("Needs you application hand-offs that carry on by themselves", () => {
     expect(
       getByRole("button", { name: "Choose a file in Profile › Files" }),
     ).toBeTruthy();
+  });
+});
+
+describe("isSameSiteApplicationActive", () => {
+  const job = (id: string, host: string) => ({
+    id,
+    canonicalUrl: `http://${host}:47970/listing/${id}`,
+    applicationUrl: `http://${host}:47970/apply/${id}`,
+  });
+  it("is true only while another job on the same site is being filled in", () => {
+    const jobsById = new Map([
+      ["willow", job("willow", "127.0.0.1")],
+      ["cedar", job("cedar", "127.0.0.1")],
+      ["cloud", job("cloud", "localhost")],
+    ]);
+    const willow = jobsById.get("willow")!;
+    expect(
+      isSameSiteApplicationActive(
+        willow,
+        [{ jobId: "cedar", state: "filling" }],
+        jobsById,
+      ),
+    ).toBe(true);
+    expect(
+      isSameSiteApplicationActive(
+        willow,
+        [
+          { jobId: "cloud", state: "filling" },
+          { jobId: "cedar", state: "submitted" },
+          { jobId: "willow", state: "filling" },
+        ],
+        jobsById,
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("a checked step behind another application on the same site", () => {
+  it("says it waits for the other application on this site after a minute", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-23T08:02:00.000Z"));
+    try {
+      const checking = UserActionRequestSchema.parse({
+        ...request({
+          kind: "manual_upload",
+          verification: {
+            type: "page_blocker_absent",
+            blockerFingerprint: "blocker_1",
+          },
+        }),
+        state: "verifying",
+        updatedAt: "2026-09-23T08:00:30.000Z",
+      });
+      const job = (id: string) => ({
+        id,
+        title: `Engineer ${id}`,
+        company: "Example",
+        canonicalUrl: `http://127.0.0.1:47970/greenhouse/jobs/${id}`,
+        applicationUrl: `http://127.0.0.1:47970/greenhouse/apply/${id}`,
+      });
+      const { container } = render(
+        <ActionsScreen
+          applyJobResults={
+            [
+              { jobId: "job_2", state: "filling" },
+            ] as unknown as JobFinderWorkspaceSnapshot["applyJobResults"]
+          }
+          discoveryJobs={
+            [
+              job("job_1"),
+              job("job_2"),
+            ] as unknown as JobFinderWorkspaceSnapshot["discoveryJobs"]
+          }
+          isPending={() => false}
+          onCommand={vi.fn()}
+          onNavigate={vi.fn()}
+          requests={[checking]}
+        />,
+      );
+      expect(container.textContent).toContain(
+        "Waiting for the other application on this site to finish.",
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

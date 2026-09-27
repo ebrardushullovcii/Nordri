@@ -1982,6 +1982,7 @@ export function createApplicationRunServiceWorkerSentinel(input: {
   const pendingWorkerEvents: string[] = [];
   const pendingInterruptions: PrepareOnlyBlockedAttempt[] = [];
   const detachListeners: Array<() => void> = [];
+  const ownedPopups = new Set<Page>();
   let ledgerPage: Page | null = null;
   let eventChannelBroken = false;
   let contextRouteInstalled = false;
@@ -2001,10 +2002,37 @@ export function createApplicationRunServiceWorkerSentinel(input: {
     pendingInterruptions.push(attempt);
   };
 
+  const currentApplicationUrl = (): string => {
+    const pageUrl = ledgerPage?.url();
+    return pageUrl && isHttpUrlLike(pageUrl) ? pageUrl : input.targetUrl;
+  };
+
+  const isOwnedPage = async (page: Page): Promise<boolean> => {
+    if (!ledgerPage || detached) return false;
+    let current: Page | null = page;
+    const seen = new Set<Page>();
+    for (let depth = 0; current && depth < 8; depth += 1) {
+      if (current === ledgerPage || ownedPopups.has(current)) return true;
+      if (seen.has(current) || typeof current.opener !== "function") break;
+      seen.add(current);
+      current = await current.opener().catch(() => null);
+    }
+    return false;
+  };
+
+  const passToOtherGuards = async (route: Route): Promise<void> => {
+    if (typeof route.fallback === "function") await route.fallback();
+    else await route.continue();
+  };
+
   if (typeof input.context.on === "function") {
     try {
       const onServiceWorker = (worker: { url(): string }): void => {
-        pendingWorkerEvents.push(worker.url());
+        const workerUrl = worker.url();
+        const workerOrigin = parseHttpOriginOrNull(workerUrl);
+        const applicationOrigin = parseHttpOriginOrNull(currentApplicationUrl());
+        if (!workerOrigin || workerOrigin === applicationOrigin)
+          pendingWorkerEvents.push(workerUrl);
       };
       input.context.on("serviceworker" as never, onServiceWorker as never);
       detachListeners.push(() => {
@@ -2015,20 +2043,17 @@ export function createApplicationRunServiceWorkerSentinel(input: {
 
       const onPage = (page: Page): void => {
         void (async () => {
-          // Only opener-backed popups (window.open/target=_blank) are
-          // contained. Pages created without an opener are first-class tabs
-          // such as the managed application page itself.
-          const opener = await page.opener().catch(() => null);
-          if (!opener) {
-            return;
-          }
+          // A shared context also contains other applications, searches, and
+          // the person's tabs. Only this run's opener chain is contained.
+          if (!(await isOwnedPage(page))) return;
+          ownedPopups.add(page);
           let popupUrl: string | null = null;
           try {
             const candidateUrl = page.url();
             if (isHttpUrlLike(candidateUrl)) {
               popupUrl = candidateUrl;
             } else {
-              const openerUrl = opener.url();
+              const openerUrl = ledgerPage?.url();
               if (openerUrl && isHttpUrlLike(openerUrl)) {
                 popupUrl = openerUrl;
               }
@@ -2058,6 +2083,17 @@ export function createApplicationRunServiceWorkerSentinel(input: {
 
   const contextRouteHandler = async (route: Route): Promise<void> => {
     const request = route.request();
+    let requestPage: Page | null = null;
+    try {
+      requestPage = request.frame().page();
+    } catch {
+      // Service-worker requests have no frame. Their origin is handled by the
+      // worker sentinel; a shared-context route cannot assign them to a tab.
+    }
+    if (!requestPage || !(await isOwnedPage(requestPage))) {
+      await passToOtherGuards(route);
+      return;
+    }
     const method = request.method().trim().toUpperCase();
     const resourceType = request.resourceType();
     const allowed =
@@ -2074,13 +2110,19 @@ export function createApplicationRunServiceWorkerSentinel(input: {
       await route.abort("blockedbyclient");
       return;
     }
-    await route.continue();
+    await passToOtherGuards(route);
   };
   if (typeof input.context.route === "function") {
     try {
       void input.context
         .route("**/*", contextRouteHandler)
-        .then(() => {
+        .then(async () => {
+          if (detached) {
+            await input.context
+              .unroute("**/*", contextRouteHandler)
+              .catch(() => undefined);
+            return;
+          }
           contextRouteInstalled = true;
         })
         .catch(() => undefined);
@@ -2122,7 +2164,7 @@ export function createApplicationRunServiceWorkerSentinel(input: {
 
       return findApplicationOriginServiceWorkerIssue({
         context: input.context,
-        targetUrl: input.targetUrl,
+        targetUrl: currentApplicationUrl(),
         page: ledgerPage,
         phase,
         pendingWorkerEventUrls: drainedEvents,

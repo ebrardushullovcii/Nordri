@@ -1340,6 +1340,18 @@ function hasVisibleEntryContent(input: {
   );
 }
 
+// Visible content must keep letters from every script. The matching normalizer
+// used elsewhere is ASCII-only and turns non-Latin achievements into empty keys.
+function normalizeVisibleResumeText(value: string): string {
+  return value
+    .normalize("NFC")
+    .replace(/(^|[^a-z0-9])c\s*\+\s*\+(?=$|[^a-z0-9])/gi, "$1cplusplus")
+    .replace(/(^|[^a-z0-9])c\s*#(?=$|[^a-z0-9])/gi, "$1csharp")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{M}\p{N}]+/gu, " ")
+    .trim();
+}
+
 function removeBulletDuplicatesFromSummary(
   summary: string,
   bullets: readonly { included: boolean; text: string }[],
@@ -1347,7 +1359,7 @@ function removeBulletDuplicatesFromSummary(
   const visibleBulletLines = new Set(
     bullets
       .filter((bullet) => bullet.included)
-      .map((bullet) => normalizeText(bullet.text))
+      .map((bullet) => normalizeVisibleResumeText(bullet.text))
       .filter(Boolean),
   );
   const sentences = summary
@@ -1355,7 +1367,7 @@ function removeBulletDuplicatesFromSummary(
     .map((sentence) => sentence.trim())
     .filter(Boolean);
   const uniqueSentences = sentences.filter(
-    (sentence) => !visibleBulletLines.has(normalizeText(sentence)),
+    (sentence) => !visibleBulletLines.has(normalizeVisibleResumeText(sentence)),
   );
 
   return uniqueSentences.length > 0 ? uniqueSentences.join(" ") : null;
@@ -1392,15 +1404,18 @@ export function sanitizeResumeDraft(input: {
 
   const orderedDraft = normalizeResumeDraftEntryOrdering(input.draft);
   const nextSections = orderedDraft.sections.map((section) => {
-    const normalizedSectionText = normalizeText(section.text ?? "");
+    const normalizedSectionText = normalizeVisibleResumeText(
+      section.text ?? "",
+    );
     // A summary the generator wrote badly is replaced by the person's own,
     // never dropped: an export that starts at Experience with no summary is
     // worse than the summary they already approved on their profile.
     const profileSummaryFallback = (): string | null => {
       if (section.kind !== "summary") return null;
       const fallback = input.profile?.summary?.trim() || null;
-      if (!fallback || seenLines.has(normalizeText(fallback))) return null;
-      seenLines.add(normalizeText(fallback));
+      if (!fallback || seenLines.has(normalizeVisibleResumeText(fallback)))
+        return null;
+      seenLines.add(normalizeVisibleResumeText(fallback));
       return fallback;
     };
     const nextText = (() => {
@@ -1433,7 +1448,7 @@ export function sanitizeResumeDraft(input: {
           if (!withoutEmploymentEnd) {
             return profileSummaryFallback();
           }
-          seenLines.add(normalizeText(withoutEmploymentEnd));
+          seenLines.add(normalizeVisibleResumeText(withoutEmploymentEnd));
           return withoutEmploymentEnd;
         }
       }
@@ -1460,7 +1475,7 @@ export function sanitizeResumeDraft(input: {
       contextText?: string | null,
     ) =>
       bullets.filter((bullet) => {
-        const normalized = normalizeText(bullet.text);
+        const normalized = normalizeVisibleResumeText(bullet.text);
         if (!normalized) {
           return false;
         }
@@ -1468,7 +1483,10 @@ export function sanitizeResumeDraft(input: {
           seenLines.add(normalized);
           return true;
         }
-        if (contextText && normalizeText(contextText) === normalized) {
+        if (
+          contextText &&
+          normalizeVisibleResumeText(contextText) === normalized
+        ) {
           return false;
         }
         if (seenLines.has(normalized)) {
@@ -1517,10 +1535,10 @@ export function sanitizeResumeDraft(input: {
       .map((entry) => {
         if (entry.locked) {
           if (entry.summary) {
-            seenLines.add(normalizeText(entry.summary));
+            seenLines.add(normalizeVisibleResumeText(entry.summary));
           }
           for (const bullet of entry.bullets) {
-            const normalizedBullet = normalizeText(bullet.text);
+            const normalizedBullet = normalizeVisibleResumeText(bullet.text);
             if (normalizedBullet) {
               seenLines.add(normalizedBullet);
             }
@@ -1535,7 +1553,7 @@ export function sanitizeResumeDraft(input: {
           if (!deduplicatedSummary?.trim()) {
             return null;
           }
-          const normalized = normalizeText(deduplicatedSummary);
+          const normalized = normalizeVisibleResumeText(deduplicatedSummary);
           if (seenLines.has(normalized)) {
             return null;
           }

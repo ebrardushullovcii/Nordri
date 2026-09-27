@@ -197,10 +197,17 @@ export function buildApplyFormObservation(
     if (control.kind !== "radio") continue;
     const groupKey = control.choiceGroupKey;
     if (!groupKey) continue;
-    control.answered = controls.some((candidate) => {
-      if (candidate.kind !== "radio" || !candidate.checked) return false;
-      return candidate.choiceGroupKey === groupKey;
-    });
+    const group = controls.filter(
+      (candidate) =>
+        candidate.kind === "radio" && candidate.choiceGroupKey === groupKey,
+    );
+    control.answered = group.some((candidate) => candidate.checked);
+    // Radio choices must pass through the same saved-answer matching as a
+    // select. Otherwise a saved prose answer appears usable until every
+    // individual radio is refused, without a question for the person.
+    control.options = group.map(
+      (candidate) => candidate.label || candidate.value,
+    );
   }
 
   // A phone field sitting next to a country picker must not repeat the code

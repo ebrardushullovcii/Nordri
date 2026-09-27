@@ -2316,6 +2316,7 @@ describe("openai-compatible chat and draft behavior", () => {
           keySkills: ["TypeScript"],
           minimumQualifications: [
             "Hands-on experience with Terraform and CI/CD.",
+            "Practical knowledge of Terraform and Kubernetes.",
           ],
         },
         resumeText: "Resume text",
@@ -2341,8 +2342,10 @@ describe("openai-compatible chat and draft behavior", () => {
         },
       });
       expect(aggressive.coreSkills).toEqual(
-        expect.arrayContaining(["Terraform", "CI/CD"]),
+        expect.arrayContaining(["Terraform", "CI/CD", "Kubernetes"]),
       );
+      expect(aggressive.coreSkills).not.toContain("Practical");
+      expect(aggressive.additionalSkills).not.toContain("Practical");
       expect(aggressive.notes.join(" ")).toMatch(/Terraform/);
 
       const balanced = await buildClient().createResumeDraft({

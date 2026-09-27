@@ -760,4 +760,14 @@ describe("one pending-question list for both screens", () => {
       }).map((question) => question.id),
     ).toEqual(["q_current"]);
   });
+
+it("reads View application on a sent application with no saved next step", () => {
+  // Sent during a batch run, the record carries no label of its own.
+  const record = createRecord({
+    status: "submitted",
+    lastAttemptState: "submitted",
+    nextActionLabel: null,
+  });
+  expect(getApplicationNextStepLabel(record)).toBe("View application");
+});
 });

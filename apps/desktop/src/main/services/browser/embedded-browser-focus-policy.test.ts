@@ -79,4 +79,29 @@ describe("getEmbeddedBrowserFocusAction", () => {
       }),
     ).toEqual({ type: "none" });
   });
+
+  test("closing a tab never stops a run that has no tab yet", () => {
+    const operations = [
+      // An application waiting for a free tab has claimed none.
+      { id: "waiting_apply", tabIds: [] },
+      { id: "apply", tabIds: ["tab_apply"] },
+    ];
+    expect(
+      getEmbeddedBrowserFocusAction({
+        ...base,
+        focusedTabId: "tab_person",
+        operations,
+        closingTab: true,
+      }),
+    ).toEqual({ type: "none" });
+    // Closing a run's own tab still stops that run.
+    expect(
+      getEmbeddedBrowserFocusAction({
+        ...base,
+        focusedTabId: "tab_apply",
+        operations,
+        closingTab: true,
+      }),
+    ).toEqual({ type: "take_tab", operationIds: ["apply"] });
+  });
 });

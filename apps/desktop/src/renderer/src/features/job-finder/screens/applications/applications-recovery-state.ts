@@ -311,6 +311,9 @@ export function formatElapsedMinutes(
   return minutes < 1 ? "under a minute" : `${minutes} min`;
 }
 
+/** What the service writes on an application waiting for a free tab. */
+export const WAITING_FOR_BROWSER_TAB_SUMMARY = "Waiting for a free browser tab";
+
 /** The one sentence a working run earns, wherever it is said. */
 export const FILLING_IN_THE_FORM_STATUS = "Job Finder is filling in the form";
 
@@ -815,6 +818,18 @@ export function resolveApplicationRecoveryPresentation(input: {
 
   // The run record, not a local pending flag: a seven-minute run kept the
   // flag for ninety seconds and then offered "Try again" beside itself.
+  if (
+    visibleApplyResult?.summary === WAITING_FOR_BROWSER_TAB_SUMMARY &&
+    applyResultIsStillRunning(visibleApplyResult, input.run)
+  ) {
+    return {
+      state: "preparing",
+      statusLine: WAITING_FOR_BROWSER_TAB_SUMMARY,
+      reasonSentence: visibleApplyResult.detail ?? null,
+      primaryAction: "none",
+      primaryActionLabel: null,
+    };
+  }
   if (
     isApplyPending ||
     applyResultIsStillRunning(visibleApplyResult, input.run)

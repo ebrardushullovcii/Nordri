@@ -273,6 +273,34 @@ export function buildPendingQuestion(input: {
   };
 }
 
+function leaveUnansweredForPerson(input: {
+  control: ApplyFormControl;
+  observation: ApplyFormObservation;
+  config: ApplyAgentConfig;
+  at: string;
+  reason: string;
+  suggestion: ApplyAnswer | null;
+}): ApplyExecutionOutcome {
+  const { control, observation, config, at, reason, suggestion } = input;
+  return {
+    kind: "suggestion",
+    answer: suggestion,
+    note: `"${questionPrompt(control)}" needs the person's answer. ${reason} Leave it unchanged and carry on with the rest of the form.`,
+    question: control.required
+      ? buildPendingQuestion({
+          control,
+          jobId: config.application.jobId,
+          detectedAt: at,
+          suggestion,
+          siblings: observation.controls,
+          reason,
+        })
+      : null,
+    controlRef: control.ref,
+    observation,
+  };
+}
+
 function bareOrigin(value: string): string | null {
   try {
     return new URL(value).origin;
@@ -856,6 +884,20 @@ export async function executeApplyProposal(
 
   switch (proposal.tool) {
     case "click": {
+      const control = findControl(observation, proposal.ref);
+      if (control?.kind === "checkbox" || control?.kind === "radio") {
+        // A click changes an answer just as set_checkbox does. Keep consent
+        // and grounded-answer checks on both routes to the same control.
+        return executeApplyProposal(
+          {
+            tool: "set_checkbox",
+            ref: control.ref,
+            checked: control.kind === "radio" || !control.checked,
+          },
+          observation.signature,
+          deps,
+        );
+      }
       const finalAction = observation.actions.find(
         (candidate) =>
           candidate.ref === proposal.ref && candidate.kind === "final",
@@ -1104,30 +1146,15 @@ export async function executeApplyProposal(
         sources: config.sources,
         salaryDisclosure: config.authority.salaryDisclosure,
       });
-      // A notice period or start date with nothing saved is the person's to
-      // give; a composed sentence is not their answer.
-      if (
-        resolution.status === "needs_you" &&
-        (control.questionKind === "notice_period" ||
-          control.questionKind === "availability")
-      ) {
-        return {
-          kind: "suggestion",
-          answer: null,
-          note: `"${questionPrompt(control)}" asks for a fact only the person can give. ${resolution.reason} Leave it empty and carry on with the rest; it has been kept for the person.`,
-          question: control.required
-            ? buildPendingQuestion({
-                control,
-                jobId: config.application.jobId,
-                detectedAt: at,
-                suggestion: null,
-                siblings: observation.controls,
-                reason: resolution.reason,
-              })
-            : null,
-          controlRef: control.ref,
+      if (resolution.status === "needs_you") {
+        return leaveUnansweredForPerson({
+          control,
           observation,
-        };
+          config,
+          at,
+          reason: resolution.reason,
+          suggestion: resolution.suggestion,
+        });
       }
       if (resolution.status !== "answered" && deps.checkWrittenAnswer) {
         const check = await deps.checkWrittenAnswer(
@@ -1209,17 +1236,20 @@ export async function executeApplyProposal(
         sources: config.sources,
         salaryDisclosure: config.authority.salaryDisclosure,
       });
+      if (resolution.status === "needs_you") {
+        return leaveUnansweredForPerson({
+          control,
+          observation,
+          config,
+          at,
+          reason: resolution.reason,
+          suggestion: resolution.suggestion,
+        });
+      }
       const groundedOption =
         resolution.status === "answered"
           ? matchOption(control.options, resolution.answer.value)
           : null;
-      if (resolution.status === "needs_you" && resolution.suggestion) {
-        return {
-          kind: "refused",
-          reason: resolution.reason,
-          observation,
-        };
-      }
       if (
         resolution.status === "answered" &&
         control.options.length > 0 &&
@@ -1294,6 +1324,20 @@ export async function executeApplyProposal(
               salaryDisclosure: config.authority.salaryDisclosure,
             })
           : null;
+      if (
+        control.kind === "radio" &&
+        proposal.checked &&
+        groundedRadioResolution?.status === "needs_you"
+      ) {
+        return leaveUnansweredForPerson({
+          control,
+          observation,
+          config,
+          at,
+          reason: groundedRadioResolution.reason,
+          suggestion: groundedRadioResolution.suggestion,
+        });
+      }
       if (control.kind === "radio" && proposal.checked) {
         if (groundedRadioResolution?.status === "answered") {
           const groupControls = observation.controls.filter(
@@ -1304,13 +1348,13 @@ export async function executeApplyProposal(
                 : candidate.ref === control.ref),
           );
           const offeredValues = groupControls.map(
-            (candidate) => candidate.value || candidate.label,
+            (candidate) => candidate.label || candidate.value,
           );
           const groundedOption = matchOption(
             offeredValues,
             groundedRadioResolution.answer.value,
           );
-          const proposedOption = control.value || control.label;
+          const proposedOption = control.label || control.value;
           if (
             !groundedOption ||
             normalizeSignal(groundedOption) !== normalizeSignal(proposedOption)
@@ -1353,14 +1397,16 @@ export async function executeApplyProposal(
         return {
           kind: "suggestion",
           answer: null,
-          note: `"${questionPrompt(control)}" is a declaration only the person can make, and they have not approved that kind in advance. Job Finder left it unticked and will hand it to them with the finished form. Do not try to tick it again; carry on with the rest of the application, and when everything else is done call finish.`,
-          question: buildPendingQuestion({
-            control,
-            jobId: config.application.jobId,
-            detectedAt: at,
-            suggestion: null,
-            siblings: observation.controls,
-          }),
+          note: `"${questionPrompt(control)}" is a declaration only the person can make, and they have not approved that kind in advance. Job Finder left it unticked.${control.required ? " It will be handed to them with the finished form." : " It is optional, so no answer is needed."} Do not try to tick it again; carry on with the rest of the application, and when everything else is done call finish.`,
+          question: control.required
+            ? buildPendingQuestion({
+                control,
+                jobId: config.application.jobId,
+                detectedAt: at,
+                suggestion: null,
+                siblings: observation.controls,
+              })
+            : null,
           controlRef: control.ref,
           observation,
         };

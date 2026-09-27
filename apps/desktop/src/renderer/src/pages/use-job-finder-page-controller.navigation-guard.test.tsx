@@ -661,3 +661,40 @@ describe("useJobFinderPageController navigation guard", () => {
     expect(harness.router.state.location.hash).toBe("#section-anchor");
   });
 });
+
+it("protects search-plan drafts on route changes and clears protection after discard", async () => {
+  configureWindowUnemployed(createReadyWorkspace());
+  const harness = mountGuardedController();
+  await waitForReady(harness);
+  act(() => harness.current?.context?.onSearchPlanSurfaceDirtyChange(true));
+  fireEvent.click(screen.getByTestId("link-to-other"));
+  expect((await openUnsavedChangesDialog()).textContent).toContain(
+    "Unsaved search-plan changes",
+  );
+  await stayOnPage();
+  expect(harness.router.state.location.pathname).toBe("/guard");
+  fireEvent.click(screen.getByTestId("link-to-other"));
+  await openUnsavedChangesDialog();
+  await leaveWithoutSaving();
+  expect(harness.router.state.location.pathname).toBe("/other");
+  await act(async () => {
+    await harness.router.navigate(-1);
+  });
+  expect(harness.router.state.location.pathname).toBe("/guard");
+  expect(screen.queryByRole("dialog")).toBeNull();
+});
+
+it("allows navigation after the search-plan editor reports a successful save", async () => {
+  configureWindowUnemployed(createReadyWorkspace());
+  const harness = mountGuardedController();
+  await waitForReady(harness);
+  act(() => {
+    harness.current?.context?.onSearchPlanSurfaceDirtyChange(true);
+    harness.current?.context?.onSearchPlanSurfaceDirtyChange(false);
+  });
+  fireEvent.click(screen.getByTestId("link-to-other"));
+  await waitFor(() =>
+    expect(harness.router.state.location.pathname).toBe("/other"),
+  );
+  expect(screen.queryByRole("dialog")).toBeNull();
+});

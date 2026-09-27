@@ -30,6 +30,12 @@ export function getEmbeddedBrowserFocusAction(input: {
   held: boolean;
   bannerOnTab: boolean;
   handoverPending: boolean;
+  /**
+   * The person is closing this tab rather than stepping into it. Only runs
+   * that work in it stop: a run with no tab yet (an application waiting for
+   * a free tab) was stopped as "you took over" by the close that freed one.
+   */
+  closingTab?: boolean;
 }): EmbeddedBrowserFocusAction {
   if (input.held || input.handoverPending) return { type: "none" };
   const owners = input.operations
@@ -39,6 +45,7 @@ export function getEmbeddedBrowserFocusAction(input: {
   if (input.parked) {
     return input.bannerOnTab ? { type: "dismiss_attention" } : { type: "none" };
   }
+  if (input.closingTab) return { type: "none" };
   const unclaimed = input.operations
     .filter((operation) => operation.tabIds.length === 0)
     .map((operation) => operation.id);

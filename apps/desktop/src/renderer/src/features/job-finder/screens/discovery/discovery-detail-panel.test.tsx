@@ -158,6 +158,40 @@ describe("DiscoveryDetailPanel listing capture copy", () => {
       screen.queryByText("Headway Featured Full-Time United States of America"),
     ).toBeNull();
   });
+
+  it("explains thin listing content without calling it an access refusal", () => {
+    render(
+      <MemoryRouter>
+        <DiscoveryDetailPanel
+          applicationRecords={[]}
+          discoveryTargets={[]}
+          isJobPending={() => false}
+          onDismissJob={vi.fn()}
+          onOpenApplication={vi.fn()}
+          onQueueJob={vi.fn()}
+          selectedJob={
+            {
+              ...baseSelectedJob,
+              description: "A short listing card",
+              listingDetailCapture: { state: "blocked", textHash: null },
+              listingDetailFetch: {
+                attemptedAt: "2026-09-12T10:00:00.000Z",
+                outcome: "no_detail",
+                method: null,
+                detail: "The page published too little readable text.",
+              },
+            } as SavedJob
+          }
+        />
+      </MemoryRouter>,
+    );
+    expect(
+      screen.getByTestId("discovery-detail-listing-text").textContent,
+    ).toContain("too little readable job detail");
+    expect(
+      screen.getByTestId("discovery-detail-listing-text").textContent,
+    ).not.toContain("did not let");
+  });
 });
 
 describe("DiscoveryDetailPanel application handoff", () => {

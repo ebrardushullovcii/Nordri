@@ -1397,6 +1397,20 @@ describe("compactJobDescriptionForModel", () => {
 });
 
 describe("collectListingRequestedSkills", () => {
+  it.each([
+    "Practical knowledge of Terraform and Kubernetes.",
+    "Experience with practical Terraform and Kubernetes skills.",
+  ])(
+    "keeps technologies without the qualification adjective in %s",
+    (qualification) => {
+      expect(
+        collectListingRequestedSkills({
+          keySkills: [],
+          minimumQualifications: [qualification],
+        }).sort(),
+      ).toEqual(["Kubernetes", "Terraform"]);
+    },
+  );
   it("does not take a word of the posting title or employer name for a skill", () => {
     const description = [
       "Cloud Garden Workshop · Remote, Europe · Posted 12d ago",

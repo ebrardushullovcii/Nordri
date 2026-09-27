@@ -1209,6 +1209,103 @@ describe("buildJobFinderTaskCenterModel", () => {
     expect(task.applyRecoveryJobIds).toBeUndefined();
   });
 
+  test("does not name a job the person took over as the one being applied to", () => {
+    const task = findTask(
+      buildJobFinderTaskCenterModel({
+        workspace: createWorkspace({
+          applyRuns: [
+            createApplyRun({
+              state: "running",
+              jobIds: ["job_1", "job_2"],
+              currentJobId: "job_1",
+              totalJobs: 2,
+              pendingJobs: 1,
+            }),
+          ],
+          applyJobResults: [
+            {
+              id: "result_taken_over",
+              runId: "apply_current",
+              jobId: "job_1",
+              state: "failed",
+              summary: "You took over this application.",
+              startedAt: "2026-07-31T10:00:00.000Z",
+              updatedAt: "2026-07-31T10:05:00.000Z",
+            },
+            {
+              id: "result_next",
+              runId: "apply_current",
+              jobId: "job_2",
+              state: "planned",
+              startedAt: "2026-07-31T10:00:00.000Z",
+              updatedAt: "2026-07-31T10:00:00.000Z",
+            },
+          ] as unknown as JobFinderWorkspaceSnapshot["applyJobResults"],
+          discoveryJobs: [
+            { id: "job_1", title: "Backend Engineer", company: "Willow" },
+            { id: "job_2", title: "Data Engineer", company: "Meadow" },
+          ] as unknown as JobFinderWorkspaceSnapshot["discoveryJobs"],
+        }),
+        isDiscoveryPending: false,
+        isResumeImportPending: false,
+      }),
+      "apply",
+    );
+    expect(task.sourceLabel).toBe("Meadow · Data Engineer");
+  });
+
+  test("does not count a job a later run took up again", () => {
+    const task = findTask(
+      buildJobFinderTaskCenterModel({
+        workspace: createWorkspace({
+          applyRuns: [
+            createApplyRun({
+              state: "completed",
+              jobIds: ["job_1", "job_2"],
+              totalJobs: 2,
+              pendingJobs: 0,
+              failedJobs: 1,
+              submittedJobs: 1,
+              updatedAt: "2026-07-31T11:00:00.000Z",
+            }),
+          ],
+          applyJobResults: [
+            {
+              id: "result_taken_over",
+              runId: "apply_current",
+              jobId: "job_1",
+              state: "failed",
+              startedAt: "2026-07-31T10:00:00.000Z",
+              updatedAt: "2026-07-31T10:05:00.000Z",
+            },
+            {
+              id: "result_sent",
+              runId: "apply_current",
+              jobId: "job_2",
+              state: "submitted",
+              startedAt: "2026-07-31T10:01:00.000Z",
+              updatedAt: "2026-07-31T10:06:00.000Z",
+            },
+            {
+              id: "result_carried_on",
+              runId: "apply_later",
+              jobId: "job_1",
+              state: "submitted",
+              startedAt: "2026-07-31T10:20:00.000Z",
+              updatedAt: "2026-07-31T10:30:00.000Z",
+            },
+          ] as unknown as JobFinderWorkspaceSnapshot["applyJobResults"],
+        }),
+        isDiscoveryPending: false,
+        isResumeImportPending: false,
+      }),
+      "apply",
+    );
+    expect(task.countLabel).not.toContain("need attention");
+    expect(task.stageLabel).not.toBe("Some applications need attention");
+    expect(task.resumeActionLabel).not.toBe("Prepare remaining jobs");
+  });
+
   test.each([
     [{ failedJobs: 1 }, "Some applications need attention"],
     [{ blockedJobs: 1 }, "Some applications need attention"],
@@ -1377,6 +1474,22 @@ describe("buildJobFinderTaskCenterModel", () => {
     expect(task.canCancel).toBe(true);
     expect(task.cancelKind).toBe("tailored_drafts");
     expect(model.activeCount).toBe(1);
+  });
+
+  test("a stopped tailored-draft batch reads Stopping and offers no second stop", () => {
+    const model = buildJobFinderTaskCenterModel({
+      workspace: createWorkspace(),
+      isDiscoveryPending: false,
+      isResumeImportPending: false,
+      tailoredDraftPreparation: createTailoredDraftPreparation({
+        stopRequested: true,
+      }),
+    });
+    const task = findTask(model, "tailored_drafts");
+
+    expect(task.status).toBe("active");
+    expect(task.stageLabel).toMatch(/^Stopping/);
+    expect(task.canCancel).toBe(false);
   });
 
   test("reports tailored-draft failures in progress without claiming durability", () => {

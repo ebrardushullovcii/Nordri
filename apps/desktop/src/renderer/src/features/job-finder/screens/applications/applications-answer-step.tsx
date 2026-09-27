@@ -18,7 +18,9 @@ export interface ApplicationAnswerStep {
   onCommand: (command: UserActionCommandInput) => void | Promise<void>;
 }
 
-export function ApplicationAnswerStepCard(props: { step: ApplicationAnswerStep }) {
+export function ApplicationAnswerStepCard(props: {
+  step: ApplicationAnswerStep;
+}) {
   const { request, questions, isPending, onCommand } = props.step;
   if (request.state === "verifying") {
     return (
@@ -35,8 +37,7 @@ export function ApplicationAnswerStepCard(props: { step: ApplicationAnswerStep }
   return (
     <div className="grid min-w-0 gap-2" data-testid="application-answer-step">
       <p className="text-(length:--text-small) leading-6 text-foreground">
-        The form asks something your profile does not answer. Answer here and
-        Job Finder carries on.
+        Answer here and Job Finder will continue.
       </p>
       <QuestionAnswerForm
         isPending={isPending}

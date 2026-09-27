@@ -37,4 +37,39 @@ describe("searchJobFinderEntries", () => {
       searchJobFinderEntries(entries, "engineer", { campaignId: "campaign-b" }),
     ).toEqual([{ entries: [entries[1]], kind: "application" }]);
   });
+
+  it("keeps the first match when the result limit is one", () => {
+    expect(searchJobFinderEntries(entries, "engineer", { limit: 1 })).toEqual([
+      { entries: [entries[0]], kind: "job" },
+    ]);
+  });
+
+  it("keeps application and resume results reachable when many jobs match", () => {
+    const manyJobs = Array.from({ length: 50 }, (_, index) => ({
+      ...entries[0]!,
+      id: `job-${index}`,
+    }));
+    const application = { ...entries[1]!, title: "Platform application" };
+    const resume: JobFinderGlobalSearchEntry = {
+      href: "/job-finder/review-queue",
+      id: "resume",
+      kind: "document",
+      metadata: [],
+      subtitle: "Platform resume",
+      title: "Platform resume",
+    };
+
+    const groups = searchJobFinderEntries(
+      [...manyJobs, application, resume],
+      "platform",
+      { limit: 5 },
+    );
+
+    expect(groups.flatMap((group) => group.entries)).toHaveLength(5);
+    expect(groups.map((group) => group.kind)).toEqual([
+      "job",
+      "application",
+      "document",
+    ]);
+  });
 });

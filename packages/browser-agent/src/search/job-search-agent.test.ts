@@ -1,5 +1,6 @@
 import {
   CandidateProfileSchema,
+  JobPostingSchema,
   type RawApplyPage,
 } from "@unemployed/contracts";
 import { describe, expect, test, vi } from "vitest";
@@ -11,6 +12,7 @@ import type { AgentConfig } from "../types";
 import type { Page } from "playwright";
 import { runJobSearchAgent } from "./job-search-agent";
 import { createJobSearchPrompts } from "./job-search-prompts";
+import { captureCompactDiscoveryObservation } from "../compact-discovery-observer";
 
 function rawPage(overrides: Partial<RawApplyPage> = {}): RawApplyPage {
   return {
@@ -302,6 +304,96 @@ describe("job search agent", () => {
     );
   });
 
+  test("an uncapped default search does not tell the model to stop at a numeric hint", () => {
+    const prompts = createJobSearchPrompts(config({ retainAllFound: true }));
+    expect(prompts.system).toContain("save all suitable results you find");
+    expect(prompts.system).toContain("honor any limit in the person's request");
+    expect(prompts.system).not.toContain("Find up to 10");
+  });
+
+  test("a conflicting goal does not promise to override Best matches only filters", () => {
+    const request = {
+      intent: "Find customer support roles instead",
+      freshness: "any" as const,
+      sourceIds: "all" as const,
+    };
+    const strict = createJobSearchPrompts(
+      config({
+        promptContext: {
+          siteLabel: "Example",
+          searchMode: "precision",
+          searchRequest: request,
+        },
+      }),
+    );
+    expect(strict.system).toContain("cannot override them");
+    expect(strict.system).toContain(
+      "Explain the conflict in your finish reason",
+    );
+    expect(strict.system).toContain(
+      "save no jobs: do not fall back to the saved role",
+    );
+    expect(strict.system).not.toContain("may narrow or redirect");
+    const broad = createJobSearchPrompts(
+      config({
+        promptContext: {
+          siteLabel: "Example",
+          searchMode: "scale",
+          searchRequest: request,
+        },
+      }),
+    );
+    expect(broad.system).toContain("may narrow or redirect");
+  });
+
+  test("the model sees the feed, goal and recency choice and selects original records", async () => {
+    const catalog = ["Platform Engineer", "Data Engineer"].map((title, id) =>
+      JobPostingSchema.parse({
+        ...posting(title, "Example", String(id)),
+        source: "target_site",
+        discoveryMethod: "public_api",
+        discoveredAt: "2026-09-20T10:00:00Z",
+      }),
+    );
+    const model = scripted([
+      { name: "list_catalog_jobs", args: { sort: "recent" } },
+      { name: "save_catalog_jobs", args: { ids: [1] } },
+      {
+        name: "finish",
+        args: { reason: "The data role fits the requested focus." },
+      },
+    ]);
+    const seen: string[] = [];
+    const result = await runJobSearchAgent({
+      hands: hands({ current: rawPage() }),
+      config: config({
+        sourceCatalog: catalog,
+        promptContext: {
+          siteLabel: "Example",
+          searchRequest: {
+            intent: "Find data roles",
+            freshness: "recent",
+            sourceIds: "all",
+          },
+        },
+      }),
+      llmClient: {
+        chatWithTools: (messages, tools, options) => {
+          seen.push(messages.map((message) => message.content).join("\n"));
+          return model.chatWithTools(messages, tools, options);
+        },
+      },
+      jobExtractor: extractor,
+    });
+    expect(seen[0]).toContain("Find data roles");
+    expect(seen[0]).toContain("Freshness: prefer postings marked as recent");
+    expect(seen[0]).toContain("public feed already supplied 2 postings");
+    expect(result.jobs).toEqual([catalog[1]]);
+    expect(result.phaseCompletionReason).toBe(
+      "The data role fits the requested focus.",
+    );
+  });
+
   test("a single temporary model failure does not end the search", async () => {
     const pages = { current: rawPage() };
     const llm = scripted([
@@ -333,6 +425,62 @@ describe("job search agent", () => {
     expect(result.jobs).toHaveLength(2);
     expect(result.incomplete).toBe(false);
     expect(result.error).toBeUndefined();
+  });
+
+  test("gives extraction observed posting URLs without saving scanner candidates automatically", async () => {
+    const pages = { current: rawPage() };
+    const jobUrls = [
+      "https://jobs.example.test/jobs/one",
+      "https://jobs.example.test/jobs/two",
+    ];
+    const page = {
+      url: () => pages.current.url,
+      title: () => Promise.resolve("Careers"),
+      locator: () => ({ innerText: () => Promise.resolve(pages.current.bodyText) }),
+      evaluate: () => Promise.resolve({
+        structuredPostings: jobUrls.map((canonicalUrl) => ({
+          sourceJobId: null,
+          canonicalUrl,
+          title: "Platform Engineer",
+          company: "Northwind",
+          location: "Manchester",
+          description: "Build dependable platforms.",
+          postedAtText: null,
+          salaryText: null,
+          employmentType: null,
+          workModeHints: [],
+        })),
+        cardContainers: [],
+        elements: [],
+        cardSignatures: [],
+      }),
+    } as unknown as Page;
+    const observed = await captureCompactDiscoveryObservation({
+      page,
+      targetId: "careers",
+      observationId: "test_identity",
+      revision: 1,
+      observedAt: "2026-09-26T10:00:00.000Z",
+    });
+    expect(observed.kind).toBe("supported");
+    if (observed.kind !== "supported") throw new Error("Expected job metadata.");
+    expect(observed.postingCandidates.map((job) => job.canonicalUrl)).toEqual(jobUrls);
+
+    const extractJobsFromPage = vi.fn<JobExtractor["extractJobsFromPage"]>(() => Promise.resolve([]));
+    const result = await runJobSearchAgent({
+      hands: hands(pages),
+      page,
+      config: config(),
+      llmClient: scripted([
+        { name: "extract_jobs", args: { pageType: "job_detail" } },
+        { name: "finish", args: { reason: "Read the page." } },
+      ]),
+      jobExtractor: { extractJobsFromPage },
+    });
+    const extractionText = extractJobsFromPage.mock.calls[0]?.[0].pageText;
+    for (const url of jobUrls) expect(extractionText).toContain(url);
+    expect(extractionText).toContain("untrusted page evidence");
+    expect(result.jobs).toEqual([]);
   });
 
   test("repairs a truncated detail title from the page's own heading before saving", async () => {

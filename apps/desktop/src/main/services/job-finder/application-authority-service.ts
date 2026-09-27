@@ -81,6 +81,10 @@ export interface JobFinderApplicationAuthorityService {
   update(
     input: UpdateApplicationAuthorityEnvelopeInput,
   ): Promise<ApplicationAuthorityEnvelopeMutationResult>;
+  /** Atomically replaces a used grant while keeping its previous revision inspectable. */
+  replaceUsed(
+    input: UpdateApplicationAuthorityEnvelopeInput,
+  ): Promise<ApplicationAuthorityEnvelopeMutationResult>;
   revoke(
     input: RevokeApplicationAuthorityEnvelopeInput,
   ): Promise<ApplicationAuthorityEnvelopeMutationResult>;
@@ -172,7 +176,8 @@ async function buildDecisionPolicy(input: {
   revision: number;
 }) {
   const elevated =
-    input.mode === "confirm_before_submit" || input.mode === "autonomous_submit";
+    input.mode === "confirm_before_submit" ||
+    input.mode === "autonomous_submit";
   if (!elevated && !input.intermediateMutationsAuthorized) {
     return null;
   }
@@ -584,6 +589,76 @@ export function createJobFinderApplicationAuthorityService(
             expectedRevision: current.revision,
           }),
         );
+      });
+    },
+
+    async replaceUsed(
+      input: UpdateApplicationAuthorityEnvelopeInput,
+    ): Promise<ApplicationAuthorityEnvelopeMutationResult> {
+      return withMutationLock(async () => {
+        const parsedInput =
+          UpdateApplicationAuthorityEnvelopeInputSchema.parse(input);
+        const replacedAt = parseClockValue(now());
+        assertExpiryIsFuture(parsedInput.expiresAt, replacedAt);
+        const repository = await resolveRepository();
+        const current = await repository.getApplicationAuthorityEnvelope(
+          parsedInput.id,
+        );
+        if (current === null) {
+          return parseMutationResult({ status: "missing", current: null });
+        }
+        if (
+          current.status !== "active" ||
+          current.revision !== parsedInput.expectedRevision
+        ) {
+          return parseMutationResult({ status: "stale", current });
+        }
+        const decisionPolicy = await buildDecisionPolicy({
+          repository,
+          mode: parsedInput.mode,
+          intermediateMutationsAuthorized:
+            parsedInput.intermediateMutationsAuthorized,
+          preApprovedAttestationKinds: parsedInput.preApprovedAttestationKinds,
+          salaryDisclosure: parsedInput.salaryDisclosure,
+          revision: 1,
+        });
+        const replacement = ApplicationAuthorityEnvelopeSchema.parse({
+          mode: parsedInput.mode,
+          scope: parsedInput.scope,
+          maxApplicationsPerRun: parsedInput.maxApplicationsPerRun,
+          maxApplicationsPerLocalDay: parsedInput.maxApplicationsPerLocalDay,
+          intermediateMutationsAuthorized:
+            parsedInput.intermediateMutationsAuthorized,
+          accountCreationAuthorized: false,
+          allowedResumeSha256: parsedInput.allowedResumeSha256,
+          allowedOrigins: parsedInput.allowedOrigins,
+          expiresAt: parsedInput.expiresAt,
+          id: `authority_${idFactory()}`,
+          status: "active",
+          revision: 1,
+          createdAt: replacedAt,
+          revokedAt: null,
+          decisionPolicy,
+        });
+        const result = await repository.replaceApplicationAuthorityEnvelope({
+          currentId: current.id,
+          expectedRevision: current.revision,
+          replacement,
+          revokedAt: replacedAt,
+        });
+        if (result.status === "applied") {
+          return parseMutationResult({
+            status: "applied",
+            envelope: result.envelope,
+          });
+        }
+        if (result.status === "missing") {
+          return parseMutationResult({ status: "missing", current: null });
+        }
+        return parseMutationResult({
+          status: "stale",
+          current: result.current,
+        });
       });
     },
 

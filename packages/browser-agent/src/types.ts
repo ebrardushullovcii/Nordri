@@ -117,6 +117,10 @@ export interface AgentCompactionStatus {
 }
 
 export interface AgentConfig {
+  /** No person-specified result cap; retain every suitable posting found. */
+  retainAllFound?: boolean;
+  /** Public feed postings available for the model to inspect and select. */
+  sourceCatalog?: JobPosting[];
   source: JobSource;
   maxSteps: number;
   /** Legacy-compatible emergency ceiling. Normal completion is progress based. */

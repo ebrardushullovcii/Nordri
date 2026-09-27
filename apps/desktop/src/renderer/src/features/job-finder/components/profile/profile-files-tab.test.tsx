@@ -171,4 +171,53 @@ describe("ProfileFilesTab", () => {
     await flush();
     expect(screen.queryByRole("status")).toBeNull();
   });
+
+  it("starts on the kind the card asked for when opened from a transcript card", async () => {
+    const importCandidateAsset = vi
+      .fn()
+      .mockResolvedValue({ status: "cancelled" });
+    Object.defineProperty(window, "unemployed", {
+      configurable: true,
+      value: {
+        jobFinder: {
+          listCandidateAssets: vi.fn().mockResolvedValue({ assets: [] }),
+          importCandidateAsset,
+          deleteCandidateAsset: vi.fn(),
+          restoreCandidateAsset: vi.fn(),
+        },
+      },
+    });
+    render(<ProfileFilesTab requestedKind="transcript" />);
+    await flush();
+    fireEvent.click(screen.getByRole("button", { name: "Add a file" }));
+    await flush();
+    expect(importCandidateAsset).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "transcript" }),
+    );
+  });
+
+  it("starts on the first asked-for kind the person has no file of yet", async () => {
+    const importCandidateAsset = vi
+      .fn()
+      .mockResolvedValue({ status: "cancelled" });
+    Object.defineProperty(window, "unemployed", {
+      configurable: true,
+      value: {
+        jobFinder: {
+          // A portfolio is already there; the card asked for both.
+          listCandidateAssets: vi.fn().mockResolvedValue({ assets: [asset] }),
+          importCandidateAsset,
+          deleteCandidateAsset: vi.fn(),
+          restoreCandidateAsset: vi.fn(),
+        },
+      },
+    });
+    render(<ProfileFilesTab requestedKind="portfolio,transcript" />);
+    await flush();
+    fireEvent.click(screen.getByRole("button", { name: "Add a file" }));
+    await flush();
+    expect(importCandidateAsset).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "transcript" }),
+    );
+  });
 });

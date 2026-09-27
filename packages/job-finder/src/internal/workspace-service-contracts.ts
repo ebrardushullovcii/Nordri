@@ -9,6 +9,7 @@ import type {
   ApplicationCrmExportResult,
   ApplicationCrmMutationInput,
   ApplicationCrmSettings,
+  ApplicationAutomationMode,
   AppearanceTheme,
   ApplicationPacket,
   CampaignRuleFunnelProjection,
@@ -529,6 +530,7 @@ export interface JobFinderWorkspaceService {
   ): Promise<JobFinderWorkspaceSnapshot>;
   startAutoApplyQueueRun(
     jobIds: readonly string[],
+    applicationAutomationMode?: ApplicationAutomationMode,
   ): Promise<JobFinderWorkspaceSnapshot>;
   approveApplyRun(runId: string): Promise<JobFinderWorkspaceSnapshot>;
   cancelApplyRun(runId: string): Promise<JobFinderWorkspaceSnapshot>;
@@ -693,9 +695,7 @@ export interface ResolvedApplicationCandidateAsset {
 
 export interface CandidateAssetResolver {
   /** Lists assets the local library may offer to an application. */
-  list?(
-    input: CandidateAssetListInput,
-  ): Promise<CandidateAssetListResult>;
+  list?(input: CandidateAssetListInput): Promise<CandidateAssetListResult>;
   resolveForApplication(
     assetId: string,
   ): Promise<ResolvedApplicationCandidateAsset>;

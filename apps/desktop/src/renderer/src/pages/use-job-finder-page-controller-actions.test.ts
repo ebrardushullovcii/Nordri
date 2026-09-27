@@ -18,6 +18,7 @@ import {
   createDiscoveryWorkspaceRefreshCoordinator,
   consumeFirstSearchRequest,
   createPrimaryPageActions,
+  describeAutoApplyQueueStart,
   describePreparedApplicationSubmitResult,
   clearJobFinderNavigationHint,
   noteJobFinderNavigation,
@@ -25,6 +26,41 @@ import {
   stripActionStateOwner,
   type ActionStateStatusWrite,
 } from "./use-job-finder-page-controller-actions";
+
+describe("describeAutoApplyQueueStart", () => {
+  it("counts the jobs the new batch took and names the one held back", () => {
+    const snapshot = {
+      applyRuns: [
+        { id: "old", createdAt: "2026-09-27T01:00:00.000Z", jobIds: ["a"] },
+        {
+          id: "new",
+          createdAt: "2026-09-27T02:00:00.000Z",
+          jobIds: ["dusk", "willow"],
+        },
+      ],
+      reviewQueue: [{ jobId: "cedar", title: "Cedar Engineer" }],
+    } as unknown as Parameters<typeof describeAutoApplyQueueStart>[0];
+    expect(
+      describeAutoApplyQueueStart(snapshot, ["cedar", "dusk", "willow"]),
+    ).toBe(
+      "2 applications started. Watch them in Applications. Cedar Engineer waits: its resume has a line for you to decide first.",
+    );
+    expect(describeAutoApplyQueueStart(snapshot, ["dusk", "willow"])).toBe(
+      "2 applications started. Watch them in Applications.",
+    );
+    // Home shows the running batch itself, so it keeps only a held-back job.
+    expect(
+      describeAutoApplyQueueStart(snapshot, ["dusk", "willow"], {
+        onlyWhenHeldBack: true,
+      }),
+    ).toBeNull();
+    expect(
+      describeAutoApplyQueueStart(snapshot, ["cedar", "dusk", "willow"], {
+        onlyWhenHeldBack: true,
+      }),
+    ).toContain("Cedar Engineer waits");
+  });
+});
 
 describe("describePreparedApplicationSubmitResult", () => {
   const snapshotWith = (

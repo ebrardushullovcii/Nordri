@@ -44,6 +44,12 @@ import type {
 } from "./runtime-types";
 import { ApplicationNavigationError } from "./application-navigation-error";
 import {
+  applicationSiteKey,
+  createApplicationPreparationScheduler,
+  type ApplicationPreparationLease,
+} from "./application-preparation-scheduler";
+import { guardApplicationPreparationSession } from "./application-preparation-session";
+import {
   buildPreparationResult,
   createApplicationRunServiceWorkerSentinel,
   ensurePrepareOnlyMutationGuard,
@@ -605,6 +611,11 @@ export interface BrowserAgentRuntimeOptions {
     getOpenBrowser(): Promise<Browser | null>;
     close(): Promise<void>;
     assertAutomationSafe(): void | Promise<void>;
+    /**
+     * Every tab the host has open, including the person's own tabs that
+     * automation never sees. The host's tab limit counts those too.
+     */
+    openTabCount?(): number;
   };
   headless?: boolean;
   maxJobsPerRun?: number;
@@ -1150,7 +1161,7 @@ async function prepareAutomationPageForTarget(
     }
   }
 
-  if (options.bringToFront !== false || navigatedToTarget) {
+  if (options.bringToFront !== false) {
     await bringPageToFrontBestEffort(page);
   }
 
@@ -1159,6 +1170,76 @@ async function prepareAutomationPageForTarget(
     alreadyAtTarget,
     navigatedToTarget,
   };
+}
+
+const pendingEmbeddedApplicationTabs = new WeakMap<BrowserContext, number>();
+
+export async function reserveEmbeddedApplicationTab(
+  context: BrowserContext,
+  signal?: AbortSignal,
+  closeIdlePage?: () => Promise<boolean>,
+  /**
+   * Told once when the browser is full and this application waits for a
+   * tab. Without it the wait is bounded and ends in "close a tab" (old
+   * callers); with it the application waits until a tab frees or it is
+   * stopped, and the caller says so on the application.
+   */
+  onWaiting?: () => void,
+  /** The host's own count of open tabs, when it has tabs automation cannot see. */
+  hostTabCount?: () => number,
+): Promise<() => void> {
+  // The embedded browser allows eight tabs. Keep one spare for a site's popup
+  // and let a waiting application use the next tab the person closes.
+  const startedAt = Date.now();
+  const deadline = startedAt + 20_000;
+  let toldWaiting = false;
+  while (true) {
+    signal?.throwIfAborted();
+    const occupied =
+      Math.max(
+        context.pages().filter((page) => !page.isClosed()).length,
+        hostTabCount?.() ?? 0,
+      ) + (pendingEmbeddedApplicationTabs.get(context) ?? 0);
+    if (occupied < 7) {
+      pendingEmbeddedApplicationTabs.set(
+        context,
+        (pendingEmbeddedApplicationTabs.get(context) ?? 0) + 1,
+      );
+      let released = false;
+      return () => {
+        if (released) return;
+        released = true;
+        const remaining = (pendingEmbeddedApplicationTabs.get(context) ?? 1) - 1;
+        if (remaining > 0) pendingEmbeddedApplicationTabs.set(context, remaining);
+        else pendingEmbeddedApplicationTabs.delete(context);
+      };
+    }
+    // An empty tab nobody uses (the browser's startup tab) is not worth a
+    // form: close it before waiting on the person.
+    if (closeIdlePage && (await closeIdlePage())) continue;
+    if (onWaiting) {
+      if (!toldWaiting && Date.now() - startedAt >= 2_000) {
+        toldWaiting = true;
+        onWaiting();
+      }
+    } else if (Date.now() >= deadline)
+      throw new Error("Close a browser tab before opening another one.");
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        signal?.removeEventListener("abort", onAbort);
+        resolve();
+      }, 250);
+      const onAbort = () => {
+        clearTimeout(timer);
+        reject(
+          signal?.reason instanceof Error
+            ? signal.reason
+            : new DOMException("Aborted", "AbortError"),
+        );
+      };
+      signal?.addEventListener("abort", onAbort, { once: true });
+    });
+  }
 }
 
 async function getPrimaryPageIfReady(context: BrowserContext): Promise<Page> {
@@ -1208,7 +1289,20 @@ export function createBrowserAgentRuntime(
   let browserPromise: Promise<Browser> | null = null;
   let launchedChromeProcess: ChildProcess | null = null;
   let ownsChromeProcess = false;
-  let applicationExecutionTail: Promise<void> = Promise.resolve();
+  const configuredApplicationConcurrency = Number.parseInt(
+    process.env.UNEMPLOYED_APPLICATION_PREPARATION_CONCURRENCY ?? "2",
+    10,
+  );
+  const applicationPreparationScheduler = createApplicationPreparationScheduler(
+    Number.isFinite(configuredApplicationConcurrency)
+      ? Math.max(1, Math.min(5, configuredApplicationConcurrency))
+      : 2,
+  );
+  const usesEmbeddedBrowserHost = Boolean(options.browserHost);
+  const hostOpenTabCount = options.browserHost?.openTabCount;
+  const hostTabCount = hostOpenTabCount
+    ? () => hostOpenTabCount.call(options.browserHost)
+    : undefined;
   // A person can prepare several Ask-before-sending forms or open unrelated
   // tabs. Keep every final action bound to its exact preparation identity.
   const preparedApplicationPages = new Map<string, Page>();
@@ -1311,11 +1405,36 @@ export function createBrowserAgentRuntime(
     }
   }
 
+  /** Pages of applications already sent: first to go when a tab is needed. */
+  const sentApplicationPages = new Set<Page>();
   const getLivePreparedApplicationPages = (): Page[] => [
     ...new Set(
       [...preparedApplicationPages.values()].filter((page) => !page.isClosed()),
     ),
   ];
+
+  async function getProtectedApplicationPages(context: BrowserContext): Promise<Page[]> {
+    const roots = new Set([
+      ...getLivePreparedApplicationPages(),
+      ...pagesInUseByOtherRuns(),
+    ]);
+    const protectedPages = new Set(roots);
+    for (const candidate of context.pages()) {
+      if (candidate.isClosed() || protectedPages.has(candidate)) continue;
+      let current: Page | null = candidate;
+      const seen = new Set<Page>();
+      for (let depth = 0; current && depth < 8; depth += 1) {
+        if (seen.has(current) || typeof current.opener !== "function") break;
+        seen.add(current);
+        current = await current.opener().catch(() => null);
+        if (current && roots.has(current)) {
+          protectedPages.add(candidate);
+          break;
+        }
+      }
+    }
+    return [...protectedPages];
+  }
   const windowBoundsPath = join(
     options.userDataDir,
     "unemployed-browser-window-bounds.json",
@@ -1742,6 +1861,19 @@ export function createBrowserAgentRuntime(
     agentOptions: AgentDiscoveryOptions,
     onPageResolved?: (page: Page) => void,
   ): Promise<Page> {
+    if ((agentOptions.sourceCatalog?.length ?? 0) > 0) {
+      // Catalog review needs an isolated page only if the agent later chooses
+      // to browse. Do not depend on the source landing page being reachable.
+      const page = await (await getContext()).newPage();
+      onPageResolved?.(page);
+      setSessionState(
+        source,
+        "ready",
+        "Browser profile ready",
+        "The browser is available for additional source research.",
+      );
+      return page;
+    }
     const navigationTarget =
       agentOptions.startingUrls.find((url) => isHttpUrlLike(url)) ?? null;
 
@@ -1750,7 +1882,7 @@ export function createBrowserAgentRuntime(
     }
 
     const context = await getContext();
-    const retainedApplicationPages = getLivePreparedApplicationPages();
+    const retainedApplicationPages = await getProtectedApplicationPages(context);
     const prepared = await prepareAutomationPageForTarget(context, {
       targetUrl: navigationTarget,
       bringToFront: currentSessionState.status !== "ready",
@@ -1763,13 +1895,9 @@ export function createBrowserAgentRuntime(
             ),
           }
         : {}),
-      ...(retainedApplicationPages.length > 0 ||
-      pagesInUseByOtherRuns().length > 0
+      ...(retainedApplicationPages.length > 0
         ? {
-            protectedPages: [
-              ...retainedApplicationPages,
-              ...pagesInUseByOtherRuns(),
-            ],
+            protectedPages: retainedApplicationPages,
           }
         : {}),
       ...(agentOptions.signal ? { signal: agentOptions.signal } : {}),
@@ -1796,21 +1924,18 @@ export function createBrowserAgentRuntime(
     const normalizedTargetUrl =
       typeof input.targetUrl === "string" ? input.targetUrl.trim() : "";
     if (isHttpUrlLike(normalizedTargetUrl)) {
-      const retainedApplicationPages = getLivePreparedApplicationPages();
-      await prepareAutomationPageForTarget(await getContext(), {
+      const context = await getContext();
+      const retainedApplicationPages = await getProtectedApplicationPages(context);
+      await prepareAutomationPageForTarget(context, {
         targetUrl: normalizedTargetUrl,
         ...(input.reuseExistingPage !== undefined
           ? { reuseExistingPage: input.reuseExistingPage }
           : {}),
         bringToFront: true,
         closeOtherPages: true,
-        ...(retainedApplicationPages.length > 0 ||
-        pagesInUseByOtherRuns().length > 0
+        ...(retainedApplicationPages.length > 0
           ? {
-              protectedPages: [
-                ...retainedApplicationPages,
-                ...pagesInUseByOtherRuns(),
-              ],
+              protectedPages: retainedApplicationPages,
             }
           : {}),
         navigationTimeoutMs: 8_000,
@@ -2054,17 +2179,6 @@ export function createBrowserAgentRuntime(
     );
   }
 
-  function withApplicationExecutionLock<TResult>(
-    operation: () => Promise<TResult>,
-  ): Promise<TResult> {
-    const run = applicationExecutionTail.then(operation, operation);
-    applicationExecutionTail = run.then(
-      () => undefined,
-      () => undefined,
-    );
-    return run;
-  }
-
   return {
     getSessionState(source) {
       return Promise.resolve(
@@ -2084,6 +2198,15 @@ export function createBrowserAgentRuntime(
       });
     },
     async closeSession(source) {
+      if (
+        pagesInUseByOtherRuns().length > 0 ||
+        getLivePreparedApplicationPages().length > 0
+      ) {
+        return BrowserSessionStateSchema.parse({
+          ...currentSessionState,
+          source,
+        });
+      }
       if (options.browserHost) {
         await options.browserHost.close();
         resetBrowserConnection();
@@ -2244,6 +2367,11 @@ export function createBrowserAgentRuntime(
       return readRawApplyPage(page);
     },
     releaseApplicationPageBinding(_source, pageBindingKey) {
+      // Only sent applications are released. Their page may be closed when a
+      // new form needs the tab, so it no longer counts toward the limit.
+      const releasedPage = preparedApplicationPages.get(pageBindingKey);
+      if (releasedPage && !releasedPage.isClosed())
+        sentApplicationPages.add(releasedPage);
       preparedApplicationPages.delete(pageBindingKey);
       markedPreparedApplicationKeys.delete(pageBindingKey);
       preparedPagesWithPerson.delete(pageBindingKey);
@@ -2252,6 +2380,42 @@ export function createBrowserAgentRuntime(
     applyPageMechanics: applyPageMechanicsForSource,
     installApplyPrepareOnlyGuard: installApplyPrepareOnlyGuardForSource,
     executeExactlyOneFinalAction: executeExactlyOneFinalActionForSource,
+    async withApplicationPageExecution(
+      source,
+      pageBindingKey,
+      operation,
+      signal,
+    ) {
+      void source;
+      signal?.throwIfAborted();
+      await rebindPreparedApplicationPage(pageBindingKey);
+      const page = selectPreparedApplicationPage(
+        preparedApplicationPages,
+        pageBindingKey,
+      );
+      const releasePageUse = usePage(page);
+      let lease: ApplicationPreparationLease | null = null;
+      try {
+        lease = await applicationPreparationScheduler.acquire(page.url(), signal);
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          if (page.isClosed())
+            throw new Error("The prepared application page was closed.");
+          const currentUrl = page.url();
+          await lease.moveTo(currentUrl);
+          if (applicationSiteKey(page.url()) === applicationSiteKey(currentUrl))
+            break;
+          if (attempt === 2)
+            throw new Error(
+              "The prepared application page moved while waiting for its site.",
+            );
+        }
+        signal?.throwIfAborted();
+        return await operation();
+      } finally {
+        releasePageUse();
+        lease?.release();
+      }
+    },
     runDiscovery(source, searchPreferences) {
       const timestamp = new Date().toISOString();
 
@@ -2290,7 +2454,16 @@ export function createBrowserAgentRuntime(
       input: ExecuteApplicationFlowInput,
       options,
     ): Promise<ApplyExecutionResult> {
-      return withApplicationExecutionLock(async () => {
+      return (async () => {
+        const requestedUrl =
+          input.startingUrl ??
+          input.job.applicationUrl ??
+          input.job.canonicalUrl;
+        const preparationLease = await applicationPreparationScheduler.acquire(
+          requestedUrl,
+          options?.signal,
+        );
+        try {
         const executionStartedAtMs = Date.now();
         const startedAt = new Date(executionStartedAtMs).toISOString();
         const executionTimings: ApplyExecutionTiming[] = [];
@@ -2339,12 +2512,14 @@ export function createBrowserAgentRuntime(
           (isContinuation ? input.startingUrl : null) ??
           input.job.applicationUrl ??
           input.job.canonicalUrl;
+        await preparationLease.moveTo(targetUrl);
         const resumeFilePath = input.resumeArtifact.filePath.trim();
         const approvedResumeFileExists = resumeFilePath
           ? await pathExists(resumeFilePath)
           : false;
         let executionResult: ApplyExecutionResult;
         let applicationPageOpened = false;
+        let applicationPageForVisuals: Page | null = null;
 
         if (
           input.resumeArtifact.jobId !== input.job.id ||
@@ -2385,9 +2560,11 @@ export function createBrowserAgentRuntime(
           const browserPreparationStartedAtMs = Date.now();
           let formPreparationStartedAtMs: number | null = null;
           let workingPage: Page | null = null;
+          let workingPageOwnedByRun = false;
+          let releaseReservedTab: (() => void) | null = null;
           let releaseWorkingPageUse: (() => void) | null = null;
           const closeWorkingPageOnAbort = () => {
-            if (workingPage) {
+            if (workingPage && workingPageOwnedByRun) {
               void workingPage.close().catch(() => undefined);
             }
           };
@@ -2396,6 +2573,7 @@ export function createBrowserAgentRuntime(
           });
           try {
             const context = await getContext();
+            const pagesBeforeRun = new Set(context.pages());
             assertNoActiveServiceWorkerControlsApplicationOrigin({
               context,
               targetUrl,
@@ -2434,10 +2612,53 @@ export function createBrowserAgentRuntime(
                   boundPage !== null &&
                   !boundPage.isClosed() &&
                   areExactHttpUrls(boundPage.url(), targetUrl);
+                if (usesEmbeddedBrowserHost && !boundPageMatchesTarget)
+                  releaseReservedTab = await reserveEmbeddedApplicationTab(
+                    context,
+                    options?.signal,
+                    async () => {
+                      const keep = new Set(
+                        await getProtectedApplicationPages(context),
+                      );
+                      const free = (page: Page) =>
+                        !page.isClosed() &&
+                        !keep.has(page) &&
+                        !pagesInUse.has(page);
+                      // First the empty startup tab, then the page of an
+                      // application that was already sent: it stays open
+                      // for the person to see the confirmation until a new
+                      // form needs the tab.
+                      const idle =
+                        context
+                          .pages()
+                          .find(
+                            (page) =>
+                              free(page) &&
+                              (page.url() === "about:blank" ||
+                                page.url() === ""),
+                          ) ??
+                        [...sentApplicationPages].find(
+                          (page) =>
+                            free(page) && context.pages().includes(page),
+                        );
+                      if (!idle) return false;
+                      sentApplicationPages.delete(idle);
+                      await idle.close().catch(() => undefined);
+                      return idle.isClosed();
+                    },
+                    input.onWaitingForBrowserTab
+                      ? () => {
+                          void Promise.resolve(
+                            input.onWaitingForBrowserTab?.(),
+                          ).catch(() => undefined);
+                        }
+                      : undefined,
+                    hostTabCount,
+                  );
                 const protectedPreparedPages = [
                   ...otherPreparedPages,
                   ...(boundPage && !boundPageMatchesTarget ? [boundPage] : []),
-                  ...pagesInUseByOtherRuns().filter(
+                  ...(await getProtectedApplicationPages(context)).filter(
                     (page) => page !== boundPage,
                   ),
                 ];
@@ -2449,8 +2670,11 @@ export function createBrowserAgentRuntime(
                 const prepared = await prepareAutomationPageForTarget(context, {
                   targetUrl,
                   requireExactTarget: true,
-                  bringToFront: true,
-                  closeOtherPages: true,
+                  bringToFront: !usesEmbeddedBrowserHost,
+                  closeOtherPages: false,
+                  ...(usesEmbeddedBrowserHost && !boundPageMatchesTarget
+                    ? { reuseExistingPage: false }
+                    : {}),
                   ...(boundPageMatchesTarget
                     ? { preferredPage: boundPage }
                     : {}),
@@ -2462,7 +2686,10 @@ export function createBrowserAgentRuntime(
                     : {}),
                   ...(options?.signal ? { signal: options.signal } : {}),
                   onPageResolved: (page) => {
+                    releaseReservedTab?.();
+                    releaseReservedTab = null;
                     workingPage = page;
+                    workingPageOwnedByRun = !pagesBeforeRun.has(page);
                     releaseWorkingPageUse?.();
                     releaseWorkingPageUse = usePage(page);
                     options?.onAutomationPage?.(page);
@@ -2480,6 +2707,8 @@ export function createBrowserAgentRuntime(
                     );
                   },
                 });
+                await preparationLease.moveTo(prepared.page.url());
+                applicationPageForVisuals = prepared.page;
                 if (input.applicationPageBindingKey) {
                   bindPreparedApplicationPage(
                     input.applicationPageBindingKey,
@@ -2512,10 +2741,15 @@ export function createBrowserAgentRuntime(
                     "The Job Finder browser is open at the current application checkpoint.",
                   );
                   formPreparationStartedAtMs = Date.now();
-                  const applicationSession = createPlaywrightApplyPageSession({
-                    page: prepared.page,
-                    sentinel: runSentinel,
-                  });
+                  const applicationSession = guardApplicationPreparationSession(
+                    createPlaywrightApplyPageSession({
+                      page: prepared.page,
+                      sentinel: runSentinel,
+                    }),
+                    prepared.page,
+                    preparationLease,
+                    options?.signal,
+                  );
                   if (input.prepareTaskLocalCredentials) {
                     await input.prepareTaskLocalCredentials({
                       session: applicationSession,
@@ -2529,6 +2763,7 @@ export function createBrowserAgentRuntime(
                     startedAt,
                     ...(options?.signal ? { signal: options.signal } : {}),
                   });
+                  await preparationLease.moveTo(prepared.page.url());
                   options?.signal?.throwIfAborted();
                   recordExecutionTiming(
                     "form_preparation",
@@ -2642,6 +2877,7 @@ export function createBrowserAgentRuntime(
               });
             }
           } finally {
+            releaseReservedTab?.();
             (releaseWorkingPageUse as (() => void) | null)?.();
             options?.signal?.removeEventListener(
               "abort",
@@ -2649,7 +2885,8 @@ export function createBrowserAgentRuntime(
             );
             const pageToClose = workingPage as Page | null;
             if (
-              options?.signal?.aborted &&
+              (options?.signal?.aborted || !applicationPageOpened) &&
+              workingPageOwnedByRun &&
               pageToClose &&
               !pageToClose.isClosed()
             ) {
@@ -2665,7 +2902,12 @@ export function createBrowserAgentRuntime(
               mode: input.mode,
               targetUrl: executionResult.replay.lastUrl ?? targetUrl,
               ...(input.captureVisualSnapshot
-                ? { captureVisualSnapshot: input.captureVisualSnapshot }
+                ? {
+                    captureVisualSnapshot: (request: BrowserVisualSnapshotRequest) =>
+                      applicationPageForVisuals
+                        ? captureVisualSnapshotForPage(applicationPageForVisuals, request)
+                        : input.captureVisualSnapshot!(request),
+                  }
                 : {}),
               ...(input.analyzeVisualSnapshot
                 ? { analyzeVisualSnapshot: input.analyzeVisualSnapshot }
@@ -2700,7 +2942,10 @@ export function createBrowserAgentRuntime(
           visualCheckpoints: visualDiagnostics.visualCheckpoints,
           executionTimings,
         });
-      });
+        } finally {
+          preparationLease.release();
+        }
+      })();
     },
     async captureVisualSnapshot(source, request: BrowserVisualSnapshotRequest) {
       return captureVisualSnapshotForSource(source, request);
@@ -2762,7 +3007,11 @@ export function createBrowserAgentRuntime(
           pageUrl: page.url(),
           options: agentOptions,
         });
-        if (warmPageReusable && navigationTarget) {
+        // A usable public catalog is already the starting evidence. The agent
+        // can navigate later if it needs more; an unavailable landing page
+        // must not prevent it from reviewing the feed.
+        const hasSourceCatalog = (agentOptions.sourceCatalog?.length ?? 0) > 0;
+        if (!hasSourceCatalog && warmPageReusable && navigationTarget) {
           // A source check may have left its starting URL open even when that
           // URL returned 404. Reusing the page must not bypass the same
           // failure check a fresh navigation would make.
@@ -2783,7 +3032,7 @@ export function createBrowserAgentRuntime(
           }
         }
 
-        if (!warmPageReusable) {
+        if (!hasSourceCatalog && !warmPageReusable) {
           if (navigationTarget) {
             const response = await page.goto(navigationTarget, {
               waitUntil: "domcontentloaded",
@@ -2799,6 +3048,10 @@ export function createBrowserAgentRuntime(
 
         const agentConfig: AgentConfig = {
           source,
+          ...(agentOptions.sourceCatalog
+            ? { sourceCatalog: agentOptions.sourceCatalog }
+            : {}),
+          ...(agentOptions.retainAllFound ? { retainAllFound: true } : {}),
           maxSteps: agentOptions.maxSteps,
           ...(agentOptions.runControl
             ? { runControl: agentOptions.runControl }
@@ -3083,7 +3336,8 @@ export function createBrowserAgentRuntime(
         // parked for the person (sign-in, a challenge) stays open: the host
         // binds it to the request, and closing the request closes it.
         if (
-          agentOptions.dedicatedPage &&
+          (agentOptions.dedicatedPage ||
+            (agentOptions.sourceCatalog?.length ?? 0) > 0) &&
           !pageParkedForPerson &&
           page &&
           !page.isClosed() &&

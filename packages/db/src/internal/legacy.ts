@@ -1,7 +1,14 @@
 import {
+  AiApplyingBehaviorSchema,
+  AiBehaviorPreferenceSchema,
+  AiJobSearchBehaviorSchema,
+  AiProfileAssistantBehaviorSchema,
   ApplicationAttemptSchema,
+  ApplicationCrmSettingsSchema,
+  ApplicationCrmStageDefinitionSchema,
   ApplicationRecordSchema,
   CandidateProfileSchema,
+  CoverLetterPreferenceSchema,
   JobFinderDiscoveryStateSchema,
   JobFinderRepositoryStateSchema,
   JobFinderSettingsSchema,
@@ -19,6 +26,7 @@ import {
   SourceInstructionArtifactSchema,
   TailoredAssetSchema,
   type JobFinderDiscoveryState,
+  type JobFinderSettings,
   type SourceDebugRunRecord,
 } from "@unemployed/contracts";
 import { readFile } from "node:fs/promises";
@@ -27,6 +35,123 @@ import type { JobFinderRepositorySeed } from "../repository-types";
 
 function cloneValue<TValue>(value: TValue): TValue {
   return structuredClone(value);
+}
+
+// Legacy JSON has no per-field migration history. Recover valid siblings
+// instead of erasing every preference when one obsolete value fails parsing.
+function recoverLegacySettings(
+  value: unknown,
+  seed: JobFinderSettings,
+): JobFinderSettings {
+  const parsed = JobFinderSettingsSchema.safeParse(value);
+  if (parsed.success) return parsed.data;
+
+  const conservativeBehavior = AiBehaviorPreferenceSchema.parse({
+    applying: { coverLetterPolicy: "never", preApprovedDeclarations: [] },
+  });
+  const fallback = JobFinderSettingsSchema.parse({
+    ...seed,
+    humanReviewRequired: true,
+    allowAutoSubmitOverride: false,
+    applicationAutomationMode: "prepare_only",
+    aiBehavior: conservativeBehavior,
+  });
+
+  function recoverFields<T>(
+    schema: {
+      shape: Record<
+        string,
+        {
+          safeParse: (
+            input: unknown,
+          ) => { success: true; data: unknown } | { success: false };
+        }
+      >;
+      parse: (input: unknown) => T;
+    },
+    input: unknown,
+    defaults: T,
+  ): T {
+    if (!input || typeof input !== "object" || Array.isArray(input)) {
+      return cloneValue(defaults);
+    }
+    const source = input as Record<string, unknown>;
+    const defaultFields = defaults as Record<string, unknown>;
+    return schema.parse(
+      Object.fromEntries(
+        Object.entries(schema.shape).map(([key, field]) => {
+          const result = field.safeParse(source[key]);
+          return [key, result.success ? result.data : defaultFields[key]];
+        }),
+      ),
+    );
+  }
+
+  const recovered = recoverFields(JobFinderSettingsSchema, value, fallback);
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const source = value as Record<string, unknown>;
+    if (source.applicationCrm !== undefined) {
+      const crm = source.applicationCrm;
+      const defaults = ApplicationCrmSettingsSchema.parse({});
+      recovered.applicationCrm = recoverFields(ApplicationCrmSettingsSchema, crm, defaults);
+      if (crm && typeof crm === "object" && !Array.isArray(crm)) {
+        const fields = crm as Record<string, unknown>;
+        recovered.applicationCrm.noResponseAutomation = recoverFields(
+          ApplicationCrmSettingsSchema.shape.noResponseAutomation.removeDefault(),
+          fields.noResponseAutomation,
+          defaults.noResponseAutomation,
+        );
+        if (Array.isArray(fields.customStages)) {
+          recovered.applicationCrm.customStages = fields.customStages.flatMap((stage: unknown) => {
+            const parsedStage = ApplicationCrmStageDefinitionSchema.safeParse(stage);
+            return parsedStage.success ? [parsedStage.data] : [];
+          });
+        }
+      }
+    }
+    if (source.coverLetter !== undefined) {
+      recovered.coverLetter = recoverFields(
+        CoverLetterPreferenceSchema,
+        source.coverLetter,
+        CoverLetterPreferenceSchema.parse({}),
+      );
+    }
+    if (
+      source.aiBehavior !== undefined &&
+      !AiBehaviorPreferenceSchema.safeParse(source.aiBehavior).success
+    ) {
+      const behavior = source.aiBehavior;
+      recovered.aiBehavior = cloneValue(conservativeBehavior);
+      if (
+        behavior &&
+        typeof behavior === "object" &&
+        !Array.isArray(behavior)
+      ) {
+        const groups = behavior as Record<string, unknown>;
+        recovered.aiBehavior = {
+          profileAssistant: recoverFields(
+            AiProfileAssistantBehaviorSchema,
+            groups.profileAssistant,
+            conservativeBehavior.profileAssistant,
+          ),
+          jobSearch: recoverFields(
+            AiJobSearchBehaviorSchema,
+            groups.jobSearch,
+            conservativeBehavior.jobSearch,
+          ),
+          applying: recoverFields(
+            AiApplyingBehaviorSchema,
+            groups.applying,
+            conservativeBehavior.applying,
+          ),
+        };
+      }
+    }
+  }
+  console.warn(
+    "[JobFinderRepository] Repaired invalid legacy settings; valid preferences were preserved and invalid permissions were disabled. The original JSON was kept.",
+  );
+  return JobFinderSettingsSchema.parse(recovered);
 }
 
 function getLegacyJsonPath(filePath: string): string {
@@ -199,7 +324,8 @@ function migrateLegacySourceIdentifiers(
   if (data.searchPreferences && typeof data.searchPreferences === "object") {
     const searchPreferences = data.searchPreferences as Record<string, unknown>;
     const discovery =
-      searchPreferences.discovery && typeof searchPreferences.discovery === "object"
+      searchPreferences.discovery &&
+      typeof searchPreferences.discovery === "object"
         ? (searchPreferences.discovery as Record<string, unknown>)
         : null;
 
@@ -271,7 +397,10 @@ export async function readLegacySeed(
     const searchPreferences = JobSearchPreferencesSchema.safeParse(
       migratedData.searchPreferences,
     );
-    const settings = JobFinderSettingsSchema.safeParse(migratedData.settings);
+    const settings = recoverLegacySettings(
+      migratedData.settings,
+      seed.settings,
+    );
     const discovery = (() => {
       try {
         return {
@@ -295,31 +424,36 @@ export async function readLegacySeed(
     const resumeExportArtifacts = ResumeExportArtifactSchema.array().safeParse(
       migratedData.resumeExportArtifacts ?? [],
     );
-    const resumeResearchArtifacts = ResumeResearchArtifactSchema.array().safeParse(
-      migratedData.resumeResearchArtifacts ?? [],
-    );
-    const resumeValidationResults = ResumeValidationResultSchema.array().safeParse(
-      migratedData.resumeValidationResults ?? [],
-    );
-    const resumeAssistantMessages = ResumeAssistantMessageSchema.array().safeParse(
-      migratedData.resumeAssistantMessages ?? [],
-    );
+    const resumeResearchArtifacts =
+      ResumeResearchArtifactSchema.array().safeParse(
+        migratedData.resumeResearchArtifacts ?? [],
+      );
+    const resumeValidationResults =
+      ResumeValidationResultSchema.array().safeParse(
+        migratedData.resumeValidationResults ?? [],
+      );
+    const resumeAssistantMessages =
+      ResumeAssistantMessageSchema.array().safeParse(
+        migratedData.resumeAssistantMessages ?? [],
+      );
     const applicationRecords = ApplicationRecordSchema.array().safeParse(
       migratedData.applicationRecords,
     );
     const applicationAttempts = ApplicationAttemptSchema.array().safeParse(
       migratedData.applicationAttempts ?? [],
     );
-    const sourceDebugAttempts = SourceDebugWorkerAttemptSchema.array().safeParse(
-      migratedData.sourceDebugAttempts ?? [],
-    );
+    const sourceDebugAttempts =
+      SourceDebugWorkerAttemptSchema.array().safeParse(
+        migratedData.sourceDebugAttempts ?? [],
+      );
     const sourceInstructionArtifacts =
       SourceInstructionArtifactSchema.array().safeParse(
         migratedData.sourceInstructionArtifacts ?? [],
       );
-    const sourceDebugEvidenceRefs = SourceDebugEvidenceRefSchema.array().safeParse(
-      migratedData.sourceDebugEvidenceRefs ?? [],
-    );
+    const sourceDebugEvidenceRefs =
+      SourceDebugEvidenceRefSchema.array().safeParse(
+        migratedData.sourceDebugEvidenceRefs ?? [],
+      );
     const sourceDebugRuns = Array.isArray(migratedData.sourceDebugRuns)
       ? migratedData.sourceDebugRuns.flatMap((run) => {
           try {
@@ -375,7 +509,7 @@ export async function readLegacySeed(
       sourceDebugEvidenceRefs: sourceDebugEvidenceRefs.success
         ? sourceDebugEvidenceRefs.data
         : cloneValue(seed.sourceDebugEvidenceRefs),
-      settings: settings.success ? settings.data : cloneValue(seed.settings),
+      settings,
       discovery: discovery.success
         ? discovery.data
         : cloneValue(seed.discovery),

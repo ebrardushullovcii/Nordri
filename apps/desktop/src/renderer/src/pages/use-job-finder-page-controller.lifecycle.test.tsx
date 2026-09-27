@@ -70,15 +70,17 @@ function createBatchWorkspace(): JobFinderWorkspaceSnapshot {
 function createBatchHarness(options: { parkFirstCall?: boolean } = {}) {
   const parkFirstCall = options.parkFirstCall ?? true;
   const workspace = createBatchWorkspace();
-  let resolveParked: (() => void) | undefined;
-  let hasParkedFirstCall = false;
+  const activeResolvers: (() => void)[] = [];
+  const parkedIds = new Set<string>();
   const generateResume = vi.fn<GenerateResume>((jobId: string) => {
-    if (jobId === "job_1" && !hasParkedFirstCall && parkFirstCall) {
+    if (
+      ["job_1", "job_2"].includes(jobId) &&
+      !parkedIds.has(jobId) &&
+      parkFirstCall
+    ) {
+      parkedIds.add(jobId);
       return new Promise<JobFinderWorkspaceSnapshot>((resolve) => {
-        resolveParked = () => {
-          hasParkedFirstCall = true;
-          resolve(workspace);
-        };
+        activeResolvers.push(() => resolve(workspace));
       });
     }
     return Promise.resolve(workspace);
@@ -97,7 +99,7 @@ function createBatchHarness(options: { parkFirstCall?: boolean } = {}) {
 
   return {
     generateResume,
-    resolveParked: () => resolveParked?.(),
+    resolveParked: () => activeResolvers.forEach((resolve) => resolve()),
   };
 }
 
@@ -144,7 +146,9 @@ afterAll(() => {
 // a data router. A probe component publishes the live controller value so the
 // assertions keep reading the latest render's result.
 function mountController(strictMode: boolean) {
-  const mounted: { current: JobFinderPageController | null } = { current: null };
+  const mounted: { current: JobFinderPageController | null } = {
+    current: null,
+  };
 
   function ControllerProbe() {
     mounted.current = useJobFinderPageController();
@@ -187,7 +191,7 @@ describe("useJobFinderPageController tailored-draft lifecycle", () => {
     Reflect.deleteProperty(window, "unemployed");
   });
 
-  it("lets a truly unmounted controller stop the batch tail after the current item settles", async () => {
+  it("lets a truly unmounted controller stop the batch tail after both active items settle", async () => {
     const harness = createBatchHarness();
     const first = mountController(false);
     await waitFor(() =>
@@ -200,11 +204,10 @@ describe("useJobFinderPageController tailored-draft lifecycle", () => {
       firstContext?.onPrepareTailoredDrafts();
     });
     await waitFor(() =>
-      expect(harness.generateResume).toHaveBeenCalledTimes(1),
+      expect(harness.generateResume).toHaveBeenCalledTimes(2),
     );
 
-    // True teardown of the owning page controller: the parked sequential
-    // loop must end after job_1 instead of scheduling the remaining jobs.
+    // True teardown finishes both active jobs without starting the third.
     first.unmount();
 
     harness.resolveParked();
@@ -212,6 +215,7 @@ describe("useJobFinderPageController tailored-draft lifecycle", () => {
 
     expect(harness.generateResume.mock.calls.map(([jobId]) => jobId)).toEqual([
       "job_1",
+      "job_2",
     ]);
 
     // The released global guard lets a freshly mounted controller run again.
@@ -226,12 +230,13 @@ describe("useJobFinderPageController tailored-draft lifecycle", () => {
       secondContext?.onPrepareTailoredDrafts();
     });
     await waitFor(() =>
-      expect(
-        second.current?.context?.tailoredDraftPreparation.status,
-      ).toBe("completed"),
+      expect(second.current?.context?.tailoredDraftPreparation.status).toBe(
+        "completed",
+      ),
     );
     expect(harness.generateResume.mock.calls.map(([jobId]) => jobId)).toEqual([
       "job_1",
+      "job_2",
       "job_1",
       "job_2",
       "job_3",
@@ -306,8 +311,7 @@ describe("useJobFinderPageController cross-route status lifetime", () => {
           getWorkspaceBootstrap: vi.fn(() => Promise.resolve(workspace)),
           mutateWorkspaceEntities,
           startApplyCopilotRun:
-            options.startApplyCopilotRun ??
-            (() => Promise.resolve(workspace)),
+            options.startApplyCopilotRun ?? (() => Promise.resolve(workspace)),
         },
       } as unknown as Window["unemployed"],
     });
@@ -338,9 +342,7 @@ describe("useJobFinderPageController cross-route status lifetime", () => {
     };
   }
 
-  async function waitForReady(
-    harness: ReturnType<typeof mountStatusHarness>,
-  ) {
+  async function waitForReady(harness: ReturnType<typeof mountStatusHarness>) {
     await waitFor(() => {
       expect(harness.current?.workspaceState.status).toBe("ready");
       expect(harness.current?.context).not.toBeNull();
@@ -407,9 +409,9 @@ describe("useJobFinderPageController cross-route status lifetime", () => {
       );
     });
     await waitFor(() => {
-      expect(
-        harness.current?.context?.actionState.message,
-      ).toContain("Applications updated");
+      expect(harness.current?.context?.actionState.message).toContain(
+        "Applications updated",
+      );
     });
   });
 

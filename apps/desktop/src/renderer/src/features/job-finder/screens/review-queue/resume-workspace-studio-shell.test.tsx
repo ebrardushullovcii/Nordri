@@ -2093,6 +2093,7 @@ describe("ResumeWorkspaceStudioShell bounded compact tabs", () => {
 
   function renderCompactShell(
     overrides?: Partial<{
+      assistantDocked: boolean;
       canClearApproval: boolean;
       /** Renders the desktop split view instead, with the same props. */
       desktop: boolean;
@@ -2111,6 +2112,7 @@ describe("ResumeWorkspaceStudioShell bounded compact tabs", () => {
       <ResumeWorkspaceStudioShell
         approvalBlockedReason={null}
         approvalStateLabel={null}
+        assistantDocked={overrides?.assistantDocked ?? false}
         canApproveResume={false}
         canClearApproval={overrides?.canClearApproval ?? false}
         editorPanel={<div>Editor</div>}
@@ -2253,6 +2255,77 @@ describe("ResumeWorkspaceStudioShell bounded compact tabs", () => {
     expect(screen.queryByRole("tab", { name: "Assistant" })).toBeNull();
   });
 
+  it.each([
+    ["desktop", true],
+    ["compact", false],
+  ] as const)(
+    "gives the open Assistant its own %s column beside the panes, below the approval row",
+    (_label, desktop) => {
+      // No-overlap guarantee, by structure: the dock is an in-flow flex
+      // sibling of the panes column, below the row that owns Approve, and
+      // never positioned over anything.
+      const { container } = renderCompactShell({
+        assistantDocked: true,
+        desktop,
+      });
+      const studio = container.firstElementChild as HTMLElement;
+      const body = studio.querySelector<HTMLElement>(
+        "[data-resume-studio-body]",
+      );
+      const dock = studio.querySelector<HTMLElement>(
+        "[data-resume-studio-assistant-dock-slot]",
+      );
+      const approvalRow = studio.querySelector<HTMLElement>(
+        "[data-resume-workspace-top-actions]",
+      );
+
+      expect(body?.className).toContain("flex");
+      expect(dock?.parentElement).toBe(body);
+      expect(body?.lastElementChild).toBe(dock);
+      expect(dock?.previousElementSibling?.className).toContain("flex-1");
+      expect(dock?.className).toContain("w-(--resume-assistant-dock-width)");
+      expect(dock?.className).toContain("shrink-0");
+      expect(dock?.className).not.toMatch(/\b(fixed|absolute|sticky)\b/);
+      expect(dock?.getAttribute("data-resume-studio-assistant-docked")).toBe(
+        "true",
+      );
+      // The approval row sits above the body, so the dock can never reach it.
+      expect(
+        approvalRow &&
+          body &&
+          approvalRow.compareDocumentPosition(body) &
+            Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+      expect(body?.contains(approvalRow)).toBe(false);
+
+      if (desktop) {
+        const grid = studio.querySelector<HTMLElement>(
+          "[data-resume-studio-grid-columns]",
+        );
+        // The tools column may narrow while the Assistant is docked.
+        expect(grid?.className).toContain(
+          "xl:grid-cols-[minmax(0,1fr)_minmax(19rem,0.8fr)]",
+        );
+      }
+    },
+  );
+
+  it("keeps the dock slot empty and hidden while the Assistant is closed", () => {
+    const { container } = renderCompactShell({ desktop: true });
+    const dock = container.querySelector<HTMLElement>(
+      "[data-resume-studio-assistant-dock-slot]",
+    );
+    const grid = container.querySelector<HTMLElement>(
+      "[data-resume-studio-grid-columns]",
+    );
+
+    expect(dock?.className).toContain("hidden");
+    expect(dock?.childElementCount).toBe(0);
+    expect(grid?.className).toContain(
+      "xl:grid-cols-[minmax(0,1.15fr)_minmax(26rem,0.85fr)]",
+    );
+  });
+
   it("leaves exactly one always-visible studio row above the desktop panes", () => {
     // G3: the stack above the content used to be 117px of shell + a ~90px
     // workspace title row + this 53px state row. The title row now scrolls with
@@ -2271,17 +2344,26 @@ describe("ResumeWorkspaceStudioShell bounded compact tabs", () => {
       "[data-resume-studio-desktop-grid]",
     );
 
+    // The panes live in the studio body, beside the (closed, hidden)
+    // Assistant dock slot.
+    const body = studio.querySelector<HTMLElement>("[data-resume-studio-body]");
+
     expect(stickyRow?.parentElement).toBe(studio);
-    expect(desktopGrid?.parentElement).toBe(studio);
+    expect(body?.parentElement).toBe(studio);
+    expect(desktopGrid?.parentElement?.parentElement).toBe(body);
+    expect(
+      Array.from(desktopGrid?.parentElement?.children ?? []),
+      "on desktop the panes column holds only the desktop grid",
+    ).toEqual([desktopGrid]);
     expect(stickyRow?.className).toContain("shrink-0");
 
-    // Everything between them belongs to the compact tab surface and is hidden
-    // from xl up, so the desktop stack is: sticky row, then panes.
+    // Everything between the sticky row and the body belongs to the compact
+    // surface and is hidden from xl up, so the desktop stack is: sticky row,
+    // then panes.
     const between = rows.slice(
       rows.indexOf(stickyRow as HTMLElement) + 1,
-      rows.indexOf(desktopGrid as HTMLElement),
+      rows.indexOf(body as HTMLElement),
     );
-    expect(between.length).toBeGreaterThan(0);
     for (const row of between) {
       expect(row.className).toContain("xl:hidden");
     }

@@ -1,9 +1,18 @@
+import { randomUUID } from "node:crypto";
+
 import type { ApplyAuthority } from "@unemployed/browser-agent";
 import {
   ApplicationAuthorityEnvelopeSchema,
   isActiveApplicationAuthorityEnvelope,
   type ApplicationAuthorityEnvelope,
 } from "@unemployed/contracts";
+import type { JobFinderRepository } from "@unemployed/db";
+
+import {
+  recordApplicationAuthoritySuccessor,
+  resolveApplicationAuthoritySuccessorId,
+  withApplicationAuthorityGate,
+} from "./application-authority-gate";
 
 /**
  * What one application is actually allowed to do.
@@ -158,7 +167,9 @@ export async function resolveApplyAuthorityForJob(input: {
   resumeSha256: string | null | undefined;
   applicationUrl: string;
   now: string;
-}): Promise<ApplyAuthorityResolution & { envelope: ApplicationAuthorityEnvelope | null }> {
+}): Promise<
+  ApplyAuthorityResolution & { envelope: ApplicationAuthorityEnvelope | null }
+> {
   let active: readonly ApplicationAuthorityEnvelope[] = [];
   try {
     active = await input.repository.listApplicationAuthorityEnvelopes({
@@ -191,21 +202,12 @@ export async function resolveApplyAuthorityForJob(input: {
  * The CAS update happens before a final-submit preflight can use the origin.
  */
 export async function authorizeReviewedApplicationOrigin(input: {
-  repository: {
-    getApplicationAuthorityEnvelope: (
-      id: string,
-    ) => Promise<ApplicationAuthorityEnvelope | null>;
-    commitApplicationAuthorityEnvelope: (input: {
-      envelope: ApplicationAuthorityEnvelope;
-      expectedRevision: number | null;
-    }) => Promise<
-      | { status: "applied"; envelope: ApplicationAuthorityEnvelope }
-      | {
-          status: "stale" | "missing";
-          current: ApplicationAuthorityEnvelope | null;
-        }
-    >;
-  };
+  repository: Pick<
+    JobFinderRepository,
+    | "getApplicationAuthorityEnvelope"
+    | "commitApplicationAuthorityEnvelope"
+    | "replaceApplicationAuthorityEnvelope"
+  >;
   envelope: ApplicationAuthorityEnvelope;
   jobId: string;
   origin: string;
@@ -213,37 +215,86 @@ export async function authorizeReviewedApplicationOrigin(input: {
 }): Promise<ApplicationAuthorityEnvelope | null> {
   const origin = canonicalOriginOf(input.origin);
   if (!origin) return null;
-
-  let current = await input.repository.getApplicationAuthorityEnvelope(
-    input.envelope.id,
-  );
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    if (
-      !current ||
-      current.mode === "prepare_only" ||
-      !isActiveApplicationAuthorityEnvelope(current, input.now) ||
-      (!current.scope.jobIds.includes(input.jobId) &&
-        current.scope.campaignId === null)
-    ) {
-      return null;
-    }
-    if (canonicalOrigins(current.allowedOrigins).includes(origin)) {
-      return current;
-    }
-
-    const envelope = ApplicationAuthorityEnvelopeSchema.parse({
-      ...current,
-      revision: current.revision + 1,
-      allowedOrigins: [...current.allowedOrigins, origin],
-    });
-    const committed = await input.repository.commitApplicationAuthorityEnvelope(
-      {
-        envelope,
-        expectedRevision: current.revision,
-      },
+  return withApplicationAuthorityGate(input.repository, undefined, async () => {
+    let current = await input.repository.getApplicationAuthorityEnvelope(
+      resolveApplicationAuthoritySuccessorId(
+        input.repository,
+        input.envelope.id,
+      ),
     );
-    if (committed.status === "applied") return committed.envelope;
-    current = committed.current;
-  }
-  return null;
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      if (
+        !current ||
+        current.mode === "prepare_only" ||
+        current.mode !== input.envelope.mode ||
+        !isActiveApplicationAuthorityEnvelope(
+          current,
+          new Date().toISOString(),
+        ) ||
+        !current.scope.jobIds.includes(input.jobId)
+      ) {
+        return null;
+      }
+      if (canonicalOrigins(current.allowedOrigins).includes(origin)) {
+        return current;
+      }
+
+      const expandedOrigins = [...current.allowedOrigins, origin];
+      const envelope = ApplicationAuthorityEnvelopeSchema.parse({
+        ...current,
+        revision: current.revision + 1,
+        allowedOrigins: expandedOrigins,
+      });
+      const committed =
+        await input.repository.commitApplicationAuthorityEnvelope({
+          envelope,
+          expectedRevision: current.revision,
+        });
+      if (committed.status === "applied") return committed.envelope;
+      if (
+        committed.current?.status === "active" &&
+        committed.current.revision !== current.revision
+      ) {
+        current = committed.current;
+        continue;
+      }
+      if (
+        committed.current?.status !== "active" ||
+        committed.current.revision !== current.revision
+      )
+        return null;
+
+      // A preflight makes this envelope immutable. Atomically replace that
+      // exact revision, preserving every existing permission and the policy.
+      const replacedAt = new Date().toISOString();
+      const replacement = ApplicationAuthorityEnvelopeSchema.parse({
+        ...current,
+        id: `authority_${randomUUID()}`,
+        status: "active",
+        revision: 1,
+        createdAt: replacedAt,
+        revokedAt: null,
+        allowedOrigins: expandedOrigins,
+      });
+      const replaced =
+        await input.repository.replaceApplicationAuthorityEnvelope({
+          currentId: current.id,
+          expectedRevision: current.revision,
+          replacement,
+          revokedAt: replacedAt,
+        });
+      if (replaced.status === "applied") {
+        recordApplicationAuthoritySuccessor(
+          input.repository,
+          current.id,
+          replaced.envelope.id,
+        );
+        return replaced.envelope;
+      }
+      if (replaced.status !== "stale" || replaced.current?.status !== "active")
+        return null;
+      current = replaced.current;
+    }
+    return null;
+  });
 }

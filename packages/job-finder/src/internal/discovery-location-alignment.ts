@@ -67,6 +67,20 @@ function requestedLocationLabel(preferences: JobSearchPreferences): string {
   return preferences.locations.join(" or ");
 }
 
+function hasNamedCompatibleLocation(
+  posting: Pick<JobPosting, "location">,
+  preferences: JobSearchPreferences,
+): boolean {
+  return (
+    !hasNoNamedLocation(posting.location) &&
+    assessLocationCompatibility(
+      posting.location,
+      preferences.locations,
+      readLocationMatchOptions(preferences),
+    ) === "compatible"
+  );
+}
+
 /**
  * Corrects the generic "Anywhere includes every city" geography rule when a
  * person explicitly asked for local onsite/hybrid work. It is a ranking miss,
@@ -79,14 +93,7 @@ export function correctRemoteOnlyLocationAlignment(
 ): MatchAssessment {
   // A concrete city/region match is the strongest location evidence. A
   // generic remote word elsewhere in the page must never overturn it.
-  if (
-    !hasNoNamedLocation(posting.location) &&
-    assessLocationCompatibility(
-      posting.location,
-      preferences.locations,
-      readLocationMatchOptions(preferences),
-    ) === "compatible"
-  ) {
+  if (hasNamedCompatibleLocation(posting, preferences)) {
     return assessment.locationReach === "in_area"
       ? assessment
       : { ...assessment, locationReach: "in_area" };
@@ -147,7 +154,7 @@ export function correctRemoteOnlyLocationAlignment(
   };
 }
 
-/** Plain run notice when the chosen sources supplied remote listings only. */
+/** Describe only this search's returned listings, not a source's full inventory. */
 export function describeRemoteOnlySourceMismatch(
   jobs: readonly SavedJob[],
   preferences: JobSearchPreferences,
@@ -155,12 +162,22 @@ export function describeRemoteOnlySourceMismatch(
   if (
     jobs.length === 0 ||
     !requestedLocalWork(preferences) ||
-    jobs.some((job) => !isRemoteListing(job))
+    jobs.some(
+      (job) =>
+        !(
+          job.workMode.includes("remote") ||
+          REMOTE_LISTING_PATTERN.test(
+            [job.location, job.canonicalUrl, job.applicationUrl ?? ""].join(
+              " ",
+            ),
+          )
+        ) || hasNamedCompatibleLocation(job, preferences),
+    )
   ) {
     return null;
   }
 
-  return `Your sources only list remote jobs; add a site that lists jobs in ${requestedLocationLabel(
+  return `This search returned only remote jobs; try another search for jobs in ${requestedLocationLabel(
     preferences,
   )}.`;
 }

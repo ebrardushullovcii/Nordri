@@ -47,10 +47,38 @@ function formatKind(kind: CandidateAssetKind): string {
   );
 }
 
-export function ProfileFilesTab() {
+export function ProfileFilesTab({
+  requestedKind = null,
+}: {
+  /**
+   * The kinds a link asked for (`?kind=portfolio,transcript`). The picker
+   * starts on the first one the person has no file of yet.
+   */
+  requestedKind?: string | null;
+} = {}) {
   const mountedRef = useRef(true);
   const [assets, setAssets] = useState<readonly CandidateAsset[]>([]);
-  const [kind, setKind] = useState<CandidateAssetKind>("portfolio");
+  const requestedKinds = (requestedKind ?? "")
+    .split(",")
+    .flatMap((value) =>
+      kindOptions.filter((option) => option.value === value.trim()),
+    )
+    .map((option) => option.value);
+  const requestedKey = requestedKinds.join(",");
+  // Arriving from a card that asked for a transcript starts on Transcript.
+  const [kind, setKind] = useState<CandidateAssetKind>(
+    () => requestedKinds[0] ?? "portfolio",
+  );
+  useEffect(() => {
+    if (!requestedKey) return;
+    const kinds = requestedKey.split(",") as CandidateAssetKind[];
+    const held = new Set(
+      assets
+        .filter((asset) => asset.deletedAt === null)
+        .map((asset) => asset.kind),
+    );
+    setKind(kinds.find((value) => !held.has(value)) ?? kinds[0]!);
+  }, [requestedKey, assets]);
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [loadState, setLoadState] = useState<"loading" | "ready" | "error">(
     "loading",

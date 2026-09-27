@@ -65,9 +65,9 @@ export function describeMissingListingText(
       if (isRateLimitedListingRead(attempt)) {
         return `${RATE_LIMITED_LISTING_TEXT} ${READ_IT}`;
       }
-      return `Job Finder tried to read the listing page, but it wants a signed-in visitor, so this job is matched on its title only. ${READ_IT}`;
+      return `This site did not let Job Finder read the listing, so this job is matched on its title only. ${READ_IT}`;
     case "no_detail":
-      return `Job Finder read the listing page, but it published no job description, so this job is matched on its title only. ${READ_IT}`;
+      return `Job Finder opened the listing page, but found too little readable job detail, so this job is matched on its title only. ${READ_IT}`;
     case "fetch_failed":
       return `Job Finder tried to read the listing page and could not reach it, so this job is matched on its title only. It will try again on the next search. ${READ_IT}`;
     case "unsupported_url":

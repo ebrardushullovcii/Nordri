@@ -21,6 +21,7 @@ import {
   PAUSED_BEFORE_APPLICATION_SENTENCE,
   resolvePlannedApplyStanding,
   TRY_AGAIN_ACTION,
+  WAITING_FOR_BROWSER_TAB_SUMMARY,
   type ApplyRunContext,
   type PlannedApplyStanding,
 } from "./applications-recovery-state";
@@ -71,6 +72,22 @@ function formatQuestionsLeft(count: number): string | null {
   return count === 1
     ? "1 question left for you"
     : `${count} questions left for you`;
+}
+
+export { WAITING_FOR_BROWSER_TAB_SUMMARY };
+
+/** What the service writes on a prepared result whose send was refused. */
+export const NOT_SENT_RESULT_PREFIX = "Not sent";
+
+/** "Not sent: <reason>. <detail>" for a refused send, else null. */
+export function describeNotSentResult(
+  result: { summary: string; detail?: string | null } | null | undefined,
+): string | null {
+  // Older and partial results can lack a summary; they were never refused.
+  if (typeof result?.summary !== "string") return null;
+  if (!result.summary.startsWith(NOT_SENT_RESULT_PREFIX)) return null;
+  const detail = result.detail?.trim() ?? "";
+  return detail ? `${result.summary}. ${detail}` : `${result.summary}.`;
 }
 
 /**
@@ -136,6 +153,17 @@ export function resolveApplyStatePresentation(input: {
   }
 
   if (applyResultIsStillRunning(result, input.run)) {
+    // The browser is full: say that it waits, and what frees a tab.
+    if (result?.summary === WAITING_FOR_BROWSER_TAB_SUMMARY) {
+      return {
+        kind: "filling_in",
+        title: "Waiting for a browser tab",
+        sentence: result.detail ?? null,
+        action: "none",
+        actionLabel: null,
+        questionsLeftLabel: null,
+      };
+    }
     const elapsed = formatElapsedMinutes(result?.startedAt, now);
     return {
       kind: "filling_in",
@@ -235,13 +263,17 @@ export function resolveApplyStatePresentation(input: {
   }
 
   if (result?.state === "awaiting_review") {
+    // A send that was asked for and refused says why (the service writes
+    // "Not sent: ..." on the result); the old row said nothing at all.
+    const notSent = describeNotSentResult(result);
     return {
       kind: "ready_to_send",
       title: "Ready to send",
       sentence:
-        mode === "apply_for_me"
+        notSent ??
+        (mode === "apply_for_me"
           ? "Job Finder filled it in but did not send it. Read it over and click Apply on the site."
-          : "Job Finder filled it in. Read it over and click Apply on the site.",
+          : "Job Finder filled it in. Read it over and click Apply on the site."),
       action: "open_browser",
       actionLabel: OPEN_THE_BROWSER_ACTION,
       questionsLeftLabel,

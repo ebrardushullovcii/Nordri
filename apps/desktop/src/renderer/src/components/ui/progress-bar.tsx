@@ -71,7 +71,7 @@ export function ProgressBar({
       className={className ?? PROGRESS_TRACK_CLASS_NAME}
       role="progressbar"
     >
-      <div className="progress-fill h-full bg-primary shadow-(--progress-active-glow)" style={style} />
+      <div className="progress-fill h-full bg-primary-fill shadow-(--progress-active-glow)" style={style} />
     </div>
   )
 }

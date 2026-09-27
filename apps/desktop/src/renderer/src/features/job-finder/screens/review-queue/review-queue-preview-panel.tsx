@@ -19,6 +19,7 @@ import {
   getReviewQueueWorkflowStatus,
   hasResumeGenerationFailure,
   isResumeGenerationInProgress,
+  needsPersonResumeReview,
   needsResumeGeneration,
 } from "./review-queue-status";
 import { formatDateOnly } from "../../lib/job-finder-utils";
@@ -409,8 +410,9 @@ export function ReviewQueuePreviewPanel({
             ) : null}
             {selectedItem.resumeReview.status === "needs_review" ? (
               <p className="text-(length:--text-small) text-foreground-soft">
-                This is the resume as it stands. Edit it if you like; Apply
-                approves it.
+                {needsPersonResumeReview(selectedItem, selectedAsset)
+                  ? "Review this resume, decide any flagged lines, then approve it before applying."
+                  : "This is the resume as it stands. Edit it if you like; Apply approves it."}
               </p>
             ) : null}
             {selectedItem.resumeReview.status === "stale" ? (

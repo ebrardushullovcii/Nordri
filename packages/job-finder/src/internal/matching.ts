@@ -348,9 +348,7 @@ const adjacentRoleFamilies: Readonly<
 };
 
 function occupationHeadStem(value: string): string | null {
-  const tokens = normalizeText(value)
-    .split(/\s+/u)
-    .filter(Boolean);
+  const tokens = normalizeText(value).split(/\s+/u).filter(Boolean);
   const head = tokens.at(-1);
   if (!head) return null;
   if (/^manag(?:e|er|ement|ing)$/u.test(head)) return "manag";
@@ -406,20 +404,8 @@ function hasRoleFamilyMismatch(
   if (candidateFamilies.size === 0 || targetFamilies.size === 0) {
     return false;
   }
-  // A shared occupational head (Manager/Management) or an adjacent family is
-  // useful recall, not positive evidence that the listing is unrelated.
-  if (
-    sharesTargetRoleHead(candidateTitle, targetRoles) ||
-    hasAdjacentRoleFamily(candidateFamilies, targetFamilies)
-  ) {
-    return false;
-  }
-  if (![...candidateFamilies].some((family) => targetFamilies.has(family))) {
-    return true;
-  }
-
-  // Generic targets such as "Senior Engineer" must not collapse vocationally
-  // distinct Sales Engineer or Support Engineer roles into software matches.
+  // Explicit occupations win over a shared head noun: Data Engineer and
+  // Software Engineer are different roles even though both say Engineer.
   const candidatePrimaryFamily = getPrimaryRoleFamily(candidateTitle);
   const targetPrimaryFamilies = new Set(
     targetRoles
@@ -433,6 +419,19 @@ function hasRoleFamilyMismatch(
   ) {
     return true;
   }
+
+  // A shared occupational head (Manager/Management) or an adjacent family is
+  // useful recall, not positive evidence that the listing is unrelated.
+  if (
+    sharesTargetRoleHead(candidateTitle, targetRoles) ||
+    hasAdjacentRoleFamily(candidateFamilies, targetFamilies)
+  ) {
+    return false;
+  }
+  if (![...candidateFamilies].some((family) => targetFamilies.has(family))) {
+    return true;
+  }
+
   // Match the occupational phrase, not a domain qualifier such as
   // "Software Engineer, Sales Platform".
   return engineeringVocationalTitlePatterns.some(
@@ -673,7 +672,7 @@ function readLocationGeographySignal(value: string): LocationGeographySignal {
   const workModeTokens = tokenize(normalizePhraseMatchInput(value, "location"));
 
   return {
-    rawText: value,
+    rawText: canonicalizeLocationAliases(value),
     tokens: tokenizePhraseMatchValue(value, "location"),
     genericTokens: tokenizePhraseMatchValue(value, "generic"),
     workModeTokens,
@@ -969,11 +968,12 @@ function buildScreeningHints(posting: JobPosting): SavedJob["screeningHints"] {
       normalizedText.includes("relocate")
         ? "Relocation support or requirements are mentioned in the listing."
         : null,
-    travelText: /(?:\b(?:requires?|must|expected|willing|ability|availability)\b[^.!?]{0,72}\btravel\b|\btravel\b[^.!?]{0,48}\b(?:required|expected|occasionally|regularly|up to\s+\d{1,3}%|\d{1,3}%)\b)/iu.test(
-      normalizedText,
-    )
-      ? "Travel expectations are mentioned in the listing."
-      : null,
+    travelText:
+      /(?:\b(?:requires?|must|expected|willing|ability|availability)\b[^.!?]{0,72}\btravel\b|\btravel\b[^.!?]{0,48}\b(?:required|expected|occasionally|regularly|up to\s+\d{1,3}%|\d{1,3}%)\b)/iu.test(
+        normalizedText,
+      )
+        ? "Travel expectations are mentioned in the listing."
+        : null,
     remoteGeographies: supportsRemoteGeographyHints
       ? uniqueStrings(
           remoteGeographyHints.flatMap((entry) =>
@@ -1094,7 +1094,8 @@ export function enrichDiscoveredPosting(
     title:
       existingJob &&
       hasEquivalentListingContentIdentity(posting, existingJob) &&
-      normalizeText(existingJob.title).length > normalizeText(posting.title).length
+      normalizeText(existingJob.title).length >
+        normalizeText(posting.title).length
         ? existingJob.title
         : posting.title,
     providerUpdatedAt: selectLatestProviderUpdate(
@@ -1645,7 +1646,9 @@ export function resolveMatchLocationReach(input: {
     return "unknown";
   }
   if (input.locationCompatibility === "compatible") {
-    return input.locationRemotePreferenceApplied ? "remote_preferred" : "in_area";
+    return input.locationRemotePreferenceApplied
+      ? "remote_preferred"
+      : "in_area";
   }
   if (input.locationCompatibility !== "incompatible") {
     return "unknown";
@@ -2333,12 +2336,16 @@ export function createMatchAssessment<
       overlappingTechnologies.length / listingTechnologies.length < 0.34
     ) {
       score -= 8;
-      gaps.push("Most of the stated technology stack is not in the current profile.");
+      gaps.push(
+        "Most of the stated technology stack is not in the current profile.",
+      );
     }
   } else if (listingTechnologies.length >= 2) {
     score -= 18;
     scoreCeiling = Math.min(scoreCeiling, 58);
-    gaps.push("The stated technology stack does not overlap the current profile.");
+    gaps.push(
+      "The stated technology stack does not overlap the current profile.",
+    );
   } else if (overlappingSkills.length > 0) {
     score += Math.min(6, overlappingSkills.length * 2);
     reasons.push(
@@ -2473,13 +2480,13 @@ export function createMatchAssessment<
               "The listing employment type conflicts with the saved employment preferences.",
           }
         : compensationFit.state === "below_minimum" &&
-          evidenceRecommendation.recommendation !== "skip"
-        ? {
-            recommendation: "review_before_applying" as const,
-            rationale:
-              "The listing compensation is below the saved salary minimum.",
-          }
-        : evidenceRecommendation;
+            evidenceRecommendation.recommendation !== "skip"
+          ? {
+              recommendation: "review_before_applying" as const,
+              rationale:
+                "The listing compensation is below the saved salary minimum.",
+            }
+          : evidenceRecommendation;
 
   return {
     scorerVersion: MATCH_ASSESSMENT_SCORER_VERSION,
@@ -2670,8 +2677,7 @@ export function mergeDiscoveredPostings(
 
     validatedCount += 1;
     const existingJob =
-      identityIndex.find({ ...posting, matchAcrossSources: true }) ??
-      undefined;
+      identityIndex.find({ ...posting, matchAcrossSources: true }) ?? undefined;
 
     // Enrich before assessing so the stored assessment fingerprint describes
     // exactly the content this merge persists. Enrichment derives fields the

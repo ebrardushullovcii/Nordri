@@ -52,7 +52,7 @@ export function describeSourceRunHealth(
     case "healthy":
       return "Finished";
     case "warning":
-      return "Finished · found nothing";
+      return "No jobs collected";
     case "failed":
       return "Could not be read";
     case "cancelled":
@@ -538,7 +538,7 @@ export function DiscoveryHistoryModal(props: {
             </div>
           </aside>
 
-          <div className="grid min-h-0 grid-rows-[auto_auto_auto_minmax(0,1fr)] gap-4 overflow-hidden px-4 py-4">
+          <div className="grid min-h-0 grid-rows-[auto_minmax(12rem,auto)_auto_minmax(16rem,1fr)] gap-4 overflow-y-auto px-4 py-4">
             {selectedRun ? (
               <div className="grid gap-3 rounded-(--radius-panel) border border-(--surface-panel-border) bg-(--surface-panel-raised) px-4 py-4 sm:grid-cols-4">
                 <div>
@@ -705,11 +705,11 @@ export function DiscoveryHistoryModal(props: {
                           const label =
                             targetLabels.get(source.targetId) ??
                             "Configured source";
+                          const execution = selectedRun.targetExecutions.find(
+                            (candidate) => candidate.targetId === source.targetId,
+                          );
                           const contributed =
-                            selectedRun.targetExecutions.find(
-                              (execution) =>
-                                execution.targetId === source.targetId,
-                            )?.jobsPersisted ?? 0;
+                            (execution?.jobsPersisted ?? 0) + (execution?.jobsStaged ?? 0);
                           return `${label} — ${contributed} ${contributed === 1 ? "job" : "jobs"}`;
                         })
                         .join("; ")}.
@@ -728,7 +728,17 @@ export function DiscoveryHistoryModal(props: {
                         const execution = selectedRun.targetExecutions.find(
                           (candidate) => candidate.targetId === source.targetId,
                         );
-                        const contributed = execution?.jobsPersisted ?? 0;
+                        // These are disjoint additions in the frozen run:
+                        // direct saved jobs and jobs staged for the results list.
+                        const contributed =
+                          (execution?.jobsPersisted ?? 0) + (execution?.jobsStaged ?? 0);
+                        const terminalReport = contributed === 0
+                          ? selectedRun.activity.findLast((event) =>
+                              event.targetId === source.targetId &&
+                              event.stage === "target" &&
+                              event.terminalState !== null,
+                            )?.message
+                          : undefined;
                         // Jobs this source listed that were already saved: a
                         // quiet re-run found them, it did not come up empty.
                         const alreadySaved =
@@ -748,10 +758,11 @@ export function DiscoveryHistoryModal(props: {
                           contributed === 0 &&
                           alreadySaved === 0 &&
                           previousExecution?.jobsPersisted === 0 &&
+                          previousExecution.jobsStaged === 0 &&
                           previousExecution.duplicatesMerged +
                             previousExecution.jobsSkippedByLedger ===
                             0;
-                        const zeroReason = repeatedZero
+                        const zeroReason = repeatedZero && !terminalReport
                           ? execution?.warning || source.warnings[0]
                             ? "The source was blocked or could not be read. Review it in the Job Finder browser or replace it."
                             : (execution?.jobsReviewed ?? 0) === 0
@@ -804,6 +815,11 @@ export function DiscoveryHistoryModal(props: {
                                 </Button>
                               ) : null}
                             </div>
+                            {terminalReport && source.warnings.length === 0 ? (
+                              <p className="text-[0.82rem] leading-5 text-foreground-soft">
+                                {terminalReport}
+                              </p>
+                            ) : null}
                             {source.warnings.map((warning) => (
                               <p
                                 className="text-[0.82rem] leading-5 text-foreground-soft"

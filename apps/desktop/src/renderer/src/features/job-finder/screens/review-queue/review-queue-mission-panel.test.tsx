@@ -134,6 +134,11 @@ describe("ReviewQueueMissionPanel", () => {
       screen.getByRole("radiogroup", { name: "Resume level for this job" }),
     ).toBeTruthy();
     expect(
+      screen.getByRole("radio", {
+        name: "Light Light edits; stays close to your wording.",
+      }),
+    ).toBeTruthy();
+    expect(
       screen
         .getByRole("radio", { name: /Tailored/ })
         .getAttribute("aria-checked"),

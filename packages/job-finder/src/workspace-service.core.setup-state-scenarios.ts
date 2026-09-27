@@ -242,7 +242,7 @@ describe("createJobFinderWorkspaceService", () => {
           workModes: [],
         },
         profileSetupState: {
-          status: "not_started",
+          status: "in_progress",
           currentStep: "import",
           completedAt: null,
           reviewItems: [],

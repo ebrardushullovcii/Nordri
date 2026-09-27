@@ -80,7 +80,8 @@ function describeDiscoveryMissingListingText(
   job: Pick<SavedJob, "listingDetailCapture" | "listingDetailFetch">,
 ): string {
   if (
-    job.listingDetailCapture?.state === "blocked" ||
+    (!job.listingDetailFetch &&
+      job.listingDetailCapture?.state === "blocked") ||
     job.listingDetailFetch?.outcome === "blocked"
   ) {
     return isRateLimitedListingRead(job.listingDetailFetch)

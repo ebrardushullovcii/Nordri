@@ -186,6 +186,25 @@ export function getResumeImportStageFallbackNotes(
   );
 }
 
+/**
+ * The notes Job Finder itself writes for the person after an import. The
+ * stored list also carries the import model's own working notes ("No target
+ * roles or salary statements; search_preferences omitted.", "Per
+ * instructions, do not create…") and parser diagnostics; those are for
+ * debugging and never shown under Import notes.
+ */
+const PERSON_FACING_IMPORT_NOTE_PATTERNS: readonly RegExp[] = [
+  /^\d+ optional proof suggestions? (?:is|are) available to review\b/u,
+  /^paste plain-text resume content\b/u,
+];
+
+export function isPersonFacingImportNote(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  return PERSON_FACING_IMPORT_NOTE_PATTERNS.some((pattern) =>
+    pattern.test(normalized),
+  );
+}
+
 function shouldHideAnalysisWarning(value: string): boolean {
   const normalized = value.trim().toLowerCase();
 
@@ -423,6 +442,7 @@ export function ProfileResumePanel({
   );
   const visibleAnalysisWarnings = profile.baseResume.analysisWarnings.filter(
     (warning) =>
+      isPersonFacingImportNote(warning) &&
       !shouldHideAnalysisWarning(warning) &&
       !pendingReviewLabels.has(warning.trim().toLowerCase()),
   );

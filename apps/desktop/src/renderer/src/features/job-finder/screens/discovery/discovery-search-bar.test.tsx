@@ -220,7 +220,11 @@ describe("DiscoverySearchBar", () => {
     // How picky a search is lives in Settings (AI behavior), so the bar no
     // longer offers a breadth choice of its own.
     expect(screen.queryByRole("radiogroup", { name: "Search breadth" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Recent only" }));
+    const preferRecent = screen.getByRole("button", { name: "Prefer recent" });
+    expect(preferRecent.getAttribute("title")).toContain(
+      "Older or undated roles may still appear",
+    );
+    fireEvent.click(preferRecent);
     fireEvent.click(screen.getByRole("button", { name: "All sources" }));
     fireEvent.click(screen.getByLabelText("Example Careers"));
     fireEvent.click(screen.getByRole("button", { name: "Search now" }));

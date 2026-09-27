@@ -187,7 +187,7 @@ describe("shell destination counts", () => {
     });
     const needsYou = screen.getByRole("button", { name: /^Needs you:/ });
 
-    const inventoryBadge = findJobs.querySelector("span:last-child");
+    const inventoryBadge = findJobs.querySelector('[data-slot="count"]');
     const attentionBadge = needsYou.querySelector("span.tabular-nums");
 
     // The shape is the shared `<Count variant="pill">` primitive; the shell

@@ -11,6 +11,7 @@ import type {
 import {
   CandidateProfileSchema,
   JobSearchPreferencesSchema,
+  ResumeImportFieldCandidateSummarySchema,
 } from "@unemployed/contracts";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
@@ -84,6 +85,7 @@ function buildProfileScreenProps(
       [] as readonly ResumeImportFieldCandidateSummary[],
     latestResumeImportRun: null,
     onApplyProfileCopilotPatchGroup: vi.fn(),
+    onApplyProfileSetupReviewAction: vi.fn(),
     onApplyResumeTimelineRepairAction: async () => {},
     onAnalyzeProfileFromResume: vi.fn(),
     onGetSourceDebugRunDetails: () =>
@@ -107,6 +109,7 @@ function buildProfileScreenProps(
       profileCopilotBusy: false,
       profileMutation: false,
       profileSetup: false,
+      profileReviewItem: () => false,
       sourceDebug: () => false,
       sourceInstruction: () => false,
       sourceInstructionVerify: () => false,
@@ -169,6 +172,173 @@ describe("ProfileScreen ready-state density and save-bar footprint", () => {
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
+  });
+
+  it.each(["experience", "education"] as const)(
+    "reviews imported %s within a completed Profile without reopening setup",
+    (section) => {
+      const props = buildProfileScreenProps();
+      const value =
+        section === "experience"
+          ? {
+              ...profile.experiences[0],
+              achievements: ["Handled 40 requests per shift."],
+            }
+          : {
+              schoolName: "Example College",
+              degree: "Certificate",
+              endDate: "2019",
+            };
+      const candidate = ResumeImportFieldCandidateSummarySchema.parse({
+        id: "imported_record",
+        target: { section, key: "record", recordId: "imported_record" },
+        label: "Updated background",
+        value,
+        confidence: 0.95,
+        resolution: "needs_review",
+      });
+      props.profile = CandidateProfileSchema.parse({
+        ...profile,
+        education: [
+          {
+            id: "saved_school",
+            schoolName: "Example College",
+            degree: "Certificate",
+          },
+        ],
+      });
+      props.latestResumeImportReviewCandidates = [candidate];
+      props.profileSetupState = {
+        ...profileSetupState,
+        reviewItems: [
+          {
+            id: "review_record",
+            step: "background",
+            target: {
+              domain: section,
+              key: "record",
+              recordId: "imported_record",
+            },
+            label: "Updated background",
+            reason: "New resume details need review.",
+            severity: "recommended",
+            status: "pending",
+            proposedValue: JSON.stringify(value),
+            sourceSnippet: null,
+            sourceCandidateId: candidate.id,
+            sourceRunId: "import_run",
+            createdAt: "2026-09-26T00:00:00.000Z",
+            resolvedAt: null,
+          },
+        ],
+      };
+      render(
+        <MemoryRouter>
+          <ProfileScreen {...props} />
+        </MemoryRouter>,
+      );
+      const action =
+        section === "experience"
+          ? /Review in Experience:/
+          : /Review in Background:/;
+      fireEvent.click(screen.getByRole("button", { name: action }));
+      expect(screen.getByText("Currently saved")).toBeTruthy();
+      expect(
+        screen.getByText("Currently saved").parentElement?.textContent,
+      ).not.toContain("Is draft");
+      expect(screen.getByText("Suggested value")).toBeTruthy();
+      const row = document.getElementById(
+        "profile-import-review-imported_record",
+      );
+      expect(row?.textContent).toContain(
+        section === "experience" ? "Handled 40 requests per shift." : "2019",
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+      expect(props.onApplyProfileSetupReviewAction).toHaveBeenCalledWith(
+        "review_record",
+        "confirm",
+        undefined,
+      );
+      expect(props.onResumeProfileSetup).not.toHaveBeenCalled();
+      expect(
+        screen.queryByRole("heading", { name: "Guided setup" }),
+      ).toBeNull();
+    },
+  );
+
+  it("blocks imported review actions while Profile has unsaved edits or a pending update", () => {
+    const props = buildProfileScreenProps();
+    const candidate = ResumeImportFieldCandidateSummarySchema.parse({
+      id: "imported_headline",
+      target: { section: "identity", key: "headline" },
+      label: "Headline",
+      value: "New headline",
+      confidence: 0.95,
+      resolution: "needs_review",
+    });
+    props.latestResumeImportReviewCandidates = [candidate];
+    props.profileSetupState = {
+      ...profileSetupState,
+      reviewItems: [
+        {
+          id: "review_headline",
+          step: "essentials",
+          target: { domain: "identity", key: "headline", recordId: null },
+          label: "Headline",
+          reason: "Different headline.",
+          severity: "recommended",
+          status: "pending",
+          proposedValue: "New headline",
+          sourceSnippet: null,
+          sourceCandidateId: candidate.id,
+          sourceRunId: "import_run",
+          createdAt: "2026-09-26T00:00:00.000Z",
+          resolvedAt: null,
+        },
+      ],
+    };
+    const rendered = render(
+      <MemoryRouter>
+        <ProfileScreen {...props} />
+      </MemoryRouter>,
+    );
+    expect(
+      screen
+        .getByRole("button", {
+          name: "Confirm",
+        })
+        .hasAttribute("disabled"),
+    ).toBe(false);
+    fireEvent.change(screen.getByLabelText("First name"), {
+      target: { value: "Edited" },
+    });
+    expect(
+      screen
+        .getByRole("button", {
+          name: "Confirm",
+        })
+        .hasAttribute("disabled"),
+    ).toBe(true);
+    expect(
+      screen.getByText(
+        "Save your profile changes before reviewing imported suggestions.",
+      ),
+    ).toBeTruthy();
+    rendered.unmount();
+    props.pendingActions.profileReviewItem = () => true;
+    render(
+      <MemoryRouter>
+        <ProfileScreen {...props} />
+      </MemoryRouter>,
+    );
+    expect(
+      screen
+        .getByRole("button", {
+          name: "Confirm",
+        })
+        .hasAttribute("disabled"),
+    ).toBe(true);
+    expect(props.onApplyProfileSetupReviewAction).not.toHaveBeenCalled();
   });
 
   it("raises the resume identity choice as soon as the Basics name changes", () => {

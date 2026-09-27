@@ -113,13 +113,15 @@ describe("Button", () => {
     );
 
     const button = container?.querySelector("button");
-    expect(button?.className).toMatch(/\bborder-primary\b/);
-    expect(button?.className).not.toMatch(/border-primary\/\d/);
+    // The fill lives on --primary-fill (split from the --primary accent
+    // text colour); the outer 1px color-mix halo was dropped with the calmer
+    // dark palette because the fill itself clears 3:1 against every panel.
+    expect(button?.className).toMatch(/\bborder-primary-fill\b/);
+    expect(button?.className).toMatch(/\bbg-primary-fill\b/);
+    expect(button?.className).toMatch(/\btext-primary-fill-foreground\b/);
+    expect(button?.className).not.toMatch(/border-primary(-fill)?\/\d/);
     expect(button?.className).toMatch(
-      /shadow-\[inset_0_1px_0_var\(--focus-inset-highlight\)/,
-    );
-    expect(button?.className).toMatch(
-      /0_0_0_1px_color-mix\(in_oklab,var\(--primary\)_45%,transparent\)/,
+      /shadow-\[inset_0_1px_0_var\(--focus-inset-highlight\)\]/,
     );
     expect(button?.className).not.toMatch(/ring-primary\/\d/);
   });

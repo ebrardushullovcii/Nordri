@@ -61,7 +61,10 @@ function canonicalSourceUrl(value: string): string | null {
     : `https://${value}`;
   try {
     const url = new URL(candidate);
-    if (url.protocol !== "https:" && url.protocol !== "http:") {
+    if (
+      (url.protocol !== "https:" && url.protocol !== "http:") ||
+      /\s|%20|%09|%0a|%0d/iu.test(url.hostname)
+    ) {
       return null;
     }
     url.hash = "";
@@ -87,7 +90,7 @@ export function parseJobSourceUrls(input: string): {
       invalid.push(value);
       continue;
     }
-    const key = url.toLocaleLowerCase();
+    const key = url;
     if (seen.has(key)) continue;
     seen.add(key);
     urls.push(url);
@@ -331,12 +334,12 @@ export function ProfileJobSourcesTab(props: ProfileJobSourcesTabProps) {
   const existingSourceUrls = new Set(
     discoveryTargets
       .map((target) =>
-        canonicalSourceUrl(target.startingUrl)?.toLocaleLowerCase(),
+        canonicalSourceUrl(target.startingUrl),
       )
       .filter((value): value is string => Boolean(value)),
   );
   const newSourceUrls = parsedSourceDraft.urls.filter(
-    (url) => !existingSourceUrls.has(url.toLocaleLowerCase()),
+    (url) => !existingSourceUrls.has(url),
   );
 
   const addSourceUrls = () => {
@@ -568,9 +571,8 @@ export function ProfileJobSourcesTab(props: ProfileJobSourcesTabProps) {
           <div className="rounded-(--radius-field) border border-(--info-border) bg-(--info-surface) px-4 py-3 text-[0.9rem] leading-6 text-(--info-text)">
             <p className="font-medium">Add your first public job source</p>
             <p className="mt-1">
-              Add the careers page or job board you would normally browse. Save
-              it, check it, then enable it when you want it included in
-              searches.
+              Add the careers page or job board you would normally browse. It is
+              saved and turned on for searches straight away.
             </p>
           </div>
         ) : null}
@@ -713,7 +715,7 @@ export function ProfileJobSourcesTab(props: ProfileJobSourcesTabProps) {
                           className="mt-1 truncate text-sm text-foreground-muted"
                           title={target.startingUrl}
                         >
-                          {getSourceHost(target.startingUrl)}
+                          {target.startingUrl}
                         </p>
                         {target.enabled ? (
                           <p className="mt-1 text-xs text-foreground-soft">

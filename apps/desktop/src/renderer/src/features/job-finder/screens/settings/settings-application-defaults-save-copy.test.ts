@@ -26,7 +26,7 @@ describe("describeApplicationDefaultsSave", () => {
     });
 
     expect(copy.savedMessage).toBe(
-      "Resume look saved for new tailored resumes.",
+      "Resume look saved.",
     );
     expect(copy.label).toBe("Resume look");
   });

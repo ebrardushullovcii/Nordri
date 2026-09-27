@@ -245,15 +245,14 @@ describe("written answer fact check recovery", () => {
       checkWrittenApplicationAnswer({ ...input(), client }),
     ).resolves.toEqual({ supported: false, reason: "No supporting fact." });
     expect(client.chatWithTools).toHaveBeenCalledTimes(2);
-    expect(client.chatWithTools).toHaveBeenLastCalledWith(
-      expect.arrayContaining([
-        expect.objectContaining({
-          content: expect.stringContaining("previous check did not return"),
-        }),
-      ]),
-      expect.any(Array),
-      expect.objectContaining({ maxOutputTokens: 1200 }),
-    );
+    const lastCall = vi.mocked(client.chatWithTools).mock.lastCall;
+    expect(
+      lastCall?.[0].some((message) =>
+        message.content.includes("previous check did not return"),
+      ),
+    ).toBe(true);
+    expect(lastCall?.[1].length).toBeGreaterThan(0);
+    expect(lastCall?.[2]?.maxOutputTokens).toBe(1200);
   });
 
   test("refuses to enter an answer when both fact reports are unusable", async () => {

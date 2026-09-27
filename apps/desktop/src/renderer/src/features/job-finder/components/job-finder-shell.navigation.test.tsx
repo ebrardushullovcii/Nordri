@@ -159,7 +159,7 @@ function getModuleOption(
   return option;
 }
 
-const SIDEBAR_SECONDARY_DESTINATIONS = ["Settings"] as const;
+const SIDEBAR_SECONDARY_DESTINATIONS = ["Safeguards", "Settings"] as const;
 
 /**
  * Only the compact top navigation renders a More trigger; the expanded sidebar
@@ -1572,7 +1572,15 @@ describe("JobFinderShell section navigation", () => {
     fireEvent.keyDown(document.activeElement as HTMLElement, {
       key: "ArrowUp",
     });
+    expect(document.activeElement).toBe(getDestinationButton(/^Safeguards/));
+    fireEvent.keyDown(document.activeElement as HTMLElement, {
+      key: "ArrowUp",
+    });
     expect(document.activeElement).toBe(getDestinationButton(/^Settings/));
+    fireEvent.keyDown(document.activeElement as HTMLElement, {
+      key: "ArrowDown",
+    });
+    expect(document.activeElement).toBe(getDestinationButton(/^Safeguards/));
     fireEvent.keyDown(document.activeElement as HTMLElement, {
       key: "ArrowDown",
     });

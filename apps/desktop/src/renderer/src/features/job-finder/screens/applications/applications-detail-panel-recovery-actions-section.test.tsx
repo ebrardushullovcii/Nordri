@@ -81,6 +81,39 @@ function primaryButtonLabels(container: HTMLElement): string[] {
   ).map((button) => (button.textContent ?? "").trim());
 }
 
+describe("ApplicationsDetailPanelRecoveryActionsSection · a sent application", () => {
+  it("does not show its batch's recovery summary once it was sent", () => {
+    const run = {
+      id: "run_1",
+      mode: "queue_auto",
+      state: "completed",
+      jobIds: ["job_1", "job_2"],
+    } as unknown as JobFinderWorkspaceSnapshot["applyRuns"][number];
+    const entries = [
+      {
+        jobId: "job_2",
+        label: "Dusk Engineer at Dusk",
+        runResult: buildResult({ jobId: "job_2", state: "failed" }),
+      },
+    ] as unknown as Parameters<
+      typeof ApplicationsDetailPanelRecoveryActionsSection
+    >[0]["selectedQueueOutcomeEntries"];
+    const sent = renderSection({
+      selectedRun: run,
+      selectedQueueOutcomeEntries: entries,
+      visibleApplyResult: buildResult({ state: "submitted" }),
+    });
+    expect(sent.container.textContent).not.toMatch(/Run outcome summary/i);
+    cleanup();
+    const failed = renderSection({
+      selectedRun: run,
+      selectedQueueOutcomeEntries: entries,
+      visibleApplyResult: buildResult({ state: "failed" }),
+    });
+    expect(failed.container.textContent).toMatch(/Run outcome summary/i);
+  });
+});
+
 describe("ApplicationsDetailPanelRecoveryActionsSection", () => {
   it("shows one primary action per state, with the label the state earns", () => {
     const cases: Array<{

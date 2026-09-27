@@ -1985,7 +1985,7 @@ describe("application authority repository", () => {
     },
   );
 
-  test("does not partially recover armed authority when its exact result receipt is missing", async () => {
+  test("closes an armed attempt as uncertain on its own when its result receipt is missing", async () => {
     const repository = createInMemoryJobFinderRepository(createSeed());
     const fixture = createAuthorityFixture(
       "recovery_missing_result",
@@ -2009,15 +2009,18 @@ describe("application authority repository", () => {
       now: later,
     });
 
+    // One attempt without its result never stops the workspace opening.
     await expect(
       repository.recoverArmedSubmissionAttempts({ now: later }),
-    ).rejects.toThrow("exact ApplyJobResult privacy receipt");
+    ).resolves.toHaveLength(1);
     expect(
       await repository.getSubmissionIdempotencyRecord(
         fixture.preflight.idempotencyKey,
       ),
-    ).toMatchObject({ status: "armed", revision: 2 });
-    expect(await repository.listSubmissionOutcomeRecords()).toEqual([]);
+    ).toMatchObject({ status: "outcome_uncertain", revision: 3 });
+    expect(await repository.listSubmissionOutcomeRecords()).toMatchObject([
+      { outcome: "outcome_uncertain" },
+    ]);
   });
 
   test.each([
@@ -2034,7 +2037,7 @@ describe("application authority repository", () => {
       },
     },
   ])(
-    "does not partially recover armed authority without exact ApplicationRecord lineage ($label)",
+    "closes an armed attempt without exact ApplicationRecord lineage as uncertain and leaves its result alone ($label)",
     async ({ create }) => {
       const repository = await create();
       const fixture = createAuthorityFixture(
@@ -2061,15 +2064,15 @@ describe("application authority repository", () => {
 
       await expect(
         repository.recoverArmedSubmissionAttempts({ now: later }),
-      ).rejects.toThrow(
-        "exact ApplyJobResult privacy receipt and ApplicationRecord",
-      );
-      expect(await repository.listSubmissionOutcomeRecords()).toEqual([]);
+      ).resolves.toHaveLength(1);
+      expect(await repository.listSubmissionOutcomeRecords()).toMatchObject([
+        { outcome: "outcome_uncertain" },
+      ]);
       expect(
         await repository.getSubmissionIdempotencyRecord(
           fixture.preflight.idempotencyKey,
         ),
-      ).toMatchObject({ status: "armed", revision: 2 });
+      ).toMatchObject({ status: "outcome_uncertain", revision: 3 });
       expect(
         (
           await repository.listApplyJobResults({

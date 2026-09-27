@@ -1,4 +1,4 @@
-import { lazy, useCallback, useEffect, useMemo, useState } from "react";
+import { lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { projectPlanSafeguardPauses } from "@unemployed/job-finder/plan-safeguard-pauses";
 import type { ReactNode } from "react";
 import { jobFinderPendingActions } from "./job-finder-pending-actions";
@@ -338,6 +338,40 @@ export function selectCampaignApplicationsScope(
   };
 }
 
+function campaignForApplicationRecordLink(
+  workspace: JobFinderWorkspaceSnapshot,
+  recordId: string,
+): JobSearchCampaign | null {
+  const record = workspace.applicationRecords.find(
+    (item) => item.id === recordId,
+  );
+  if (!record) return null;
+  const campaignIndex = indexCampaignJobIds(workspace.campaigns);
+  const linkedResults = workspace.applyJobResults.filter(
+    (result) => result.applicationRecordId === recordId,
+  );
+  const campaignId =
+    linkedResults.length > 0
+      ? onlyValue(
+          new Set(
+            linkedResults.flatMap((result) => {
+              const run = workspace.applyRuns.find(
+                (candidate) => candidate.id === result.runId,
+              );
+              const id = run
+                ? (run.campaignId ??
+                  resolveCampaignForJobs(campaignIndex, run.jobIds))
+                : null;
+              return id ? [id] : [];
+            }),
+          ),
+        )
+      : resolveCampaignForJobs(campaignIndex, [record.jobId]);
+  return (
+    workspace.campaigns.find((campaign) => campaign.id === campaignId) ?? null
+  );
+}
+
 export function WorkspaceStateScreen(props: {
   action?: { label: string; onClick: () => void };
   fillAvailableViewport?: boolean;
@@ -602,6 +636,7 @@ export function JobFinderHomeRoute() {
 
   return (
     <JobSearchHomeScreen
+      actionState={context.actionState}
       activityPending={activityPending}
       applicationAutomationMode={
         context.workspace.settings.applicationAutomationMode ?? "prepare_only"
@@ -681,11 +716,24 @@ export function JobFinderHomeRoute() {
 export function JobFinderCampaignsRoute() {
   const context = useJobFinderPageContext();
   const [searchParams, setSearchParams] = useSearchParams();
+  const [dismissedActionState, setDismissedActionState] = useState<
+    typeof context.actionState | null
+  >(null);
   const [pending, setPending] = useState(false);
   const [rulePending, setRulePending] = useState(false);
   const [funnelProjection, setFunnelProjection] =
     useState<CampaignRuleFunnelProjection | null>(null);
   const requestedCampaignId = searchParams.get("campaignId");
+  const linkedPlanRequestRef = useRef<{ key: string } | null>(null);
+  const linkedPlanRequestsRef = useRef(new Set<{ key: string }>());
+  const [linkedPlanPendingCount, setLinkedPlanPendingCount] = useState(0);
+  useEffect(
+    () => () => {
+      linkedPlanRequestRef.current = null;
+      linkedPlanRequestsRef.current.clear();
+    },
+    [],
+  );
   const requestedPlanEditorId =
     searchParams.get(CAMPAIGN_PLAN_EDITOR_SEARCH_PARAM) ===
     CAMPAIGN_PLAN_EDITOR_SEARCH_VALUE
@@ -704,39 +752,60 @@ export function JobFinderCampaignsRoute() {
   }, [requestedPlanEditorId]);
 
   useEffect(() => {
-    if (!requestedCampaignId) return;
     if (
+      !requestedCampaignId ||
       !context.workspace.campaigns.some(
         (campaign) => campaign.id === requestedCampaignId,
       )
     ) {
+      if (linkedPlanRequestRef.current) setPending(false);
+      linkedPlanRequestRef.current = null;
       return;
     }
 
+    const requestKey = searchParams.toString();
     const clearRequestedCampaign = () => {
-      const nextSearchParams = new URLSearchParams(searchParams);
-      nextSearchParams.delete("campaignId");
-      nextSearchParams.delete(CAMPAIGN_PLAN_EDITOR_SEARCH_PARAM);
-      setSearchParams(nextSearchParams, { replace: true });
+      setSearchParams(
+        (current) => {
+          if (current.toString() !== requestKey) return current;
+          const next = new URLSearchParams(current);
+          next.delete("campaignId");
+          next.delete(CAMPAIGN_PLAN_EDITOR_SEARCH_PARAM);
+          return next;
+        },
+        { replace: true },
+      );
     };
     if (requestedCampaignId === context.workspace.activeCampaignId) {
+      // A prior selection can still publish an older plan. Keep the latest
+      // link until all requests settle so that the effect can reconcile it.
+      if (linkedPlanPendingCount > 0) return;
+      linkedPlanRequestRef.current = null;
+      setPending(false);
       clearRequestedCampaign();
       return;
     }
-
+    const attemptKey = `${context.workspace.activeCampaignId}:${requestKey}`;
+    if (linkedPlanRequestRef.current?.key === attemptKey) return;
+    const request = { key: attemptKey };
+    linkedPlanRequestRef.current = request;
+    linkedPlanRequestsRef.current.add(request);
+    setLinkedPlanPendingCount(linkedPlanRequestsRef.current.size);
     setPending(true);
     void context
       .onSelectCampaign(requestedCampaignId)
-      .then((selected) => {
-        if (selected) clearRequestedCampaign();
-      })
+      .catch(() => undefined)
       .finally(() => {
-        setPending(false);
+        if (!linkedPlanRequestsRef.current.delete(request)) return;
+        const remaining = linkedPlanRequestsRef.current.size;
+        setLinkedPlanPendingCount(remaining);
+        setPending(remaining > 0);
       });
   }, [
     context.onSelectCampaign,
     context.workspace.activeCampaignId,
     context.workspace.campaigns,
+    linkedPlanPendingCount,
     requestedCampaignId,
     searchParams,
     setSearchParams,
@@ -818,6 +887,24 @@ export function JobFinderCampaignsRoute() {
       collections={["discovery_jobs"]}
       workspace={context.workspace}
     >
+      {context.actionState.message &&
+      context.actionState !== dismissedActionState ? (
+        <div
+          aria-atomic="true"
+          className="sticky top-0 z-10 mb-4 flex min-w-0 items-start justify-between gap-3 rounded-(--radius-field) border border-(--surface-panel-border) bg-background px-3 py-2 text-sm leading-5 text-foreground"
+          role="status"
+        >
+          <p className="min-w-0 break-words">{context.actionState.message}</p>
+          <Button
+            onClick={() => setDismissedActionState(context.actionState)}
+            size="sm"
+            type="button"
+            variant="ghost"
+          >
+            Dismiss
+          </Button>
+        </div>
+      ) : null}
       <CampaignsScreen
         editCampaignId={editCampaignId}
         safeguardPauses={projectPlanSafeguardPauses(
@@ -831,6 +918,7 @@ export function JobFinderCampaignsRoute() {
         campaigns={context.workspace.campaigns}
         profile={context.workspace.profile}
         discoveryRuns={context.workspace.recentDiscoveryRuns}
+        onDirtyChange={context.onSearchPlanSurfaceDirtyChange}
         onDeleteCampaign={context.onDeleteCampaign}
         onDeleteCampaignRule={handleDeleteCampaignRule}
         onRefreshCampaignRuleFunnel={refreshCampaignRuleFunnel}
@@ -867,6 +955,7 @@ export function JobFinderProfileRoute() {
 
   return (
     <ProfileScreen
+      onApplyProfileSetupReviewAction={context.onApplyProfileSetupReviewAction}
       actionState={context.actionState}
       discoveryRunFeedback={context.discoveryRunFeedback}
       importResumeGuardMessage={context.importResumeGuardMessage}
@@ -886,6 +975,7 @@ export function JobFinderProfileRoute() {
           jobFinderPendingActions.profileMutation(),
         ),
         profileSetup: context.isPending(jobFinderPendingActions.profileSetup()),
+        profileReviewItem: (reviewItemId) => context.isPending(jobFinderPendingActions.profileReviewItem(reviewItemId)),
         sourceDebug: (targetId) =>
           context.isPending(jobFinderPendingActions.sourceDebug(targetId)),
         sourceInstruction: (targetId) =>
@@ -1035,6 +1125,9 @@ export function JobFinderDiscoveryRoute() {
   const rapidReviewReturnRoute = readJobFinderReturnRoute(searchParams);
   const [activityPausePending, setActivityPausePending] = useState(false);
   const [planSwitchPending, setPlanSwitchPending] = useState(false);
+  const [crossPlanSwitchFailed, setCrossPlanSwitchFailed] = useState(false);
+  const [crossPlanRetry, setCrossPlanRetry] = useState(0);
+  const attemptedCrossPlanJobRef = useRef<{ key: string } | null>(null);
   const { onRunAgentDiscovery } = context;
 
   // Finishing guided setup lands here with the first search requested: start
@@ -1065,6 +1158,16 @@ export function JobFinderDiscoveryRoute() {
   const requestedJob = navigationContext.jobId
     ? (jobs.find((job) => job.id === navigationContext.jobId) ?? null)
     : null;
+  const crossPlanCampaign =
+    navigationContext.jobId &&
+    !requestedJob &&
+    context.workspace.discoveryJobs.some(
+      (job) => job.id === navigationContext.jobId,
+    )
+      ? (context.workspace.campaigns.find((campaign) =>
+          campaign.jobIds.includes(navigationContext.jobId!),
+        ) ?? null)
+      : null;
   const requestedTarget = navigationContext.targetId
     ? (context.workspace.searchPreferences.discovery.targets.find(
         (target) => target.id === navigationContext.targetId,
@@ -1072,6 +1175,37 @@ export function JobFinderDiscoveryRoute() {
     : null;
   const isHydrating = isJobFinderHydratingCollections(context.workspace, [
     "discovery_jobs",
+  ]);
+
+  useEffect(() => {
+    if (!navigationContext.jobId || !crossPlanCampaign) {
+      attemptedCrossPlanJobRef.current = null;
+      return;
+    }
+    if (isHydrating) return;
+    const requestKey = `${context.workspace.activeCampaignId}:${navigationContext.jobId}:${crossPlanCampaign.id}:${crossPlanRetry}`;
+    if (attemptedCrossPlanJobRef.current?.key === requestKey) return;
+    const request = { key: requestKey };
+    attemptedCrossPlanJobRef.current = request;
+    setCrossPlanSwitchFailed(false);
+    void context
+      .onSelectCampaign(crossPlanCampaign.id)
+      .then((selected) => {
+        if (attemptedCrossPlanJobRef.current === request && !selected) {
+          setCrossPlanSwitchFailed(true);
+        }
+      })
+      .catch(() => {
+        if (attemptedCrossPlanJobRef.current === request)
+          setCrossPlanSwitchFailed(true);
+      });
+  }, [
+    context.onSelectCampaign,
+    context.workspace.activeCampaignId,
+    crossPlanCampaign,
+    crossPlanRetry,
+    isHydrating,
+    navigationContext.jobId,
   ]);
 
   useEffect(() => {
@@ -1113,6 +1247,32 @@ export function JobFinderDiscoveryRoute() {
   }
 
   if (navigationContext.jobId && !requestedJob) {
+    if (crossPlanCampaign) {
+      return (
+        <WorkspaceStateScreen
+          {...(crossPlanSwitchFailed
+            ? {
+                action: {
+                  label: `Switch to ${crossPlanCampaign.name}`,
+                  onClick: () => {
+                    setCrossPlanSwitchFailed(false);
+                    setCrossPlanRetry((current) => current + 1);
+                  },
+                },
+              }
+            : {})}
+          kicker="Find jobs"
+          message={
+            crossPlanSwitchFailed
+              ? "The search plan did not change. Switch plans to open this job."
+              : `Opening this job in ${crossPlanCampaign.name}.`
+          }
+          title={
+            crossPlanSwitchFailed ? "Job is in another plan" : "Opening job"
+          }
+        />
+      );
+    }
     // Workspace search lists every job saved on this device, but Find jobs
     // shows only the active plan's kept jobs. Say which case this is and
     // point at the control that changes it instead of a dead "Show all jobs".
@@ -1764,6 +1924,9 @@ function findPendingBrowserStepRequest(
 export function JobFinderApplicationsRoute() {
   const context = useJobFinderPageContext();
   const [searchParams, setSearchParams] = useSearchParams();
+  const [crossPlanSwitchFailed, setCrossPlanSwitchFailed] = useState(false);
+  const [crossPlanRetry, setCrossPlanRetry] = useState(0);
+  const attemptedCrossPlanRecordRef = useRef<{ key: string } | null>(null);
   const trackerView =
     searchParams.get(APPLICATIONS_VIEW_QUERY_KEY) === "tracker"
       ? ("crm" as const)
@@ -1852,6 +2015,49 @@ export function JobFinderApplicationsRoute() {
     "applications",
     "intelligence",
   ]);
+  const crossPlanRecord = navigationContext.applicationRecordId
+    ? (context.workspace.applicationRecords.find(
+        (record) =>
+          record.id === navigationContext.applicationRecordId &&
+          (!navigationContext.jobId ||
+            record.jobId === navigationContext.jobId),
+      ) ?? null)
+    : null;
+  const crossPlanCampaign =
+    crossPlanRecord && !requestedApplicationRecord
+      ? campaignForApplicationRecordLink(context.workspace, crossPlanRecord.id)
+      : null;
+
+  useEffect(() => {
+    if (!crossPlanRecord || !crossPlanCampaign) {
+      attemptedCrossPlanRecordRef.current = null;
+      return;
+    }
+    if (isHydrating) return;
+    const requestKey = `${context.workspace.activeCampaignId}:${crossPlanRecord.id}:${crossPlanCampaign.id}:${crossPlanRetry}`;
+    if (attemptedCrossPlanRecordRef.current?.key === requestKey) return;
+    const request = { key: requestKey };
+    attemptedCrossPlanRecordRef.current = request;
+    setCrossPlanSwitchFailed(false);
+    void context
+      .onSelectCampaign(crossPlanCampaign.id)
+      .then((selected) => {
+        if (attemptedCrossPlanRecordRef.current === request && !selected) {
+          setCrossPlanSwitchFailed(true);
+        }
+      })
+      .catch(() => {
+        if (attemptedCrossPlanRecordRef.current === request)
+          setCrossPlanSwitchFailed(true);
+      });
+  }, [
+    context.onSelectCampaign,
+    context.workspace.activeCampaignId,
+    crossPlanCampaign,
+    crossPlanRecord,
+    crossPlanRetry,
+    isHydrating,
+  ]);
 
   useEffect(() => {
     if (
@@ -1909,6 +2115,35 @@ export function JobFinderApplicationsRoute() {
       >
         {null}
       </JobFinderHydrationGate>
+    );
+  }
+
+  if (crossPlanCampaign) {
+    return (
+      <WorkspaceStateScreen
+        {...(crossPlanSwitchFailed
+          ? {
+              action: {
+                label: `Switch to ${crossPlanCampaign.name}`,
+                onClick: () => {
+                  setCrossPlanSwitchFailed(false);
+                  setCrossPlanRetry((current) => current + 1);
+                },
+              },
+            }
+          : {})}
+        kicker="Applications"
+        message={
+          crossPlanSwitchFailed
+            ? "The search plan did not change. Switch plans to open this application."
+            : `Opening this application in ${crossPlanCampaign.name}.`
+        }
+        title={
+          crossPlanSwitchFailed
+            ? "Application is in another plan"
+            : "Opening application"
+        }
+      />
     );
   }
 
@@ -2309,6 +2544,18 @@ export function JobFinderActionsRoute() {
         onNavigate={context.onNavigateSafely}
         onProjectGroupedManualAnswer={scope.onProjectGroupedManualAnswer}
         onSnoozeGroupedDecision={scope.onSnoozeGroupedDecision}
+        onStartOver={async (request, cancel) => {
+          // A lost check: close it, then prepare the same application again.
+          if (request.scope.type !== "application") return;
+          const cancelled = await context.onPerformUserAction(cancel);
+          if (!cancelled) return;
+          context.onStartApplyCopilot({
+            jobId: request.scope.jobId,
+            ...(request.scope.applicationRecordId
+              ? { applicationRecordId: request.scope.applicationRecordId }
+              : {}),
+          });
+        }}
         profile={context.workspace.profile}
         requests={context.workspace.userActionRequests ?? []}
       />

@@ -1,4 +1,9 @@
 export * from "./workspace-service";
+export {
+  recordApplicationAuthoritySuccessor,
+  resolveApplicationAuthoritySuccessorId,
+  withApplicationAuthorityGate,
+} from "./internal/application-authority-gate";
 export * from "./product-action-tools";
 export * from "./resume-import-benchmark";
 export * from "./user-action-domain";

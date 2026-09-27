@@ -113,9 +113,9 @@ export function ProfileSetupSummaryCards(props: {
           <CardTitle>Start with the resume you already have.</CardTitle>
           <CardDescription className="max-w-2xl">
             Job Finder fills in your profile from it and asks only about the
-            gaps. The file stays on this device. The text read from it is
-            sent to Job Finder&apos;s AI to fill in your profile; nothing is
-            sent anywhere else.
+            gaps. The file stays on this device. The text read from it is sent
+            to Job Finder&apos;s AI to fill in your profile; nothing is sent
+            anywhere else.
           </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-5 pt-6">
@@ -171,7 +171,7 @@ export function ProfileSetupSummaryCards(props: {
               type="button"
             >
               <span className="sr-only">Recommended. </span>
-              <span className="inline-flex w-fit items-center gap-2 rounded-(--radius-button) border border-primary bg-primary px-4 py-2 font-semibold text-(--primary-foreground) shadow-[0_1px_0_var(--surface-inset-highlight)] group-hover:bg-primary/90">
+              <span className="inline-flex w-fit items-center gap-2 rounded-(--radius-button) border border-primary-fill bg-primary-fill px-4 py-2 font-semibold text-primary-fill-foreground shadow-[0_1px_0_var(--surface-inset-highlight)] group-hover:bg-primary-fill/90">
                 <FolderOpen className="size-4 shrink-0" />
                 {props.isImportResumePending
                   ? props.resumeImportProgress === null
@@ -416,6 +416,9 @@ export function ProfileSetupPathCard(props: {
 
 export function ProfileSetupReviewQueueCard(props: {
   compact?: boolean;
+  title?: string;
+  description?: string;
+  getSavedValue?: (item: ProfileSetupReviewItemDisplay) => string | null;
   actionsDisabledReason?: string | null;
   isReviewItemPending: (reviewItemId: string) => boolean;
   items: readonly ProfileSetupReviewItemDisplay[];
@@ -503,10 +506,10 @@ export function ProfileSetupReviewQueueCard(props: {
       <CardHeader className="gap-2 border-b border-border/30 pb-5">
         {/* The stepper chip above owns the count for this step; this card
             owns the items themselves and never restates the number. */}
-        <CardTitle>Still to confirm on this step</CardTitle>
+        <CardTitle>{props.title ?? "Still to confirm on this step"}</CardTitle>
         <CardDescription>
-          Imported suggestions stay here until you confirm, dismiss, or clear
-          them. Required details stay here until you fill them in.
+          {props.description ??
+            "Imported suggestions stay here until you confirm, dismiss, or clear them. Required details stay here until you fill them in."}
         </CardDescription>
       </CardHeader>
       <CardContent className="flex min-h-0 flex-1 flex-col gap-3 pt-6">
@@ -528,6 +531,7 @@ export function ProfileSetupReviewQueueCard(props: {
               {props.items.map((item) => {
                 const isRowReviewActionPending = isReviewActionPending(item.id);
                 const itemCopy = getProfileSetupReviewItemCopy(item);
+                const savedValue = props.getSavedValue?.(item);
                 const editActionLabel = getReviewItemEditActionLabel(item);
                 const linkedCandidate = item.sourceCandidateId
                   ? (resumeImportCandidateById.get(item.sourceCandidateId) ??
@@ -539,6 +543,12 @@ export function ProfileSetupReviewQueueCard(props: {
                 return (
                   <div
                     key={item.id}
+                    id={
+                      item.sourceCandidateId
+                        ? `profile-import-review-${item.sourceCandidateId}`
+                        : undefined
+                    }
+                    tabIndex={-1}
                     className="rounded-(--radius-field) border border-border/30 bg-background/50 p-4"
                   >
                     <div className="flex flex-wrap items-start justify-between gap-3">
@@ -578,6 +588,16 @@ export function ProfileSetupReviewQueueCard(props: {
                         ) : null}
                       </div>
                     </div>
+                    {item.status === "pending" && savedValue ? (
+                      <div className="mt-3 rounded-(--radius-field) border border-border/40 bg-background/70 p-3">
+                        <p className="text-(length:--text-tiny) uppercase tracking-[0.2em] text-muted-foreground">
+                          Currently saved
+                        </p>
+                        <p className="mt-2 text-sm text-foreground">
+                          {savedValue}
+                        </p>
+                      </div>
+                    ) : null}
                     {item.status === "pending" && item.proposedValue ? (
                       <div className="mt-3 rounded-(--radius-field) border border-dashed border-border/40 bg-background/70 p-3">
                         <p className="text-(length:--text-tiny) uppercase tracking-[0.2em] text-muted-foreground">

@@ -83,6 +83,7 @@ describe("known-job ledger repeated-source performance", () => {
     seed.savedJobs = [];
     seed.discovery.discoveryLedger = [];
     seed.searchPreferences.companyWhitelist = [];
+    seed.searchPreferences.discovery.runJobBudget = 50;
     seed.profile.skills = [
       ...seed.profile.skills,
       ...Array.from({ length: 80 }, (_, index) => `Platform skill ${index}`),

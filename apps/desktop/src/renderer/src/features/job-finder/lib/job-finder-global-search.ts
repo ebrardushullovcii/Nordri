@@ -36,21 +36,35 @@ export function searchJobFinderEntries(
   options: { campaignId?: string | null; limit?: number } = {},
 ): readonly JobFinderGlobalSearchGroup[] {
   const limit = Math.max(1, Math.min(options.limit ?? 40, 200));
-  const matches = entries
-    .filter(
-      (entry) =>
-        (!options.campaignId || entry.campaignId === options.campaignId) &&
-        matchesCollectionSearch(query, [
-          entry.title,
-          entry.subtitle,
-          entry.kind,
-          ...entry.metadata,
-        ]),
-    )
-    .slice(0, limit);
+  const matches = entries.filter(
+    (entry) =>
+      (!options.campaignId || entry.campaignId === options.campaignId) &&
+      matchesCollectionSearch(query, [
+        entry.title,
+        entry.subtitle,
+        entry.kind,
+        ...entry.metadata,
+      ]),
+  );
+
+  // Jobs are built before applications and resumes. Reserve one place for
+  // each matching kind so a large job collection cannot hide every result
+  // from the other parts of the workspace.
+  const selected = new Set<JobFinderGlobalSearchEntry>();
+  if (matches[0]) selected.add(matches[0]);
+  for (const kind of kindOrder) {
+    const first = matches.find((entry) => entry.kind === kind);
+    if (first && selected.size < limit) selected.add(first);
+  }
+  for (const entry of matches) {
+    if (selected.size >= limit) break;
+    selected.add(entry);
+  }
 
   return kindOrder.flatMap((kind) => {
-    const groupedEntries = matches.filter((entry) => entry.kind === kind);
+    const groupedEntries = matches.filter(
+      (entry) => entry.kind === kind && selected.has(entry),
+    );
     return groupedEntries.length > 0 ? [{ entries: groupedEntries, kind }] : [];
   });
 }

@@ -22,6 +22,11 @@ import {
 import path from "node:path";
 import { BrowserCdpBridge, type BrowserCdpPage } from "./browser-cdp-bridge";
 import { getEmbeddedBrowserFocusAction } from "./embedded-browser-focus-policy";
+import {
+  isUsableViewRect,
+  resolvePageViewBounds,
+  type ViewRect,
+} from "./embedded-browser-layout";
 import { alignClientHintHeaders } from "./browser-identity";
 import {
   browserDisplayUrl,
@@ -78,6 +83,7 @@ export class EmbeddedBrowser {
   private readonly pageListeners = new Set<(page: BrowserCdpPage) => void>();
   private stateListeners = new Set<(state: DesktopBrowserState) => void>();
   private activeTabId: string | null = null;
+  private automationPlaceholderTabId: string | null = null;
   private presentation: DesktopBrowserState["presentation"] = "minimized";
   private closed = true;
   private closing = false;
@@ -109,6 +115,13 @@ export class EmbeddedBrowser {
     width: 1100,
     height: 640,
     visible: false,
+  };
+  /** The last on-screen page size, for tabs sized while it is minimized. */
+  private lastUsableViewport: ViewRect = {
+    x: 50,
+    y: 130,
+    width: 1100,
+    height: 640,
   };
   private readonly operations = new Map<AbortController, string>();
   /** When automation last sent pointer or keyboard input to each tab. */
@@ -484,6 +497,11 @@ export class EmbeddedBrowser {
     return { url, value };
   }
 
+  /** Every open tab, the person's own included; the limit counts them all. */
+  openTabCount(): number {
+    return this.pageMap.size;
+  }
+
   assertAutomationSafe(): void {
     if (
       Object.keys(this.getSession().serviceWorkers.getAllRunning()).length > 0
@@ -500,6 +518,7 @@ export class EmbeddedBrowser {
     popupOptions?: BrowserWindowConstructorOptions,
     beforeAnnounce?: (id: string) => void,
     fixedId?: string,
+    selectOnCreate = true,
   ): BrowserPage {
     if (this.closing)
       throw new Error(
@@ -537,7 +556,23 @@ export class EmbeddedBrowser {
     this.pageMap.set(page.id, page);
     beforeAnnounce?.(page.id);
     this.closed = false;
-    this.activeTabId = page.id;
+    const selected = this.activeTabId
+      ? this.pageMap.get(this.activeTabId)
+      : undefined;
+    const replacesPlaceholder =
+      selected?.id === this.automationPlaceholderTabId &&
+      (selected.contents.getURL() === "about:blank" ||
+        selected.contents.getURL() === "") &&
+      !this.heldTabs.has(selected.id) &&
+      !this.parkedTabs.has(selected.id) &&
+      !this.personTabs.has(selected.id) &&
+      ![...this.operationClaims.values()].some((claim) =>
+        claim.tabs.has(selected.id),
+      );
+    // Show the first useful page, then keep the person's selected tab stable
+    // while other application pages open in the background.
+    if (selectOnCreate || !this.activeTabId || replacesPlaceholder)
+      this.activeTabId = page.id;
     view.setBorderRadius(12);
     (host === "backstage"
       ? (this.getBackstage() ?? this.window)
@@ -781,24 +816,45 @@ export class EmbeddedBrowser {
       1,
       Math.min(windowHeight - y, Math.round(this.viewport.height * zoom)),
     );
+    const viewport = { x, y, width, height };
+    if (isUsableViewRect(viewport)) this.lastUsableViewport = viewport;
+    const last = this.lastUsableViewport;
     const backstage =
       this.backstage && !this.backstage.isDestroyed() ? this.backstage : null;
-    if (backstage && width > 100 && height > 100)
-      backstage.setContentSize(width, height);
+    if (backstage) {
+      const [backstageWidth = 0, backstageHeight = 0] =
+        backstage.getContentSize();
+      const size = resolvePageViewBounds({
+        viewport,
+        current: { x: 0, y: 0, width: backstageWidth, height: backstageHeight },
+        lastUsable: last,
+      });
+      if (size) backstage.setContentSize(size.width, size.height);
+    }
     for (const page of this.pageMap.values()) {
       if (page.contents.isDestroyed()) continue;
       if (page.host === "backstage") {
         // Same size as the on-screen viewport so layout and screenshots match
         // what the user would see; always visible, the window itself is not.
-        if (width > 100 && height > 100)
-          page.view.setBounds({ x: 0, y: 0, width, height });
+        const bounds = resolvePageViewBounds({
+          viewport: { ...viewport, x: 0, y: 0 },
+          current: page.view.getBounds(),
+          lastUsable: { ...last, x: 0, y: 0 },
+        });
+        if (bounds) page.view.setBounds(bounds);
         page.view.setVisible(true);
         page.contents.setBackgroundThrottling(this.operations.size === 0);
         continue;
       }
-      // Minimize preserves the last usable viewport; never resize a live page to 0.
-      if (width > 100 && height > 100)
-        page.view.setBounds({ x, y, width, height });
+      // Minimize preserves the last usable viewport; never resize a live page
+      // to 0. A tab opened while minimized gets that size too: a hidden page
+      // at 0×0 lays out nothing the agent can click.
+      const bounds = resolvePageViewBounds({
+        viewport,
+        current: page.view.getBounds(),
+        lastUsable: last,
+      });
+      if (bounds) page.view.setBounds(bounds);
       page.view.setVisible(
         !this.closed &&
           !this.closing &&
@@ -877,7 +933,8 @@ export class EmbeddedBrowser {
     if (this.connection) return this.connection;
     const generation = this.connectionGeneration;
     const creation = (async () => {
-      if (this.pageMap.size === 0) this.createPage("about:blank");
+      if (this.pageMap.size === 0)
+        this.automationPlaceholderTabId = this.createPage("about:blank").id;
       const bridge = new BrowserCdpBridge({
         // Tabs the person holds and parked tabs stay out of automation.
         pages: () =>
@@ -887,7 +944,10 @@ export class EmbeddedBrowser {
               !this.parkedTabs.has(page.id) &&
               !this.personTabs.has(page.id),
           ),
-        createPage: (url) => Promise.resolve(this.createPage(url)),
+        createPage: (url) =>
+          Promise.resolve(
+            this.createPage(url, undefined, undefined, undefined, undefined, false),
+          ),
         closePage: (id) => this.closePageForAutomation(id),
         selectPage: (id) => this.selectPage(id),
         onPageCreated: (listener) => {
@@ -1069,7 +1129,7 @@ export class EmbeddedBrowser {
         void this.activityHooks.handback(owners).catch(() => undefined);
     } else if (command.type === "select_tab") this.selectPage(command.tabId);
     else if (command.type === "close_tab") {
-      this.takeTabByPerson(command.tabId, false);
+      this.takeTabByPerson(command.tabId, false, true);
       this.closePage(command.tabId);
       if (this.pageMap.size === 0) await this.close(false);
     } else {
@@ -1124,11 +1184,16 @@ export class EmbeddedBrowser {
    * during automation is the person stepping into that tab: the runs working
    * there stop, as they would for a click on the page.
    */
-  private takeTabByPerson(tabId: string, holdEvenIfIdle: boolean): void {
+  private takeTabByPerson(
+    tabId: string,
+    holdEvenIfIdle: boolean,
+    claimedOnly = false,
+  ): void {
     if (this.heldTabs.has(tabId) || !this.pageMap.has(tabId)) return;
     const action = getEmbeddedBrowserFocusAction({
       focusedTabId: tabId,
       operations: this.describeOperations(),
+      closingTab: claimedOnly,
       parked: this.parkedTabs.has(tabId),
       held: false,
       bannerOnTab: false,
@@ -1268,6 +1333,7 @@ export class EmbeddedBrowser {
       for (const id of [...this.pageMap.keys()]) this.closePage(id);
       this.pageMap.clear();
       this.activeTabId = null;
+      this.automationPlaceholderTabId = null;
       if (this.browserSession) {
         await this.browserSession.cookies.flushStore();
         // Workers must not outlive Close; cookies and site sign-in storage remain.

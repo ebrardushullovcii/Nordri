@@ -13,6 +13,7 @@ import type {
   ApplicationAutomationMode,
   ApplicationRecord,
   BrowserSessionState,
+  GlobalDailyApplicationPreparationCapacity,
   ResumeSourceDocument,
   ReviewQueueItem,
   SavedJob,
@@ -94,6 +95,7 @@ function createOriginalResume(): ResumeSourceDocument {
 function renderScreen(props: {
   applicationAutomationMode?: ApplicationAutomationMode;
   applicationRecords?: readonly ApplicationRecord[];
+  dailyCapacity?: GlobalDailyApplicationPreparationCapacity;
   resumeOperationStarts?: Readonly<Record<string, number>>;
   browserSession?: BrowserSessionState;
   isJobPending?: (jobId: string) => boolean;
@@ -129,7 +131,7 @@ function renderScreen(props: {
         draftPreparation={
           props.draftPreparation ?? createIdleDraftPreparation()
         }
-        globalDailyApplicationPreparationCapacity={null}
+        globalDailyApplicationPreparationCapacity={props.dailyCapacity ?? null}
         isApplyPending={false}
         isJobPending={props.isJobPending ?? (() => false)}
         onPrepareTailoredDrafts={props.onPrepareTailoredDrafts ?? vi.fn()}
@@ -307,9 +309,11 @@ describe("ReviewQueueScreen tailored draft preparation (controlled)", () => {
       ],
     });
 
-    expect(screen.getByText(/Writing resume 2 of 3/)).toBeTruthy();
+    expect(screen.getByText(/Writing resumes · 1 of 3 finished/)).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("button", { name: "Stop after this one" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Stop new resumes" }),
+    );
 
     expect(onStopTailoredDraftPreparation).toHaveBeenCalledTimes(1);
   });
@@ -350,6 +354,55 @@ describe("ReviewQueueScreen tailored draft preparation (controlled)", () => {
     expect(onPrepareTailoredDrafts).toHaveBeenCalledTimes(1);
   });
 
+  it.each([0, 1, 2])(
+    "keeps a ready batch within %i remaining daily slots",
+    async (remaining) => {
+      const onStartAutoApplyQueue = vi
+        .fn<
+          (jobIds: string[]) => Promise<JobFinderAutoApplyQueueStartOutcome>
+        >()
+        .mockResolvedValue({ status: "confirmed" });
+      renderScreen({
+        dailyCapacity: {
+          limit: 2,
+          used: 2 - remaining,
+          legacyUncertain: 0,
+          remaining,
+          localDate: "2026-09-26",
+          resetsAt: "2026-09-27T00:00:00.000Z",
+        },
+        onStartAutoApplyQueue,
+        queue: ["job_a", "job_b"].map((jobId) => ({
+          ...createEligibleItem(jobId),
+          assetStatus: "ready",
+          resumeAssetId: `asset_${jobId}`,
+          resumeReview: { status: "needs_review" },
+        })),
+      });
+
+      if (remaining === 0) {
+        expect(screen.queryByTestId("apply-all-ready")).toBeNull();
+        expect(onStartAutoApplyQueue).not.toHaveBeenCalled();
+        return;
+      }
+      await act(async () => {
+        fireEvent.click(
+          screen.getByRole("button", {
+            name:
+              remaining === 1
+                ? "Apply to the 1 ready job"
+                : "Apply to all 2 ready jobs",
+          }),
+        );
+        await Promise.resolve();
+      });
+      expect(onStartAutoApplyQueue).toHaveBeenCalledWith(
+        ["job_a", "job_b"].slice(0, remaining),
+        "prepare_only",
+      );
+    },
+  );
+
   it.each([
     "prepare_only",
     "confirm_before_submit",
@@ -357,41 +410,43 @@ describe("ReviewQueueScreen tailored draft preparation (controlled)", () => {
   ] as const)(
     "applies to every ready job in one press with %s, leaving jobs already in Applications alone",
     async (applicationAutomationMode) => {
-    const onStartAutoApplyQueue = vi
-      .fn<(jobIds: string[]) => Promise<JobFinderAutoApplyQueueStartOutcome>>()
-      .mockResolvedValue({ status: "confirmed" });
-    const ready = (jobId: string): ReviewQueueItem => ({
-      ...createEligibleItem(jobId),
-      assetStatus: "ready",
-      resumeAssetId: `asset_${jobId}`,
-      resumeReview: { status: "needs_review" },
-    });
+      const onStartAutoApplyQueue = vi
+        .fn<
+          (jobIds: string[]) => Promise<JobFinderAutoApplyQueueStartOutcome>
+        >()
+        .mockResolvedValue({ status: "confirmed" });
+      const ready = (jobId: string): ReviewQueueItem => ({
+        ...createEligibleItem(jobId),
+        assetStatus: "ready",
+        resumeAssetId: `asset_${jobId}`,
+        resumeReview: { status: "needs_review" },
+      });
 
-    renderScreen({
-      applicationAutomationMode,
-      applicationRecords: [
-        ApplicationRecordSchema.parse({
-          id: "application_done",
-          jobId: "job_done",
-          title: "Role job_done",
-          company: "Acme",
-          status: "ready_for_review",
-          lastAttemptState: null,
-          lastActionLabel: "Prepared",
-          nextActionLabel: "Send",
-          lastUpdatedAt: "2026-08-30T10:00:00.000Z",
-        }),
-      ],
-      onStartAutoApplyQueue,
-      queue: [ready("job_a"), ready("job_b"), ready("job_done")],
-    });
+      renderScreen({
+        applicationAutomationMode,
+        applicationRecords: [
+          ApplicationRecordSchema.parse({
+            id: "application_done",
+            jobId: "job_done",
+            title: "Role job_done",
+            company: "Acme",
+            status: "ready_for_review",
+            lastAttemptState: null,
+            lastActionLabel: "Prepared",
+            nextActionLabel: "Send",
+            lastUpdatedAt: "2026-08-30T10:00:00.000Z",
+          }),
+        ],
+        onStartAutoApplyQueue,
+        queue: [ready("job_a"), ready("job_b"), ready("job_done")],
+      });
 
-    await act(async () => {
-      fireEvent.click(
-        screen.getByRole("button", { name: "Apply to all 2 ready jobs" }),
-      );
-      await Promise.resolve();
-    });
+      await act(async () => {
+        fireEvent.click(
+          screen.getByRole("button", { name: "Apply to all 2 ready jobs" }),
+        );
+        await Promise.resolve();
+      });
 
       expect(onStartAutoApplyQueue).toHaveBeenCalledWith(
         ["job_a", "job_b"],

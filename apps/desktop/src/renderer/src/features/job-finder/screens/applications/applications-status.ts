@@ -366,8 +366,11 @@ export function getApplicationNextStepLabel(record: ApplicationRecord): string {
       : "Open the Job Finder browser";
   }
 
-  if (record.lastAttemptState === "submitted") {
-    return record.nextActionLabel ?? "No next step saved";
+  // Every sent application reads the same, however it was sent: one sent
+  // during a batch run carried no saved label and read "No next step saved"
+  // beside rows reading "View application".
+  if (record.lastAttemptState === "submitted" || record.status === "submitted") {
+    return record.nextActionLabel ?? "View application";
   }
 
   if (

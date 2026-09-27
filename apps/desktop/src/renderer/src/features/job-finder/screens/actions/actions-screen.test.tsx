@@ -440,11 +440,17 @@ describe("ActionsScreen", () => {
         onCommand={vi.fn()}
         onNavigate={vi.fn()}
         requests={[
-          createRequest({
-            id: "checking",
-            scope: "application",
-            state: "verifying",
-          }),
+          {
+            ...createRequest({
+              id: "checking",
+              scope: "application",
+              state: "verifying",
+            }),
+            updatedAt: new Date().toISOString(),
+            instructions: [
+              "Return to Needs you and confirm completion only after the browser step is complete.",
+            ],
+          },
         ]}
       />,
     );
@@ -455,6 +461,62 @@ describe("ActionsScreen", () => {
     expect(
       queryByText("Use the Job Finder browser, then return here."),
     ).toBeNull();
+    expect(queryByText(/confirm completion only after/)).toBeNull();
+  });
+
+  it("a check that never finished says so and offers one press to prepare it again", () => {
+    const onStartOver = vi.fn();
+    const startedAt = new Date(Date.now() - 20 * 60_000).toISOString();
+    const request = {
+      ...createRequest({
+        id: "lost-check",
+        scope: "application",
+        state: "verifying",
+        applicationRecordId: "application_1",
+      }),
+      updatedAt: startedAt,
+    };
+    const { getByTestId, getByText } = render(
+      <ActionsScreen
+        discoveryJobs={[]}
+        isPending={() => false}
+        onCommand={vi.fn()}
+        onNavigate={vi.fn()}
+        onStartOver={onStartOver}
+        requests={[request]}
+      />,
+    );
+
+    expect(getByText(/has not finished after 20 minutes/)).toBeTruthy();
+    fireEvent.click(getByTestId("needs-you-start-over"));
+    expect(onStartOver).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "lost-check" }),
+      expect.objectContaining({ action: "cancel", requestId: "lost-check" }),
+    );
+  });
+
+  it("a check still waiting its turn says why, without a start-over press", () => {
+    const request = {
+      ...createRequest({
+        id: "slow-check",
+        scope: "application",
+        state: "verifying",
+      }),
+      updatedAt: new Date(Date.now() - 5 * 60_000).toISOString(),
+    };
+    const { getByText, queryByTestId } = render(
+      <ActionsScreen
+        discoveryJobs={[]}
+        isPending={() => false}
+        onCommand={vi.fn()}
+        onNavigate={vi.fn()}
+        onStartOver={vi.fn()}
+        requests={[request]}
+      />,
+    );
+
+    expect(getByText(/Still checking after 5 minutes/)).toBeTruthy();
+    expect(queryByTestId("needs-you-start-over")).toBeNull();
   });
 
   it("gives the empty inbox one clear next action toward discovery", () => {

@@ -6,7 +6,9 @@ import { createWorkspaceServiceHarness } from "./workspace-service.test-support"
 function createOriginalJobHarness() {
   const seed = createSeed();
   const baseAiClient = createAiClient();
-  const reviseResumeDraft = vi.fn(baseAiClient.reviseResumeDraft);
+  const reviseResumeDraft = vi.fn(
+    baseAiClient.reviseResumeDraft.bind(baseAiClient),
+  );
   const harness = createWorkspaceServiceHarness({
     seed: {
       ...seed,
@@ -52,7 +54,9 @@ describe("Resume Studio on an Original job", () => {
     expect(reply?.role).toBe("assistant");
     expect(reply?.patches).toEqual([]);
     expect(reply?.approvalBlockers ?? []).toEqual([]);
-    expect(reply?.content).toContain("sends your original resume file unchanged");
+    expect(reply?.content).toContain(
+      "sends your original resume file unchanged",
+    );
     expect(reply?.content).toContain('"Write an editable');
     expect(messages.at(-2)?.content).toBe(
       "Shorten the summary to one sentence.",
@@ -83,9 +87,64 @@ describe("Resume Studio on an Original job", () => {
 });
 
 describe("a repeated Create the resume press", () => {
+  test("writes different jobs concurrently without losing either draft or duplicating a same-job request", async () => {
+    const seed = createSeed();
+    const original = seed.savedJobs.find((job) => job.id === "job_ready")!;
+    const baseAiClient = createAiClient();
+    const releases = new Map<string, () => void>();
+    const createResumeDraft = vi.fn(
+      async (input: Parameters<typeof baseAiClient.createResumeDraft>[0]) => {
+        await new Promise<void>((resolve) =>
+          releases.set(input.job.canonicalUrl, resolve),
+        );
+        return baseAiClient.createResumeDraft(input);
+      },
+    );
+    const { workspaceService, repository } = createWorkspaceServiceHarness({
+      seed: {
+        ...seed,
+        savedJobs: [
+          ...seed.savedJobs,
+          {
+            ...original,
+            id: "job_parallel",
+            sourceJobId: "parallel-resume",
+            canonicalUrl: "https://example.com/parallel-resume",
+          },
+        ],
+      },
+      aiClient: { ...baseAiClient, createResumeDraft },
+    });
+    const first = workspaceService.generateResume("job_ready");
+    const duplicate = workspaceService.generateResume("job_ready");
+    const second = workspaceService.generateResume("job_parallel");
+    await vi.waitFor(() => expect(releases.size).toBe(2));
+    releases.get("https://example.com/parallel-resume")!();
+    await second;
+    expect(
+      await repository.getResumeDraftByJobId("job_parallel"),
+    ).not.toBeNull();
+    expect(await repository.getResumeDraftByJobId("job_ready")).toBeNull();
+    releases.get(original.canonicalUrl)!();
+    await Promise.all([first, duplicate]);
+    expect(createResumeDraft).toHaveBeenCalledTimes(2);
+    for (const jobId of ["job_ready", "job_parallel"]) {
+      expect((await repository.getResumeDraftByJobId(jobId))?.jobId).toBe(
+        jobId,
+      );
+      expect(
+        (await repository.listTailoredAssets()).find(
+          (asset) => asset.jobId === jobId,
+        )?.status,
+      ).toBe("ready");
+    }
+  });
+
   test("joins the run already writing this job's resume instead of starting a second one", async () => {
     const baseAiClient = createAiClient();
-    const createResumeDraft = vi.fn(baseAiClient.createResumeDraft);
+    const createResumeDraft = vi.fn(
+      baseAiClient.createResumeDraft.bind(baseAiClient),
+    );
     const { workspaceService } = createWorkspaceServiceHarness({
       aiClient: { ...baseAiClient, createResumeDraft },
     });

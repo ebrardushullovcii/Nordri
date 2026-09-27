@@ -104,7 +104,13 @@ const administrativeAreaByPostalCode = new Map(
 );
 
 export function canonicalizeLocationAliases(value: string): string {
-  const trimmed = value.trim();
+  // This is a location field, not prose. Country abbreviations name the same
+  // place as the full country and must survive strict filtering identically.
+  const countryNormalized = value.replace(
+    /\b(?:usa|u\.s\.a\.?|us|u\.s\.?|united states of america)\b/giu,
+    "United States",
+  );
+  const trimmed = countryNormalized.trim();
   const exactPostalArea = administrativeAreaByPostalCode.get(
     trimmed.toUpperCase(),
   );
@@ -112,7 +118,7 @@ export function canonicalizeLocationAliases(value: string): string {
     return exactPostalArea.name;
   }
 
-  return value.replace(
+  return countryNormalized.replace(
     /(^|,\s*)([A-Z]{2})(?=\s*(?:[,;/|]|\bor\b|$))/giu,
     (match, prefix: string, postalCode: string) => {
       const area = administrativeAreaByPostalCode.get(postalCode.toUpperCase());

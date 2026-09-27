@@ -52,6 +52,7 @@ const CARDS = [
   card("americas", "Frontend Engineer", "Remote, Americas"),
   card("berlin", "Frontend Engineer", "Berlin, Germany"),
   card("data", "Data Analyst", "Berlin, Germany"),
+  card("platform", "Platform Engineer", "Berlin, Germany"),
 ];
 
 function runtimeReturning(): BrowserSessionRuntime {
@@ -139,21 +140,25 @@ describe("saved search behavior changes what a search keeps", () => {
     expect(Object.keys(kept)).toEqual(["berlin"]);
   }, 60_000);
 
-  test("the other modes keep every card, and remote off scores remote-region cards lower", async () => {
-    const on = await search({
-      selectivity: "balanced",
-      remoteCountsAsAnyLocation: true,
-    });
-    const off = await search({
-      selectivity: "balanced",
-      remoteCountsAsAnyLocation: false,
-    });
-    expect(Object.keys(on).sort()).toEqual(
-      ["americas", "berlin", "data", "europe", "worldwide"],
-    );
-    expect(Object.keys(off).sort()).toEqual(Object.keys(on).sort());
-    expect(off.europe).toBeLessThan(on.europe ?? 0);
-    expect(off.worldwide).toBeLessThan(on.worldwide ?? 0);
-    expect(off.berlin).toBe(on.berlin);
-  }, 60_000);
+  test.each(["balanced", "wide_net"] as const)(
+    "%s keeps adjacent jobs, and remote off lowers remote-region scores",
+    async (selectivity) => {
+      const on = await search({
+        selectivity,
+        remoteCountsAsAnyLocation: true,
+      });
+      const off = await search({
+        selectivity,
+        remoteCountsAsAnyLocation: false,
+      });
+      expect(Object.keys(on).sort()).toEqual(
+        ["americas", "berlin", "data", "europe", "platform", "worldwide"],
+      );
+      expect(Object.keys(off).sort()).toEqual(Object.keys(on).sort());
+      expect(off.europe).toBeLessThan(on.europe ?? 0);
+      expect(off.worldwide).toBeLessThan(on.worldwide ?? 0);
+      expect(off.berlin).toBe(on.berlin);
+    },
+    60_000,
+  );
 });

@@ -59,7 +59,9 @@ export function SettingsUnsavedChangesBar({
         ))}
         {soleDirtySection ? (
           <Button
-            disabled={soleDirtySection.isSaving}
+            disabled={
+              soleDirtySection.isSaving || soleDirtySection.isSaveDisabled
+            }
             onClick={() => soleDirtySection.save()}
             pending={soleDirtySection.isSaving}
             size="compact"

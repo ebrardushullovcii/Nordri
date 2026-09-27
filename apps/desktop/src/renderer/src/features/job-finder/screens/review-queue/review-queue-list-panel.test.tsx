@@ -71,6 +71,133 @@ function renderPanel(
 }
 
 describe("ReviewQueueListPanel", () => {
+  it("creates only selected missing resumes, preserves choices across filtering, and leaves ready jobs alone", () => {
+    const onPrepareTailoredDrafts = vi.fn();
+    renderPanel({
+      onPrepareTailoredDrafts,
+      queue: [
+        createEligibleItem("one"),
+        createEligibleItem("two"),
+        createReadyItem("ready"),
+      ],
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Choose jobs" }));
+    expect(
+      screen
+        .getByRole("button", { name: "Create 0 resumes" })
+        .hasAttribute("disabled"),
+    ).toBe(true);
+    expect(
+      screen
+        .getByRole("checkbox", { name: "Create resume for Role ready" })
+        .hasAttribute("disabled"),
+    ).toBe(true);
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "Create resume for Role two" }),
+    );
+    fireEvent.change(screen.getByRole("searchbox"), {
+      target: { value: "one" },
+    });
+    expect(
+      screen.queryByRole("checkbox", { name: "Create resume for Role two" }),
+    ).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Create 1 resume" }));
+    expect(onPrepareTailoredDrafts).toHaveBeenCalledExactlyOnceWith(["two"]);
+    expect(screen.queryByRole("checkbox")).toBeNull();
+  });
+
+  it("keeps selected jobs across pages", () => {
+    const onPrepareTailoredDrafts = vi.fn();
+    renderPanel({
+      onPrepareTailoredDrafts,
+      queue: Array.from({ length: 51 }, (_, i) =>
+        createEligibleItem(String(i)),
+      ),
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Choose jobs" }));
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "Create resume for Role 0" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "Create resume for Role 50" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Create 2 resumes" }));
+    expect(onPrepareTailoredDrafts).toHaveBeenCalledExactlyOnceWith([
+      "0",
+      "50",
+    ]);
+  });
+
+  it("caps a selection at ten and lets a person cancel without generating", () => {
+    const onPrepareTailoredDrafts = vi.fn();
+    renderPanel({
+      onPrepareTailoredDrafts,
+      queue: Array.from({ length: 11 }, (_, i) =>
+        createEligibleItem(String(i)),
+      ),
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Choose jobs" }));
+    for (let i = 0; i < 10; i++)
+      fireEvent.click(
+        screen.getByRole("checkbox", { name: `Create resume for Role ${i}` }),
+      );
+    expect(
+      screen
+        .getByRole("checkbox", { name: "Create resume for Role 10" })
+        .hasAttribute("disabled"),
+    ).toBe(true);
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "Create resume for Role 0" }),
+    );
+    expect(
+      screen
+        .getByRole("checkbox", { name: "Create resume for Role 10" })
+        .hasAttribute("disabled"),
+    ).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Cancel selection" }));
+    expect(onPrepareTailoredDrafts).not.toHaveBeenCalled();
+    expect(screen.queryByRole("checkbox")).toBeNull();
+  });
+
+  it("drops ineligible selections and does not carry them into another campaign", () => {
+    const onPrepareTailoredDrafts = vi.fn();
+    const { rerender, props } = renderPanel({
+      campaignId: "a",
+      onPrepareTailoredDrafts,
+      queue: [createEligibleItem("one"), createEligibleItem("two")],
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Choose jobs" }));
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "Create resume for Role one" }),
+    );
+    rerender(
+      <MemoryRouter>
+        <ReviewQueueListPanel
+          {...props}
+          queue={[createReadyItem("one"), createEligibleItem("two")]}
+        />
+      </MemoryRouter>,
+    );
+    expect(
+      screen
+        .getByRole("button", { name: "Create 0 resumes" })
+        .hasAttribute("disabled"),
+    ).toBe(true);
+    rerender(
+      <MemoryRouter>
+        <ReviewQueueListPanel {...props} campaignId="b" />
+      </MemoryRouter>,
+    );
+    expect(screen.queryByRole("checkbox")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Choose jobs" }));
+    expect(
+      screen
+        .getByRole("button", { name: "Create 0 resumes" })
+        .hasAttribute("disabled"),
+    ).toBe(true);
+  });
+
   it("keeps shortlist status words intact beside long job titles", () => {
     renderPanel({
       queue: [
@@ -149,7 +276,7 @@ describe("ReviewQueueListPanel", () => {
       within(row).getByRole("button", { name: "Apply to the 1 ready job" }),
     );
     expect(onApplyToAllReady).toHaveBeenCalledWith(1);
-    expect(within(row).getByText(/About a minute each/)).toBeTruthy();
+    expect(within(row).getByText(/Up to two at once/)).toBeTruthy();
     // No checkboxes, no selection copy, no per-batch mode choice.
     expect(screen.queryByRole("checkbox")).toBeNull();
     expect(screen.queryByText(/selected for/)).toBeNull();
@@ -192,7 +319,7 @@ describe("ReviewQueueListPanel", () => {
     expect(
       screen.getByRole("button", { name: "Create 10 missing resumes" }),
     ).toBeTruthy();
-    expect(screen.getByText(/10 at a time; 2 more after that/)).toBeTruthy();
+    expect(screen.getByText(/10 per batch; 2 more after that/)).toBeTruthy();
   });
 
   it("swaps the create-all action for live progress and a stop while resumes are written", () => {
@@ -212,13 +339,36 @@ describe("ReviewQueueListPanel", () => {
     });
 
     expect(screen.getByRole("status").textContent).toContain(
-      "Writing resume 2 of 3",
+      "Writing resumes · 1 of 3 finished",
     );
     expect(
       screen.queryByRole("button", { name: /Create .* missing/ }),
     ).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Stop after this one" }));
+    fireEvent.click(screen.getByRole("button", { name: "Stop new resumes" }));
     expect(onStopTailoredDraftPreparation).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows at once that Stop landed and offers no second Stop", () => {
+    renderPanel({
+      draftPreparation: {
+        attemptedCount: 2,
+        completedCount: 0,
+        currentIndex: 2,
+        eligibleRemainingCount: 0,
+        failedCount: 0,
+        status: "running",
+        stopRequested: true,
+        totalCount: 3,
+      },
+      queue: [createEligibleItem("job_a"), createEligibleItem("job_b")],
+    });
+
+    expect(screen.getByRole("status").textContent).toContain(
+      "Stopping · finishing the resumes already started · 0 of 3 finished",
+    );
+    expect(
+      screen.queryByRole("button", { name: "Stop new resumes" }),
+    ).toBeNull();
   });
 
   it("reports the finished run in plain words and never claims anything was sent", () => {
@@ -364,7 +514,10 @@ describe("ReviewQueueListPanel", () => {
     const unselectedBoxes = readBoxes(unselected.container);
     unselected.unmount();
 
-    const selected = renderPanel({ queue: [first, second], selectedItem: first });
+    const selected = renderPanel({
+      queue: [first, second],
+      selectedItem: first,
+    });
     const selectedBoxes = readBoxes(selected.container);
 
     // Selection may only change the tint and the inset accent bar, never the

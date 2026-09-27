@@ -8,6 +8,7 @@ import type {
   JobSearchPreferences,
   ProfileCopilotContext,
   ProfileSetupState,
+  ProfileSetupReviewActionOptions,
   ProfileSetupStep,
   ResumeImportFieldCandidateSummary,
   ResumeImportProgressEvent,
@@ -43,6 +44,14 @@ import {
   getProfileImportSuggestionDestination,
 } from "../components/profile/profile-import-suggestion-navigation";
 import { ProfileSaveFooter } from "../components/profile/profile-save-footer";
+import { ProfileSetupReviewQueueCard } from "../components/profile/setup/profile-setup-screen-sections";
+import { formatProfileSetupReviewValue } from "../components/profile/setup/profile-setup-screen-helpers";
+import {
+  areEquivalentExperienceRecords,
+  areEquivalentEducationRecords,
+} from "@unemployed/job-finder/resume-record-identity";
+import { getJobFinderScrollBehavior } from "../lib/job-finder-scroll-behavior";
+
 import { ResumeIdentityChoiceNotice } from "../components/profile/resume-identity-choice-notice";
 import { ProfileSectionTabs } from "../components/profile/profile-section-tabs";
 import { ProfileSetupReminder } from "../components/profile/profile-setup-reminder";
@@ -87,6 +96,7 @@ type ProfileScreenPendingActions = {
   profileCopilotBusy: boolean;
   profileMutation: boolean;
   profileSetup: boolean;
+  profileReviewItem: (reviewItemId: string) => boolean;
   sourceDebug: (targetId: string) => boolean;
   sourceInstruction: (targetId: string) => boolean;
   sourceInstructionVerify: (instructionId: string) => boolean;
@@ -99,6 +109,11 @@ export function ProfileScreen(props: {
   importResumeGuardMessage: string | null;
   pendingActions: ProfileScreenPendingActions;
   onApplyProfileCopilotPatchGroup: (patchGroupId: string) => void;
+  onApplyProfileSetupReviewAction: (
+    reviewItemId: string,
+    action: "confirm" | "dismiss" | "clear_value",
+    options?: ProfileSetupReviewActionOptions,
+  ) => void;
   onAnalyzeProfileFromResume: () => void;
   onGetSourceDebugRunDetails: (runId: string) => Promise<SourceDebugRunDetails>;
   onImportResume: () => void;
@@ -253,6 +268,18 @@ export function ProfileScreen(props: {
     let focusFrame = 0;
     let attemptsRemaining = 12;
     const focusWhenReady = () => {
+      const review = document.getElementById(
+        `profile-import-review-${candidate.id}`,
+      );
+      if (review) {
+        review.scrollIntoView?.({
+          behavior: getJobFinderScrollBehavior(window),
+          block: "center",
+        });
+        review.focus({ preventScroll: true });
+        pendingImportSuggestionRef.current = null;
+        return;
+      }
       if (focusProfileImportSuggestion(candidate)) {
         pendingImportSuggestionRef.current = null;
         return;
@@ -321,6 +348,28 @@ export function ProfileScreen(props: {
   const pendingSetupItems = profileSetupState.reviewItems.filter(
     (item) => item.status === "pending",
   );
+  const importCandidateById = new Map(
+    latestResumeImportReviewCandidates.map((candidate) => [
+      candidate.id,
+      candidate,
+    ]),
+  );
+  const sectionReviewItems = pendingSetupItems
+    .filter((item) => {
+      const candidate = item.sourceCandidateId
+        ? importCandidateById.get(item.sourceCandidateId)
+        : null;
+      return (
+        candidate &&
+        getProfileImportSuggestionDestination(candidate).section ===
+          activeSection
+      );
+    })
+    .map((item) => ({
+      ...item,
+      savedStatus: item.status,
+      statusSource: "saved" as const,
+    }));
   // The renderer receives no progress event until a native picker has
   // returned a file. Treat that picker-only phase as recoverable rather than
   // freezing every profile field behind an unresolved local pending flag.
@@ -670,6 +719,76 @@ export function ProfileScreen(props: {
                 id={activeSectionPanelId}
                 role="tabpanel"
               >
+                {sectionReviewItems.length > 0 ? (
+                  <div className="mb-4">
+                    <ProfileSetupReviewQueueCard
+                      compact
+                      title="Review imported suggestions"
+                      description="Compare the resume details with your saved profile, then confirm or dismiss each suggestion."
+                      actionsDisabledReason={
+                        hasUserDraftChanges
+                          ? "Save your profile changes before reviewing imported suggestions."
+                          : pendingActions.profileMutation ||
+                              pendingActions.profileSetup ||
+                              resumeAnalysisPending
+                            ? "Wait for the current profile update to finish."
+                            : null
+                      }
+                      isReviewItemPending={pendingActions.profileReviewItem}
+                      items={sectionReviewItems}
+                      latestResumeImportReviewCandidates={
+                        latestResumeImportReviewCandidates
+                      }
+                      onApplyReviewAction={
+                        props.onApplyProfileSetupReviewAction
+                      }
+                      getSavedValue={(item) => {
+                        const candidate = item.sourceCandidateId
+                          ? importCandidateById.get(item.sourceCandidateId)
+                          : null;
+                        if (candidate?.target.section === "experience") {
+                          const saved = profile.experiences.find(
+                            (record) =>
+                              record.id === candidate.target.recordId ||
+                              areEquivalentExperienceRecords(
+                                record,
+                                candidate.value,
+                              ),
+                          );
+                          return saved
+                            ? formatProfileSetupReviewValue({
+                                ...saved,
+                                isDraft: null,
+                              })
+                            : "No saved role matches this suggestion.";
+                        }
+                        if (candidate?.target.section === "education") {
+                          const saved = profile.education.find(
+                            (record) =>
+                              record.id === candidate.target.recordId ||
+                              areEquivalentEducationRecords(
+                                record,
+                                candidate.value,
+                              ),
+                          );
+                          return saved
+                            ? formatProfileSetupReviewValue({
+                                ...saved,
+                                isDraft: null,
+                              })
+                            : "No saved education matches this suggestion.";
+                        }
+                        return null;
+                      }}
+                      onEditReviewItem={(item) => {
+                        const candidate = item.sourceCandidateId
+                          ? importCandidateById.get(item.sourceCandidateId)
+                          : null;
+                        if (candidate) focusProfileImportSuggestion(candidate);
+                      }}
+                    />
+                  </div>
+                ) : null}
                 {visibleSourceRowFeedback && sourceRowFeedbackTargetId ? (
                   <div className="mb-3">
                     <DiscoveryRunFeedbackCallout
@@ -705,6 +824,7 @@ export function ProfileScreen(props: {
                 >
                   <ProfileActiveSectionContent
                     activeSection={activeSection}
+                    requestedFileKind={searchParams.get("kind")}
                     activeDiscoveryRun={activeDiscoveryRun}
                     onSaveNow={handleSaveAll}
                     backgroundArrays={backgroundArrays}

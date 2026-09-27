@@ -57,7 +57,10 @@ import {
 } from "./applications-crm-views";
 import { ApplicationsCrmDetail } from "./applications-crm-detail";
 import type { ApplyMode } from "../../lib/apply-mode-contracts-stub";
-import { resolveApplyStatePresentation } from "./apply-state";
+import {
+  resolveApplyStatePresentation,
+  WAITING_FOR_BROWSER_TAB_SUMMARY,
+} from "./apply-state";
 import { buildApplyRunContextReader } from "./applications-recovery-state";
 import { APPLICATION_PREPARATION_BATCH_LIMIT } from "../review-queue/review-queue-status";
 
@@ -126,6 +129,10 @@ export function ApplicationsScreen(props: {
   ) => void;
   onStartApplyCopilot: (input: JobFinderExactApplicationTarget) => void;
   onOpenCompany?: (companyId: string) => void;
+  /**
+   * The workspace's most recently updated run. Not used to pick a record's
+   * attempt (see effectiveSelectedApplyRunId); kept for callers.
+   */
   selectedApplyRunId: string | null;
   onSelectRecord: (recordId: string) => void;
   selectedAttempt: ApplicationAttempt | null;
@@ -204,7 +211,6 @@ export function ApplicationsScreen(props: {
     onRevokeApplyRunApproval,
     onStartAutoApplyQueue,
     onStartApplyCopilot,
-    selectedApplyRunId,
     onSelectRecord,
     selectedAttempt,
     selectedRecord,
@@ -269,6 +275,11 @@ export function ApplicationsScreen(props: {
     const lines = new Map<string, string>();
     for (const result of applyJobResults) {
       if (!runningRunIds.has(result.runId)) continue;
+      // Started but held until the browser has a free tab: say that.
+      if (result.summary === WAITING_FOR_BROWSER_TAB_SUMMARY) {
+        lines.set(result.jobId, `${WAITING_FOR_BROWSER_TAB_SUMMARY}.`);
+        continue;
+      }
       if (result.state === "planned") {
         lines.set(
           result.jobId,
@@ -584,20 +595,15 @@ export function ApplicationsScreen(props: {
       return locallySelectedRunId;
     }
 
-    if (
-      selectedApplyRunId &&
-      applyResultsForSelectedRecord.some(
-        (result) => result.runId === selectedApplyRunId,
-      )
-    ) {
-      return selectedApplyRunId;
-    }
-
+    // Otherwise the record's newest attempt. The workspace-wide selection is
+    // the most recently *updated* run, which after a Try again is often the
+    // older batch (a late write to it moves it forward). Following it here
+    // aimed "Open the Job Finder browser" at the earlier, failed attempt, so
+    // the kept page of the newer one was never handed to the person.
     return applyResultsForSelectedRecord[0]?.runId ?? null;
   }, [
     applyResultsForSelectedRecord,
     effectiveSelectedRecord,
-    selectedApplyRunId,
     selectedApplyRunIdByApplicationRecordId,
   ]);
   const effectiveSelectedApplyResult = useMemo(
@@ -659,35 +665,6 @@ export function ApplicationsScreen(props: {
     },
     [effectiveSelectedRecord],
   );
-
-  useEffect(() => {
-    if (!effectiveSelectedRecord || !selectedApplyRunId) {
-      return;
-    }
-
-    if (
-      !applyResultsForSelectedRecord.some(
-        (result) => result.runId === selectedApplyRunId,
-      )
-    ) {
-      return;
-    }
-
-    setSelectedApplyRunIdByApplicationRecordId((current) => {
-      if (current[effectiveSelectedRecord.id] === selectedApplyRunId) {
-        return current;
-      }
-
-      return {
-        ...current,
-        [effectiveSelectedRecord.id]: selectedApplyRunId,
-      };
-    });
-  }, [
-    applyResultsForSelectedRecord,
-    effectiveSelectedRecord,
-    selectedApplyRunId,
-  ]);
 
   useEffect(() => {
     if (

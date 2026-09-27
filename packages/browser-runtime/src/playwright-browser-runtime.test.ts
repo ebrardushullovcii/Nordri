@@ -13,6 +13,7 @@ import net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { JobFinderAiClient } from "@unemployed/ai-providers";
+import type * as browserAgent from "@unemployed/browser-agent";
 import {
   ApplyExecutionResultSchema,
   BrowserVisualObservationSetSchema,
@@ -1213,7 +1214,7 @@ describe("playwright browser runtime", () => {
         input,
       );
 
-      expect(staleAutomationPage.close).toHaveBeenCalledTimes(1);
+      expect(staleAutomationPage.close).not.toHaveBeenCalled();
       expect(defaultResult.visualEvidence).toEqual([]);
       expect(defaultResult.visualObservationSets).toEqual([]);
       expect(defaultResult.visualCheckpoints).toEqual([]);
@@ -1727,7 +1728,7 @@ describe("playwright browser runtime", () => {
       join(tmpdir(), "unemployed-browser-runtime-agent-parked-page-"),
     );
     vi.doMock("@unemployed/browser-agent", async (importOriginal) => ({
-      ...(await importOriginal<typeof import("@unemployed/browser-agent")>()),
+      ...(await importOriginal<typeof browserAgent>()),
       runJobSearchAgent: vi.fn().mockResolvedValue({
         jobs: [],
         steps: 3,
@@ -1816,6 +1817,103 @@ describe("playwright browser runtime", () => {
       await rm(userDataDir, { recursive: true, force: true });
     }
   });
+
+  test.each([true, false])(
+    "runAgentDiscovery reviews a usable catalog without its missing landing page (dedicatedPage=%s)",
+    async (dedicatedPage) => {
+      const userDataDir = await mkdtemp(
+        join(
+          tmpdir(),
+          "unemployed-browser-runtime-agent-catalog-missing-page-",
+        ),
+      );
+      vi.doMock("@unemployed/browser-agent", async (importOriginal) => ({
+        ...(await importOriginal<typeof browserAgent>()),
+        runJobSearchAgent: vi.fn().mockResolvedValue({
+          jobs: [createTestJob()],
+          steps: 3,
+          incomplete: false,
+          transcriptMessageCount: 4,
+          warning: null,
+        }),
+      }));
+
+      try {
+        const chromeExecutablePath = join(userDataDir, "chrome.exe");
+        await writeFile(chromeExecutablePath, "", "utf8");
+        const debugPort = await reserveFreePort();
+        const launchedChromeProcess = createMockChildProcess({ pid: 54648 });
+        let pageUrl = "about:blank";
+        const page = {
+          bringToFront: vi.fn().mockResolvedValue(undefined),
+          close: vi.fn().mockResolvedValue(undefined),
+          evaluate: vi.fn().mockResolvedValue(404),
+          goto: vi.fn((url: string) => {
+            pageUrl = url;
+            return Promise.resolve({ status: () => 404 });
+          }),
+          isClosed: () => false,
+          url: () => pageUrl,
+        };
+        const fakeContext = {
+          newPage: vi.fn().mockResolvedValue(page),
+          pages: () => [page],
+        };
+        const fakeBrowser = {
+          close: vi.fn(),
+          contexts: () => [fakeContext],
+          isConnected: () => true,
+          once: vi.fn(() => fakeBrowser),
+        };
+
+        vi.stubGlobal(
+          "fetch",
+          vi.fn().mockResolvedValue({
+            ok: true,
+            json: () => Promise.resolve({}),
+          } as Response),
+        );
+        execFileMock.mockImplementation((...args: unknown[]) => {
+          maybeInvokeExecFileCallback(args);
+        });
+        spawnMock.mockReturnValue(launchedChromeProcess);
+        connectOverCDPMock.mockResolvedValue(fakeBrowser);
+
+        const { createBrowserAgentRuntime } =
+          await import("./playwright-browser-runtime");
+        const runtime = createBrowserAgentRuntime({
+          userDataDir,
+          chromeExecutablePath,
+          debugPort,
+          jobExtractor: vi.fn().mockResolvedValue([]),
+        });
+        const claimed: unknown[] = [];
+
+        const result = await runtime.runAgentDiscovery!("target_site", {
+          maxSteps: 3,
+          targetJobCount: 1,
+          userProfile: createTestProfile(),
+          searchPreferences: { targetRoles: [], locations: [] },
+          startingUrls: ["https://example.com/jobs"],
+          navigationHostnames: ["example.com"],
+          siteLabel: "Catalog Jobs",
+          sourceCatalog: [createTestJob()],
+          dedicatedPage,
+          onAutomationPage: (claimedPage) => claimed.push(claimedPage),
+        });
+
+        expect(result.warning).toBeNull();
+        expect(result.jobs).toHaveLength(1);
+        expect(result.jobs[0]?.title).toBe("Senior Engineer");
+        expect(page.goto).not.toHaveBeenCalled();
+        expect(page.close).toHaveBeenCalledOnce();
+        expect(claimed).toEqual([page]);
+      } finally {
+        vi.doUnmock("@unemployed/browser-agent");
+        await rm(userDataDir, { recursive: true, force: true });
+      }
+    },
+  );
 
   test("runAgentDiscovery reuses an already-open matching page instead of navigating a blank tab", async () => {
     const userDataDir = await mkdtemp(
@@ -3174,6 +3272,352 @@ describe("managed context active service worker gate", () => {
       },
     };
   }
+
+  test.each([
+    ["different sites", "https://beta.test/apply/second", true],
+    ["the same site", "https://jobs.example.com/apply/second", false],
+  ])("application preparation overlaps only for %s", async (_label, secondUrl, overlaps) => {
+    const userDataDir = await mkdtemp(join(tmpdir(), "unemployed-runtime-apply-overlap-"));
+    try {
+      const debugPort = await reserveFreePort();
+      const harness = createGateHarness({ activeServiceWorkers: () => [] });
+      const runtime = await createGatedRuntime({
+        userDataDir,
+        debugPort,
+        browser: harness.fakeBrowser,
+      });
+      const { approvedResumePath, prepareInput } = createPrepareInput({ userDataDir });
+      await writeFile(approvedResumePath, "approved resume", "utf8");
+      const stub = createStubFormPreparer();
+      let releaseFirst!: () => void;
+      let firstEntered!: () => void;
+      const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+      const entered = new Promise<void>((resolve) => { firstEntered = resolve; });
+      const firstRun = runtime.executeApplicationFlow("target_site", {
+        ...prepareInput,
+        applicationPageBindingKey: "first_bound_page",
+        prepareApplicationForm: async (args) => {
+          firstEntered();
+          await firstGate;
+          return stub(args);
+        },
+      });
+      await entered;
+      let secondEntered = false;
+      const secondRun = runtime.executeApplicationFlow("target_site", {
+        ...prepareInput,
+        applicationPageBindingKey: "second_bound_page",
+        job: { ...prepareInput.job, applicationUrl: secondUrl },
+        prepareApplicationForm: (args) => {
+          secondEntered = true;
+          return stub(args);
+        },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(secondEntered).toBe(overlaps);
+      if (overlaps) {
+        expect(harness.secondaryPage.goto).toHaveBeenCalledWith(secondUrl, expect.anything());
+        expect(harness.fakePage.close).not.toHaveBeenCalled();
+        await secondRun;
+      }
+      releaseFirst();
+      await firstRun;
+      if (!overlaps) {
+        await secondRun;
+        expect(secondEntered).toBe(true);
+      }
+    } finally {
+      await rm(userDataDir, { recursive: true, force: true });
+    }
+  });
+
+  test("cancelling a same-site waiter does not touch the active form", async () => {
+    const userDataDir = await mkdtemp(join(tmpdir(), "unemployed-runtime-apply-abort-"));
+    try {
+      const debugPort = await reserveFreePort();
+      const harness = createGateHarness({ activeServiceWorkers: () => [] });
+      const runtime = await createGatedRuntime({
+        userDataDir,
+        debugPort,
+        browser: harness.fakeBrowser,
+      });
+      const { approvedResumePath, prepareInput } = createPrepareInput({ userDataDir });
+      await writeFile(approvedResumePath, "approved resume", "utf8");
+      const stub = createStubFormPreparer();
+      let releaseFirst!: () => void;
+      let firstEntered!: () => void;
+      const gate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+      const entered = new Promise<void>((resolve) => { firstEntered = resolve; });
+      const firstRun = runtime.executeApplicationFlow("target_site", {
+        ...prepareInput,
+        prepareApplicationForm: async (args) => {
+          firstEntered();
+          await gate;
+          return stub(args);
+        },
+      });
+      await entered;
+      const controller = new AbortController();
+      const waitingRun = runtime.executeApplicationFlow(
+        "target_site",
+        { ...prepareInput, job: { ...prepareInput.job, applicationUrl: "https://jobs.example.com/second" } },
+        { signal: controller.signal },
+      );
+      controller.abort();
+      await expect(waitingRun).rejects.toMatchObject({ name: "AbortError" });
+      expect(harness.fakePage.close).not.toHaveBeenCalled();
+      expect(harness.secondaryPage.goto).not.toHaveBeenCalled();
+      releaseFirst();
+      await firstRun;
+    } finally {
+      await rm(userDataDir, { recursive: true, force: true });
+    }
+  });
+
+  test("a redirect into another active application's site waits before form work", async () => {
+    const userDataDir = await mkdtemp(join(tmpdir(), "unemployed-runtime-redirect-lock-"));
+    try {
+      const debugPort = await reserveFreePort();
+      const harness = createGateHarness({ activeServiceWorkers: () => [] });
+      const firstGoto = harness.fakePage.goto.getMockImplementation()!;
+      const secondGoto = harness.secondaryPage.goto.getMockImplementation()!;
+      harness.fakePage.goto.mockImplementation(() => firstGoto("https://account.shared.example/form/first"));
+      harness.secondaryPage.goto.mockImplementation(() => secondGoto("https://account.shared.example/form/second"));
+      const runtime = await createGatedRuntime({
+        userDataDir,
+        debugPort,
+        browser: harness.fakeBrowser,
+      });
+      const { approvedResumePath, prepareInput } = createPrepareInput({ userDataDir });
+      await writeFile(approvedResumePath, "approved resume", "utf8");
+      const stub = createStubFormPreparer();
+      let releaseFirst!: () => void;
+      let firstEntered!: () => void;
+      const gate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+      const entered = new Promise<void>((resolve) => { firstEntered = resolve; });
+      const firstRun = runtime.executeApplicationFlow("target_site", {
+        ...prepareInput,
+        applicationPageBindingKey: "redirect_first",
+        prepareApplicationForm: async (args) => {
+          firstEntered();
+          await gate;
+          return stub(args);
+        },
+      });
+      await entered;
+      let secondEntered = false;
+      const secondRun = runtime.executeApplicationFlow("target_site", {
+        ...prepareInput,
+        applicationPageBindingKey: "redirect_second",
+        job: { ...prepareInput.job, applicationUrl: "https://other.test/apply/second" },
+        prepareApplicationForm: (args) => {
+          secondEntered = true;
+          return stub(args);
+        },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(harness.secondaryPage.goto).toHaveBeenCalled();
+      expect(secondEntered).toBe(false);
+      releaseFirst();
+      await Promise.all([firstRun, secondRun]);
+      expect(secondEntered).toBe(true);
+    } finally {
+      await rm(userDataDir, { recursive: true, force: true });
+    }
+  });
+
+  test("a final page operation waits for same-site preparation while another site proceeds", async () => {
+    const userDataDir = await mkdtemp(join(tmpdir(), "unemployed-runtime-final-site-"));
+    try {
+      const debugPort = await reserveFreePort();
+      const harness = createGateHarness({ activeServiceWorkers: () => [] });
+      const originalNewPage = harness.fakeContext.newPage.getMockImplementation()!;
+      const originalPages = harness.fakeContext.pages;
+      let thirdUrl = "about:blank";
+      let thirdAdded = false;
+      const thirdPage = {
+        bringToFront: vi.fn().mockResolvedValue(undefined),
+        close: vi.fn().mockResolvedValue(undefined),
+        goto: vi.fn((url: string) => {
+          thirdUrl = url;
+          return Promise.resolve(undefined);
+        }),
+        isClosed: () => false,
+        url: () => thirdUrl,
+      };
+      harness.fakeContext.newPage
+        .mockImplementationOnce(originalNewPage)
+        .mockImplementationOnce(() => {
+          thirdAdded = true;
+          return Promise.resolve(thirdPage);
+        });
+      Object.assign(harness.fakeContext, {
+        pages: () => [...originalPages(), ...(thirdAdded ? [thirdPage] : [])],
+      });
+      const runtime = await createGatedRuntime({
+        userDataDir,
+        debugPort,
+        browser: harness.fakeBrowser,
+      });
+      const { approvedResumePath, prepareInput } = createPrepareInput({ userDataDir });
+      await writeFile(approvedResumePath, "approved resume", "utf8");
+      const stub = createStubFormPreparer();
+      await runtime.executeApplicationFlow("target_site", {
+        ...prepareInput,
+        applicationPageBindingKey: "ready_for_final",
+      });
+
+      let releaseSameSite!: () => void;
+      let sameSiteEntered!: () => void;
+      const gate = new Promise<void>((resolve) => { releaseSameSite = resolve; });
+      const entered = new Promise<void>((resolve) => { sameSiteEntered = resolve; });
+      const sameSiteRun = runtime.executeApplicationFlow("target_site", {
+        ...prepareInput,
+        applicationPageBindingKey: "same_site_busy",
+        job: { ...prepareInput.job, applicationUrl: "https://jobs.example.com/second" },
+        prepareApplicationForm: async (args) => {
+          sameSiteEntered();
+          await gate;
+          return stub(args);
+        },
+      });
+      await entered;
+
+      let finalEntered = false;
+      let finalPageUrl: string | null = null;
+      const finalOperation = runtime.withApplicationPageExecution!(
+        "target_site",
+        "ready_for_final",
+        () => {
+          finalEntered = true;
+          finalPageUrl = harness.fakePage.url();
+          return Promise.resolve("sent");
+        },
+      );
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(finalEntered).toBe(false);
+      await harness.fakePage.goto("https://elsewhere.test/wizard");
+
+      let otherSiteEntered = false;
+      const otherSiteRun = runtime.executeApplicationFlow("target_site", {
+        ...prepareInput,
+        applicationPageBindingKey: "other_site_ready",
+        job: { ...prepareInput.job, applicationUrl: "https://elsewhere.test/apply" },
+        prepareApplicationForm: (args) => {
+          otherSiteEntered = true;
+          return stub(args);
+        },
+      });
+      await otherSiteRun;
+      expect(otherSiteEntered).toBe(true);
+      expect(finalEntered).toBe(false);
+      releaseSameSite();
+      await sameSiteRun;
+      await expect(finalOperation).resolves.toBe("sent");
+      expect(finalEntered).toBe(true);
+      expect(finalPageUrl).toBe("https://elsewhere.test/wizard");
+    } finally {
+      await rm(userDataDir, { recursive: true, force: true });
+    }
+  });
+
+  test("embedded tab headroom waits abortably without closing existing tabs", async () => {
+    const userDataDir = await mkdtemp(join(tmpdir(), "unemployed-runtime-tab-headroom-"));
+    try {
+      const harness = createGateHarness({ activeServiceWorkers: () => [] });
+      // A form page, not the idle startup tab (that one may be closed for room).
+      await harness.fakePage.goto("https://held.example/primary");
+      const otherPages = Array.from({ length: 6 }, (_, index) => ({
+        isClosed: () => false,
+        url: () => `https://held.example/${index}`,
+        close: vi.fn().mockResolvedValue(undefined),
+      }));
+      Object.assign(harness.fakeContext, {
+        pages: () => [harness.fakePage, ...otherPages],
+      });
+      const { createBrowserAgentRuntime } = await import("./playwright-browser-runtime");
+      const runtime = createBrowserAgentRuntime({
+        userDataDir,
+        browserHost: {
+          connect: () => Promise.resolve(harness.fakeBrowser as never),
+          getOpenBrowser: () => Promise.resolve(harness.fakeBrowser as never),
+          close: () => Promise.resolve(),
+          assertAutomationSafe: () => undefined,
+        },
+      });
+      const { approvedResumePath, prepareInput } = createPrepareInput({ userDataDir });
+      await writeFile(approvedResumePath, "approved resume", "utf8");
+      const controller = new AbortController();
+      const run = runtime.executeApplicationFlow("target_site", prepareInput, {
+        signal: controller.signal,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      expect(harness.fakeContext.newPage).not.toHaveBeenCalled();
+      controller.abort();
+      await expect(run).rejects.toMatchObject({ name: "AbortError" });
+      expect(harness.fakePage.close).not.toHaveBeenCalled();
+      expect(otherPages.every((page) => page.close.mock.calls.length === 0)).toBe(true);
+    } finally {
+      await rm(userDataDir, { recursive: true, force: true });
+    }
+  });
+
+  test("concurrent embedded tab openings reserve popup headroom atomically", async () => {
+    const userDataDir = await mkdtemp(join(tmpdir(), "unemployed-runtime-tab-reservation-"));
+    try {
+      const harness = createGateHarness({ activeServiceWorkers: () => [] });
+      // A form page, not the idle startup tab (that one may be closed for room).
+      await harness.fakePage.goto("https://held.example/primary");
+      const otherPages = Array.from({ length: 5 }, (_, index) => ({
+        isClosed: () => false,
+        url: () => `https://held.example/${index}`,
+        close: vi.fn().mockResolvedValue(undefined),
+      }));
+      let resolveNewPage!: (page: typeof harness.secondaryPage) => void;
+      let newPageStarted!: () => void;
+      const opening = new Promise<typeof harness.secondaryPage>((resolve) => {
+        resolveNewPage = resolve;
+      });
+      const started = new Promise<void>((resolve) => { newPageStarted = resolve; });
+      Object.assign(harness.fakeContext, {
+        pages: () => [harness.fakePage, ...otherPages],
+        newPage: vi.fn(() => {
+          newPageStarted();
+          return opening;
+        }),
+      });
+      const { createBrowserAgentRuntime } = await import("./playwright-browser-runtime");
+      const runtime = createBrowserAgentRuntime({
+        userDataDir,
+        browserHost: {
+          connect: () => Promise.resolve(harness.fakeBrowser as never),
+          getOpenBrowser: () => Promise.resolve(harness.fakeBrowser as never),
+          close: () => Promise.resolve(),
+          assertAutomationSafe: () => undefined,
+        },
+      });
+      const { approvedResumePath, prepareInput } = createPrepareInput({ userDataDir });
+      await writeFile(approvedResumePath, "approved resume", "utf8");
+      const first = runtime.executeApplicationFlow("target_site", prepareInput);
+      await started;
+      const controller = new AbortController();
+      const second = runtime.executeApplicationFlow(
+        "target_site",
+        { ...prepareInput, job: { ...prepareInput.job, applicationUrl: "https://other.test/apply" } },
+        { signal: controller.signal },
+      );
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      expect(harness.fakeContext.newPage).toHaveBeenCalledTimes(1);
+      controller.abort();
+      await expect(second).rejects.toMatchObject({ name: "AbortError" });
+      resolveNewPage(harness.secondaryPage);
+      await first;
+      expect(harness.fakePage.close).not.toHaveBeenCalled();
+      expect(otherPages.every((page) => page.close.mock.calls.length === 0)).toBe(true);
+    } finally {
+      await rm(userDataDir, { recursive: true, force: true });
+    }
+  });
 
   test("prepare-only flow fails closed without navigating when an application-origin service worker is active", async () => {
     const userDataDir = await mkdtemp(

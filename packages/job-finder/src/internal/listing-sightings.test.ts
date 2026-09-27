@@ -403,9 +403,13 @@ describe("merging the same job from two sources", () => {
     };
     const read = await readSightingApplyRoutes({
       jobs: [job],
-      fetchHtml: async (url) => {
+      fetchHtml: (url) => {
         requested.push(url);
-        return { status: 200, html: pages[url] ?? "", finalUrl: url };
+        return Promise.resolve({
+          status: 200,
+          html: pages[url] ?? "",
+          finalUrl: url,
+        });
       },
       now: () => "2026-09-23T10:10:00.000Z",
     });
@@ -415,9 +419,9 @@ describe("merging the same job from two sources", () => {
     expect(winner?.listingUrl).toBe(`${HOST}/forms/jobs/9`);
     const again = await readSightingApplyRoutes({
       jobs: read.jobs,
-      fetchHtml: async (url) => {
+      fetchHtml: (url) => {
         requested.push(url);
-        return { status: 200, html: "", finalUrl: url };
+        return Promise.resolve({ status: 200, html: "", finalUrl: url });
       },
     });
     expect(again.summary.read).toBe(0);
@@ -428,7 +432,8 @@ describe("merging the same job from two sources", () => {
     const job = mergeInOrder("board", "forms").mergedJobs[0]!;
     const read = await readSightingApplyRoutes({
       jobs: [job],
-      fetchHtml: async (url) => ({ status: 429, html: "", finalUrl: url }),
+      fetchHtml: (url) =>
+        Promise.resolve({ status: 429, html: "", finalUrl: url }),
     });
     expect(read.summary).toEqual({ read: 0, rateLimited: true });
     expect(listUnreadSightings(read.jobs[0]!.provenance)).toHaveLength(2);

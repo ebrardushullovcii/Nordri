@@ -592,6 +592,11 @@ export function buildReviewQueue(
   resumeExportArtifacts: readonly ResumeExportArtifact[],
   profile?: CandidateProfile,
   settings?: JobFinderSettings,
+  /**
+   * Per draft id, the lines its latest validation says still wait for the
+   * person (the export gate's own rule). Drafts not listed have none.
+   */
+  linesToDecideByDraftId?: ReadonlyMap<string, number>,
 ): ReviewQueueItem[] {
   const originalResume = profile?.baseResume ?? null;
   const originalResumePath = originalResume?.storagePath?.trim() ?? "";
@@ -685,6 +690,9 @@ export function buildReviewQueue(
         progressPercent: asset?.progressPercent ?? null,
         resumeAssetId: asset?.id ?? null,
         resumeReview,
+        ...(draft && (linesToDecideByDraftId?.get(draft.id) ?? 0) > 0
+          ? { resumeLinesToDecide: linesToDecideByDraftId!.get(draft.id)! }
+          : {}),
         updatedAt: updatedAtCandidates.sort().at(-1) ?? job.discoveredAt,
       };
     })

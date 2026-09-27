@@ -319,6 +319,61 @@ describe("source-generic application browser hands", () => {
     ).toHaveLength(1);
   });
 
+  test("reports not sent when the site refused the connection and nothing answered", async () => {
+    const closed = http.createServer();
+    await new Promise<void>((resolve) => closed.listen(0, "127.0.0.1", resolve));
+    const closedPort = (closed.address() as AddressInfo).port;
+    await new Promise<void>((resolve) => closed.close(() => resolve()));
+    const { page } = await createPage(
+      `<form method=post action='http://127.0.0.1:${closedPort}/apply'><input name=a value=x><button id=send type=submit>Send application</button></form>`,
+    );
+    const observation = await observeApplicationForm(page);
+    const result = await executeExactlyOneFinalAction(page, {
+      expectedObservation: observation.identity,
+      expectedControl: observation.controls[0]!.identity,
+      expectedPageOrigin: expectedOrigin(page),
+      allowedOrigins: [expectedOrigin(page), `http://127.0.0.1:${closedPort}`],
+      veto: () => true,
+    });
+
+    expect(result).toMatchObject({
+      outcome: "not_submitted",
+      reason: "site_unreachable",
+      facts: { actionIssued: true },
+    });
+  });
+
+  test("a click that never reached the page can be pressed again", async () => {
+    const { page, server } = await createPage(
+      "<form action='/submit'><button id=send type=submit>Send application</button></form><div id=cover style='position:fixed;inset:0;z-index:10'></div>",
+    );
+    const observation = await observeApplicationForm(page);
+    const input = {
+      expectedObservation: observation.identity,
+      expectedControl: observation.controls[0]!.identity,
+      expectedPageOrigin: expectedOrigin(page),
+      allowedOrigins: [expectedOrigin(page)],
+      veto: () => true,
+      clickTimeoutMs: 500,
+    };
+    expect(await executeExactlyOneFinalAction(page, input)).toMatchObject({
+      outcome: "not_submitted",
+      reason: "action_error",
+      facts: { actionIssued: false },
+    });
+
+    await page.evaluate(() => document.getElementById("cover")?.remove());
+    expect(await executeExactlyOneFinalAction(page, input)).toMatchObject({
+      outcome: "outcome_uncertain",
+      reason: "action_issued",
+      facts: { actionIssued: true },
+    });
+    await page.waitForTimeout(100);
+    expect(
+      server.requests.filter((request) => request.includes("/submit")),
+    ).toHaveLength(1);
+  });
+
   test("counts the employer page's receipt confirmation as submitted", async () => {
     const { page, server } = await createPage(
       "<form action='/submit-confirmed'><button id=send type=submit>Send application</button></form>",

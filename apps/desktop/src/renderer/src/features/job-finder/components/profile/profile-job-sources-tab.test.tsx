@@ -142,6 +142,91 @@ describe("ProfileJobSourcesTab", () => {
     });
   });
 
+  it("rejects whitespace in hosts while allowing spaces in paths and queries", () => {
+    expect(
+      parseJobSourceUrls(
+        "not a url\nhttps://not%20a%20url/jobs\nhttps://jobs.example.com/Job Openings?team=Design Systems",
+      ),
+    ).toEqual({
+      urls: ["https://jobs.example.com/Job%20Openings?team=Design%20Systems"],
+      invalid: ["not a url", "https://not%20a%20url/jobs"],
+    });
+  });
+
+  it("rejects whitespace hosts even when the renderer URL parser accepts them", () => {
+    const NativeUrl = globalThis.URL;
+    class PermissiveUrl extends NativeUrl {
+      constructor(input: string | URL, base?: string | URL) {
+        const acceptsWhitespaceHost = input === "https://not a url";
+        super(acceptsWhitespaceHost ? "https://valid.example/" : input, base);
+        if (acceptsWhitespaceHost) {
+          Object.defineProperty(this, "hostname", { value: "not%20a%20url" });
+        }
+      }
+    }
+    vi.stubGlobal("URL", PermissiveUrl);
+    try {
+      expect(parseJobSourceUrls("not a url")).toEqual({
+        urls: [],
+        invalid: ["not a url"],
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("preserves case-sensitive paths and query values while deduplicating host casing", () => {
+    expect(
+      parseJobSourceUrls(
+        "https://JOBS.example.com/Jobs?team=ABC\nhttps://jobs.example.com/Jobs?team=ABC\nhttps://jobs.example.com/jobs?team=ABC\nhttps://jobs.example.com/Jobs?team=abc",
+      ),
+    ).toEqual({
+      urls: [
+        "https://jobs.example.com/Jobs?team=ABC",
+        "https://jobs.example.com/jobs?team=ABC",
+        "https://jobs.example.com/Jobs?team=abc",
+      ],
+      invalid: [],
+    });
+  });
+
+  it("shows distinct URLs beneath shared source labels", () => {
+    const urls = [
+      "https://jobs.example.com/openings?team=Design",
+      "https://jobs.example.com/openings?team=Engineering",
+    ];
+    render(
+      <JobSourcesHarness
+        targets={urls.map((startingUrl, index) =>
+          createTarget(index + 1, { label: "Company careers", startingUrl }),
+        )}
+      />,
+    );
+    expect(screen.getAllByRole("heading", { name: "Company careers" })).toHaveLength(2);
+    for (const url of urls) expect(screen.getByText(url)).toBeTruthy();
+  });
+
+  it("adds case-distinct URLs beside an existing source", () => {
+    render(
+      <JobSourcesHarness
+        targets={[
+          createTarget(1, {
+            startingUrl: "https://jobs.example.com/Jobs?team=ABC",
+          }),
+        ]}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Add sources" }));
+    fireEvent.change(screen.getByLabelText("Add sources"), {
+      target: {
+        value:
+          "https://JOBS.example.com/Jobs?team=ABC\nhttps://jobs.example.com/jobs?team=ABC\nhttps://jobs.example.com/Jobs?team=abc",
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add 2 sources" }));
+    expect(screen.getByText("3 sources")).toBeTruthy();
+  });
+
   beforeAll(() => {
     Element.prototype.scrollIntoView = function scrollIntoViewTrackingStub(
       this: Element,
@@ -679,8 +764,10 @@ describe("ProfileJobSourcesTab", () => {
 
     expect(screen.getByText("Added and turned on 2 sources.")).toBeTruthy();
     expect(screen.getByText("3 sources")).toBeTruthy();
-    expect(screen.getAllByText("alpha.example")).toHaveLength(2);
-    expect(screen.getAllByText("beta.example")).toHaveLength(2);
+    expect(screen.getByText("alpha.example")).toBeTruthy();
+    expect(screen.getByText("https://alpha.example/careers")).toBeTruthy();
+    expect(screen.getByText("beta.example")).toBeTruthy();
+    expect(screen.getByText("https://beta.example/jobs")).toBeTruthy();
   });
 
   it("checks every listed source one at a time and stops on request", () => {

@@ -490,6 +490,23 @@ function hasDurableFinalSubmitAuthorization(
   );
 }
 
+/**
+ * A result whose last attempt is on record as not sent can take the outcome
+ * of a later attempt under a different key: the person pressed Send again
+ * after nothing reached the site. A sent or uncertain outcome is never
+ * replaced.
+ */
+function isLaterAttemptAfterNotSubmitted(
+  previous: SubmissionOutcomeRecord,
+  outcome: SubmissionOutcomeRecord,
+): boolean {
+  return (
+    previous.outcome === "not_submitted" &&
+    previous.idempotencyKey !== outcome.idempotencyKey &&
+    previous.preflightId !== outcome.preflightId
+  );
+}
+
 interface ReconciledSubmissionOutcomeProjection {
   applicationRecord: ApplicationRecord;
   result: ApplyJobResult;
@@ -533,7 +550,8 @@ function buildReconciledSubmissionOutcomeProjection(
 
   if (
     receipt.submissionOutcome !== null &&
-    !sameValue(receipt.submissionOutcome, outcome)
+    !sameValue(receipt.submissionOutcome, outcome) &&
+    !isLaterAttemptAfterNotSubmitted(receipt.submissionOutcome, outcome)
   ) {
     return null;
   }
@@ -1779,14 +1797,14 @@ export function createApplicationAuthorityRepositoryMethods(
           const prepared: Array<{
             outcome: SubmissionOutcomeRecord;
             resolved: SubmissionIdempotencyRecord;
-            projection: ReconciledSubmissionOutcomeProjection;
+            projection: ReconciledSubmissionOutcomeProjection | null;
           }> = [];
           const resultIds = new Set<string>();
 
-          // Build every recovery mutation first. In particular, a malformed
-          // timestamp or missing/mismatched result must fail before any
-          // earlier armed attempt is converted, preserving the transaction's
-          // all-or-nothing promise in the in-memory implementation as well.
+          // Build every recovery mutation first. A malformed timestamp must
+          // fail before any earlier armed attempt is converted, preserving the
+          // transaction's all-or-nothing promise in the in-memory
+          // implementation as well.
           for (const current of armed) {
             const outcome = SubmissionOutcomeRecordSchema.parse({
               id: `recovery_outcome_${current.id}_${current.revision}`,
@@ -1804,21 +1822,18 @@ export function createApplicationAuthorityRepositoryMethods(
               evidence: [],
               retry: { eligible: false, blockReason: "outcome_uncertain" },
             });
-            const projection = buildReconciledSubmissionOutcomeProjection(
+            const built = buildReconciledSubmissionOutcomeProjection(
               state,
               outcome,
             );
-            if (projection === null) {
-              throw new Error(
-                "Cannot recover an armed submission without its exact ApplyJobResult privacy receipt and ApplicationRecord.",
-              );
-            }
-            if (resultIds.has(projection.result.id)) {
-              throw new Error(
-                "Cannot recover multiple armed submissions into one ApplyJobResult.",
-              );
-            }
-            resultIds.add(projection.result.id);
+            // One attempt whose result cannot carry the outcome (the result
+            // is gone, was sent by the person meanwhile, or already holds
+            // another attempt's outcome) is closed as uncertain on its own,
+            // leaving that result as it is. It never stops the others from
+            // recovering, and it never stops the workspace from opening.
+            const projection =
+              built !== null && !resultIds.has(built.result.id) ? built : null;
+            if (projection) resultIds.add(projection.result.id);
             const resolved = SubmissionIdempotencyRecordSchema.parse({
               ...current,
               status: "outcome_uncertain",
@@ -1848,8 +1863,13 @@ export function createApplicationAuthorityRepositoryMethods(
           // authority records and their matching receipts can now be swapped
           // together.
           for (const entry of prepared) {
-            replaceApplyJobResult(state, entry.projection.result);
-            replaceApplicationRecord(state, entry.projection.applicationRecord);
+            if (entry.projection) {
+              replaceApplyJobResult(state, entry.projection.result);
+              replaceApplicationRecord(
+                state,
+                entry.projection.applicationRecord,
+              );
+            }
             state.submissionOutcomeRecords.push(entry.outcome);
             replaceById(state.submissionIdempotencyRecords, entry.resolved);
             recovered.push(entry.outcome);

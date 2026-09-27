@@ -155,6 +155,16 @@ async function readApplyFrame(frame: Frame, frameIndex: number) {
       frame
         .locator(APPLY_CONTROL_SELECTOR)
         .evaluateAll((elements, prefix): RawApplyControl[] => {
+          const labelText = (element: Element | null): string => {
+            if (!element) return "";
+            const clone = element.cloneNode(true) as Element;
+            clone
+              .querySelectorAll(
+                "input, textarea, select, [role='option'], [role='listbox']",
+              )
+              .forEach((control) => control.remove());
+            return (clone.textContent ?? "").replace(/\s+/gu, " ").trim();
+          };
           const roots = Array.from(
             new Set(elements.map((element) => element.getRootNode())),
           );
@@ -187,7 +197,7 @@ async function readApplyFrame(frame: Frame, frameIndex: number) {
             const labelledBy = (element.getAttribute("aria-labelledby") ?? "")
               .split(/\s+/u)
               .filter(Boolean)
-              .map((id) => document.getElementById(id)?.textContent ?? "")
+              .map((id) => labelText(document.getElementById(id)))
               .join(" ")
               .trim();
             const labels =
@@ -214,11 +224,11 @@ async function readApplyFrame(frame: Frame, frameIndex: number) {
               labelledBy ||
               (labels
                 ? Array.from(labels)
-                    .map((item) => item.textContent?.trim() ?? "")
+                    .map((item) => labelText(item))
                     .filter(Boolean)
                     .join(" ")
                 : "") ||
-              element.closest("label")?.textContent?.trim() ||
+              labelText(element.closest("label")) ||
               nearbyQuestionText() ||
               "";
             const legend = element
@@ -283,6 +293,15 @@ async function readApplyFrame(frame: Frame, frameIndex: number) {
               multiple: select?.multiple ?? false,
               options: select
                 ? Array.from(select.options)
+                    .filter(
+                      (option) =>
+                        !option.disabled &&
+                        !(
+                          option.parentElement instanceof HTMLOptGroupElement &&
+                          option.parentElement.disabled
+                        ) &&
+                        !(select.required && option.value === ""),
+                    )
                     .map((option) => option.label.trim())
                     .filter(Boolean)
                 : [],
@@ -447,6 +466,16 @@ async function readRawApplyPageOnce(page: Page): Promise<RawApplyPage> {
       page
         .locator(APPLY_CONTROL_SELECTOR)
         .evaluateAll((elements): RawApplyControl[] => {
+          const labelText = (element: Element | null): string => {
+            if (!element) return "";
+            const clone = element.cloneNode(true) as Element;
+            clone
+              .querySelectorAll(
+                "input, textarea, select, [role='option'], [role='listbox']",
+              )
+              .forEach((control) => control.remove());
+            return (clone.textContent ?? "").replace(/\s+/gu, " ").trim();
+          };
           const isVisible = (element: HTMLElement): boolean => {
             if (element.getAttribute("aria-hidden") === "true") {
               return false;
@@ -463,7 +492,7 @@ async function readRawApplyPageOnce(page: Page): Promise<RawApplyPage> {
             (element.getAttribute("aria-labelledby") ?? "")
               .split(/\s+/u)
               .filter(Boolean)
-              .map((id) => document.getElementById(id)?.textContent ?? "")
+              .map((id) => labelText(document.getElementById(id)))
               .join(" ")
               .trim();
           const directLabel = (element: Element): string => {
@@ -477,11 +506,11 @@ async function readRawApplyPageOnce(page: Page): Promise<RawApplyPage> {
                 ? Array.from(labelled.labels)
                 : [];
             const text = labels
-              .map((label) => label.innerText.trim())
+              .map((label) => labelText(label))
               .filter(Boolean)
               .join(" ");
             if (text) return text;
-            const enclosing = element.closest("label")?.textContent?.trim();
+            const enclosing = labelText(element.closest("label"));
             if (enclosing) return enclosing;
             let ancestor = element.parentElement;
             for (let depth = 0; ancestor && depth < 5; depth += 1) {
@@ -609,6 +638,15 @@ async function readRawApplyPageOnce(page: Page): Promise<RawApplyPage> {
               multiple: select?.multiple ?? false,
               options: select
                 ? Array.from(select.options)
+                    .filter(
+                      (option) =>
+                        !option.disabled &&
+                        !(
+                          option.parentElement instanceof HTMLOptGroupElement &&
+                          option.parentElement.disabled
+                        ) &&
+                        !(select.required && option.value === ""),
+                    )
                     .map((option) => option.label.trim())
                     .filter(Boolean)
                 : customOptions(html),
@@ -1560,6 +1598,20 @@ export function createPlaywrightApplyPageMechanics(
         return { ok: false, error: `There is nothing called ${ref} here.` };
       }
       try {
+        const changesToggle = await locator.evaluate((element) => {
+          const label = element.closest("label");
+          const target = label?.control ?? element;
+          return target.matches(
+            "input[type='checkbox'], input[type='radio'], [role='checkbox'], [role='radio']",
+          );
+        });
+        if (changesToggle) {
+          return {
+            ok: false,
+            error:
+              "This click changes a checkbox or radio answer. Use set_checkbox with the control reference so its answer is checked first.",
+          };
+        }
         await clickAndSettle(page, locator);
         return { ok: true, observedValue: "clicked" };
       } catch (error) {

@@ -96,6 +96,9 @@ export function ResumeWorkspaceScreen(props: ResumeWorkspaceScreenProps) {
   const [mobileStudioTab, setMobileStudioTab] =
     useState<ResumeStudioMobileTab>("preview");
   const [assistantOpenRequestKey, setAssistantOpenRequestKey] = useState(0);
+  // Open, the Assistant docks as the studio's right-hand column, so the shell
+  // needs to know to make room for it.
+  const [isAssistantOpen, setIsAssistantOpen] = useState(false);
   // The level an Original job is being moved to by the studio's one-press
   // route. The job stops being Original as soon as the level is saved, but
   // until the new resume is written the header keeps saying what is happening
@@ -1077,6 +1080,7 @@ export function ResumeWorkspaceScreen(props: ResumeWorkspaceScreenProps) {
         }
       >
         <ResumeWorkspaceStudioShell
+          assistantDocked={isAssistantOpen}
           approvalBlockedReason={approvalBlockedReason}
           approvalStateLabel={approvalStateLabel}
           approvedExportPageCount={approvedExport?.pageCount ?? null}
@@ -1214,15 +1218,16 @@ export function ResumeWorkspaceScreen(props: ResumeWorkspaceScreenProps) {
           validationIssues={visibleValidationIssues}
         />
       </section>
-      {/* One Assistant, one placement: a floating panel over the studio at
-          every width. It never takes a studio column, so opening, minimizing
-          or closing it leaves the preview and tools panes exactly where they
-          were. */}
+      {/* One Assistant, one placement: open, it docks as the studio's
+          right-hand column at every width and the panes beside it narrow, so
+          it never rests over the controls the person is using; minimized, it
+          is a button in the studio's action row. */}
       <ResumeGuidedEditsPopup
         assistantMessages={props.assistantMessages}
         assistantPending={props.assistantPending}
         draft={draft}
         isWorkspacePending={props.isWorkspacePending}
+        onOpenChange={setIsAssistantOpen}
         openRequestKey={assistantOpenRequestKey}
         onSendAssistantMessage={(content) =>
           runWithSavedDraftAsync(

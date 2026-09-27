@@ -1744,6 +1744,12 @@ function inferWorkModes(
   if (normalized.includes("hybrid")) {
     return ["hybrid"];
   }
+  if (
+    /\bon[\s-]?site\b/u.test(normalized) &&
+    !/\b(?:not|no|without)\s+(?:an?\s+)?on[\s-]?site\b/u.test(normalized)
+  ) {
+    return ["onsite"];
+  }
   return [];
 }
 
@@ -2147,13 +2153,7 @@ export function applyDiscoveryTitleTriage(input: {
     !(
       allowsPollutedTitleEvidence &&
       matchesTitlePreference(postingEvidenceText, searchPreferences.targetRoles)
-    ) &&
-    !matchesTechnicalRoleFallback({
-      posting,
-      postingEvidenceText,
-      profile,
-      searchPreferences,
-    })
+    )
   ) {
     return {
       outcome: "skip_title" as const,

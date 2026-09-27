@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import {
   DiscoveryActivityEventSchema,
   DiscoveryRunRecordSchema,
@@ -89,6 +89,51 @@ const liveEvent = DiscoveryActivityEventSchema.parse({
 });
 
 describe("DiscoveryHistoryModal", () => {
+  it("shows the terminal source explanation instead of guessing why no jobs were collected", () => {
+    const reason = "The careers page returned service unavailable. No vacancies could be read.";
+    const run = DiscoveryRunRecordSchema.parse({
+      ...failedRun,
+      targetExecutions: failedRun.targetExecutions.map((execution) => ({
+        ...execution, state: "completed", warning: null,
+      })),
+      activity: [
+        { ...liveEvent, id: "finished", runId: failedRun.id, terminalState: "completed", message: reason },
+        { ...liveEvent, id: "later-note", runId: failedRun.id, message: "Reading another page." },
+      ],
+      summary: {
+        ...failedRun.summary,
+        sourceHealth: [{ targetId: "greenhouse-source", health: "warning", durationMs: 4000, warnings: [] }],
+        warnings: [],
+      },
+    });
+    render(<DiscoveryHistoryModal activeRun={null} isDiscoveryPending={false}
+      isTargetPending={() => false} liveEvents={[]} onClose={vi.fn()} open
+      recentRuns={[run]} targets={targets} />);
+    const sourceCard = screen.getByText(/^No jobs collected/u).closest("article");
+    expect(sourceCard).not.toBeNull();
+    expect(within(sourceCard!).getByText(reason)).toBeTruthy();
+    expect(within(sourceCard!).queryByText("Reading another page.")).toBeNull();
+  });
+
+  it("counts distinct staged and persisted additions in source contributions", () => {
+    const run = DiscoveryRunRecordSchema.parse({
+      ...failedRun,
+      targetExecutions: failedRun.targetExecutions.map((execution) => ({
+        ...execution, state: "completed", warning: null, jobsPersisted: 1, jobsStaged: 2, jobsFound: 3,
+      })),
+      summary: {
+        ...failedRun.summary,
+        sourceHealth: [{ targetId: "greenhouse-source", health: "healthy", durationMs: 4000, warnings: [] }],
+        warnings: [],
+      },
+    });
+    render(<DiscoveryHistoryModal activeRun={null} isDiscoveryPending={false}
+      isTargetPending={() => false} liveEvents={[]} onClose={vi.fn()} open
+      recentRuns={[run]} targets={targets} />);
+    expect(screen.getByText("Contributed 3 new jobs to this run.")).toBeTruthy();
+    expect(screen.getByText("By source: Greenhouse roles — 3 jobs.")).toBeTruthy();
+  });
+
   it("describes the dialog and exposes current activity as an additions-only log", () => {
     render(
       <DiscoveryHistoryModal

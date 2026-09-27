@@ -276,6 +276,71 @@ async function commitPreflightAndGrant(
 }
 
 describe("synthetic application submission orchestrator", () => {
+  test("a person's retry after a not-sent attempt sends under the next key and records its outcome", async () => {
+    const repository = createInMemoryJobFinderRepository(createSeed());
+    const envelope = ApplicationAuthorityEnvelopeSchema.parse({
+      ...createEnvelope(),
+      maxApplicationsPerRun: 5,
+      maxApplicationsPerLocalDay: 5,
+    });
+    await commitEnvelope(repository);
+    expect(
+      await repository.commitApplicationAuthorityEnvelope({
+        envelope: { ...envelope, revision: 2 },
+        expectedRevision: 1,
+      }),
+    ).toMatchObject({ status: "applied" });
+    const first = await runSyntheticApplicationSubmission({
+      ...createInput(repository, {
+        observation: { remainingRunCapacity: 5, remainingDailyCapacity: 5 },
+      }),
+      preflight: SubmissionPreflightRecordSchema.parse({
+        ...createPreflight(),
+        authorityRevision: 2,
+        remainingRunCapacityBefore: 5,
+        remainingDailyCapacityBefore: 5,
+      }),
+    });
+    expect(first.status).toBe("recorded_not_submitted");
+
+    const confirmed = {
+      outcome: "submitted",
+      verifiedAt: NOW,
+      evidence: [
+        {
+          id: "retry_evidence",
+          kind: "employer_site_state",
+          observedAt: NOW,
+          destination: { origin: ORIGIN, safePath: "/confirmation" },
+          artifactRefId: null,
+          summary: "The employer site confirmed receipt.",
+        },
+      ],
+    } as unknown as SyntheticSubmissionExecutorResult;
+    const submitted = {
+      execute: vi.fn(() => Promise.resolve(confirmed)),
+    } satisfies SyntheticSubmissionExecutor;
+    const retry = await runSyntheticApplicationSubmission({
+      ...createInput(repository, {
+        executor: submitted,
+        observation: { remainingRunCapacity: 4, remainingDailyCapacity: 4 },
+      }),
+      preflight: SubmissionPreflightRecordSchema.parse({
+        ...createPreflight(),
+        id: "preflight_1_retry1",
+        idempotencyKey: "submit_once_1_retry1",
+        authorityRevision: 2,
+        remainingRunCapacityBefore: 4,
+        remainingDailyCapacityBefore: 4,
+      }),
+    });
+    expect(retry).toMatchObject({ status: "submitted" });
+    expect(submitted.execute).toHaveBeenCalledTimes(1);
+    expect(
+      await repository.getSubmissionIdempotencyRecord("submit_once_1_retry1"),
+    ).toMatchObject({ status: "resolved", outcome: "submitted" });
+  });
+
   test("runs an autonomous attempt once, arms before execution, and records not-submitted", async () => {
     const repository = createInMemoryJobFinderRepository(createSeed());
     await commitEnvelope(repository);

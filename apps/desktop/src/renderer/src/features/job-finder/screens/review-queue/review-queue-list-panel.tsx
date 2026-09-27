@@ -41,19 +41,22 @@ import {
   getReviewQueueWorkflowStatus,
   getTailoredDraftPreparationResultMessage,
   isResumeGenerationInProgress,
+  isTailoredDraftPreparationEligible,
   type TailoredDraftPreparationViewState,
 } from "./review-queue-status";
 
 interface ReviewQueueListPanelProps {
+  campaignId?: string;
   draftPreparation?: TailoredDraftPreparationViewState;
   isJobPending: (jobId: string) => boolean;
-  /** Writes the first resume for every job that has none, one after another. */
-  onPrepareTailoredDrafts?: () => void;
+  /** Writes missing first resumes for the chosen jobs, or all eligible jobs. */
+  onPrepareTailoredDrafts?: (jobIds?: readonly string[]) => void;
   /** Starts the application for every job whose resume is ready. */
   onApplyToAllReady?: (readyCount: number) => void;
   /** What Apply to all does in the mode saved in Settings, in one sentence. */
   applyAllOutcome?: string | null;
   isApplyToAllPending?: boolean;
+  applicationBatchLimit?: number;
   onOpenSafeguards?: () => void;
   /** A safeguard holding every application start back, in plain words. */
   safeguardBlocker?: string | null;
@@ -71,6 +74,7 @@ interface ReviewQueueListPanelProps {
 }
 
 export function ReviewQueueListPanel({
+  campaignId = "",
   draftPreparation = {
     attemptedCount: 0,
     completedCount: 0,
@@ -85,6 +89,7 @@ export function ReviewQueueListPanel({
   onApplyToAllReady,
   applyAllOutcome = null,
   isApplyToAllPending = false,
+  applicationBatchLimit = APPLICATION_PREPARATION_BATCH_LIMIT,
   onOpenSafeguards,
   safeguardBlocker = null,
   onSelectItem,
@@ -189,13 +194,41 @@ export function ReviewQueueListPanel({
       ),
     [queue, unavailableApplicationJobIds],
   );
+  const [resumeSelection, setResumeSelection] = useState<{
+    campaignId: string;
+    jobIds: readonly string[];
+  } | null>(null);
+  const choosingResumes = resumeSelection?.campaignId === campaignId;
+  const eligibleResumeIds = new Set(
+    queue
+      .filter(
+        (item) =>
+          isTailoredDraftPreparationEligible(
+            item,
+            unavailableApplicationJobIds,
+          ) && !isJobPending(item.jobId),
+      )
+      .map((item) => item.jobId),
+  );
+  const selectedResumeIds = new Set(
+    choosingResumes
+      ? resumeSelection.jobIds.filter((id) => eligibleResumeIds.has(id))
+      : [],
+  );
+  const toggleResume = useStableCallback((jobId: string) => {
+    if (!eligibleResumeIds.has(jobId)) return;
+    const next = new Set(selectedResumeIds);
+    if (next.has(jobId)) next.delete(jobId);
+    else if (next.size < TAILORED_DRAFT_PREPARATION_LIMIT) next.add(jobId);
+    setResumeSelection({ campaignId, jobIds: [...next] });
+  });
   const readyToApplyCount = useMemo(
     () =>
       Math.min(
         countQueueStageReady(queue, unavailableApplicationJobIds),
-        APPLICATION_PREPARATION_BATCH_LIMIT,
+        applicationBatchLimit,
       ),
-    [queue, unavailableApplicationJobIds],
+    [applicationBatchLimit, queue, unavailableApplicationJobIds],
   );
   const safeguardBlockerSentence = safeguardBlocker?.trim()
     ? stripInternalCodeParenthetical(safeguardBlocker)
@@ -243,8 +276,9 @@ export function ReviewQueueListPanel({
   // The "for all jobs" row appears only when it can do something: two or
   // more jobs, and at least one of them needs a resume or is ready to apply.
   const showsAllJobsRow =
-    queue.length > 1 &&
-    (isDraftPreparationRunning ||
+    (queue.length > 1 || choosingResumes || isDraftPreparationRunning) &&
+    (choosingResumes ||
+      isDraftPreparationRunning ||
       draftEligibleCount > 0 ||
       readyToApplyCount > 0 ||
       draftPreparationResultMessage !== null);
@@ -283,17 +317,45 @@ export function ReviewQueueListPanel({
                   className="m-0 text-sm text-primary"
                   role="status"
                 >
-                  Writing resume {draftPreparation.currentIndex ?? 1} of{" "}
-                  {draftPreparation.totalCount}…
+                  {draftPreparation.stopRequested
+                    ? "Stopping · finishing the resumes already started · "
+                    : "Writing resumes · "}
+                  {draftPreparation.completedCount +
+                    draftPreparation.failedCount}{" "}
+                  of {draftPreparation.totalCount} finished
                 </p>
+                {draftPreparation.stopRequested ? null : (
+                  <Button
+                    className="h-8 px-2.5 text-xs font-medium tracking-normal normal-case"
+                    onClick={onStopTailoredDraftPreparation}
+                    size="compact"
+                    type="button"
+                    variant="ghost"
+                  >
+                    Stop new resumes
+                  </Button>
+                )}
+              </>
+            ) : choosingResumes ? (
+              <>
                 <Button
-                  className="h-8 px-2.5 text-xs font-medium tracking-normal normal-case"
-                  onClick={onStopTailoredDraftPreparation}
-                  size="compact"
-                  type="button"
-                  variant="ghost"
+                  size="sm"
+                  variant="secondary"
+                  disabled={selectedResumeIds.size === 0}
+                  onClick={() => {
+                    onPrepareTailoredDrafts([...selectedResumeIds]);
+                    setResumeSelection(null);
+                  }}
                 >
-                  Stop after this one
+                  Create {selectedResumeIds.size}{" "}
+                  {selectedResumeIds.size === 1 ? "resume" : "resumes"}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setResumeSelection(null)}
+                >
+                  Cancel selection
                 </Button>
               </>
             ) : (
@@ -303,7 +365,7 @@ export function ReviewQueueListPanel({
                     className="whitespace-normal text-sm font-medium normal-case tracking-normal"
                     data-testid="create-missing-resumes"
                     disabled={draftPreparationBlocker !== null}
-                    onClick={onPrepareTailoredDrafts}
+                    onClick={() => onPrepareTailoredDrafts()}
                     size="sm"
                     type="button"
                     variant="secondary"
@@ -311,6 +373,17 @@ export function ReviewQueueListPanel({
                     {draftRunCount === 1
                       ? "Create the missing resume"
                       : `Create ${draftRunCount} missing resumes`}
+                  </Button>
+                ) : null}
+                {draftEligibleCount > 0 ? (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() =>
+                      setResumeSelection({ campaignId, jobIds: [] })
+                    }
+                  >
+                    Choose jobs
                   </Button>
                 ) : null}
                 {readyToApplyCount > 0 && onApplyToAllReady ? (
@@ -345,14 +418,27 @@ export function ReviewQueueListPanel({
               </>
             )}
           </div>
-          {!isDraftPreparationRunning && draftEligibleCount > 0 ? (
+          {isDraftPreparationRunning ? (
             <p className="m-0 text-xs text-foreground-muted">
+              Up to two at once. Stopping lets resumes already being written
+              finish.
+            </p>
+          ) : choosingResumes ? (
+            <p className="m-0 text-xs text-foreground-muted">
+              {selectedResumeIds.size} selected. Choose up to{" "}
+              {TAILORED_DRAFT_PREPARATION_LIMIT} jobs. Existing resumes are
+              kept.
+            </p>
+          ) : draftEligibleCount > 0 ? (
+            <p className="m-0 text-xs text-foreground-muted">
+              Up to two at once. Stop any time; finished resumes are kept.
               {draftEligibleCount > TAILORED_DRAFT_PREPARATION_LIMIT
-                ? `About a minute each, ${TAILORED_DRAFT_PREPARATION_LIMIT} at a time; ${draftEligibleCount - TAILORED_DRAFT_PREPARATION_LIMIT} more after that.`
-                : "About a minute each. Stop any time; finished resumes are kept."}
+                ? ` ${TAILORED_DRAFT_PREPARATION_LIMIT} per batch; ${draftEligibleCount - TAILORED_DRAFT_PREPARATION_LIMIT} more after that.`
+                : ""}
             </p>
           ) : null}
           {!isDraftPreparationRunning &&
+          !choosingResumes &&
           !safeguardBlockerSentence &&
           readyToApplyCount > 0 &&
           onApplyToAllReady &&
@@ -364,7 +450,9 @@ export function ReviewQueueListPanel({
               {applyAllOutcome}
             </p>
           ) : null}
-          {safeguardBlockerSentence && readyToApplyCount > 0 ? (
+          {!choosingResumes &&
+          safeguardBlockerSentence &&
+          readyToApplyCount > 0 ? (
             <p
               className="m-0 text-xs text-foreground-muted"
               data-testid="apply-all-blocker"
@@ -434,6 +522,14 @@ export function ReviewQueueListPanel({
                   location: item.location,
                   separator: " • ",
                 })}
+                choosingResumes={choosingResumes && !isDraftPreparationRunning}
+                resumeSelected={selectedResumeIds.has(item.jobId)}
+                resumeSelectionDisabled={
+                  !eligibleResumeIds.has(item.jobId) ||
+                  (!selectedResumeIds.has(item.jobId) &&
+                    selectedResumeIds.size >= TAILORED_DRAFT_PREPARATION_LIMIT)
+                }
+                onToggleResume={toggleResume}
                 jobId={item.jobId}
                 key={item.jobId}
                 onSelect={selectItem}

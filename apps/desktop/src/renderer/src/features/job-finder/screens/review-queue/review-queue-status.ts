@@ -30,12 +30,15 @@ export interface TailoredDraftPreparationViewState {
   eligibleRemainingCount: number;
   failedCount: number;
   status: TailoredDraftPreparationStatus;
+  /** Stop was pressed: nothing new starts; drafts already started finish. */
+  stopRequested?: boolean;
   totalCount: number;
 }
 
 export interface TailoredDraftPreparationProgress {
   completedCount: number;
   currentIndex: number;
+  failedCount: number;
   totalCount: number;
 }
 
@@ -167,9 +170,21 @@ export function getReviewQueueWorkflowStatus(
 }
 
 /**
+ * Lines in the job's saved resume still waiting for the person's decision.
+ * Apply cannot approve such a resume at any level, so the job is not ready.
+ */
+export function countResumeLinesToDecide(
+  item: Pick<ReviewQueueItem, "resumeLinesToDecide" | "resumeReview"> | null,
+): number {
+  if (!item || item.resumeReview.status === "approved") return 0;
+  return item.resumeLinesToDecide ?? 0;
+}
+
+/**
  * True when the draft has to be read by the person before it is used: an
- * Aggressive draft that is not yet approved (ADR 0018). Light and Tailored
- * keep every fact, so pressing Apply is their approval.
+ * Aggressive draft that is not yet approved (ADR 0018), or a draft at any
+ * level with a line still waiting for their decision. Light and Tailored
+ * otherwise keep every fact, so pressing Apply is their approval.
  */
 export function needsPersonResumeReview(
   item: ReviewQueueItem | null,
@@ -178,8 +193,18 @@ export function needsPersonResumeReview(
    * without the listing text kept the person's own wording: nothing was
    * stretched, so there are no flagged lines to read, whatever the level.
    */
-  asset?: Pick<TailoredAsset, "id" | "generationMethod" | "generationReason"> | null,
+  asset?: Pick<
+    TailoredAsset,
+    "id" | "generationMethod" | "generationReason"
+  > | null,
 ): boolean {
+  if (
+    item !== null &&
+    item.resumeApplicationMode !== "original_resume" &&
+    countResumeLinesToDecide(item) > 0
+  ) {
+    return true;
+  }
   if (
     asset &&
     item?.resumeAssetId === asset.id &&
@@ -367,6 +392,13 @@ export function getReviewQueueResumePolicyCaption(
     return "Your saved wording — AI was unavailable";
   }
 
+  const linesToDecide = countResumeLinesToDecide(item);
+  if (linesToDecide > 0) {
+    return linesToDecide === 1
+      ? "A line in this resume needs your decision"
+      : `${linesToDecide} lines in this resume need your decision`;
+  }
+
   if (needsPersonResumeReview(item, asset)) {
     return "Resume ready — review it before applying";
   }
@@ -516,7 +548,7 @@ export function countQueueStageReady(
   return count;
 }
 
-export async function prepareTailoredDraftsSequentially(
+export async function prepareTailoredDraftBatch(
   queue: readonly ReviewQueueItem[],
   onGenerateResume: (jobId: string) => Promise<boolean>,
   options: {
@@ -530,39 +562,48 @@ export async function prepareTailoredDraftsSequentially(
   const failedJobIds: string[] = [];
   let stopped = false;
 
-  for (const [index, item] of candidates.entries()) {
-    if (options.shouldStop?.()) {
-      stopped = true;
-      break;
-    }
-
-    attemptedCount += 1;
+  const reportProgress = () => {
     options.onProgress?.({
       completedCount,
-      currentIndex: index + 1,
+      currentIndex: attemptedCount,
+      failedCount: failedJobIds.length,
       totalCount: candidates.length,
     });
-
-    let succeeded = false;
-    try {
-      succeeded = await onGenerateResume(item.jobId);
-    } catch {
-      succeeded = false;
+  };
+  const worker = async () => {
+    while (attemptedCount < candidates.length) {
+      if (options.shouldStop?.()) {
+        stopped = true;
+        return;
+      }
+      // Claim synchronously before awaiting so each job has exactly one owner.
+      const item = candidates[attemptedCount++]!;
+      reportProgress();
+      let succeeded = false;
+      try {
+        succeeded = await onGenerateResume(item.jobId);
+      } catch {
+        succeeded = false;
+      }
+      if (succeeded) completedCount += 1;
+      else failedJobIds.push(item.jobId);
+      reportProgress();
     }
+  };
 
-    if (!succeeded) {
-      failedJobIds.push(item.jobId);
-      continue;
-    }
-
-    completedCount += 1;
-  }
+  // Two requests keep providers and local PDF work bounded. Stop prevents new
+  // claims; already-started drafts finish and remain available.
+  await Promise.all(
+    Array.from({ length: Math.min(2, candidates.length) }, worker),
+  );
 
   return {
     attemptedCount,
     completedCount,
     failedCount: failedJobIds.length,
-    failedJobIds,
+    failedJobIds: candidates
+      .filter((item) => failedJobIds.includes(item.jobId))
+      .map((item) => item.jobId),
     stopped,
     totalCount: candidates.length,
   };

@@ -214,6 +214,61 @@ describe("ResumeGuidedEditsPopup", () => {
     );
   });
 
+  it("opens into the studio dock slot, not over the page, when the studio provides one", () => {
+    // The floating panel opened mid-right over the tools column (Save, the
+    // template chooser, "Edit resume"). With a studio dock slot mounted, the
+    // open panel is an in-flow column inside it: no fixed box, no drag grip,
+    // and minimizing returns it to the launcher.
+    const dock = document.createElement("div");
+    dock.setAttribute("data-resume-studio-assistant-dock-slot", "");
+    document.body.appendChild(dock);
+    const onOpenChange = vi.fn();
+
+    try {
+      render(
+        <>
+          <section data-resume-workspace-top-actions />
+          <ResumeGuidedEditsPopup
+            assistantMessages={[]}
+            assistantPending={false}
+            isWorkspacePending={false}
+            onOpenChange={onOpenChange}
+            onSendAssistantMessage={vi.fn()}
+          />
+        </>,
+      );
+
+      fireEvent.click(
+        screen.getByRole("button", { name: "Open the Assistant" }),
+      );
+
+      const panel = screen.getByRole("dialog", { name: "Assistant" });
+
+      expect(panel.parentElement).toBe(dock);
+      expect(panel.getAttribute("data-resume-guided-edits-docked")).toBe(
+        "true",
+      );
+      expect(panel.className).not.toMatch(/\bfixed\b/);
+      expect(panel.style.top).toBe("");
+      expect(panel.style.left).toBe("");
+      expect(screen.queryByLabelText("Drag the Assistant")).toBeNull();
+      expect(onOpenChange).toHaveBeenLastCalledWith(true);
+
+      fireEvent.click(
+        screen.getByRole("button", { name: "Minimize the Assistant" }),
+      );
+
+      expect(dock.childElementCount).toBe(0);
+      expect(onOpenChange).toHaveBeenLastCalledWith(false);
+      expect(
+        screen.getByRole("button", { name: "Open the Assistant" }),
+      ).toBeTruthy();
+    } finally {
+      cleanup();
+      dock.remove();
+    }
+  });
+
   it("uses an ordinary action-row button, not a floating pill", () => {
     // Previously "uses the same labelled pill launcher shape as Profile
     // Copilot", which pinned `rounded-full`, `min-h-12`, `sm:h-12`,

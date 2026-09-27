@@ -489,14 +489,17 @@ describe("findUnansweredAssistantRequest", () => {
   ) => ({
     role,
     content,
-    patches: Array.from({ length: patchCount }) as never[],
+    patches: new Array<ResumeAssistantMessage["patches"][number]>(patchCount),
   });
 
   it("returns the newest request when its reply proposed nothing", () => {
     expect(
       findUnansweredAssistantRequest([
         message("user", "Shorten the summary."),
-        message("assistant", "This job sends your original resume file unchanged."),
+        message(
+          "assistant",
+          "This job sends your original resume file unchanged.",
+        ),
       ]),
     ).toBe("Shorten the summary.");
   });

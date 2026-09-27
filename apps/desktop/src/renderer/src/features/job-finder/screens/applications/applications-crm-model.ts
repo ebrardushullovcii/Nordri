@@ -4,6 +4,10 @@ import type {
   ApplicationCrmStage,
   ApplicationRecord,
 } from "@unemployed/contracts";
+import {
+  resolveApplicationCrmStageSource,
+  resolveApplicationCrmTrackedStage,
+} from "@unemployed/contracts";
 import { formatApplicationEmployerLine } from "../../lib/job-employer-location-display";
 
 export const APPLICATION_CRM_STAGE_ORDER: readonly ApplicationCrmStage[] = [
@@ -63,21 +67,26 @@ export const APPLICATION_CRM_STAGE_LABELS: Record<ApplicationCrmStage, string> =
 export function inferApplicationCrmStageForView(
   record: ApplicationRecord,
 ): ApplicationCrmStage {
-  if (record.crm) return record.crm.stage;
+  return resolveApplicationCrmTrackedStage(
+    record.crm,
+    inferActivityStage(record),
+  );
+}
+
+function inferActivityStage(record: ApplicationRecord): ApplicationCrmStage {
   // A paused or blocked attempt is still being prepared and is waiting on the
   // user. Reading only `status` showed "Ready for approval" on the Stages tab
   // while the Preparation tab said Needs you about the same application.
-  if (record.latestBlocker || record.lastAttemptState === "paused") {
-    return "preparing";
-  }
+  const preparationBlocked =
+    Boolean(record.latestBlocker) || record.lastAttemptState === "paused";
   switch (record.status) {
     case "shortlisted":
-      return "shortlisted";
+      return preparationBlocked ? "preparing" : "shortlisted";
     case "drafting":
       return "preparing";
     case "ready_for_review":
     case "approved":
-      return "ready_for_approval";
+      return preparationBlocked ? "preparing" : "ready_for_approval";
     case "submitted":
       return "applied";
     case "assessment":
@@ -89,7 +98,7 @@ export function inferApplicationCrmStageForView(
     case "archived":
       return "no_response";
     default:
-      return record.lastAttemptState === "in_progress"
+      return preparationBlocked || record.lastAttemptState === "in_progress"
         ? "preparing"
         : "discovered";
   }
@@ -110,14 +119,16 @@ export function applicationCrmStageLabelForView(
 export function applicationCrmStageProvenanceForView(
   record: ApplicationRecord,
 ): string {
-  return record.crm ? "You recorded this" : "From your activity";
+  return resolveApplicationCrmStageSource(record.crm) === "user"
+    ? "You recorded this"
+    : "From your activity";
 }
 
 /** Hover explanation for how a stage was decided. */
 export function applicationCrmStageProvenanceDetailForView(
   record: ApplicationRecord,
 ): string {
-  return record.crm
+  return resolveApplicationCrmStageSource(record.crm) === "user"
     ? "You set this stage yourself."
     : "Job Finder worked this out from your activity. Set it yourself to override.";
 }
@@ -125,36 +136,46 @@ export function applicationCrmStageProvenanceDetailForView(
 export function applicationCrmDataForView(
   record: ApplicationRecord,
 ): ApplicationCrmData {
-  return (
-    record.crm ?? {
-      revision: 0,
-      stage: inferApplicationCrmStageForView(record),
-      customStageId: null,
-      stageChangedAt: record.lastUpdatedAt,
-      tags: [],
-      events: [],
-      contacts: [],
-      reminders: [],
-      interviews: [],
-      notes: [],
-      attachments: [],
-      compensation: {
-        listedMinimum: null,
-        listedMaximum: null,
-        expectedMinimum: null,
-        expectedMaximum: null,
-        offerBase: null,
-        offerBonus: null,
-        offerEquity: null,
-        offerBenefits: [],
-        offerDeadlineAt: null,
-        offerStatus: "none",
-        notes: null,
-      },
-      lastEmployerActivityAt: null,
-      appliedAt: record.status === "submitted" ? record.lastUpdatedAt : null,
-    }
-  );
+  const stage = inferApplicationCrmStageForView(record);
+  if (record.crm)
+    return {
+      ...record.crm,
+      stage,
+      stageSource: resolveApplicationCrmStageSource(record.crm),
+      stageChangedAt:
+        stage === record.crm.stage
+          ? record.crm.stageChangedAt
+          : record.lastUpdatedAt,
+    };
+  return {
+    revision: 0,
+    stage,
+    stageSource: "activity",
+    customStageId: null,
+    stageChangedAt: record.lastUpdatedAt,
+    tags: [],
+    events: [],
+    contacts: [],
+    reminders: [],
+    interviews: [],
+    notes: [],
+    attachments: [],
+    compensation: {
+      listedMinimum: null,
+      listedMaximum: null,
+      expectedMinimum: null,
+      expectedMaximum: null,
+      offerBase: null,
+      offerBonus: null,
+      offerEquity: null,
+      offerBenefits: [],
+      offerDeadlineAt: null,
+      offerStatus: "none",
+      notes: null,
+    },
+    lastEmployerActivityAt: null,
+    appliedAt: record.status === "submitted" ? record.lastUpdatedAt : null,
+  };
 }
 
 export function groupApplicationRecordsByStage(

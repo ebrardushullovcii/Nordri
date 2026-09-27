@@ -1,5 +1,4 @@
 import type {
-  CandidateProfile,
   ProfileReviewItem,
   ProfileReviewTargetDomain,
   ResumeDocumentBundle,
@@ -204,21 +203,14 @@ function mapCandidateToStep(
 
 function mapCandidateToSeverity(
   candidate: ResumeImportFieldCandidate,
-  profile: CandidateProfile | null,
 ): ProfileReviewItem["severity"] {
-  // A role or school is required only while the profile has none. Once the
-  // person has cards there, a role the import reads differently (after they
-  // split, merged or retitled one) is a suggestion; it never blocks Finish or
-  // reopens a finished setup.
-  if (candidate.target.section === "experience") {
-    return profile && profile.experiences.length > 0
-      ? "recommended"
-      : "critical";
-  }
-  if (candidate.target.section === "education") {
-    return profile && profile.education.length > 0
-      ? "recommended"
-      : "critical";
+  // Background is optional even for a first job. Imported roles and schools
+  // stay available for review without preventing setup from finishing.
+  if (
+    candidate.target.section === "experience" ||
+    candidate.target.section === "education"
+  ) {
+    return "recommended";
   }
 
   if (
@@ -298,7 +290,6 @@ export function shouldIncludeCandidateInSetupReview(
 export function toReviewDraft(
   candidate: ResumeImportFieldCandidate,
   documentBundle: ResumeDocumentBundle | null,
-  profile: CandidateProfile | null = null,
 ): DerivedReviewDraft | null {
   const step = mapCandidateToStep(candidate);
   const domain = mapTargetDomain(candidate);
@@ -316,7 +307,7 @@ export function toReviewDraft(
     },
     label: candidate.label,
     reason: buildCandidateReason(candidate),
-    severity: mapCandidateToSeverity(candidate, profile),
+    severity: mapCandidateToSeverity(candidate),
     proposedValue: summarizeValue(
       isSearchLocationCandidateTarget(candidate.target)
         ? sanitizeSearchLocationCandidateValue(candidate.value)

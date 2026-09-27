@@ -679,8 +679,8 @@ function buildMissingFieldDrafts(
       target: { domain: "experience", key: "record", recordId: null },
       label: "Work history",
       reason:
-        "Add at least one meaningful work-history role so resumes and fit scoring have grounded background to work from.",
-      severity: "critical",
+        "Add work history if you have it so resumes and fit scoring can use your background. You can finish setup without a previous role.",
+      severity: "recommended",
       proposedValue: null,
       sourceSnippet: null,
     });
@@ -854,9 +854,7 @@ export function buildProfileSetupReviewItems(
         shouldIncludeCandidateInSetupReview(candidate) &&
         !isEducationScalarCoveredByRecord(candidate, input.candidates),
     )
-    .map((candidate) =>
-      toReviewDraft(candidate, input.documentBundle, input.profile),
-    )
+    .map((candidate) => toReviewDraft(candidate, input.documentBundle))
     .filter((draft): draft is DerivedReviewDraft => draft !== null)
     .filter(
       (draft) =>

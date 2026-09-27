@@ -329,6 +329,38 @@ describe("formatProfileSetupReviewValue", () => {
 });
 
 describe("getProfileSetupReviewItemCopy", () => {
+  it("preserves the explanation for an imported eligibility conflict", () => {
+    const reason =
+      "Your resume differs from your saved answer. Confirm which answer to use.";
+    const copy = getProfileSetupReviewItemCopy({
+      label: "Work eligibility",
+      reason,
+      target: {
+        domain: "work_eligibility",
+        key: "authorizedWorkCountries",
+        recordId: null,
+      },
+      sourceCandidateId: "imported_work_countries",
+    });
+
+    expect(copy.reason).toBe(reason);
+  });
+
+  it.each(["authorizedWorkCountries", "requiresVisaSponsorship"])(
+    "keeps the required %s answer distinct from optional work details",
+    (key) => {
+      const copy = getProfileSetupReviewItemCopy({
+        label: "Work eligibility",
+        reason: "The imported resume did not provide this answer.",
+        target: { domain: "work_eligibility", key, recordId: null },
+      });
+
+      expect(copy.label).toBe("Work eligibility");
+      expect(copy.reason).toContain("before finishing setup");
+      expect(copy.reason).not.toContain("Optional");
+    },
+  );
+
   it("explains how to handle unknown legal work details", () => {
     const copy = getProfileSetupReviewItemCopy({
       label: "Work eligibility",

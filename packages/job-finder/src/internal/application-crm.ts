@@ -19,6 +19,8 @@ import {
   ApplicationCrmMutationInputSchema,
   ApplicationCrmSettingsSchema,
   ApplicationRecordSchema,
+  resolveApplicationCrmStageSource,
+  resolveApplicationCrmTrackedStage,
 } from "@unemployed/contracts";
 
 export interface ApplicationCrmRepository {
@@ -222,16 +224,21 @@ function uniqueTags(values: readonly string[]): string[] {
 }
 
 export function inferApplicationCrmStage(
-  record: Pick<ApplicationRecord, "status" | "lastAttemptState">,
+  record: Pick<ApplicationRecord, "status" | "lastAttemptState"> &
+    Partial<Pick<ApplicationRecord, "latestBlocker">>,
 ): ApplicationCrmStage {
+  // Match the Tracker's inferred stage when its first note, tag, or reminder
+  // creates the CRM payload. A paused form is still being prepared.
+  const preparationBlocked =
+    Boolean(record.latestBlocker) || record.lastAttemptState === "paused";
   switch (record.status) {
     case "shortlisted":
-      return "shortlisted";
+      return preparationBlocked ? "preparing" : "shortlisted";
     case "drafting":
       return "preparing";
     case "ready_for_review":
     case "approved":
-      return "ready_for_approval";
+      return preparationBlocked ? "preparing" : "ready_for_approval";
     case "submitted":
       return "applied";
     case "assessment":
@@ -247,7 +254,7 @@ export function inferApplicationCrmStage(
     case "archived":
       return "no_response";
     default:
-      return record.lastAttemptState === "in_progress"
+      return preparationBlocked || record.lastAttemptState === "in_progress"
         ? "preparing"
         : "discovered";
   }
@@ -290,10 +297,25 @@ export function isApplicationAwaitingUserApproval(
 export function getApplicationCrmData(
   record: ApplicationRecord,
 ): ApplicationCrmData {
-  if (record.crm) return ApplicationCrmDataSchema.parse(record.crm);
+  const stageSource = resolveApplicationCrmStageSource(record.crm);
+  const stage = resolveApplicationCrmTrackedStage(
+    record.crm,
+    inferApplicationCrmStage(record),
+  );
+  if (record.crm)
+    return ApplicationCrmDataSchema.parse({
+      ...record.crm,
+      stageSource,
+      stage,
+      stageChangedAt:
+        stage === record.crm.stage
+          ? record.crm.stageChangedAt
+          : record.lastUpdatedAt,
+    });
 
   return ApplicationCrmDataSchema.parse({
-    stage: inferApplicationCrmStage(record),
+    stage,
+    stageSource,
     stageChangedAt: record.lastUpdatedAt,
     appliedAt: record.status === "submitted" ? record.lastUpdatedAt : null,
   });
@@ -306,7 +328,9 @@ type ApplicationCrmProvenance =
 function applicationCrmProvenance(
   record: Pick<ApplicationRecord, "crm">,
 ): ApplicationCrmProvenance {
-  return record.crm ? "user_recorded_local" : "local_historical_inference";
+  return resolveApplicationCrmStageSource(record.crm) === "user"
+    ? "user_recorded_local"
+    : "local_historical_inference";
 }
 
 function replaceById<T extends { id: string }>(
@@ -339,6 +363,7 @@ function applyMutation(input: {
   switch (mutation.type) {
     case "set_stage": {
       if (
+        crm.stageSource === "user" &&
         crm.stage === mutation.stage &&
         crm.customStageId === mutation.customStageId
       ) {
@@ -357,6 +382,7 @@ function applyMutation(input: {
       return ApplicationCrmDataSchema.parse({
         ...crm,
         stage: mutation.stage,
+        stageSource: "user",
         customStageId: mutation.customStageId,
         stageChangedAt: now,
         appliedAt:

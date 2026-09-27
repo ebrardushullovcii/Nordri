@@ -1732,6 +1732,7 @@ const LISTING_SKILL_FLUFF_TOKENS = new Set([
   "excellent",
   "outstanding",
   "proven",
+  "practical",
   "required",
   "preferred",
   "plus",

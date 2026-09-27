@@ -142,6 +142,39 @@ describe("the five apply states (ADR 0022)", () => {
     }
   });
 
+  it("a ready form whose send was refused says Not sent and why", () => {
+    const presentation = resolveApplyStatePresentation({
+      mode: "apply_for_me",
+      result: buildResult({
+        summary: "Not sent: your permission to send changed",
+        detail: "Nothing was sent.",
+      }),
+    });
+    expect(presentation).toMatchObject({
+      kind: "ready_to_send",
+      sentence: "Not sent: your permission to send changed. Nothing was sent.",
+    });
+  });
+
+  it("an application waiting for a browser tab says so instead of filling in", () => {
+    const presentation = resolveApplyStatePresentation({
+      mode: "fill_only",
+      result: buildResult({
+        state: "planned",
+        applicationPreparationStartedAt: "2026-09-14T10:00:30.000Z",
+        completedAt: null,
+        summary: "Waiting for a free browser tab",
+        detail: "Close a tab you no longer need and this one starts.",
+      }),
+      run: { state: "running" } as never,
+    });
+    expect(presentation).toMatchObject({
+      kind: "filling_in",
+      title: "Waiting for a browser tab",
+      sentence: "Close a tab you no longer need and this one starts.",
+    });
+  });
+
   it("never calls an unverified outcome Applied", () => {
     const presentation = resolveApplyStatePresentation({
       mode: "apply_for_me",

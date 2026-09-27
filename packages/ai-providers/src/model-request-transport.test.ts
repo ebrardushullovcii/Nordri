@@ -310,6 +310,67 @@ describe("performModelRequest", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 
+  test.each(["chat_completions", "responses"] as const)(
+    "retries %s text that arrives without a completion marker",
+    async (apiMode) => {
+      const fetchImpl = vi
+        .fn()
+        .mockResolvedValueOnce(
+          sseResponse([
+            JSON.stringify(
+              apiMode === "responses"
+                ? {
+                    type: "response.output_text.delta",
+                    delta: '{"partial":true}',
+                  }
+                : { choices: [{ delta: { content: '{"partial":true}' } }] },
+            ),
+          ]),
+        )
+        .mockResolvedValueOnce(
+          jsonResponse(
+            apiMode === "responses"
+              ? { output_text: '{"complete":true}' }
+              : { choices: [{ message: { content: '{"complete":true}' } }] },
+          ),
+        );
+
+      const payload = await performModelRequest({
+        ...baseInput,
+        apiMode,
+        fetchImpl,
+      });
+      expect(payload.choices?.[0]?.message?.content).toBe('{"complete":true}');
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  test("does not release Responses tool calls before the response finishes", async () => {
+    const fetchImpl = vi.fn(() =>
+      Promise.resolve(
+        sseResponse([
+          JSON.stringify({
+            type: "response.output_item.done",
+            item: {
+              type: "function_call",
+              call_id: "cut_off",
+              name: "inspect",
+              arguments: "{}",
+            },
+          }),
+        ]),
+      ),
+    );
+    await expect(
+      performModelRequest({
+        ...baseInput,
+        apiMode: "responses",
+        maxAttempts: 1,
+        fetchImpl,
+      }),
+    ).rejects.toThrow(/closed the stream before finishing/);
+  });
+
   test("gives up on a chat stream that keeps stopping mid tool call with a plain error", async () => {
     const fetchImpl = vi.fn(() =>
       sseResponse([
@@ -355,6 +416,47 @@ describe("performModelRequest", () => {
     ).rejects.toBeInstanceOf(ModelRequestHttpError);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
+
+  test.each([true, false])(
+    "rejects explicitly incomplete output (streaming %s) without retrying the same token budget",
+    async (streaming) => {
+      for (const apiMode of ["responses", "chat_completions"] as const) {
+        const response =
+          apiMode === "responses"
+            ? {
+                status: "incomplete",
+                incomplete_details: { reason: "max_output_tokens" },
+                output_text: '{"partial":true}',
+              }
+            : {
+                choices: [
+                  {
+                    message: { content: '{"partial":true}' },
+                    finish_reason: "length",
+                  },
+                ],
+              };
+        const fetchImpl = vi.fn(() =>
+          Promise.resolve(
+            streaming
+              ? sseResponse([
+                  JSON.stringify(
+                    apiMode === "responses"
+                      ? { type: "response.incomplete", response }
+                      : response,
+                  ),
+                  "[DONE]",
+                ])
+              : jsonResponse(response),
+          ),
+        );
+        await expect(
+          performModelRequest({ ...baseInput, apiMode, streaming, fetchImpl }),
+        ).rejects.toThrow(/incomplete response/);
+        expect(fetchImpl).toHaveBeenCalledTimes(1);
+      }
+    },
+  );
 
   test("stops at the total budget with a plain timeout", async () => {
     const fetchImpl = vi.fn(() => sseResponse([], { hang: true }));

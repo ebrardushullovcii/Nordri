@@ -49,12 +49,13 @@ import type {
   UpdateAiBehaviorInput,
 } from "@unemployed/contracts";
 import {
+  collectPreparedApplicationJobIds,
   countTailoredDraftPreparationEligible,
   describeResumeRunResult,
   describeSavedResumeLevel,
   getTailoredDraftPreparationCandidates,
   getTailoredDraftPreparationResultMessage,
-  prepareTailoredDraftsSequentially,
+  prepareTailoredDraftBatch,
   shouldRewriteResumeAfterLevelChange,
   type TailoredDraftPreparationViewState,
 } from "@renderer/features/job-finder/screens/review-queue/review-queue-status";
@@ -537,18 +538,51 @@ function decrementPendingScope(
 
 function getActiveCampaignReviewQueue(
   snapshot: JobFinderWorkspaceSnapshot | null,
+  campaignId = snapshot?.activeCampaignId,
 ): ReviewQueueItem[] {
   if (!snapshot) {
     return [];
   }
 
   const activeCampaign = snapshot.campaigns?.find(
-    (campaign) => campaign.id === snapshot.activeCampaignId,
+    (campaign) => campaign.id === campaignId,
   );
   const campaignJobIds = new Set(activeCampaign?.jobIds ?? []);
   return (snapshot.reviewQueue ?? []).filter((item) =>
     campaignJobIds.has(item.jobId),
   );
+}
+
+/**
+ * What an Apply press started. Main holds back a job whose resume still
+ * waits on the person and starts the rest, so the sentence counts the jobs
+ * the new batch took and names any it left out.
+ */
+export function describeAutoApplyQueueStart(
+  snapshot: Pick<JobFinderWorkspaceSnapshot, "applyRuns" | "reviewQueue"> | null | undefined,
+  jobIds: readonly string[],
+  options?: { onlyWhenHeldBack?: boolean },
+): string | null {
+  const newestRun = [...(snapshot?.applyRuns ?? [])].sort((left, right) =>
+    right.createdAt.localeCompare(left.createdAt),
+  )[0];
+  const inRun = new Set(newestRun?.jobIds ?? jobIds);
+  const started = jobIds.filter((jobId) => inRun.has(jobId)).length;
+  const heldBack = jobIds
+    .filter((jobId) => !inRun.has(jobId))
+    .map(
+      (jobId) =>
+        snapshot?.reviewQueue.find((item) => item.jobId === jobId)?.title ??
+        "one job",
+    );
+  const startedSentence =
+    started === 1
+      ? "Application started. Watch it in Applications."
+      : `${started} applications started. Watch them in Applications.`;
+  if (heldBack.length === 0 || started === 0) {
+    return options?.onlyWhenHeldBack ? null : startedSentence;
+  }
+  return `${startedSentence} ${heldBack.length === 1 ? `${heldBack[0]} waits` : `${heldBack.join(", ")} wait`}: ${heldBack.length === 1 ? "its resume has" : "their resumes have"} a line for you to decide first.`;
 }
 
 export function describePreparedApplicationSubmitResult(
@@ -1215,15 +1249,15 @@ export function createPrimaryPageActions(
     );
   };
 
-  // The sequential tailored-draft batch is owned here instead of the
+  // The bounded tailored-draft batch is owned here instead of the
   // Review Queue screen so that sibling route changes neither lose the run
   // nor let a rebuilt context start a duplicate. The refs live in the page
   // controller, which stays mounted across every Job Finder route change;
   // true controller teardown flips the disposed ref so the parked loop stops
-  // after its current item and writes nothing further. The module-scope
+  // after its current items and writes nothing further. The module-scope
   // guard blocks duplicates during the gap before a replacement controller
   // can see a fresh release.
-  const prepareTailoredDrafts = () => {
+  const prepareTailoredDrafts = (jobIds?: readonly string[]) => {
     if (
       isTailoredDraftPreparationRunActive ||
       tailoredDraftPreparationRunRef.current
@@ -1232,7 +1266,16 @@ export function createPrimaryPageActions(
     }
 
     const ownerStartRoute = jobFinderStatusRoute;
-    const queue = getCampaignReviewQueue();
+    const ownerCampaignId = workspace.activeCampaignId;
+    const selectedJobIds = jobIds ? new Set(jobIds) : null;
+    const preparedJobIds = collectPreparedApplicationJobIds(
+      workspace.applicationRecords,
+    );
+    const queue = getCampaignReviewQueue().filter(
+      (item) =>
+        !preparedJobIds.has(item.jobId) &&
+        (!selectedJobIds || selectedJobIds.has(item.jobId)),
+    );
     const candidates = getTailoredDraftPreparationCandidates(queue);
     if (candidates.length === 0) {
       return;
@@ -1256,7 +1299,7 @@ export function createPrimaryPageActions(
         totalCount: candidates.length,
       });
 
-      void prepareTailoredDraftsSequentially(
+      void prepareTailoredDraftBatch(
         candidates,
         async (jobId) => {
           try {
@@ -1271,22 +1314,19 @@ export function createPrimaryPageActions(
           }
         },
         {
-          onProgress: ({ completedCount, currentIndex, totalCount }) => {
-            if (
-              tailoredDraftPreparationDisposedRef.current ||
-              // Once Stop is pressed the count must not keep climbing: the
-              // run is finishing the item it already started and nothing
-              // after it.
-              tailoredDraftPreparationStopRequested ||
-              tailoredDraftPreparationStopRequestedRef.current
-            ) {
-              return;
-            }
+          onProgress: ({
+            completedCount,
+            currentIndex,
+            failedCount,
+            totalCount,
+          }) => {
+            if (tailoredDraftPreparationDisposedRef.current) return;
 
             setTailoredDraftPreparation((current) => ({
               ...current,
               attemptedCount: currentIndex,
               completedCount,
+              failedCount,
               currentIndex,
               totalCount,
               status: "running",
@@ -1310,16 +1350,27 @@ export function createPrimaryPageActions(
           // Items this batch completed are excluded even when a not-yet-
           // refreshed snapshot still lists them as eligible; failures stay
           // counted because they remain eligible for a rerun.
+          const currentSnapshot = latestWorkspaceRef.current ?? workspace;
           const currentQueue = getActiveCampaignReviewQueue(
-            latestWorkspaceRef.current ?? workspace,
-          ).filter((item) => !completedJobIds.has(item.jobId));
+            currentSnapshot,
+            ownerCampaignId,
+          ).filter(
+            (item) =>
+              !completedJobIds.has(item.jobId) &&
+              (!selectedJobIds || selectedJobIds.has(item.jobId)),
+          );
           const finalState: TailoredDraftPreparationViewState = {
             attemptedCount: result.attemptedCount,
             completedCount: result.completedCount,
             currentIndex: null,
             eligibleRemainingCount: Math.max(
               0,
-              countTailoredDraftPreparationEligible(currentQueue),
+              countTailoredDraftPreparationEligible(
+                currentQueue,
+                collectPreparedApplicationJobIds(
+                  currentSnapshot.applicationRecords,
+                ),
+              ),
             ),
             failedCount: result.failedCount,
             status:
@@ -1513,9 +1564,12 @@ export function createPrimaryPageActions(
             navigate("/job-finder/applications");
           }
         },
-        jobIds.length === 1
-          ? "Application started. Watch it in Applications."
-          : `${jobIds.length} applications started. Watch them in Applications.`,
+        (snapshot) =>
+          describeAutoApplyQueueStart(snapshot, jobIds, {
+            // Home shows the running batch itself; a "started" line there
+            // outlived the batch. It keeps only a job held back.
+            onlyWhenHeldBack: options?.stayOnCurrentPage === true,
+          }),
         { scope: jobFinderPendingActions.apply() },
       );
 
@@ -2016,6 +2070,12 @@ export function createPrimaryPageActions(
 
       tailoredDraftPreparationStopRequestedRef.current = true;
       tailoredDraftPreparationStopRequested = true;
+      // Show at once that the press landed; the active drafts still finish.
+      setTailoredDraftPreparation((current) =>
+        current.status === "running"
+          ? { ...current, stopRequested: true }
+          : current,
+      );
       // The progress figure freezes where it stands (see `onProgress`): the
       // run is finishing the draft it already started and scheduling nothing
       // after it. The terminal state is written when it really has stopped,
@@ -2830,6 +2890,17 @@ export function createPrimaryPageActions(
         const requestToken = ++profileCopilotRequestTokenRef.current;
         const effectiveContext = context ?? { surface: "general" as const };
         const contextKey = getProfileCopilotContextKey(effectiveContext);
+        const lastSavedMessage = [
+          ...(latestWorkspaceRef.current ?? workspace).profileCopilotMessages,
+        ]
+          .reverse()
+          .find(
+            (message) =>
+              getProfileCopilotContextKey(message.context) === contextKey,
+          );
+        const retryingSavedQuestion =
+          lastSavedMessage?.role === "user" &&
+          lastSavedMessage.content.trim() === content.trim();
         const createdAt = new Date().toISOString();
         const optimisticUserMessage: ProfileCopilotMessage = {
           id: `profile_copilot_user_optimistic_${contextKey}_${Date.now()}`,
@@ -2840,10 +2911,14 @@ export function createPrimaryPageActions(
           createdAt,
         };
 
-        setOptimisticProfileCopilotMessages((current) => [
-          ...current,
-          optimisticUserMessage,
-        ]);
+        // Ask again answers the existing saved question. Keep its id and
+        // timestamp instead of briefly appending a second optimistic copy.
+        if (!retryingSavedQuestion) {
+          setOptimisticProfileCopilotMessages((current) => [
+            ...current,
+            optimisticUserMessage,
+          ]);
+        }
         setProfileCopilotBusy(true);
         setProfileCopilotPendingContextKey(contextKey);
         setActionState((current) =>

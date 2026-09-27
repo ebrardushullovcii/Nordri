@@ -56,7 +56,7 @@ function Switch({
         // here rather than two of three with an implicit exception.
         "peer group/switch inline-flex shrink-0 items-center rounded-none border border-(--control-border) bg-input transition-all outline-none focus-visible:ring-[3px] focus-visible:ring-ring disabled:cursor-not-allowed disabled:border-(--disabled-border) disabled:bg-(--disabled-surface) disabled:text-(--disabled-foreground)",
         "h-(--switch-track-height) w-(--switch-track-width)",
-        "data-[state=checked]:bg-primary data-[state=unchecked]:bg-input",
+        "data-[state=checked]:bg-primary-fill data-[state=unchecked]:bg-input",
         "disabled:data-[state=checked]:bg-(--disabled-surface) disabled:data-[state=unchecked]:bg-(--disabled-surface)",
         className
       )}
@@ -71,7 +71,7 @@ function Switch({
           // control's own parts were not separable even though the two track
           // states were.
           "pointer-events-none block rounded-none bg-(--foreground-soft) ring-0 transition-transform",
-          "data-[state=checked]:bg-primary-foreground",
+          "data-[state=checked]:bg-primary-fill-foreground",
           // A disabled track has no fill, so the thumb takes the disabled
           // boundary colour: it stays the visible carrier of on/off instead of
           // disappearing into the surface behind the emptied track.

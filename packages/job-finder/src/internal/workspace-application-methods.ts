@@ -1,10 +1,16 @@
-import type { ExecuteApplicationFlowInput } from "@unemployed/browser-runtime";
+import {
+  applicationSiteKey,
+  type ExecuteApplicationFlowInput,
+} from "@unemployed/browser-runtime";
 import {
   buildApplyLetterDependencies,
   createApplyFormPreparer,
   resolveApplySiteLabel,
 } from "./agent-application-preparation";
-import { persistApplicationPreparationProgress } from "./application-preparation-progress";
+import {
+  persistApplicationPreparationProgress,
+  persistApplicationWaitingForBrowserTab,
+} from "./application-preparation-progress";
 import { resolveApplicationAttachmentsForExecution } from "./workspace-application-attachments";
 import {
   authorizeReviewedApplicationOrigin,
@@ -14,7 +20,12 @@ import {
   enforceResolvedApplyAuthorityResult,
   type ApplySubmissionHandoff,
 } from "./apply-submission-handoff";
-import { sendPreparedApplicationIfAllowed } from "./apply-submission-run-step";
+import {
+  notSentAfterError,
+  notSentAttempt,
+  recordPreparedApplicationNotSent,
+  sendPreparedApplicationIfAllowed,
+} from "./apply-submission-run-step";
 import {
   ApplyJobResultSchema,
   ApplyRecoveryContextSchema,
@@ -178,6 +189,7 @@ import {
   PERSON_TOOK_OVER_SUMMARY,
   handApplicationPageToPersonForAccessStep,
   persistApplicationUserAction,
+  retireCancelledApplicationUserActions,
   terminalizeApplicationAfterPreparedPageLost,
 } from "./workspace-application-user-action";
 import { persistAutomaticApplicationSafeguards } from "./automatic-safeguards";
@@ -352,6 +364,7 @@ type WorkspaceApplicationMethods = Omit<
   startAutoApplyQueueRun(
     jobIds: readonly string[],
     capacityToken?: ApplicationPreparationCapacityToken,
+    applicationAutomationMode?: ApplicationAutomationMode,
   ): Promise<
     Awaited<ReturnType<JobFinderWorkspaceService["startAutoApplyQueueRun"]>>
   >;
@@ -1976,7 +1989,7 @@ export function createWorkspaceApplicationMethods(
         updatedAt: new Date().toISOString(),
         summary:
           input.mode === "queue_auto"
-            ? "Applying to these jobs one after another."
+            ? "Working through these applications."
             : "Applying to this job.",
         detail:
           "Job Finder fills in each application. Whether it sends it is the mode you chose in Settings.",
@@ -2054,9 +2067,37 @@ export function createWorkspaceApplicationMethods(
     let pendingConsentRequests = consentRequests.filter(
       (request) => request.runId === run.id && request.status === "pending",
     ).length;
-    let activeSource: JobSource | null = null;
+    const openedSources = new Map<JobSource, Promise<void>>();
     let shouldCloseActiveSessionOnExit = false;
     let queuedCampaignPauseReason: string | null = null;
+    let admissionStopped = false;
+    let admissionStopDetail: string | null = null;
+    const readQueueProgress = async () => {
+      const committedResults = await ctx.repository.listApplyJobResults({
+        runId: run.id,
+      });
+      const byJob = new Map(
+        committedResults.map((result) => [result.jobId, result]),
+      );
+      const pendingJobs = run.jobIds.filter((jobId) => {
+        const result = byJob.get(jobId);
+        return (
+          !result ||
+          ["planned", "question_capture", "filling", "submitting"].includes(
+            result.state,
+          )
+        );
+      }).length;
+      return {
+        ...summarizeApplyJobResultStates(committedResults),
+        pendingJobs,
+        pendingConsentRequests: (
+          await ctx.repository.listApplicationConsentRequests()
+        ).filter(
+          (request) => request.runId === run.id && request.status === "pending",
+        ).length,
+      };
+    };
     const deferredQueueSafeguards: Array<{
       result: ReturnType<typeof ApplyJobResultSchema.parse>;
       job: ReturnType<typeof SavedJobSchema.parse>;
@@ -2064,7 +2105,7 @@ export function createWorkspaceApplicationMethods(
     }> = [];
     const keepSessionAlive = settings.keepSessionAlive;
     try {
-      for (let index = 0; index < run.jobIds.length; index += 1) {
+      const processJob = async (index: number): Promise<void> => {
         if (await stopIfRunWasCancelled(true)) {
           return;
         }
@@ -2081,18 +2122,7 @@ export function createWorkspaceApplicationMethods(
         const exactApplicationRecordId = jobResult.applicationRecordId;
 
         if (jobResult?.state && jobResult.state !== "planned") {
-          if (jobResult.state === "submitted") {
-            submittedJobs += 1;
-          } else if (jobResult.state === "awaiting_review") {
-            awaitingReviewJobs += 1;
-          } else if (jobResult.state === "blocked") {
-            blockedJobs += 1;
-          } else if (jobResult.state === "failed") {
-            failedJobs += 1;
-          } else if (jobResult.state === "skipped") {
-            skippedJobs += 1;
-          }
-          continue;
+          return;
         }
 
         try {
@@ -2105,25 +2135,26 @@ export function createWorkspaceApplicationMethods(
           if (await stopIfRunWasCancelled(true)) {
             return;
           }
-          const pausedAt = new Date().toISOString();
-          currentRunState = ApplyRunSchema.parse({
-            ...currentRunState,
-            state: "paused_for_user_review",
-            currentJobId: jobId,
-            updatedAt: pausedAt,
-            completedAt: null,
-            pendingJobs: run.jobIds.length - index + awaitingReviewJobs,
-            submittedJobs,
-            skippedJobs,
-            blockedJobs,
-            failedJobs,
-            summary: "Automatic apply paused before the next queued job.",
-            detail:
-              error instanceof Error
-                ? error.message
-                : "Application safeguards could not be verified before the next queued job.",
+          admissionStopped = true;
+          admissionStopDetail =
+            error instanceof Error
+              ? error.message
+              : "Application safeguards could not be verified before the next queued job.";
+          await withApplyRunTransition(run.id, async () => {
+            if (await stopIfRunWasCancelled()) return;
+            const progress = await readQueueProgress();
+            currentRunState = ApplyRunSchema.parse({
+              ...currentRunState,
+              ...progress,
+              state: "paused_for_user_review",
+              currentJobId: jobId,
+              updatedAt: new Date().toISOString(),
+              completedAt: null,
+              summary: "Automatic apply paused before the next queued job.",
+              detail: admissionStopDetail,
+            });
+            await ctx.repository.upsertApplyRun(currentRunState);
           });
-          await persistRunUnlessCancelled(currentRunState);
           return;
         }
 
@@ -2133,6 +2164,8 @@ export function createWorkspaceApplicationMethods(
             jobId,
             savedJobsById.get(jobId) ? [savedJobsById.get(jobId)!] : [],
           );
+          // A prerequisite read is not an active browser preparation yet.
+          // Finish current must also hold jobs admitted just before Pause.
           if (await stopIfRunWasCancelled(true)) {
             return;
           }
@@ -2155,12 +2188,18 @@ export function createWorkspaceApplicationMethods(
             prerequisites.profileRevision,
             "marking this application preparation started",
           );
-          currentRunState = ApplyRunSchema.parse({
-            ...currentRunState,
-            currentJobId: jobId,
-            updatedAt: new Date().toISOString(),
+          const mayStart = await withApplyRunTransition(run.id, async () => {
+            if (admissionStopped || (await stopIfRunWasCancelled()))
+              return false;
+            currentRunState = ApplyRunSchema.parse({
+              ...currentRunState,
+              currentJobId: jobId,
+              updatedAt: new Date().toISOString(),
+            });
+            await ctx.repository.upsertApplyRun(currentRunState);
+            return true;
           });
-          if (!(await persistRunUnlessCancelled(currentRunState))) return;
+          if (!mayStart) return;
           jobResult = await ctx.markApplicationPreparationStarted(
             {
               resultId: jobResult.id,
@@ -2170,19 +2209,15 @@ export function createWorkspaceApplicationMethods(
             capacityToken,
           );
           const activeResultIdRun = jobResult.id;
-          if (activeSource !== job.source) {
-            if (activeSource && !keepSessionAlive) {
-              await ctx.closeRunBrowserSession(activeSource);
-            }
-            await ctx.openRunBrowserSession(job.source, {
+          let opening = openedSources.get(job.source);
+          if (!opening) {
+            opening = ctx.openRunBrowserSession(job.source, {
               purpose: "automation",
             });
-            activeSource = job.source;
-            shouldCloseActiveSessionOnExit = false;
-            if (await stopIfRunWasCancelled(true)) {
-              return;
-            }
+            openedSources.set(job.source, opening);
           }
+          await opening;
+          if (await stopIfRunWasCancelled()) return;
           const provenanceTargetId =
             selectApplicationSighting(job)?.targetId ??
             job.provenance[job.provenance.length - 1]?.targetId ??
@@ -2283,6 +2318,13 @@ export function createWorkspaceApplicationMethods(
           };
           const applyFlowInputRun = {
             ...applyFlowFactsRun,
+            onWaitingForBrowserTab: () =>
+              persistApplicationWaitingForBrowserTab({
+                repository: ctx.repository,
+                resultId: activeResultIdRun,
+                runId: run.id,
+                jobId: jobId,
+              }),
             prepareApplicationForm: createApplyFormPreparer({
               executionInput: applyFlowFactsRun,
               aiClient: ctx.aiClient,
@@ -2469,7 +2511,11 @@ export function createWorkspaceApplicationMethods(
                 executionSignal.aborted ||
                 (activityControl.paused &&
                   activityControl.pauseBehavior !== "finish_current") ||
-                latestRun?.state !== "running"
+                (latestRun?.state !== "running" &&
+                  !(
+                    admissionStopDetail &&
+                    latestRun?.state === "paused_for_user_review"
+                  ))
               ) {
                 executionController.abort();
                 return false;
@@ -2578,19 +2624,6 @@ export function createWorkspaceApplicationMethods(
               await ctx.repository.upsertApplicationAttempt(attempt);
 
               const jobState = updatedResult.state;
-              if (jobState === "submitted") {
-                submittedJobs += 1;
-              } else if (jobState === "awaiting_review") {
-                awaitingReviewJobs += 1;
-              } else if (jobState === "blocked") {
-                blockedJobs += 1;
-              } else if (jobState === "failed") {
-                failedJobs += 1;
-              } else if (jobState === "skipped") {
-                skippedJobs += 1;
-              }
-              pendingConsentRequests += runArtifacts.consentRequests.length;
-
               await syncRunApplicationRecord({
                 applicationRecordId: exactApplicationRecordId,
                 consentSummary: buildConsentSummary(attempt.consentDecisions),
@@ -2637,18 +2670,19 @@ export function createWorkspaceApplicationMethods(
 
               // Sending happens after the preparation is on record, so the
               // submission's own projection is the last word on this attempt.
-              await sendPreparedApplicationIfAllowed({
+              const sendLineage = {
+                runId: run.id,
+                jobId,
+                resultId: updatedResult.id,
+                applicationRecordId: exactApplicationRecordId,
+                campaignId: run.campaignId ?? null,
+              };
+              const sendAttempt = await sendPreparedApplicationIfAllowed({
                 ctx,
                 handoff: preparedHandoffRun,
                 envelope: activeEnvelopeRun,
                 source: job.source,
-                lineage: {
-                  runId: run.id,
-                  jobId,
-                  resultId: updatedResult.id,
-                  applicationRecordId: exactApplicationRecordId,
-                  campaignId: run.campaignId ?? null,
-                },
+                lineage: sendLineage,
                 resumeArtifact,
                 siteLabel: resolveApplySiteLabel({
                   targetLabel: provenanceTarget?.label ?? null,
@@ -2662,8 +2696,42 @@ export function createWorkspaceApplicationMethods(
                   "Failed to send the prepared application.",
                   sendError,
                 );
-                return null;
+                return notSentAfterError(sendError);
               });
+              // A send that did not happen says why on its row and on Home;
+              // it used to leave the job on "ready to send" without a word.
+              if (sendAttempt && !sendAttempt.sent && !sendAttempt.pageClosed) {
+                console.warn(
+                  `[apply] ${job.company}: ${sendAttempt.summary}. ${sendAttempt.detail}`,
+                );
+                await recordPreparedApplicationNotSent({
+                  repository: ctx.repository,
+                  lineage: sendLineage,
+                  attempt: sendAttempt,
+                }).catch(() => undefined);
+                await syncRunApplicationRecord({
+                  applicationRecordId: exactApplicationRecordId,
+                  consentSummary: buildConsentSummary(attempt.consentDecisions),
+                  eventDetail: sendAttempt.detail,
+                  eventEmphasis: "warning",
+                  eventId: `event_${run.id}_${jobId}_not_sent_${Date.now()}`,
+                  eventTitle: sendAttempt.summary,
+                  jobId,
+                  lastActionLabel: sendAttempt.summary,
+                  lastAttemptState: sendAttempt.formGone
+                    ? "failed"
+                    : normalizedExecutionResult.state,
+                  latestBlocker: buildLatestBlockerSummary(attempt.blocker),
+                  nextActionLabel: sendAttempt.nextActionLabel,
+                  questionSummary: buildQuestionSummary(attempt.questions),
+                  replaySummary: buildReplaySummary(
+                    attempt.replay,
+                    attempt.visualEvidence,
+                  ),
+                  automationMode: applyAuthorityRun.authority.mode,
+                  updatedAt: new Date().toISOString(),
+                }).catch(() => undefined);
+              }
 
               // Sending may replace the prepared result with a submitted or
               // uncertain result. Re-read the durable rows before projecting
@@ -2675,20 +2743,20 @@ export function createWorkspaceApplicationMethods(
                 committedRunResults.find(
                   (candidate) => candidate.id === updatedResult.id,
                 ) ?? updatedResult;
+              const progress = await readQueueProgress();
               ({
                 submittedJobs,
                 awaitingReviewJobs,
                 blockedJobs,
                 failedJobs,
                 skippedJobs,
-              } = summarizeApplyJobResultStates(committedRunResults));
-
-              const remainingJobs = run.jobIds.length - (index + 1);
-              // A job that reached review, consent, a blocker, failure, or skip
-              // has finished this batch's attempt. Only jobs the loop has not
-              // reached are pending; otherwise a fully processed prepare-only
-              // batch remains stuck at "0 of N finished" forever.
-              const pendingJobs = remainingJobs;
+                pendingConsentRequests,
+              } = progress);
+              // Review and Needs you are finished preparation attempts. Count
+              // only work still planned or active, regardless of finish order.
+              const pendingJobs = progress.pendingJobs;
+              const remainingJobs = pendingJobs;
+              const processedJobs = run.jobIds.length - pendingJobs;
               const nextRunState =
                 committedJobResult.state === "submitted"
                   ? "completed"
@@ -2720,47 +2788,53 @@ export function createWorkspaceApplicationMethods(
               currentRunState = ApplyRunSchema.parse({
                 ...currentRunState,
                 currentJobId: jobId,
-                updatedAt: committedJobResult.updatedAt,
-                state: campaignPauseReason
-                  ? "paused_for_user_review"
-                  : input.mode === "queue_auto"
-                    ? remainingJobs > 0
-                      ? "running"
-                      : pendingConsentRequests > 0
-                        ? "paused_for_consent"
-                        : pendingJobs > 0 || blockedJobs > 0
-                          ? "paused_for_user_review"
-                          : "completed"
-                    : nextRunState,
-                summary: campaignPauseReason
-                  ? isQuestionHandoffPauseReason(campaignPauseReason)
-                    ? `Automatic apply did what it could; ${blockedJobs <= 1 ? "1 application waits" : `${blockedJobs} applications wait`} on your answers in Needs you.`
-                    : "Automatic apply paused by this search plan's safety rules."
-                  : input.mode === "queue_auto"
-                    ? remainingJobs === 0 && pendingConsentRequests > 0
-                      ? `Automatic apply prepared every unblocked job; ${pendingConsentRequests} consent ${pendingConsentRequests === 1 ? "decision needs" : "decisions need"} you.`
-                      : `Automatic apply queue processed ${index + 1} of ${run.jobIds.length} jobs using the chosen application mode.`
-                    : runArtifacts.consentRequests.length > 0
-                      ? `Automatic apply paused for consent on '${job.title}'.`
-                      : `Automatic apply run processed '${job.title}' using the chosen application mode.`,
+                updatedAt: new Date().toISOString(),
+                state:
+                  admissionStopDetail || campaignPauseReason
+                    ? "paused_for_user_review"
+                    : input.mode === "queue_auto"
+                      ? remainingJobs > 0
+                        ? "running"
+                        : pendingConsentRequests > 0
+                          ? "paused_for_consent"
+                          : pendingJobs > 0 || blockedJobs > 0
+                            ? "paused_for_user_review"
+                            : "completed"
+                      : nextRunState,
+                summary: admissionStopDetail
+                  ? "Automatic apply paused before the next queued job."
+                  : campaignPauseReason
+                    ? isQuestionHandoffPauseReason(campaignPauseReason)
+                      ? `Automatic apply did what it could; ${blockedJobs <= 1 ? "1 application waits" : `${blockedJobs} applications wait`} on your answers in Needs you.`
+                      : "Automatic apply paused by this search plan's safety rules."
+                    : input.mode === "queue_auto"
+                      ? remainingJobs === 0 && pendingConsentRequests > 0
+                        ? `Automatic apply prepared every unblocked job; ${pendingConsentRequests} consent ${pendingConsentRequests === 1 ? "decision needs" : "decisions need"} you.`
+                        : `Automatic apply queue processed ${processedJobs} of ${run.jobIds.length} jobs using the chosen application mode.`
+                      : runArtifacts.consentRequests.length > 0
+                        ? `Automatic apply paused for consent on '${job.title}'.`
+                        : `Automatic apply run processed '${job.title}' using the chosen application mode.`,
                 detail:
+                  admissionStopDetail ??
                   campaignPauseReason ??
                   (input.mode === "queue_auto" && pendingConsentRequests > 0
                     ? "Consent-blocked jobs remain explicit user actions, while every unrelated ready job was allowed to reach its safe review checkpoint."
                     : runArtifacts.consentRequests.length > 0
                       ? "The run stopped because a consent-gated step needs an explicit user decision."
                       : "Job Finder finished working through the application."),
-                completedAt: campaignPauseReason
-                  ? null
-                  : input.mode === "queue_auto"
-                    ? pendingConsentRequests > 0 ||
-                      pendingJobs > 0 ||
-                      blockedJobs > 0
-                      ? null
-                      : committedJobResult.updatedAt
-                    : nextRunState === "completed" || nextRunState === "failed"
-                      ? committedJobResult.updatedAt
-                      : null,
+                completedAt:
+                  admissionStopDetail || campaignPauseReason
+                    ? null
+                    : input.mode === "queue_auto"
+                      ? pendingConsentRequests > 0 ||
+                        pendingJobs > 0 ||
+                        blockedJobs > 0
+                        ? null
+                        : committedJobResult.updatedAt
+                      : nextRunState === "completed" ||
+                          nextRunState === "failed"
+                        ? committedJobResult.updatedAt
+                        : null,
                 pendingJobs,
                 submittedJobs,
                 skippedJobs,
@@ -2824,56 +2898,115 @@ export function createWorkspaceApplicationMethods(
               ? (jobError.stack ?? jobError.message)
               : jobError,
           );
-          await markQueuedJobFailed({
-            runId: run.id,
-            resultId: queuedResultId,
-            error: jobError,
+          await withApplyRunTransition(run.id, async () => {
+            if (await stopIfRunWasCancelled()) return;
+            await markQueuedJobFailed({
+              runId: run.id,
+              resultId: queuedResultId,
+              error: jobError,
+            });
+            const progress = await readQueueProgress();
+            ({
+              submittedJobs,
+              awaitingReviewJobs,
+              blockedJobs,
+              failedJobs,
+              skippedJobs,
+              pendingConsentRequests,
+            } = progress);
+            const remainingJobs = progress.pendingJobs;
+            currentRunState = ApplyRunSchema.parse({
+              ...currentRunState,
+              ...progress,
+              currentJobId: jobId,
+              updatedAt: new Date().toISOString(),
+              state: admissionStopDetail
+                ? "paused_for_user_review"
+                : remainingJobs > 0
+                  ? "running"
+                  : pendingConsentRequests > 0
+                    ? "paused_for_consent"
+                    : blockedJobs > 0 || awaitingReviewJobs > 0
+                      ? "paused_for_user_review"
+                      : "completed",
+              completedAt:
+                admissionStopDetail ||
+                remainingJobs > 0 ||
+                pendingConsentRequests > 0 ||
+                blockedJobs > 0 ||
+                awaitingReviewJobs > 0
+                  ? null
+                  : new Date().toISOString(),
+              summary: admissionStopDetail
+                ? "Automatic apply paused before the next queued job."
+                : `Automatic apply queue processed ${run.jobIds.length - remainingJobs} of ${run.jobIds.length} jobs using the chosen application mode.`,
+              detail:
+                admissionStopDetail ??
+                "Job Finder finished working through the application.",
+            });
+            await ctx.repository.upsertApplyRun(currentRunState);
           });
-          ({
-            submittedJobs,
-            awaitingReviewJobs,
-            blockedJobs,
-            failedJobs,
-            skippedJobs,
-          } = summarizeApplyJobResultStates(
-            await ctx.repository.listApplyJobResults({ runId: run.id }),
-          ));
-          const remainingJobs = run.jobIds.length - (index + 1);
-          currentRunState = ApplyRunSchema.parse({
-            ...currentRunState,
-            currentJobId: jobId,
-            updatedAt: new Date().toISOString(),
-            state:
-              remainingJobs > 0
-                ? "running"
-                : pendingConsentRequests > 0
-                  ? "paused_for_consent"
-                  : blockedJobs > 0 || awaitingReviewJobs > 0
-                    ? "paused_for_user_review"
-                    : "completed",
-            completedAt:
-              remainingJobs > 0 ||
-              pendingConsentRequests > 0 ||
-              blockedJobs > 0 ||
-              awaitingReviewJobs > 0
-                ? null
-                : new Date().toISOString(),
-            summary: `Automatic apply queue processed ${index + 1} of ${run.jobIds.length} jobs using the chosen application mode.`,
-            detail: "Job Finder finished working through the application.",
-            pendingJobs: remainingJobs,
-            submittedJobs,
-            skippedJobs,
-            blockedJobs,
-            failedJobs,
-          });
-          if (!(await persistRunUnlessCancelled(currentRunState))) return;
-          continue;
         }
+      };
 
-        if (input.mode === "single_job_auto") {
-          break;
-        }
-      }
+      // Preparation can overlap; every result/run transition above is still
+      // committed in order. Drain active workers before cleanup or failure.
+      const requestedConcurrency = Number(
+        process.env.UNEMPLOYED_APPLICATION_PREPARATION_CONCURRENCY ?? 2,
+      );
+      const concurrency =
+        input.mode === "single_job_auto"
+          ? 1
+          : Number.isInteger(requestedConcurrency)
+            ? Math.max(1, Math.min(5, requestedConcurrency))
+            : 2;
+      // The browser runs one form per site at a time. A worker that took the
+      // next job in list order could sit waiting on a busy site while a job
+      // on another site was free, so each worker takes the first job whose
+      // site no other worker holds, and list order only when none is free.
+      const unclaimedIndexes = run.jobIds.map((_, index) => index);
+      const busySites = new Map<string, number>();
+      const siteOfIndex = (index: number): string => {
+        const job = savedJobsById.get(run.jobIds[index]!);
+        return (
+          applicationSiteKey(job?.applicationUrl ?? job?.canonicalUrl ?? "") ??
+          `unknown:${index}`
+        );
+      };
+      const claimNextIndex = (): number | null => {
+        if (unclaimedIndexes.length === 0) return null;
+        const free = unclaimedIndexes.findIndex(
+          (index) => !busySites.has(siteOfIndex(index)),
+        );
+        return unclaimedIndexes.splice(free >= 0 ? free : 0, 1)[0] ?? null;
+      };
+      const workers = Array.from(
+        { length: Math.min(concurrency, run.jobIds.length) },
+        async () => {
+          while (!admissionStopped && unclaimedIndexes.length > 0) {
+            if (await stopIfRunWasCancelled(true)) return;
+            if (admissionStopped) return;
+            const index = claimNextIndex();
+            if (index === null) return;
+            const site = siteOfIndex(index);
+            busySites.set(site, (busySites.get(site) ?? 0) + 1);
+            try {
+              await processJob(index);
+            } catch (error) {
+              admissionStopped = true;
+              throw error;
+            } finally {
+              const remaining = (busySites.get(site) ?? 1) - 1;
+              if (remaining > 0) busySites.set(site, remaining);
+              else busySites.delete(site);
+            }
+          }
+        },
+      );
+      const settled = await Promise.allSettled(workers);
+      const failed = settled.find((result) => result.status === "rejected");
+      if (failed?.status === "rejected") throw failed.reason;
+      if (await stopIfRunWasCancelled()) return;
 
       for (const deferred of deferredQueueSafeguards) {
         await persistAutomaticApplicationSafeguards({
@@ -2891,7 +3024,7 @@ export function createWorkspaceApplicationMethods(
       if (await stopIfRunWasCancelled()) {
         return;
       }
-      shouldCloseActiveSessionOnExit = Boolean(activeSource);
+      shouldCloseActiveSessionOnExit = openedSources.size > 0;
       const failedAt = new Date().toISOString();
       const handedToPerson = isBrowserHandedToPersonError(error);
       if (input.mode === "queue_auto") {
@@ -2946,15 +3079,19 @@ export function createWorkspaceApplicationMethods(
       throw error;
     } finally {
       if (
-        activeSource &&
-        (!keepSessionAlive ||
-          shouldCloseActiveSessionOnExit ||
-          executionSignal.aborted)
+        !keepSessionAlive ||
+        shouldCloseActiveSessionOnExit ||
+        executionSignal.aborted
       ) {
-        try {
-          await ctx.closeRunBrowserSession(activeSource);
-        } catch (cleanupError) {
-          console.error("Failed to close apply browser session.", cleanupError);
+        for (const source of openedSources.keys()) {
+          try {
+            await ctx.closeRunBrowserSession(source);
+          } catch (cleanupError) {
+            console.error(
+              "Failed to close apply browser session.",
+              cleanupError,
+            );
+          }
         }
       }
     }
@@ -3963,7 +4100,10 @@ export function createWorkspaceApplicationMethods(
             },
           )
             .catch((error: unknown) => {
-              if (!started) reject(error);
+              if (!started)
+                reject(
+                  error instanceof Error ? error : new Error(String(error)),
+                );
               else
                 console.error("The resumed application queue stopped.", error);
             })
@@ -4705,7 +4845,10 @@ export function createWorkspaceApplicationMethods(
       const targetRevision = revisions.find(
         (revision) => revision.id === revisionId,
       );
-      if (!targetRevision || targetRevision.mutationKind !== "assistant_patch") {
+      if (
+        !targetRevision ||
+        targetRevision.mutationKind !== "assistant_patch"
+      ) {
         throw new Error("That AI edit is no longer in this resume's history.");
       }
       if (
@@ -5818,8 +5961,7 @@ export function createWorkspaceApplicationMethods(
       const reviewablePatches = invalidReplacementPatch
         ? []
         : normalizedPatches.filter(
-            (patch) =>
-              !droppedOnSave.some((drop) => drop.patchId === patch.id),
+            (patch) => !droppedOnSave.some((drop) => drop.patchId === patch.id),
           );
       const droppedNote =
         droppedOnSave.length > 0
@@ -6216,6 +6358,13 @@ export function createWorkspaceApplicationMethods(
         };
         const applyFlowInputApproved = {
           ...applyFlowFactsApproved,
+          onWaitingForBrowserTab: () =>
+            persistApplicationWaitingForBrowserTab({
+              repository: ctx.repository,
+              resultId: markedResult.id,
+              runId: claim.runId,
+              jobId: jobId,
+            }),
           prepareApplicationForm: createApplyFormPreparer({
             executionInput: applyFlowFactsApproved,
             aiClient: ctx.aiClient,
@@ -6822,6 +6971,13 @@ export function createWorkspaceApplicationMethods(
         let preparedReviewCardDirect: ApplicationReviewCard | null = null;
         const applyFlowInputDirect = {
           ...applyFlowFactsDirect,
+          onWaitingForBrowserTab: () =>
+            persistApplicationWaitingForBrowserTab({
+              repository: ctx.repository,
+              resultId: markedResult.id,
+              runId: claim.runId,
+              jobId: jobId,
+            }),
           prepareApplicationForm: createApplyFormPreparer({
             executionInput: applyFlowFactsDirect,
             aiClient: ctx.aiClient,
@@ -7077,8 +7233,19 @@ export function createWorkspaceApplicationMethods(
           signal: claim.controller.signal,
         }).catch((sendError: unknown) => {
           console.error("Failed to send the prepared application.", sendError);
-          return null;
+          return notSentAfterError(sendError);
         });
+        await recordPreparedApplicationNotSent({
+          repository: ctx.repository,
+          lineage: {
+            runId: persistedRun.id,
+            jobId,
+            resultId: runArtifacts.result.id,
+            applicationRecordId: selectedApplicationRecord.id,
+            campaignId: persistedRun.campaignId ?? null,
+          },
+          attempt: sent,
+        }).catch(() => undefined);
         if (sent) {
           const sentAt = new Date().toISOString();
           if (sent.confirmedSubmitted) {
@@ -7206,7 +7373,11 @@ export function createWorkspaceApplicationMethods(
 
       return ctx.getWorkspaceSnapshot();
     },
-    async startAutoApplyQueueRun(jobIds, capacityToken) {
+    async startAutoApplyQueueRun(
+      jobIds,
+      capacityToken,
+      applicationAutomationMode,
+    ) {
       const uniqueJobIds = uniqueStrings(jobIds);
 
       if (uniqueJobIds.length === 0) {
@@ -7260,6 +7431,10 @@ export function createWorkspaceApplicationMethods(
         return id;
       };
       const createdAt = new Date().toISOString();
+      const effectiveApplicationAutomationMode =
+        applicationAutomationMode ??
+        scopedSettings.applicationAutomationMode ??
+        "prepare_only";
       const capturedCampaignId = await ctx.getActiveCampaignId();
       const runId = createUniqueId("apply_run");
       const approvalId = createUniqueId("apply_submit_approval");
@@ -7301,12 +7476,11 @@ export function createWorkspaceApplicationMethods(
         completedAt: null,
         summary: inheritedApproval
           ? `Applying to the remaining ${uniqueJobIds.length} ${uniqueJobIds.length === 1 ? "job" : "jobs"}.`
-          : `Applying to ${uniqueJobIds.length} ${uniqueJobIds.length === 1 ? "job" : "jobs"}, one after another.`,
+          : `Working through ${uniqueJobIds.length} ${uniqueJobIds.length === 1 ? "application" : "applications"}.`,
         detail:
-          scopedSettings.applicationAutomationMode === "autonomous_submit"
+          effectiveApplicationAutomationMode === "autonomous_submit"
             ? "Job Finder fills each one in and sends it when the employer's form is complete, inside the limits you set."
-            : scopedSettings.applicationAutomationMode ===
-                "confirm_before_submit"
+            : effectiveApplicationAutomationMode === "confirm_before_submit"
               ? "Job Finder fills each one in and stops at the send button so you can read it over and send it."
               : "Job Finder fills each one in and leaves it open for you to send.",
         totalJobs: uniqueJobIds.length,
@@ -7345,7 +7519,7 @@ export function createWorkspaceApplicationMethods(
             ? "Waiting its turn in the batch you approved."
             : "Waiting for you to approve this batch.",
           detail: inheritedApproval
-            ? "This job was named in the batch you already approved, so Job Finder prepares it without asking again. It still stops before the final submit button."
+            ? "This job was named in the batch you already approved, so Job Finder works on it without asking again. Whether it sends the application follows the mode you chose in Settings."
             : "Job Finder prepares nothing for this job until you approve this batch.",
           startedAt: createdAt,
           updatedAt: createdAt,
@@ -7653,6 +7827,7 @@ export function createWorkspaceApplicationMethods(
         );
       }
 
+      await retireCancelledApplicationUserActions(ctx.repository, runId);
       return ctx.getWorkspaceSnapshot();
     },
     async resolveApplyConsentRequest(
@@ -8289,10 +8464,22 @@ export function createWorkspaceApplicationMethods(
         applicationUrl: job.applicationUrl ?? job.canonicalUrl,
         now: new Date().toISOString(),
       });
+      const notSentLineage = {
+        runId: run.id,
+        jobId: job.id,
+        resultId: result.id,
+        applicationRecordId,
+        campaignId: run.campaignId ?? null,
+      };
       if (!authority.envelope) {
-        throw new Error(
-          "You have not allowed Job Finder to send this application. Open it and send it yourself.",
-        );
+        const message =
+          "You have not allowed Job Finder to send this application. Open it and send it yourself.";
+        await recordPreparedApplicationNotSent({
+          repository: ctx.repository,
+          lineage: notSentLineage,
+          attempt: notSentAttempt("no permission to send it", message),
+        }).catch(() => undefined);
+        throw new Error(message);
       }
 
       const siteLabel = resolveApplySiteLabel({
@@ -8320,6 +8507,19 @@ export function createWorkspaceApplicationMethods(
         },
         resumeArtifact,
         siteLabel,
+      }).catch(async (sendError: unknown) => {
+        await recordPreparedApplicationNotSent({
+          repository: ctx.repository,
+          lineage: notSentLineage,
+          attempt: notSentAfterError(sendError),
+        }).catch(() => undefined);
+        throw sendError;
+      });
+
+      await recordPreparedApplicationNotSent({
+        repository: ctx.repository,
+        lineage: notSentLineage,
+        attempt: sent,
       });
 
       // A page the browser let go of is recorded as such, so the review can
@@ -8380,7 +8580,9 @@ export function createWorkspaceApplicationMethods(
           eventTitle: sent.summary,
           jobId: job.id,
           lastActionLabel: sent.summary,
-          lastAttemptState: currentApplicationRecord.lastAttemptState,
+          lastAttemptState: sent.formGone
+            ? "failed"
+            : currentApplicationRecord.lastAttemptState,
           latestBlocker: currentApplicationRecord.latestBlocker,
           nextActionLabel: sent.nextActionLabel,
           questionSummary: currentApplicationRecord.questionSummary,

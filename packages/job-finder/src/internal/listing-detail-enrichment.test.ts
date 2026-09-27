@@ -424,12 +424,17 @@ describe("enrichSavedJobListingDetails", () => {
       canonicalUrl: "https://jobs.example.test/second-limited",
     });
     const limitedOnce = new Set<string>();
-    const eachOnceFetcher = vi.fn<ListingHtmlFetcher>(async (url) => {
+    const eachOnceFetcher = vi.fn<ListingHtmlFetcher>((url) => {
       if (!limitedOnce.has(url)) {
         limitedOnce.add(url);
-        return { status: 429, html: "", finalUrl: url, retryAfterMs: 0 };
+        return Promise.resolve({
+          status: 429,
+          html: "",
+          finalUrl: url,
+          retryAfterMs: 0,
+        });
       }
-      return { status: 200, html: RECORD_PAGE, finalUrl: url };
+      return Promise.resolve({ status: 200, html: RECORD_PAGE, finalUrl: url });
     });
     const bothRecovered = await enrichSavedJobListingDetails({
       jobs: [firstLimited, secondLimited],

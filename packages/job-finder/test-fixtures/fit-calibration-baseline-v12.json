@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "corpusVersion": "fit-calibration-v1-2026-07-30",
-  "generatedAt": "2026-09-13T02:41:51.701Z",
-  "scorerVersion": 11,
-  "durationMs": 939.9142999999999,
+  "generatedAt": "2026-09-26T16:29:51.483Z",
+  "scorerVersion": 13,
+  "durationMs": 332.534625,
   "thresholds": {
     "maxHardConflictsInTopFive": 0,
     "maxUnsafeHardConflictRecommendations": 0,
@@ -62,7 +62,7 @@
             "compensation"
           ],
           "rank": 1,
-          "scorerVersion": 11,
+          "scorerVersion": 13,
           "score": 94,
           "recommendation": "strong_fit",
           "recommendationRationale": "No hard conflicts or unsupported required requirements were detected.",
@@ -374,7 +374,7 @@
             "application_effort"
           ],
           "rank": 2,
-          "scorerVersion": 11,
+          "scorerVersion": 13,
           "score": 93,
           "recommendation": "strong_fit",
           "recommendationRationale": "No hard conflicts or unsupported required requirements were detected.",
@@ -685,7 +685,7 @@
             "senior_engineering"
           ],
           "rank": 3,
-          "scorerVersion": 11,
+          "scorerVersion": 13,
           "score": 78,
           "recommendation": "apply_with_original",
           "recommendationRationale": "The original resume has credible evidence for the detected requirements, with no hard blocker found.",
@@ -933,7 +933,7 @@
             "senior_engineering"
           ],
           "rank": 4,
-          "scorerVersion": 11,
+          "scorerVersion": 13,
           "score": 72,
           "recommendation": "apply_with_original",
           "recommendationRationale": "The original resume has credible evidence for the detected requirements, with no hard blocker found.",
@@ -1152,7 +1152,7 @@
             "senior_engineering"
           ],
           "rank": 5,
-          "scorerVersion": 11,
+          "scorerVersion": 13,
           "score": 70,
           "recommendation": "review_before_applying",
           "recommendationRationale": "The listing location could not be compared with the saved search areas yet.",
@@ -1420,7 +1420,7 @@
             "compensation"
           ],
           "rank": 6,
-          "scorerVersion": 11,
+          "scorerVersion": 13,
           "score": 70,
           "recommendation": "review_before_applying",
           "recommendationRationale": "The listing compensation is below the saved salary minimum.",
@@ -1732,7 +1732,7 @@
             "incomplete_listing"
           ],
           "rank": 7,
-          "scorerVersion": 11,
+          "scorerVersion": 13,
           "score": 70,
           "recommendation": "review_before_applying",
           "recommendationRationale": "The listing location could not be compared with the saved search areas yet.",
@@ -1889,7 +1889,7 @@
             "hard_requirement_conflict"
           ],
           "rank": 8,
-          "scorerVersion": 11,
+          "scorerVersion": 13,
           "score": 63,
           "recommendation": "review_before_applying",
           "recommendationRationale": "Go is not yet supported by explicit resume evidence.",
@@ -2087,7 +2087,7 @@
             "senior_engineering"
           ],
           "rank": 9,
-          "scorerVersion": 11,
+          "scorerVersion": 13,
           "score": 0,
           "recommendation": "review_before_applying",
           "recommendationRationale": "Kubernetes is not yet supported by explicit resume evidence.",
@@ -2274,7 +2274,7 @@
             "misleading_title"
           ],
           "rank": 10,
-          "scorerVersion": 11,
+          "scorerVersion": 13,
           "score": 38,
           "recommendation": "skip",
           "recommendationRationale": "This is a talent-pool or future-interest listing, not a current vacancy.",
@@ -2547,7 +2547,7 @@
             "hard_requirement_conflict"
           ],
           "rank": 11,
-          "scorerVersion": 11,
+          "scorerVersion": 13,
           "score": 34,
           "recommendation": "skip",
           "recommendationRationale": "Remote geography eligibility conflicts with the saved profile or search preferences.",
@@ -2881,7 +2881,7 @@
             "misleading_title"
           ],
           "rank": 12,
-          "scorerVersion": 11,
+          "scorerVersion": 13,
           "score": 29,
           "recommendation": "skip",
           "recommendationRationale": "The listing belongs to a different occupational role.",
@@ -3152,7 +3152,7 @@
             "senior_engineering"
           ],
           "rank": 13,
-          "scorerVersion": 11,
+          "scorerVersion": 13,
           "score": 27,
           "recommendation": "skip",
           "recommendationRationale": "The listing belongs to a different occupational role.",
@@ -3378,7 +3378,7 @@
             "nontechnical"
           ],
           "rank": 1,
-          "scorerVersion": 11,
+          "scorerVersion": 13,
           "score": 68,
           "recommendation": "review_before_applying",
           "recommendationRationale": "The fit is plausible, but the evidence is not strong enough for an unqualified recommendation.",
@@ -3477,6 +3477,12 @@
               "jobEvidence": "Required: 5+ years of experience leading customer onboarding, adoption, renewals, and stakeholder management.",
               "resumeEvidence": [
                 {
+                  "sourceKind": "profile",
+                  "sourceId": "fit_customer_success",
+                  "label": "Profile summary",
+                  "detail": "Customer onboarding, Renewals, Customer adoption, Stakeholder management, Zendesk, CRM."
+                },
+                {
                   "sourceKind": "profile_skill",
                   "sourceId": null,
                   "label": "Profile skill: Customer onboarding",
@@ -3499,6 +3505,12 @@
               "status": "supported",
               "jobEvidence": "Customer adoption",
               "resumeEvidence": [
+                {
+                  "sourceKind": "profile",
+                  "sourceId": "fit_customer_success",
+                  "label": "Profile summary",
+                  "detail": "Customer onboarding, Renewals, Customer adoption, Stakeholder management, Zendesk, CRM."
+                },
                 {
                   "sourceKind": "profile_skill",
                   "sourceId": null,
@@ -3599,7 +3611,7 @@
             "nontechnical"
           ],
           "rank": 2,
-          "scorerVersion": 11,
+          "scorerVersion": 13,
           "score": 68,
           "recommendation": "review_before_applying",
           "recommendationRationale": "The fit is plausible, but the evidence is not strong enough for an unqualified recommendation.",
@@ -3698,6 +3710,12 @@
               "jobEvidence": "Required: 5+ years of experience leading customer onboarding, adoption, renewals, and stakeholder management.",
               "resumeEvidence": [
                 {
+                  "sourceKind": "profile",
+                  "sourceId": "fit_customer_success",
+                  "label": "Profile summary",
+                  "detail": "Customer onboarding, Renewals, Customer adoption, Stakeholder management, Zendesk, CRM."
+                },
+                {
                   "sourceKind": "profile_skill",
                   "sourceId": null,
                   "label": "Profile skill: Customer onboarding",
@@ -3720,6 +3738,12 @@
               "status": "supported",
               "jobEvidence": "Customer adoption",
               "resumeEvidence": [
+                {
+                  "sourceKind": "profile",
+                  "sourceId": "fit_customer_success",
+                  "label": "Profile summary",
+                  "detail": "Customer onboarding, Renewals, Customer adoption, Stakeholder management, Zendesk, CRM."
+                },
                 {
                   "sourceKind": "profile_skill",
                   "sourceId": null,
@@ -3804,7 +3828,7 @@
             "incomplete_listing"
           ],
           "rank": 3,
-          "scorerVersion": 11,
+          "scorerVersion": 13,
           "score": 68,
           "recommendation": "review_before_applying",
           "recommendationRationale": "The listing location could not be compared with the saved search areas yet.",
@@ -3960,7 +3984,7 @@
             "nontechnical"
           ],
           "rank": 4,
-          "scorerVersion": 11,
+          "scorerVersion": 13,
           "score": 67,
           "recommendation": "review_before_applying",
           "recommendationRationale": "The fit is plausible, but the evidence is not strong enough for an unqualified recommendation.",
@@ -4059,6 +4083,12 @@
               "jobEvidence": "Customer adoption",
               "resumeEvidence": [
                 {
+                  "sourceKind": "profile",
+                  "sourceId": "fit_customer_success",
+                  "label": "Profile summary",
+                  "detail": "Customer onboarding, Renewals, Customer adoption, Stakeholder management, Zendesk, CRM."
+                },
+                {
                   "sourceKind": "profile_skill",
                   "sourceId": null,
                   "label": "Profile skill: Customer adoption",
@@ -4142,7 +4172,7 @@
             "compensation"
           ],
           "rank": 5,
-          "scorerVersion": 11,
+          "scorerVersion": 13,
           "score": 66,
           "recommendation": "review_before_applying",
           "recommendationRationale": "The listing compensation is below the saved salary minimum.",
@@ -4241,6 +4271,12 @@
               "jobEvidence": "Required: 5+ years of experience leading customer onboarding, adoption, renewals, and stakeholder management.",
               "resumeEvidence": [
                 {
+                  "sourceKind": "profile",
+                  "sourceId": "fit_customer_success",
+                  "label": "Profile summary",
+                  "detail": "Customer onboarding, Renewals, Customer adoption, Stakeholder management, Zendesk, CRM."
+                },
+                {
                   "sourceKind": "profile_skill",
                   "sourceId": null,
                   "label": "Profile skill: Customer onboarding",
@@ -4263,6 +4299,12 @@
               "status": "supported",
               "jobEvidence": "Customer adoption",
               "resumeEvidence": [
+                {
+                  "sourceKind": "profile",
+                  "sourceId": "fit_customer_success",
+                  "label": "Profile summary",
+                  "detail": "Customer onboarding, Renewals, Customer adoption, Stakeholder management, Zendesk, CRM."
+                },
                 {
                   "sourceKind": "profile_skill",
                   "sourceId": null,
@@ -4361,7 +4403,7 @@
             "nontechnical"
           ],
           "rank": 6,
-          "scorerVersion": 11,
+          "scorerVersion": 13,
           "score": 62,
           "recommendation": "review_before_applying",
           "recommendationRationale": "The fit is plausible, but the evidence is not strong enough for an unqualified recommendation.",
@@ -4460,6 +4502,12 @@
               "jobEvidence": "Customer onboarding",
               "resumeEvidence": [
                 {
+                  "sourceKind": "profile",
+                  "sourceId": "fit_customer_success",
+                  "label": "Profile summary",
+                  "detail": "Customer onboarding, Renewals, Customer adoption, Stakeholder management, Zendesk, CRM."
+                },
+                {
                   "sourceKind": "profile_skill",
                   "sourceId": null,
                   "label": "Profile skill: Customer onboarding",
@@ -4542,7 +4590,7 @@
             "nontechnical"
           ],
           "rank": 7,
-          "scorerVersion": 11,
+          "scorerVersion": 13,
           "score": 61,
           "recommendation": "review_before_applying",
           "recommendationRationale": "The fit is plausible, but the evidence is not strong enough for an unqualified recommendation.",
@@ -4641,6 +4689,12 @@
               "jobEvidence": "Customer onboarding",
               "resumeEvidence": [
                 {
+                  "sourceKind": "profile",
+                  "sourceId": "fit_customer_success",
+                  "label": "Profile summary",
+                  "detail": "Customer onboarding, Renewals, Customer adoption, Stakeholder management, Zendesk, CRM."
+                },
+                {
                   "sourceKind": "profile_skill",
                   "sourceId": null,
                   "label": "Profile skill: Customer onboarding",
@@ -4706,7 +4760,7 @@
             "nontechnical"
           ],
           "rank": 8,
-          "scorerVersion": 11,
+          "scorerVersion": 13,
           "score": 46,
           "recommendation": "review_before_applying",
           "recommendationRationale": "SQL is not yet supported by explicit resume evidence.",
@@ -4830,6 +4884,12 @@
               "jobEvidence": "Customer onboarding",
               "resumeEvidence": [
                 {
+                  "sourceKind": "profile",
+                  "sourceId": "fit_customer_success",
+                  "label": "Profile summary",
+                  "detail": "Customer onboarding, Renewals, Customer adoption, Stakeholder management, Zendesk, CRM."
+                },
+                {
                   "sourceKind": "profile_skill",
                   "sourceId": null,
                   "label": "Profile skill: Customer onboarding",
@@ -4912,7 +4972,7 @@
             "hard_requirement_conflict"
           ],
           "rank": 9,
-          "scorerVersion": 11,
+          "scorerVersion": 13,
           "score": 32,
           "recommendation": "skip",
           "recommendationRationale": "Remote geography eligibility conflicts with the saved profile or search preferences.",
@@ -5091,7 +5151,7 @@
             "misleading_title"
           ],
           "rank": 10,
-          "scorerVersion": 11,
+          "scorerVersion": 13,
           "score": 30,
           "recommendation": "skip",
           "recommendationRationale": "This is a talent-pool or future-interest listing, not a current vacancy.",
@@ -5190,6 +5250,12 @@
               "jobEvidence": "Customer onboarding",
               "resumeEvidence": [
                 {
+                  "sourceKind": "profile",
+                  "sourceId": "fit_customer_success",
+                  "label": "Profile summary",
+                  "detail": "Customer onboarding, Renewals, Customer adoption, Stakeholder management, Zendesk, CRM."
+                },
+                {
                   "sourceKind": "profile_skill",
                   "sourceId": null,
                   "label": "Profile skill: Customer onboarding",
@@ -5212,6 +5278,12 @@
               "status": "supported",
               "jobEvidence": "Customer adoption",
               "resumeEvidence": [
+                {
+                  "sourceKind": "profile",
+                  "sourceId": "fit_customer_success",
+                  "label": "Profile summary",
+                  "detail": "Customer onboarding, Renewals, Customer adoption, Stakeholder management, Zendesk, CRM."
+                },
                 {
                   "sourceKind": "profile_skill",
                   "sourceId": null,
@@ -5293,7 +5365,7 @@
             "nontechnical"
           ],
           "rank": 11,
-          "scorerVersion": 11,
+          "scorerVersion": 13,
           "score": 28,
           "recommendation": "skip",
           "recommendationRationale": "The listing belongs to a different occupational role.",
@@ -5450,7 +5522,7 @@
             "misleading_title"
           ],
           "rank": 12,
-          "scorerVersion": 11,
+          "scorerVersion": 13,
           "score": 20,
           "recommendation": "skip",
           "recommendationRationale": "The listing belongs to a different occupational role.",
@@ -5638,7 +5710,7 @@
             "hard_requirement_conflict"
           ],
           "rank": 13,
-          "scorerVersion": 11,
+          "scorerVersion": 13,
           "score": 32,
           "recommendation": "skip",
           "recommendationRationale": "Location: On-site - Madrid, Spain conflicts with the saved profile or search preferences.",
@@ -5791,7 +5863,7 @@
             "career_change"
           ],
           "rank": 1,
-          "scorerVersion": 11,
+          "scorerVersion": 13,
           "score": 94,
           "recommendation": "strong_fit",
           "recommendationRationale": "No hard conflicts or unsupported required requirements were detected.",
@@ -5913,6 +5985,12 @@
               "jobEvidence": "Required: React, accessible HTML, CSS, and partnership with Figma design-system teams.",
               "resumeEvidence": [
                 {
+                  "sourceKind": "profile",
+                  "sourceId": "fit_transition",
+                  "label": "Profile summary",
+                  "detail": "React, Figma, Design Systems, Accessibility, HTML, CSS."
+                },
+                {
                   "sourceKind": "profile_skill",
                   "sourceId": null,
                   "label": "Profile skill: Figma",
@@ -5935,6 +6013,12 @@
               "status": "supported",
               "jobEvidence": "Accessibility",
               "resumeEvidence": [
+                {
+                  "sourceKind": "profile",
+                  "sourceId": "fit_transition",
+                  "label": "Profile summary",
+                  "detail": "React, Figma, Design Systems, Accessibility, HTML, CSS."
+                },
                 {
                   "sourceKind": "profile_skill",
                   "sourceId": null,
@@ -6018,7 +6102,7 @@
             "career_change"
           ],
           "rank": 2,
-          "scorerVersion": 11,
+          "scorerVersion": 13,
           "score": 94,
           "recommendation": "strong_fit",
           "recommendationRationale": "No hard conflicts or unsupported required requirements were detected.",
@@ -6140,6 +6224,12 @@
               "jobEvidence": "Required: Build production React interfaces with Figma, design systems, accessibility, HTML, and CSS.",
               "resumeEvidence": [
                 {
+                  "sourceKind": "profile",
+                  "sourceId": "fit_transition",
+                  "label": "Profile summary",
+                  "detail": "React, Figma, Design Systems, Accessibility, HTML, CSS."
+                },
+                {
                   "sourceKind": "profile_skill",
                   "sourceId": null,
                   "label": "Profile skill: Design Systems",
@@ -6163,6 +6253,12 @@
               "jobEvidence": "Required: Build production React interfaces with Figma, design systems, accessibility, HTML, and CSS.",
               "resumeEvidence": [
                 {
+                  "sourceKind": "profile",
+                  "sourceId": "fit_transition",
+                  "label": "Profile summary",
+                  "detail": "React, Figma, Design Systems, Accessibility, HTML, CSS."
+                },
+                {
                   "sourceKind": "profile_skill",
                   "sourceId": null,
                   "label": "Profile skill: Figma",
@@ -6185,6 +6281,12 @@
               "status": "supported",
               "jobEvidence": "Required: Build production React interfaces with Figma, design systems, accessibility, HTML, and CSS.",
               "resumeEvidence": [
+                {
+                  "sourceKind": "profile",
+                  "sourceId": "fit_transition",
+                  "label": "Profile summary",
+                  "detail": "React, Figma, Design Systems, Accessibility, HTML, CSS."
+                },
                 {
                   "sourceKind": "profile_skill",
                   "sourceId": null,
@@ -6266,7 +6368,7 @@
             "career_change"
           ],
           "rank": 3,
-          "scorerVersion": 11,
+          "scorerVersion": 13,
           "score": 85,
           "recommendation": "apply_with_original",
           "recommendationRationale": "The original resume has credible evidence for the detected requirements, with no hard blocker found.",
@@ -6388,6 +6490,12 @@
               "jobEvidence": "Design Systems",
               "resumeEvidence": [
                 {
+                  "sourceKind": "profile",
+                  "sourceId": "fit_transition",
+                  "label": "Profile summary",
+                  "detail": "React, Figma, Design Systems, Accessibility, HTML, CSS."
+                },
+                {
                   "sourceKind": "profile_skill",
                   "sourceId": null,
                   "label": "Profile skill: Design Systems",
@@ -6411,6 +6519,12 @@
               "jobEvidence": "Figma",
               "resumeEvidence": [
                 {
+                  "sourceKind": "profile",
+                  "sourceId": "fit_transition",
+                  "label": "Profile summary",
+                  "detail": "React, Figma, Design Systems, Accessibility, HTML, CSS."
+                },
+                {
                   "sourceKind": "profile_skill",
                   "sourceId": null,
                   "label": "Profile skill: Figma",
@@ -6433,6 +6547,12 @@
               "status": "supported",
               "jobEvidence": "Accessibility",
               "resumeEvidence": [
+                {
+                  "sourceKind": "profile",
+                  "sourceId": "fit_transition",
+                  "label": "Profile summary",
+                  "detail": "React, Figma, Design Systems, Accessibility, HTML, CSS."
+                },
                 {
                   "sourceKind": "profile_skill",
                   "sourceId": null,
@@ -6499,7 +6619,7 @@
             "career_change"
           ],
           "rank": 4,
-          "scorerVersion": 11,
+          "scorerVersion": 13,
           "score": 85,
           "recommendation": "apply_with_original",
           "recommendationRationale": "The original resume has credible evidence for the detected requirements, with no hard blocker found.",
@@ -6621,6 +6741,12 @@
               "jobEvidence": "Figma",
               "resumeEvidence": [
                 {
+                  "sourceKind": "profile",
+                  "sourceId": "fit_transition",
+                  "label": "Profile summary",
+                  "detail": "React, Figma, Design Systems, Accessibility, HTML, CSS."
+                },
+                {
                   "sourceKind": "profile_skill",
                   "sourceId": null,
                   "label": "Profile skill: Figma",
@@ -6643,6 +6769,12 @@
               "status": "supported",
               "jobEvidence": "Accessibility",
               "resumeEvidence": [
+                {
+                  "sourceKind": "profile",
+                  "sourceId": "fit_transition",
+                  "label": "Profile summary",
+                  "detail": "React, Figma, Design Systems, Accessibility, HTML, CSS."
+                },
                 {
                   "sourceKind": "profile_skill",
                   "sourceId": null,
@@ -6724,7 +6856,7 @@
             "career_change"
           ],
           "rank": 5,
-          "scorerVersion": 11,
+          "scorerVersion": 13,
           "score": 84,
           "recommendation": "apply_with_original",
           "recommendationRationale": "The original resume has credible evidence for the detected requirements, with no hard blocker found.",
@@ -6846,6 +6978,12 @@
               "jobEvidence": "Design Systems",
               "resumeEvidence": [
                 {
+                  "sourceKind": "profile",
+                  "sourceId": "fit_transition",
+                  "label": "Profile summary",
+                  "detail": "React, Figma, Design Systems, Accessibility, HTML, CSS."
+                },
+                {
                   "sourceKind": "profile_skill",
                   "sourceId": null,
                   "label": "Profile skill: Design Systems",
@@ -6868,6 +7006,12 @@
               "status": "supported",
               "jobEvidence": "Accessibility",
               "resumeEvidence": [
+                {
+                  "sourceKind": "profile",
+                  "sourceId": "fit_transition",
+                  "label": "Profile summary",
+                  "detail": "React, Figma, Design Systems, Accessibility, HTML, CSS."
+                },
                 {
                   "sourceKind": "profile_skill",
                   "sourceId": null,
@@ -6950,7 +7094,7 @@
             "incomplete_listing"
           ],
           "rank": 6,
-          "scorerVersion": 11,
+          "scorerVersion": 13,
           "score": 70,
           "recommendation": "review_before_applying",
           "recommendationRationale": "The listing location could not be compared with the saved search areas yet.",
@@ -7097,7 +7241,7 @@
           "failureCodes": []
         },
         {
-          "id": "transition_principal_ux_scope_gap",
+          "id": "transition_typescript_required_missing",
           "expectedDisposition": "review",
           "actualDisposition": "review",
           "grade": 1,
@@ -7106,7 +7250,230 @@
             "career_change"
           ],
           "rank": 7,
-          "scorerVersion": 11,
+          "scorerVersion": 13,
+          "score": 67,
+          "recommendation": "review_before_applying",
+          "recommendationRationale": "TypeScript is not yet supported by explicit resume evidence.",
+          "labelRationale": "React is supported, but required production TypeScript is not.",
+          "dimensions": {
+            "roleSuitability": {
+              "state": "adjacent",
+              "explanation": "The title matches, but your saved profile does not yet show typescript.",
+              "evidence": [
+                {
+                  "source": "listing",
+                  "label": "Listing title",
+                  "detail": "UX Engineer"
+                },
+                {
+                  "source": "preference",
+                  "label": "Saved target roles",
+                  "detail": "UX Engineer, Design Systems Engineer, UI Engineer"
+                },
+                {
+                  "source": "listing",
+                  "label": "Required: TypeScript",
+                  "detail": "missing: Production TypeScript and React are required."
+                }
+              ]
+            },
+            "preferenceAlignment": {
+              "state": "aligned",
+              "explanation": "The listing aligns with the configured search preferences.",
+              "evidence": [
+                {
+                  "source": "preference",
+                  "label": "Location comparison",
+                  "detail": "Remote - United Kingdom compared with Manchester, United Kingdom, Remote - United Kingdom: aligned."
+                },
+                {
+                  "source": "preference",
+                  "label": "Work-mode comparison",
+                  "detail": "remote compared with remote, hybrid: aligned."
+                },
+                {
+                  "source": "preference",
+                  "label": "Seniority comparison",
+                  "detail": "Senior compared with Senior: aligned."
+                },
+                {
+                  "source": "preference",
+                  "label": "Employment-type comparison",
+                  "detail": "Full-time compared with Full-time: aligned."
+                }
+              ]
+            },
+            "applicationEffort": {
+              "level": "moderate",
+              "explanation": "The application redirects to an employer or ATS form, which usually requires more review and form entry.",
+              "evidence": [
+                {
+                  "source": "listing",
+                  "label": "Application path",
+                  "detail": "external redirect"
+                }
+              ]
+            },
+            "evidenceConfidence": {
+              "level": "high",
+              "explanation": "The listing body was read and 3 of 3 role requirements were checked. A gap that was found still counts against the fit.",
+              "evidence": [
+                {
+                  "source": "listing",
+                  "label": "Listing detail depth",
+                  "detail": "partial detail"
+                },
+                {
+                  "source": "derived",
+                  "label": "Requirement supportability",
+                  "detail": "3 of 3 role or eligibility requirements have explicit positive or negative evidence."
+                }
+              ],
+              "supportedCount": 2,
+              "partialCount": 0,
+              "missingCount": 1,
+              "unknownCount": 0,
+              "conflictCount": 0
+            }
+          },
+          "compensationFit": {
+            "state": "meets_minimum",
+            "confidence": "high",
+            "minimumSalaryUsd": 90000,
+            "listingMinimumAnnualUsd": 105000,
+            "listingCurrency": "USD",
+            "explanation": "The listing minimum meets or exceeds the saved USD minimum after normalizing both to annual amounts."
+          },
+          "requirements": [
+            {
+              "id": "requirement_skill_typescript",
+              "category": "skill",
+              "label": "TypeScript",
+              "importance": "required",
+              "status": "missing",
+              "jobEvidence": "Production TypeScript and React are required.",
+              "resumeEvidence": [],
+              "explanation": "No explicit TypeScript evidence was found in the imported resume."
+            },
+            {
+              "id": "requirement_skill_react",
+              "category": "skill",
+              "label": "React",
+              "importance": "required",
+              "status": "supported",
+              "jobEvidence": "Production TypeScript and React are required.",
+              "resumeEvidence": [
+                {
+                  "sourceKind": "profile_skill",
+                  "sourceId": null,
+                  "label": "Profile skill: React",
+                  "detail": "React is explicitly listed in the imported profile."
+                },
+                {
+                  "sourceKind": "experience",
+                  "sourceId": "fit_transition_experience",
+                  "label": "Senior Product Designer at Established Employer",
+                  "detail": "React"
+                }
+              ],
+              "explanation": "The resume contains explicit React evidence."
+            },
+            {
+              "id": "requirement_skill_design_systems",
+              "category": "skill",
+              "label": "Design systems",
+              "importance": "required",
+              "status": "supported",
+              "jobEvidence": "Required: deep production TypeScript and React experience building component libraries.",
+              "resumeEvidence": [
+                {
+                  "sourceKind": "profile",
+                  "sourceId": "fit_transition",
+                  "label": "Profile summary",
+                  "detail": "React, Figma, Design Systems, Accessibility, HTML, CSS."
+                },
+                {
+                  "sourceKind": "profile_skill",
+                  "sourceId": null,
+                  "label": "Profile skill: Design Systems",
+                  "detail": "Design Systems is explicitly listed in the imported profile."
+                },
+                {
+                  "sourceKind": "experience",
+                  "sourceId": "fit_transition_experience",
+                  "label": "Senior Product Designer at Established Employer",
+                  "detail": "Design Systems"
+                }
+              ],
+              "explanation": "The resume contains explicit design systems evidence."
+            },
+            {
+              "id": "requirement_location_remote_geography_eligibility",
+              "category": "location",
+              "label": "Remote geography eligibility",
+              "importance": "required",
+              "status": "supported",
+              "jobEvidence": "Remote - United Kingdom",
+              "resumeEvidence": [
+                {
+                  "sourceKind": "profile",
+                  "sourceId": "fit_transition",
+                  "label": "Current location",
+                  "detail": "Manchester, United Kingdom"
+                }
+              ],
+              "explanation": "The candidate's current country is explicitly inside the listing's remote hiring geography."
+            },
+            {
+              "id": "requirement_location_remote_united_kingdom",
+              "category": "location",
+              "label": "Location: Remote - United Kingdom",
+              "importance": "required",
+              "status": "supported",
+              "jobEvidence": "Remote - United Kingdom",
+              "resumeEvidence": [
+                {
+                  "sourceKind": "profile",
+                  "sourceId": "fit_transition",
+                  "label": "Current location",
+                  "detail": "Manchester, United Kingdom"
+                }
+              ],
+              "explanation": "The listing location is compatible with the saved search area."
+            },
+            {
+              "id": "requirement_work_mode_remote",
+              "category": "work_mode",
+              "label": "Work mode: remote",
+              "importance": "required",
+              "status": "supported",
+              "jobEvidence": "Remote - United Kingdom; remote",
+              "resumeEvidence": [
+                {
+                  "sourceKind": "profile",
+                  "sourceId": "fit_transition",
+                  "label": "Remote-work eligibility",
+                  "detail": "The profile confirms remote-work eligibility."
+                }
+              ],
+              "explanation": "The listing work mode matches the saved preference."
+            }
+          ],
+          "deterministicReplay": true,
+          "explicitExpectationFailureCodes": [],
+          "failureCodes": []
+        },
+        {
+          "id": "transition_principal_ux_scope_gap",
+          "expectedDisposition": "review",
+          "actualDisposition": "review",
+          "grade": 1,
+          "hardConflict": false,
+          "tags": [
+            "career_change"
+          ],
+          "rank": 8,
+          "scorerVersion": 13,
           "score": 67,
           "recommendation": "review_before_applying",
           "recommendationRationale": "The fit is plausible, but the evidence is not strong enough for an unqualified recommendation.",
@@ -7276,223 +7643,6 @@
           "failureCodes": []
         },
         {
-          "id": "transition_typescript_required_missing",
-          "expectedDisposition": "review",
-          "actualDisposition": "review",
-          "grade": 1,
-          "hardConflict": false,
-          "tags": [
-            "career_change"
-          ],
-          "rank": 8,
-          "scorerVersion": 11,
-          "score": 67,
-          "recommendation": "review_before_applying",
-          "recommendationRationale": "TypeScript is not yet supported by explicit resume evidence.",
-          "labelRationale": "React is supported, but required production TypeScript is not.",
-          "dimensions": {
-            "roleSuitability": {
-              "state": "adjacent",
-              "explanation": "The title matches, but your saved profile does not yet show typescript.",
-              "evidence": [
-                {
-                  "source": "listing",
-                  "label": "Listing title",
-                  "detail": "UX Engineer"
-                },
-                {
-                  "source": "preference",
-                  "label": "Saved target roles",
-                  "detail": "UX Engineer, Design Systems Engineer, UI Engineer"
-                },
-                {
-                  "source": "listing",
-                  "label": "Required: TypeScript",
-                  "detail": "missing: Production TypeScript and React are required."
-                }
-              ]
-            },
-            "preferenceAlignment": {
-              "state": "aligned",
-              "explanation": "The listing aligns with the configured search preferences.",
-              "evidence": [
-                {
-                  "source": "preference",
-                  "label": "Location comparison",
-                  "detail": "Remote - United Kingdom compared with Manchester, United Kingdom, Remote - United Kingdom: aligned."
-                },
-                {
-                  "source": "preference",
-                  "label": "Work-mode comparison",
-                  "detail": "remote compared with remote, hybrid: aligned."
-                },
-                {
-                  "source": "preference",
-                  "label": "Seniority comparison",
-                  "detail": "Senior compared with Senior: aligned."
-                },
-                {
-                  "source": "preference",
-                  "label": "Employment-type comparison",
-                  "detail": "Full-time compared with Full-time: aligned."
-                }
-              ]
-            },
-            "applicationEffort": {
-              "level": "moderate",
-              "explanation": "The application redirects to an employer or ATS form, which usually requires more review and form entry.",
-              "evidence": [
-                {
-                  "source": "listing",
-                  "label": "Application path",
-                  "detail": "external redirect"
-                }
-              ]
-            },
-            "evidenceConfidence": {
-              "level": "high",
-              "explanation": "The listing body was read and 3 of 3 role requirements were checked. A gap that was found still counts against the fit.",
-              "evidence": [
-                {
-                  "source": "listing",
-                  "label": "Listing detail depth",
-                  "detail": "partial detail"
-                },
-                {
-                  "source": "derived",
-                  "label": "Requirement supportability",
-                  "detail": "3 of 3 role or eligibility requirements have explicit positive or negative evidence."
-                }
-              ],
-              "supportedCount": 2,
-              "partialCount": 0,
-              "missingCount": 1,
-              "unknownCount": 0,
-              "conflictCount": 0
-            }
-          },
-          "compensationFit": {
-            "state": "meets_minimum",
-            "confidence": "high",
-            "minimumSalaryUsd": 90000,
-            "listingMinimumAnnualUsd": 105000,
-            "listingCurrency": "USD",
-            "explanation": "The listing minimum meets or exceeds the saved USD minimum after normalizing both to annual amounts."
-          },
-          "requirements": [
-            {
-              "id": "requirement_skill_typescript",
-              "category": "skill",
-              "label": "TypeScript",
-              "importance": "required",
-              "status": "missing",
-              "jobEvidence": "Production TypeScript and React are required.",
-              "resumeEvidence": [],
-              "explanation": "No explicit TypeScript evidence was found in the imported resume."
-            },
-            {
-              "id": "requirement_skill_react",
-              "category": "skill",
-              "label": "React",
-              "importance": "required",
-              "status": "supported",
-              "jobEvidence": "Production TypeScript and React are required.",
-              "resumeEvidence": [
-                {
-                  "sourceKind": "profile_skill",
-                  "sourceId": null,
-                  "label": "Profile skill: React",
-                  "detail": "React is explicitly listed in the imported profile."
-                },
-                {
-                  "sourceKind": "experience",
-                  "sourceId": "fit_transition_experience",
-                  "label": "Senior Product Designer at Established Employer",
-                  "detail": "React"
-                }
-              ],
-              "explanation": "The resume contains explicit React evidence."
-            },
-            {
-              "id": "requirement_skill_design_systems",
-              "category": "skill",
-              "label": "Design systems",
-              "importance": "required",
-              "status": "supported",
-              "jobEvidence": "Required: deep production TypeScript and React experience building component libraries.",
-              "resumeEvidence": [
-                {
-                  "sourceKind": "profile_skill",
-                  "sourceId": null,
-                  "label": "Profile skill: Design Systems",
-                  "detail": "Design Systems is explicitly listed in the imported profile."
-                },
-                {
-                  "sourceKind": "experience",
-                  "sourceId": "fit_transition_experience",
-                  "label": "Senior Product Designer at Established Employer",
-                  "detail": "Design Systems"
-                }
-              ],
-              "explanation": "The resume contains explicit design systems evidence."
-            },
-            {
-              "id": "requirement_location_remote_geography_eligibility",
-              "category": "location",
-              "label": "Remote geography eligibility",
-              "importance": "required",
-              "status": "supported",
-              "jobEvidence": "Remote - United Kingdom",
-              "resumeEvidence": [
-                {
-                  "sourceKind": "profile",
-                  "sourceId": "fit_transition",
-                  "label": "Current location",
-                  "detail": "Manchester, United Kingdom"
-                }
-              ],
-              "explanation": "The candidate's current country is explicitly inside the listing's remote hiring geography."
-            },
-            {
-              "id": "requirement_location_remote_united_kingdom",
-              "category": "location",
-              "label": "Location: Remote - United Kingdom",
-              "importance": "required",
-              "status": "supported",
-              "jobEvidence": "Remote - United Kingdom",
-              "resumeEvidence": [
-                {
-                  "sourceKind": "profile",
-                  "sourceId": "fit_transition",
-                  "label": "Current location",
-                  "detail": "Manchester, United Kingdom"
-                }
-              ],
-              "explanation": "The listing location is compatible with the saved search area."
-            },
-            {
-              "id": "requirement_work_mode_remote",
-              "category": "work_mode",
-              "label": "Work mode: remote",
-              "importance": "required",
-              "status": "supported",
-              "jobEvidence": "Remote - United Kingdom; remote",
-              "resumeEvidence": [
-                {
-                  "sourceKind": "profile",
-                  "sourceId": "fit_transition",
-                  "label": "Remote-work eligibility",
-                  "detail": "The profile confirms remote-work eligibility."
-                }
-              ],
-              "explanation": "The listing work mode matches the saved preference."
-            }
-          ],
-          "deterministicReplay": true,
-          "explicitExpectationFailureCodes": [],
-          "failureCodes": []
-        },
-        {
           "id": "transition_product_designer_old_path",
           "expectedDisposition": "review",
           "actualDisposition": "review",
@@ -7502,7 +7652,7 @@
             "career_change"
           ],
           "rank": 9,
-          "scorerVersion": 11,
+          "scorerVersion": 13,
           "score": 64,
           "recommendation": "review_before_applying",
           "recommendationRationale": "The fit is plausible, but the evidence is not strong enough for an unqualified recommendation.",
@@ -7601,6 +7751,12 @@
               "jobEvidence": "Design Systems",
               "resumeEvidence": [
                 {
+                  "sourceKind": "profile",
+                  "sourceId": "fit_transition",
+                  "label": "Profile summary",
+                  "detail": "React, Figma, Design Systems, Accessibility, HTML, CSS."
+                },
+                {
                   "sourceKind": "profile_skill",
                   "sourceId": null,
                   "label": "Profile skill: Design Systems",
@@ -7623,6 +7779,12 @@
               "status": "supported",
               "jobEvidence": "Figma",
               "resumeEvidence": [
+                {
+                  "sourceKind": "profile",
+                  "sourceId": "fit_transition",
+                  "label": "Profile summary",
+                  "detail": "React, Figma, Design Systems, Accessibility, HTML, CSS."
+                },
                 {
                   "sourceKind": "profile_skill",
                   "sourceId": null,
@@ -7705,7 +7867,7 @@
             "misleading_title"
           ],
           "rank": 10,
-          "scorerVersion": 11,
+          "scorerVersion": 13,
           "score": 60,
           "recommendation": "review_before_applying",
           "recommendationRationale": "The fit is plausible, but the evidence is not strong enough for an unqualified recommendation.",
@@ -7863,7 +8025,7 @@
             "career_change"
           ],
           "rank": 11,
-          "scorerVersion": 11,
+          "scorerVersion": 13,
           "score": 56,
           "recommendation": "review_before_applying",
           "recommendationRationale": "The fit is plausible, but the evidence is not strong enough for an unqualified recommendation.",
@@ -8042,7 +8204,7 @@
             "misleading_title"
           ],
           "rank": 12,
-          "scorerVersion": 11,
+          "scorerVersion": 13,
           "score": 38,
           "recommendation": "skip",
           "recommendationRationale": "This is a talent-pool or future-interest listing, not a current vacancy.",
@@ -8164,6 +8326,12 @@
               "jobEvidence": "Design Systems",
               "resumeEvidence": [
                 {
+                  "sourceKind": "profile",
+                  "sourceId": "fit_transition",
+                  "label": "Profile summary",
+                  "detail": "React, Figma, Design Systems, Accessibility, HTML, CSS."
+                },
+                {
                   "sourceKind": "profile_skill",
                   "sourceId": null,
                   "label": "Profile skill: Design Systems",
@@ -8186,6 +8354,12 @@
               "status": "supported",
               "jobEvidence": "Figma",
               "resumeEvidence": [
+                {
+                  "sourceKind": "profile",
+                  "sourceId": "fit_transition",
+                  "label": "Profile summary",
+                  "detail": "React, Figma, Design Systems, Accessibility, HTML, CSS."
+                },
                 {
                   "sourceKind": "profile_skill",
                   "sourceId": null,
@@ -8269,7 +8443,7 @@
             "hard_requirement_conflict"
           ],
           "rank": 13,
-          "scorerVersion": 11,
+          "scorerVersion": 13,
           "score": 34,
           "recommendation": "skip",
           "recommendationRationale": "Remote geography eligibility conflicts with the saved profile or search preferences.",
@@ -8396,6 +8570,12 @@
               "jobEvidence": "Design Systems",
               "resumeEvidence": [
                 {
+                  "sourceKind": "profile",
+                  "sourceId": "fit_transition",
+                  "label": "Profile summary",
+                  "detail": "React, Figma, Design Systems, Accessibility, HTML, CSS."
+                },
+                {
                   "sourceKind": "profile_skill",
                   "sourceId": null,
                   "label": "Profile skill: Design Systems",
@@ -8507,7 +8687,7 @@
             "regional_eligibility"
           ],
           "rank": 1,
-          "scorerVersion": 11,
+          "scorerVersion": 13,
           "score": 94,
           "recommendation": "strong_fit",
           "recommendationRationale": "No hard conflicts or unsupported required requirements were detected.",
@@ -8606,6 +8786,12 @@
               "jobEvidence": "Required: 5+ years of experience leading product design, Figma design systems, user research, and workflow products.",
               "resumeEvidence": [
                 {
+                  "sourceKind": "profile",
+                  "sourceId": "fit_regional",
+                  "label": "Profile summary",
+                  "detail": "Product Design, Figma, Design Systems, User Research, Workflows."
+                },
+                {
                   "sourceKind": "profile_skill",
                   "sourceId": null,
                   "label": "Profile skill: User Research",
@@ -8629,6 +8815,12 @@
               "jobEvidence": "Required: 5+ years of experience leading product design, Figma design systems, user research, and workflow products.",
               "resumeEvidence": [
                 {
+                  "sourceKind": "profile",
+                  "sourceId": "fit_regional",
+                  "label": "Profile summary",
+                  "detail": "Product Design, Figma, Design Systems, User Research, Workflows."
+                },
+                {
                   "sourceKind": "profile_skill",
                   "sourceId": null,
                   "label": "Profile skill: Design Systems",
@@ -8651,6 +8843,12 @@
               "status": "supported",
               "jobEvidence": "Required: 5+ years of experience leading product design, Figma design systems, user research, and workflow products.",
               "resumeEvidence": [
+                {
+                  "sourceKind": "profile",
+                  "sourceId": "fit_regional",
+                  "label": "Profile summary",
+                  "detail": "Product Design, Figma, Design Systems, User Research, Workflows."
+                },
                 {
                   "sourceKind": "profile_skill",
                   "sourceId": null,
@@ -8749,7 +8947,7 @@
             "regional_eligibility"
           ],
           "rank": 2,
-          "scorerVersion": 11,
+          "scorerVersion": 13,
           "score": 94,
           "recommendation": "strong_fit",
           "recommendationRationale": "No hard conflicts or unsupported required requirements were detected.",
@@ -8848,6 +9046,12 @@
               "jobEvidence": "Required: 5+ years of experience leading product design, Figma design systems, user research, and workflow products.",
               "resumeEvidence": [
                 {
+                  "sourceKind": "profile",
+                  "sourceId": "fit_regional",
+                  "label": "Profile summary",
+                  "detail": "Product Design, Figma, Design Systems, User Research, Workflows."
+                },
+                {
                   "sourceKind": "profile_skill",
                   "sourceId": null,
                   "label": "Profile skill: User Research",
@@ -8871,6 +9075,12 @@
               "jobEvidence": "Required: 5+ years of experience leading product design, Figma design systems, user research, and workflow products.",
               "resumeEvidence": [
                 {
+                  "sourceKind": "profile",
+                  "sourceId": "fit_regional",
+                  "label": "Profile summary",
+                  "detail": "Product Design, Figma, Design Systems, User Research, Workflows."
+                },
+                {
                   "sourceKind": "profile_skill",
                   "sourceId": null,
                   "label": "Profile skill: Design Systems",
@@ -8893,6 +9103,12 @@
               "status": "supported",
               "jobEvidence": "Required: 5+ years of experience leading product design, Figma design systems, user research, and workflow products.",
               "resumeEvidence": [
+                {
+                  "sourceKind": "profile",
+                  "sourceId": "fit_regional",
+                  "label": "Profile summary",
+                  "detail": "Product Design, Figma, Design Systems, User Research, Workflows."
+                },
                 {
                   "sourceKind": "profile_skill",
                   "sourceId": null,
@@ -8974,7 +9190,7 @@
             "regional_eligibility"
           ],
           "rank": 3,
-          "scorerVersion": 11,
+          "scorerVersion": 13,
           "score": 94,
           "recommendation": "strong_fit",
           "recommendationRationale": "No hard conflicts or unsupported required requirements were detected.",
@@ -9073,6 +9289,12 @@
               "jobEvidence": "Required: 5+ years of experience leading product design, Figma design systems, user research, and workflow products.",
               "resumeEvidence": [
                 {
+                  "sourceKind": "profile",
+                  "sourceId": "fit_regional",
+                  "label": "Profile summary",
+                  "detail": "Product Design, Figma, Design Systems, User Research, Workflows."
+                },
+                {
                   "sourceKind": "profile_skill",
                   "sourceId": null,
                   "label": "Profile skill: User Research",
@@ -9096,6 +9318,12 @@
               "jobEvidence": "Required: 5+ years of experience leading product design, Figma design systems, user research, and workflow products.",
               "resumeEvidence": [
                 {
+                  "sourceKind": "profile",
+                  "sourceId": "fit_regional",
+                  "label": "Profile summary",
+                  "detail": "Product Design, Figma, Design Systems, User Research, Workflows."
+                },
+                {
                   "sourceKind": "profile_skill",
                   "sourceId": null,
                   "label": "Profile skill: Design Systems",
@@ -9118,6 +9346,12 @@
               "status": "supported",
               "jobEvidence": "Required: 5+ years of experience leading product design, Figma design systems, user research, and workflow products.",
               "resumeEvidence": [
+                {
+                  "sourceKind": "profile",
+                  "sourceId": "fit_regional",
+                  "label": "Profile summary",
+                  "detail": "Product Design, Figma, Design Systems, User Research, Workflows."
+                },
                 {
                   "sourceKind": "profile_skill",
                   "sourceId": null,
@@ -9216,7 +9450,7 @@
             "regional_eligibility"
           ],
           "rank": 4,
-          "scorerVersion": 11,
+          "scorerVersion": 13,
           "score": 94,
           "recommendation": "strong_fit",
           "recommendationRationale": "No hard conflicts or unsupported required requirements were detected.",
@@ -9315,6 +9549,12 @@
               "jobEvidence": "Required: 5+ years of experience leading product design, Figma design systems, user research, and workflow products.",
               "resumeEvidence": [
                 {
+                  "sourceKind": "profile",
+                  "sourceId": "fit_regional",
+                  "label": "Profile summary",
+                  "detail": "Product Design, Figma, Design Systems, User Research, Workflows."
+                },
+                {
                   "sourceKind": "profile_skill",
                   "sourceId": null,
                   "label": "Profile skill: User Research",
@@ -9338,6 +9578,12 @@
               "jobEvidence": "Required: 5+ years of experience leading product design, Figma design systems, user research, and workflow products.",
               "resumeEvidence": [
                 {
+                  "sourceKind": "profile",
+                  "sourceId": "fit_regional",
+                  "label": "Profile summary",
+                  "detail": "Product Design, Figma, Design Systems, User Research, Workflows."
+                },
+                {
                   "sourceKind": "profile_skill",
                   "sourceId": null,
                   "label": "Profile skill: Design Systems",
@@ -9360,6 +9606,12 @@
               "status": "supported",
               "jobEvidence": "Required: 5+ years of experience leading product design, Figma design systems, user research, and workflow products.",
               "resumeEvidence": [
+                {
+                  "sourceKind": "profile",
+                  "sourceId": "fit_regional",
+                  "label": "Profile summary",
+                  "detail": "Product Design, Figma, Design Systems, User Research, Workflows."
+                },
                 {
                   "sourceKind": "profile_skill",
                   "sourceId": null,
@@ -9459,7 +9711,7 @@
             "compensation"
           ],
           "rank": 5,
-          "scorerVersion": 11,
+          "scorerVersion": 13,
           "score": 88,
           "recommendation": "strong_fit",
           "recommendationRationale": "No hard conflicts or unsupported required requirements were detected.",
@@ -9558,6 +9810,12 @@
               "jobEvidence": "Required: 5+ years of experience leading product design, Figma design systems, user research, and workflow products.",
               "resumeEvidence": [
                 {
+                  "sourceKind": "profile",
+                  "sourceId": "fit_regional",
+                  "label": "Profile summary",
+                  "detail": "Product Design, Figma, Design Systems, User Research, Workflows."
+                },
+                {
                   "sourceKind": "profile_skill",
                   "sourceId": null,
                   "label": "Profile skill: User Research",
@@ -9581,6 +9839,12 @@
               "jobEvidence": "Required: 5+ years of experience leading product design, Figma design systems, user research, and workflow products.",
               "resumeEvidence": [
                 {
+                  "sourceKind": "profile",
+                  "sourceId": "fit_regional",
+                  "label": "Profile summary",
+                  "detail": "Product Design, Figma, Design Systems, User Research, Workflows."
+                },
+                {
                   "sourceKind": "profile_skill",
                   "sourceId": null,
                   "label": "Profile skill: Design Systems",
@@ -9603,6 +9867,12 @@
               "status": "supported",
               "jobEvidence": "Required: 5+ years of experience leading product design, Figma design systems, user research, and workflow products.",
               "resumeEvidence": [
+                {
+                  "sourceKind": "profile",
+                  "sourceId": "fit_regional",
+                  "label": "Profile summary",
+                  "detail": "Product Design, Figma, Design Systems, User Research, Workflows."
+                },
                 {
                   "sourceKind": "profile_skill",
                   "sourceId": null,
@@ -9701,7 +9971,7 @@
             "regional_eligibility"
           ],
           "rank": 6,
-          "scorerVersion": 11,
+          "scorerVersion": 13,
           "score": 70,
           "recommendation": "review_before_applying",
           "recommendationRationale": "The listing location could not be compared with the saved search areas yet.",
@@ -9800,6 +10070,12 @@
               "jobEvidence": "Required: 5+ years of experience leading product design, Figma design systems, user research, and workflow products.",
               "resumeEvidence": [
                 {
+                  "sourceKind": "profile",
+                  "sourceId": "fit_regional",
+                  "label": "Profile summary",
+                  "detail": "Product Design, Figma, Design Systems, User Research, Workflows."
+                },
+                {
                   "sourceKind": "profile_skill",
                   "sourceId": null,
                   "label": "Profile skill: User Research",
@@ -9823,6 +10099,12 @@
               "jobEvidence": "Required: 5+ years of experience leading product design, Figma design systems, user research, and workflow products.",
               "resumeEvidence": [
                 {
+                  "sourceKind": "profile",
+                  "sourceId": "fit_regional",
+                  "label": "Profile summary",
+                  "detail": "Product Design, Figma, Design Systems, User Research, Workflows."
+                },
+                {
                   "sourceKind": "profile_skill",
                   "sourceId": null,
                   "label": "Profile skill: Design Systems",
@@ -9845,6 +10127,12 @@
               "status": "supported",
               "jobEvidence": "Required: 5+ years of experience leading product design, Figma design systems, user research, and workflow products.",
               "resumeEvidence": [
+                {
+                  "sourceKind": "profile",
+                  "sourceId": "fit_regional",
+                  "label": "Profile summary",
+                  "detail": "Product Design, Figma, Design Systems, User Research, Workflows."
+                },
                 {
                   "sourceKind": "profile_skill",
                   "sourceId": null,
@@ -9946,7 +10234,7 @@
             "incomplete_listing"
           ],
           "rank": 7,
-          "scorerVersion": 11,
+          "scorerVersion": 13,
           "score": 70,
           "recommendation": "review_before_applying",
           "recommendationRationale": "The listing location could not be compared with the saved search areas yet.",
@@ -10045,6 +10333,12 @@
               "jobEvidence": "Design Systems",
               "resumeEvidence": [
                 {
+                  "sourceKind": "profile",
+                  "sourceId": "fit_regional",
+                  "label": "Profile summary",
+                  "detail": "Product Design, Figma, Design Systems, User Research, Workflows."
+                },
+                {
                   "sourceKind": "profile_skill",
                   "sourceId": null,
                   "label": "Profile skill: Design Systems",
@@ -10067,6 +10361,12 @@
               "status": "supported",
               "jobEvidence": "Figma",
               "resumeEvidence": [
+                {
+                  "sourceKind": "profile",
+                  "sourceId": "fit_regional",
+                  "label": "Profile summary",
+                  "detail": "Product Design, Figma, Design Systems, User Research, Workflows."
+                },
                 {
                   "sourceKind": "profile_skill",
                   "sourceId": null,
@@ -10149,7 +10449,7 @@
             "hard_requirement_conflict"
           ],
           "rank": 8,
-          "scorerVersion": 11,
+          "scorerVersion": 13,
           "score": 70,
           "recommendation": "review_before_applying",
           "recommendationRationale": "Work authorization is not stated in your profile yet.",
@@ -10299,7 +10599,7 @@
             "incomplete_listing"
           ],
           "rank": 9,
-          "scorerVersion": 11,
+          "scorerVersion": 13,
           "score": 70,
           "recommendation": "review_before_applying",
           "recommendationRationale": "The listing location could not be compared with the saved search areas yet.",
@@ -10398,6 +10698,12 @@
               "jobEvidence": "Figma",
               "resumeEvidence": [
                 {
+                  "sourceKind": "profile",
+                  "sourceId": "fit_regional",
+                  "label": "Profile summary",
+                  "detail": "Product Design, Figma, Design Systems, User Research, Workflows."
+                },
+                {
                   "sourceKind": "profile_skill",
                   "sourceId": null,
                   "label": "Profile skill: Figma",
@@ -10479,7 +10785,7 @@
             "hard_requirement_conflict"
           ],
           "rank": 10,
-          "scorerVersion": 11,
+          "scorerVersion": 13,
           "score": 34,
           "recommendation": "skip",
           "recommendationRationale": "Remote geography eligibility conflicts with the saved profile or search preferences.",
@@ -10658,7 +10964,7 @@
             "hard_requirement_conflict"
           ],
           "rank": 11,
-          "scorerVersion": 11,
+          "scorerVersion": 13,
           "score": 34,
           "recommendation": "skip",
           "recommendationRationale": "Remote geography eligibility conflicts with the saved profile or search preferences.",
@@ -10837,7 +11143,7 @@
             "hard_requirement_conflict"
           ],
           "rank": 12,
-          "scorerVersion": 11,
+          "scorerVersion": 13,
           "score": 34,
           "recommendation": "skip",
           "recommendationRationale": "Remote geography eligibility conflicts with the saved profile or search preferences.",
@@ -11016,7 +11322,7 @@
             "hard_requirement_conflict"
           ],
           "rank": 13,
-          "scorerVersion": 11,
+          "scorerVersion": 13,
           "score": 34,
           "recommendation": "skip",
           "recommendationRationale": "Location: On-site - Berlin, Germany conflicts with the saved profile or search preferences.",

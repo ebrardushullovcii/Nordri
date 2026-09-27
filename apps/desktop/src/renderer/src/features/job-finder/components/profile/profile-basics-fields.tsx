@@ -112,11 +112,11 @@ export function ProfileBasicsFields(props: {
           </Field>
           <Field>
             <FieldLabel htmlFor={fieldId("preferred-name")}>
-              Preferred name
+              Preferred full name
             </FieldLabel>
             <ProfileInput
               id={fieldId("preferred-name")}
-              placeholder="Use this if it differs from your first name"
+              placeholder="Full name to use on resumes and applications"
               {...register("identity.preferredDisplayName")}
             />
           </Field>

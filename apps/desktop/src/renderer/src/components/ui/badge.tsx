@@ -10,17 +10,19 @@ import { cn } from "@renderer/lib/utils";
 // 1.10-1.18:1 from the card - i.e. no visible chip at all. The tinted tones
 // keep their own hue at /75: /65 was measured for the warning family and
 // inherited untested, and fell to 2.86:1 (light --primary) against its own
-// tint. Both are pinned by styles/globals.test.ts.
+// tint. The alpha is a theme token (--badge-border-alpha: 75% light, 40%
+// dark; see status-badge.tsx). Both are pinned by styles/globals.test.ts.
 const badgeVariants = cva(
   "inline-flex w-fit max-w-full min-w-0 shrink truncate items-center justify-center gap-1 overflow-hidden border px-2 py-0.5 text-(length:--text-tiny) font-bold uppercase tracking-[0.08em] whitespace-nowrap rounded-(--radius-badge) transition-[color,box-shadow] motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&>svg]:pointer-events-none [&>svg]:size-3",
   {
     variants: {
       variant: {
-        default: "border-primary/75 bg-primary/15 text-primary",
+        default:
+          "border-primary/(--badge-border-alpha) bg-primary/15 text-primary",
         secondary:
           "border-(--surface-panel-border) bg-secondary text-secondary-foreground [a&]:hover:bg-secondary/90",
         destructive:
-          "border-destructive/75 bg-destructive/15 text-destructive [a&]:hover:bg-destructive/90",
+          "border-destructive/(--badge-border-alpha) bg-destructive/15 text-destructive [a&]:hover:bg-destructive/90",
         outline:
           "border-(--surface-panel-border) bg-surface-strong text-foreground-soft [a&]:hover:bg-accent [a&]:hover:text-accent-foreground",
         ghost: "[a&]:hover:bg-accent [a&]:hover:text-accent-foreground",

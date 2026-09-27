@@ -319,7 +319,12 @@ export function createOpenAiCompatibleJobFinderAiClient(
           reasoningSummary: resilience.streaming !== false,
           jsonOutput: true,
           messages: [
-            { role: "system", content: systemPrompt },
+            {
+              role: "system",
+              content: /\bjson\b/i.test(systemPrompt)
+                ? systemPrompt
+                : `${systemPrompt}\nReturn JSON only.`,
+            },
             {
               role: "user",
               content: JSON.stringify(compactedUserPayload),
@@ -607,9 +612,10 @@ export function createOpenAiCompatibleJobFinderAiClient(
           ? SEARCH_RESULTS_EXTRACTION_PAGE_TEXT_LIMIT
           : JOB_DETAIL_EXTRACTION_PAGE_TEXT_LIMIT;
       const timeoutMs =
-        input.pageType === "search_results"
+        validatedOptions?.requestTimeoutMs ??
+        (input.pageType === "search_results"
           ? SEARCH_RESULTS_EXTRACTION_TIMEOUT_MS
-          : DEFAULT_MODEL_TIMEOUT_MS;
+          : DEFAULT_MODEL_TIMEOUT_MS);
 
       const payload = await fetchModelJson(
         "extractJobsFromPage",
@@ -1469,6 +1475,9 @@ export function createJobFinderAiClientFromEnvironment(
       try {
         return await primaryClient.extractJobsFromPage(input);
       } catch (error) {
+        if (input.signal?.aborted) {
+          throw error;
+        }
         logFallbackError("extractJobsFromPage", error);
         return fallbackClient.extractJobsFromPage(input);
       }

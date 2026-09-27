@@ -42,7 +42,7 @@ function candidate(input: {
 }
 
 describe("buildProfileSetupReviewItems", () => {
-  test("represents an empty work history as one required setup item", () => {
+  test("keeps empty work history as a suggestion for people without previous roles", () => {
     const seed = createSeed();
     const items = buildProfileSetupReviewItems({
       currentState: null,
@@ -57,7 +57,7 @@ describe("buildProfileSetupReviewItems", () => {
       [
         expect.objectContaining({
           label: "Work history",
-          severity: "critical",
+          severity: "recommended",
           status: "pending",
           proposedValue: null,
           sourceCandidateId: null,
@@ -67,8 +67,80 @@ describe("buildProfileSetupReviewItems", () => {
     );
     expect(
       items.find((item) => item.label === "Work history")?.reason,
-    ).toContain("Add at least one meaningful work-history role");
+    ).toContain("You can finish setup without a previous role");
   });
+
+  test("refreshes an older required work-history item without inventing experience", () => {
+    const seed = createSeed();
+    const profile = { ...seed.profile, experiences: [], projects: [] };
+    const input = {
+      documentBundle: null,
+      now: createdAt,
+      profile,
+      candidates: [],
+      searchPreferences: seed.searchPreferences,
+    };
+    const items = buildProfileSetupReviewItems({
+      ...input,
+      currentState: null,
+    });
+    const storedItems = items.map((item) =>
+      item.target.domain === "experience"
+        ? { ...item, severity: "critical" as const }
+        : item,
+    );
+    const refreshed = buildProfileSetupReviewItems({
+      ...input,
+      currentState: ProfileSetupStateSchema.parse({
+        status: "in_progress",
+        reviewItems: storedItems,
+      }),
+    });
+
+    expect(
+      refreshed.find((item) => item.label === "Work history"),
+    ).toMatchObject({
+      severity: "recommended",
+      status: "pending",
+      proposedValue: null,
+    });
+    expect(profile.experiences).toEqual([]);
+  });
+
+  test.each(["experience", "education"] as const)(
+    "keeps an imported %s suggestion optional when no background is saved",
+    (section) => {
+      const seed = createSeed();
+      const imported = candidate({
+        id: `imported_${section}`,
+        section,
+        key: "record",
+        label: section === "experience" ? "Work history" : "Education",
+        value:
+          section === "experience"
+            ? { companyName: "Example Hotel", title: "Receptionist" }
+            : {
+                schoolName: "Example College",
+                degree: "Hospitality certificate",
+              },
+      });
+      const items = buildProfileSetupReviewItems({
+        currentState: null,
+        documentBundle: null,
+        now: createdAt,
+        profile: { ...seed.profile, experiences: [], education: [] },
+        candidates: [imported],
+        searchPreferences: seed.searchPreferences,
+      });
+
+      expect(
+        items.find((item) => item.sourceCandidateId === imported.id),
+      ).toMatchObject({
+        severity: "recommended",
+        status: "pending",
+      });
+    },
+  );
 
   test("keeps a dismissed missing-field item dismissed", () => {
     const seed = createSeed();

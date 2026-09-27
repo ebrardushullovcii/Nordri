@@ -650,7 +650,7 @@ export function getQueueStateExplanation(
   }
 
   if (input.completedJobCount === input.selectedJobCount) {
-    return "Every job in this historical run already reached a review-ready or terminal outcome. Recovery is available only if you want to start a completely fresh run another way.";
+    return "Every job in this run already reached a review-ready or final outcome.";
   }
 
   return "This run still has unfinished jobs. Review the per-job outcomes below before deciding whether to prepare the remaining work.";

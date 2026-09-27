@@ -67,6 +67,7 @@ export function SettingsApplyModeSection(props: {
 }) {
   const { headingId, isSaving = false, mode, onSave } = props;
   const dailyCapId = useId();
+  const dailyCapErrorId = useId();
   const [selectedMode, setSelectedMode] = useState(mode);
   const [modeSave, setModeSave] = useState<ModeSaveState>({
     status: "idle",
@@ -88,10 +89,12 @@ export function SettingsApplyModeSection(props: {
     setDailyCap(String(props.maxApplicationsPerLocalDay));
   }, [props.maxApplicationsPerLocalDay]);
 
-  const parsedCap = Number.parseInt(dailyCap, 10);
-  const capIsValid = Number.isFinite(parsedCap) && parsedCap > 0;
-  const capIsDirty =
-    capIsValid && parsedCap !== props.maxApplicationsPerLocalDay;
+  const parsedCap = Number(dailyCap);
+  const capIsValid =
+    /^\d+$/.test(dailyCap) && Number.isSafeInteger(parsedCap) && parsedCap > 0;
+  const capIsDirty = capIsValid
+    ? parsedCap !== props.maxApplicationsPerLocalDay
+    : dailyCap !== String(props.maxApplicationsPerLocalDay);
   const capSaving = capSaveState.status === "saving";
   const capIsOutstanding = hasOutstandingSectionChanges(
     capIsDirty,
@@ -100,7 +103,8 @@ export function SettingsApplyModeSection(props: {
   const modeSaving = modeSave.status === "saving";
 
   const chooseMode = (value: ApplicationAutomationMode) => {
-    if (modeSaving || (value === mode && modeSave.status !== "failed")) {
+    if (isSaving || modeSaving || capSaving) return;
+    if (value === mode && modeSave.status !== "failed") {
       setSelectedMode(value);
       return;
     }
@@ -129,7 +133,7 @@ export function SettingsApplyModeSection(props: {
   };
 
   const saveDailyCap = () => {
-    if (!capIsOutstanding || capSaving) {
+    if (!capIsOutstanding || !capIsValid || isSaving || capSaving || modeSaving) {
       return;
     }
     // The mode the person last picked, so a limit saved moments after a
@@ -152,6 +156,7 @@ export function SettingsApplyModeSection(props: {
   useRegisterSettingsDirtySection({
     anchorId: "settings-application-authority",
     isDirty: capIsOutstanding,
+    isSaveDisabled: !capIsValid || isSaving || modeSaving,
     isSaving: capSaving,
     label: "Applying",
     onSave: saveDailyCap,
@@ -170,12 +175,13 @@ export function SettingsApplyModeSection(props: {
             Applying
           </h3>
           <p className="text-(length:--text-description) leading-5 text-foreground-soft">
-            What Apply does. Your choice saves as soon as you pick it, and
-            every Apply and Apply to all uses it until you change it here.
+            What Apply does. Your choice saves as soon as you pick it, and every
+            Apply and Apply to all uses it until you change it here.
           </p>
         </div>
         <SettingsSectionSaveControl
           hasUnsavedChanges={capIsDirty}
+          isSaveDisabled={!capIsValid || isSaving || modeSaving}
           onSave={saveDailyCap}
           saveState={capSaveState}
           subject="daily limit"
@@ -184,7 +190,7 @@ export function SettingsApplyModeSection(props: {
 
       <ChoiceCards
         aria-label="Default application mode"
-        disabled={isSaving || modeSaving}
+        disabled={isSaving || modeSaving || capSaving}
         onChange={chooseMode}
         options={APPLY_MODE_OPTIONS}
         value={selectedMode}
@@ -213,8 +219,12 @@ export function SettingsApplyModeSection(props: {
           Most applications in one day
         </FieldLabel>
         <Input
+          aria-describedby={!capIsValid ? dailyCapErrorId : undefined}
+          aria-invalid={!capIsValid}
+          disabled={isSaving || capSaving || modeSaving}
           id={dailyCapId}
           min="1"
+          step="1"
           onChange={(event) => {
             setDailyCap(event.target.value);
             resetCapSave();
@@ -223,8 +233,11 @@ export function SettingsApplyModeSection(props: {
           value={dailyCap}
         />
         {!capIsValid ? (
-          <p className="text-sm leading-5 text-foreground-soft">
-            Enter a number of 1 or more.
+          <p
+            className="text-sm leading-5 text-foreground-soft"
+            id={dailyCapErrorId}
+          >
+            Enter a whole number of 1 or more.
           </p>
         ) : null}
       </Field>

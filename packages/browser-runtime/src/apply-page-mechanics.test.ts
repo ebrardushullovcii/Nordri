@@ -64,6 +64,44 @@ describe("reading the choices of lists the page draws itself", () => {
     await browser?.close();
   });
 
+  test("keeps nested choices and entered answers out of question labels in pages and frames", async () => {
+    const page = await browser.newPage();
+    const form = `
+      <label><span>Preferred interview session</span>
+        <select id="session" required><option value="">Choose a session</option><option>Thursday</option><option>Friday</option><option disabled>Unavailable</option><optgroup label="Past" disabled><option>Yesterday</option></optgroup></select>
+      </label>
+      <label id="note-label">Additional information <textarea id="note" aria-labelledby="note-label">A previous answer</textarea></label>
+      <label><input id="updates" type="checkbox">Email me updates</label>
+    `;
+    await page.setContent(form + '<iframe id="embedded"></iframe>');
+    const frame = page.locator("#embedded").contentFrame();
+    await frame.locator("body").evaluate((body, html) => {
+      body.innerHTML = html;
+    }, form);
+
+    const observation = await readRawApplyPage(page);
+    const sessions = observation.controls.filter(
+      (control) => control.id === "session",
+    );
+    expect(sessions).toHaveLength(2);
+    for (const control of sessions) {
+      expect(control.label).toBe("Preferred interview session");
+      expect(control.options).toEqual(["Thursday", "Friday"]);
+    }
+    for (const control of observation.controls.filter(
+      (item) => item.id === "note",
+    )) {
+      expect(control.label).toBe("Additional information");
+      expect(control.value).toBe("A previous answer");
+    }
+    for (const control of observation.controls.filter(
+      (item) => item.id === "updates",
+    )) {
+      expect(control.label).toBe("Email me updates");
+    }
+    await page.close();
+  });
+
   test("each control gets its own choices, and keeps them on a second read", async () => {
     const page = await browser.newPage();
     await page.setContent(PAGE);
@@ -273,6 +311,32 @@ describe("reading the choices of lists the page draws itself", () => {
         "The field cleared the answer instead of keeping it. Leave it for the person or try a different control once.",
     });
 
+    await page.close();
+  });
+
+  test("toggle labels cannot bypass the typed answer path through generic clicks", async () => {
+    const page = await browser.newPage();
+    await page.setContent(`
+      <label for="consent">I consent to a background check</label>
+      <input id="consent" type="checkbox" />
+    `);
+    const mechanics = createPlaywrightApplyPageMechanics(page);
+    const observation = await readRawApplyPage(page);
+    const label = observation.clickables.find(
+      (item) => item.tagName === "label",
+    );
+    if (!label) throw new Error("Expected a clickable checkbox label");
+    for (const ref of [`e${label.index}`, "c0"]) {
+      const outcome = await mechanics.clickElement(ref);
+      expect(outcome.ok).toBe(false);
+      if (outcome.ok) throw new Error("A generic click changed the answer");
+      expect(outcome.error).toContain("set_checkbox");
+      expect(await page.locator("#consent").isChecked()).toBe(false);
+    }
+    await expect(mechanics.setToggle("c0", true)).resolves.toMatchObject({
+      ok: true,
+    });
+    expect(await page.locator("#consent").isChecked()).toBe(true);
     await page.close();
   });
 

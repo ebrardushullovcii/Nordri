@@ -15,7 +15,9 @@ import type { JobFinderRepository } from "@unemployed/db";
 import {
   isUserActionTerminal,
   reduceUserActionSuperseded,
+  reduceUserActionCommand,
 } from "../user-action-domain";
+import { withApplicationRecordTransition } from "./application-crm";
 import { reconcileApplyRunAfterConfirmedSubmission } from "./workspace-apply-run-support";
 
 const applicationAuthenticationKinds = new Set<UserActionRequestKind>([
@@ -185,6 +187,40 @@ function detailRestatesSummary(summary: string, detail: string): boolean {
   ).length;
 
   return shared / summaryWords.size >= REASON_RESTATEMENT_OVERLAP;
+}
+
+/** The labels of the file fields a blocked form still needs, in form order. */
+async function listNeededApplicationFiles(input: {
+  repository: JobFinderRepository;
+  applicationRecordId: string;
+  resultId: string;
+  questionIds: readonly string[];
+}): Promise<string[]> {
+  if (input.questionIds.length === 0) return [];
+  const records = await input.repository
+    .listApplicationQuestionRecords({ resultId: input.resultId })
+    .catch(() => []);
+  return input.questionIds.flatMap((questionId) => {
+    const record = records.find(
+      (entry) =>
+        entry.id ===
+          `apply_question_${input.applicationRecordId}_${questionId}` &&
+        entry.answerControlType === "file",
+    );
+    const label = record?.prompt.trim().replace(/[\s*:]+$/u, "") ?? "";
+    if (!label) return [];
+    // "Academic transcript" reads "your academic transcript"; "CV" stays.
+    return [
+      /^[A-Z][a-z]/u.test(label)
+        ? label.charAt(0).toLowerCase() + label.slice(1)
+        : label,
+    ];
+  });
+}
+
+function joinWithAnd(values: readonly string[]): string {
+  if (values.length <= 1) return values[0] ?? "";
+  return `${values.slice(0, -1).join(", ")} and ${values.at(-1)}`;
 }
 
 export function describeApplicationBlockerReason(
@@ -366,6 +402,13 @@ export const PREPARED_PAGE_CLOSED_SUMMARY =
   "The prepared application page is no longer open.";
 
 /**
+ * Written on a result whose site refused the send: nothing went out and
+ * nothing failed on the site, so the failure-rate safeguard does not count it.
+ */
+export const SITE_UNREACHABLE_SUMMARY =
+  "The site could not be reached when the application was sent.";
+
+/**
  * Written on an application the person stepped into while it was being
  * filled. Nothing went wrong on the site; it carries on when they hand the
  * browser back, and it is not a failed attempt for the failure-rate
@@ -518,6 +561,18 @@ export async function persistApplicationUserAction(input: {
     return;
   }
 
+  // An upload step names the files the form asks for, so the person knows
+  // what to add in Profile › Files without opening the page.
+  const neededFiles =
+    kind === "manual_upload"
+      ? await listNeededApplicationFiles({
+          repository: input.repository,
+          applicationRecordId: input.applicationRecordId,
+          resultId: input.resultId,
+          questionIds: input.blocker.questionIds ?? [],
+        })
+      : [];
+  const neededFileLabel = joinWithAnd(neededFiles);
   const request = UserActionRequestSchema.parse({
     id: `application_${kind}_${occurrenceFingerprint}`,
     dedupeKey,
@@ -546,14 +601,18 @@ export async function persistApplicationUserAction(input: {
           blockerFingerprint,
           expectedPageFingerprint: null,
         },
-    title: `${copy.titleVerb} to continue the ${input.job.company} application`,
+    title: neededFileLabel
+      ? `Add your ${neededFileLabel} to continue the ${input.job.company} application`
+      : `${copy.titleVerb} to continue the ${input.job.company} application`,
     // A sign-in on the kept application page is watched and carries on by
     // itself (ADR 0027); every other step still ends with the person's
     // confirmation.
     summary: isApplicationAuthenticationUserActionKind(kind)
       ? `${describeApplicationBlockerReason(input.blocker)} Complete this ${copy.summaryStep} step in the ${JOB_FINDER_BROWSER_LABEL}; Job Finder carries on with this application by itself once you're in.`
       : kind === "manual_upload"
-        ? `${describeApplicationBlockerReason(input.blocker)} Add or restore the file in Profile › Files and Job Finder attaches it and carries on by itself.`
+        ? neededFileLabel
+          ? `The ${input.job.company} form asks for your ${neededFileLabel}. Add or restore ${neededFiles.length === 1 ? "it" : "them"} in Profile › Files and Job Finder attaches ${neededFiles.length === 1 ? "it" : "them"} and carries on by itself.`
+          : `${describeApplicationBlockerReason(input.blocker)} Add or restore the file in Profile › Files and Job Finder attaches it and carries on by itself.`
         : `${describeApplicationBlockerReason(input.blocker)} Complete this ${copy.summaryStep} step in the ${JOB_FINDER_BROWSER_LABEL}, then come back here and confirm so Job Finder can check the page again.`,
     instructions: isApplicationAuthenticationUserActionKind(kind)
       ? [
@@ -899,10 +958,23 @@ export async function releaseApplicationRecordAfterDismissedUserAction(input: {
   await input.repository.upsertApplyRun(
     ApplyRunSchema.parse({
       ...run,
-      state: pendingResults.length > 0 ? "paused_for_user_review" : "completed",
-      currentJobId: pendingResults[0]?.jobId ?? null,
+      state:
+        run.state === "cancelled" || run.state === "failed"
+          ? run.state
+          : pendingResults.length > 0
+            ? "paused_for_user_review"
+            : "completed",
+      currentJobId:
+        run.state === "cancelled" || run.state === "failed"
+          ? null
+          : (pendingResults[0]?.jobId ?? null),
       updatedAt: input.occurredAt,
-      completedAt: pendingResults.length > 0 ? null : input.occurredAt,
+      completedAt:
+        run.state === "cancelled" || run.state === "failed"
+          ? run.completedAt
+          : pendingResults.length > 0
+            ? null
+            : input.occurredAt,
       pendingJobs: pendingResults.length,
       submittedJobs: nextResults.filter((entry) => entry.state === "submitted")
         .length,
@@ -914,4 +986,113 @@ export async function releaseApplicationRecordAfterDismissedUserAction(input: {
         .length,
     }),
   );
+}
+
+/** Close steps that can no longer resume because their exact run was cancelled. */
+export async function retireCancelledApplicationUserActions(
+  repository: JobFinderRepository,
+  runId?: string,
+): Promise<void> {
+  const [runs, requests, results] = await Promise.all([
+    repository.listApplyRuns(),
+    repository.listUserActionRequests({ scopeType: "application" }),
+    repository.listApplyJobResults(),
+  ]);
+  const cancelledRunIds = new Set(
+    runs
+      .filter(
+        (run) => run.state === "cancelled" && (!runId || run.id === runId),
+      )
+      .map((run) => run.id),
+  );
+  for (const request of requests) {
+    const scope = request.scope;
+    if (
+      scope.type !== "application" ||
+      !cancelledRunIds.has(scope.runId) ||
+      !scope.applicationRecordId ||
+      !scope.resultId ||
+      isUserActionTerminal(request.state)
+    )
+      continue;
+    const result = results.find(
+      (entry) =>
+        entry.id === scope.resultId &&
+        entry.runId === scope.runId &&
+        entry.jobId === scope.jobId &&
+        entry.applicationRecordId === scope.applicationRecordId,
+    );
+    if (
+      !result ||
+      result.state === "submitted" ||
+      result.privacyReceipt?.submissionOutcome?.outcome === "outcome_uncertain"
+    )
+      continue;
+    const now = new Date().toISOString();
+    const transition = reduceUserActionCommand(
+      request,
+      {
+        requestId: request.id,
+        commandId: `${request.id}_run_cancelled_r${request.revision}`,
+        expectedRevision: request.revision,
+        action: "cancel",
+        reason:
+          "The application run was cancelled. Choose Try again to prepare it again.",
+        credentialsPolicy: "browser_only",
+        submitAuthorized: false,
+        accountCreationAuthorized: false,
+      },
+      now,
+    );
+    if (transition.status !== "applied") continue;
+    const commit = await repository.commitUserActionTransition({
+      request: transition.request,
+      event: transition.event,
+    });
+    if (commit.status === "stale") continue;
+    await withApplicationRecordTransition(
+      repository,
+      scope.applicationRecordId,
+      async () => {
+        // Re-read under the record transition: a new attempt may have committed
+        // while this request was being closed. Ambiguous equal times stay intact.
+        const currentResults = await repository.listApplyJobResults();
+        const currentResult = currentResults.find(
+          (entry) => entry.id === result.id,
+        );
+        if (
+          !currentResult ||
+          currentResult.state === "submitted" ||
+          currentResult.privacyReceipt?.submissionOutcome?.outcome ===
+            "outcome_uncertain"
+        )
+          return;
+        if (
+          currentResults.some(
+            (entry) =>
+              entry.applicationRecordId === scope.applicationRecordId &&
+              entry.id !== result.id &&
+              entry.startedAt >= result.startedAt,
+          )
+        )
+          return;
+        await releaseApplicationRecordAfterDismissedUserAction({
+          repository,
+          request: commit.request,
+          occurredAt: now,
+          eventId: `event_${request.id}_run_cancelled`,
+          dismissal: "cancelled",
+          closedBecause: {
+            lastActionLabel: "You cancelled this application run.",
+            eventTitle: "Application step closed after cancellation",
+            eventDetail:
+              "The application run was cancelled. Its prepared evidence remains available; choose Try again to prepare it again.",
+            resultSummary: "You cancelled this application run.",
+            resultDetail:
+              "Nothing was sent. Choose Try again to prepare this application again.",
+          },
+        });
+      },
+    );
+  }
 }

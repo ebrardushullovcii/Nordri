@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { BrowserWindow } from "electron";
@@ -278,7 +278,8 @@ export function createLocalJobFinderDocumentManager(
     async renderResumeArtifact(input) {
       await mkdir(options.outputDirectory, { recursive: true });
 
-      const artifactBaseName = `${Date.now()}_${sanitizeSegment(input.profile.fullName ?? "")}_${sanitizeSegment(input.job.company)}_${sanitizeSegment(input.templateId)}`;
+      // Parallel drafts for the same employer can render in the same millisecond.
+      const artifactBaseName = `${Date.now()}_${randomUUID()}_${sanitizeSegment(input.profile.fullName ?? "")}_${sanitizeSegment(input.job.company)}_${sanitizeSegment(input.templateId)}`;
       const htmlFileName = `${artifactBaseName}.html`;
       const htmlPath = path.join(options.outputDirectory, htmlFileName);
       const html = renderResumeTemplateHtml(input);

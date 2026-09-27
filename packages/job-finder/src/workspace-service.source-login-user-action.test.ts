@@ -728,6 +728,7 @@ describe("continuing a search after the person clears a wall", () => {
             startedAt: "2026-09-12T10:00:00.000Z",
             completedAt: "2026-09-12T10:00:01.000Z",
             querySummary: target.label,
+            warning: null,
             inventoryCompleteness: "partial",
             jobs: [],
           }),
@@ -804,6 +805,121 @@ describe("continuing a search after the person clears a wall", () => {
     const resolved = await harness.repository.getUserActionRequest(request.id);
     expect(resolved?.state).toBe("resolved");
   });
+
+  test("a sign-in finished while another search runs searches the source once that search ends", async () => {
+    const seed = createSeed();
+    const target = seed.searchPreferences.discovery.targets[0];
+    if (!target) throw new Error("Expected a saved source.");
+    const baseRuntime = createBrowserRuntime();
+    const expectedOrigin = new URL(target.startingUrl).origin;
+    let releaseRunning: () => void = () => undefined;
+    const running = new Promise<void>((resolve) => {
+      releaseRunning = resolve;
+    });
+    let calls = 0;
+    const runAgentDiscovery = vi.fn(
+      async (source: Parameters<NonNullable<BrowserSessionRuntime["runAgentDiscovery"]>>[0]) => {
+        calls += 1;
+        // The first search is still running when the person signs in.
+        if (calls === 1) await running;
+        return Promise.resolve(
+          DiscoveryRunResultSchema.parse({
+            source,
+            startedAt: "2026-09-12T10:00:00.000Z",
+            completedAt: "2026-09-12T10:00:01.000Z",
+            querySummary: target.label,
+            warning: null,
+            inventoryCompleteness: "partial",
+            jobs: [],
+          }),
+        );
+      },
+    );
+    const browserRuntime: BrowserSessionRuntime = {
+      ...baseRuntime,
+      runAgentDiscovery,
+      inspectSourceAccess: () =>
+        Promise.resolve({
+          state: "authenticated" as const,
+          currentOrigin: `${expectedOrigin}/`,
+          checkedAt: "2026-09-12T10:05:00.000Z",
+          signals: ["account_menu_control" as const],
+        }),
+    };
+    const harness = createWorkspaceServiceHarness({ seed, browserRuntime });
+    const initialized = await harness.workspaceService.getWorkspaceSnapshot();
+    const campaignId = initialized.activeCampaignId;
+    if (!campaignId) throw new Error("Expected an active search plan.");
+    await harness.repository.commitDiscoveryStateUpdate((current) => ({
+      ...current,
+      recentRuns: [
+        DiscoveryRunRecordSchema.parse({
+          id: "discovery_run_blocked",
+          campaignId,
+          state: "failed",
+          scope: "single_target",
+          startedAt: "2026-09-12T10:00:00.000Z",
+          completedAt: "2026-09-12T10:01:00.000Z",
+          targetIds: [target.id],
+        }),
+        ...current.recentRuns,
+      ],
+    }));
+
+    await persistDiscoveryRunBlockerUserAction({
+      repository: harness.repository,
+      runId: "discovery_run_blocked",
+      target,
+      execution: DiscoveryTargetExecutionSchema.parse({
+        targetId: target.id,
+        adapterKind: target.adapterKind,
+        state: "failed",
+        accessBlockerReason: "site_protection",
+        parkedTab: {
+          tabId: "tab_parked",
+          url: target.startingUrl,
+          title: target.label,
+        },
+      }),
+      occurredAt: "2026-09-12T10:01:00.000Z",
+    });
+
+    const [request] = await harness.repository.listUserActionRequests();
+    if (!request) throw new Error("Expected a parked-tab action.");
+    expect(runAgentDiscovery).not.toHaveBeenCalled();
+
+    const runningSearch = harness.workspaceService.runAgentDiscovery();
+    await vi.waitFor(() => {
+      expect(runAgentDiscovery).toHaveBeenCalledTimes(1);
+    });
+
+    const confirmed = harness.workspaceService.performUserAction({
+      action: "confirm_done",
+      requestId: request.id,
+      commandId: "confirm_cleared_discovery_wall",
+      expectedRevision: request.revision,
+      credentialsPolicy: "browser_only",
+      submitAuthorized: false,
+      accountCreationAuthorized: false,
+    });
+
+    // The source is not searched while the other search holds the browser,
+    // and the card is not closed as if it had been.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(runAgentDiscovery).toHaveBeenCalledTimes(1);
+    releaseRunning();
+    await runningSearch.catch(() => undefined);
+    await confirmed;
+
+    // It was searched once the running search ended, and only then resolved.
+    await vi.waitFor(() => {
+      expect(runAgentDiscovery.mock.calls.length).toBeGreaterThan(1);
+    });
+    const resolved = await harness.repository.getUserActionRequest(request.id);
+    expect(resolved?.state).toBe("resolved");
+  });
+
+
 
   test("continues a blocked run with its non-active plan preferences and retention", async () => {
     const seed = createSeed();

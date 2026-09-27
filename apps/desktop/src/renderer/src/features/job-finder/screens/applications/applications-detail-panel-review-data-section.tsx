@@ -31,7 +31,10 @@ import {
   getConsentTone,
 } from "./applications-detail-panel-helpers";
 import { buildJobFinderContextRoute } from "../../lib/job-finder-context-navigation";
-import { JOB_FINDER_ROUTE_PATHS } from "../../lib/job-finder-route-hrefs";
+import {
+  inferFileKindForQuestion,
+  profileFilesHref,
+} from "../../lib/job-finder-route-hrefs";
 import { getJobFinderDateInputLocale } from "../../lib/job-finder-date-input-locale";
 
 const jobFinderDateInputLocale = getJobFinderDateInputLocale();
@@ -898,7 +901,7 @@ function ApplicationQuestionAnswerEditor(props: {
                 ? buildJobFinderContextRoute("/job-finder/review-queue", {
                     jobId,
                   })
-                : JOB_FINDER_ROUTE_PATHS.profileFiles
+                : profileFilesHref(inferFileKindForQuestion(question))
             }
           >
             {question.kind === "resume"

@@ -18,7 +18,7 @@ import {
   isQueueStageReady,
   isTailoredDraftPreparationEligible,
   needsPersonResumeReview,
-  prepareTailoredDraftsSequentially,
+  prepareTailoredDraftBatch,
   type TailoredDraftPreparationViewState,
 } from "./review-queue-status";
 
@@ -51,6 +51,36 @@ it("holds an Aggressive draft back for the person's review before Apply", () => 
   expect(getReviewQueueResumePolicyCaption(draft)).toBe(
     "Resume ready — review it before applying",
   );
+});
+
+it("holds a Tailored draft with a line still to decide back from Apply, whatever its level", () => {
+  const draft = createItem("tailored_undecided", {
+    assetStatus: "ready",
+    resumeAssetId: "resume_tailored",
+    resumeTailoringMode: "balanced",
+    resumeLinesToDecide: 1,
+    resumeReview: { status: "needs_review" },
+  });
+  const asset = {
+    id: "resume_tailored",
+    generationMethod: "deterministic",
+    generationReason: "listing_text_missing",
+  } as const;
+
+  expect(needsPersonResumeReview(draft)).toBe(true);
+  // Even a resume that kept the person's wording is blocked by the line.
+  expect(needsPersonResumeReview(draft, asset)).toBe(true);
+  expect(isQueueStageReady(draft)).toBe(false);
+  expect(getReviewQueueWorkflowStatus(draft)).toEqual({
+    label: "Review resume",
+    tone: "active",
+  });
+  expect(getReviewQueueResumePolicyCaption(draft)).toBe(
+    "A line in this resume needs your decision",
+  );
+  expect(
+    getReviewQueueResumePolicyCaption({ ...draft, resumeLinesToDecide: 3 }),
+  ).toBe("3 lines in this resume need your decision");
 });
 
 it("asks for no flagged-line review when the listing text was never read", () => {
@@ -176,42 +206,42 @@ describe("tailored draft preparation", () => {
     expect(getTailoredDraftPreparationCandidates(queue, 50)).toHaveLength(10);
   });
 
-  it("awaits each generation before scheduling the next job", async () => {
-    const firstStarted = vi.fn();
-    let resolveFirst: ((value: boolean) => void) | undefined;
-    const onGenerateResume = vi.fn<(jobId: string) => Promise<boolean>>(
-      (jobId) => {
-        if (jobId === "job-1") {
-          firstStarted();
-          return new Promise<boolean>((resolve) => {
-            resolveFirst = resolve;
-          });
-        }
-
-        return Promise.resolve(true);
-      },
+  it("runs at most two drafts, accounts for out-of-order failures, and stops new work", async () => {
+    const settle = new Map<string, (success: boolean) => void>();
+    const generate = vi.fn(
+      (id: string) =>
+        new Promise<boolean>((resolve) => settle.set(id, resolve)),
     );
-    const runPromise = prepareTailoredDraftsSequentially(
-      [createItem("job-1"), createItem("job-2")],
-      onGenerateResume,
+    const progress = vi.fn();
+    let stop = false;
+    const promise = prepareTailoredDraftBatch(
+      ["1", "2", "3", "4"].map((id) => createItem(id)),
+      generate,
+      { onProgress: progress, shouldStop: () => stop },
     );
-
-    await vi.waitFor(() => expect(firstStarted).toHaveBeenCalledOnce());
-    expect(onGenerateResume).toHaveBeenCalledTimes(1);
-    resolveFirst?.(true);
-
-    await expect(runPromise).resolves.toMatchObject({
-      attemptedCount: 2,
-      completedCount: 2,
-      failedCount: 0,
-      failedJobIds: [],
-      stopped: false,
-      totalCount: 2,
+    expect(generate.mock.calls).toEqual([["1"], ["2"]]);
+    settle.get("2")!(false);
+    await vi.waitFor(() =>
+      expect(generate.mock.calls).toEqual([["1"], ["2"], ["3"]]),
+    );
+    expect(progress).toHaveBeenLastCalledWith({
+      completedCount: 0,
+      currentIndex: 3,
+      failedCount: 1,
+      totalCount: 4,
     });
-    expect(onGenerateResume.mock.calls.map(([jobId]) => jobId)).toEqual([
-      "job-1",
-      "job-2",
-    ]);
+    stop = true;
+    settle.get("3")!(true);
+    settle.get("1")!(true);
+    await expect(promise).resolves.toEqual({
+      attemptedCount: 3,
+      completedCount: 2,
+      failedCount: 1,
+      failedJobIds: ["2"],
+      stopped: true,
+      totalCount: 4,
+    });
+    expect(generate).toHaveBeenCalledTimes(3);
   });
 
   it("stops scheduling after the current draft finishes", async () => {
@@ -224,7 +254,7 @@ describe("tailored draft preparation", () => {
     });
 
     await expect(
-      prepareTailoredDraftsSequentially(
+      prepareTailoredDraftBatch(
         [createItem("job-1"), createItem("job-2")],
         onGenerateResume,
         { shouldStop: () => stopRequested },
@@ -244,7 +274,7 @@ describe("tailored draft preparation", () => {
     const onGenerateResume = vi.fn((jobId: string) =>
       Promise.resolve(jobId !== "job-2"),
     );
-    const result = await prepareTailoredDraftsSequentially(
+    const result = await prepareTailoredDraftBatch(
       [createItem("job-1"), createItem("job-2"), createItem("job-3")],
       onGenerateResume,
     );
@@ -274,7 +304,7 @@ describe("tailored draft preparation", () => {
     });
 
     await expect(
-      prepareTailoredDraftsSequentially(
+      prepareTailoredDraftBatch(
         [createItem("job-1"), createItem("job-2"), createItem("job-3")],
         onGenerateResume,
       ),
@@ -299,7 +329,7 @@ describe("tailored draft preparation", () => {
     });
 
     await expect(
-      prepareTailoredDraftsSequentially(
+      prepareTailoredDraftBatch(
         [createItem("job-1"), createItem("job-2")],
         onGenerateResume,
         { shouldStop: () => stopRequested },
@@ -316,7 +346,7 @@ describe("tailored draft preparation", () => {
 
   it("treats an empty candidate list as a finished, unstopped run", async () => {
     await expect(
-      prepareTailoredDraftsSequentially([], vi.fn(), {
+      prepareTailoredDraftBatch([], vi.fn(), {
         shouldStop: () => true,
       }),
     ).resolves.toEqual({

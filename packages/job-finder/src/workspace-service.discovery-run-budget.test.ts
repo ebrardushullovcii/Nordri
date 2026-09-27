@@ -42,8 +42,8 @@ const fullYieldShares = (
 };
 
 describe("resolveDiscoveryTargetBudget", () => {
-  test("keeps the default interactive precision budgets unchanged", () => {
-    // Single-target interactive runs keep 50 jobs and the safety step ceiling.
+  test("keeps default browser planning hints and safety ceilings unchanged", () => {
+    // Single-target runs use a 50-job planning hint, not a retention cap.
     expect(
       resolveDiscoveryTargetBudget({
         targetsRemaining: 1,
@@ -51,8 +51,8 @@ describe("resolveDiscoveryTargetBudget", () => {
       }),
     ).toEqual({ targetJobCount: 50, maxSteps: 120 });
 
-    // Multi-target interactive runs keep the 100-job run budget, the safety step
-    // ceiling, and the exact legacy fair-share split.
+    // Multi-target runs keep the legacy 100-job planning split and safety
+    // ceiling; default retained counts are tested separately.
     const shares = fullYieldShares(3);
     expect(shares).toEqual([34, 33, 33]);
     expect(shares.reduce((total, share) => total + share, 0)).toBe(100);
@@ -226,7 +226,7 @@ describe("resolveDiscoveryBudgetPlan exact-total semantics", () => {
   });
 
   test("retains the existing interactive and scaled allocation contracts", () => {
-    // Interactive default stays [34,33,33] over 100 jobs.
+    // The default collection planning hints remain [34,33,33].
     expect(fullYieldShares(3)).toEqual([34, 33, 33]);
     expect(planShares(["board_a", "board_b", "board_c"])).toEqual([34, 33, 33]);
     // Scaled budgets keep the floor-of-remaining positional split whenever
@@ -463,8 +463,7 @@ describe("campaign discovery run budgets", () => {
     // campaign explicitly.
     await workspaceService.runCampaignNow({ campaignId });
 
-    // The explicit scale budget - not the interactive 100-job default - is
-    // what bounds retention here.
+    // This explicit scale budget bounds retention; an omitted budget does not.
     const savedJobs = await repository.listSavedJobs();
     expect(savedJobs.length).toBeGreaterThanOrEqual(1_000);
 
@@ -764,7 +763,7 @@ describe("campaign discovery run budgets", () => {
     );
     expect(brokenExecution?.state).toBe("failed");
     expect(brokenExecution?.warning).toContain("browser navigation collapsed");
-    expect(brokenExecution?.requestedJobBudget).toBeGreaterThan(0);
+    expect(brokenExecution?.requestedJobBudget).toBeNull();
     expect(healthyExecution?.state).toBe("completed");
     expect(healthyExecution?.jobsPersisted).toBeGreaterThan(0);
   }, 60_000);

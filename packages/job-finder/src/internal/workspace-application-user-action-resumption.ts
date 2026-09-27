@@ -9,7 +9,10 @@ import {
   createApplyFormPreparer,
   resolveApplySiteLabel,
 } from "./agent-application-preparation";
-import { persistApplicationPreparationProgress } from "./application-preparation-progress";
+import {
+  persistApplicationPreparationProgress,
+  persistApplicationWaitingForBrowserTab,
+} from "./application-preparation-progress";
 import {
   ApplyExecutionResultSchema,
   ApplyJobResultSchema,
@@ -30,7 +33,11 @@ import {
   type SavedJob,
   type UserActionRequest,
 } from "@unemployed/contracts";
-import { reduceUserActionVerification } from "../user-action-domain";
+import {
+  isUserActionTerminal,
+  reduceUserActionCommand,
+  reduceUserActionVerification,
+} from "../user-action-domain";
 
 import {
   buildApplicationBlockerFingerprint,
@@ -38,6 +45,7 @@ import {
   isApplicationPrepareOnlyUserAction,
   handApplicationPageToPersonForAccessStep,
   persistApplicationUserAction,
+  releaseApplicationRecordAfterDismissedUserAction,
 } from "./workspace-application-user-action";
 import {
   buildApplyCopilotArtifacts,
@@ -70,7 +78,11 @@ import {
   enforceResolvedApplyAuthorityResult,
   type ApplySubmissionHandoff,
 } from "./apply-submission-handoff";
-import { sendPreparedApplicationIfAllowed } from "./apply-submission-run-step";
+import {
+  notSentAfterError,
+  recordPreparedApplicationNotSent,
+  sendPreparedApplicationIfAllowed,
+} from "./apply-submission-run-step";
 import type {
   TaskLocalApplicationCredentials,
   WorkspaceServiceContext,
@@ -480,6 +492,58 @@ async function settlePrepareOnlyVerification(input: {
   return commit.request;
 }
 
+/**
+ * Closes a step whose run already ended and puts its application at Could
+ * not apply with Try again. After a restart the prepared page is gone, so the
+ * application is prepared again from the start; the person's answers are
+ * already saved and are reused.
+ */
+async function closeStepOfEndedRun(input: {
+  ctx: WorkspaceServiceContext;
+  request: UserActionRequest;
+  scope: ExactApplicationScope;
+}): Promise<void> {
+  const current = await input.ctx.repository.getUserActionRequest(
+    input.request.id,
+  );
+  if (!current || isUserActionTerminal(current.state)) return;
+  const occurredAt = new Date().toISOString();
+  const transition = reduceUserActionCommand(
+    current,
+    {
+      requestId: current.id,
+      commandId: `${current.id}_run_ended_r${current.revision}`,
+      expectedRevision: current.revision,
+      action: "cancel",
+      reason:
+        "This application's run ended before the step could be checked. Nothing was sent; choose Try again to prepare it again.",
+      credentialsPolicy: "browser_only",
+      submitAuthorized: false,
+      accountCreationAuthorized: false,
+    },
+    occurredAt,
+  );
+  if (transition.status !== "applied") return;
+  const commit = await input.ctx.repository.commitUserActionTransition({
+    request: transition.request,
+    event: transition.event,
+  });
+  if (commit.status === "stale") return;
+  await withApplicationRecordTransition(
+    input.ctx.repository,
+    input.scope.applicationRecordId,
+    () =>
+      releaseApplicationRecordAfterDismissedUserAction({
+        repository: input.ctx.repository,
+        request: commit.request,
+        occurredAt,
+        eventId: `event_${current.id}_run_ended`,
+        dismissal: "cancelled",
+        unavailablePreparedPage: true,
+      }),
+  );
+}
+
 async function settleTaskLocalCredentialVerification(input: {
   ctx: WorkspaceServiceContext;
   outcome: "verified" | "still_blocked";
@@ -532,7 +596,7 @@ async function readExactLineage(input: {
   scope: ExactApplicationScope;
 }): Promise<
   | { status: "current"; lineage: ApplicationResumptionLineage }
-  | { status: "stale"; detail: string }
+  | { status: "stale"; detail: string; runEnded?: boolean }
 > {
   const [runs, results, checkpoints, savedJobs, applicationRecords] =
     await Promise.all([
@@ -580,6 +644,7 @@ async function readExactLineage(input: {
     return {
       status: "stale",
       detail: `The exact apply run is already ${run.state}.`,
+      runEnded: true,
     };
   }
   if (!result || results.length !== 1) {
@@ -748,6 +813,25 @@ export function reconcileReadyRunAfterApplicationResumption(input: {
   });
 }
 
+/**
+ * Resumption attempts this process is running, per workspace store. A claimed
+ * attempt that is not in here was left by an earlier run of the app (a
+ * restart mid-way) or by a flight that ended without settling it; nothing
+ * will ever finish it, so it is taken over instead of leaving its step on
+ * "Checking" for ever. Shared across service instances on one store, so a
+ * second instance still joins the first one's live attempt.
+ */
+const liveResumptionAttemptIds = new WeakMap<object, Set<string>>();
+
+function getLiveResumptionAttemptIds(repository: object): Set<string> {
+  let ids = liveResumptionAttemptIds.get(repository);
+  if (!ids) {
+    ids = new Set<string>();
+    liveResumptionAttemptIds.set(repository, ids);
+  }
+  return ids;
+}
+
 export function createApplicationUserActionResumer(
   ctx: WorkspaceServiceContext,
   dependencies: ApplicationResumptionDependencies,
@@ -755,10 +839,13 @@ export function createApplicationUserActionResumer(
   request: UserActionRequest,
   taskLocalCredentials?: TaskLocalApplicationCredentials,
 ) => Promise<void> {
-  return async (requestInput, taskLocalCredentials) => {
-    const request = requestInput;
-    const scope = getExactApplicationScope(request);
-    if (!scope) return;
+  const liveAttemptIds = getLiveResumptionAttemptIds(ctx.repository);
+  const resume = async (
+    request: UserActionRequest,
+    scope: ExactApplicationScope,
+    attemptId: string,
+    taskLocalCredentials?: TaskLocalApplicationCredentials,
+  ): Promise<void> => {
     const isPrepareOnlyVerification =
       request.state === "verifying" &&
       isApplicationPrepareOnlyUserAction(request);
@@ -822,7 +909,6 @@ export function createApplicationUserActionResumer(
       }
     }
 
-    const attemptId = getResumptionAttemptId(request);
     const attempts = await ctx.repository.listApplicationAttempts();
     const existingAttempt =
       attempts.find((attempt) => attempt.id === attemptId) ?? null;
@@ -865,6 +951,26 @@ export function createApplicationUserActionResumer(
     });
 
     const lineageResult = await readExactLineage({ ctx, scope });
+    if (lineageResult.status === "stale" && lineageResult.runEnded) {
+      // The run ended under this check (the app closed mid-check, or the
+      // person stopped the batch). The step cannot carry on, so it must not
+      // stay in Needs you asking for something already done: close it and
+      // leave the application as Could not apply with Try again.
+      await closeStepOfEndedRun({ ctx, request, scope });
+      await ctx.repository.upsertApplicationAttempt(
+        createResumptionAttempt({
+          request,
+          scope,
+          existingAttempt: existingAttempt ?? scheduledAttempt,
+          now: new Date().toISOString(),
+          state: "unsupported",
+          summary: "Application check stopped because its run ended",
+          detail: lineageResult.detail,
+          completed: true,
+        }),
+      );
+      return;
+    }
     if (lineageResult.status === "stale") {
       const staleAt = new Date().toISOString();
       await settlePrepareOnlyVerification({
@@ -924,8 +1030,12 @@ export function createApplicationUserActionResumer(
       return;
     }
 
-    if (existingAttempt) {
-      return;
+    // Still unfinished here means orphaned (see liveAttemptIds): carry it on.
+    const orphanedAttempt = existingAttempt;
+    if (orphanedAttempt) {
+      console.warn(
+        `[apply] taking over application step '${request.id}': its earlier check never finished (started ${orphanedAttempt.startedAt}).`,
+      );
     }
 
     let prerequisites: ApplicationPrerequisites;
@@ -1101,8 +1211,12 @@ export function createApplicationUserActionResumer(
     // resumable instead of leaving an in-progress receipt that later runs
     // cannot safely adopt.
     if (await isActivityPaused(ctx)) return;
-    const ownsClaim =
-      await ctx.repository.claimApplicationAttempt(scheduledAttempt);
+    let ownsClaim = true;
+    if (orphanedAttempt) {
+      await ctx.repository.upsertApplicationAttempt(scheduledAttempt);
+    } else {
+      ownsClaim = await ctx.repository.claimApplicationAttempt(scheduledAttempt);
+    }
     if (!ownsClaim) {
       const claimedAttempt = (
         await ctx.repository.listApplicationAttempts()
@@ -1220,6 +1334,13 @@ export function createApplicationUserActionResumer(
         applyAuthority.authority,
         await ctx.browserRuntime.executeApplicationFlow(scope.source, {
           ...applyFlowFacts,
+          onWaitingForBrowserTab: () =>
+            persistApplicationWaitingForBrowserTab({
+              repository: ctx.repository,
+              resultId: result.id,
+              runId: run.id,
+              jobId: job.id,
+            }),
           prepareApplicationForm: createApplyFormPreparer({
             executionInput: applyFlowFacts,
             aiClient: ctx.aiClient,
@@ -1626,8 +1747,19 @@ export function createApplicationUserActionResumer(
       siteLabel,
     }).catch((sendError: unknown) => {
       console.error("Failed to send the continued application.", sendError);
-      return null;
+      return notSentAfterError(sendError);
     });
+    await recordPreparedApplicationNotSent({
+      repository: ctx.repository,
+      lineage: {
+        runId: run.id,
+        jobId: job.id,
+        resultId: nextResult.id,
+        applicationRecordId: scope.applicationRecordId,
+        campaignId: run.campaignId ?? null,
+      },
+      attempt: sent,
+    }).catch(() => undefined);
     if (sent) {
       if (sent.confirmedSubmitted) {
         const [currentRuns, currentResults] = await Promise.all([
@@ -1661,7 +1793,7 @@ export function createApplicationUserActionResumer(
           // with the preparation attempt's earlier "ready" state.
           state: sent.confirmedSubmitted
             ? "submitted"
-            : sent.pageClosed
+            : sent.pageClosed || sent.formGone
               ? "failed"
               : (currentRecord?.lastAttemptState ?? finalAttempt.state),
           summary: sent.summary,
@@ -1684,5 +1816,18 @@ export function createApplicationUserActionResumer(
         safeguardError,
       );
     });
+  };
+
+  return async (request, taskLocalCredentials) => {
+    const scope = getExactApplicationScope(request);
+    if (!scope) return;
+    const attemptId = getResumptionAttemptId(request);
+    if (liveAttemptIds.has(attemptId)) return;
+    liveAttemptIds.add(attemptId);
+    try {
+      await resume(request, scope, attemptId, taskLocalCredentials);
+    } finally {
+      liveAttemptIds.delete(attemptId);
+    }
   };
 }

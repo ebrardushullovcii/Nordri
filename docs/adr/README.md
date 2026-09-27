@@ -41,6 +41,9 @@ ADRs capture durable decisions and rejected alternatives. Use them to avoid reop
 | [0033](0033-person-finishes-on-the-kept-page.md)                     | accepted   | The person finishes on the kept page; hand-offs carry on by themselves                          |
 | [0034](0034-stepping-in-hands-over-one-tab.md)                        | accepted   | Stepping into the browser hands over one tab; handing it back carries on                        |
 
+| [0035](0035-selected-resume-batches.md) | accepted | Temporary job selection and two concurrent resume generations per batch |
+| [0036](0036-parallel-application-preparation.md) | accepted | Owned application tabs, bounded parallel preparation, and serialized sending |
+
 ## Policy
 
 - Write an ADR only when a decision is hard to reverse, surprising without context, and based on a real trade-off.

@@ -1,4 +1,5 @@
 import { memo, type KeyboardEvent } from "react";
+import { Checkbox } from "@renderer/components/ui/checkbox";
 import {
   ProgressBar,
   SelectableRow,
@@ -20,7 +21,7 @@ import type { BadgeTone } from "../../lib/job-finder-types";
 /**
  * One Shortlisted row.
  *
- * A resume run moves one job at a time, and the whole list used to re-render
+ * A resume run changes individual jobs, and the whole list used to re-render
  * on every one of those steps. The row takes only already-derived, comparable
  * values, so React's shallow prop check is enough to skip the rows the step
  * did not touch. Nothing here is recomputed from the queue.
@@ -30,6 +31,10 @@ import type { BadgeTone } from "../../lib/job-finder-types";
  * silently un-memoises every row, so derive it in the panel instead.
  */
 export interface ReviewQueueRowProps {
+  choosingResumes: boolean;
+  resumeSelected: boolean;
+  resumeSelectionDisabled: boolean;
+  onToggleResume: (jobId: string) => void;
   employerLocationLine: string | null;
   jobId: string;
   onSelect: (jobId: string) => void;
@@ -46,6 +51,10 @@ export interface ReviewQueueRowProps {
 }
 
 function ReviewQueueRowComponent({
+  choosingResumes,
+  resumeSelected,
+  resumeSelectionDisabled,
+  onToggleResume,
   employerLocationLine,
   jobId,
   onSelect,
@@ -64,9 +73,22 @@ function ReviewQueueRowComponent({
     // row below it.
     <SelectableRow
       as="div"
-      className={cn(jobFinderListRowClassName, "text-foreground")}
+      className={cn(
+        jobFinderListRowClassName,
+        "text-foreground",
+        choosingResumes && "grid-cols-[auto_minmax(0,1fr)] items-start",
+      )}
       selected={selected}
     >
+      {choosingResumes ? (
+        <Checkbox
+          aria-label={`Create resume for ${title}`}
+          className="mt-1"
+          checked={resumeSelected}
+          disabled={resumeSelectionDisabled}
+          onCheckedChange={() => onToggleResume(jobId)}
+        />
+      ) : null}
       <button
         aria-current={selected ? "true" : undefined}
         aria-keyshortcuts="ArrowUp ArrowDown Home End"

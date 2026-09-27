@@ -107,14 +107,18 @@ function formatDateTime(
   return formatPlanTimestamp(iso, timeZone);
 }
 
-function formatPlanCardDateTime(
-  iso: string | null,
-): string | null {
+function formatPlanCardDateTime(iso: string | null): string | null {
   return formatPlanTimestamp(iso, deviceTimeZone(), { includeZoneName: false });
 }
 
-function describeScheduleStart(schedule: JobSearchCampaignSchedule): string | null {
-  if (!schedule.enabled || schedule.mode === "manual" || !schedule.localStartTime) {
+function describeScheduleStart(
+  schedule: JobSearchCampaignSchedule,
+): string | null {
+  if (
+    !schedule.enabled ||
+    schedule.mode === "manual" ||
+    !schedule.localStartTime
+  ) {
     return null;
   }
   const [hourText, minuteText] = schedule.localStartTime.split(":");
@@ -137,10 +141,7 @@ function describeNextRun(schedule: JobSearchCampaignSchedule): string {
     }
     return "Next run not scheduled yet";
   }
-  return (
-    formatPlanCardDateTime(nextRunAt) ??
-    "Next run not scheduled yet"
-  );
+  return formatPlanCardDateTime(nextRunAt) ?? "Next run not scheduled yet";
 }
 
 /**
@@ -208,10 +209,11 @@ export function describePlanRunFailure(
  * a place. Matching on the opening words, not the whole sentence, keeps the
  * card readable when the plan's places have been edited since that run.
  */
-const REMOTE_ONLY_SOURCE_WARNING_OPENING = "Your sources only list remote jobs";
+const REMOTE_ONLY_SOURCE_WARNING_OPENING =
+  "This search returned only remote jobs";
 
 /**
- * "Your sources only list remote jobs" for this plan's own last finished run.
+ * Remote-only results for this plan's own last finished run.
  *
  * A plan that asks for a place with Remote unticked can be fed nothing but
  * remote listings by its sources, and every one of them then scores as out of
@@ -239,12 +241,14 @@ function describeRemoteOnlySourceWarning(
       null,
     );
 
-  const recorded = lastFinishedRun?.summary.warnings.some((warning) =>
-    warning.startsWith(REMOTE_ONLY_SOURCE_WARNING_OPENING),
+  const recorded = lastFinishedRun?.summary.warnings.some(
+    (warning) =>
+      warning.startsWith(REMOTE_ONLY_SOURCE_WARNING_OPENING) ||
+      warning.startsWith("Your sources only list remote jobs"),
   );
 
   return recorded === true
-    ? `${REMOTE_ONLY_SOURCE_WARNING_OPENING}; add a site that lists jobs in ${locations.join(" or ")}.`
+    ? `${REMOTE_ONLY_SOURCE_WARNING_OPENING}; try another search for jobs in ${locations.join(" or ")}.`
     : null;
 }
 
@@ -253,7 +257,9 @@ function describeRemoteOnlySourceWarning(
  * describes. A run recorded before the report existed says so rather than
  * printing a number this card recomputed from the plan's current membership.
  */
-export function describePlanRunCounts(report: DiscoveryRunReportCounts): string {
+export function describePlanRunCounts(
+  report: DiscoveryRunReportCounts,
+): string {
   return hasDiscoveryRunReportCounts(report)
     ? formatDiscoveryRunReportLabel(report)
     : "Counts were not recorded for this run.";
@@ -301,9 +307,7 @@ function describeLastRun(
     ? hasDiscoveryRunReportCounts(report)
     : false;
   if (facts.lastRunAt !== null && facts.lastRunOutcome !== null) {
-    const at =
-      formatPlanCardDateTime(facts.lastRunAt) ??
-      "unknown time";
+    const at = formatPlanCardDateTime(facts.lastRunAt) ?? "unknown time";
     // "Skipped" belongs to a scheduled run that never started. A run that
     // reported what it found is not one of those, whatever the stored
     // outcome says.
@@ -450,12 +454,11 @@ function CampaignEditor(props: {
   const [pauseWindowStartsAt, setPauseWindowStartsAt] = useState("");
   const [pauseWindowEndsAt, setPauseWindowEndsAt] = useState("");
   const [pauseWindowReason, setPauseWindowReason] = useState("");
-  const [archiveOutcome, setArchiveOutcome] = useState<
-    "archived" | "failed" | null
-  >(null);
   const [saveOutcome, setSaveOutcome] = useState<"saved" | null>(null);
   const [discardConfirmationOpen, setDiscardConfirmationOpen] = useState(false);
   const dirty = draft !== baselineCampaign;
+  const cannotArchiveCurrentPlan =
+    props.isCurrentPlan && draft.status === "archived";
   useEffect(() => {
     props.onDirtyChange?.(dirty);
   }, [dirty, props.onDirtyChange]);
@@ -547,21 +550,15 @@ function CampaignEditor(props: {
   };
 
   const saveDraft = () => {
+    if (cannotArchiveCurrentPlan) return;
     setSaveOutcome(null);
-    if (!(props.isCurrentPlan && draft.status === "archived")) {
-      void props.onSave(draft).then((saved) => {
-        if (!saved) return;
-        setBaselineCampaign(draft);
-        if (props.campaign.id !== null) {
-          setSaveOutcome("saved");
-        }
-        props.onSaved?.(draft);
-      });
-      return;
-    }
-    setArchiveOutcome(null);
     void props.onSave(draft).then((saved) => {
-      setArchiveOutcome(saved ? "archived" : "failed");
+      if (!saved) return;
+      setBaselineCampaign(draft);
+      if (props.campaign.id !== null) {
+        setSaveOutcome("saved");
+      }
+      props.onSaved?.(draft);
     });
   };
 
@@ -638,24 +635,16 @@ function CampaignEditor(props: {
               <option value="active">Active</option>
               <option value="paused">Paused</option>
               <option value="completed">Completed</option>
-              <option value="archived">Archived</option>
+              <option disabled={props.isCurrentPlan} value="archived">
+                Archived
+              </option>
             </select>
           </label>
         </div>
-        {props.isCurrentPlan && draft.status === "archived" ? (
+        {props.isCurrentPlan ? (
           <p className="text-sm text-foreground-muted">
-            Archiving your current plan is allowed. When other non-archived
-            plans remain, one of them becomes your current plan automatically.
-          </p>
-        ) : null}
-        {archiveOutcome === "archived" && draft.status === "archived" ? (
-          <p className="text-sm text-foreground" role="status">
-            Search plan archived.
-          </p>
-        ) : null}
-        {archiveOutcome === "failed" && draft.status === "archived" ? (
-          <p className="text-sm text-destructive" role="alert">
-            Archiving failed. Your search plan is unchanged.
+            To archive this plan, make another plan current first. Create a new
+            plan if you need one.
           </p>
         ) : null}
         {saveOutcome === "saved" ? (
@@ -833,7 +822,8 @@ function CampaignEditor(props: {
               <legend className="text-sm">Included sources</legend>
               <p className="text-xs leading-5 text-foreground-muted">
                 This is the live source list from Profile. New sources follow
-                Profile&apos;s Include in search setting until you change this plan.
+                Profile&apos;s Include in search setting until you change this
+                plan.
               </p>
               <div className="grid max-h-44 gap-2 overflow-y-auto rounded-(--radius-field) border border-border-subtle p-3 sm:grid-cols-2">
                 {draft.searchPreferences.discovery.targets.map((target) => (
@@ -850,7 +840,12 @@ function CampaignEditor(props: {
                           // Profile-level Include flag is a separate choice
                           // and must not be rewritten by this checkbox.
                           sourceTargetIds: event.target.checked
-                            ? [...new Set([...draft.sourceTargetIds, target.id])]
+                            ? [
+                                ...new Set([
+                                  ...draft.sourceTargetIds,
+                                  target.id,
+                                ]),
+                              ]
                             : draft.sourceTargetIds.filter(
                                 (candidateId) => candidateId !== target.id,
                               ),
@@ -1025,9 +1020,7 @@ function CampaignEditor(props: {
             'Saved safety and automation policy' looking for a daily run
             time" — so when this plan runs is its own section, named for
             what it does, and the safety limits keep theirs. */}
-        <section
-          className="rounded-(--radius-field) border border-border-subtle p-4"
-        >
+        <section className="rounded-(--radius-field) border border-border-subtle p-4">
           <h3 className="font-semibold text-(--text-headline)">
             Run automatically
           </h3>
@@ -1403,7 +1396,8 @@ function CampaignEditor(props: {
               (target) => target.enabled,
             ).length
           }{" "}
-          job {draft.searchPreferences.discovery.targets.filter(
+          job{" "}
+          {draft.searchPreferences.discovery.targets.filter(
             (target) => target.enabled,
           ).length === 1
             ? "site"
@@ -1417,7 +1411,9 @@ function CampaignEditor(props: {
             Cancel
           </Button>
           <Button
-            disabled={draft.name.trim().length === 0}
+            disabled={
+              draft.name.trim().length === 0 || cannotArchiveCurrentPlan
+            }
             pending={props.pending}
             type="submit"
           >
@@ -1471,6 +1467,7 @@ export function CampaignsScreen(props: {
   onRunCampaignNow?: (campaignId: string) => void;
   runCampaignPending?: (campaignId: string) => boolean;
   pending: boolean;
+  onDirtyChange?: (dirty: boolean) => void;
   campaignRuleFunnel?: CampaignRuleFunnelProjection | null;
   campaignRulePending?: boolean;
   onDeleteCampaignRule?: (campaignId: string, ruleId: string) => void;
@@ -1491,6 +1488,10 @@ export function CampaignsScreen(props: {
   );
   const [editorSession, setEditorSession] = useState(0);
   const [editorDirty, setEditorDirty] = useState(false);
+  useEffect(() => {
+    props.onDirtyChange?.(editorDirty);
+  }, [editorDirty, props.onDirtyChange]);
+  useEffect(() => () => props.onDirtyChange?.(false), [props.onDirtyChange]);
   const handleEditorDirtyChange = useCallback(
     (dirty: boolean) => setEditorDirty(dirty),
     [],
@@ -1706,9 +1707,9 @@ export function CampaignsScreen(props: {
               Search plans are optional.
             </span>
             <span className="min-w-0 flex-1 text-foreground-soft">
-              Find jobs always searches with the current plan; switch plans from
-              the Plan chip there or with Make current here. Create another plan
-              when you want a reusable search setup with its own roles, sources,
+              Find jobs always searches with the current plan. Switch plans with
+              Make current here. Create another plan when you want a reusable
+              search setup with its own roles, sources,
               how many jobs each search keeps, and progress.
             </span>
           </span>
@@ -1789,7 +1790,9 @@ export function CampaignsScreen(props: {
           {`Search plan "${createdPlanNotice.name}" created.`}
           {createdPlanNotice.resolvedId !== null ? (
             <Button
-              onClick={() => props.onSelectCampaign(createdPlanNotice.resolvedId!)}
+              onClick={() =>
+                props.onSelectCampaign(createdPlanNotice.resolvedId!)
+              }
               pending={props.pending}
               size="sm"
               type="button"
@@ -1865,435 +1868,464 @@ export function CampaignsScreen(props: {
             Times shown in {deviceTimeZone()}.
           </p>
           <div
-          className={
-            filteredCampaigns.length === 1
-              ? "grid gap-3"
-              : "grid gap-3 xl:grid-cols-2"
-          }
+            className={
+              filteredCampaigns.length === 1
+                ? "grid gap-3"
+                : "grid gap-3 xl:grid-cols-2"
+            }
           >
-          {filteredCampaigns.map((campaign) => {
-            const active = campaign.id === props.activeCampaignId;
-            const archived = campaign.status === "archived";
-            const sharedJobCount =
-              sharedJobCountByCampaignId.get(campaign.id) ?? 0;
-            const remoteOnlySourceWarning = describeRemoteOnlySourceWarning(
-              props.discoveryRuns,
-              campaign,
-            );
-            // R7: one plan running greyed out every plan's Run now. Only the
-            // plan that is actually running says "Search running"; the others
-            // keep an enabled Run now and explain themselves if pressed.
-            const activeRun = props.activeDiscoveryRun ?? null;
-            const thisPlanIsRunning = activeRun?.campaignId === campaign.id;
-            const activeRunBlockMessage = thisPlanIsRunning
-              ? DISCOVERY_RUN_ALREADY_ACTIVE_MESSAGE
-              : blockedRunPlanId === campaign.id
-                ? describeActiveRunBlock(campaign.id, activeRun)
-                : null;
-            return (
-              <article
-                className={`surface-panel-shell grid min-w-0 gap-4 rounded-(--radius-panel) border p-5 ${active ? "border-accent/60" : "border-(--surface-panel-border)"} ${archived ? "opacity-60" : ""}`}
-                key={campaign.id}
-              >
-                <div className="flex min-w-0 items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <h2
-                        className="min-w-0 break-words font-semibold text-(--text-headline)"
-                        title={campaign.name}
-                      >
-                        {campaign.name}
-                      </h2>
-                      {active ? (
-                        <span className="rounded-full bg-primary px-2 py-0.5 text-xs font-medium text-primary-foreground">
-                          Current
-                        </span>
-                      ) : null}
-                      {archived ? (
-                        <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
-                          Archived
-                        </span>
-                      ) : null}
-                    </div>
-                    {/* "Precision volume" is internal vocabulary; the card
+            {filteredCampaigns.map((campaign) => {
+              const active = campaign.id === props.activeCampaignId;
+              const archived = campaign.status === "archived";
+              const cannotDeletePlan =
+                props.campaigns.length === 1 ||
+                (active &&
+                  !props.campaigns.some(
+                    (candidate) =>
+                      candidate.id !== campaign.id &&
+                      candidate.status !== "archived",
+                  ));
+              const sharedJobCount =
+                sharedJobCountByCampaignId.get(campaign.id) ?? 0;
+              const remoteOnlySourceWarning = describeRemoteOnlySourceWarning(
+                props.discoveryRuns,
+                campaign,
+              );
+              // R7: one plan running greyed out every plan's Run now. Only the
+              // plan that is actually running says "Search running"; the others
+              // keep an enabled Run now and explain themselves if pressed.
+              const activeRun = props.activeDiscoveryRun ?? null;
+              const thisPlanIsRunning = activeRun?.campaignId === campaign.id;
+              const activeRunBlockMessage = thisPlanIsRunning
+                ? DISCOVERY_RUN_ALREADY_ACTIVE_MESSAGE
+                : blockedRunPlanId === campaign.id
+                  ? describeActiveRunBlock(campaign.id, activeRun)
+                  : null;
+              return (
+                <article
+                  className={`surface-panel-shell grid min-w-0 gap-4 rounded-(--radius-panel) border p-5 ${active ? "border-accent/60" : "border-(--surface-panel-border)"} ${archived ? "opacity-60" : ""}`}
+                  key={campaign.id}
+                >
+                  <div className="flex min-w-0 items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h2
+                          className="min-w-0 break-words font-semibold text-(--text-headline)"
+                          title={campaign.name}
+                        >
+                          {campaign.name}
+                        </h2>
+                        {active ? (
+                          <span className="rounded-full bg-primary-fill px-2 py-0.5 text-xs font-medium text-primary-fill-foreground">
+                            Current
+                          </span>
+                        ) : null}
+                        {archived ? (
+                          <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
+                            Archived
+                          </span>
+                        ) : null}
+                      </div>
+                      {/* "Precision volume" is internal vocabulary; the card
                         says what the setting actually does. */}
-                    <p className="mt-1 text-sm capitalize text-foreground-soft">
-                      {campaign.mode === "scale"
-                        ? "Wider search"
-                        : "Focused search"}{" "}
-                      · {campaign.status}
-                    </p>
-                  </div>
-                  <div className="grid shrink-0 justify-items-end">
-                    <strong className="text-sm text-(--text-headline)">
-                      {campaign.progress.jobsRetained}
-                    </strong>
-                    <span className="text-xs text-foreground-muted">
-                      {/* "Kept" means the plan's retained results on Home
+                      <p className="mt-1 text-sm capitalize text-foreground-soft">
+                        {campaign.mode === "scale"
+                          ? "Wider search"
+                          : "Focused search"}{" "}
+                        · {campaign.status}
+                      </p>
+                    </div>
+                    <div className="grid shrink-0 justify-items-end">
+                      <strong className="text-sm text-(--text-headline)">
+                        {campaign.progress.jobsRetained}
+                      </strong>
+                      <span className="text-xs text-foreground-muted">
+                        {/* "Kept" means the plan's retained results on Home
                           and Find jobs; this number is the shortlist. */}
-                      shortlisted
-                    </span>
+                        shortlisted
+                      </span>
+                    </div>
                   </div>
-                </div>
-                <p className="text-sm text-foreground-soft">
-                  {campaign.description || "No description yet."}
-                </p>
-                <p className="text-sm text-foreground-soft">
-                  Uses {campaign.sourceTargetIds.length} of your{" "}
-                  {new Set(props.campaigns.flatMap((entry) => entry.sourceTargetIds)).size} job sites.
-                </p>
-                {describeScheduleStart(campaign.schedule) ? (
                   <p className="text-sm text-foreground-soft">
-                    {describeScheduleStart(campaign.schedule)}
+                    {campaign.description || "No description yet."}
                   </p>
-                ) : null}
-                {remoteOnlySourceWarning ? (
-                  <p
-                    className="rounded-(--radius-small) border border-(--warning-border) bg-(--warning-surface) px-3 py-2 text-sm leading-6 text-(--warning-text)"
-                    data-testid="campaign-remote-only-sources-note"
-                  >
-                    {remoteOnlySourceWarning}
+                  <p className="text-sm text-foreground-soft">
+                    Uses {campaign.sourceTargetIds.length} of your{" "}
+                    {
+                      new Set(
+                        props.campaigns.flatMap(
+                          (entry) => entry.sourceTargetIds,
+                        ),
+                      ).size
+                    }{" "}
+                    job sites.
                   </p>
-                ) : null}
-                {sharedJobCount > 0 ? (
-                  <p
-                    className="text-sm leading-6 text-foreground-soft"
-                    data-testid="campaign-shared-jobs-note"
-                  >
-                    {sharedJobCount === 1
-                      ? "1 of these jobs is also kept by another search plan."
-                      : `${sharedJobCount} of these jobs are also kept by another search plan.`}{" "}
-                    Job Finder saves jobs once for the whole app, so a job that
-                    fits two plans appears in both.
-                  </p>
-                ) : null}
-                {thisPlanIsRunning ? (
-                  <p
-                    className="rounded-(--radius-small) border border-primary/25 bg-primary/5 px-3 py-2 text-sm text-foreground"
-                    role="status"
-                  >
-                    Search running for this plan.
-                  </p>
-                ) : (
-                <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
-                  {/* Each number says what it counts; bare "Blocked 1" beside
+                  {describeScheduleStart(campaign.schedule) ? (
+                    <p className="text-sm text-foreground-soft">
+                      {describeScheduleStart(campaign.schedule)}
+                    </p>
+                  ) : null}
+                  {remoteOnlySourceWarning ? (
+                    <p
+                      className="rounded-(--radius-small) border border-(--warning-border) bg-(--warning-surface) px-3 py-2 text-sm leading-6 text-(--warning-text)"
+                      data-testid="campaign-remote-only-sources-note"
+                    >
+                      {remoteOnlySourceWarning}
+                    </p>
+                  ) : null}
+                  {sharedJobCount > 0 ? (
+                    <p
+                      className="text-sm leading-6 text-foreground-soft"
+                      data-testid="campaign-shared-jobs-note"
+                    >
+                      {sharedJobCount === 1
+                        ? "1 of these jobs is also kept by another search plan."
+                        : `${sharedJobCount} of these jobs are also kept by another search plan.`}{" "}
+                      Job Finder saves jobs once for the whole app, so a job
+                      that fits two plans appears in both.
+                    </p>
+                  ) : null}
+                  {thisPlanIsRunning ? (
+                    <p
+                      className="rounded-(--radius-small) border border-primary/25 bg-primary/5 px-3 py-2 text-sm text-foreground"
+                      role="status"
+                    >
+                      Search running for this plan.
+                    </p>
+                  ) : (
+                    <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+                      {/* Each number says what it counts; bare "Blocked 1" beside
                       "Remaining 1" explained neither. */}
-                  <div>
-                    <dt className="text-xs text-foreground-muted">
-                      Jobs in this plan
-                    </dt>
-                    <dd>{campaign.progress.jobsFound}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-xs text-foreground-muted">
-                      Applications
-                    </dt>
-                    <dd>{campaign.progress.applicationsPrepared}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-xs text-foreground-muted">
-                      Waiting for you
-                    </dt>
-                    <dd>{campaign.progress.blockedCount}</dd>
-                  </div>
-                  {/* This counts jobs left in a running application batch,
+                      <div>
+                        <dt className="text-xs text-foreground-muted">
+                          Jobs in this plan
+                        </dt>
+                        <dd>{campaign.progress.jobsFound}</dd>
+                      </div>
+                      <div>
+                        <dt className="text-xs text-foreground-muted">
+                          Applications
+                        </dt>
+                        <dd>{campaign.progress.applicationsPrepared}</dd>
+                      </div>
+                      <div>
+                        <dt className="text-xs text-foreground-muted">
+                          Waiting for you
+                        </dt>
+                        <dd>{campaign.progress.blockedCount}</dd>
+                      </div>
+                      {/* This counts jobs left in a running application batch,
                       not a review backlog; an idle plan printing "0" read as
                       "nothing left to review" beside a shortlist of one. */}
-                  {campaign.progress.remainingQueueSize > 0 ? (
-                    <div>
-                      <dt className="text-xs text-foreground-muted">
-                        Jobs left in this batch
-                      </dt>
-                      <dd>{campaign.progress.remainingQueueSize}</dd>
-                    </div>
-                  ) : null}
-                  <div className="col-span-2">
-                    <dt className="text-xs text-foreground-muted">Next run</dt>
-                    <dd>{props.safeguardPauses?.some((pause) => pause.campaignId === campaign.id)
-                      ? "Paused by a safeguard" : describeNextRun(campaign.schedule)}</dd>
-                  </div>
-                  <div className="col-span-2">
-                    <dt className="text-xs text-foreground-muted">Last run</dt>
-                    <dd>
-                      {describeLastRun(
-                        campaign.schedule,
-                        campaign.progress.lastRunAt ??
-                          campaign.latestDigest?.generatedAt ??
-                          null,
-                        readPlanRunReport(
-                          props.discoveryRuns,
-                          campaign.latestDigest,
-                        ),
-                      )}
-                    </dd>
-                  </div>
-                </dl>
-                )}
-                {campaign.schedule.runFacts.consecutiveFailures > 0 ? (
-                  <p className="text-xs text-foreground-muted">
-                    {campaign.schedule.runFacts.consecutiveFailures} consecutive
-                    failed run
-                    {campaign.schedule.runFacts.consecutiveFailures === 1
-                      ? ""
-                      : "s"}{" "}
-                    recorded.
-                  </p>
-                ) : null}
-                {!thisPlanIsRunning && campaign.latestDigest ? (
-                  <details className="rounded-(--radius-field) border border-(--surface-panel-border) px-3 py-2">
-                    <summary className="cursor-pointer text-sm font-medium text-foreground">
-                      What the last run found
-                    </summary>
-                    {/* The run's own frozen line, identical to the one Home,
-                        Find jobs, Search history and Tasks print for it. */}
-                    <p className="mt-2 text-sm text-foreground-soft">
-                      {describePlanRunPopulations(
-                        readPlanRunReport(
-                          props.discoveryRuns,
-                          campaign.latestDigest,
-                        ),
-                        campaign.latestDigest,
-                      )}
-                    </p>
-                    {campaign.latestDigest.sourceOutcome ? (
-                      <p className="mt-2 text-sm text-foreground-soft">
-                        {campaign.latestDigest.sourceOutcome.completed} of{" "}
-                        {campaign.latestDigest.sourceOutcome.planned} sources completed
-                        {campaign.latestDigest.failedSources.map((source) =>
-                          ` · ${jobSourceLabel(source.sourceTargetId, campaign.searchPreferences.discovery.targets)} failed (${source.reason})`,
-                        )}
-                      </p>
-                    ) : null}
-                    <dl className="mt-3 grid grid-cols-3 gap-2 text-sm text-foreground-soft sm:grid-cols-6">
-                      <div>
-                        <dt className="text-xs text-foreground-muted">New</dt>
-                        {/* The same record the sentence above prints, so the
-                            tile can never give a second number for the same
-                            run. The change-digest count is a sighting tally,
-                            not a result count. */}
+                      {campaign.progress.remainingQueueSize > 0 ? (
+                        <div>
+                          <dt className="text-xs text-foreground-muted">
+                            Jobs left in this batch
+                          </dt>
+                          <dd>{campaign.progress.remainingQueueSize}</dd>
+                        </div>
+                      ) : null}
+                      <div className="col-span-2">
+                        <dt className="text-xs text-foreground-muted">
+                          Next run
+                        </dt>
                         <dd>
-                          {readPlanRunReport(
-                            props.discoveryRuns,
-                            campaign.latestDigest,
-                          ).new ?? campaign.latestDigest.counts.new}
+                          {props.safeguardPauses?.some(
+                            (pause) => pause.campaignId === campaign.id,
+                          )
+                            ? "Paused by a safeguard"
+                            : describeNextRun(campaign.schedule)}
                         </dd>
                       </div>
-                      <div>
+                      <div className="col-span-2">
                         <dt className="text-xs text-foreground-muted">
-                          Changed
+                          Last run
                         </dt>
-                        <dd>{campaign.latestDigest.counts.changed}</dd>
-                      </div>
-                      <div>
-                        <dt className="text-xs text-foreground-muted">
-                          Open again
-                        </dt>
-                        <dd>{campaign.latestDigest.counts.reactivated}</dd>
-                      </div>
-                      <div>
-                        <dt className="text-xs text-foreground-muted">
-                          Closed
-                        </dt>
-                        <dd>{campaign.latestDigest.counts.inactive}</dd>
-                      </div>
-                      <div>
-                        <dt className="text-xs text-foreground-muted">
-                          Seen before
-                        </dt>
-                        {/* Same field the headline above prints. The change
-                            digest's own tally counts sightings, not the
-                            listings this run found already saved, so reading
-                            it here printed "Seen before 0" under "7 already
-                            here" for one run. */}
                         <dd>
-                          {resolveDiscoveryRunAlreadyHereCount(
+                          {describeLastRun(
+                            campaign.schedule,
+                            campaign.progress.lastRunAt ??
+                              campaign.latestDigest?.generatedAt ??
+                              null,
                             readPlanRunReport(
                               props.discoveryRuns,
                               campaign.latestDigest,
                             ),
-                          ) ?? campaign.latestDigest.counts.known}
+                          )}
                         </dd>
                       </div>
-                      <div>
-                        <dt className="text-xs text-foreground-muted">
-                          Skipped
-                        </dt>
-                        <dd>{campaign.latestDigest.counts.skipped}</dd>
-                      </div>
                     </dl>
-                    {campaign.latestDigest.failedSources.length > 0 ? (
-                      <ul className="mt-3 grid gap-2 text-sm text-foreground-soft">
-                        {campaign.latestDigest.failedSources.map((source) => (
-                          <li key={source.sourceTargetId}>
+                  )}
+                  {campaign.schedule.runFacts.consecutiveFailures > 0 ? (
+                    <p className="text-xs text-foreground-muted">
+                      {campaign.schedule.runFacts.consecutiveFailures}{" "}
+                      consecutive failed run
+                      {campaign.schedule.runFacts.consecutiveFailures === 1
+                        ? ""
+                        : "s"}{" "}
+                      recorded.
+                    </p>
+                  ) : null}
+                  {!thisPlanIsRunning && campaign.latestDigest ? (
+                    <details className="rounded-(--radius-field) border border-(--surface-panel-border) px-3 py-2">
+                      <summary className="cursor-pointer text-sm font-medium text-foreground">
+                        What the last run found
+                      </summary>
+                      {/* The run's own frozen line, identical to the one Home,
+                        Find jobs, Search history and Tasks print for it. */}
+                      <p className="mt-2 text-sm text-foreground-soft">
+                        {describePlanRunPopulations(
+                          readPlanRunReport(
+                            props.discoveryRuns,
+                            campaign.latestDigest,
+                          ),
+                          campaign.latestDigest,
+                        )}
+                      </p>
+                      {campaign.latestDigest.sourceOutcome ? (
+                        <p className="mt-2 text-sm text-foreground-soft">
+                          {campaign.latestDigest.sourceOutcome.completed} of{" "}
+                          {campaign.latestDigest.sourceOutcome.planned} sources
+                          completed
+                          {campaign.latestDigest.failedSources.map(
+                            (source) =>
+                              ` · ${jobSourceLabel(source.sourceTargetId, campaign.searchPreferences.discovery.targets)} failed (${source.reason})`,
+                          )}
+                        </p>
+                      ) : null}
+                      <dl className="mt-3 grid grid-cols-3 gap-2 text-sm text-foreground-soft sm:grid-cols-6">
+                        <div>
+                          <dt className="text-xs text-foreground-muted">New</dt>
+                          {/* The same record the sentence above prints, so the
+                            tile can never give a second number for the same
+                            run. The change-digest count is a sighting tally,
+                            not a result count. */}
+                          <dd>
+                            {readPlanRunReport(
+                              props.discoveryRuns,
+                              campaign.latestDigest,
+                            ).new ?? campaign.latestDigest.counts.new}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt className="text-xs text-foreground-muted">
+                            Changed
+                          </dt>
+                          <dd>{campaign.latestDigest.counts.changed}</dd>
+                        </div>
+                        <div>
+                          <dt className="text-xs text-foreground-muted">
+                            Open again
+                          </dt>
+                          <dd>{campaign.latestDigest.counts.reactivated}</dd>
+                        </div>
+                        <div>
+                          <dt className="text-xs text-foreground-muted">
+                            Closed
+                          </dt>
+                          <dd>{campaign.latestDigest.counts.inactive}</dd>
+                        </div>
+                        <div>
+                          <dt className="text-xs text-foreground-muted">
+                            Seen before
+                          </dt>
+                          {/* Same field the headline above prints. The change
+                            digest's own tally counts sightings, not the
+                            listings this run found already saved, so reading
+                            it here printed "Seen before 0" under "7 already
+                            here" for one run. */}
+                          <dd>
+                            {resolveDiscoveryRunAlreadyHereCount(
+                              readPlanRunReport(
+                                props.discoveryRuns,
+                                campaign.latestDigest,
+                              ),
+                            ) ?? campaign.latestDigest.counts.known}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt className="text-xs text-foreground-muted">
+                            Skipped
+                          </dt>
+                          <dd>{campaign.latestDigest.counts.skipped}</dd>
+                        </div>
+                      </dl>
+                      {campaign.latestDigest.failedSources.length > 0 ? (
+                        <ul className="mt-3 grid gap-2 text-sm text-foreground-soft">
+                          {campaign.latestDigest.failedSources.map((source) => (
+                            <li key={source.sourceTargetId}>
+                              <span className="font-medium text-foreground">
+                                {jobSourceLabel(
+                                  source.sourceTargetId,
+                                  campaign.searchPreferences.discovery.targets,
+                                )}
+                              </span>{" "}
+                              — {source.reason}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="mt-3 text-xs text-foreground-muted">
+                          {describePlanRunFailure(
+                            props.discoveryRuns,
+                            campaign.latestDigest,
+                          ) ?? "No source problems in this run."}
+                        </p>
+                      )}
+                    </details>
+                  ) : null}
+                  {campaign.history.length > 0 ? (
+                    <details className="rounded-(--radius-field) border border-(--surface-panel-border) px-3 py-2">
+                      <summary className="cursor-pointer text-sm font-medium text-foreground">
+                        Recent search-plan history
+                      </summary>
+                      <ol className="mt-3 grid gap-2 text-sm text-foreground-soft">
+                        {campaign.history.slice(0, 5).map((entry) => (
+                          <li key={entry.id}>
                             <span className="font-medium text-foreground">
-                              {jobSourceLabel(
-                                source.sourceTargetId,
-                                campaign.searchPreferences.discovery.targets,
-                              )}
+                              {formatPlanCardDateTime(entry.occurredAt) ??
+                                "Unknown time"}
                             </span>{" "}
-                            — {source.reason}
+                            — {entry.summary}
                           </li>
                         ))}
-                      </ul>
-                    ) : (
-                      <p className="mt-3 text-xs text-foreground-muted">
-                        {describePlanRunFailure(
-                          props.discoveryRuns,
-                          campaign.latestDigest,
-                        ) ?? "No source problems in this run."}
+                      </ol>
+                    </details>
+                  ) : null}
+                  {deleteCandidateId === campaign.id ? (
+                    <div
+                      aria-label={`Confirm deleting ${campaign.name}`}
+                      className="grid gap-2 rounded-(--radius-field) border border-destructive/40 bg-destructive/10 p-3"
+                      role="group"
+                    >
+                      <p className="text-sm text-foreground">
+                        {cannotDeletePlan
+                          ? "This plan cannot be deleted yet."
+                          : `Permanently delete “${campaign.name}”? This cannot be undone.`}
                       </p>
-                    )}
-                  </details>
-                ) : null}
-                {campaign.history.length > 0 ? (
-                  <details className="rounded-(--radius-field) border border-(--surface-panel-border) px-3 py-2">
-                    <summary className="cursor-pointer text-sm font-medium text-foreground">
-                      Recent search-plan history
-                    </summary>
-                    <ol className="mt-3 grid gap-2 text-sm text-foreground-soft">
-                      {campaign.history.slice(0, 5).map((entry) => (
-                        <li key={entry.id}>
-                          <span className="font-medium text-foreground">
-                            {formatPlanCardDateTime(
-                              entry.occurredAt,
-                            ) ??
-                              "Unknown time"}
-                          </span>{" "}
-                          — {entry.summary}
-                        </li>
-                      ))}
-                    </ol>
-                  </details>
-                ) : null}
-                {deleteCandidateId === campaign.id ? (
-                  <div
-                    aria-label={`Confirm deleting ${campaign.name}`}
-                    className="grid gap-2 rounded-(--radius-field) border border-destructive/40 bg-destructive/10 p-3"
-                    role="group"
-                  >
-                    <p className="text-sm text-foreground">
-                      Permanently delete “{campaign.name}”? This cannot be
-                      undone.
-                    </p>
-                    {active ? (
-                      <p className="text-sm text-foreground-muted">
-                        {props.campaigns.some(
-                          (candidate) =>
-                            candidate.id !== campaign.id &&
-                            candidate.status !== "archived",
-                        )
-                          ? "This is your current plan. Your current plan switches automatically to another non-archived plan."
-                          : "This is your current plan and no other non-archived plan exists. Deleting it leaves no current plan until you switch to or create one."}
+                      {cannotDeletePlan ? (
+                        <p className="text-sm text-foreground-muted">
+                          Keep at least one non-archived plan. Create another
+                          plan, or restore an archived plan by editing its
+                          status, before deleting this one.
+                        </p>
+                      ) : active ? (
+                        <p className="text-sm text-foreground-muted">
+                          This is your current plan. Your current plan switches
+                          automatically to another non-archived plan.
+                        </p>
+                      ) : null}
+                      {deleteFailedId === campaign.id ? (
+                        <p className="text-sm text-destructive" role="alert">
+                          Deleting this search plan failed. It was not removed.
+                        </p>
+                      ) : null}
+                      <div className="flex flex-wrap justify-end gap-2">
+                        <Button
+                          disabled={deletePending}
+                          onClick={() => {
+                            setDeleteCandidateId(null);
+                            setDeleteFailedId(null);
+                          }}
+                          size="compact"
+                          type="button"
+                          variant="ghost"
+                        >
+                          Cancel
+                        </Button>
+                        <Button
+                          disabled={cannotDeletePlan}
+                          onClick={() => confirmDeleteCampaign(campaign.id)}
+                          pending={deletePending}
+                          size="compact"
+                          type="button"
+                          variant="destructive"
+                        >
+                          Delete plan
+                        </Button>
+                      </div>
+                    </div>
+                  ) : null}
+                  <div className="flex flex-wrap items-center justify-end gap-2">
+                    {/* One search runs at a time. The service refuses a second
+                      one with this exact sentence, so the button says it here
+                      instead of looking like a click that did nothing. */}
+                    {props.onRunCampaignNow && activeRunBlockMessage ? (
+                      <p className="mr-auto text-sm text-foreground-soft">
+                        {activeRunBlockMessage}
                       </p>
                     ) : null}
-                    {deleteFailedId === campaign.id ? (
-                      <p className="text-sm text-destructive" role="alert">
-                        Deleting this search plan failed. It was not removed.
-                      </p>
-                    ) : null}
-                    <div className="flex flex-wrap justify-end gap-2">
+                    {props.onRunCampaignNow ? (
                       <Button
-                        disabled={deletePending}
+                        disabled={thisPlanIsRunning}
                         onClick={() => {
-                          setDeleteCandidateId(null);
+                          if (props.activeDiscoveryRun) {
+                            setBlockedRunPlanId(campaign.id);
+                            return;
+                          }
+                          setBlockedRunPlanId(null);
+                          props.onRunCampaignNow?.(campaign.id);
+                        }}
+                        pending={
+                          props.runCampaignPending?.(campaign.id) ?? false
+                        }
+                        type="button"
+                        variant="outline"
+                      >
+                        {thisPlanIsRunning ? "Search running" : "Run now"}
+                      </Button>
+                    ) : null}
+                    <Button
+                      onClick={(event) => {
+                        rulesOpenerRef.current = event.currentTarget;
+                        setRulesCampaignId(campaign.id);
+                        props.onRefreshCampaignRuleFunnel?.(campaign.id);
+                      }}
+                      type="button"
+                      variant="ghost"
+                    >
+                      Rules
+                    </Button>
+                    <Button
+                      onClick={() => beginEditing(campaignToInput(campaign))}
+                      type="button"
+                      variant="ghost"
+                    >
+                      Edit
+                    </Button>
+                    {!active && !archived ? (
+                      <Button
+                        onClick={() => props.onSelectCampaign(campaign.id)}
+                        pending={props.pending}
+                        type="button"
+                        variant="outline"
+                      >
+                        Make current
+                      </Button>
+                    ) : null}
+                  </div>
+                  {/* Delete is not one of the safe actions. It sits on its own
+                    row, at the opposite end, one deliberate reach away from
+                    Edit. */}
+                  {props.onDeleteCampaign ? (
+                    <div className="flex flex-wrap justify-start gap-2 border-t border-(--surface-panel-border) pt-2">
+                      <Button
+                        className="border-destructive/45 text-destructive hover:border-destructive hover:text-destructive"
+                        onClick={() => {
+                          setDeleteCandidateId(campaign.id);
                           setDeleteFailedId(null);
                         }}
-                        size="compact"
+                        size="sm"
                         type="button"
-                        variant="ghost"
-                      >
-                        Cancel
-                      </Button>
-                      <Button
-                        onClick={() => confirmDeleteCampaign(campaign.id)}
-                        pending={deletePending}
-                        size="compact"
-                        type="button"
-                        variant="destructive"
+                        variant="outline"
                       >
                         Delete plan
                       </Button>
                     </div>
-                  </div>
-                ) : null}
-                <div className="flex flex-wrap items-center justify-end gap-2">
-                  {/* One search runs at a time. The service refuses a second
-                      one with this exact sentence, so the button says it here
-                      instead of looking like a click that did nothing. */}
-                  {props.onRunCampaignNow && activeRunBlockMessage ? (
-                    <p className="mr-auto text-sm text-foreground-soft">
-                      {activeRunBlockMessage}
-                    </p>
                   ) : null}
-                  {props.onRunCampaignNow ? (
-                    <Button
-                      disabled={thisPlanIsRunning}
-                      onClick={() => {
-                        if (props.activeDiscoveryRun) {
-                          setBlockedRunPlanId(campaign.id);
-                          return;
-                        }
-                        setBlockedRunPlanId(null);
-                        props.onRunCampaignNow?.(campaign.id);
-                      }}
-                      pending={props.runCampaignPending?.(campaign.id) ?? false}
-                      type="button"
-                      variant="outline"
-                    >
-                      {thisPlanIsRunning ? "Search running" : "Run now"}
-                    </Button>
-                  ) : null}
-                  <Button
-                    onClick={(event) => {
-                      rulesOpenerRef.current = event.currentTarget;
-                      setRulesCampaignId(campaign.id);
-                      props.onRefreshCampaignRuleFunnel?.(campaign.id);
-                    }}
-                    type="button"
-                    variant="ghost"
-                  >
-                    Rules
-                  </Button>
-                  <Button
-                    onClick={() => beginEditing(campaignToInput(campaign))}
-                    type="button"
-                    variant="ghost"
-                  >
-                    Edit
-                  </Button>
-                  {!active && !archived ? (
-                    <Button
-                      onClick={() => props.onSelectCampaign(campaign.id)}
-                      pending={props.pending}
-                      type="button"
-                      variant="outline"
-                    >
-                      Make current
-                    </Button>
-                  ) : null}
-                </div>
-                {/* Delete is not one of the safe actions. It sits on its own
-                    row, at the opposite end, one deliberate reach away from
-                    Edit. */}
-                {props.onDeleteCampaign ? (
-                  <div className="flex flex-wrap justify-start gap-2 border-t border-(--surface-panel-border) pt-2">
-                    <Button
-                      className="border-destructive/45 text-destructive hover:border-destructive hover:text-destructive"
-                      onClick={() => {
-                        setDeleteCandidateId(campaign.id);
-                        setDeleteFailedId(null);
-                      }}
-                      size="sm"
-                      type="button"
-                      variant="outline"
-                    >
-                      Delete plan
-                    </Button>
-                  </div>
-                ) : null}
-              </article>
-            );
-          })}
+                </article>
+              );
+            })}
           </div>
         </div>
       )}

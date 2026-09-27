@@ -100,7 +100,7 @@ describe("SettingsApplicationDefaultsSection", () => {
     });
     await waitFor(() =>
       expect(
-        screen.getByText("Resume look saved for new tailored resumes."),
+        screen.getByText("Resume look saved."),
       ).toBeTruthy(),
     );
     expect(screen.queryByText("No unsaved changes.")).toBeNull();

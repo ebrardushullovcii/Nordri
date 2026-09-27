@@ -335,10 +335,10 @@ export function DiscoverySearchBar(props: {
             current === "recent" ? "any" : "recent",
           )
         }
-        title="Only listings posted in the last few days."
+        title="Prioritize recent listings. Older or undated roles may still appear when they fit."
         type="button"
       >
-        Recent only
+        Prefer recent
       </button>
       {/* With one enabled source there is nothing to choose; the picker
           returns as soon as a second source is on. */}

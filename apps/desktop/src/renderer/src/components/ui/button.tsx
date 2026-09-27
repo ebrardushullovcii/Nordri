@@ -19,9 +19,10 @@ const buttonVariants = cva(
     variants: {
       variant: {
         primary:
-          // Full primary border + soft outer edge so funnel CTAs (Prepare,
-          // Search, Safeguards) hold weight on dark panels without glow kitsch.
-          "border border-primary bg-primary text-primary-foreground shadow-[inset_0_1px_0_var(--focus-inset-highlight),0_0_0_1px_color-mix(in_oklab,var(--primary)_45%,transparent)] hover:bg-primary/90",
+          // The one filled control. --primary-fill is split from the --primary
+          // accent text/tint colour so the fill can sit calmly on dark panels
+          // behind light label text; no outer glow ring.
+          "border border-primary-fill bg-primary-fill text-primary-fill-foreground shadow-[inset_0_1px_0_var(--focus-inset-highlight)] hover:bg-primary-fill/90",
         destructive:
           "border border-destructive/35 bg-destructive text-destructive-foreground hover:opacity-90",
         // Outline and secondary have no fill difference from the surface they

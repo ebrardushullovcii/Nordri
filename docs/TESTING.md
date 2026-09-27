@@ -22,6 +22,8 @@ Other entry points: `pnpm test:correctness`, `pnpm test:performance` (serial, no
 
 ## Testing the built app
 
+- For exploratory agent testing, use `pnpm --filter @unemployed/desktop qa`. It wraps the installed Playwright/Electron tools in an isolated session with a private build copy, local sites, diagnostics and restarts. See [Agent development QA](AGENT_QA.md) for interactive/scripted usage, fault injection and evidence limits. Existing focused harnesses remain available.
+
 - Build first: `pnpm --filter @unemployed/desktop build`. Scripts that launch `out/main/index.cjs` run whatever was last built.
 - Use a temporary user-data directory and synthetic data (`apps/desktop/test-fixtures/job-finder/resume-import-sample.txt`), never the user's real workspace. `docs/resume-tests/` includes personal resumes; it is not a synthetic fixture source.
 - Serialize isolated Electron launches; audit for leftover processes you own before launching another.
@@ -30,7 +32,7 @@ Other entry points: `pnpm test:correctness`, `pnpm test:performance` (serial, no
 
 ## Safety rules
 
-- Never run live-site final-submit flows. Every apply harness keeps `submitAuthorized: false` and `accountCreationAuthorized: false` and fails if any attempt, job, or application record reaches `submitted`.
+- Never submit to a real employer site. Final submits, from an apply harness or the assistant, are allowed only against the local replica job sites (below): the harness must fail before sending if any application target is not a loopback replica origin. Every other apply harness keeps `submitAuthorized: false` and `accountCreationAuthorized: false` and fails if any attempt, job, or application record reaches `submitted`.
 - Live prepare-only runs use a temporary user-data directory, a fake profile, and an approved deterministic resume. Anonymous Workday must stop at the account gate with a `site_login_required` handoff; never attempt credentials.
 - Interview Helper harnesses default to deterministic providers with AI credentials blanked. Live providers require `UI_INTERVIEW_HELPER_PROVIDER_MODE=configured` (see `docs/AI_PROVIDER_SETUP.md`).
 - Never add personal resumes, live workspaces, credentials, or authenticated browser state to benchmark corpora.
@@ -38,7 +40,7 @@ Other entry points: `pnpm test:correctness`, `pnpm test:performance` (serial, no
 
 ## Fit calibration gate
 
-- `pnpm job-finder:fit-calibration` (also in `pnpm verify`) compares against the single baseline `packages/job-finder/test-fixtures/fit-calibration-baseline-v10.json`. It fails on the quality gates and on any `schemaVersion`, `corpusVersion`, or `scorerVersion` drift between run and baseline.
+- `pnpm job-finder:fit-calibration` (also in `pnpm verify`) compares against the single baseline `packages/job-finder/test-fixtures/fit-calibration-baseline-v12.json`. It fails on the quality gates and on any `schemaVersion`, `corpusVersion`, or `scorerVersion` drift between run and baseline.
 - Bumping `MATCH_ASSESSMENT_SCORER_VERSION` is expected to fail the gate until the baseline is regenerated. Read the case diff first, then run `node scripts/run-fit-calibration-benchmark.cjs --output <new-baseline>` and rename the baseline file plus both `package.json` references together so exactly one baseline exists. `--report-only` never fails and is not a gate.
 
 ## Benchmarks
@@ -64,4 +66,4 @@ From the repo root, run `node apps/desktop/test-fixtures/job-sites/serve.mjs` wi
 
 Run `node apps/desktop/test-fixtures/job-sites/check.mjs` for the HTTP self-check. It starts its own server on a random port, visits every job/application, submits one synthetic application per site, checks confirmations and POST logs, then stops that server. It does not execute browser JavaScript.
 
-Every POST is logged as JSON to stdout and the gitignored `apps/desktop/test-fixtures/job-sites/submissions.log`; passwords are redacted and uploads record metadata only. All content is local and synthetic. Agent runs retain prepare-only boundaries; direct submissions in the self-check reach only these fixtures. See the fixture folder's `README.md` for details.
+Every POST is logged as JSON to stdout and the gitignored `apps/desktop/test-fixtures/job-sites/submissions.log`; passwords are redacted and uploads record metadata only. All content is local and synthetic. Agent runs may send real applications to these fixtures, and only to them; read `submissions.log` to prove a send. Runs against any other site stay prepare-only. See the fixture folder's `README.md` for details.

@@ -619,6 +619,7 @@ export function SettingsAiBehaviorSection({
               <Textarea
                 disabled={isSavePending}
                 id={sampleId}
+                maxLength={8_000}
                 onChange={(event) =>
                   editCoverLetter({ sample: event.target.value || null })
                 }

@@ -111,7 +111,7 @@ export function SettingsApplicationDefaultsSection({
         }),
       failedMessage:
         "Resume look was not saved. Retry before leaving this page.",
-      savedMessage: "Resume look saved for new tailored resumes.",
+      savedMessage: "Resume look saved.",
     });
   };
 
@@ -133,9 +133,9 @@ export function SettingsApplicationDefaultsSection({
             {SETTINGS_RESUME_LOOK_LABEL}
           </h3>
           <p className="text-(length:--text-description) leading-5 text-foreground-soft">
-            The design and font new tailored resumes start from. Your existing
-            resumes are not changed. Whether a job gets a tailored resume, and
-            how far it may go, is set under AI behavior.
+            The template is the default for new tailored resumes. The font applies
+            to all generated resumes; changing it requires approving existing
+            drafts again. Resume rewriting is set under AI behavior.
           </p>
         </div>
         <SettingsSectionSaveControl
@@ -143,7 +143,7 @@ export function SettingsApplicationDefaultsSection({
           onSave={saveResumeLook}
           saveState={saveState}
           subject="resume look"
-          effect="Applies to resumes written from now on."
+          effect="Template changes apply to new drafts. Font changes apply to all generated resumes."
         />
       </div>
 

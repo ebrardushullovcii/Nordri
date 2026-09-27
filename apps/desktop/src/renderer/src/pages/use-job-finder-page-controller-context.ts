@@ -128,6 +128,7 @@ type BuildJobFinderPageContextArgs = {
   setProfileCopilotBusy: Dispatch<SetStateAction<boolean>>;
   setProfileCopilotPendingContextKey: Dispatch<SetStateAction<string | null>>;
   setProfileSurfaceDirty: Dispatch<SetStateAction<boolean>>;
+  setSearchPlanSurfaceDirty: (dirty: boolean) => void;
   setResumeAssistantMessages: Dispatch<
     SetStateAction<readonly ResumeAssistantMessage[]>
   >;
@@ -203,6 +204,7 @@ export function buildJobFinderPageContext(
     setProfileCopilotBusy,
     setProfileCopilotPendingContextKey,
     setProfileSurfaceDirty,
+    setSearchPlanSurfaceDirty,
     setResumeAssistantMessages,
     setResumeAssistantPending,
     setResumeWorkspace,
@@ -290,6 +292,7 @@ export function buildJobFinderPageContext(
     saveState,
     ...primaryActions,
     onProfileSurfaceDirtyChange: setProfileSurfaceDirty,
+    onSearchPlanSurfaceDirtyChange: setSearchPlanSurfaceDirty,
     onProfileSurfaceDraftEdited,
     onCancelImportResume,
     onSettingsDraftEdited,
@@ -570,7 +573,7 @@ export function buildJobFinderPageContext(
               );
             if (!tab) {
               throw new Error(
-                "Job Finder could not open that page in its browser. Open the browser from the top bar and go to the site to sign in; Job Finder notices when you're done.",
+                `Job Finder could not open that page in its browser. Open ${JOB_FINDER_BROWSER_NAME} from the top bar and go to the site to sign in; Job Finder notices when you're done.`,
               );
             }
             await window.unemployed.browser.command({

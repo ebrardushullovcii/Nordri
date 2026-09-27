@@ -379,6 +379,32 @@ describe("workspace campaign preparation capacity", () => {
     ).rejects.toThrow("at most 1 begun employer application per local day");
   });
 
+  test.each([
+    "prepare_only",
+    "confirm_before_submit",
+    "autonomous_submit",
+  ] as const)(
+    "refuses a %s batch when today's application limit is spent",
+    async (applicationAutomationMode) => {
+      const seed = createCapacitySeed();
+      seed.settings = {
+        ...seed.settings,
+        maxApplicationsPerLocalDay: 1,
+      };
+      seedBegunPreparations(seed, 1);
+      const harness = createWorkspaceServiceHarness({ seed });
+      await seedActiveCampaign(harness);
+
+      await expect(
+        harness.workspaceService.startAutoApplyQueueRun(
+          ["job_ready"],
+          applicationAutomationMode,
+        ),
+      ).rejects.toThrow("at most 1 begun employer application per local day");
+      expect(await harness.repository.listApplyRuns()).toHaveLength(1);
+    },
+  );
+
   test("does not count staged or cancelled-before-start work", async () => {
     const seed = createCapacitySeed();
     seed.applyRuns = Array.from({ length: 30 }, (_, index) =>

@@ -15,7 +15,7 @@ describe("describeMissingListingText", () => {
     expect(text).not.toContain("signed-in");
   });
 
-  it("keeps the sign-in wording for a refused read and points at Open listing", () => {
+  it("explains a refused read without assuming sign-in will fix it", () => {
     const text = describeMissingListingText({
       attemptedAt: "2026-09-12T10:00:00.000Z",
       outcome: "blocked",
@@ -23,8 +23,24 @@ describe("describeMissingListingText", () => {
       detail:
         "The page answered 403; it may require access or a signed-in visitor.",
     });
-    expect(text).toContain("signed-in visitor");
+    expect(text).toContain("did not let Job Finder read the listing");
+    expect(text).not.toContain("signed-in visitor");
     expect(text).toContain("Use Open listing below");
     expect(text).not.toContain("open it in your browser");
+  });
+
+  it("explains sparse content using the read result even when capture is blocked", () => {
+    const text = describeMissingListingText(
+      {
+        attemptedAt: "2026-09-12T10:00:00.000Z",
+        outcome: "no_detail",
+        method: null,
+        detail: "The page published too little readable text.",
+      },
+      { state: "blocked", textHash: null },
+    );
+    expect(text).toContain("too little readable job detail");
+    expect(text).not.toContain("did not let");
+    expect(text).not.toContain("no job description");
   });
 });

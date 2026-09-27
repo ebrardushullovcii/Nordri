@@ -1,4 +1,5 @@
 import type {
+  ApplicationAutomationMode,
   ApplyRun,
   JobFinderWorkspaceSnapshot,
 } from "@unemployed/contracts";
@@ -9,7 +10,10 @@ import type {
  * minutes; the press only has to wait until it is running or refused.
  */
 export interface ApplyBatchService {
-  startAutoApplyQueueRun(jobIds: string[]): Promise<JobFinderWorkspaceSnapshot>;
+  startAutoApplyQueueRun(
+    jobIds: string[],
+    applicationAutomationMode?: ApplicationAutomationMode,
+  ): Promise<JobFinderWorkspaceSnapshot>;
   approveApplyRun(runId: string): Promise<JobFinderWorkspaceSnapshot>;
   cancelApplyRun(runId: string): Promise<JobFinderWorkspaceSnapshot>;
 }
@@ -101,6 +105,7 @@ export async function startApplyBatch(input: {
   service: ApplyBatchService;
   runs: ApplyBatchRunReader;
   jobIds: readonly string[];
+  applicationAutomationMode?: ApplicationAutomationMode;
   onBackgroundSettled: () => void;
   pollMs?: number;
   startTimeoutMs?: number;
@@ -130,43 +135,31 @@ export async function startApplyBatch(input: {
   // A batch the person already approved runs straight from staging (a
   // "Try again for all" of that batch's jobs), so staging itself can be the
   // whole run.
-  const staging = input.service.startAutoApplyQueueRun(jobIds);
-  const staged = await waitUntilRunningOrSettled({
-    work: staging,
+  const work = (async () => {
+    await input.service.startAutoApplyQueueRun(
+      jobIds,
+      input.applicationAutomationMode,
+    );
+    const stagedRun = await findNewBatch();
+    if (!stagedRun || stagedRun.state !== "awaiting_submit_approval") return;
+
+    try {
+      await input.service.approveApplyRun(stagedRun.id);
+    } catch (error: unknown) {
+      await input.service.cancelApplyRun(stagedRun.id).catch(() => undefined);
+      throw error;
+    }
+  })();
+  // Keep staging and approval in the same background operation. Reaching the
+  // foreground deadline must not abandon the approval of a slow staging call.
+  const started = await waitUntilRunningOrSettled({
+    work,
     isRunning: async () => (await findNewBatch())?.state === "running",
     pollMs,
     timeoutMs,
   });
-  if (!staged.result.ok) throw staged.result.error;
-  if (!staged.workSettled) {
-    void staging
-      .catch((error: unknown) => {
-        console.error("Try again for all stopped.", error);
-      })
-      .finally(input.onBackgroundSettled);
-    return { startedJobIds: jobIds };
-  }
-
-  const stagedRun = await findNewBatch();
-  if (!stagedRun || stagedRun.state !== "awaiting_submit_approval") {
-    return { startedJobIds: jobIds };
-  }
-
-  const approval = input.service.approveApplyRun(stagedRun.id);
-  const approved = await waitUntilRunningOrSettled({
-    work: approval,
-    isRunning: async () =>
-      (await input.runs.listApplyRuns()).find((run) => run.id === stagedRun.id)
-        ?.state === "running",
-    pollMs,
-    timeoutMs,
-  });
-  if (!approved.result.ok) {
-    const refusal = approved.result.error;
-    await input.service.cancelApplyRun(stagedRun.id).catch(() => undefined);
-    throw refusal;
-  }
-  void approval
+  if (!started.result.ok) throw started.result.error;
+  void work
     .catch((error: unknown) => {
       console.error("Apply to all stopped.", error);
     })

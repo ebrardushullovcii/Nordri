@@ -125,6 +125,36 @@ describe("startApplyBatch", () => {
     await vi.waitFor(() => expect(onBackgroundSettled).toHaveBeenCalled());
   });
 
+  it("still approves a batch when staging finishes after the foreground wait", async () => {
+    let finishStaging!: () => void;
+    const h = harness({
+      stage: async (runs) => {
+        await new Promise<void>((resolve) => {
+          finishStaging = resolve;
+        });
+        runs.push(run("slow", "awaiting_submit_approval", ["job_1"]));
+      },
+      approve: (runs) => {
+        runs.find((candidate) => candidate.id === "slow")!.state = "completed";
+        return Promise.resolve();
+      },
+    });
+    const onBackgroundSettled = vi.fn();
+    await startApplyBatch({
+      service: h.service,
+      runs: h.reader,
+      jobIds: ["job_1"],
+      onBackgroundSettled,
+      pollMs: 1,
+      startTimeoutMs: 1,
+    });
+    expect(h.service.approveApplyRun).not.toHaveBeenCalled();
+    finishStaging();
+    await vi.waitFor(() => expect(onBackgroundSettled).toHaveBeenCalledOnce());
+    expect(h.service.approveApplyRun).toHaveBeenCalledWith("slow");
+    expect(h.runs[0]?.state).toBe("completed");
+  });
+
   it("leaves out jobs a running batch already has, so a double press stages nothing", async () => {
     const h = harness({
       existing: [run("first", "running", ["job_1", "job_2"])],
@@ -143,4 +173,59 @@ describe("startApplyBatch", () => {
     ).resolves.toEqual({ startedJobIds: [] });
     expect(h.service.startAutoApplyQueueRun).not.toHaveBeenCalled();
   });
+
+  it("does not approve a slow-staged batch cancelled before staging settles", async () => {
+    let finishStaging!: () => void;
+    const h = harness({
+      stage: async (runs) => {
+        runs.push(run("slow", "awaiting_submit_approval", ["job_1"]));
+        await new Promise<void>((resolve) => {
+          finishStaging = resolve;
+        });
+      },
+    });
+    const onBackgroundSettled = vi.fn();
+    await startApplyBatch({
+      service: h.service,
+      runs: h.reader,
+      jobIds: ["job_1"],
+      onBackgroundSettled,
+      pollMs: 1,
+      startTimeoutMs: 1,
+    });
+    await h.service.cancelApplyRun("slow");
+    finishStaging();
+    await vi.waitFor(() => expect(onBackgroundSettled).toHaveBeenCalledOnce());
+    expect(h.service.approveApplyRun).not.toHaveBeenCalled();
+    expect(h.runs[0]?.state).toBe("cancelled");
+  });
+
+  it.each([
+    "prepare_only",
+    "confirm_before_submit",
+    "autonomous_submit",
+  ] as const)(
+    "passes the selected %s mode into the batch start",
+    async (applicationAutomationMode) => {
+      const h = harness({
+        approve: (runs) => {
+          runs.find((candidate) => candidate.id === "staged")!.state =
+            "completed";
+          return Promise.resolve();
+        },
+      });
+      await startApplyBatch({
+        service: h.service,
+        runs: h.reader,
+        jobIds: ["job_1"],
+        applicationAutomationMode,
+        onBackgroundSettled: vi.fn(),
+        pollMs: 5,
+      });
+      expect(h.service.startAutoApplyQueueRun).toHaveBeenCalledWith(
+        ["job_1"],
+        applicationAutomationMode,
+      );
+    },
+  );
 });

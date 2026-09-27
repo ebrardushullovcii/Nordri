@@ -83,7 +83,7 @@ export function ResumeSectionHeaderActions(
         <Button
           aria-label={includeLabel}
           className={sectionActionClassName}
-          disabled={disabled}
+          disabled={disabled || section.locked}
           onClick={() =>
             onPatch(
               createResumeDraftPatch({
@@ -96,7 +96,11 @@ export function ResumeSectionHeaderActions(
             )
           }
           size="xs"
-          title={includeLabel}
+          title={
+            section.locked
+              ? "Unlock this section before hiding it"
+              : includeLabel
+          }
           type="button"
           variant="ghost"
         >

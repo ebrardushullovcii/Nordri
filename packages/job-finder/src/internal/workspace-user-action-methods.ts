@@ -1,4 +1,5 @@
 import {
+  DISCOVERY_RUN_ALREADY_ACTIVE_MESSAGE,
   ApplicationAnswerRecordSchema,
   type ApplicationAnswerRecord,
   type SubmitUserActionManualAnswerCommand,
@@ -25,6 +26,7 @@ import {
   isApplicationAuthenticationUserActionKind,
   isApplicationPrepareOnlyUserAction,
   releaseApplicationRecordAfterDismissedUserAction,
+  retireCancelledApplicationUserActions,
 } from "./workspace-application-user-action";
 import type { JobFinderRepository } from "@unemployed/db";
 
@@ -141,6 +143,14 @@ function isApplicationResumptionAction(request: UserActionRequest): boolean {
     (isApplicationPrepareOnlyUserAction(request) &&
       (request.state === "verifying" || request.state === "resolved"))
   );
+}
+
+function describeContinuationError(error: unknown): string {
+  const message =
+    error instanceof Error && error.message.trim()
+      ? error.message.trim().slice(0, 240)
+      : "the search could not start";
+  return /[.!?]$/u.test(message) ? message : `${message}.`;
 }
 
 function getApplicationResumptionFlightKey(request: UserActionRequest): string {
@@ -700,19 +710,57 @@ export function createWorkspaceUserActionMethods(
     const existing = discoveryContinuationFlights.get(key);
     if (existing) return existing;
 
-    const flight = (async () => {
+    const flight = (async (): Promise<
+      { status: "continued" } | { status: "blocked"; message: string }
+    > => {
       // Same fail-closed gate as the other resumption paths: nothing drives
       // the browser while global activity is paused or unreadable.
       if (await isWorkspaceActivityPaused(ctx.repository)) {
         return { status: "continued" } as const;
       }
-      const continuation = await ctx.continueDiscoveryForSource(
-        targetId,
-        discoveryRunId,
-      );
-      return continuation.status === "origin_removed"
-        ? ({ status: "blocked", message: continuation.message } as const)
-        : ({ status: "continued" } as const);
+      const continuedAt = new Date().toISOString();
+      for (let attempt = 0; ; attempt += 1) {
+        try {
+          const continuation = await ctx.continueDiscoveryForSource(
+            targetId,
+            discoveryRunId,
+          );
+          if (continuation.status === "origin_removed")
+            return { status: "blocked", message: continuation.message };
+          return await describeSourceContinuation(targetId, continuedAt);
+        } catch (error) {
+          // A sign-in finished while another search was still running. That
+          // error used to be swallowed: the card closed and the source was
+          // never searched. This source's search now waits its turn and runs
+          // as soon as the running one ends.
+          if (
+            error instanceof Error &&
+            error.message === DISCOVERY_RUN_ALREADY_ACTIVE_MESSAGE &&
+            attempt < 5
+          ) {
+            // Wait while the running search holds the pipeline (the same
+            // guard that refused this one), up to half an hour.
+            const waitUntil = Date.now() + 30 * 60_000;
+            do {
+              const running = ctx.activeDiscoveryPromiseRef.current;
+              if (running) await running.catch(() => undefined);
+              else await new Promise((resolve) => setTimeout(resolve, 2_000));
+            } while (
+              ctx.activeDiscoveryAbortControllerRef.current &&
+              Date.now() < waitUntil
+            );
+            continue;
+          }
+          console.warn(
+            "[discovery] Could not search a source after its sign-in.",
+            error,
+          );
+          return {
+            status: "blocked",
+            message: `You are signed in, but searching this source did not start: ${describeContinuationError(error)} Press "Check whether this step is done" to search it.`,
+          };
+        }
+      }
     })()
       .catch(() => ({ status: "continued" }) as const)
       .finally(() => {
@@ -722,6 +770,34 @@ export function createWorkspaceUserActionMethods(
       });
     discoveryContinuationFlights.set(key, flight);
     return flight;
+  }
+
+  /**
+   * What the continued search of one source did. A failure there (for
+   * example the browser profile could not be opened) used to close the card
+   * as if the source had been searched.
+   */
+  async function describeSourceContinuation(
+    targetId: string,
+    continuedAt: string,
+  ): Promise<{ status: "continued" } | { status: "blocked"; message: string }> {
+    const discoveryState = await ctx.repository.getDiscoveryState();
+    const execution = [discoveryState.activeRun, ...discoveryState.recentRuns]
+      .flatMap((run) => run?.targetExecutions ?? [])
+      .filter(
+        (candidate) =>
+          candidate.targetId === targetId &&
+          (candidate.startedAt ?? "") >= continuedAt,
+      )
+      .sort((left, right) =>
+        (right.startedAt ?? "").localeCompare(left.startedAt ?? ""),
+      )[0];
+    if (execution?.state !== "failed") return { status: "continued" };
+    const why = execution.warning?.trim();
+    return {
+      status: "blocked",
+      message: `You are signed in, but searching this source failed${why ? `: ${why.replace(/[.\s]+$/u, "")}` : ""}. Press "Check whether this step is done" to search it.`,
+    };
   }
 
   function verifySingleFlight(request: UserActionRequest): Promise<void> {
@@ -824,6 +900,9 @@ export function createWorkspaceUserActionMethods(
       // the resumptions below.
       await retireStaleTabLimitHandoffs(ctx.repository).catch(() => {});
     }
+
+    // Also repairs older records and a hand-off committed just after cancellation.
+    await retireCancelledApplicationUserActions(ctx.repository);
 
     const verifyingRequests = (
       await ctx.repository.listUserActionRequests({

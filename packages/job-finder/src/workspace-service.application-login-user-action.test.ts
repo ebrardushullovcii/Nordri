@@ -1,4 +1,5 @@
 import {
+  ApplicationAttemptSchema,
   ApplicationAttemptBlockerSchema,
   ApplicationRecordSchema,
   ApplyJobResultSchema,
@@ -2259,6 +2260,61 @@ describe("application login UserActionRequest adoption", () => {
     },
   );
 
+  test("names the file an upload step needs", async () => {
+    const seed = createSeed();
+    seed.settings.resumeApplicationMode = "original_resume";
+    seed.profile.baseResume.storagePath = "C:/tmp/alex-vanguard.pdf";
+    const baseRuntime = createBrowserRuntime();
+    const harness = createWorkspaceServiceHarness({
+      seed,
+      browserRuntime: {
+        ...baseRuntime,
+        executeApplicationFlow: async (source, input) =>
+          ApplyExecutionResultSchema.parse({
+            ...(await baseRuntime.executeApplicationFlow(source, input)),
+            state: "paused",
+            summary: "Browser action required",
+            detail:
+              "Job Finder filled in what it could and needs your answers to 1 question.",
+            questions: [
+              {
+                id: "question_transcript",
+                prompt: "Academic transcript",
+                kind: "other",
+                answerControlType: "file",
+                isRequired: true,
+                detectedAt: "2026-07-30T10:00:00.000Z",
+                answerOptions: [],
+                suggestedAnswers: [],
+                submittedAnswer: null,
+                status: "detected",
+              },
+            ],
+            blocker: {
+              code: "missing_candidate_answer",
+              userActionKind: "manual_upload",
+              summary:
+                "Job Finder filled in what it could and needs your answers to 1 question.",
+              questionIds: ["question_transcript"],
+              url: input.job.applicationUrl ?? input.job.canonicalUrl,
+            },
+          }),
+      },
+    });
+
+    const snapshot =
+      await harness.workspaceService.startApplyCopilotRun("job_ready");
+    const request = snapshot.userActionRequests[0];
+
+    expect(request?.kind).toBe("manual_upload");
+    expect(request?.title).toMatch(
+      /^Add your academic transcript to continue/u,
+    );
+    expect(request?.summary).toMatch(
+      /form asks for your academic transcript\. Add or restore it in Profile › Files/u,
+    );
+  });
+
   test("rejects a submitted result reported through the prepare-only production path", async () => {
     const seed = createSeed();
     seed.settings.resumeApplicationMode = "original_resume";
@@ -2992,6 +3048,120 @@ describe("application login UserActionRequest adoption", () => {
     expect(restarted.userActionRequests[0]?.state).toBe("resolved");
   });
 
+  test("an answered step whose check an earlier run of the app left unfinished carries on", async () => {
+    const seed = createSeed();
+    seed.settings.resumeApplicationMode = "original_resume";
+    seed.profile.baseResume.storagePath = "C:/tmp/alex-vanguard.pdf";
+    const baseRuntime = createBrowserRuntime();
+    let executionCount = 0;
+    const executeApplicationFlow = vi.fn(
+      async (
+        source: Parameters<typeof baseRuntime.executeApplicationFlow>[0],
+        input: Parameters<typeof baseRuntime.executeApplicationFlow>[1],
+      ) => {
+        executionCount += 1;
+        const baseResult = await baseRuntime.executeApplicationFlow(
+          source,
+          input,
+        );
+        return executionCount === 1
+          ? ApplyExecutionResultSchema.parse({
+              ...baseResult,
+              state: "paused",
+              summary: "A required answer needs you",
+              detail: "Answer this question in the browser.",
+              questions: [
+                {
+                  id: "question_work_authorization",
+                  prompt: "Are you authorized to work in this location?",
+                  kind: "work_authorization",
+                  answerControlType: "text",
+                  isRequired: true,
+                  detectedAt: "2026-07-30T10:00:00.000Z",
+                  answerOptions: [],
+                  suggestedAnswers: [],
+                  submittedAnswer: null,
+                  status: "detected",
+                },
+              ],
+              blocker: {
+                code: "missing_candidate_answer",
+                userActionKind: "manual_answer",
+                summary: "Answer the work authorization question.",
+                detail: "The answer stays in the browser.",
+                questionIds: ["question_work_authorization"],
+                sourceDebugEvidenceRefIds: [],
+                url: input.job.applicationUrl ?? input.job.canonicalUrl,
+              },
+            })
+          : baseResult;
+      },
+    );
+    const harness = createWorkspaceServiceHarness({
+      seed,
+      browserRuntime: { ...baseRuntime, executeApplicationFlow },
+    });
+
+    const blocked =
+      await harness.workspaceService.startApplyCopilotRun("job_ready");
+    const request = blocked.userActionRequests[0];
+    if (
+      !request ||
+      request.scope.type !== "application" ||
+      !request.scope.applicationRecordId ||
+      !request.scope.resultId
+    ) {
+      throw new Error("Expected a manual application action.");
+    }
+    // An earlier run of the app claimed this step's check and quit before it
+    // ran (a restart while it waited for its site): the attempt is still in
+    // progress in the store, and nothing in this process is running it.
+    await harness.repository.upsertApplicationAttempt(
+      ApplicationAttemptSchema.parse({
+        id: `application_user_action_resume_${request.id}_r3`,
+        jobId: request.scope.jobId,
+        applicationRecordId: request.scope.applicationRecordId,
+        state: "in_progress",
+        summary: "Checking the completed browser step once",
+        detail: "Scheduled before the app was restarted.",
+        startedAt: "2026-07-30T10:05:00.000Z",
+        updatedAt: "2026-07-30T10:05:00.000Z",
+        completedAt: null,
+        outcome: null,
+        nextActionLabel: null,
+        userActionResumption: {
+          requestId: request.id,
+          requestRevision: 3,
+          verificationEventId: `verification:${request.id}:r2`,
+          runId: request.scope.runId,
+          jobId: request.scope.jobId,
+          resultId: request.scope.resultId,
+          replayCheckpointId: request.scope.replayCheckpointId,
+        },
+      }),
+    );
+
+    const resumed = await harness.workspaceService.performUserAction({
+      commandId: "submit_manual_answer_after_restart",
+      requestId: request.id,
+      expectedRevision: request.revision,
+      action: "submit_manual_answer",
+      answer: "Yes, I am authorized to work in this location.",
+      saveForFuture: false,
+      credentialsPolicy: "browser_only",
+      submitAuthorized: false,
+      accountCreationAuthorized: false,
+    });
+
+    expect(executeApplicationFlow).toHaveBeenCalledTimes(2);
+    expect(resumed.userActionRequests[0]?.state).toBe("resolved");
+    const attempt = resumed.applicationAttempts.find(
+      (entry) => entry.id === `application_user_action_resume_${request.id}_r3`,
+    );
+    expect(attempt?.completedAt).toBeTruthy();
+    expect(attempt?.state).not.toBe("in_progress");
+  });
+
   test("offers retry immediately after a failed answer continuation", async () => {
     const seed = createSeed();
     seed.settings.resumeApplicationMode = "original_resume";
@@ -3290,6 +3460,83 @@ describe("application login UserActionRequest adoption", () => {
     ).toMatchObject({
       state: "unsupported",
       summary: "Application retry skipped because its checkpoint changed",
+    });
+  });
+});
+
+// Gate 3: the app closed while an answered step was being checked. Startup
+// failed the batch run first, and the check then left the card on "still
+// blocked" asking the person to do what was already done.
+describe("a step whose run ended before its check", () => {
+  test("closes the step and leaves Could not apply with Try again", async () => {
+    const seed = createSeed();
+    seed.settings.resumeApplicationMode = "original_resume";
+    seed.profile.baseResume.storagePath = "C:/tmp/alex-vanguard.pdf";
+    const baseRuntime = createBrowserRuntime();
+    const executeApplicationFlow = vi.fn(
+      async (
+        source: Parameters<typeof baseRuntime.executeApplicationFlow>[0],
+        input: Parameters<typeof baseRuntime.executeApplicationFlow>[1],
+      ) => {
+        const baseResult = await baseRuntime.executeApplicationFlow(
+          source,
+          input,
+        );
+        return ApplyExecutionResultSchema.parse({
+          ...baseResult,
+          state: "paused",
+          summary: "A required answer needs you",
+          detail: "Answer this question in the browser.",
+          blocker: {
+            code: "missing_candidate_answer",
+            userActionKind: "manual_answer",
+            summary: "Answer the work authorization question.",
+            questionIds: ["question_work_authorization"],
+            url: input.job.applicationUrl ?? input.job.canonicalUrl,
+          },
+        });
+      },
+    );
+    const harness = createWorkspaceServiceHarness({
+      seed,
+      browserRuntime: { ...baseRuntime, executeApplicationFlow },
+    });
+
+    const blocked =
+      await harness.workspaceService.startApplyCopilotRun("job_ready");
+    const request = blocked.userActionRequests[0];
+    const run = blocked.applyRuns[0];
+    if (!request || request.scope.type !== "application" || !run)
+      throw new Error("Expected a manual application step.");
+    const applicationRecordId = request.scope.applicationRecordId;
+    await harness.repository.upsertApplyRun({
+      ...run,
+      state: "failed",
+      summary: "Automatic apply stopped because the app closed",
+      completedAt: "2026-07-30T11:00:00.000Z",
+      updatedAt: "2026-07-30T11:00:00.000Z",
+    });
+
+    const checked = await harness.workspaceService.performUserAction({
+      commandId: "confirm_manual_answer_after_run_failed",
+      requestId: request.id,
+      expectedRevision: request.revision,
+      action: "confirm_done",
+    });
+
+    expect(executeApplicationFlow).toHaveBeenCalledTimes(1);
+    expect(checked.userActionRequests[0]?.state).toBe("cancelled");
+    expect(checked.applyJobResults[0]).toMatchObject({
+      state: "failed",
+      summary: "The prepared application page is no longer open.",
+    });
+    expect(
+      checked.applicationRecords.find(
+        (record) => record.id === applicationRecordId,
+      ),
+    ).toMatchObject({
+      lastAttemptState: "failed",
+      nextActionLabel: "Try again, or finish it yourself on the job site.",
     });
   });
 });

@@ -244,7 +244,7 @@ export const DESTINATION_COUNT_INLINE_LAYOUT_CLASS = "mr-1 ml-auto shrink-0";
  * reader can tell "work waiting on you" from inventory before reading the noun.
  */
 export const DESTINATION_COUNT_ATTENTION_CLASS =
-  "mr-1 ml-auto inline-flex h-5 shrink-0 items-center justify-center gap-1 rounded-full bg-primary px-1.5 text-(length:--text-tiny) font-semibold text-primary-foreground tabular-nums";
+  "mr-1 ml-auto inline-flex h-5 shrink-0 items-center justify-center gap-1 rounded-full bg-primary-fill px-1.5 text-(length:--text-tiny) font-semibold text-primary-fill-foreground tabular-nums";
 /**
  * The collapsed rail has no room for an inline number or a noun, so every
  * count moves to the shared `<Count variant="rail-marker">` corner marker —
@@ -294,7 +294,7 @@ export const SHELL_BRAND_ROW_CLASS = cn(
 export const SHELL_SIDEBAR_CLASS =
   "fixed bottom-0 left-0 top-14 z-40 hidden w-(--job-finder-side-width) overflow-hidden border-r border-(--surface-panel-shell-border) bg-(--shell-header-bg) min-[1440px]:block";
 export const SHELL_SIDEBAR_ROW_CLASS =
-  "inline-flex min-h-9 w-full min-w-0 max-w-full items-center gap-2 overflow-hidden rounded-(--radius-button) border-l-2 border-transparent px-2 py-1.5 text-left text-sm font-medium text-muted-foreground outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/40";
+  "job-finder-sidebar-row inline-flex min-h-9 w-full min-w-0 max-w-full items-center gap-2 overflow-hidden rounded-(--radius-button) border-l-2 border-transparent px-2 py-1.5 text-left text-sm font-medium text-muted-foreground outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/40";
 export const SHELL_SIDEBAR_ROW_COLLAPSED_CLASS =
   "relative min-h-10 justify-center border-l-0 px-0 text-center";
 // The keyboard-shortcuts reference is one small square beside Settings at the
@@ -314,6 +314,34 @@ export const SHELL_SIDEBAR_ROW_INACTIVE_CLASS =
 // the accent bar keep the state legible without relying on colour.
 export const SHELL_SIDEBAR_ROW_ACTIVE_CLASS =
   "border-l-(--nav-active-bar) bg-(--nav-active-surface) font-semibold text-(--nav-active-foreground)";
+
+const sidebarDescriptions: Partial<Record<string, string>> = {
+  Home: "Your next step",
+  Profile: "Experience & documents",
+  "Find jobs": "Discover opportunities",
+  Shortlisted: "Review & prepare",
+  Applications: "Track your progress",
+};
+
+export function SidebarDestinationLabel({
+  label,
+  collapsed,
+}: {
+  label: string;
+  collapsed: boolean;
+}) {
+  const description = sidebarDescriptions[label];
+  return (
+    <span className={cn("min-w-0 truncate", collapsed && "sr-only")}>
+      <span className="block truncate">{label}</span>
+      {!collapsed && description ? (
+        <span aria-hidden="true" className="job-finder-sidebar-description">
+          {description}
+        </span>
+      ) : null}
+    </span>
+  );
+}
 export const SHELL_CONTENT_CLASS =
   "flex min-h-screen flex-col sm:h-full sm:min-h-0 sm:pt-[7.25rem] min-[1440px]:!pt-14 min-[1440px]:pl-(--job-finder-side-width)";
 export const SHELL_MAIN_SCROLLING_CLASS = cn(
@@ -537,9 +565,8 @@ export function JobFinderShell({
   const [isMoreOpen, setIsMoreOpen] = useState(false);
   const [isShortcutsDialogOpen, setIsShortcutsDialogOpen] = useState(false);
   const [focusedMoreMenuItemIndex, setFocusedMoreMenuItemIndex] = useState(0);
-  // Only the compact top navigation owns a More trigger now: the expanded
-  // 17rem sidebar and the 4rem rail list every secondary destination inline,
-  // so there is no second trigger for the popover to anchor to.
+  // Only compact top navigation uses More; the sidebar pins Settings below
+  // its primary destinations.
   const moreButtonRef = useRef<HTMLButtonElement | null>(null);
   const moreMenuRef = useRef<HTMLDivElement | null>(null);
   const moreMenuScrollRef = useRef<HTMLDivElement | null>(null);
@@ -706,7 +733,7 @@ export function JobFinderShell({
   const menuGroups = [
     {
       label: "Workspace",
-      screens: selectMenuScreens(["settings"]),
+      screens: selectMenuScreens(["settings", "safeguards"]),
     },
   ];
   const moreMenuItemCount = menuGroups.reduce(
@@ -725,6 +752,12 @@ export function JobFinderShell({
   // navigation, which genuinely has no room, keeps its More menu.
   const settingsScreen = screenDefinitions.find(
     (screen) => screen.id === "settings",
+  );
+  // Safeguards is not a step either, but the person must always be able to
+  // reach it (to look over the limits before anything is blocked), so it sits
+  // quietly just above Settings, counting only what it blocks.
+  const safeguardsScreen = screenDefinitions.find(
+    (screen) => screen.id === "safeguards",
   );
   const sidebarGroups = [
     {
@@ -1070,14 +1103,10 @@ export function JobFinderShell({
             ) : (
               <screen.icon aria-hidden="true" className="size-4 shrink-0" />
             )}
-            <span
-              className={cn(
-                "min-w-0 truncate",
-                isSidebarCollapsed && "sr-only",
-              )}
-            >
-              {screen.label}
-            </span>
+            <SidebarDestinationLabel
+              collapsed={isSidebarCollapsed}
+              label={screen.label}
+            />
             {!isSidebarCollapsed && screen.count !== null ? (
               <ScreenCountBadge
                 count={screen.count}
@@ -1230,7 +1259,7 @@ export function JobFinderShell({
                 </Button>
                 <Button
                   aria-label="Close window"
-                  className="h-full w-12 rounded-none border-0 bg-transparent p-0 text-muted-foreground shadow-none hover:bg-(--button-close-hover) hover:text-primary-foreground"
+                  className="h-full w-12 rounded-none border-0 bg-transparent p-0 text-muted-foreground shadow-none hover:bg-(--button-close-hover) hover:text-primary-fill-foreground"
                   disabled={!windowControlsState.isClosable}
                   onClick={closeWindow}
                   size="icon-xs"
@@ -1720,11 +1749,14 @@ export function JobFinderShell({
           <div
             className={cn(
               "mb-1 flex h-10 shrink-0 items-center",
-              isSidebarCollapsed ? "justify-center" : "justify-start",
+              isSidebarCollapsed ? "justify-center" : "justify-between",
             )}
             data-job-finder-sidebar-toggle
             style={{ ...noDragRegionStyle }}
           >
+            {!isSidebarCollapsed ? (
+              <span className="job-finder-sidebar-heading">Your job search</span>
+            ) : null}
             <Tooltip delayDuration={0}>
               <TooltipTrigger asChild>
                 <button
@@ -1765,9 +1797,7 @@ export function JobFinderShell({
                 className="grid min-w-0 gap-1"
                 role="group"
               >
-                {/* The group keeps its accessible name only: a "Your job
-                    search" eyebrow above the only list on the rail labelled
-                    nothing the rows did not already say. */}
+                {/* The group name remains available to assistive technology. */}
                 <div
                   className={cn(
                     "grid min-w-0 overflow-hidden",
@@ -1787,7 +1817,7 @@ export function JobFinderShell({
               "mt-2 flex min-w-0 shrink-0 border-t border-(--surface-panel-border) pt-2",
               isSidebarCollapsed
                 ? "flex-col-reverse gap-0.5"
-                : "items-center gap-1",
+                : "flex-wrap items-center gap-1",
             )}
             data-job-finder-sidebar-footer
             role="group"
@@ -1796,6 +1826,21 @@ export function JobFinderShell({
                 journey rather than scrolling with it, with the shortcuts
                 reference as one small control beside it (above it on the
                 collapsed rail, so the gear stays at the very bottom). */}
+            {/* Safeguards sits quietly above Settings (ordered last in the
+                collapsed column, which is reversed), so the person can always
+                reach it. It carries no count: what it blocks shows in
+                Activity. */}
+            {safeguardsScreen ? (
+              <div
+                className={cn(
+                  "min-w-0",
+                  isSidebarCollapsed ? "order-last" : "basis-full",
+                )}
+                data-job-finder-sidebar-safeguards-entry
+              >
+                {renderSidebarDestination({ ...safeguardsScreen, count: null })}
+              </div>
+            ) : null}
             <div className={cn("min-w-0", !isSidebarCollapsed && "flex-1")}>
               {settingsScreen ? renderSidebarDestination(settingsScreen) : null}
             </div>

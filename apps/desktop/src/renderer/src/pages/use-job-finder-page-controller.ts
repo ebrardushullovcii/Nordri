@@ -88,6 +88,7 @@ function createIdleTailoredDraftPreparationState(): TailoredDraftPreparationView
 
 export type JobFinderNavigationGuardInput = {
   profileSurfaceDirty: boolean;
+  searchPlanSurfaceDirty?: boolean;
   resumeWorkspaceDirty: boolean;
   saveState: JobFinderSaveState;
 };
@@ -125,6 +126,10 @@ export function composeLeaveConfirmation(
 
   if (input.profileSurfaceDirty) {
     reasons.push("Unsaved profile or setup changes");
+  }
+
+  if (input.searchPlanSurfaceDirty) {
+    reasons.push("Unsaved search-plan changes");
   }
 
   if (input.saveState.state === "saving") {
@@ -281,6 +286,7 @@ export function useJobFinderPageController() {
   // still sees the fresh flags instead of a stale render's values.
   const navigationGuardRef = useRef<JobFinderNavigationGuardInput>({
     profileSurfaceDirty: false,
+    searchPlanSurfaceDirty: false,
     resumeWorkspaceDirty: false,
     saveState: getJobFinderSaveStateFromReceipt(initialSaveReceipt),
   });
@@ -572,6 +578,10 @@ export function useJobFinderPageController() {
     },
     [saveCoordinator],
   );
+  const applySearchPlanSurfaceDirty = useCallback((dirty: boolean) => {
+    navigationGuardRef.current.searchPlanSurfaceDirty = dirty;
+    syncJobFinderWindowCloseGuard(navigationGuardRef.current);
+  }, []);
   const applyResumeWorkspaceDirty = useCallback<
     Dispatch<SetStateAction<boolean>>
   >(
@@ -760,6 +770,7 @@ export function useJobFinderPageController() {
     // appliers update the guard ref synchronously, so `proceed` commits with
     // fresh flags.
     applyProfileSurfaceDirty(false);
+    applySearchPlanSurfaceDirty(false);
     applyResumeWorkspaceDirty(false);
     // The dialog just named the failed save as one of its reasons and the user
     // answered it, so that failure is discarded with the rest. This is the
@@ -771,6 +782,7 @@ export function useJobFinderPageController() {
   }, [
     acknowledgeCurrentFailedSave,
     applyProfileSurfaceDirty,
+    applySearchPlanSurfaceDirty,
     applyResumeWorkspaceDirty,
     routeChangeBlocker,
   ]);
@@ -1194,6 +1206,7 @@ export function useJobFinderPageController() {
       setProfileCopilotBusy,
       setProfileCopilotPendingContextKey,
       setProfileSurfaceDirty: applyProfileSurfaceDirty,
+      setSearchPlanSurfaceDirty: applySearchPlanSurfaceDirty,
       setResumeAssistantMessages,
       setResumeAssistantPending,
       setResumeWorkspace: applyResumeWorkspaceSnapshot,
@@ -1215,6 +1228,7 @@ export function useJobFinderPageController() {
       workspace: workspaceWithOptimisticProfileCopilot ?? workspace,
     });
   }, [
+    applySearchPlanSurfaceDirty,
     scopedActionState,
     actionState,
     actions,

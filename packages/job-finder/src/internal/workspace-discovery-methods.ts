@@ -982,6 +982,7 @@ async function collectTargetJobs(input: {
   /** The saved AI search behavior (Settings), handed to the agent's prompt. */
   searchGuidance: AiJobSearchBehavior;
   targetJobCount: number;
+  retainAllFound: boolean;
   maxSteps: number;
   activeRun: DiscoveryRunRecord;
   emitActivity: (event: DiscoveryActivityEvent) => void;
@@ -1034,6 +1035,8 @@ async function collectTargetJobs(input: {
     intelligence,
   });
 
+  let sourceCatalog: JobPosting[] | undefined;
+  let catalogWarning: string | null = null;
   if (discoveryMethod === "public_api") {
     const startedAt = new Date().toISOString();
     input.emitActivity(
@@ -1076,31 +1079,47 @@ async function collectTargetJobs(input: {
       }));
     const completedAt = new Date().toISOString();
 
-    return {
-      result: {
-        source: adapterKind,
-        startedAt,
-        completedAt,
-        querySummary: `${target.label} via ${providerLabel} API`,
-        warning: apiResult.warning,
-        inventoryCompleteness:
-          apiResult.warning === null ? "complete" : "partial",
-        jobs: apiResult.jobs.map((posting) =>
-          toProviderAwarePosting({
-            posting,
-            target,
-            collectionMethod,
-            discoveryMethod,
-            intelligence,
-            adapterKind,
-          }),
-        ),
-        agentMetadata: null,
-      },
-      collectionMethod,
-      adapterKind,
-      intelligence,
-    };
+    // A plain-language goal and a freshness preference need the search
+    // agent's judgement. The feed remains the cheap reader; the model gets
+    // bounded catalog tools rather than silently losing the person's request.
+    const needsCatalogReview =
+      input.useAgentRuntime &&
+      Boolean(
+        input.searchRequest?.intent.trim() ||
+        input.searchRequest?.freshness === "recent",
+      ) &&
+      ctx.browserRuntime.runAgentDiscovery !== undefined &&
+      apiResult.jobs.length > 0;
+    if (needsCatalogReview) {
+      sourceCatalog = apiResult.jobs;
+      catalogWarning = apiResult.warning;
+    } else {
+      return {
+        result: {
+          source: adapterKind,
+          startedAt,
+          completedAt,
+          querySummary: `${target.label} via ${providerLabel} API`,
+          warning: apiResult.warning,
+          inventoryCompleteness:
+            apiResult.warning === null ? "complete" : "partial",
+          jobs: apiResult.jobs.map((posting) =>
+            toProviderAwarePosting({
+              posting,
+              target,
+              collectionMethod,
+              discoveryMethod,
+              intelligence,
+              adapterKind,
+            }),
+          ),
+          agentMetadata: null,
+        },
+        collectionMethod,
+        adapterKind,
+        intelligence,
+      };
+    }
   }
 
   const sessionOpening = input.sessionOpenings.get(adapterKind);
@@ -1161,6 +1180,8 @@ async function collectTargetJobs(input: {
     const result = await ctx.browserRuntime.runAgentDiscovery(adapterKind, {
       // Each source searches in its own tab so several can run at once.
       dedicatedPage: true,
+      ...(sourceCatalog ? { sourceCatalog } : {}),
+      retainAllFound: input.retainAllFound,
       userProfile: input.profile,
       searchPreferences: {
         targetRoles:
@@ -1241,6 +1262,14 @@ async function collectTargetJobs(input: {
     return {
       result: {
         ...result,
+        ...(catalogWarning
+          ? {
+              warning: [catalogWarning, result.warning]
+                .filter(Boolean)
+                .join(" "),
+              inventoryCompleteness: "partial" as const,
+            }
+          : {}),
         jobs: result.jobs.map((posting) =>
           toProviderAwarePosting({
             posting,
@@ -1395,8 +1424,8 @@ export function createWorkspaceDiscoveryMethods(
       settings.aiBehavior ?? {},
     ).jobSearch;
     // Explicit run budget resolution order: campaign limit first (the
-    // campaign-scoped control), then the discovery preferences field, then the
-    // interactive precision default handled inside the budget resolver.
+    // campaign-scoped control), then the discovery preferences field. No
+    // explicit budget means uncapped retention with normal safety ceilings.
     const runJobBudget =
       options.campaign?.runJobBudget ??
       enrichedPreferences.discovery.runJobBudget ??
@@ -1790,7 +1819,8 @@ export function createWorkspaceDiscoveryMethods(
         const discoveryBudget = plannedBudget;
         activeRun = updateTargetExecution(activeRun, target.id, (entry) => ({
           ...entry,
-          requestedJobBudget: discoveryBudget.targetJobCount,
+          requestedJobBudget:
+            runJobBudget == null ? null : discoveryBudget.targetJobCount,
         }));
         const resolvedTargetAdapterKind = resolveAdapterKind(target);
         const targetProviderKey = getDiscoveryProviderKey({
@@ -2042,14 +2072,20 @@ export function createWorkspaceDiscoveryMethods(
             0,
             discoveryBudget.retentionJobCount - checkpointState.budgetedCount,
           );
-          const budgetedNewPostings = selectDiscoveryBudgetPostings({
-            postings: newCandidates,
-            profile,
-            searchPreferences: enrichedPreferences,
-            limit: remainingBudget,
-            preferredCanonicalUrls: [target.startingUrl],
-            assessPosting: assessDiscoveryPosting,
-          });
+          // Default searches keep every eligible listing already collected
+          // (ADR 0024). Only a person-specified result budget may discard one;
+          // normal identity merging still removes actual duplicates.
+          const budgetedNewPostings =
+            runJobBudget == null
+              ? [...newCandidates]
+              : selectDiscoveryBudgetPostings({
+                  postings: newCandidates,
+                  profile,
+                  searchPreferences: enrichedPreferences,
+                  limit: remainingBudget,
+                  preferredCanonicalUrls: [target.startingUrl],
+                  assessPosting: assessDiscoveryPosting,
+                });
           checkpointState.budgetedCount += budgetedNewPostings.length;
           checkpointState.reviewedCount +=
             budgetedNewPostings.length + upgradeCandidates.length;
@@ -2452,6 +2488,7 @@ export function createWorkspaceDiscoveryMethods(
               ? { searchRequest: options.searchRequest }
               : {}),
             targetJobCount: discoveryBudget.targetJobCount,
+            retainAllFound: runJobBudget == null,
             maxSteps: discoveryBudget.maxSteps,
             activeRun,
             emitActivity,
@@ -2480,7 +2517,8 @@ export function createWorkspaceDiscoveryMethods(
           const warning = `Discovery failed for ${target.label}: ${describeUnknownThrowable(error)}`;
           activeRun = completeTargetExecution(activeRun, target.id, failedAt, {
             state: "failed",
-            requestedJobBudget: discoveryBudget.targetJobCount,
+            requestedJobBudget:
+              runJobBudget == null ? null : discoveryBudget.targetJobCount,
             // Failure truth is cumulative: checkpoint flushes may already have
             // committed jobs durably, so the failed execution must report what
             // was actually kept rather than zeros. jobsFound is the distinct
@@ -2740,7 +2778,8 @@ export function createWorkspaceDiscoveryMethods(
           targetCompletedAt,
           {
             state: targetFailed ? "failed" : "completed",
-            requestedJobBudget: discoveryBudget.targetJobCount,
+            requestedJobBudget:
+              runJobBudget == null ? null : discoveryBudget.targetJobCount,
             // Execution truth is cumulative across checkpoint flushes and the
             // final remainder, so a completed source never hides the work its
             // mid-run persistence already committed. Reviewed counts every
@@ -2789,7 +2828,9 @@ export function createWorkspaceDiscoveryMethods(
           terminalState: targetFailed ? "failed" : "completed",
           message: targetFailed
             ? `Could not finish ${target.label}: ${collected.result.warning}`
-            : `Finished ${target.label} (${index + 1}/${targets.length})`,
+            : collected.result.agentMetadata?.phaseCompletionReason
+              ? `${target.label}: ${collected.result.agentMetadata.phaseCompletionReason}`
+              : `Finished ${target.label} (${index + 1}/${targets.length})`,
           url: target.startingUrl,
           // Review-volume semantic on purpose (valid cards merged, duplicates
           // included): the renderer count label derives "unique retained" as
@@ -2844,15 +2885,13 @@ export function createWorkspaceDiscoveryMethods(
             execution: completedExecution,
             occurredAt: targetCompletedAt,
           });
-          const doneTabs = await resolveSourceAccessRequestsAfterCompletedRun(
-            {
-              repository: ctx.repository,
-              runId,
-              target,
-              execution: completedExecution,
-              occurredAt: targetCompletedAt,
-            },
-          );
+          const doneTabs = await resolveSourceAccessRequestsAfterCompletedRun({
+            repository: ctx.repository,
+            runId,
+            target,
+            execution: completedExecution,
+            occurredAt: targetCompletedAt,
+          });
           for (const tab of [...replacedTabs, ...doneTabs]) {
             await ctx
               .closeParkedBrowserTab(resolveAdapterKind(target), tab)

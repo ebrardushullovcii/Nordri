@@ -59,7 +59,7 @@ export function describeApplicationDefaultsSave(
   if (input.resumeTemplateId !== undefined || input.fontPreset !== undefined) {
     return {
       label: "Resume look",
-      savedMessage: "Resume look saved for new tailored resumes.",
+      savedMessage: "Resume look saved.",
       failedFallback:
         "Resume look was not saved. Retry before leaving this page.",
     };

@@ -772,7 +772,12 @@ export function ApplicationsDetailPanelRecoveryActionsSection(props: {
           </p>
         ) : null}
       </section>
-      {!needsUserFinishPath && selectedRun?.mode === "queue_auto" ? (
+      {/* A sent application has no next step in its batch: the batch's
+          recovery list ("Will be prepared", "Some jobs in this run failed")
+          described jobs that were later sent, beside this one's Applied. */}
+      {!needsUserFinishPath &&
+      selectedRun?.mode === "queue_auto" &&
+      visibleApplyResult?.state !== "submitted" ? (
         <section className="surface-card-tint grid gap-4 rounded-(--radius-field) border border-(--surface-panel-border) px-4 py-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="grid gap-1">

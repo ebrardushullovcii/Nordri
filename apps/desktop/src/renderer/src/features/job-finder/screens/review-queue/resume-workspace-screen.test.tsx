@@ -1,7 +1,13 @@
 // @vitest-environment jsdom
 
 import { act } from "react";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
 import type {
   JobFinderResumePreview,
   JobFinderResumeWorkspace,
@@ -2593,7 +2599,7 @@ describe("ResumeWorkspaceScreen", () => {
       },
     );
 
-    it("opens the Assistant without changing a single class on the preview or tools panes", async () => {
+    it("docks the open Assistant beside the panes instead of over them", async () => {
       renderScreen();
 
       await act(async () => {
@@ -2618,11 +2624,17 @@ describe("ResumeWorkspaceScreen", () => {
               ?.className ?? null,
         };
       };
+      const dockSlot = () =>
+        document.querySelector<HTMLElement>(
+          "[data-resume-studio-assistant-dock-slot]",
+        );
 
       const closed = readStudio();
       expect(closed.gridColumns).toBe("preview-tools");
       expect(closed.previewClass).toBeTruthy();
       expect(closed.toolsClass).toBeTruthy();
+      expect(dockSlot()?.className).toContain("hidden");
+      expect(dockSlot()?.childElementCount).toBe(0);
 
       fireEvent.click(
         screen.getByRole("button", { name: /^Open the Assistant/ }),
@@ -2631,30 +2643,37 @@ describe("ResumeWorkspaceScreen", () => {
       const panel = screen.getByRole("dialog", { name: "Assistant" });
       const opened = readStudio();
 
-      // The Assistant used to become a real third grid track, which squeezed
-      // both panes and shifted everything in them. It floats over the studio
-      // now: nothing behind it may react to it.
-      expect(opened).toEqual(closed);
-      expect(document.querySelector("[data-resume-assistant-dock]")).toBeNull();
+      // The floating panel rested over the tools column (Save, template,
+      // editor). Open, it is now a column of its own in the studio body:
+      // never inside the preview/tools grid, never portalled over the page.
+      expect(panel.parentElement).toBe(dockSlot());
       expect(panel.closest("[data-resume-studio-grid-columns]")).toBeNull();
-      expect(
-        document.querySelector<HTMLElement>("[data-resume-guided-edits-open]")
-          ?.parentElement,
-      ).toBe(document.body);
-      // Its own pixel box, sized by the window rather than by a studio column.
-      expect(panel.style.width).toBe(
-        window.innerWidth >= 1280 ? "384px" : "360px",
+      expect(panel.getAttribute("data-resume-guided-edits-docked")).toBe(
+        "true",
       );
+      expect(
+        dockSlot()?.getAttribute("data-resume-studio-assistant-docked"),
+      ).toBe("true");
+      expect(dockSlot()?.className).toContain(
+        "w-(--resume-assistant-dock-width)",
+      );
+      // The panes themselves are untouched; only the grid narrows to make room.
+      expect(opened.previewClass).toBe(closed.previewClass);
+      expect(opened.toolsClass).toBe(closed.toolsClass);
+      expect(opened.gridColumns).toBe(closed.gridColumns);
+      // Docked, it has no drag grip: there is nowhere to drag it to.
+      expect(within(panel).queryByLabelText("Drag the Assistant")).toBeNull();
 
       fireEvent.click(
         screen.getAllByRole("button", { name: "Minimize the Assistant" })[0]!,
       );
 
-      // Minimized back to the launcher pill: still identical.
+      // Minimized back to the launcher: the studio is exactly as it was.
       expect(readStudio()).toEqual(closed);
       expect(
         document.querySelector("[data-resume-guided-edits-panel]"),
       ).toBeNull();
+      expect(dockSlot()?.className).toContain("hidden");
       expect(
         screen.getByRole("button", { name: /^Open the Assistant/ }),
       ).toBeTruthy();

@@ -127,6 +127,173 @@ function looseCandidatesForSavedRoles(): ResumeImportFieldCandidate[] {
 }
 
 describe("loose record fields from the model", () => {
+  test("adopts named singleton skills instead of marking ignored slug keys applied", () => {
+    const seed = createSeed();
+    const profile = createFreshStartCandidateProfile();
+    const skills = ["Guest service", "reservation management"];
+    const candidates = skills.map((name, index) =>
+      ResumeImportFieldCandidateSchema.parse({
+        id: `skill_${index}`,
+        runId,
+        target: { section: "skill", key: `skill_${index}`, recordId: null },
+        label: name,
+        value: { name },
+        evidenceText: name,
+        sourceBlockIds: ["skills_block"],
+        confidence: 0.97,
+        sourceKind: "model_background",
+        resolution: "needs_review",
+        createdAt: "2026-09-26T13:00:00.000Z",
+      }),
+    );
+    const reconciled = reconcileCandidates(
+      profile,
+      seed.searchPreferences,
+      candidates,
+    );
+    const merged = applyResolvedResumeImportCandidatesToWorkspace({
+      profile,
+      searchPreferences: seed.searchPreferences,
+      candidates: reconciled,
+      analysisProviderKind: "openai_compatible",
+      analysisProviderLabel: "Test model",
+      analysisWarnings: [],
+    });
+
+    expect(merged.profile.skills).toEqual(skills);
+    expect(reconciled.every((item) => item.resolution === "auto_applied")).toBe(
+      true,
+    );
+    const repeated = reconcileCandidates(
+      merged.profile,
+      seed.searchPreferences,
+      candidates,
+    );
+    const reapplied = applyResolvedResumeImportCandidatesToWorkspace({
+      profile: merged.profile,
+      searchPreferences: merged.searchPreferences,
+      candidates: repeated,
+      analysisProviderKind: "openai_compatible",
+      analysisProviderLabel: "Test model",
+      analysisWarnings: [],
+    });
+    expect(reapplied.profile.skills).toEqual(skills);
+    expect(repeated.some((item) => item.resolution === "needs_review")).toBe(
+      false,
+    );
+  });
+
+  test("replacement keeps new facts on the same role available for review and acceptance", () => {
+    const seed = createSeed();
+    const role = savedRoles[0]!;
+    const profile = CandidateProfileSchema.parse({
+      ...seed.profile,
+      experiences: [role],
+    });
+    const addedBullet = "Handled 40 guest arrivals per shift.";
+    const candidate = ResumeImportFieldCandidateSchema.parse({
+      ...looseRoleCandidates("same_role", { title: role.title })[0],
+      id: "updated_role",
+      target: { section: "experience", key: "record", recordId: "same_role" },
+      value: { ...role, achievements: [...role.achievements, addedBullet] },
+    });
+    const [review] = reconcileCandidates(profile, seed.searchPreferences, [
+      candidate,
+    ]);
+    expect(review?.resolution).toBe("needs_review");
+    const merged = applyResolvedResumeImportCandidatesToWorkspace({
+      profile,
+      searchPreferences: seed.searchPreferences,
+      candidates: [{ ...review!, resolution: "auto_applied" }],
+      analysisProviderKind: "openai_compatible",
+      analysisProviderLabel: "Test model",
+      analysisWarnings: [],
+    });
+    expect(merged.profile.headline).toBe(profile.headline);
+    expect(merged.profile.workEligibility).toEqual(profile.workEligibility);
+    expect(merged.profile.experiences).toHaveLength(1);
+    expect(merged.profile.experiences[0]?.id).toBe(role.id);
+    expect(merged.profile.experiences[0]?.achievements).toEqual([
+      ...role.achievements,
+      addedBullet,
+    ]);
+    const [repeated] = reconcileCandidates(
+      merged.profile,
+      seed.searchPreferences,
+      [candidate],
+    );
+    expect(repeated?.resolutionReason).toBe("already_matches_workspace_value");
+  });
+
+  test("replacement keeps a newly read qualification year on the same school available for review", () => {
+    const seed = createSeed();
+    const education = {
+      id: "school",
+      schoolName: "Example Community College",
+      degree: "Certificate in Hospitality Operations",
+    };
+    const profile = CandidateProfileSchema.parse({
+      ...seed.profile,
+      education: [education],
+    });
+    const candidate = ResumeImportFieldCandidateSchema.parse({
+      ...looseRoleCandidates("school", { title: "unused" })[0],
+      id: "updated_school",
+      target: { section: "education", key: "record", recordId: "school" },
+      sourceKind: "model_background",
+      evidenceText: "Certificate in Hospitality Operations | Example Community College | 2019",
+      value: { ...education, endDate: "2019" },
+    });
+    const [review] = reconcileCandidates(profile, seed.searchPreferences, [
+      candidate,
+    ]);
+    expect(review?.resolution).toBe("needs_review");
+    const merged = applyResolvedResumeImportCandidatesToWorkspace({
+      profile,
+      searchPreferences: seed.searchPreferences,
+      candidates: [{ ...review!, resolution: "auto_applied" }],
+      analysisProviderKind: "openai_compatible",
+      analysisProviderLabel: "Test model",
+      analysisWarnings: [],
+    });
+    expect(merged.profile.education).toHaveLength(1);
+    expect(merged.profile.education[0]).toMatchObject({
+      ...education,
+      endDate: "2019",
+    });
+  });
+
+  test("an identical or partial reread does not ask to remove saved role details", () => {
+    const seed = createSeed();
+    const role = savedRoles[0]!;
+    const profile = CandidateProfileSchema.parse({
+      ...seed.profile,
+      experiences: [role],
+    });
+    for (const achievements of [
+      role.achievements,
+      role.achievements.slice(0, 1),
+      [],
+    ]) {
+      const candidate = ResumeImportFieldCandidateSchema.parse({
+        ...looseRoleCandidates("same_role", { title: role.title })[0],
+        id: "partial_role",
+        target: { section: "experience", key: "record", recordId: "same_role" },
+        value: {
+          ...role,
+          achievements,
+          summary: null,
+          location: null,
+          skills: [],
+        },
+      });
+      const [result] = reconcileCandidates(profile, seed.searchPreferences, [
+        candidate,
+      ]);
+      expect(result?.resolutionReason).toBe("already_matches_workspace_value");
+    }
+  });
+
   test("importing the same resume again asks nothing about roles already saved", () => {
     const seed = createSeed();
     const profile = CandidateProfileSchema.parse({

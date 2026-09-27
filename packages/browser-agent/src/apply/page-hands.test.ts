@@ -112,6 +112,12 @@ describe("buildApplyFormObservation radio groups", () => {
     expect(observation.controls[0]?.choiceGroupKey).not.toBe(
       observation.controls[2]?.choiceGroupKey,
     );
+    expect(observation.controls.map((control) => control.options)).toEqual([
+      ["Yes", "No"],
+      ["Yes", "No"],
+      ["Yes", "No"],
+      ["Yes", "No"],
+    ]);
   });
 
   test("does not merge unnamed radios only because their wording matches", () => {
@@ -136,6 +142,10 @@ describe("buildApplyFormObservation radio groups", () => {
     expect(observation.controls.map((control) => control.answered)).toEqual([
       true,
       false,
+    ]);
+    expect(observation.controls.map((control) => control.options)).toEqual([
+      ["Yes"],
+      ["Yes"],
     ]);
   });
 });

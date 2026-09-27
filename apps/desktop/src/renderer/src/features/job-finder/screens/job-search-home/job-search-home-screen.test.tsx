@@ -382,6 +382,34 @@ describe("JobSearchHomeScreen", () => {
     resolveApply();
   });
 
+  it("says why a press on Home did nothing, with Dismiss, instead of staying silent", () => {
+    const refusal = {
+      message:
+        "Nothing was started. The resume for 'Cedar Frontend Engineer' has a line waiting for your decision. Open it, keep or change the line, then apply.",
+    };
+    const { rerender } = render(
+      <JobSearchHomeScreen
+        {...baseProps()}
+        actionState={refusal}
+        workspace={workspace()}
+      />,
+    );
+    const note = screen.getByTestId("home-action-message");
+    expect(note.getAttribute("role")).toBe("status");
+    expect(note.textContent).toContain("Nothing was started.");
+    fireEvent.click(within(note).getByRole("button", { name: "Dismiss" }));
+    expect(screen.queryByTestId("home-action-message")).toBeNull();
+    // The same refusal from a second press is a new message and shows again.
+    rerender(
+      <JobSearchHomeScreen
+        {...baseProps()}
+        actionState={{ ...refusal }}
+        workspace={workspace()}
+      />,
+    );
+    expect(screen.getByTestId("home-action-message")).toBeTruthy();
+  });
+
   it("names the saved mode and changes it with one press on the Applying settings", () => {
     const props = baseProps();
     render(
@@ -580,5 +608,128 @@ describe("listCurrentUnreadNotifications", () => {
       } as unknown as JobFinderWorkspaceSnapshot,
     );
     expect(kept.map((entry) => entry.id)).toEqual(["n_open", "n_src"]);
+  });
+
+  it("drops a job's failure note once a newer attempt for that job started", () => {
+    const note = {
+      id: "n_failed_willow",
+      campaignId: "c",
+      kind: "blocked_work",
+      title: "Failed: Willow",
+      body: "The prepared application page is no longer open.",
+      createdAt: "2026-09-27T00:24:18.426Z",
+      unread: true,
+      readAt: null,
+      jobId: "job_willow",
+      sourceTargetId: null,
+    } as unknown as CampaignNotification;
+    const workspace = (startedAt: readonly string[]) =>
+      ({
+        applicationRecords: [
+          { jobId: "job_willow", status: "ready_for_review", lastAttemptState: "failed" },
+        ],
+        applyJobResults: startedAt.map((at) => ({ jobId: "job_willow", startedAt: at })),
+      }) as unknown as JobFinderWorkspaceSnapshot;
+
+    // Only the attempt the note is about: it stays.
+    expect(
+      listCurrentUnreadNotifications(
+        [note],
+        workspace(["2026-09-27T00:14:47.900Z"]),
+      ),
+    ).toHaveLength(1);
+    // A newer attempt started after the note: the note is over.
+    expect(
+      listCurrentUnreadNotifications(
+        [note],
+        workspace(["2026-09-27T00:14:47.900Z", "2026-09-27T00:26:00.000Z"]),
+      ),
+    ).toEqual([]);
+  });
+
+  it("drops a run's failure note once every job of that run was tried again", () => {
+    const runNote = {
+      id: "n_campaign_default_failed_apply_run_apply_run_1",
+      campaignId: "campaign_default",
+      kind: "blocked_work",
+      title: "Failed: Application run",
+      body: "The dedicated browser could not load this employer page.",
+      createdAt: "2026-09-27T01:07:16.014Z",
+      unread: true,
+      readAt: null,
+      jobId: null,
+      sourceTargetId: null,
+    } as unknown as CampaignNotification;
+    const workspace = (startedAt: Record<string, string>) =>
+      ({
+        applicationRecords: [],
+        applyRuns: [{ id: "apply_run_1", jobIds: ["job_a", "job_b"] }],
+        applyJobResults: Object.entries(startedAt).map(([jobId, at]) => ({
+          jobId,
+          startedAt: at,
+        })),
+      }) as unknown as JobFinderWorkspaceSnapshot;
+
+    // Only one of the run's two jobs was tried again: the note stays.
+    expect(
+      listCurrentUnreadNotifications(
+        [runNote],
+        workspace({
+          job_a: "2026-09-27T01:10:00.000Z",
+          job_b: "2026-09-27T01:06:00.000Z",
+        }),
+      ),
+    ).toHaveLength(1);
+    expect(
+      listCurrentUnreadNotifications(
+        [runNote],
+        workspace({
+          job_a: "2026-09-27T01:10:00.000Z",
+          job_b: "2026-09-27T01:10:00.000Z",
+        }),
+      ),
+    ).toEqual([]);
+  });
+
+  it("drops a source's sign-in note once that sign-in resolved", () => {
+    const note = {
+      id: "n_blocked_src",
+      campaignId: "c",
+      kind: "blocked_work",
+      title: "Blocked: Job source localhost/authboard",
+      body: "Sign in from Needs you; the search carries on by itself.",
+      createdAt: "2026-09-26T22:10:06.820Z",
+      unread: true,
+      readAt: null,
+      jobId: null,
+      sourceTargetId: "target_auth",
+    } as unknown as CampaignNotification;
+    const step = (state: string, resolvedAt: string | null) => ({
+      scope: { type: "discovery_source", targetId: "target_auth" },
+      state,
+      resolvedAt,
+    });
+    const workspace = (steps: unknown[]) =>
+      ({
+        applicationRecords: [],
+        userActionRequests: steps,
+      }) as unknown as JobFinderWorkspaceSnapshot;
+
+    expect(
+      listCurrentUnreadNotifications(
+        [note],
+        workspace([step("resolved", "2026-09-26T22:10:59.041Z")]),
+      ),
+    ).toEqual([]);
+    // Still waiting for the sign-in: the note stays.
+    expect(
+      listCurrentUnreadNotifications(
+        [note],
+        workspace([
+          step("resolved", "2026-09-26T22:10:59.041Z"),
+          step("pending", null),
+        ]),
+      ),
+    ).toHaveLength(1);
   });
 });

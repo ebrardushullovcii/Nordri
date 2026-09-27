@@ -36,6 +36,12 @@ function config(): AgentConfig {
 }
 
 describe("move reviewer", () => {
+  test("does not give the move reviewer a hidden default result cap", () => {
+    const goal = describeSearchGoal({ ...config(), retainAllFound: true });
+    expect(goal).toContain("Find all suitable current job postings");
+    expect(goal).not.toContain("up to 10");
+  });
+
   test("hands the goal, the addresses, and the reason to the model and returns its decision", async () => {
     const chatWithTools = vi.fn<LLMClient["chatWithTools"]>(() =>
       Promise.resolve({

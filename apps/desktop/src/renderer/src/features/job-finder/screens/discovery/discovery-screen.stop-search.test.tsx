@@ -267,7 +267,7 @@ describe("DiscoveryScreen stop search action", () => {
       ).toBe("true");
       expect(
         screen
-          .getByRole("button", { name: "Recent only" })
+          .getByRole("button", { name: "Prefer recent" })
           .hasAttribute("disabled"),
       ).toBe(true);
 
@@ -280,7 +280,7 @@ describe("DiscoveryScreen stop search action", () => {
       expect(screen.queryByTestId("discovery-search-progress")).toBeNull();
       expect(
         screen
-          .getByRole("button", { name: "Recent only" })
+          .getByRole("button", { name: "Prefer recent" })
           .hasAttribute("disabled"),
       ).toBe(false);
       expect(

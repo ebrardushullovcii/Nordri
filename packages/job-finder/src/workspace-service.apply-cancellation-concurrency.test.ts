@@ -15,7 +15,7 @@ import type {
   BrowserSessionRuntime,
   ExecuteApplicationFlowInput,
 } from "@unemployed/browser-runtime";
-import { describe, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 
 import {
   createBrowserRuntime,
@@ -200,6 +200,8 @@ function createConsentQueueHarness(options?: {
   });
   return { ...harness, flowedJobIds };
 }
+
+afterEach(() => vi.unstubAllEnvs());
 
 describe("apply run cancellation and application record concurrency", () => {
   test("job-only preparation rejects ambiguous sibling application records", async () => {
@@ -927,7 +929,9 @@ describe("apply run cancellation and application record concurrency", () => {
       state: "cancelled",
       blockedJobs: 0,
       submittedJobs: 0,
-      pendingJobs: resolvedRun?.pendingJobs,
+      // The ready form is retained; the cancelled missing-answer step is closed.
+      pendingJobs: 1,
+      failedJobs: 1,
     });
     expect(run?.completedAt).not.toBeNull();
 
@@ -1093,6 +1097,8 @@ describe("apply run cancellation and application record concurrency", () => {
   });
 
   test("a failed consent relaunch parks the run instead of leaving it falsely running", async () => {
+    // Keep the second job queued to exercise the relaunch failure itself.
+    vi.stubEnv("UNEMPLOYED_APPLICATION_PREPARATION_CONCURRENCY", "1");
     const seed = createSeed();
     stageReadyTailoredJob(seed, "job_ready", "linkedin_signal_ready", {
       filePath: "/tmp/job-ready-resume.pdf",

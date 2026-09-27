@@ -20,6 +20,7 @@ import {
   hasDiscoveryRunReportCounts,
 } from "../../lib/discovery-run-count-label";
 import { applyRunJobNeedsPreparation } from "../../screens/applications/applications-detail-panel-helpers";
+import { WAITING_FOR_BROWSER_TAB_SUMMARY } from "../../screens/applications/applications-recovery-state";
 import type { TailoredDraftPreparationViewState } from "../../screens/review-queue/review-queue-status";
 import {
   DISCOVERY_RUN_STATE_LABELS,
@@ -639,9 +640,42 @@ function buildApplyRunTask(
     return null;
   }
 
-  const resultsForRun = (input.workspace.applyJobResults ?? []).filter(
-    (result) => result.runId === run.id,
+  const allResults = input.workspace.applyJobResults ?? [];
+  const resultsForRun = allResults.filter((result) => result.runId === run.id);
+  // A job this run failed or stopped on, and that a later run took up again
+  // (a Try again, or a handed-back application carried on), is that later
+  // run's now. Counting it here said "1 need attention" and offered
+  // "Prepare remaining jobs" while Needs you was empty and nothing remained.
+  const supersededResultIds = new Set(
+    resultsForRun
+      .filter((result) =>
+        allResults.some(
+          (other) =>
+            other.runId !== run.id &&
+            other.jobId === result.jobId &&
+            other.startedAt > result.startedAt,
+        ),
+      )
+      .map((result) => result.id),
   );
+  const supersededJobIds = new Set(
+    resultsForRun
+      .filter((result) => supersededResultIds.has(result.id))
+      .map((result) => result.jobId),
+  );
+  const supersededCount = (state: string) =>
+    resultsForRun.filter(
+      (result) => result.state === state && supersededResultIds.has(result.id),
+    ).length;
+  const currentJobEnded = resultsForRun.some(
+    (result) =>
+      result.jobId === run.currentJobId &&
+      ["failed", "submitted", "awaiting_review", "blocked", "skipped"].includes(
+        result.state,
+      ),
+  );
+  const failedJobs = Math.max(0, run.failedJobs - supersededCount("failed"));
+  const blockedJobs = Math.max(0, run.blockedJobs - supersededCount("blocked"));
   const parked =
     input.workspace.activityControl?.paused &&
     input.workspace.activityControl.pauseBehavior === "finish_current" &&
@@ -695,10 +729,12 @@ function buildApplyRunTask(
       : Math.max(0, run.totalJobs - run.pendingJobs);
   // Same predicate Applications uses to build its "Prepare remaining jobs"
   // target list, so the two surfaces cannot disagree about what is left.
-  const applyRecoveryJobIds = run.jobIds.filter((jobId) =>
-    applyRunJobNeedsPreparation(
-      resultsForRun.find((candidate) => candidate.jobId === jobId),
-    ),
+  const applyRecoveryJobIds = run.jobIds.filter(
+    (jobId) =>
+      !supersededJobIds.has(jobId) &&
+      applyRunJobNeedsPreparation(
+        resultsForRun.find((candidate) => candidate.jobId === jobId),
+      ),
   );
   const recordsById = new Map(
     input.workspace.applicationRecords.map((record) => [record.id, record]),
@@ -747,6 +783,25 @@ function buildApplyRunTask(
       (duration): duration is number => duration !== null && duration > 0,
     );
 
+  // A job that holds its place but has no browser tab yet is waiting, not
+  // being worked on: Home read "Applying: <it> · Working through
+  // application" while it waited for the person to free a tab.
+  const activeResults = resultsForRun.filter((result) =>
+    ["filling", "question_capture", "submitting"].includes(result.state),
+  );
+  const isWaitingForTab = (result: (typeof resultsForRun)[number]) =>
+    result.summary === WAITING_FOR_BROWSER_TAB_SUMMARY;
+  const workingResult = activeResults.find(
+    (result) => !isWaitingForTab(result),
+  );
+  const waitingForTabResult =
+    run.state === "running" && !workingResult
+      ? resultsForRun.find(
+          (result) =>
+            isWaitingForTab(result) &&
+            ["planned", "filling", "question_capture"].includes(result.state),
+        )
+      : undefined;
   return {
     id: run.id,
     kind: "apply",
@@ -754,6 +809,8 @@ function buildApplyRunTask(
     status,
     stageLabel: parked
       ? "Paused before the next application"
+      : waitingForTabResult
+        ? WAITING_FOR_BROWSER_TAB_SUMMARY
       : run.state === "draft"
         ? "Ready to start"
         : run.state === "awaiting_submit_approval"
@@ -776,7 +833,7 @@ function buildApplyRunTask(
               : run.state === "paused_for_consent"
                 ? "Waiting for your consent"
                 : run.state === "completed"
-                  ? run.failedJobs > 0 || run.blockedJobs > 0
+                  ? failedJobs > 0 || blockedJobs > 0
                     ? "Some applications need attention"
                     : run.totalJobs > 0 && run.submittedJobs === run.totalJobs
                       ? "Applied"
@@ -791,19 +848,23 @@ function buildApplyRunTask(
         : // The job being worked right now. After a Resume the run record's
           // current job still named the one finished before the pause, so
           // Home read "Applying: <that job>" while the next one filled.
-          (resultsForRun.find((result) =>
-            ["filling", "question_capture", "submitting"].includes(
-              result.state,
-            ),
-          )?.jobId ?? run.currentJobId)) ??
+          (workingResult?.jobId ??
+          waitingForTabResult?.jobId ??
+          // Between two jobs the run's current job can be one that already
+          // ended (one the person took over read "Applying: <it>" while
+          // the batch went on); name the next job waiting instead.
+          (currentJobEnded
+            ? resultsForRun.find((result) => result.state === "planned")?.jobId
+            : null) ??
+          run.currentJobId)) ??
         run.jobIds[0] ??
         null,
     ),
     countLabel: [
       `${countApplicationLedgerEntries(input.workspace.applicationRecords)} applications`,
       `${finishedJobs} of ${run.totalJobs} application tasks finished`,
-      run.blockedJobs > 0 ? `${run.blockedJobs} blocked` : null,
-      run.failedJobs > 0 ? `${run.failedJobs} need attention` : null,
+      blockedJobs > 0 ? `${blockedJobs} blocked` : null,
+      failedJobs > 0 ? `${failedJobs} need attention` : null,
       awaitingDecision
         ? "Waiting on you"
         : stoppedBySafeguard
@@ -896,13 +957,15 @@ function buildTailoredDraftsTask(
     kind: "tailored_drafts",
     title: "Tailored drafts",
     status: "active",
-    stageLabel: "Preparing shortlisted resumes",
+    stageLabel: preparation.stopRequested
+      ? "Stopping · finishing the resumes already started"
+      : "Preparing shortlisted resumes",
     sourceLabel: "Shortlisted jobs",
     countLabel: `${completedCount} of ${totalCount} prepared${
       failedCount > 0 ? ` · ${failedCount} failed` : ""
     }`,
     historyEstimateLabel: null,
-    canCancel: true,
+    canCancel: !preparation.stopRequested,
     cancelKind: "tailored_drafts",
     resumeRoute: "/job-finder/review-queue",
     resumeActionLabel: "Open Shortlisted",

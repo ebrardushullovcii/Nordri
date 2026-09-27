@@ -67,15 +67,22 @@ function normalizeAlternatives(value: unknown): ResumeImportJsonValue[] {
     return value as ResumeImportJsonValue[];
   }
 
-  return value === null || value === undefined ? [] : [value as ResumeImportJsonValue];
+  return value === null || value === undefined
+    ? []
+    : [value as ResumeImportJsonValue];
 }
 
-function normalizeTarget(value: unknown): ResumeImportFieldCandidateDraft["target"] | undefined {
+function normalizeTarget(
+  value: unknown,
+): ResumeImportFieldCandidateDraft["target"] | undefined {
   if (value && typeof value === "object" && !Array.isArray(value)) {
     const record = value as Record<string, unknown>;
-    const sectionResult = ResumeImportTargetSectionSchema.safeParse(record.section);
+    const sectionResult = ResumeImportTargetSectionSchema.safeParse(
+      record.section,
+    );
     const key = typeof record.key === "string" ? record.key.trim() : "";
-    const recordId = typeof record.recordId === "string" ? record.recordId.trim() : null;
+    const recordId =
+      typeof record.recordId === "string" ? record.recordId.trim() : null;
 
     if (sectionResult.success && key) {
       return {
@@ -95,7 +102,11 @@ function normalizeTarget(value: unknown): ResumeImportFieldCandidateDraft["targe
     return undefined;
   }
 
-  const delimiter = normalized.includes("|") ? "|" : normalized.includes(":") ? ":" : ".";
+  const delimiter = normalized.includes("|")
+    ? "|"
+    : normalized.includes(":")
+      ? ":"
+      : ".";
   const parts = normalized
     .split(delimiter)
     .map((part) => part.trim())
@@ -138,9 +149,10 @@ function normalizeCandidate(
     return undefined;
   }
 
-  const label = typeof record.label === "string" && record.label.trim()
-    ? record.label.trim()
-    : `${target.section}.${target.key}${target.recordId ? `.${target.recordId}` : ""}`;
+  const label =
+    typeof record.label === "string" && record.label.trim()
+      ? record.label.trim()
+      : `${target.section}.${target.key}${target.recordId ? `.${target.recordId}` : ""}`;
   const confidence = normalizeConfidence(record.confidence) ?? 0.5;
 
   return {
@@ -148,8 +160,10 @@ function normalizeCandidate(
     label,
     value: (record.value ?? null) as ResumeImportJsonValue,
     normalizedValue: (record.normalizedValue ?? null) as ResumeImportJsonValue,
-    valuePreview: typeof record.valuePreview === "string" ? record.valuePreview : null,
-    evidenceText: typeof record.evidenceText === "string" ? record.evidenceText : null,
+    valuePreview:
+      typeof record.valuePreview === "string" ? record.valuePreview : null,
+    evidenceText:
+      typeof record.evidenceText === "string" ? record.evidenceText : null,
     sourceBlockIds: toStringArray(record.sourceBlockIds),
     confidence,
     confidenceBreakdown: null,
@@ -170,7 +184,9 @@ function normalizeCandidate(
   };
 }
 
-function buildStageInstructions(stage: ExtractResumeImportStageInput["stage"]): string {
+export function buildResumeImportStageInstructions(
+  stage: ExtractResumeImportStageInput["stage"],
+): string {
   switch (stage) {
     case "identity_summary":
       return [
@@ -181,7 +197,7 @@ function buildStageInstructions(stage: ExtractResumeImportStageInput["stage"]): 
         "Prefer literal values from the document over inferred rewrites.",
         "Never use a section heading like ABOUT ME, SKILLS, or WORK EXPERIENCE as a person name.",
         "Only return currentLocation when the blocks show an address or a short literal location label, not a narrative sentence.",
-        "Each candidate target must be an object like {\"section\":\"identity\",\"key\":\"fullName\",\"recordId\":null}, not a string.",
+        'Each candidate target must be an object like {"section":"identity","key":"fullName","recordId":null}, not a string.',
       ].join(" ");
     case "experience":
       return [
@@ -199,14 +215,15 @@ function buildStageInstructions(stage: ExtractResumeImportStageInput["stage"]): 
         "Include skills only when that specific role header, summary, or achievement explicitly names the skill or directly demonstrates a skill that is also declared in the resume skills section.",
         "Do not copy unrelated global skills onto every experience record.",
         "Do not create an experience record unless the blocks contain an explicit role header or date range.",
-        "For record candidates, target must be an object like {\"section\":\"experience\",\"key\":\"record\",\"recordId\":\"experience_1\"}.",
+        'For record candidates, target must be an object like {"section":"experience","key":"record","recordId":"experience_1"}.',
       ].join(" ");
     case "background":
       return [
         "Return only background candidates for skills, education, certifications, links, projects, and languages.",
         "Valid target sections: skill, education, certification, link, project, language.",
-        "Use target {\"section\":\"skill\",\"key\":\"skills\",\"recordId\":null} for a complete skills array, and optional skillGroups.coreSkills, skillGroups.tools, skillGroups.languagesAndFrameworks, skillGroups.softSkills, or skillGroups.highlightedSkills for grouped skill arrays.",
-        "Use target {\"section\":\"education\",\"key\":\"record\",\"recordId\":\"education_1\"} for each education object with schoolName, degree, fieldOfStudy, location, startDate, endDate, and summary fields.",
+        'Use target {"section":"skill","key":"skills","recordId":null} for a complete skills array, and optional skillGroups.coreSkills, skillGroups.tools, skillGroups.languagesAndFrameworks, skillGroups.softSkills, or skillGroups.highlightedSkills for grouped skill arrays.',
+        'Use target {"section":"education","key":"record","recordId":"education_1"} for each education object with schoolName, degree, fieldOfStudy, location, startDate, endDate, and summary fields.',
+        "Preserve the named qualification and completion date or year in degree and endDate; leave dates absent from the document null rather than inventing months or years.",
         "Do not emit education.institution, education.startDate, education.graduationDate, or education.education scalar targets; fold those values into an education record object.",
         "Use key 'record' for certification, link, project, and language object records.",
       ].join(" ");
@@ -249,7 +266,7 @@ export async function extractOpenAiCompatibleResumeImportStage(input: {
       'Example candidate: {"target":{"section":"identity","key":"fullName","recordId":null},"label":"Full name","value":"Jane Doe","normalizedValue":"Jane Doe","evidenceText":"Jane Doe","sourceBlockIds":["block_1"],"confidence":0.98,"notes":[],"alternatives":[]}',
       "Only use sourceBlockIds that exist in the input block list.",
       "Confidence must be a number between 0 and 1.",
-      buildStageInstructions(input.stageInput.stage),
+      buildResumeImportStageInstructions(input.stageInput.stage),
       "Abstain instead of guessing.",
     ].join(" "),
     {
@@ -287,9 +304,8 @@ export async function extractOpenAiCompatibleResumeImportStage(input: {
       candidates: Array.isArray(normalizedPayload.candidates)
         ? normalizedPayload.candidates
             .map((candidate) => normalizeCandidate(candidate))
-            .filter(
-              (candidate): candidate is ResumeImportFieldCandidateDraft =>
-                Boolean(candidate),
+            .filter((candidate): candidate is ResumeImportFieldCandidateDraft =>
+              Boolean(candidate),
             )
             .map((candidate) => ({
               ...candidate,
@@ -332,32 +348,43 @@ export async function adjudicateOpenAiCompatibleResumeImportCandidates(input: {
     ].join(" "),
     {
       existingProfile: input.adjudicationInput.existingProfile,
-      existingSearchPreferences: input.adjudicationInput.existingSearchPreferences,
+      existingSearchPreferences:
+        input.adjudicationInput.existingSearchPreferences,
       documentBundle: {
         id: input.adjudicationInput.documentBundle.id,
         sourceFileKind: input.adjudicationInput.documentBundle.sourceFileKind,
         quality: input.adjudicationInput.documentBundle.quality ?? null,
         warnings: input.adjudicationInput.documentBundle.warnings,
-        blocks: input.adjudicationInput.documentBundle.blocks.slice(0, ADJUDICATION_BLOCK_LIMIT).map((block) => ({
-          id: block.id,
-          pageNumber: block.pageNumber,
-          sectionHint: block.sectionHint,
-          kind: block.kind,
-          text: block.text,
-        })),
+        blocks: input.adjudicationInput.documentBundle.blocks
+          .slice(0, ADJUDICATION_BLOCK_LIMIT)
+          .map((block) => ({
+            id: block.id,
+            pageNumber: block.pageNumber,
+            sectionHint: block.sectionHint,
+            kind: block.kind,
+            text: block.text,
+          })),
       },
-      candidates: input.adjudicationInput.candidates.slice(0, ADJUDICATION_CANDIDATE_LIMIT),
+      candidates: input.adjudicationInput.candidates.slice(
+        0,
+        ADJUDICATION_CANDIDATE_LIMIT,
+      ),
     },
     { timeoutMs: input.timeoutMs },
   );
 
   const truncationWarnings: string[] = [];
-  if (input.adjudicationInput.documentBundle.blocks.length > ADJUDICATION_BLOCK_LIMIT) {
+  if (
+    input.adjudicationInput.documentBundle.blocks.length >
+    ADJUDICATION_BLOCK_LIMIT
+  ) {
     truncationWarnings.push(
       `Adjudication input truncated: ${input.adjudicationInput.documentBundle.blocks.length} blocks (>${ADJUDICATION_BLOCK_LIMIT} limit)`,
     );
   }
-  if (input.adjudicationInput.candidates.length > ADJUDICATION_CANDIDATE_LIMIT) {
+  if (
+    input.adjudicationInput.candidates.length > ADJUDICATION_CANDIDATE_LIMIT
+  ) {
     truncationWarnings.push(
       `Adjudication input truncated: ${input.adjudicationInput.candidates.length} candidates (>${ADJUDICATION_CANDIDATE_LIMIT} limit)`,
     );
@@ -370,9 +397,8 @@ export async function adjudicateOpenAiCompatibleResumeImportCandidates(input: {
   const candidates = Array.isArray(normalizedPayload.candidates)
     ? normalizedPayload.candidates
         .map((candidate) => normalizeCandidate(candidate))
-        .filter(
-          (candidate): candidate is ResumeImportFieldCandidateDraft =>
-            Boolean(candidate),
+        .filter((candidate): candidate is ResumeImportFieldCandidateDraft =>
+          Boolean(candidate),
         )
         .map((candidate) => ({
           ...candidate,

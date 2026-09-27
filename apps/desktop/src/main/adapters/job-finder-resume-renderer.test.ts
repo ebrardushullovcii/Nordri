@@ -459,7 +459,9 @@ describe("job finder resume renderer", () => {
     expect(html).toContain("header-executive");
     expect(html).toContain("meta-pill-list");
     expect(html).toContain("section-dense-chronology");
-    expect(html).toContain("'Space Grotesk', 'Segoe UI', sans-serif");
+    expect(html).toContain(
+      "'Space Grotesk', 'Trebuchet MS', 'Segoe UI', sans-serif",
+    );
     expect(html).toContain("grid-template-columns: 1fr;");
     expect(html).toContain("break-inside: avoid;");
   });
@@ -695,6 +697,30 @@ describe("job finder resume renderer", () => {
     }
   });
 
+  test("keeps long contact tokens within the page and repeats existing template margins in print", () => {
+    const margins = {
+      classic: "0.52in 0.62in",
+      compact: "0.44in 0.54in",
+      modern: "0.54in 0.64in",
+      technical: "0.48in 0.58in",
+      projects: "0.56in 0.66in",
+      credentials: "0.52in 0.64in",
+      longform: "0.4in 0.52in",
+      pivot: "0.52in 0.64in",
+    };
+    for (const template of listLocalResumeTemplates()) {
+      const html = renderTemplate(template.id);
+      const family = /class="page page-([a-z]+)/.exec(html)?.[1];
+      expect(family).toBeDefined();
+      const margin = margins[family as keyof typeof margins];
+      expect(html).toContain(`@page resume-${family} { margin: ${margin}; }`);
+      expect(html).toContain(`.page-${family} { page: resume-${family}; }`);
+      expect(html).toContain("overflow-wrap: anywhere;");
+      expect(html).toContain(".page * { min-width: 0; }");
+      expect(html).toContain(".page { width: auto; min-height: 0; padding: 0;");
+    }
+  });
+
   test("keeps exported resumes flat, typeset, and print-ready across every family", () => {
     for (const template of listLocalResumeTemplates()) {
       const html = renderTemplate(template.id);
@@ -915,6 +941,23 @@ describe("job finder resume renderer narrative presentation", () => {
     expect(html).toContain("Led the data platform.</p>");
     expect(html).toContain("<li>Migrated 40 pipelines to Airflow.</li>");
     expect(html).toContain("<li>Reduced on-call pages by half.</li>");
+  });
+
+  test("preserves terminal punctuation from non-Latin scripts", () => {
+    const texts = [
+      "顧客対応と資料管理を担当しました。",
+      "负责客户支持和文档管理。",
+      "هل راجعت السجلات؟",
+      "محفوظ ریکارڈ۔",
+    ];
+    const html = renderTemplate(
+      "classic_ats",
+      withEntrySummary(
+        "Owns the platform.",
+        texts.map((text, index) => ({ id: `bullet_${index}`, text })),
+      ),
+    );
+    for (const text of texts) expect(html).toContain(`<li>${text}</li>`);
   });
 
   test("normalizes split .NET tokens and missing list spacing in bullets", () => {

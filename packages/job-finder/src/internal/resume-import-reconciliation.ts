@@ -493,7 +493,8 @@ function normalizeRecordCandidateValue(
       // silently dropping them into an empty card.
       const rawEndDate = readAliasString(value, ["endDate", "end", "to"]);
       const endDateSaysCurrent =
-        rawEndDate !== null && /^(?:present|current|now|ongoing)$/i.test(rawEndDate.trim());
+        rawEndDate !== null &&
+        /^(?:present|current|now|ongoing)$/i.test(rawEndDate.trim());
       return {
         companyName: readAliasString(value, [
           "companyName",
@@ -503,7 +504,12 @@ function normalizeRecordCandidateValue(
           "organisation",
         ]),
         companyUrl: readAliasString(value, ["companyUrl", "companyWebsite"]),
-        title: readAliasString(value, ["title", "role", "position", "jobTitle"]),
+        title: readAliasString(value, [
+          "title",
+          "role",
+          "position",
+          "jobTitle",
+        ]),
         employmentType: readAliasString(value, ["employmentType", "type"]),
         location: readAliasString(value, ["location"]),
         workMode: toStringArray(value.workMode ?? value.workModes),
@@ -526,7 +532,9 @@ function normalizeRecordCandidateValue(
             value.responsibilities ??
             value.accomplishments,
         ),
-        skills: toStringArray(value.skills ?? value.technologies ?? value.tools),
+        skills: toStringArray(
+          value.skills ?? value.technologies ?? value.tools,
+        ),
         domainTags: toStringArray(
           value.domainTags ?? value.domains ?? value.industries,
         ),
@@ -701,6 +709,28 @@ function normalizeRecordCandidateValue(
 function normalizeRecordCandidateForReconciliation(
   candidate: ResumeImportFieldCandidate,
 ): ResumeImportFieldCandidate {
+  // Some providers emit one named skill object per candidate. Normalize it
+  // to the supported single-skill record before ranking and applying it;
+  // otherwise a slug key can be marked applied without reaching the profile.
+  if (
+    candidate.target.section === "skill" &&
+    isObject(candidate.value) &&
+    typeof candidate.value.name === "string" &&
+    candidate.value.name.trim()
+  ) {
+    const value = candidate.value.name.trim();
+    return ResumeImportFieldCandidateSchema.parse({
+      ...candidate,
+      target: {
+        ...candidate.target,
+        key: "record",
+        recordId: candidate.target.recordId ?? candidate.target.key,
+      },
+      value,
+      normalizedValue: value,
+      valuePreview: value,
+    });
+  }
   if (!isRecordTarget(candidate)) {
     return candidate;
   }
@@ -1036,7 +1066,9 @@ function enrichRecordCandidateFromSiblings(
       const current = merged[key];
       if (Array.isArray(current) && Array.isArray(siblingValue)) {
         const union = uniqueStrings([
-          ...current.filter((entry): entry is string => typeof entry === "string"),
+          ...current.filter(
+            (entry): entry is string => typeof entry === "string",
+          ),
           ...siblingValue.filter(
             (entry): entry is string => typeof entry === "string",
           ),
@@ -1075,7 +1107,9 @@ function enrichRecordCandidateFromSiblings(
   });
 }
 
-function hasMeaningfulRecordValue(candidate: ResumeImportFieldCandidate): boolean {
+function hasMeaningfulRecordValue(
+  candidate: ResumeImportFieldCandidate,
+): boolean {
   if (
     !isRecordTarget(candidate) ||
     candidate.target.section !== "education" ||
@@ -1576,19 +1610,58 @@ function listCandidateMatchesWorkspace(
   }
 }
 
+// Record identity means the same role or school, not the same saved facts.
+// An import may omit saved details, but new or changed details need review.
+function recordDetailsAlreadySaved(
+  saved: Record<string, unknown>,
+  incoming: ResumeImportFieldCandidate["value"],
+): boolean {
+  if (!isObject(incoming)) return false;
+  return Object.entries(incoming).every(([key, value]) => {
+    if (key === "id" || key === "isDraft" || value === null) return true;
+    if (Array.isArray(value)) {
+      const savedValues = new Set(toStringArray(saved[key]).map(normalizeText));
+      return toStringArray(value).every((item) =>
+        savedValues.has(normalizeText(item)),
+      );
+    }
+    if (typeof value === "string") {
+      if (!value.trim()) return true;
+      if (key === "startDate" || key === "endDate") {
+        return (
+          canonicalizeRecordDateText(value) ===
+          canonicalizeRecordDateText(saved[key])
+        );
+      }
+      return (
+        normalizeText(value) ===
+        normalizeText(typeof saved[key] === "string" ? saved[key] : "")
+      );
+    }
+    // False is the normalized default when a resume does not say ongoing.
+    // A stated end date is compared above; explicit ongoing status matters.
+    if (key === "isCurrent") return value !== true || saved[key] === true;
+    return value === saved[key];
+  });
+}
+
 function recordCandidateMatchesWorkspace(
   profile: CandidateProfile,
   candidate: ResumeImportFieldCandidate,
 ): boolean {
   if (candidate.target.section === "experience") {
-    return profile.experiences.some((record) =>
-      areEquivalentExperienceRecords(record, candidate.value),
+    return profile.experiences.some(
+      (record) =>
+        areEquivalentExperienceRecords(record, candidate.value) &&
+        recordDetailsAlreadySaved(record, candidate.value),
     );
   }
 
   if (candidate.target.section === "education") {
-    return profile.education.some((record) =>
-      areEquivalentEducationRecords(record, candidate.value),
+    return profile.education.some(
+      (record) =>
+        areEquivalentEducationRecords(record, candidate.value) &&
+        recordDetailsAlreadySaved(record, candidate.value),
     );
   }
 
