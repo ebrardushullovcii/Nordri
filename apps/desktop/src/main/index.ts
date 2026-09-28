@@ -324,6 +324,11 @@ async function shutdownJobFinderServicesIfLoaded(): Promise<void> {
   }
 
   const { shutdownJobFinderWorkspaceService } = await jobFinderServicesPromise;
+  // The assistant's running turns are marked interrupted before the
+  // workspace they work on closes.
+  const { shutdownAssistantHost } =
+    await import("./services/assistant/assistant-service");
+  await shutdownAssistantHost();
   await shutdownJobFinderWorkspaceService();
 }
 

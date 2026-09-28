@@ -31,8 +31,12 @@ export interface BrowserCdpHost {
   onPageCreated(listener: (page: BrowserCdpPage) => void): () => void;
   userAgent(): string;
   emulateFocus?(): boolean;
-  /** Automation is about to send keyboard or pointer input to this page. */
-  onAutomationInput?(pageId: string): void;
+  /**
+   * Automation is about to send keyboard or pointer input to this page.
+   * `pointerDown` is set for a pressed pointer button, which the page then
+   * reports once as a mouse-down of its own.
+   */
+  onAutomationInput?(pageId: string, input?: { pointerDown: boolean }): void;
 }
 interface AttachedPage {
   page: BrowserCdpPage;
@@ -590,7 +594,11 @@ export class BrowserCdpBridge {
     // The page reports automation input as input too; the host must be
     // able to tell it from the person's own clicks and keys.
     if (method.startsWith("Input."))
-      this.host.onAutomationInput?.(binding.target.page.id);
+      this.host.onAutomationInput?.(binding.target.page.id, {
+        pointerDown:
+          method === "Input.dispatchMouseEvent" &&
+          params.type === "mousePressed",
+      });
     if (this.tokenWaiters.size > 0) {
       const text = JSON.stringify(params);
       for (const [token, resolve] of [...this.tokenWaiters]) {

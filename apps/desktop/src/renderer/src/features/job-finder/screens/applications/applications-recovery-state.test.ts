@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import type { JobFinderWorkspaceSnapshot } from "@unemployed/contracts";
+import {
+  APPLICATION_SKIPPED_BY_PERSON_LABEL,
+  type JobFinderWorkspaceSnapshot,
+} from "@unemployed/contracts";
 import {
   applyResultStoppedStructurally,
   buildApplyRunContextReader,
@@ -589,6 +592,21 @@ describe("a planned job's standing in its batch", () => {
     ).toMatchObject({
       statusLine: "Waiting its turn in this batch",
       primaryAction: "none",
+    });
+  });
+});
+
+describe("a job the person asked to skip", () => {
+  it("reads as skipped with Apply again, not as an unfinished application", () => {
+    const presentation = resolveApplicationRecoveryPresentation({
+      canOpenSafeguards: false,
+      isApplyPending: false,
+      recordLastActionLabel: APPLICATION_SKIPPED_BY_PERSON_LABEL,
+      visibleApplyResult: buildResult({ state: "failed" }),
+    });
+    expect(presentation).toMatchObject({
+      statusLine: "Skipped at your request",
+      primaryActionLabel: "Apply again",
     });
   });
 });

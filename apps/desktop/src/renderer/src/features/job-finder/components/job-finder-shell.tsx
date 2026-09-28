@@ -1,5 +1,9 @@
 import type { CSSProperties, ReactNode } from "react";
 import { BrowserPeek } from "./browser-peek";
+import { AssistantSidebar } from "../assistant/assistant-sidebar";
+import { AssistantToggle } from "../assistant/assistant-toggle";
+import { useAssistant } from "../assistant/assistant-provider";
+import { useAssistantSideMenuCollapse } from "../assistant/use-assistant-side-menu-collapse";
 import {
   useCallback,
   useEffect,
@@ -37,6 +41,7 @@ import type {
   ResumeImportProgressEvent,
   SuiteModule,
 } from "@unemployed/contracts";
+import { collapsesSideMenuWithAssistant } from "@unemployed/contracts";
 import { useLocation, useNavigate } from "react-router-dom";
 import { Button } from "@renderer/components/ui/button";
 import { Count } from "@renderer/components/ui/count";
@@ -560,6 +565,16 @@ export function JobFinderShell({
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(
     getInitialSidebarCollapsedState,
   );
+  const assistant = useAssistant();
+  // Fold the side menu while the assistant is docked beside the page; the
+  // person's own toggle (button or shortcut) always wins and is what is saved.
+  const { notePersonToggledSideMenu } = useAssistantSideMenuCollapse({
+    assistantOpen: assistant?.open ?? false,
+    assistantWidth: assistant?.width ?? 0,
+    enabled: collapsesSideMenuWithAssistant(workspace.settings ?? {}),
+    isSideMenuCollapsed: isSidebarCollapsed,
+    setSideMenuCollapsed: setIsSidebarCollapsed,
+  });
   const [isGlobalSearchOpen, setIsGlobalSearchOpen] = useState(false);
   const [globalSearchFocusRequest, setGlobalSearchFocusRequest] = useState(0);
   const [isMoreOpen, setIsMoreOpen] = useState(false);
@@ -1031,6 +1046,7 @@ export function JobFinderShell({
   }
 
   function toggleSidebar() {
+    notePersonToggledSideMenu();
     setIsSidebarCollapsed((current) => {
       const next = !current;
       try {
@@ -1127,6 +1143,7 @@ export function JobFinderShell({
     isSearchOpen: isGlobalSearchOpen,
     onOpenGlobalSearch: openGlobalSearch,
     onOpenShortcuts: openShortcutsDialog,
+    ...(assistant ? { onToggleAssistant: assistant.toggle } : {}),
     onToggleSidebar: toggleSidebar,
   });
 
@@ -1689,6 +1706,7 @@ export function JobFinderShell({
               tailoredDraftPreparation={tailoredDraftPreparation}
               workspace={workspace}
             />
+            <AssistantToggle platform={platform} />
             <BrowserPeek
               chromeInsetStart={
                 isMac && !windowControlsState.isFullScreen
@@ -1926,7 +1944,14 @@ export function JobFinderShell({
         )}
         data-job-finder-shell-header-mask
       />
-      <div className={SHELL_CONTENT_CLASS} data-job-finder-shell-content>
+      {/* The assistant docks on the right; the content gives it its width
+          instead of being covered (ADR 0037). */}
+      <AssistantSidebar />
+      <div
+        className={SHELL_CONTENT_CLASS}
+        data-job-finder-shell-content
+        style={{ paddingRight: "var(--assistant-sidebar-reserved, 0px)" }}
+      >
         <main
           aria-label={activeScreenLabel}
           className={

@@ -63,6 +63,8 @@ import {
 } from "./apply-state";
 import { buildApplyRunContextReader } from "./applications-recovery-state";
 import { APPLICATION_PREPARATION_BATCH_LIMIT } from "../review-queue/review-queue-status";
+import { useAssistantContextSource } from "../../assistant/assistant-provider";
+import { buildListContext } from "../../assistant/assistant-context-capture";
 
 /** Statuses an application reaches once it was sent and can have an outcome. */
 const OUTCOME_STATUSES = new Set<string>([
@@ -343,6 +345,7 @@ export function ApplicationsScreen(props: {
             : "fill_only",
         result,
         run: readApplyRunContext(result),
+        recordLastActionLabel: record.lastActionLabel,
         recordFailure:
           record.lastAttemptState === "failed"
             ? {
@@ -390,6 +393,7 @@ export function ApplicationsScreen(props: {
                       record.questionSummary.total -
                         record.questionSummary.answered,
                     ),
+                    recordLastActionLabel: record.lastActionLabel,
                     recordFailure:
                       record.lastAttemptState === "failed"
                         ? {
@@ -475,6 +479,7 @@ export function ApplicationsScreen(props: {
                   record.questionSummary.total -
                     record.questionSummary.answered,
                 ),
+                recordLastActionLabel: record.lastActionLabel,
                 recordFailure:
                   record.lastAttemptState === "failed"
                     ? {
@@ -508,6 +513,25 @@ export function ApplicationsScreen(props: {
       ) ??
       filteredApplicationRecords[0] ??
       null);
+  // The applications list as the person sees it, for the assistant (ADR 0037).
+  useAssistantContextSource("applications", () => ({
+    focus: effectiveSelectedRecord
+      ? {
+          kind: "application",
+          id: effectiveSelectedRecord.id,
+          label: `${effectiveSelectedRecord.title} at ${effectiveSelectedRecord.company}`,
+        }
+      : null,
+    // The open application is focus, never selection. The tracker table
+    // publishes its ticked rows with a higher priority when it is shown.
+    list: buildListContext({
+      listKind: "applications",
+      checkedIds: [],
+      displayedIds: filteredApplicationRecords.map((record) => record.id),
+      filteredIds: filteredApplicationRecords.map((record) => record.id),
+      filterSummary: activeFilter === "all" ? null : `Filter: ${activeFilter}`,
+    }),
+  }));
   const effectiveSelectedAttempt = (() => {
     if (!effectiveSelectedRecord) {
       return null;
@@ -902,7 +926,7 @@ export function ApplicationsScreen(props: {
         className={
           workspaceView === "crm"
             ? "grid min-w-0 items-stretch gap-4"
-            : "grid min-w-0 items-stretch gap-4 xl:h-full xl:min-h-0 xl:grid-cols-[minmax(22rem,0.95fr)_minmax(30rem,1.45fr)] xl:items-start xl:overflow-hidden"
+            : "grid min-w-0 items-stretch gap-4 xl:h-full xl:min-h-0 xl:grid-cols-[minmax(22rem,0.95fr)_minmax(30rem,1.45fr)] assistant-docked:xl:grid-cols-[minmax(16rem,0.95fr)_minmax(0,1.45fr)] xl:items-start xl:overflow-hidden"
         }
         id="applications-workspace-content"
       >

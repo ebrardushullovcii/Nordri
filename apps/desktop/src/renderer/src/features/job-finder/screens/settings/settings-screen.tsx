@@ -453,6 +453,7 @@ export function SettingsScreen(props: {
           <SettingsAppDeviceSection
             onSettingsDraftEdited={onSettingsDraftEdited}
             onUpdateAppearanceTheme={onUpdateAppearanceTheme}
+            onUpdateWorkspaceBehavior={onUpdateWorkspaceBehavior}
             settings={settings}
           />
         </section>

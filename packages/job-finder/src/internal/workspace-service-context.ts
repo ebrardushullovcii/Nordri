@@ -174,6 +174,14 @@ export interface WorkspaceServiceContext {
     jobId: string,
     updater: (job: SavedJob) => SavedJob,
   ) => Promise<void>;
+  /**
+   * The per-job queue every resume draft mutation waits on; set by the
+   * application methods so assistant edits share it.
+   */
+  withResumeDraftTransition?: <T>(
+    jobId: string,
+    operation: () => Promise<T>,
+  ) => Promise<T>;
 }
 
 export type DiscoveryContinuationResult =

@@ -78,6 +78,13 @@ export async function loadAgentOwnedBrowserDriveState(input: {
   sourceUrl: string;
   applicationUrl: string;
   secondaryApplicationUrl?: string;
+  jobTitle?: string;
+  jobCompany?: string;
+  foundJobs?: readonly {
+    title: string;
+    company: string;
+    applicationUrl: string;
+  }[];
 }) {
   const state = createAgentOwnedBrowserDriveState(input);
   await ensureDemoResumeFiles(

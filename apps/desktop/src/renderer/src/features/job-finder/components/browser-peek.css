@@ -103,6 +103,9 @@
 .browser-peek-backdrop {
   position: fixed;
   inset: 0;
+  /* The assistant sidebar docks beside the browser; the native page never
+     paints under it (ADR 0038). */
+  right: var(--assistant-sidebar-reserved, 0px);
   z-index: 110;
   background: color-mix(in srgb, var(--background) 56%, transparent);
   backdrop-filter: blur(10px) saturate(1.15);
@@ -144,6 +147,18 @@
 }
 .browser-peek-backdrop:has(.is-expanded) {
   padding: 0;
+}
+/* The backdrop blurs the header only as far as the sidebar, so a sidebar
+   that started below the header would leave the header's right end sharp
+   and cut through its buttons. While the browser is open the sidebar takes
+   the full window height instead: browser on the left, chat on the right. */
+html:has(.browser-peek-backdrop) [data-assistant-sidebar] {
+  top: 0 !important;
+  /* The header colour is 97% opaque; over the header it would let the
+     buttons show through, so lay it on the solid page background. */
+  background:
+    linear-gradient(var(--shell-header-bg), var(--shell-header-bg)),
+    var(--background);
 }
 /* Fill the window edge to edge. The toolbar keeps clear of the native macOS
    traffic lights, which paint above everything; the shell passes that inset

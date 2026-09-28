@@ -7,13 +7,15 @@
     "build": "tsc --noEmit",
     "lint": "eslint src --ext .ts",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run --passWithNoTests",
+    "assistant-lane": "node scripts/run-assistant-lane.mjs"
   },
   "dependencies": {
     "@unemployed/ai-providers": "workspace:*",
     "@unemployed/browser-agent": "workspace:*",
     "@unemployed/browser-runtime": "workspace:*",
     "@unemployed/contracts": "workspace:*",
+    "@unemployed/db": "workspace:*",
     "@unemployed/job-finder": "workspace:*",
     "playwright": "^1.63.0",
     "zod": "3.25.76"

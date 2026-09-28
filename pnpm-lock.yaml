@@ -195,6 +195,9 @@ importers:
       '@unemployed/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@unemployed/db':
+        specifier: workspace:*
+        version: link:../db
       '@unemployed/job-finder':
         specifier: workspace:*
         version: link:../job-finder
@@ -284,6 +287,9 @@ importers:
 
   packages/job-finder:
     dependencies:
+      '@unemployed/agent-runtime':
+        specifier: workspace:*
+        version: link:../agent-runtime
       '@unemployed/ai-providers':
         specifier: workspace:*
         version: link:../ai-providers
@@ -305,6 +311,9 @@ importers:
       '@unemployed/knowledge-base':
         specifier: workspace:*
         version: link:../knowledge-base
+      zod:
+        specifier: ^3.24.2
+        version: 3.25.76
 
   packages/knowledge-base:
     dependencies:

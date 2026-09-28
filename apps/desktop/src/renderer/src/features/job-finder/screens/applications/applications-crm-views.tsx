@@ -31,6 +31,8 @@ import {
   groupApplicationRecordsByStage,
 } from "./applications-crm-model";
 import { formatApplicationEmployerLine } from "../../lib/job-employer-location-display";
+import { useAssistantContextSource } from "../../assistant/assistant-provider";
+import { buildListContext } from "../../assistant/assistant-context-capture";
 
 export const APPLICATION_CRM_VIEW_VALUES = [
   "table",
@@ -233,6 +235,7 @@ export function ApplicationsCrmViews(props: {
   const [bulkPending, setBulkPending] = useState(false);
   const [bulkError, setBulkError] = useState<string | null>(null);
   const selectedIdsRef = useRef(selectedIds);
+  const pagedRecordIdsRef = useRef<readonly string[]>([]);
   selectedIdsRef.current = selectedIds;
   const [page, setPage] = useState(1);
   const selectionKey = selectedIds.join("\0");
@@ -316,6 +319,21 @@ export function ApplicationsCrmViews(props: {
     );
   }, [visibleRecordIdKey]);
 
+  // The tracker's ticked rows are the assistant's selection (ADR 0037).
+  useAssistantContextSource(
+    "applications-tracker-list",
+    () => ({
+      list: buildListContext({
+        listKind: "applications",
+        checkedIds: selectedIdsRef.current,
+        displayedIds: pagedRecordIdsRef.current,
+        filteredIds: filteredRecords.map((record) => record.id),
+        filterSummary: query.trim() ? `matching "${query.trim()}"` : null,
+      }),
+    }),
+    { priority: 1 },
+  );
+
   useEffect(() => {
     const visibleIds = new Set(filteredRecords.map((record) => record.id));
     setSelectedIds((current) => current.filter((id) => visibleIds.has(id)));
@@ -347,6 +365,7 @@ export function ApplicationsCrmViews(props: {
       ),
     [currentPage, filteredRecords],
   );
+  pagedRecordIdsRef.current = pagedRecords.map((record) => record.id);
 
   const grouped = useMemo(
     () => groupApplicationRecordsByStage(pagedRecords),

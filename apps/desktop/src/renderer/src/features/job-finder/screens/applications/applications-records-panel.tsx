@@ -300,6 +300,7 @@ export function ApplicationsRecordsPanel({
                   pendingQuestionCount:
                     record.questionSummary.total -
                     record.questionSummary.answered,
+                  recordLastActionLabel: record.lastActionLabel,
                   recordFailure:
                     record.lastAttemptState === "failed"
                       ? {

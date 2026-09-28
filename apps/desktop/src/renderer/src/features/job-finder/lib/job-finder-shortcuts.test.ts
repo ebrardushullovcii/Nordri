@@ -144,6 +144,13 @@ describe("job finder shortcut registry", () => {
           "Wide layout only, outside overlays, search, and editable fields",
       },
       {
+        combos: [["⌘", "I"]],
+        id: "toggle-assistant",
+        rowId: "toggle-assistant::Anywhere in Job Finder",
+        label: "Show or hide the assistant",
+        scope: "Anywhere in Job Finder",
+      },
+      {
         combos: [["?"]],
         id: "open-shortcuts",
         rowId: "open-shortcuts::Outside text fields, controls, and dialogs",

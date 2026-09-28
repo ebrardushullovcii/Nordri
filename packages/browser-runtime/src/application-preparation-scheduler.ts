@@ -19,6 +19,13 @@ export function applicationSiteKey(url: string): string | null {
 
 export interface ApplicationPreparationLease {
   moveTo: (url: string) => Promise<void>;
+  /**
+   * Gives up the site and the worker slot while `work` waits on something
+   * else (a free browser tab), then takes the site back. A form waiting for
+   * a tab must not stop other applications on the site from carrying on,
+   * or the pages holding the tabs can never finish and free them.
+   */
+  suspend: <T>(work: () => Promise<T>) => Promise<T>;
   release: () => void;
 }
 
@@ -112,6 +119,25 @@ export function createApplicationPreparationScheduler(maxActive = 2): {
           // Release the previous site's ownership while waiting. Two forms
           // crossing sites in opposite directions cannot deadlock this way.
           await waitFor(request, nextKey);
+        },
+        async suspend(work) {
+          if (released)
+            throw new Error("Application preparation was released.");
+          const key = request.key;
+          request.granted = false;
+          request.key = "";
+          if (request.active) {
+            request.active = false;
+            running -= 1;
+          }
+          // Out of the queue while suspended; waitFor puts it back.
+          requests.delete(request);
+          drain();
+          try {
+            return await work();
+          } finally {
+            if (!released) await waitFor(request, key);
+          }
         },
         release() {
           if (released) return;

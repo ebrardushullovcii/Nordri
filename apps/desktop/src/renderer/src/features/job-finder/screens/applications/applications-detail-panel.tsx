@@ -329,6 +329,7 @@ export function ApplicationsDetailPanel({
           pendingQuestionCount:
             selectedRecord.questionSummary.total -
             selectedRecord.questionSummary.answered,
+          recordLastActionLabel: selectedRecord.lastActionLabel,
           recordFailure:
             selectedRecord.lastAttemptState === "failed"
               ? {
@@ -431,6 +432,7 @@ export function ApplicationsDetailPanel({
       pausedQuestionCount={pendingQuestionCount}
       selectedRecordJobId={selectedRecord.jobId}
       selectedApplicationRecordId={selectedRecord.id}
+      selectedRecordLastActionLabel={selectedRecord.lastActionLabel}
       selectedRecordLatestBlockerCode={
         selectedRecord.latestBlocker?.code ?? null
       }

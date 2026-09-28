@@ -1,5 +1,9 @@
 @import "tailwindcss";
 
+/* While the assistant sidebar is docked beside the page (ADR 0037), two-pane
+   screens have less width than the viewport breakpoints assume. */
+@custom-variant assistant-docked (html[data-assistant-sidebar="docked"] &);
+
 @theme inline {
   --font-sans: var(--font-body);
   --font-mono: var(--font-mono);

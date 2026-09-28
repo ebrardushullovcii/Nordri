@@ -1003,6 +1003,17 @@ export async function resetJobFinderWorkspace() {
   }
 
   await completeJobFinderWorkspaceReset(completedIntent);
+  // Conversations about the old workspace go with it.
+  try {
+    const { resetAssistantStore } =
+      await import("../assistant/assistant-service");
+    await resetAssistantStore();
+  } catch (error) {
+    console.warn(
+      "[Desktop] The assistant history could not be cleared.",
+      error,
+    );
+  }
 
   return JobFinderWorkspaceSnapshotSchema.parse(snapshot);
 }

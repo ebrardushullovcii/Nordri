@@ -95,6 +95,61 @@ function sources(
   };
 }
 
+describe("the person's answer to this exact question", () => {
+  test("beats a saved work-authorization sentence that fits none of the choices", () => {
+    const input = sources([
+      savedAnswer(
+        "Are you legally authorized to work in this country? *",
+        "Yes",
+      ),
+    ]);
+    input.profile.answerBank.workAuthorization =
+      "Authorized to work in the United Kingdom and open to remote roles across Europe.";
+    expect(
+      resolveApplyAnswer({
+        control: control({
+          kind: "radio",
+          label: "Are you legally authorized to work in this country?",
+          questionKind: "work_authorization",
+        }),
+        sources: input,
+        salaryDisclosure: "pause_for_user",
+      }),
+    ).toMatchObject({
+      status: "answered",
+      answer: { value: "Yes", sourceKind: "answer_library" },
+    });
+  });
+});
+
+describe("the person's answer to a yes/no radio group", () => {
+  test("matches the group's question, not the option label", () => {
+    const input = sources([
+      savedAnswer(
+        "Are you legally authorized to work in this country? *",
+        "Yes",
+      ),
+    ]);
+    input.profile.answerBank.workAuthorization =
+      "Authorized to work in the United Kingdom and open to remote roles across Europe.";
+    expect(
+      resolveApplyAnswer({
+        control: control({
+          kind: "radio",
+          label: "Yes",
+          groupLabel: "Are you legally authorized to work in this country? *",
+          questionKind: "work_authorization",
+        }),
+        sources: input,
+        salaryDisclosure: "pause_for_user",
+      }),
+    ).toMatchObject({
+      status: "answered",
+      answer: { value: "Yes", sourceKind: "answer_library" },
+    });
+  });
+});
+
 describe("fitting an answer to the choices a form offers", () => {
   test.each([
     "First available interview session",

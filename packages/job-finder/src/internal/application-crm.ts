@@ -356,7 +356,9 @@ function applyMutation(input: {
   mutation: ApplicationCrmMutation;
   now: string;
   createId: () => string;
+  actor?: "user" | "assistant";
 }): ApplicationCrmData {
+  const source = input.actor ?? "user";
   const { mutation, now } = input;
   const crm = input.crm;
 
@@ -377,7 +379,7 @@ function applyMutation(input: {
         detail: mutation.note,
         fromStage: crm.stage,
         toStage: mutation.stage,
-        source: "user" as const,
+        source,
       };
       return ApplicationCrmDataSchema.parse({
         ...crm,
@@ -412,7 +414,7 @@ function applyMutation(input: {
             kind: "tags_changed",
             title: "Updated application tags",
             detail: uniqueTags(mutation.tags).join(", ") || "All tags removed",
-            source: "user",
+            source,
           },
         ],
       });
@@ -428,7 +430,7 @@ function applyMutation(input: {
             kind: "note_changed",
             title: "Note added",
             detail: null,
-            source: "user",
+            source,
           },
         ],
       });
@@ -444,7 +446,7 @@ function applyMutation(input: {
             kind: "note_changed",
             title: "Removed a note",
             detail: null,
-            source: "user",
+            source,
           },
         ],
       });
@@ -464,7 +466,7 @@ function applyMutation(input: {
               ? `Updated contact ${mutation.contact.name}`
               : `Added contact ${mutation.contact.name}`,
             detail: null,
-            source: "user",
+            source,
           },
         ],
       });
@@ -486,7 +488,7 @@ function applyMutation(input: {
             kind: "contact_changed",
             title: "Removed a contact",
             detail: null,
-            source: "user",
+            source,
           },
         ],
       });
@@ -507,7 +509,7 @@ function applyMutation(input: {
               ? `Updated reminder ${mutation.reminder.title}`
               : `Added reminder ${mutation.reminder.title}`,
             detail: `Due ${mutation.reminder.dueAt}`,
-            source: "user",
+            source,
           },
         ],
       });
@@ -524,7 +526,7 @@ function applyMutation(input: {
             kind: "reminder_changed",
             title: "Removed a reminder",
             detail: null,
-            source: "user",
+            source,
           },
         ],
       });
@@ -554,7 +556,7 @@ function applyMutation(input: {
               ? `Updated interview ${mutation.interview.title}`
               : `Scheduled interview ${mutation.interview.title}`,
             detail: `Starts ${mutation.interview.startsAt}`,
-            source: "user",
+            source,
           },
         ],
       });
@@ -571,7 +573,7 @@ function applyMutation(input: {
             kind: "interview_changed",
             title: "Removed an interview",
             detail: null,
-            source: "user",
+            source,
           },
         ],
       });
@@ -590,7 +592,7 @@ function applyMutation(input: {
                 ? "Updated compensation details"
                 : "Updated offer details",
             detail: null,
-            source: "user",
+            source,
           },
         ],
       });
@@ -606,7 +608,7 @@ function applyMutation(input: {
             kind: "attachment_changed",
             title: `Linked ${mutation.attachment.label}`,
             detail: null,
-            source: "user",
+            source,
           },
         ],
       });
@@ -622,7 +624,7 @@ function applyMutation(input: {
             kind: "attachment_changed",
             title: "Unlinked an attachment",
             detail: null,
-            source: "user",
+            source,
           },
         ],
       });
@@ -693,6 +695,7 @@ export async function mutateApplicationCrm(input: {
         mutation: command.mutation,
         now,
         createId,
+        actor: command.actor ?? "user",
       });
       if (mutated === crm) {
         return record;
@@ -725,6 +728,7 @@ function applyBulkStageMutationToRecord(input: {
   note: string | null;
   now: string;
   createId: () => string;
+  actor: "user" | "assistant";
 }): { record: ApplicationRecord; changed: boolean } {
   const crm = getApplicationCrmData(input.record);
   const mutated = applyMutation({
@@ -737,6 +741,7 @@ function applyBulkStageMutationToRecord(input: {
     },
     now: input.now,
     createId: input.createId,
+    actor: input.actor,
   });
   if (mutated === crm) {
     return { record: input.record, changed: false };
@@ -809,6 +814,7 @@ export function prepareApplicationCrmBulkStageMutation(input: {
       note: command.note,
       now,
       createId,
+      actor: command.actor ?? "user",
     });
     if (!prepared.changed) return prepared.record;
 
@@ -880,6 +886,7 @@ export async function mutateApplicationCrmBulkStage(input: {
           note: command.note,
           now,
           createId,
+          actor: command.actor ?? "user",
         });
         if (!prepared.changed) return;
 
@@ -1360,9 +1367,12 @@ export function exportApplicationCrm(input: {
     format: "csv",
     fileName: `applications-${dateLabel}.csv`,
     mimeType: "text/csv;charset=utf-8",
+    // Every row ends with a line break, the last one too, so line-counting
+    // tools see one line per application (without it, `wc -l` reported one
+    // application fewer than the file holds).
     content: [header, ...rows]
-      .map((row) => row.map((value) => csvCell(value)).join(","))
-      .join("\r\n"),
+      .map((row) => `${row.map((value) => csvCell(value)).join(",")}\r\n`)
+      .join(""),
     exportedCount: records.length,
   };
 }

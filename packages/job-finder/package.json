@@ -22,12 +22,14 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@unemployed/agent-runtime": "workspace:*",
     "@unemployed/ai-providers": "workspace:*",
     "@unemployed/browser-agent": "workspace:*",
     "@unemployed/browser-runtime": "workspace:*",
     "@unemployed/contracts": "workspace:*",
     "@unemployed/core": "workspace:*",
     "@unemployed/db": "workspace:*",
-    "@unemployed/knowledge-base": "workspace:*"
+    "@unemployed/knowledge-base": "workspace:*",
+    "zod": "^3.24.2"
   }
 }

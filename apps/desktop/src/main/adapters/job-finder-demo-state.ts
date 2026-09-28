@@ -1177,6 +1177,15 @@ export function createAgentOwnedBrowserDriveState(input: {
   sourceUrl: string;
   applicationUrl: string;
   secondaryApplicationUrl?: string;
+  /** Match the local site's listing when a harness drives a real send. */
+  jobTitle?: string;
+  jobCompany?: string;
+  /** Extra jobs on Find jobs (not shortlisted), for selection checks. */
+  foundJobs?: readonly {
+    title: string;
+    company: string;
+    applicationUrl: string;
+  }[];
 }): JobFinderRepositoryState {
   // This seed drives the real Apply pipeline, so it must carry the same
   // approved, on-disk resume lineage as the apply-queue demo. Starting from
@@ -1196,12 +1205,13 @@ export function createAgentOwnedBrowserDriveState(input: {
         })),
       },
     },
-    savedJobs: base.savedJobs.map((job) =>
+    savedJobs: [
+      ...base.savedJobs.map((job) =>
       job.id === "job_ready"
         ? {
             ...job,
-            title: "Platform Engineer",
-            company: "Northwind Tools",
+            title: input.jobTitle ?? "Platform Engineer",
+            company: input.jobCompany ?? "Northwind Tools",
             summary:
               "Own a dependable internal platform spanning TypeScript, React, workflow automation, and design systems.",
             description:
@@ -1247,6 +1257,20 @@ export function createAgentOwnedBrowserDriveState(input: {
             }
         : job,
     ),
+      ...(input.foundJobs ?? []).map((found, index) => ({
+        ...base.savedJobs[0]!,
+        id: `job_found_${index + 1}`,
+        sourceJobId: `found_${index + 1}`,
+        title: found.title,
+        company: found.company,
+        canonicalUrl: found.applicationUrl,
+        applicationUrl: found.applicationUrl,
+        employerWebsiteUrl: found.applicationUrl,
+        employerDomain: new URL(found.applicationUrl).hostname,
+        status: "discovered" as const,
+        resumeApplicationMode: undefined,
+      })),
+    ],
     // Browser-drive fixtures start from approved resume lineage, not from the
     // apply-queue demo's historical runs. Carrying those old run ids into a
     // fresh Electron drive made startup recovery log "Unknown apply run" and

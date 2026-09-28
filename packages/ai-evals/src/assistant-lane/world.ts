@@ -1,0 +1,347 @@
+import {
+  createDeterministicJobFinderAiClient,
+  resolveAssistantModelRouteFromEnvironment,
+} from "@unemployed/ai-providers";
+import { createStubBrowserSessionRuntime } from "@unemployed/browser-runtime";
+import {
+  JobFinderIntelligenceStateSchema,
+  JobFinderSettingsSchema,
+  JobSearchPreferencesSchema,
+  ProfileSetupStateSchema,
+  SavedJobSchema,
+  createFreshStartCandidateProfile,
+  type AssistantContextReference,
+  type AssistantEvent,
+  type AssistantMessage,
+  type JobFinderRepositoryState,
+  type JobFinderWorkspaceSnapshot,
+  type SavedJob,
+} from "@unemployed/contracts";
+import {
+  createAssistantRepository,
+  createInMemoryJobFinderRepository,
+} from "@unemployed/db";
+import {
+  AssistantSessionHost,
+  createAssistantModelHandle,
+  createJobFinderWorkspaceService,
+  createScriptedAssistantModelHandle,
+  type AssistantHostPorts,
+  type AssistantModelResolution,
+} from "@unemployed/job-finder";
+
+/**
+ * One isolated Job Finder workspace with the assistant attached, built from
+ * synthetic data only. Background work (searches, applications, sends) goes
+ * to recording fakes: the lane grades what the assistant asked for and what
+ * changed in the workspace, never a real site.
+ */
+
+export type AssistantLaneModel = "scripted" | "live";
+
+export interface AssistantLaneRecorder {
+  searches: string[];
+  applications: { jobIds: string[]; mode: string }[];
+  sends: string[][];
+}
+
+export interface AssistantLaneWorld {
+  host: AssistantSessionHost;
+  recorder: AssistantLaneRecorder;
+  events: AssistantEvent[];
+  snapshot(): Promise<JobFinderWorkspaceSnapshot>;
+  jobs: readonly SavedJob[];
+  shutdown(): Promise<void>;
+}
+
+const NOW = "2026-09-27T09:00:00.000Z";
+
+/** Synthetic postings; companies and people are invented. */
+export const LANE_JOBS: readonly SavedJob[] = [
+  lanePosting(
+    "job_lane_1",
+    "Senior Product Designer",
+    "Northwind Labs",
+    92,
+    "Remote",
+  ),
+  lanePosting(
+    "job_lane_2",
+    "Staff Product Designer",
+    "Bluebird Health",
+    88,
+    "Berlin, Germany",
+  ),
+  lanePosting(
+    "job_lane_3",
+    "Design Systems Lead",
+    "Quartz Freight",
+    84,
+    "Remote",
+  ),
+  lanePosting("job_lane_4", "UX Designer", "Harbor Mutual", 71, "London, UK"),
+  lanePosting(
+    "job_lane_5",
+    "Product Design Manager",
+    "Cinder Robotics",
+    66,
+    "Remote",
+  ),
+];
+
+function lanePosting(
+  id: string,
+  title: string,
+  company: string,
+  score: number,
+  location: string,
+): SavedJob {
+  return SavedJobSchema.parse({
+    id,
+    source: "target_site",
+    sourceJobId: `${id}_source`,
+    discoveryMethod: "catalog_seed",
+    canonicalUrl: `http://127.0.0.1:47950/jobs/${id}`,
+    applicationUrl: `http://127.0.0.1:47950/jobs/${id}/apply`,
+    title,
+    company,
+    location,
+    workMode: location === "Remote" ? ["remote"] : ["hybrid"],
+    applyPath: "easy_apply",
+    easyApplyEligible: true,
+    postedAt: NOW,
+    postedAtText: null,
+    discoveredAt: NOW,
+    firstSeenAt: NOW,
+    lastSeenAt: NOW,
+    lastVerifiedActiveAt: NOW,
+    salaryText: null,
+    summary: `${title} at ${company}.`,
+    description: `${company} is hiring a ${title} to lead product design work across web and mobile.`,
+    keySkills: ["Figma", "Design systems", "User research"],
+    responsibilities: [],
+    minimumQualifications: [],
+    preferredQualifications: [],
+    seniority: null,
+    employmentType: null,
+    department: null,
+    team: null,
+    employerWebsiteUrl: null,
+    employerDomain: null,
+    atsProvider: null,
+    screeningHints: {
+      sponsorshipText: null,
+      requiresSecurityClearance: null,
+      relocationText: null,
+      travelText: null,
+      remoteGeographies: [],
+    },
+    keywordSignals: [],
+    benefits: [],
+    status: "discovered",
+    matchAssessment: { score, reasons: ["Design systems overlap"], gaps: [] },
+    provenance: [],
+  });
+}
+
+function laneSeed(): JobFinderRepositoryState {
+  const fresh = createFreshStartCandidateProfile();
+  return {
+    profile: {
+      ...fresh,
+      id: "candidate_lane",
+      firstName: "Riley",
+      lastName: "Okafor",
+      fullName: "Riley Okafor",
+      headline: "Product designer",
+      summary: "Designs calm tools for busy operations teams.",
+      currentLocation: "Lisbon, Portugal",
+      yearsExperience: 8,
+      email: "riley.okafor@example.test",
+      skills: ["Figma", "Prototyping"],
+      baseResume: {
+        ...fresh.baseResume,
+        id: "resume_lane",
+        fileName: "riley-okafor.txt",
+        uploadedAt: NOW,
+        storagePath: "/tmp/unemployed-assistant-lane/riley-okafor.txt",
+        textContent:
+          "Riley Okafor\nProduct designer\nFigma, prototyping, design systems\nLead designer at Example Freight 2020-2026",
+        textUpdatedAt: NOW,
+        extractionStatus: "ready",
+        lastAnalyzedAt: NOW,
+      },
+    },
+    searchPreferences: JobSearchPreferencesSchema.parse({
+      targetRoles: ["Product Designer"],
+      jobFamilies: [],
+      locations: ["Remote"],
+      excludedLocations: [],
+      workModes: ["remote"],
+      seniorityLevels: [],
+      minimumSalaryUsd: null,
+      targetSalaryUsd: null,
+      salaryCurrency: "USD",
+      targetIndustries: [],
+      targetCompanyStages: [],
+      employmentTypes: [],
+      approvalMode: "review_before_submit",
+      tailoringMode: "balanced",
+      companyBlacklist: [],
+      companyWhitelist: [],
+      discovery: { historyLimit: 5, targets: [] },
+    }),
+    profileSetupState: ProfileSetupStateSchema.parse({
+      status: "completed",
+      currentStep: "ready_check",
+      completedAt: NOW,
+      reviewItems: [],
+      lastResumedAt: null,
+    }),
+    savedJobs: [...LANE_JOBS],
+    settings: JobFinderSettingsSchema.parse({
+      resumeTemplateId: "classic_ats",
+      resumeFormat: "pdf",
+      fontPreset: "inter_requisite",
+      appearanceTheme: "system",
+      humanReviewRequired: true,
+      keepSessionAlive: false,
+      allowAutoSubmitOverride: false,
+      discoveryOnly: false,
+    }),
+    activityControl: { paused: false, pausedAt: null, reason: null },
+    intelligence: JobFinderIntelligenceStateSchema.parse({}),
+  } as JobFinderRepositoryState;
+}
+
+type DocumentManager = Parameters<
+  typeof createJobFinderWorkspaceService
+>[0]["documentManager"];
+
+function laneDocumentManager(): DocumentManager {
+  const unavailable = () =>
+    Promise.reject(new Error("Rendering is not part of the assistant lane."));
+  return {
+    listResumeTemplates: () => [],
+    renderResumePreview: unavailable,
+    renderResumeArtifact: unavailable,
+  };
+}
+
+function recordingPorts(recorder: AssistantLaneRecorder): AssistantHostPorts {
+  return {
+    startSearch: (input) => {
+      recorder.searches.push(JSON.stringify(input.searchRequest).slice(0, 400));
+      return Promise.resolve({
+        runId: `run_search_${recorder.searches.length}`,
+        message: "Search started.",
+      });
+    },
+    cancelSearch: () => Promise.resolve(),
+    startApplications: (input) => {
+      recorder.applications.push({
+        jobIds: [...input.jobIds],
+        mode: input.mode,
+      });
+      return Promise.resolve({
+        startedJobIds: [...input.jobIds],
+        heldBack: [],
+        runId: null,
+      });
+    },
+    sendPreparedApplications: (input) => {
+      recorder.sends.push([...input.jobIds]);
+      return Promise.resolve({ sentJobIds: [...input.jobIds], failed: [] });
+    },
+    checkSource: () => Promise.resolve(),
+    listDocuments: () => Promise.resolve([]),
+    readDocumentText: () => Promise.resolve(null),
+    loadDocumentFile: () =>
+      Promise.reject(new Error("No files in the assistant lane.")),
+    importResumeDocument: () => Promise.resolve(),
+    publishWorkspaceUpdate: () => undefined,
+  };
+}
+
+export function resolveLaneModel(
+  model: AssistantLaneModel,
+): AssistantModelResolution {
+  if (model === "scripted") {
+    return { kind: "ready", handle: createScriptedAssistantModelHandle() };
+  }
+  const resolution = resolveAssistantModelRouteFromEnvironment(process.env);
+  if (!resolution.available)
+    return { kind: "unavailable", detail: resolution.detail };
+  return {
+    kind: "ready",
+    handle: createAssistantModelHandle(resolution.route, resolution.fallback),
+  };
+}
+
+export function createAssistantLaneWorld(
+  model: AssistantLaneModel,
+): AssistantLaneWorld {
+  const repository = createInMemoryJobFinderRepository(laneSeed());
+  const service = createJobFinderWorkspaceService({
+    repository,
+    aiClient: createDeterministicJobFinderAiClient(
+      "The assistant lane uses the deterministic Job Finder client.",
+    ),
+    browserRuntime: createStubBrowserSessionRuntime({
+      sessions: [],
+      catalog: [],
+    }),
+    documentManager: laneDocumentManager(),
+  });
+  const recorder: AssistantLaneRecorder = {
+    searches: [],
+    applications: [],
+    sends: [],
+  };
+  const events: AssistantEvent[] = [];
+  const resolution = resolveLaneModel(model);
+  const host = new AssistantSessionHost({
+    repository: createAssistantRepository({ filePath: ":memory:" }),
+    service,
+    ports: recordingPorts(recorder),
+    resolveModel: () => resolution,
+    publish: (event) => events.push(event),
+    stallAfterMs: 60_000,
+    log: () => undefined,
+  });
+  return {
+    host,
+    recorder,
+    events,
+    jobs: LANE_JOBS,
+    snapshot: () => service.getWorkspaceSnapshot(),
+    shutdown: () => host.shutdown(),
+  };
+}
+
+export function laneContext(
+  overrides: Partial<AssistantContextReference> = {},
+): AssistantContextReference {
+  return {
+    screen: "home",
+    route: "/job-finder",
+    sectionLabel: null,
+    focus: null,
+    list: null,
+    editor: null,
+    browser: null,
+    selectedText: null,
+    mentions: [],
+    attachments: [],
+    capturedAt: new Date().toISOString(),
+    ...overrides,
+  };
+}
+
+export function lastReply(
+  messages: readonly AssistantMessage[],
+): AssistantMessage | null {
+  return (
+    messages.filter((message) => message.role === "assistant").at(-1) ?? null
+  );
+}

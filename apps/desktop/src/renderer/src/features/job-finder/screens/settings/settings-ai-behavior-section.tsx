@@ -395,13 +395,13 @@ export function SettingsAiBehaviorSection({
         data-testid="settings-ai-profile-assistant"
       >
         <GroupHeading
-          eyebrow="Profile"
-          title="Profile assistant"
-          description="The chat beside your profile. Choose how much it volunteers and how long it talks."
+          eyebrow="Chat"
+          title="Assistant"
+          description="The assistant in the side chat. Choose how much it volunteers and how long it talks."
         />
         <div className="grid min-w-0 gap-3 lg:grid-cols-[3fr_2fr]">
           <ChoiceCards
-            aria-label="How much the profile assistant suggests"
+            aria-label="How much the assistant suggests"
             columns={3}
             disabled={isSavePending}
             onChange={(initiative) =>

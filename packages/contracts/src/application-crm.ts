@@ -60,7 +60,13 @@ export const ApplicationCrmEventSchema = z.object({
   detail: NonEmptyStringSchema.nullable().default(null),
   fromStage: ApplicationCrmStageSchema.nullable().default(null),
   toStage: ApplicationCrmStageSchema.nullable().default(null),
-  source: z.enum(["user", "automation", "application_prepare", "system"]),
+  source: z.enum([
+    "user",
+    "assistant",
+    "automation",
+    "application_prepare",
+    "system",
+  ]),
 });
 export type ApplicationCrmEvent = z.infer<typeof ApplicationCrmEventSchema>;
 
@@ -308,10 +314,16 @@ export type ApplicationCrmMutation = z.infer<
   typeof ApplicationCrmMutationSchema
 >;
 
+/** Who made a tracker change: the person, or the assistant for them. */
+export const ApplicationCrmActorSchema = z
+  .enum(["user", "assistant"])
+  .optional();
+
 export const ApplicationCrmMutationInputSchema = z.object({
   applicationRecordId: NonEmptyStringSchema,
   expectedRevision: z.number().int().nonnegative(),
   mutation: ApplicationCrmMutationSchema,
+  actor: ApplicationCrmActorSchema,
 });
 export type ApplicationCrmMutationInput = z.infer<
   typeof ApplicationCrmMutationInputSchema
@@ -336,6 +348,7 @@ export const ApplicationCrmBulkStageMutationInputSchema = z
     stage: ApplicationCrmStageSchema,
     customStageId: NonEmptyStringSchema.nullable().default(null),
     note: NonEmptyStringSchema.nullable().default(null),
+    actor: ApplicationCrmActorSchema,
   })
   .superRefine((input, context) => {
     const seen = new Set<string>();
@@ -427,3 +440,9 @@ export const ApplicationCrmFileExportResultSchema = z.object({
 export type ApplicationCrmFileExportResult = z.infer<
   typeof ApplicationCrmFileExportResultSchema
 >;
+
+/**
+ * The last-action label of an application the person asked to skip in a
+ * batch. Screens show it as skipped, never as an application that failed.
+ */
+export const APPLICATION_SKIPPED_BY_PERSON_LABEL = "Skipped at your request.";

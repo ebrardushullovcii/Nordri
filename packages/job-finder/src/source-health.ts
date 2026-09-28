@@ -478,3 +478,54 @@ export function deriveSourceHealthSignals(
     ]),
   };
 }
+
+/** The fields of a source check this row needs. */
+export type SourceCheckHealthFields = {
+  targetId: string;
+  state: string;
+  startedAt: string;
+  completedAt: string | null;
+  finalSummary: string | null;
+};
+
+/**
+ * The newest "Check source" run for a source, as one line, when it is newer
+ * than the source's last search. A row that kept showing the last search
+ * line after a check read as if the check had done nothing.
+ */
+export function describeLatestSourceCheck(
+  target: { id: string },
+  checks: readonly SourceCheckHealthFields[],
+  latestSearch?: {
+    completedAt?: string | null;
+    startedAt?: string | null;
+  } | null,
+): string | null {
+  const latest = checks
+    .filter((check) => check.targetId === target.id)
+    .sort((left, right) =>
+      (right.completedAt ?? right.startedAt).localeCompare(
+        left.completedAt ?? left.startedAt,
+      ),
+    )[0];
+  if (!latest) return null;
+  const checkedAt = latest.completedAt ?? latest.startedAt;
+  const searchedAt = latestSearch?.completedAt ?? latestSearch?.startedAt ?? "";
+  if (latest.state !== "running" && searchedAt > checkedAt) return null;
+  const summary = latest.finalSummary?.trim();
+  switch (latest.state) {
+    case "running":
+      return "Checking this source now.";
+    case "completed":
+      return summary ? `Latest check: ${summary}` : "Latest check finished.";
+    case "failed":
+      return summary
+        ? `The latest check failed: ${summary}`
+        : "The latest check failed.";
+    case "cancelled":
+    case "interrupted":
+      return "The latest check was stopped before it finished.";
+    default:
+      return null;
+  }
+}

@@ -48,20 +48,6 @@ const PENDING_ADOPTION: ReadonlyArray<{
   rule: "portal" | "viewport-max-height";
 }> = [
   {
-    owner: "PKG-05",
-    path: "features/job-finder/screens/review-queue/resume-guided-edits-popup.tsx",
-    reason:
-      "The Assistant PANEL (not its dock-placed pill) is still sized by the Copilot placement model in profile-copilot-rail-layout.ts, which is a second solver. Folding drag, corner-anchoring and position storage into the shared solver is a larger change than this package carries.",
-    rule: "viewport-max-height",
-  },
-  {
-    owner: "PKG-05",
-    path: "features/job-finder/components/profile/profile-copilot-rail.tsx",
-    reason:
-      "Same second solver as the Assistant panel above; they move together.",
-    rule: "viewport-max-height",
-  },
-  {
     owner: "PKG-04",
     path: "features/job-finder/components/task-center/job-finder-task-center.tsx",
     reason:

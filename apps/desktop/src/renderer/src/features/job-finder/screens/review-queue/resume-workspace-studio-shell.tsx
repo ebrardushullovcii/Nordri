@@ -1160,7 +1160,7 @@ export function ResumeWorkspaceStudioShell(
                   // so the preview keeps a readable share of what is left.
                   props.assistantDocked
                     ? "xl:grid-cols-[minmax(0,1fr)_minmax(19rem,0.8fr)]"
-                    : "xl:grid-cols-[minmax(0,1.15fr)_minmax(26rem,0.85fr)]",
+                    : "xl:grid-cols-[minmax(0,1.15fr)_minmax(26rem,0.85fr)] assistant-docked:xl:grid-cols-[minmax(0,1fr)_minmax(19rem,0.8fr)]",
                 )}
                 data-resume-studio-grid-columns="preview-tools"
               >

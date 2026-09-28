@@ -227,7 +227,6 @@ const RULES: readonly Rule[] = [
  */
 export const PENDING_ADOPTION = {
   rawThrownMessage: [
-    "features/job-finder/components/profile/profile-copilot-rail.tsx",
     "features/job-finder/components/profile/use-profile-source-debug-review.ts",
     "features/job-finder/hooks/use-job-finder-workspace.ts",
     "features/job-finder/screens/applications/applications-application-documents.tsx",
@@ -246,7 +245,6 @@ export const PENDING_ADOPTION = {
   ],
   formatStatusLabel: [
     "features/job-finder/components/profile/profile-background-sections.tsx",
-    "features/job-finder/components/profile/profile-copilot-rail.shared.ts",
     "features/job-finder/components/profile/profile-experience-tab.tsx",
     "features/job-finder/components/profile/profile-import-suggestion-list.tsx",
     "features/job-finder/components/profile/profile-preferences-eligibility-section.tsx",
@@ -274,7 +272,6 @@ export const PENDING_ADOPTION = {
     "features/job-finder/screens/applications/applications-crm-detail.tsx",
     "features/job-finder/screens/applications/applications-crm-views.tsx",
     "features/job-finder/screens/rapid-review/rapid-review-screen.tsx",
-    "features/job-finder/screens/review-queue/resume-assistant-proposal-card.tsx",
     "features/job-finder/screens/safeguards/safeguards-presentation.ts",
     "features/job-finder/screens/settings/settings-application-authority-section.tsx",
   ],

@@ -158,7 +158,10 @@ vi.mock("../services/job-finder", () => ({
 }));
 
 import { JOB_FINDER_WORKSPACE_UPDATED_CHANNEL } from "../services/job-finder/workspace-updates";
-import { registerJobFinderRouteHandlers } from "./job-finder";
+import {
+  RETIRED_CHAT_MESSAGE,
+  registerJobFinderRouteHandlers,
+} from "./job-finder";
 
 const packet = ApplicationPacketSchema.parse({
   generatedAt: "2026-07-30T12:00:00.000Z",
@@ -234,10 +237,8 @@ describe("job-finder profile copilot patch-group routes", () => {
     return handler;
   }
 
-  it("forwards exact patch-group and revision IDs through apply, reject, and undo routes", async () => {
+  it("refuses the retired patch-group writes and still forwards undo", async () => {
     const snapshot = createEmptyWorkspace("2026-08-22T11:00:00.000Z");
-    mockApplyProfileCopilotPatchGroup.mockResolvedValue(snapshot);
-    mockRejectProfileCopilotPatchGroup.mockResolvedValue(snapshot);
     mockUndoProfileRevision.mockResolvedValue(snapshot);
     mockGetJobFinderWorkspaceService.mockResolvedValue({
       applyProfileCopilotPatchGroup: mockApplyProfileCopilotPatchGroup,
@@ -248,25 +249,20 @@ describe("job-finder profile copilot patch-group routes", () => {
     const applyInput = JobFinderProfileCopilotPatchGroupActionInputSchema.parse(
       { patchGroupId: "profile_patch_group_1" },
     );
-    const applyResult = await registerAndFindHandler(
-      "job-finder:apply-profile-copilot-patch-group",
-    )({ sender: {} }, applyInput);
-    expect(mockApplyProfileCopilotPatchGroup).toHaveBeenCalledWith(
-      "profile_patch_group_1",
-    );
-    expect(applyResult).toEqual(snapshot);
-
-    const rejectInput =
-      JobFinderProfileCopilotPatchGroupActionInputSchema.parse({
-        patchGroupId: "profile_patch_group_2",
-      });
-    const rejectResult = await registerAndFindHandler(
-      "job-finder:reject-profile-copilot-patch-group",
-    )({ sender: {} }, rejectInput);
-    expect(mockRejectProfileCopilotPatchGroup).toHaveBeenCalledWith(
-      "profile_patch_group_2",
-    );
-    expect(rejectResult).toEqual(snapshot);
+    await expect(
+      registerAndFindHandler("job-finder:apply-profile-copilot-patch-group")(
+        { sender: {} },
+        applyInput,
+      ),
+    ).rejects.toThrow(RETIRED_CHAT_MESSAGE);
+    await expect(
+      registerAndFindHandler("job-finder:reject-profile-copilot-patch-group")(
+        { sender: {} },
+        applyInput,
+      ),
+    ).rejects.toThrow(RETIRED_CHAT_MESSAGE);
+    expect(mockApplyProfileCopilotPatchGroup).not.toHaveBeenCalled();
+    expect(mockRejectProfileCopilotPatchGroup).not.toHaveBeenCalled();
 
     const undoInput = JobFinderUndoProfileRevisionInputSchema.parse({
       revisionId: "profile_revision_3",
@@ -1288,10 +1284,12 @@ describe("job-finder Apply to all with a resume that waits on the person", () =>
 });
 
 describe("job-finder resume Assistant edits", () => {
-  it("tells the screens to catch up after an edit is accepted, so Shortlisted and Home see a line left to decide", async () => {
+  it("refuses new writes to the retired resume chat (ADR 0037)", async () => {
+    const resolve = vi.fn().mockResolvedValue([]);
+    const send = vi.fn().mockResolvedValue([]);
     mockGetJobFinderWorkspaceService.mockResolvedValue({
-      resolveResumeAssistantProposal: vi.fn().mockResolvedValue([]),
-      sendResumeAssistantMessage: vi.fn().mockResolvedValue([]),
+      resolveResumeAssistantProposal: resolve,
+      sendResumeAssistantMessage: send,
     });
     const handlers = new Map<string, RegisteredHandler>();
     registerJobFinderRouteHandlers({
@@ -1300,22 +1298,25 @@ describe("job-finder resume Assistant edits", () => {
       }),
     } as unknown as IpcMain);
     const sender = { send: vi.fn(), isDestroyed: () => false };
-    await handlers.get("job-finder:resolve-resume-assistant-proposal")!(
-      { sender },
-      {
-        jobId: "job_paper",
-        proposalId: "proposal_1",
-        action: "accept",
-        patchIds: ["patch_1"],
-      },
-    );
-    expect(sender.send).toHaveBeenCalledWith("job-finder:workspace-updated");
-    sender.send.mockClear();
-    await handlers.get("job-finder:send-resume-assistant-message")!(
-      { sender },
-      { jobId: "job_paper", content: "Tighten the summary." },
-    );
-    expect(sender.send).toHaveBeenCalledWith("job-finder:workspace-updated");
+    await expect(
+      handlers.get("job-finder:resolve-resume-assistant-proposal")!(
+        { sender },
+        {
+          jobId: "job_paper",
+          proposalId: "proposal_1",
+          action: "accept",
+          patchIds: ["patch_1"],
+        },
+      ),
+    ).rejects.toThrow(RETIRED_CHAT_MESSAGE);
+    await expect(
+      handlers.get("job-finder:send-resume-assistant-message")!(
+        { sender },
+        { jobId: "job_paper", content: "Tighten the summary." },
+      ),
+    ).rejects.toThrow(RETIRED_CHAT_MESSAGE);
+    expect(resolve).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
   });
 });
 
@@ -1699,57 +1700,17 @@ describe("job-finder application packet export route", () => {
     expect(result).not.toHaveProperty("snapshot");
   });
 
-  it("routes visible Profile Copilot requests through proposal-only product actions", async () => {
-    const base = createEmptyWorkspace("2026-08-09T10:05:00.000Z");
-    const proposed = JobFinderWorkspaceSnapshotSchema.parse({
-      ...base,
-      profileCopilotMessages: [
+  it("refuses new messages to the retired Profile chat (ADR 0037)", async () => {
+    await expect(
+      profileCopilotHandler(
+        { sender: {} },
         {
-          id: "profile_copilot_assistant_message_1",
-          role: "assistant",
-          content:
-            "I prepared this change for your review. Nothing changed yet.",
+          content: "Look for jobs around New York",
           context: { surface: "profile", section: "preferences" },
-          patchGroups: [
-            {
-              id: "profile_patch_group_1",
-              summary: "Update preferred location",
-              applyMode: "needs_review",
-              createdAt: "2026-08-09T10:05:00.000Z",
-              operations: [
-                {
-                  operation: "replace_search_preferences_fields",
-                  value: { locations: ["New York, NY"] },
-                },
-              ],
-            },
-          ],
-          createdAt: "2026-08-09T10:05:00.000Z",
         },
-      ],
-    });
-    mockProposeProfileCopilotChange.mockResolvedValueOnce(proposed);
-    mockGetWorkspaceSnapshot.mockResolvedValueOnce(proposed);
-
-    const result = await profileCopilotHandler(
-      { sender: {} },
-      {
-        content: "Look for jobs around New York",
-        context: { surface: "profile", section: "preferences" },
-      },
-    );
-
-    expect(mockProposeProfileCopilotChange).toHaveBeenCalledWith(
-      "Look for jobs around New York",
-      { surface: "profile", section: "preferences" },
-    );
-    expect(result).toMatchObject({
-      profileCopilotMessages: [
-        {
-          patchGroups: [{ applyMode: "needs_review" }],
-        },
-      ],
-    });
+      ),
+    ).rejects.toThrow(RETIRED_CHAT_MESSAGE);
+    expect(mockProposeProfileCopilotChange).not.toHaveBeenCalled();
   });
 
   it("falls back to a revisioned snapshot when a mutation changes an unsupported scalar", async () => {

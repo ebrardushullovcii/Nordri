@@ -80,3 +80,6 @@ export {
 // How an application the person stepped into is recorded, so the desktop
 // host can carry exactly those on when the browser is handed back.
 export { PERSON_TOOK_OVER_SUMMARY } from "./internal/workspace-application-user-action";
+
+// The app assistant (ADR 0037, 0038, 0039).
+export * from "./assistant";

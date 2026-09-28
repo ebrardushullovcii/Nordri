@@ -11,6 +11,7 @@ export * from "./application-documents";
 export * from "./apply";
 export * from "./profile";
 export * from "./product-action-tools";
+export * from "./assistant";
 export * from "./profile-copilot";
 export * from "./profile-setup";
 export * from "./resume-import";

@@ -569,7 +569,7 @@ function buildConversationFacts(input: {
   return facts;
 }
 
-function buildProfileRevision(input: {
+export function buildProfileRevision(input: {
   trigger: ProfileRevision["trigger"];
   profile: CandidateProfile;
   searchPreferences: JobSearchPreferences;
@@ -621,7 +621,7 @@ function buildProfileRevision(input: {
  * Ids alone cannot order two revisions written in the same millisecond, and
  * "undo back to here" needs an order it can trust.
  */
-function nextProfileRevisionSequence(
+export function nextProfileRevisionSequence(
   revisions: readonly ProfileRevision[],
 ): number {
   let highest = 0;
@@ -832,6 +832,18 @@ function reorderRecords<TRecord extends { id: string }>(
     );
   }
   return orderedRecordIds.map((recordId) => recordsById.get(recordId)!);
+}
+
+/** What an applied patch group found and left behind. */
+export interface AppliedProfilePatchGroup {
+  profileBefore: CandidateProfile;
+  searchPreferencesBefore: JobSearchPreferences;
+  profileAfter: CandidateProfile;
+  searchPreferencesAfter: JobSearchPreferences;
+  resumeApplicationMode: {
+    before: ResumeApplicationMode | null;
+    after: ResumeApplicationMode;
+  } | null;
 }
 
 export const PROFILE_ASSISTANT_UNAVAILABLE_MESSAGE =
@@ -1572,11 +1584,24 @@ export function createWorkspaceProfileCopilotMethods(input: {
     options?: {
       messageId?: string | null;
       patchGroup?: ProfileCopilotPatchGroup;
+      /** Overrides the revision reason (assistant sidebar edits). */
+      reason?: string;
     },
-  ) {
+  ): Promise<AppliedProfilePatchGroup> {
     // The Settings half of a resume-level change, from the attempt that
     // committed. Written once the profile commit has landed.
     let pendingResumeApplicationMode: ResumeApplicationMode | null = null;
+    let committedResumeApplicationModeBefore: ResumeApplicationMode | null =
+      null;
+    // What the committing attempt found and left, for per-change undo.
+    const lastAttempt: {
+      value: {
+        profileBefore: CandidateProfile;
+        searchPreferencesBefore: JobSearchPreferences;
+        profileAfter: CandidateProfile;
+        searchPreferencesAfter: JobSearchPreferences;
+      } | null;
+    } = { value: null };
     const prepareAttempt =
       async (): Promise<CommitProfileCopilotStateInput> => {
         const [messages, currentSetupContext, existingRevisions, settings] =
@@ -1636,6 +1661,13 @@ export function createWorkspaceProfileCopilotMethods(input: {
             currentResumeApplicationMode,
             currentSetupContext.searchPreferences.tailoringMode,
           );
+        committedResumeApplicationModeBefore = currentResumeApplicationMode;
+        lastAttempt.value = {
+          profileBefore: captured.profile,
+          searchPreferencesBefore: currentSetupContext.searchPreferences,
+          profileAfter: patched.profile,
+          searchPreferencesAfter: patched.searchPreferences,
+        };
 
         const nextProfileSetupState =
           resolvePendingReviewItemsAfterExplicitSave({
@@ -1708,7 +1740,8 @@ export function createWorkspaceProfileCopilotMethods(input: {
                   }
                 : {}),
               sequence: nextProfileRevisionSequence(existingRevisions),
-              reason: `Assistant patch: ${patchGroup.summary}`,
+              reason:
+                options?.reason ?? `Assistant patch: ${patchGroup.summary}`,
               messageId: options?.messageId ?? sourceMessage?.id ?? null,
               patchGroupId,
             }),
@@ -1724,6 +1757,34 @@ export function createWorkspaceProfileCopilotMethods(input: {
     if (pendingResumeApplicationMode) {
       await commitResumeApplicationMode(pendingResumeApplicationMode);
     }
+    if (!lastAttempt.value) {
+      throw new Error("The profile change was not committed.");
+    }
+    return {
+      ...lastAttempt.value,
+      resumeApplicationMode: pendingResumeApplicationMode
+        ? {
+            before: committedResumeApplicationModeBefore,
+            after: pendingResumeApplicationMode,
+          }
+        : null,
+    };
+  }
+
+  /**
+   * Commits a patch group written by the assistant sidebar (ADR 0037). No
+   * chat message is stored here; the revision is attributed to the sidebar
+   * message and the before and after states come back for the undo receipt.
+   */
+  function applyAssistantProfilePatchGroup(
+    patchGroup: ProfileCopilotPatchGroup,
+    attribution: { messageId: string | null; reason: string },
+  ): Promise<AppliedProfilePatchGroup> {
+    return applyProfileCopilotPatchGroupInternal(patchGroup.id, {
+      patchGroup,
+      messageId: attribution.messageId,
+      reason: attribution.reason,
+    });
   }
 
   async function applyProfileCopilotPatchGroup(patchGroupId: string) {
@@ -1881,6 +1942,7 @@ export function createWorkspaceProfileCopilotMethods(input: {
   return {
     sendProfileCopilotMessage,
     proposeProfileCopilotChange,
+    applyAssistantProfilePatchGroup,
     applyProfileCopilotPatchGroup,
     rejectProfileCopilotPatchGroup,
     undoProfileRevision,

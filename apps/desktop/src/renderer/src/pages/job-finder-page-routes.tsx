@@ -989,7 +989,6 @@ export function JobFinderProfileRoute() {
         targetDiscovery: (targetId) =>
           context.isPending(jobFinderPendingActions.discoveryTarget(targetId)),
       }}
-      onApplyProfileCopilotPatchGroup={context.onApplyProfileCopilotPatchGroup}
       onAnalyzeProfileFromResume={context.onAnalyzeProfileFromResume}
       onApplyResumeTimelineRepairAction={
         context.onApplyResumeTimelineRepairAction
@@ -1004,19 +1003,13 @@ export function JobFinderProfileRoute() {
       }}
       onProfileSurfaceDirtyChange={context.onProfileSurfaceDirtyChange}
       onProfileSurfaceDraftEdited={context.onProfileSurfaceDraftEdited}
-      profileCopilotPendingContextKey={context.profileCopilotPendingContextKey}
       onResumeProfileSetup={context.onResumeProfileSetup}
-      onRejectProfileCopilotPatchGroup={
-        context.onRejectProfileCopilotPatchGroup
-      }
       {...(context.onRunDiscoveryForTarget
         ? { onRunDiscoveryForTarget: context.onRunDiscoveryForTarget }
         : {})}
       onRunSourceDebug={context.onRunSourceDebug}
       onSaveAll={context.onSaveAll}
       onSaveSourceInstructionArtifact={context.onSaveSourceInstructionArtifact}
-      onSendProfileCopilotMessage={context.onSendProfileCopilotMessage}
-      onUndoProfileRevision={context.onUndoProfileRevision}
       onVerifySourceInstructions={context.onVerifySourceInstructions}
       latestResumeImportReviewCandidates={
         context.workspace.latestResumeImportReviewCandidates
@@ -1024,8 +1017,6 @@ export function JobFinderProfileRoute() {
       resumeImportProgress={context.resumeImportProgress}
       latestResumeImportRun={context.workspace.latestResumeImportRun}
       profile={context.workspace.profile}
-      profileCopilotMessages={context.workspace.profileCopilotMessages}
-      profileRevisions={context.workspace.profileRevisions}
       profileSetupState={context.workspace.profileSetupState}
       activeDiscoveryRun={context.workspace.activeDiscoveryRun}
       discoveryRuns={context.workspace.recentDiscoveryRuns}
@@ -1070,16 +1061,11 @@ export function JobFinderProfileSetupRoute() {
           jobFinderPendingActions.profileReviewItem(reviewItemId),
         )
       }
-      profileCopilotBusy={context.profileCopilotBusy}
-      profileMutationPending={context.isPending(
-        jobFinderPendingActions.profileMutation(),
-      )}
       latestResumeImportReviewCandidates={
         context.workspace.latestResumeImportReviewCandidates
       }
       latestResumeImportRun={context.workspace.latestResumeImportRun}
       resumeImportProgress={context.resumeImportProgress}
-      onApplyProfileCopilotPatchGroup={context.onApplyProfileCopilotPatchGroup}
       onApplyProfileSetupReviewAction={context.onApplyProfileSetupReviewAction}
       onContinueToProfile={context.onOpenProfile}
       onImportResume={context.onImportResume}
@@ -1093,18 +1079,10 @@ export function JobFinderProfileSetupRoute() {
       onCancelImportResume={context.onCancelImportResume}
       onProfileSurfaceDirtyChange={context.onProfileSurfaceDirtyChange}
       onProfileSurfaceDraftEdited={context.onProfileSurfaceDraftEdited}
-      profileCopilotPendingContextKey={context.profileCopilotPendingContextKey}
-      onRejectProfileCopilotPatchGroup={
-        context.onRejectProfileCopilotPatchGroup
-      }
       onResumeSetup={context.onResumeProfileSetup}
       onRunSourceDebug={context.onRunSourceDebug}
       onSaveSetupStep={context.onSaveSetupStep}
-      onSendProfileCopilotMessage={context.onSendProfileCopilotMessage}
-      onUndoProfileRevision={context.onUndoProfileRevision}
       profile={context.workspace.profile}
-      profileCopilotMessages={context.workspace.profileCopilotMessages}
-      profileRevisions={context.workspace.profileRevisions}
       profileSetupState={context.workspace.profileSetupState}
       recentSourceDebugRuns={context.workspace.recentSourceDebugRuns}
       {...(context.workspace.settings.resumeApplicationMode

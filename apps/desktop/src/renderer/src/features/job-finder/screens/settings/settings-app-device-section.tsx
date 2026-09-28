@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
-import type { AppearanceTheme, JobFinderSettings } from "@unemployed/contracts";
+import {
+  collapsesSideMenuWithAssistant,
+  type AppearanceTheme,
+  type JobFinderSettings,
+  type UpdateWorkspaceBehaviorInput,
+} from "@unemployed/contracts";
+import { ToggleField } from "../../components/toggle-field";
 import {
   applyAppearancePreference,
   getSystemPrefersDark,
@@ -26,12 +32,17 @@ interface SettingsAppDeviceSectionProps {
   onUpdateAppearanceTheme: (
     theme: AppearanceTheme,
   ) => Promise<boolean | void> | void;
+  /** Saves the side menu choice; the same path as Browser & saved jobs. */
+  onUpdateWorkspaceBehavior?: (
+    input: UpdateWorkspaceBehaviorInput,
+  ) => Promise<boolean | void> | void;
   settings: JobFinderSettings;
 }
 
 export function SettingsAppDeviceSection({
   onSettingsDraftEdited,
   onUpdateAppearanceTheme,
+  onUpdateWorkspaceBehavior,
   settings,
 }: SettingsAppDeviceSectionProps) {
   const appearanceHeadingId = useId();
@@ -41,12 +52,23 @@ export function SettingsAppDeviceSection({
   const { resetSectionSave, runSectionSave, saveState } =
     useSettingsSectionSave();
 
+  const savedCollapseSideMenu = collapsesSideMenuWithAssistant(settings);
+  const [draftCollapseSideMenu, setDraftCollapseSideMenu] = useState(
+    savedCollapseSideMenu,
+  );
+
   useEffect(() => {
     setSelectedTheme(settings.appearanceTheme);
   }, [settings.appearanceTheme]);
 
+  useEffect(() => {
+    setDraftCollapseSideMenu(savedCollapseSideMenu);
+  }, [savedCollapseSideMenu]);
+
   const isSavePending = saveState.status === "saving";
-  const hasUnsavedChanges = selectedTheme !== settings.appearanceTheme;
+  const themeChanged = selectedTheme !== settings.appearanceTheme;
+  const hasUnsavedChanges = themeChanged;
+  const [sideMenuSaveFailed, setSideMenuSaveFailed] = useState(false);
 
   // Picking a theme used to change nothing on screen until the user found and
   // pressed Save and an IPC round trip finished, so the interval between the
@@ -83,6 +105,27 @@ export function SettingsAppDeviceSection({
     applyAppearancePreference(theme, getSystemPrefersDark());
     resetSectionSave();
     onSettingsDraftEdited?.();
+  };
+  // A switch acts when flipped: this layout choice saves at once instead of
+  // waiting for Save appearance, and goes back if the save fails.
+  const updateCollapseSideMenu = (checked: boolean) => {
+    setDraftCollapseSideMenu(checked);
+    setSideMenuSaveFailed(false);
+    const revert = () => {
+      setDraftCollapseSideMenu(!checked);
+      setSideMenuSaveFailed(true);
+    };
+    try {
+      void Promise.resolve(
+        onUpdateWorkspaceBehavior?.({
+          collapseSideMenuWithAssistant: checked,
+        }),
+      ).then((saved) => {
+        if (saved === false) revert();
+      }, revert);
+    } catch {
+      revert();
+    }
   };
   const saveAppearanceTheme = () => {
     if (!hasUnsavedChanges || isSavePending) {
@@ -170,6 +213,21 @@ export function SettingsAppDeviceSection({
           );
         })}
       </div>
+
+      {onUpdateWorkspaceBehavior ? (
+        <ToggleField
+          checked={draftCollapseSideMenu}
+          className="max-w-xl"
+          description="Fold the side menu to icons when the assistant opens beside the page, and open it again when the assistant closes."
+          hint={
+            sideMenuSaveFailed
+              ? "That change was not saved. Try the switch again."
+              : "Saved as soon as you flip it. Folding or opening the menu yourself always wins."
+          }
+          label="Collapse the side menu while the assistant is open"
+          onCheckedChange={updateCollapseSideMenu}
+        />
+      ) : null}
     </section>
   );
 }

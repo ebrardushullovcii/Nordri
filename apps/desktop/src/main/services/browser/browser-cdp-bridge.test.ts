@@ -54,6 +54,7 @@ async function fixture() {
   const page: BrowserCdpPage = { id: "owned-tab", contents };
   const closed: string[] = [];
   const automationInput: string[] = [];
+  const pointerDowns: boolean[] = [];
   const bridge = new BrowserCdpBridge({
     pages: () => [page],
     createPage: () => Promise.reject(new Error("Not used")),
@@ -63,8 +64,9 @@ async function fixture() {
     selectPage: () => undefined,
     onPageCreated: () => () => undefined,
     userAgent: () => "Synthetic browser",
-    onAutomationInput: (id) => {
+    onAutomationInput: (id, input) => {
       automationInput.push(id);
+      pointerDowns.push(input?.pointerDown ?? false);
     },
   });
   const transport = await bridge.start();
@@ -77,6 +79,7 @@ async function fixture() {
     page,
     closed,
     automationInput,
+    pointerDowns,
   };
 }
 
@@ -284,7 +287,7 @@ describe("scoped embedded browser transport", () => {
   });
 
   test("tells the host when automation sends input to a tab, so it is not mistaken for the person", async () => {
-    const { transport, automationInput } = await fixture();
+    const { transport, automationInput, pointerDowns } = await fixture();
     const client = await connect(transport);
     await client.send("Target.setAutoAttach", { autoAttach: true });
     const session = String(
@@ -300,5 +303,12 @@ describe("scoped embedded browser transport", () => {
       session,
     );
     expect(automationInput).toEqual(["owned-tab"]);
+    await client.send(
+      "Input.dispatchMouseEvent",
+      { type: "mouseReleased", x: 1, y: 1 },
+      session,
+    );
+    // Only the press is a mouse-down the page will report back.
+    expect(pointerDowns).toEqual([true, false]);
   });
 });

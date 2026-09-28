@@ -39,6 +39,8 @@ import { useStableCallback } from "../../hooks/use-stable-callback";
 import { ReviewQueueListPanel } from "./review-queue-list-panel";
 import { collectPreparedApplicationJobIds } from "./review-queue-status";
 import { ReviewQueueMissionPanel } from "./review-queue-mission-panel";
+import { useAssistantContextSource } from "../../assistant/assistant-provider";
+import { buildListContext } from "../../assistant/assistant-context-capture";
 import { describeApplyAllOutcome } from "./review-queue-mission-panel-helpers";
 import { ReviewQueuePreviewPanel } from "./review-queue-preview-panel";
 import type { TailoredDraftPreparationViewState } from "./review-queue-status";
@@ -171,6 +173,23 @@ export function ReviewQueueScreen(props: {
     () => collectPreparedApplicationJobIds(applicationRecords),
     [applicationRecords],
   );
+  // The shortlist as the person sees it, for the assistant (ADR 0037).
+  useAssistantContextSource("shortlist", () => ({
+    focus: selectedItem
+      ? {
+          kind: "job",
+          id: selectedItem.jobId,
+          label: `${selectedItem.title} at ${selectedItem.company}`,
+        }
+      : null,
+    // The open job is focus; the list panel publishes the ticked rows.
+    list: buildListContext({
+      listKind: "shortlist",
+      checkedIds: [],
+      displayedIds: queue.map((item) => item.jobId),
+      filteredIds: queue.map((item) => item.jobId),
+    }),
+  }));
   const applicationPreparingJobIds = useMemo(
     () => collectInProgressApplicationJobIds(applicationRecords),
     [applicationRecords],
@@ -329,7 +348,7 @@ export function ReviewQueueScreen(props: {
         />
       }
     >
-      <div className="grid min-w-0 items-stretch gap-4 xl:h-full xl:min-h-0 xl:grid-cols-[minmax(24rem,0.72fr)_minmax(34rem,1fr)] xl:overflow-hidden">
+      <div className="grid min-w-0 items-stretch gap-4 xl:h-full xl:min-h-0 xl:grid-cols-[minmax(24rem,0.72fr)_minmax(34rem,1fr)] assistant-docked:xl:grid-cols-[minmax(16rem,0.72fr)_minmax(0,1fr)] xl:overflow-hidden">
         <ReviewQueueListPanel
           key={props.campaignId}
           campaignId={props.campaignId}

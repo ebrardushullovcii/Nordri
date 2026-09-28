@@ -2613,47 +2613,51 @@ export function createBrowserAgentRuntime(
                   !boundPage.isClosed() &&
                   areExactHttpUrls(boundPage.url(), targetUrl);
                 if (usesEmbeddedBrowserHost && !boundPageMatchesTarget)
-                  releaseReservedTab = await reserveEmbeddedApplicationTab(
-                    context,
-                    options?.signal,
-                    async () => {
-                      const keep = new Set(
-                        await getProtectedApplicationPages(context),
-                      );
-                      const free = (page: Page) =>
-                        !page.isClosed() &&
-                        !keep.has(page) &&
-                        !pagesInUse.has(page);
-                      // First the empty startup tab, then the page of an
-                      // application that was already sent: it stays open
-                      // for the person to see the confirmation until a new
-                      // form needs the tab.
-                      const idle =
-                        context
-                          .pages()
-                          .find(
-                            (page) =>
-                              free(page) &&
-                              (page.url() === "about:blank" ||
-                                page.url() === ""),
-                          ) ??
-                        [...sentApplicationPages].find(
-                          (page) =>
-                            free(page) && context.pages().includes(page),
+                  // Waiting for a tab must not hold the site: the pages
+                  // occupying the tabs may need it to finish.
+                  releaseReservedTab = await preparationLease.suspend(() =>
+                    reserveEmbeddedApplicationTab(
+                      context,
+                      options?.signal,
+                      async () => {
+                        const keep = new Set(
+                          await getProtectedApplicationPages(context),
                         );
-                      if (!idle) return false;
-                      sentApplicationPages.delete(idle);
-                      await idle.close().catch(() => undefined);
-                      return idle.isClosed();
-                    },
-                    input.onWaitingForBrowserTab
-                      ? () => {
-                          void Promise.resolve(
-                            input.onWaitingForBrowserTab?.(),
-                          ).catch(() => undefined);
-                        }
-                      : undefined,
-                    hostTabCount,
+                        const free = (page: Page) =>
+                          !page.isClosed() &&
+                          !keep.has(page) &&
+                          !pagesInUse.has(page);
+                        // First the empty startup tab, then the page of an
+                        // application that was already sent: it stays open
+                        // for the person to see the confirmation until a new
+                        // form needs the tab.
+                        const idle =
+                          context
+                            .pages()
+                            .find(
+                              (page) =>
+                                free(page) &&
+                                (page.url() === "about:blank" ||
+                                  page.url() === ""),
+                            ) ??
+                          [...sentApplicationPages].find(
+                            (page) =>
+                              free(page) && context.pages().includes(page),
+                          );
+                        if (!idle) return false;
+                        sentApplicationPages.delete(idle);
+                        await idle.close().catch(() => undefined);
+                        return idle.isClosed();
+                      },
+                      input.onWaitingForBrowserTab
+                        ? () => {
+                            void Promise.resolve(
+                              input.onWaitingForBrowserTab?.(),
+                            ).catch(() => undefined);
+                          }
+                        : undefined,
+                      hostTabCount,
+                    ),
                   );
                 const protectedPreparedPages = [
                   ...otherPreparedPages,

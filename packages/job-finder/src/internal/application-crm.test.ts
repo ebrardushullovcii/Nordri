@@ -316,6 +316,27 @@ describe("application CRM service", () => {
     expect(repo.read()[0]?.crm?.events[0]?.source).toBe("user");
   });
 
+  test("records the assistant as the source of changes it made", async () => {
+    const repo = repository();
+    await mutateApplicationCrm({
+      repository: repo,
+      command: {
+        applicationRecordId: "application_1",
+        expectedRevision: 0,
+        actor: "assistant",
+        mutation: {
+          type: "set_stage",
+          stage: "interview",
+          customStageId: null,
+          note: "First call on Monday.",
+        },
+      },
+      now: () => "2026-08-15T10:00:00.000Z",
+      createId: () => "event_1",
+    });
+    expect(repo.read()[0]?.crm?.events[0]?.source).toBe("assistant");
+  });
+
   test("tags and notes keep following later application progress", async () => {
     const repo = repository([
       record({ status: "ready_for_review", lastAttemptState: "paused" }),
@@ -976,8 +997,11 @@ describe("application CRM service", () => {
       records,
       request: { format: "csv", applicationRecordIds: [] },
     });
-    const [, ...lines] = csv.content.split("\r\n");
+    const [, ...lines] = csv.content.split("\r\n").filter(Boolean);
     expect(lines).toHaveLength(3);
+    // One line break per row, the last row included.
+    expect(csv.content.endsWith("\r\n")).toBe(true);
+    expect(csv.content.match(/\r\n/gu)).toHaveLength(4);
     const csvRows = new Map(lines.map((line) => [line.split(",", 1)[0], line]));
     expect(csvRows.get("application_persisted")).toBe(
       "application_persisted,job_persisted,Software Engineer,Example Inc,applied,user_recorded_local,,2026-08-10T09:30:00.000Z,user_recorded_local,not_verified_with_employer_or_ats,,,2026-08-01T10:00:00.000Z",

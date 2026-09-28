@@ -3,8 +3,26 @@ import { BrowserWindow, type WebContents } from "electron";
 export const JOB_FINDER_WORKSPACE_UPDATED_CHANNEL =
   "job-finder:workspace-updated";
 
+const workspaceUpdateListeners = new Set<() => void>();
+
+/**
+ * Main-process listeners told about every workspace update (the assistant
+ * watches its background runs this way instead of polling).
+ */
+export function onJobFinderWorkspaceUpdate(listener: () => void): () => void {
+  workspaceUpdateListeners.add(listener);
+  return () => workspaceUpdateListeners.delete(listener);
+}
+
 /** Tells mounted renderers to converge through the existing delta sync. */
 export function publishJobFinderWorkspaceUpdate(target?: WebContents): void {
+  for (const listener of workspaceUpdateListeners) {
+    try {
+      listener();
+    } catch {
+      // A listener never blocks the renderer update.
+    }
+  }
   if (target) {
     const canSend = typeof target.send === "function";
     const isDestroyed =

@@ -200,6 +200,7 @@ export function ApplicationsDetailPanelRecoveryActionsSection(props: {
   selectedRecordJobId: string;
   selectedApplicationRecordId: string;
   selectedRecordLatestBlockerCode?: string | null;
+  selectedRecordLastActionLabel?: string | null;
   selectedRun: JobFinderWorkspaceSnapshot["applyRuns"][number] | null;
   /** What the visible result's run is doing (a planned job's standing). */
   visibleApplyRunContext?: ApplyRunContext | null;
@@ -232,6 +233,7 @@ export function ApplicationsDetailPanelRecoveryActionsSection(props: {
     selectedRecordJobId,
     selectedApplicationRecordId,
     selectedRecordLatestBlockerCode,
+    selectedRecordLastActionLabel = null,
     selectedRun,
     visibleApplyRunContext = null,
     visibleApplyResult,
@@ -245,6 +247,7 @@ export function ApplicationsDetailPanelRecoveryActionsSection(props: {
       visibleApplyResult?.privacyReceipt,
     ),
     isApplyPending,
+    recordLastActionLabel: selectedRecordLastActionLabel,
     ...(selectedRecordLatestBlockerCode !== undefined
       ? { recordLatestBlockerCode: selectedRecordLatestBlockerCode }
       : {}),

@@ -1,0 +1,60 @@
+import { describe, expect, it } from "vitest";
+
+import { ACTION_INVENTORY } from "./action-inventory";
+import { buildAssistantToolCatalog, listAllAssistantToolNames } from "./tools";
+
+describe("assistant action inventory", () => {
+  it("names only tools that exist", () => {
+    const known = new Set(listAllAssistantToolNames());
+    const missing = ACTION_INVENTORY.flatMap((entry) =>
+      entry.coverage.kind === "tools"
+        ? entry.coverage.tools
+            .filter((tool) => !known.has(tool))
+            .map((tool) => `${entry.id}: ${tool}`)
+        : [],
+    );
+    expect(missing).toEqual([]);
+  });
+
+  it("gives every excluded action a reason and every entry a unique id", () => {
+    const ids = ACTION_INVENTORY.map((entry) => entry.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    for (const entry of ACTION_INVENTORY) {
+      if (entry.coverage.kind === "excluded") {
+        expect(entry.coverage.reason.length).toBeGreaterThan(10);
+      }
+    }
+  });
+
+  it("reaches every tool in both catalog modes", () => {
+    const all = listAllAssistantToolNames();
+    expect(new Set(all).size).toBe(all.length);
+    const flat = new Set(
+      buildAssistantToolCatalog({ mode: "flat", browserAvailable: true }).map(
+        (tool) => tool.name,
+      ),
+    );
+    const grouped = new Set(
+      buildAssistantToolCatalog({
+        mode: "grouped",
+        browserAvailable: true,
+        screen: "home",
+        loadedGroups: [
+          "profile",
+          "files",
+          "resume",
+          "jobs",
+          "applications",
+          "tracking",
+          "settings",
+          "browser",
+        ],
+      }).map((tool) => tool.name),
+    );
+    for (const name of all) {
+      expect(flat.has(name), name).toBe(true);
+      expect(grouped.has(name), name).toBe(true);
+    }
+    expect(grouped.has("load_tools")).toBe(true);
+  });
+});

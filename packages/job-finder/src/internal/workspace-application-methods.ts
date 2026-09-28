@@ -1,4 +1,8 @@
 import {
+  createMonotonicTimestamp,
+  preserveWorkHistoryReviewGuidance,
+} from "./resume-draft-commit-support";
+import {
   applicationSiteKey,
   type ExecuteApplicationFlowInput,
 } from "@unemployed/browser-runtime";
@@ -27,6 +31,7 @@ import {
   sendPreparedApplicationIfAllowed,
 } from "./apply-submission-run-step";
 import {
+  APPLICATION_SKIPPED_BY_PERSON_LABEL,
   ApplyJobResultSchema,
   ApplyRecoveryContextSchema,
   ApplyRunSchema,
@@ -66,8 +71,6 @@ import {
   type BrowserVisualEvidenceSummary,
   type CandidateProfile,
   type JobSource,
-  type ResumeValidationIssue,
-  type ResumeValidationResult,
   type ResumeTemplateDefinition,
   type TailoredAsset,
   type UserActionRequest,
@@ -247,17 +250,6 @@ function buildRecoveryInstructions(input: {
       Boolean(value && value.trim().length > 0),
     ),
   );
-}
-
-function createMonotonicTimestamp(
-  previousIso: string | null | undefined,
-): string {
-  const now = Date.now();
-  const parsedPrevious = previousIso
-    ? new Date(previousIso).getTime()
-    : Number.NaN;
-  const previous = Number.isNaN(parsedPrevious) ? now : parsedPrevious + 1;
-  return new Date(Math.max(now, previous)).toISOString();
 }
 
 /**
@@ -1060,6 +1052,8 @@ export function createWorkspaceApplicationMethods(
       }
     }
   }
+  // Assistant edits queue on the same per-job transition tail.
+  ctx.withResumeDraftTransition = withResumeDraftTransition;
 
   async function assertResumeDraftCurrent(draft: ResumeDraft): Promise<void> {
     const currentDraft = await ctx.repository.getResumeDraftByJobId(
@@ -1128,36 +1122,6 @@ export function createWorkspaceApplicationMethods(
         `The selected resume template for '${input.jobTitle}' is not eligible for automatic apply. Choose an apply-safe template, export a fresh PDF, and approve it again.`,
       );
     }
-  }
-
-  function preserveWorkHistoryReviewGuidance(input: {
-    validation: ResumeValidationResult;
-    previousValidation: ResumeValidationResult | null;
-    draft: ResumeDraft;
-  }): ResumeValidationResult {
-    const existingIssueIds = new Set(
-      input.validation.issues.map((issue) => issue.id),
-    );
-    const entryIds = new Set(
-      input.draft.sections.flatMap((section) =>
-        section.entries.map((entry) => entry.id),
-      ),
-    );
-    const preservedIssues: ResumeValidationIssue[] = (
-      input.previousValidation?.issues ?? []
-    )
-      .filter((issue) => issue.category === "work_history_review")
-      .filter((issue) => !issue.entryId || entryIds.has(issue.entryId))
-      .filter((issue) => !existingIssueIds.has(issue.id));
-
-    if (preservedIssues.length === 0) {
-      return input.validation;
-    }
-
-    return ResumeValidationResultSchema.parse({
-      ...input.validation,
-      issues: [...input.validation.issues, ...preservedIssues],
-    });
   }
 
   /**
@@ -7704,7 +7668,8 @@ export function createWorkspaceApplicationMethods(
 
       return ctx.getWorkspaceSnapshot();
     },
-    async cancelApplyRun(runId) {
+    async cancelApplyRun(runId, options) {
+      const skippedByPerson = new Set(options?.skippedByPerson ?? []);
       ctx.activeApplyRunAbortControllers.get(runId)?.abort();
       const { run, updatedRun, now, applicationRecordIdByJobId, results } =
         await withApplyRunTransition(runId, async () => {
@@ -7804,12 +7769,19 @@ export function createWorkspaceApplicationMethods(
             await ctx.repository.upsertApplicationRecord(
               ApplicationRecordSchema.parse({
                 ...existingRecord,
-                ...(runOwnsJobOutcome
+                ...(runOwnsJobOutcome && skippedByPerson.has(jobId)
                   ? {
-                      lastActionLabel: updatedRun.summary,
-                      nextActionLabel: "Press Try again to pick this up later.",
+                      lastActionLabel: APPLICATION_SKIPPED_BY_PERSON_LABEL,
+                      nextActionLabel:
+                        "Nothing was sent. Apply again if you change your mind.",
                     }
-                  : {}),
+                  : runOwnsJobOutcome
+                    ? {
+                        lastActionLabel: updatedRun.summary,
+                        nextActionLabel:
+                          "Press Try again to pick this up later.",
+                      }
+                    : {}),
                 lastUpdatedAt: now,
                 events: mergeEvents(existingRecord.events, [
                   {

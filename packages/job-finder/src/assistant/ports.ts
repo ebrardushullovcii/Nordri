@@ -1,0 +1,91 @@
+import type {
+  ApplicationAutomationMode,
+  ApplyRawPageHands,
+  CandidateAsset,
+  JobFinderSearchRequest,
+} from "@unemployed/contracts";
+
+/**
+ * What the assistant needs from the host that is not a workspace-service
+ * call: the same orchestration the screens use (a search with its activity
+ * feed, an apply batch with its authority, a send), files, and the browser.
+ * The desktop main process implements these with the exact functions its
+ * IPC routes call, so the assistant and the buttons take one path.
+ */
+export interface AssistantHostPorts {
+  /** Starts a search as Find jobs does and returns once the run exists. */
+  startSearch(input: {
+    searchRequest: JobFinderSearchRequest;
+    targetId: string | null;
+  }): Promise<{ runId: string | null; message: string }>;
+  cancelSearch(runId: string): Promise<void>;
+  /**
+   * Starts preparing applications as Apply to all does, in the given mode
+   * for this batch only. Resumes are approved the way Apply approves them;
+   * jobs whose resume waits on the person are held back and named.
+   */
+  startApplications(input: {
+    jobIds: readonly string[];
+    mode: ApplicationAutomationMode;
+  }): Promise<{
+    startedJobIds: string[];
+    heldBack: { jobId: string; title: string; reason: string }[];
+    runId: string | null;
+  }>;
+  /** Sends forms already filled in, one after another, through the send path. */
+  sendPreparedApplications(input: { jobIds: readonly string[] }): Promise<{
+    sentJobIds: string[];
+    failed: { jobId: string; reason: string }[];
+  }>;
+  /** Runs a source check (the same as Check this source). */
+  checkSource(targetId: string): Promise<void>;
+  listDocuments(): Promise<readonly CandidateAsset[]>;
+  /** Plain text of one document, bounded; null when it has none. */
+  readDocumentText(documentId: string): Promise<string | null>;
+  /** The file's bytes for an upload into a page; the model never sees a path. */
+  loadDocumentFile(documentId: string): Promise<{
+    name: string;
+    mimeType: string;
+    bytes: Uint8Array;
+  }>;
+  /** Imports a document into the profile as a resume. */
+  importResumeDocument(documentId: string): Promise<void>;
+  /** Writes the tracker export where the person chooses; returns the path or null. */
+  exportTracker?(format: "csv" | "json"): Promise<string | null>;
+  /** The browser, when the host has one. */
+  browser?: AssistantBrowserPort;
+  /** Tells mounted screens to refresh after the assistant changed something. */
+  publishWorkspaceUpdate(): void;
+}
+
+/**
+ * The tab the person lent the assistant (ADR 0038). A lease covers exactly
+ * that tab and the tabs the task opens from it; the person's click or key in
+ * it, closing it, Stop, or the end of the task revokes it.
+ */
+export interface AssistantBrowserLease {
+  leaseId: string;
+  tabId: string;
+  /** Aborted when the lease is revoked. */
+  revoked: AbortSignal;
+  /** Mechanics on the lease's current page (it moves into a popup it adopts). */
+  hands: ApplyRawPageHands;
+  currentUrl(): string;
+  /** Tabs the task opened from the lent tab, with their order for adoption. */
+  childTabIds(): string[];
+  /** A still of the page, for image-capable routes. */
+  screenshot?(): Promise<{ dataUrl: string } | null>;
+  release(reason: string): Promise<void>;
+}
+
+export interface AssistantBrowserPort {
+  /** The tab on screen now, if the browser is open. */
+  visibleTab(): { tabId: string; url: string; title: string | null } | null;
+  lease(input: {
+    tabId: string | null;
+    conversationId: string;
+    turnId: string;
+    /** When no tab is lent, the task may open its own at this address. */
+    openUrl?: string | null;
+  }): Promise<AssistantBrowserLease>;
+}

@@ -23,6 +23,7 @@ import type { UseFormReturn } from "react-hook-form";
 import {
   deriveSourceHealthSignals,
   describeEnabledSourceHealth,
+  describeLatestSourceCheck,
   isEnabledSourceNeedingAttention,
   type SourceRuntimeSignals,
 } from "@unemployed/job-finder/source-health";
@@ -625,6 +626,12 @@ export function ProfileJobSourcesTab(props: ProfileJobSourcesTabProps) {
               );
               const needsAttention =
                 target.enabled && health.state === "needs_attention";
+              // A check newer than the last search is what the row reports.
+              const checkLine = describeLatestSourceCheck(
+                target,
+                props.recentSourceDebugRuns,
+                sourceHealthSignals.latestExecutions?.get(target.id) ?? null,
+              );
 
               return (
                 <li className="min-w-0" key={target.id}>
@@ -718,8 +725,11 @@ export function ProfileJobSourcesTab(props: ProfileJobSourcesTabProps) {
                           {target.startingUrl}
                         </p>
                         {target.enabled ? (
-                          <p className="mt-1 text-xs text-foreground-soft">
-                            {health.reason}
+                          <p
+                            className="mt-1 text-xs text-foreground-soft"
+                            data-source-status-line
+                          >
+                            {checkLine ?? health.reason}
                           </p>
                         ) : getInstructionStatusLabel(target) ? (
                           <p className="mt-1 text-xs text-foreground-muted">

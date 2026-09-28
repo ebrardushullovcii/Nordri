@@ -48,6 +48,12 @@ import {
   type JobFinderWorkspaceResetOptions,
 } from "./internal/workspace-service-contracts";
 import { createWorkspaceSnapshotProfileMethods } from "./internal/workspace-snapshot-profile-methods";
+import { createWorkspaceAssistantEditMethods } from "./internal/workspace-assistant-edit-methods";
+import { runResumeRevisionSpecialist } from "./internal/workspace-assistant-resume-specialist";
+import {
+  extractJobsFromPageText,
+  saveJobsFromPage,
+} from "./internal/workspace-assistant-page-jobs";
 import { createWorkspaceDiscoveryMethods } from "./internal/workspace-discovery-methods";
 import { createWorkspaceSourceDebugMethods } from "./internal/workspace-source-debug-methods";
 import { createWorkspaceApplicationMethods } from "./internal/workspace-application-methods";
@@ -674,6 +680,17 @@ export function createJobFinderWorkspaceService(
   };
 
   const snapshotProfileMethods = createWorkspaceSnapshotProfileMethods(context);
+  const assistantEditMethods = createWorkspaceAssistantEditMethods({
+    ctx: context,
+    applyAssistantProfilePatchGroup:
+      snapshotProfileMethods.applyAssistantProfilePatchGroup,
+    commitResumeApplicationMode: async (resumeApplicationMode) => {
+      await snapshotProfileMethods.updateApplicationDefaults({
+        resumeApplicationMode,
+      });
+    },
+    saveSettings: (settings) => snapshotProfileMethods.saveSettings(settings),
+  });
   const applicationMethods = createWorkspaceApplicationMethods(context);
   context.resumeApplicationUserAction = (request, taskLocalCredentials) =>
     applicationMethods.resumeApplicationUserAction(
@@ -1710,9 +1727,9 @@ export function createJobFinderWorkspaceService(
           (token) => applicationMethods.approveApplyRun(runId, token),
         );
       }),
-    cancelApplyRun: (runId) =>
+    cancelApplyRun: (runId, options) =>
       trackWorkspaceOperation("application preparation", () =>
-        applicationMethods.cancelApplyRun(runId),
+        applicationMethods.cancelApplyRun(runId, options),
       ),
     resolveApplyConsentRequest: (requestId, action) =>
       trackWorkspaceOperation("application preparation", async () => {
@@ -1763,5 +1780,29 @@ export function createJobFinderWorkspaceService(
         );
       }),
     ...crmMethods,
+    applyAssistantProfileOperations: (request) =>
+      trackWorkspaceOperation("profile proposal", () =>
+        assistantEditMethods.applyAssistantProfileOperations(request),
+      ),
+    undoAssistantProfileChange: (request) =>
+      trackWorkspaceOperation("profile proposal", () =>
+        assistantEditMethods.undoAssistantProfileChange(request),
+      ),
+    undoAssistantSettingsChange:
+      assistantEditMethods.undoAssistantSettingsChange,
+    applyAssistantResumePatches:
+      assistantEditMethods.applyAssistantResumePatches,
+    applyAssistantResumeRevision:
+      assistantEditMethods.applyAssistantResumeRevision,
+    undoAssistantResumeChange: assistantEditMethods.undoAssistantResumeChange,
+    extractJobsFromPageText: (input) => extractJobsFromPageText(context, input),
+    saveJobsFromPage: (input) =>
+      trackWorkspaceOperation("discovery", () =>
+        saveJobsFromPage(context, input),
+      ),
+    runResumeRevisionSpecialist: (input) =>
+      trackWorkspaceOperation("resume edit", () =>
+        runResumeRevisionSpecialist(context, input),
+      ),
   };
 }
