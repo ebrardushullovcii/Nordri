@@ -11,7 +11,7 @@ import {
   ResumeDraftSchema,
   ResumeValidationResultSchema,
   SavedJobSchema,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { createInMemoryJobFinderRepository } from "./index";
 import { createSeed } from "./test-fixtures";
 import { MAX_RESUME_DRAFT_REVISIONS_PER_DRAFT } from "./resume-draft-revision-retention";

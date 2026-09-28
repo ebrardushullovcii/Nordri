@@ -2,8 +2,8 @@ import type {
   TailoredResumeCoverageMetadata,
   WorkHistoryReviewSuggestionAction,
   WorkHistoryReviewSuggestionKind,
-} from "@unemployed/contracts";
-import { fnv1a32 } from "@unemployed/core";
+} from "@nordri/contracts";
+import { fnv1a32 } from "@nordri/core";
 
 /**
  * Draft-independent identity of a projected work-history review suggestion:

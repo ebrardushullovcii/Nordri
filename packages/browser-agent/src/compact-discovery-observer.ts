@@ -15,7 +15,7 @@ import {
   type DiscoveryCompactObservation,
   type DiscoveryCompactObservationUnsupportedReason,
   type JobPosting,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import {
   buildGenericJobId,

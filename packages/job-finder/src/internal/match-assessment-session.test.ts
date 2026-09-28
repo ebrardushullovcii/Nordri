@@ -1,4 +1,4 @@
-import type { JobPosting } from "@unemployed/contracts";
+import type { JobPosting } from "@nordri/contracts";
 import { describe, expect, test, vi } from "vitest";
 import { createSeed } from "../workspace-service.test-fixtures";
 import {

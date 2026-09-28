@@ -13,7 +13,7 @@ import {
   ResumeResearchArtifactSchema,
   ResumeValidationResultSchema,
   TailoredAssetSchema,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import { secureDatabaseFile } from "./internal/migrations";
 import {

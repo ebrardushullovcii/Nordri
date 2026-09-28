@@ -3,7 +3,7 @@ import {
   JobPostingSchema,
   MatchAssessmentSchema,
   type JobPosting,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import { mergeDiscoveredJob } from "./matching";
 

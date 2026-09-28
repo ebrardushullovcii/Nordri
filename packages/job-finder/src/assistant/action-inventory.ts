@@ -885,7 +885,7 @@ export const SERVICE_METHOD_COVERAGE: Record<
   recordApplicationsSentByPerson: "internal",
   submitPreparedApplication: "send_applications",
   approveApply: "apply_to_jobs",
-  recordInterviewHelperApplicationAction: "internal",
+  recordLiveAssistantApplicationAction: "internal",
   mutateApplicationCrm: "update_tracking",
   mutateApplicationCrmBulkStage: "set_stage_for_applications",
   runApplicationNoResponseAutomation: "internal",

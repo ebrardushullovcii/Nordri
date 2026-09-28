@@ -2,7 +2,7 @@ import type {
   ApplicationQuestionKind,
   CandidateProfile,
   CandidateReusableAnswer,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import { normalizeSignal } from "./control-classification";
 import {

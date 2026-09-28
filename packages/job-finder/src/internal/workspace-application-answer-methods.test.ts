@@ -8,8 +8,8 @@ import {
   ApplicationAttemptBlockerSchema,
   type ApplicationQuestionKind,
   type UserActionCommand,
-} from "@unemployed/contracts";
-import { createInMemoryJobFinderRepository } from "@unemployed/db";
+} from "@nordri/contracts";
+import { createInMemoryJobFinderRepository } from "@nordri/db";
 import { describe, expect, it, vi } from "vitest";
 import { createSeed } from "../workspace-service.test-fixtures";
 import { createWorkspaceApplicationAnswerMethods } from "./workspace-application-answer-methods";

@@ -1,4 +1,4 @@
-import type { AssistantMessage } from "@unemployed/contracts";
+import type { AssistantMessage } from "@nordri/contracts";
 
 import type { AssistantLaneCase, AssistantLaneObservation } from "./cases";
 import {

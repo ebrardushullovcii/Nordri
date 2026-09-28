@@ -1,4 +1,4 @@
-import type { NormalizedCompensation, SavedJob } from "@unemployed/contracts";
+import type { NormalizedCompensation, SavedJob } from "@nordri/contracts";
 
 export function formatNormalizedCompensation(
   compensation: NormalizedCompensation | null | undefined,

@@ -2,7 +2,7 @@ import type {
   GlobalDailyApplicationPreparationCapacity,
   JobFinderExactApplicationTarget,
   JobFinderWorkspaceSnapshot,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import type { QueueEntry } from "./applications-detail-panel-helpers";
 import type { ApplicationAnswerStep } from "./applications-answer-step";
 import type { ApplyRunContext } from "./applications-recovery-state";

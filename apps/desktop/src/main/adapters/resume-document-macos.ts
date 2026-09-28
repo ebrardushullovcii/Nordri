@@ -6,7 +6,7 @@ import { promisify } from "node:util";
 import {
   ResumeDocumentBundleSchema,
   type ResumeDocumentBundle,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 const execFileAsync = promisify(execFile);
 const MAX_MACOS_PROCESS_OUTPUT_BYTES = 10 * 1024 * 1024;
@@ -15,7 +15,7 @@ function getSwiftExecutable(): {
   executable: string;
   leadingArgs: string[];
 } {
-  const configuredSwiftPath = process.env.UNEMPLOYED_SWIFT_PATH?.trim();
+  const configuredSwiftPath = process.env.NORDRI_SWIFT_PATH?.trim();
   const candidates = [
     ...(configuredSwiftPath
       ? [{ executable: configuredSwiftPath, leadingArgs: [] as string[] }]
@@ -31,7 +31,7 @@ function getSwiftExecutable(): {
   }
 
   throw new Error(
-    "Swift runtime not found. Install Xcode Command Line Tools or set UNEMPLOYED_SWIFT_PATH to a local Swift executable.",
+    "Swift runtime not found. Install Xcode Command Line Tools or set NORDRI_SWIFT_PATH to a local Swift executable.",
   );
 }
 

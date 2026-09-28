@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { cleanup, render, screen } from "@testing-library/react";
-import { SavedJobSchema, type SavedJob } from "@unemployed/contracts";
+import { SavedJobSchema, type SavedJob } from "@nordri/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {

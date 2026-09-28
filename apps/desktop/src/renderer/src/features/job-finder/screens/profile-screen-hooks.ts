@@ -4,7 +4,7 @@ import type {
   CandidateProfile,
   JobSearchPreferences,
   ResumeImportFieldCandidateSummary,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import type { ProfileBackgroundArrays } from "../components/profile/profile-field-array-types";
 import {
   buildProfilePayload,

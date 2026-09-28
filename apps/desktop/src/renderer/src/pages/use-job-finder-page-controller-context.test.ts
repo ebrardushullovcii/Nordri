@@ -11,7 +11,7 @@ import type {
   JobFinderSetResumeClaimConfirmationInput,
   JobFinderWorkspaceSnapshot,
   ReviewQueueItem,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import type { TailoredDraftPreparationViewState } from "@renderer/features/job-finder/screens/review-queue/review-queue-status";
 import type { DiscoveryRunFeedback } from "@renderer/features/job-finder/screens/discovery/discovery-run-feedback";
 import { buildJobFinderTaskCenterModel } from "@renderer/features/job-finder/components/task-center/job-finder-task-center-model";
@@ -1329,7 +1329,7 @@ describe("Applications browser hand-off failure reporting", () => {
     const command = vi.fn().mockResolvedValue(undefined);
     vi.stubGlobal("window", {
       ...globalThis.window,
-      unemployed: { browser: { command, getState: vi.fn() } },
+      nordri: { browser: { command, getState: vi.fn() } },
     });
     try {
       const performUserAction = vi
@@ -1373,7 +1373,7 @@ describe("Applications browser hand-off failure reporting", () => {
     });
     vi.stubGlobal("window", {
       ...globalThis.window,
-      unemployed: { browser: { command, getState } },
+      nordri: { browser: { command, getState } },
     });
     try {
       const requests = [

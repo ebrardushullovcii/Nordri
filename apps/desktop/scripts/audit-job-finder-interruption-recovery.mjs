@@ -20,7 +20,7 @@ const sourceUserDataDirectory =
     throw new Error("Pass a fictional audit user-data directory.");
   })();
 const recoveryUserDataDirectory = await mkdtemp(
-  path.join(os.tmpdir(), "unemployed-interruption-recovery-"),
+  path.join(os.tmpdir(), "nordri-interruption-recovery-"),
 );
 
 await mkdir(outputDir, { recursive: true });
@@ -34,8 +34,8 @@ function launch() {
     cwd: desktopDir,
     env: {
       ...process.env,
-      UNEMPLOYED_ENABLE_TEST_API: "1",
-      UNEMPLOYED_USER_DATA_DIR: recoveryUserDataDirectory,
+      NORDRI_ENABLE_TEST_API: "1",
+      NORDRI_USER_DATA_DIR: recoveryUserDataDirectory,
     },
   });
 }
@@ -43,12 +43,12 @@ function launch() {
 let app = await launch();
 let page = await app.firstWindow();
 await page.waitForFunction(
-  () => Boolean(window.unemployed?.jobFinder?.runDiscovery),
+  () => Boolean(window.nordri?.jobFinder?.runDiscovery),
   undefined,
   { timeout: 20_000 },
 );
 await page.evaluate(() => {
-  void window.unemployed.jobFinder.runDiscovery();
+  void window.nordri.jobFinder.runDiscovery();
 });
 await page.waitForTimeout(75);
 await app.close();
@@ -56,12 +56,12 @@ await app.close();
 app = await launch();
 page = await app.firstWindow();
 await page.waitForFunction(
-  () => Boolean(window.unemployed?.jobFinder?.getWorkspace),
+  () => Boolean(window.nordri?.jobFinder?.getWorkspace),
   undefined,
   { timeout: 20_000 },
 );
 const workspace = await page.evaluate(() =>
-  window.unemployed.jobFinder.getWorkspace(),
+  window.nordri.jobFinder.getWorkspace(),
 );
 await page.evaluate(() => {
   window.location.hash = "#/job-finder/discovery";

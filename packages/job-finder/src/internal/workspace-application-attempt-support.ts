@@ -8,7 +8,7 @@ import {
   type BrowserVisualEvidenceSummary,
   type SourceDebugWorkerAttempt,
   type SourceInstructionArtifact,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { uniqueStrings } from "./shared";
 
 export function buildQuestionSummary(

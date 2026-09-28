@@ -10,7 +10,7 @@ import { createLocalJobFinderDocumentManager } from "./job-finder-document-manag
 describe("application document DOCX rendering", () => {
   test("writes a valid Word package containing the generated text", async () => {
     const outputDirectory = await mkdtemp(
-      path.join(tmpdir(), "unemployed-letter-docx-"),
+      path.join(tmpdir(), "nordri-letter-docx-"),
     );
     const manager = createLocalJobFinderDocumentManager({ outputDirectory });
     const result = await manager.renderLetterArtifact!({

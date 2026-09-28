@@ -1,7 +1,7 @@
 import {
   ResumeGenerationStrategyPolicySchema,
   type ResumeGenerationStrategyPolicy,
-} from "@unemployed/ai-providers";
+} from "@nordri/ai-providers";
 import {
   JobFinderResumeWorkspaceStrategyContextSchema,
   type JobFinderIntelligenceState,
@@ -9,7 +9,7 @@ import {
   type ResumeStrategy,
   type ResumeTemplateId,
   type SavedJob,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   recommendResumeStrategy,
   type RecommendResumeStrategyResult,

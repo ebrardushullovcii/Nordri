@@ -15,7 +15,7 @@ import {
   type ResumeImportTextStageTiming,
   type ResumeImportRun,
   type ResumeImportVisionArtifact,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import type { WorkspaceServiceContext } from "./workspace-service-context";
 export { applyResolvedResumeImportCandidatesToWorkspace } from "./resume-import-apply";
@@ -42,7 +42,7 @@ import {
   type ResumeImportExtractionStage,
   type ResumeImportStageExtractionResult,
   type ResumeVisionExtractionResult,
-} from "@unemployed/ai-providers";
+} from "@nordri/ai-providers";
 import {
   normalizeSharedMemoryCandidates,
   promoteGroundedSharedMemoryCandidates,

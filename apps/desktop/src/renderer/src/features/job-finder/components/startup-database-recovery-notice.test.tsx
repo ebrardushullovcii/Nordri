@@ -15,7 +15,7 @@ function configureBridge(overrides: {
   getStartupDatabaseRecovery?: () => Promise<unknown>;
   dismissStartupDatabaseRecoveryNotice?: () => Promise<unknown>;
 }) {
-  Object.defineProperty(window, "unemployed", {
+  Object.defineProperty(window, "nordri", {
     configurable: true,
     value: {
       jobFinder: {
@@ -38,7 +38,7 @@ function configureBridge(overrides: {
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
-  delete (window as { unemployed?: unknown }).unemployed;
+  delete (window as { nordri?: unknown }).nordri;
 });
 
 describe("StartupDatabaseRecoveryNotice", () => {
@@ -167,7 +167,7 @@ describe("StartupDatabaseRecoveryNotice", () => {
   });
 
   it("stays hidden without a desktop bridge", async () => {
-    Object.defineProperty(window, "unemployed", {
+    Object.defineProperty(window, "nordri", {
       configurable: true,
       value: {},
     });

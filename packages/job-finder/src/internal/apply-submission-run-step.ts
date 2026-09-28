@@ -4,8 +4,8 @@ import type {
   ApplicationAuthorityEnvelope,
   ApplicationResumeArtifact,
   JobSource,
-} from "@unemployed/contracts";
-import { isActiveApplicationAuthorityEnvelope } from "@unemployed/contracts";
+} from "@nordri/contracts";
+import { isActiveApplicationAuthorityEnvelope } from "@nordri/contracts";
 
 import type { SubmissionPreflightLineageFacts } from "./application-submission-preflight";
 import {

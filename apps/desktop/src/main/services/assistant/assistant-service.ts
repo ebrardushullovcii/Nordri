@@ -2,18 +2,18 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 
 import { BrowserWindow } from "electron";
-import { resolveAssistantModelRouteFromEnvironment } from "@unemployed/ai-providers";
-import type { AssistantEvent } from "@unemployed/contracts";
+import { resolveAssistantModelRouteFromEnvironment } from "@nordri/ai-providers";
+import type { AssistantEvent } from "@nordri/contracts";
 import {
   createAssistantRepository,
   type AssistantRepository,
-} from "@unemployed/db";
+} from "@nordri/db";
 import {
   AssistantSessionHost,
   createAssistantModelHandle,
   createScriptedAssistantModelHandle,
   type AssistantModelResolution,
-} from "@unemployed/job-finder";
+} from "@nordri/job-finder";
 
 import { getJobFinderUserDataDirectory } from "../job-finder/paths";
 import { isDesktopTestApiEnabled } from "../job-finder/test-api";
@@ -43,10 +43,10 @@ export function resolveAssistantModel(
   // rule the rest of Job Finder follows (see create-workspace-service).
   if (
     isDesktopTestApiEnabled(env) &&
-    !isEnabled(env.UNEMPLOYED_TEST_API_USE_LIVE_AI)
+    !isEnabled(env.NORDRI_TEST_API_USE_LIVE_AI)
   ) {
     const delay = Number.parseInt(
-      env.UNEMPLOYED_TEST_ASSISTANT_DELAY_MS ?? "",
+      env.NORDRI_TEST_ASSISTANT_DELAY_MS ?? "",
       10,
     );
     return {
@@ -76,8 +76,8 @@ function publish(event: AssistantEvent): void {
 
 function browserHost(env: NodeJS.ProcessEnv): "embedded" | "external" {
   const testApi = isDesktopTestApiEnabled(env);
-  return env.UNEMPLOYED_BROWSER_HOST !== "external" &&
-    (!testApi || env.UNEMPLOYED_BROWSER_HOST === "embedded")
+  return env.NORDRI_BROWSER_HOST !== "external" &&
+    (!testApi || env.NORDRI_BROWSER_HOST === "embedded")
     ? "embedded"
     : "external";
 }
@@ -151,5 +151,16 @@ export async function resetAssistantStore(): Promise<void> {
     if (!existsSync(filePath)) return;
     repository = createAssistantRepository({ filePath });
   }
+  const conversations = await repository.listConversations();
   await repository.reset();
+  const at = new Date().toISOString();
+  for (const conversation of conversations) {
+    publish({
+      conversationId: conversation.id,
+      turnId: null,
+      sequence: 0,
+      at,
+      payload: { type: "conversation_deleted" },
+    });
+  }
 }

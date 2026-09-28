@@ -1,7 +1,7 @@
 import {
   APPLICATION_SKIPPED_BY_PERSON_LABEL,
   type JobFinderWorkspaceSnapshot,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   JOB_FINDER_BROWSER_NAME,
   OPEN_JOB_FINDER_BROWSER_ACTION,

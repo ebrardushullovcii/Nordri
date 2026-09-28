@@ -45,7 +45,7 @@ describe("tailwind custom-property class syntax", () => {
       sources.has("features/job-finder/components/job-finder-shell-brand.tsx"),
     ).toBe(true);
     expect(
-      sources.has("features/interview-helper/interview-helper-page.tsx"),
+      sources.has("features/live-assistant/live-assistant-page.tsx"),
     ).toBe(true);
     expect(sources.size).toBeGreaterThan(100);
 

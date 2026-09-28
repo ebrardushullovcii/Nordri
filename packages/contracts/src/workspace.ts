@@ -363,7 +363,7 @@ export type JobFinderResumePreviewMode = z.infer<
  * file handle is already open, so neither patching nor read-only permissions
  * fails a save. The desktop test API therefore exposes a one-shot,
  * per-surface synthetic failure keyed by these values; it exists only while
- * UNEMPLOYED_ENABLE_TEST_API is set and never changes product behavior.
+ * NORDRI_ENABLE_TEST_API is set and never changes product behavior.
  */
 export const jobFinderTestSaveSurfaceValues = [
   "profile",
@@ -558,7 +558,7 @@ export type JobFinderSaveSourceInstructionInput = z.infer<
  * drives, without an article, for labels and headings that carry none.
  *
  * It lives here — beside the session state it names — because both the desktop
- * renderer and `@unemployed/job-finder` write user-facing copy about that
+ * renderer and `@nordri/job-finder` write user-facing copy about that
  * window, and a review found the same window called four different things
  * across four screens. Contracts is the one package both already depend on, so
  * this is the only place the label can exist once. Every derived form ("the

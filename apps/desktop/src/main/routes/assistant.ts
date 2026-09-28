@@ -21,7 +21,7 @@ import {
   AssistantUndoChangeInputSchema,
   AssistantUndoChangeResultSchema,
   type CandidateAssetKind,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import { getAssistantHost } from "../services/assistant/assistant-service";
 import { getCandidateAssetLibrary } from "../services/job-finder/candidate-asset-library-instance";

@@ -2,7 +2,7 @@ import { expect, it } from "vitest";
 import {
   ResumeCoverageRoleComparisonSchema,
   WorkHistoryReviewSuggestionSchema,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { describeReviewRole } from "./resume-review-context";
 
 it("identifies missing draft entries from the exact coverage record without borrowing another role", () => {

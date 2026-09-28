@@ -17,7 +17,7 @@ and routed only aggressive resume tailoring to DeepSeek. OpenCode Go now offers
 ## Decision
 
 - Default text, tool-calling, and every vision route (resume scan, browser
-  visual analysis, Interview Helper) to `muse-spark-1.3-contributor` through
+  visual analysis, Live Assistant) to `muse-spark-1.3-contributor` through
   the Responses API with `xhigh` reasoning.
 - Default aggressive resume tailoring to `deepseek-v4.1-flash` through Chat
   Completions with `high` reasoning, on its own route so the whole aggressive
@@ -27,7 +27,7 @@ and routed only aggressive resume tailoring to DeepSeek. OpenCode Go now offers
 
 ## Consequences
 
-- A packaged build with only `UNEMPLOYED_AI_API_KEY` set behaves like the
+- A packaged build with only `NORDRI_AI_API_KEY` set behaves like the
   owner's dogfood setup; no local env file is needed to reproduce it.
 - `.env.example`, `docs/AI_PROVIDER_SETUP.md`, and the routing sentences in
   `docs/ARCHITECTURE.md` and `docs/PRODUCT.md` describe this default.

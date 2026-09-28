@@ -3,7 +3,7 @@ import {
   type JobFinderDiagnosticExport,
   type JobFinderPerformanceSnapshot,
   type JobFinderWorkspaceSnapshot,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 export function buildJobFinderDiagnosticExport(input: {
   workspace: JobFinderWorkspaceSnapshot;

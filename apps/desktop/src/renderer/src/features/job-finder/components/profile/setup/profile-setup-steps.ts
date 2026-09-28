@@ -2,7 +2,7 @@ import {
   normalizeProfileSetupStep,
   profileSetupVisibleStepValues,
   type ProfileSetupStep,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 /**
  * Guided setup is five steps. "Your story" and "Screener answers" merged into

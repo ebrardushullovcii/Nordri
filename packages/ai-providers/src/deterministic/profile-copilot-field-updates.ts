@@ -11,7 +11,7 @@ import type {
   ProfileSearchPreferencesPatchFieldsSchema,
   ProfileSkillGroupsPatchFieldsSchema,
   ProfileWorkEligibilityPatchFieldsSchema,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import type { ReviseCandidateProfileInput } from "../shared";
 import { contentFieldDescriptors } from "./profile-copilot-field-updates-content";

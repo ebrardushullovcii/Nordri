@@ -1,8 +1,8 @@
-import type { CandidateProfile } from "@unemployed/contracts";
+import type { CandidateProfile } from "@nordri/contracts";
 import {
   describeResumeIdentityOwnershipChoice,
   resolveResumeIdentity,
-} from "@unemployed/job-finder/resume-identity";
+} from "@nordri/job-finder/resume-identity";
 import { Button } from "@renderer/components/ui/button";
 
 export function ResumeIdentityChoiceNotice(props: {

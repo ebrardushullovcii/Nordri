@@ -5,7 +5,7 @@ import {
   type ResumeDraftEntry,
   type ResumeDraftOrigin,
   type ResumeDraftSection,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import {
   createResumeDraftPatch,

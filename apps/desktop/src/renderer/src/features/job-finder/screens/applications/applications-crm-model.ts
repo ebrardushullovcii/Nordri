@@ -3,11 +3,11 @@ import type {
   ApplicationCrmData,
   ApplicationCrmStage,
   ApplicationRecord,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   resolveApplicationCrmStageSource,
   resolveApplicationCrmTrackedStage,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { formatApplicationEmployerLine } from "../../lib/job-employer-location-display";
 
 export const APPLICATION_CRM_STAGE_ORDER: readonly ApplicationCrmStage[] = [

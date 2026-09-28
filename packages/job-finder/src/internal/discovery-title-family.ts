@@ -1,4 +1,4 @@
-import type { MatchAssessment, TitleFamilyMatch } from "@unemployed/contracts";
+import type { MatchAssessment, TitleFamilyMatch } from "@nordri/contracts";
 
 import {
   TITLE_MATCHES_TARGET_ROLES_REASON,

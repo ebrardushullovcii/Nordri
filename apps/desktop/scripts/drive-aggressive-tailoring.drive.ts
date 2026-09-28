@@ -286,24 +286,24 @@ async function captureStudio(window: Page, name: string): Promise<void> {
 async function main(): Promise<void> {
   loadRepoLocalEnv();
   const builtMain = path.join(desktopDir, "out", "main", "index.cjs");
-  assert(existsSync(builtMain), "Desktop build is missing. Run pnpm --filter @unemployed/desktop build first.");
+  assert(existsSync(builtMain), "Desktop build is missing. Run pnpm --filter @nordri/desktop build first.");
   assert(existsSync(resumePath), `Resume is missing at ${resumePath}`);
   assert(
-    Boolean(process.env.UNEMPLOYED_AI_API_KEY),
-    "UNEMPLOYED_AI_API_KEY is required so this drive can generate a real aggressive draft.",
+    Boolean(process.env.NORDRI_AI_API_KEY),
+    "NORDRI_AI_API_KEY is required so this drive can generate a real aggressive draft.",
   );
 
   await rm(outputDir, { recursive: true, force: true });
   await mkdir(outputDir, { recursive: true });
   const userDataDirectory = await mkdtemp(
-    path.join(os.tmpdir(), "unemployed-aggressive-tailoring-"),
+    path.join(os.tmpdir(), "nordri-aggressive-tailoring-"),
   );
 
   let app: ElectronApplication | undefined;
   const report: Record<string, unknown> = {
     userDataDirectory,
     resumeFile: path.basename(resumePath),
-    hasLiveApiKey: Boolean(process.env.UNEMPLOYED_AI_API_KEY),
+    hasLiveApiKey: Boolean(process.env.NORDRI_AI_API_KEY),
   };
 
   try {
@@ -312,24 +312,24 @@ async function main(): Promise<void> {
       cwd: desktopDir,
       env: {
         ...process.env,
-        UNEMPLOYED_BROWSER_AGENT: "0",
-        UNEMPLOYED_ENABLE_TEST_API: "1",
-        UNEMPLOYED_TEST_API_USE_LIVE_AI: "1",
-        UNEMPLOYED_TEST_SYSTEM_THEME: "dark",
-        UNEMPLOYED_USER_DATA_DIR: userDataDirectory,
+        NORDRI_BROWSER_AGENT: "0",
+        NORDRI_ENABLE_TEST_API: "1",
+        NORDRI_TEST_API_USE_LIVE_AI: "1",
+        NORDRI_TEST_SYSTEM_THEME: "dark",
+        NORDRI_USER_DATA_DIR: userDataDirectory,
       },
     });
 
     const window = await app.firstWindow();
     await window.setViewportSize({ width: 1440, height: 920 });
     await window.waitForFunction(
-      () => Boolean(window.unemployed?.jobFinder?.test?.importResumeFromPath),
+      () => Boolean(window.nordri?.jobFinder?.test?.importResumeFromPath),
       undefined,
       { timeout: 20_000 },
     );
 
     const imported = await window.evaluate(async (sourcePath) => {
-      const snapshot = await window.unemployed.jobFinder.test!.importResumeFromPath({
+      const snapshot = await window.nordri.jobFinder.test!.importResumeFromPath({
         sourcePath,
         useVision: false,
       });
@@ -347,8 +347,8 @@ async function main(): Promise<void> {
     const now = new Date().toISOString();
     const probeJob = createProbeJob(now);
     await window.evaluate(async (job) => {
-      const snapshot = await window.unemployed.jobFinder.getWorkspace();
-      await window.unemployed.jobFinder.test!.resetWorkspaceState({
+      const snapshot = await window.nordri.jobFinder.getWorkspace();
+      await window.nordri.jobFinder.test!.resetWorkspaceState({
         profile: snapshot.profile,
         searchPreferences: {
           ...snapshot.searchPreferences,
@@ -364,8 +364,8 @@ async function main(): Promise<void> {
 
     window.setDefaultTimeout(360_000);
     const generatedSnapshot = await window.evaluate(async (jobId) => {
-      await window.unemployed.jobFinder.generateResume(jobId);
-      return window.unemployed.jobFinder.getResumeWorkspace(jobId);
+      await window.nordri.jobFinder.generateResume(jobId);
+      return window.nordri.jobFinder.getResumeWorkspace(jobId);
     }, JOB_ID);
     const generated = summarizeWorkspace(generatedSnapshot);
     report.generated = generated;
@@ -497,7 +497,7 @@ async function main(): Promise<void> {
 
     await waitForCondition(async () => {
       const after = await window.evaluate(
-        (jobId) => window.unemployed.jobFinder.getResumeWorkspace(jobId),
+        (jobId) => window.nordri.jobFinder.getResumeWorkspace(jobId),
         JOB_ID,
       );
       return after.draft.claimConfirmations.length >= 1;
@@ -507,7 +507,7 @@ async function main(): Promise<void> {
 
     const afterSkills = summarizeWorkspace(
       await window.evaluate(
-        (jobId) => window.unemployed.jobFinder.getResumeWorkspace(jobId),
+        (jobId) => window.nordri.jobFinder.getResumeWorkspace(jobId),
         JOB_ID,
       ),
     );
@@ -527,14 +527,14 @@ async function main(): Promise<void> {
       while ((await confirmWording.count()) > 0) {
         const beforeCount = (
           await window.evaluate(
-            (jobId) => window.unemployed.jobFinder.getResumeWorkspace(jobId),
+            (jobId) => window.nordri.jobFinder.getResumeWorkspace(jobId),
             JOB_ID,
           )
         ).draft.claimConfirmations.length;
         await confirmWording.first().click();
         await waitForCondition(async () => {
           const after = await window.evaluate(
-            (jobId) => window.unemployed.jobFinder.getResumeWorkspace(jobId),
+            (jobId) => window.nordri.jobFinder.getResumeWorkspace(jobId),
             JOB_ID,
           );
           return after.draft.claimConfirmations.length > beforeCount;
@@ -580,7 +580,7 @@ async function countOutstandingClaims(window: Page): Promise<{
   unsupported: number;
 }> {
   return window.evaluate(async (jobId) => {
-    const workspace = await window.unemployed.jobFinder.getResumeWorkspace(jobId);
+    const workspace = await window.nordri.jobFinder.getResumeWorkspace(jobId);
     const assessments = workspace.validation?.claimAssessments ?? [];
     return {
       unconfirmed: assessments.filter((assessment) => {
@@ -602,7 +602,7 @@ async function countOutstandingClaims(window: Page): Promise<{
 async function expectExportBlocked(window: Page): Promise<void> {
   const failed = await window.evaluate(async (jobId) => {
     try {
-      await window.unemployed.jobFinder.exportResumePdf(jobId);
+      await window.nordri.jobFinder.exportResumePdf(jobId);
       return null;
     } catch (error) {
       return error instanceof Error ? error.message : String(error);

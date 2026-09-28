@@ -1,4 +1,4 @@
-import { ProfileCopilotPatchOperationSchema } from "@unemployed/contracts";
+import { ProfileCopilotPatchOperationSchema } from "@nordri/contracts";
 import { describe, expect, it } from "vitest";
 
 import { PROFILE_EDITING_RULES } from "./profile-tools";

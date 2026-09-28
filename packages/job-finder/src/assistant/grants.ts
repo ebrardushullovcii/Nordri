@@ -5,7 +5,7 @@ import type {
   AssistantMessage,
   AssistantResultSet,
   ApplicationAutomationMode,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 /**
  * Written instructions authorize (ADR 0039).

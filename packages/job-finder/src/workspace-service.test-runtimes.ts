@@ -2,18 +2,18 @@ import {
   createDeterministicJobFinderAiClient,
   type JobFinderAiClient,
   type ResumeProfileExtraction,
-} from "@unemployed/ai-providers";
-import { createCatalogBrowserSessionRuntime } from "@unemployed/browser-runtime";
+} from "@nordri/ai-providers";
+import { createCatalogBrowserSessionRuntime } from "@nordri/browser-runtime";
 import type {
   AgentDiscoveryOptions,
   BrowserSessionRuntime,
-} from "@unemployed/browser-runtime";
+} from "@nordri/browser-runtime";
 import {
   AgentDebugFindingsSchema,
   JobPostingSchema,
   ResumeTemplateDefinitionSchema,
   SourceDebugPhaseEvidenceSchema,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import type {
   AgentDebugFindings,
   AgentDiscoveryProgress,
@@ -27,11 +27,11 @@ import type {
   ResumeResearchArtifact,
   SourceDebugPhaseCompletionMode,
   SourceDebugPhaseEvidence,
-} from "@unemployed/contracts";
-import { SourceIntelligenceArtifactSchema } from "@unemployed/contracts";
+} from "@nordri/contracts";
+import { SourceIntelligenceArtifactSchema } from "@nordri/contracts";
 
 import type { JobFinderDocumentManager } from "./internal/workspace-service-contracts";
-import type { SourceDebugPhase } from "@unemployed/contracts";
+import type { SourceDebugPhase } from "@nordri/contracts";
 import type { SourceDebugPhaseMap } from "./workspace-service.test-fixtures";
 
 export type AgentDebugFindingsInput = Omit<

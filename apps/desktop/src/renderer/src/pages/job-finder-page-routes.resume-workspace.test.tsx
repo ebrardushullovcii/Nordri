@@ -2,7 +2,7 @@
 
 import { Suspense } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { JobFinderWorkspaceSnapshot } from "@unemployed/contracts";
+import type { JobFinderWorkspaceSnapshot } from "@nordri/contracts";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter, Outlet, Route, Routes } from "react-router-dom";
 import type { JobFinderPageContext } from "./job-finder-page-context";

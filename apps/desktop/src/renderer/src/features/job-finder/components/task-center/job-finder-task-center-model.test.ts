@@ -4,8 +4,8 @@ import type {
   DiscoveryRunRecord,
   JobFinderWorkspaceSnapshot,
   ResumeImportRun,
-} from "@unemployed/contracts";
-import { JobFinderIntelligenceStateSchema } from "@unemployed/contracts";
+} from "@nordri/contracts";
+import { JobFinderIntelligenceStateSchema } from "@nordri/contracts";
 import { describe, expect, test } from "vitest";
 import {
   buildJobFinderTaskCenterModel,

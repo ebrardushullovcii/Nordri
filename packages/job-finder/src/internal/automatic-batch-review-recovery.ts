@@ -1,4 +1,4 @@
-import { JobFinderIntelligenceStateSchema } from "@unemployed/contracts";
+import { JobFinderIntelligenceStateSchema } from "@nordri/contracts";
 import { isReviewablePreparedResult } from "./automatic-safeguards";
 import type { WorkspaceServiceContext } from "./workspace-service-context";
 

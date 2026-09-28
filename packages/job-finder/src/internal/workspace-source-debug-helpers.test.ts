@@ -3,7 +3,7 @@ import { describe, expect, test } from "vitest";
 import type {
   JobDiscoveryTarget,
   JobSearchPreferences,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import { createSourceInstructionArtifact } from "../workspace-service.test-fixtures";
 import {

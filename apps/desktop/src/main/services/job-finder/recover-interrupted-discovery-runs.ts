@@ -1,8 +1,8 @@
 import {
   recoverInterruptedDiscoveryRun,
   type JobFinderDiscoveryState,
-} from "@unemployed/contracts";
-import type { JobFinderRepository } from "@unemployed/db";
+} from "@nordri/contracts";
+import type { JobFinderRepository } from "@nordri/db";
 
 /**
  * Records, at startup, that a search which was still running when the app

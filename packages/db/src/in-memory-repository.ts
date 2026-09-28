@@ -41,7 +41,7 @@ import {
   type ApplicationQuestionRecord,
   type CandidateProfile,
   type UserActionRequest,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import { cloneValue } from "./internal/state";
 import { createApplicationAnswerSnapshotRepositoryMethods } from "./application-answer-snapshot-repository";

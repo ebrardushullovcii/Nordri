@@ -5,7 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import {
   ApplicationDocumentRevisionSchema,
   ApplicationRecordSchema,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApplicationsApplicationDocuments } from "./applications-application-documents";
 
@@ -110,7 +110,7 @@ describe("ApplicationsApplicationDocuments", () => {
       });
       return Promise.resolve(currentDocument);
     });
-    Object.defineProperty(window, "unemployed", {
+    Object.defineProperty(window, "nordri", {
       configurable: true,
       value: {
         jobFinder: {
@@ -201,7 +201,7 @@ describe("ApplicationsApplicationDocuments", () => {
     const listApplicationDocuments = vi.fn(() =>
       Promise.resolve({ documents: [proposed] }),
     );
-    Object.defineProperty(window, "unemployed", {
+    Object.defineProperty(window, "nordri", {
       configurable: true,
       value: {
         jobFinder: {

@@ -74,18 +74,18 @@ Each line names the symbol or file to check before changing the behavior. If the
 - The product-action registry exposes exactly the eight tools in `jobFinderProductActionToolNameValues`; none submits, creates accounts, or navigates arbitrarily.
 - Visual snapshots are evidence-only: `visual.ts` rejects selectors and directives, and capture requires the explicit `captureVisualSnapshots` opt-in rather than inference from a visual-capable client.
 
-### AI providers and Interview Helper
+### AI providers and Live Assistant
 
 - Image routes have their own default model, API mode, and reasoning setting and never inherit the text defaults (`DEFAULT_VISION_MODEL*` in `openai-compatible-transport.ts`).
 - A resume-import stage that fell back to the deterministic reader keeps `status: "completed"`; `fallbackKind` and `fallbackReason` are the only durable degradation record (`resume-import.ts`, `describeResumeImportStageFallback`).
 - Disclosure acceptance does not imply capture: `microphoneCapture`, `meetingAudioCapture`, and `screenshotCapture` are enforced separately (`InterviewSetupConsentSchema`).
 - Empty or non-speech audio results are ignored, not persisted as transcript segments (`NON_SPEECH_TRANSCRIPT_PATTERN`).
 - `InterviewCaptureProtectionStateSchema` is a six-state enum; never collapse it into a boolean.
-- Interview Helper writes back to Job Finder only through `JobFinderInterviewFollowUpInputSchema`.
+- Live Assistant writes back to Job Finder only through `JobFinderInterviewFollowUpInputSchema`.
 
 ## Validation Expectations
 
 - normalize browser extraction through schemas before saving jobs
 - validate provider output before workflow code uses it
-- keep import, source-debug, apply, and Interview Helper artifacts replayable and auditable
+- keep import, source-debug, apply, and Live Assistant artifacts replayable and auditable
 - store screenshots only through typed evidence refs or checkpoint metadata with explicit retention/redaction decisions

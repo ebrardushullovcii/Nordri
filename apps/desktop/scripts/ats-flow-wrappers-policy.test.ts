@@ -136,7 +136,7 @@ describe.each(Object.keys(WRAPPERS) as WrapperName[])(
 
     it("cannot elevate final submit or account creation authority", async () => {
       const source = await readWrapper(name);
-      expect(source).not.toMatch(/UNEMPLOYED_[A-Z0-9_]+/u);
+      expect(source).not.toMatch(/NORDRI_[A-Z0-9_]+/u);
       expect(source).not.toMatch(/FINAL_SUBMIT|ACCOUNT_CREAT/iu);
       expect(countOccurrences(source, `${AUTHORIZE_ENV} = "1"`)).toBe(1);
       expect(countOccurrences(source, `${AUTHORIZE_ENV} = "0"`)).toBe(1);
@@ -310,7 +310,7 @@ describe("prepare-only smoke sealed accepted-app launch contract", () => {
       "delete env.JOB_FINDER_PREPARE_ONLY_AUTHORIZE_INTERMEDIATE_WRITES;",
     );
     // Secrets are deleted by name from a single exported list.
-    expect(source).toContain("UNEMPLOYED_AI_API_KEY");
+    expect(source).toContain("NORDRI_AI_API_KEY");
     expect(source).toContain("for (const name of CHILD_ENV_SECRET_VARS)");
     // Self-assertion guards the no-writes invariant.
     expect(source).toContain(
@@ -493,10 +493,10 @@ describe("binding-variable handoff to the prepare-only smoke", () => {
     const source = await readSmokeSource();
 
     expect(source).toContain(
-      "window.unemployed.jobFinder.startApplyCopilotRun({\n              jobId,\n              visualCheckpointsEnabled: false,\n            })",
+      "window.nordri.jobFinder.startApplyCopilotRun({\n              jobId,\n              visualCheckpointsEnabled: false,\n            })",
     );
     expect(source).not.toContain(
-      "window.unemployed.jobFinder.startApplyCopilotRun(jobId,",
+      "window.nordri.jobFinder.startApplyCopilotRun(jobId,",
     );
   });
 

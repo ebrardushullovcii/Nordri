@@ -11,14 +11,14 @@ import {
   saveMainWindowState,
 } from "./window-state";
 
-const originalUserDataDirectory = process.env.UNEMPLOYED_USER_DATA_DIR;
+const originalUserDataDirectory = process.env.NORDRI_USER_DATA_DIR;
 
 describe("main window state", () => {
   afterEach(() => {
     if (originalUserDataDirectory === undefined) {
-      delete process.env.UNEMPLOYED_USER_DATA_DIR;
+      delete process.env.NORDRI_USER_DATA_DIR;
     } else {
-      process.env.UNEMPLOYED_USER_DATA_DIR = originalUserDataDirectory;
+      process.env.NORDRI_USER_DATA_DIR = originalUserDataDirectory;
     }
 
     vi.restoreAllMocks();
@@ -128,9 +128,9 @@ describe("main window state", () => {
 
   test("round-trips the persisted state through the desktop user data directory", () => {
     const userDataDirectory = mkdtempSync(
-      path.join(tmpdir(), "unemployed-window-state-"),
+      path.join(tmpdir(), "nordri-window-state-"),
     );
-    process.env.UNEMPLOYED_USER_DATA_DIR = `  ${path.relative(
+    process.env.NORDRI_USER_DATA_DIR = `  ${path.relative(
       process.cwd(),
       userDataDirectory,
     )}  `;
@@ -168,9 +168,9 @@ describe("main window state", () => {
 
   test("falls back cleanly when the saved state file is invalid JSON", () => {
     const userDataDirectory = mkdtempSync(
-      path.join(tmpdir(), "unemployed-window-state-"),
+      path.join(tmpdir(), "nordri-window-state-"),
     );
-    process.env.UNEMPLOYED_USER_DATA_DIR = userDataDirectory;
+    process.env.NORDRI_USER_DATA_DIR = userDataDirectory;
     const warnSpy = vi
       .spyOn(console, "warn")
       .mockImplementation(() => undefined);

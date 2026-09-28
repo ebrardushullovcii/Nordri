@@ -15,7 +15,7 @@ import {
   type ApplyRunDetails,
   type ApplicationQuestionRecord,
   type JobFinderWorkspaceSnapshot,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   ApplicationDocumentLibraryError,
   type ApplicationDocumentLibrary,

@@ -45,7 +45,7 @@ import {
   type SaveJobSearchCampaignInput,
   type TailoredAsset,
   type ToggleCampaignRuleInput,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import { countDiscoveryStrongMatches } from "../discovery-result-bands";
 import { deriveDiscoverySourceOutcome } from "../source-health";

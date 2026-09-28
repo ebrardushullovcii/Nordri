@@ -2,8 +2,8 @@ import type {
   AssistantContextReference,
   AssistantMessage,
   JobFinderWorkspaceSnapshot,
-} from "@unemployed/contracts";
-import { ACTION_INVENTORY } from "@unemployed/job-finder";
+} from "@nordri/contracts";
+import { ACTION_INVENTORY } from "@nordri/job-finder";
 
 import { LANE_JOBS, laneContext, type AssistantLaneRecorder } from "./world";
 

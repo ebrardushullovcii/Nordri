@@ -1,4 +1,4 @@
-import type { JobDiscoveryTarget, JobSource } from "@unemployed/contracts";
+import type { JobDiscoveryTarget, JobSource } from "@nordri/contracts";
 
 /**
  * Naming for job sources on user-facing surfaces.

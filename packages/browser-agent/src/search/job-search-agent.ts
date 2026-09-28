@@ -4,7 +4,7 @@ import {
   type AgentLoopFinish,
   type AgentLoopMessage,
   type AgentLoopTool,
-} from "@unemployed/agent-runtime";
+} from "@nordri/agent-runtime";
 import {
   AgentDebugFindingsSchema,
   JobPostingSchema,
@@ -14,7 +14,7 @@ import {
   type DiscoveryAccessBlockerReason,
   type JobPosting,
   type SourceDebugPhaseCompletionMode,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import type { APIResponse, Page } from "playwright";
 
 import { isAllowedUrl } from "../allowlist";

@@ -25,7 +25,7 @@ import {
   type SourceIntelligenceProviderKey,
   deriveListingDetailCapture,
   stripDiscoveryCardOnlyEvidenceWarning,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   getDiscoveryListingRecencyKey,
   toSortableListingTime,
@@ -213,11 +213,11 @@ const MIN_DISCOVERY_TARGET_TIME_BUDGET_MS = 120_000;
 /**
  * How many sources one search works on at the same time. Each gets its own
  * browser tab; the number stays small so a laptop and a site's patience both
- * hold. Override with UNEMPLOYED_SEARCH_CONCURRENCY.
+ * hold. Override with NORDRI_SEARCH_CONCURRENCY.
  */
 const DISCOVERY_SOURCE_CONCURRENCY = (() => {
   const configured = Number.parseInt(
-    process.env.UNEMPLOYED_SEARCH_CONCURRENCY ?? "",
+    process.env.NORDRI_SEARCH_CONCURRENCY ?? "",
     10,
   );
   return Number.isFinite(configured) && configured > 0

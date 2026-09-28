@@ -1,5 +1,5 @@
-import { parseToolArguments } from "@unemployed/agent-runtime";
-import type { AgentLoopToolDefinition } from "@unemployed/agent-runtime";
+import { parseToolArguments } from "@nordri/agent-runtime";
+import type { AgentLoopToolDefinition } from "@nordri/agent-runtime";
 import type { LLMClient } from "../agent/contracts";
 import { buildApplicationProfileGrounding } from "./cover-letter";
 import type { ApplyAnswerSources } from "./types";

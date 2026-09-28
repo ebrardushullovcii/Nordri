@@ -3,7 +3,7 @@ import {
   isAgeTokenMisreadAsCompany,
   sanitizeObservedEmployerLabel,
   type JobPosting,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 export type ExtractedJobInput = Pick<
   JobPosting,

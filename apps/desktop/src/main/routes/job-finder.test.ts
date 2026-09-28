@@ -25,7 +25,7 @@ import {
   UpdateWorkspaceBehaviorInputSchema,
   UpdateAiBehaviorInputSchema,
   resumeClaimOwnershipStatement,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { createEmptyJobFinderRepositoryState } from "../adapters/job-finder-initial-state";
 
 type RegisteredHandler = (
@@ -1140,7 +1140,7 @@ describe("job-finder apply entry-point resume approval and authority", () => {
       job.resumeTailoringMode = "aggressive";
       exportArtifact.filePath = path.join(
         os.tmpdir(),
-        "unemployed-missing-approved-pdf",
+        "nordri-missing-approved-pdf",
         `${applicationAutomationMode}-${entryPoint}.pdf`,
       );
       callOrder.length = 0;
@@ -1496,7 +1496,7 @@ describe("job-finder application packet export route", () => {
 
   beforeEach(async () => {
     temporaryDirectory = await mkdtemp(
-      path.join(os.tmpdir(), "unemployed-application-packet-"),
+      path.join(os.tmpdir(), "nordri-application-packet-"),
     );
     mockBuildApplicationPacket.mockResolvedValue(packet);
     mockGetWorkspaceSnapshot.mockResolvedValue(
@@ -3598,7 +3598,7 @@ describe("job-finder agent discovery outcome routes", () => {
 });
 
 describe("job-finder synthetic save failure route", () => {
-  const originalTestApiFlag = process.env.UNEMPLOYED_ENABLE_TEST_API;
+  const originalTestApiFlag = process.env.NORDRI_ENABLE_TEST_API;
 
   function registerHandlers(): Map<string, RegisteredHandler> {
     const handlers = new Map<string, RegisteredHandler>();
@@ -3630,7 +3630,7 @@ describe("job-finder synthetic save failure route", () => {
 
   afterEach(async () => {
     // Never leave an arm behind for another suite.
-    process.env.UNEMPLOYED_ENABLE_TEST_API = "1";
+    process.env.NORDRI_ENABLE_TEST_API = "1";
     const handlers = registerHandlers();
     mockIsDesktopTestApiEnabled.mockReturnValue(true);
     requireHandler(handlers, "job-finder:test-fail-next-save")(
@@ -3647,16 +3647,16 @@ describe("job-finder synthetic save failure route", () => {
     }
 
     if (originalTestApiFlag === undefined) {
-      delete process.env.UNEMPLOYED_ENABLE_TEST_API;
+      delete process.env.NORDRI_ENABLE_TEST_API;
     } else {
-      process.env.UNEMPLOYED_ENABLE_TEST_API = originalTestApiFlag;
+      process.env.NORDRI_ENABLE_TEST_API = originalTestApiFlag;
     }
     mockIsDesktopTestApiEnabled.mockReturnValue(false);
     vi.clearAllMocks();
   });
 
   it("refuses to arm a synthetic failure while the test API is disabled", () => {
-    delete process.env.UNEMPLOYED_ENABLE_TEST_API;
+    delete process.env.NORDRI_ENABLE_TEST_API;
     mockIsDesktopTestApiEnabled.mockReturnValue(false);
 
     expect(() =>
@@ -3668,7 +3668,7 @@ describe("job-finder synthetic save failure route", () => {
   });
 
   it("fails one campaign save before persistence and allows retry", async () => {
-    process.env.UNEMPLOYED_ENABLE_TEST_API = "1";
+    process.env.NORDRI_ENABLE_TEST_API = "1";
     mockIsDesktopTestApiEnabled.mockReturnValue(true);
     const snapshot = createEmptyWorkspace("2026-09-26T10:00:00.000Z");
     const saveCampaign = vi.fn().mockResolvedValue(snapshot);
@@ -3689,7 +3689,7 @@ describe("job-finder synthetic save failure route", () => {
   });
 
   it("fails exactly one save on the armed surface and leaves other surfaces alone", async () => {
-    process.env.UNEMPLOYED_ENABLE_TEST_API = "1";
+    process.env.NORDRI_ENABLE_TEST_API = "1";
     mockIsDesktopTestApiEnabled.mockReturnValue(true);
     const snapshot = createEmptyWorkspace("2026-09-03T10:00:00.000Z");
     const saveProfile = vi.fn().mockResolvedValue(snapshot);

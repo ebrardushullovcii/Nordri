@@ -1,7 +1,7 @@
 import type {
   ApplicationAutomationMode,
   UpdateApplicationDefaultsInput,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 const APPLY_MODE_SAVED: Record<ApplicationAutomationMode, string> = {
   prepare_only:

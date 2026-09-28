@@ -3,7 +3,7 @@ import type {
   JobSearchPreferences,
   ProfileCopilotPatchGroup,
   ProfileCopilotPatchOperation,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 /**
  * Target roles and locations are stored twice: on the profile (resume and

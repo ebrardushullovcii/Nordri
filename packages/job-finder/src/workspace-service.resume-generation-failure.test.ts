@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
-import type { JobFinderAiClient } from "@unemployed/ai-providers";
-import { createInMemoryJobFinderRepository } from "@unemployed/db";
+import type { JobFinderAiClient } from "@nordri/ai-providers";
+import { createInMemoryJobFinderRepository } from "@nordri/db";
 
 import { createJobFinderWorkspaceService } from "./index";
 import { createSeed } from "./workspace-service.test-fixtures";

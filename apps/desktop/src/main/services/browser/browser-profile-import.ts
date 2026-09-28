@@ -19,7 +19,7 @@ import type {
   DesktopBrowserImportResult,
   DesktopBrowserImportSource,
   DesktopBrowserImportSources,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import type { EmbeddedBrowser } from "./embedded-browser";
 
 /**
@@ -487,7 +487,7 @@ async function snapshotDatabase(source: string): Promise<{
   dispose: () => Promise<void>;
 }> {
   // The browser may hold the live file open; a private copy is read instead.
-  const directory = await mkdtemp(path.join(tmpdir(), "unemployed-import-"));
+  const directory = await mkdtemp(path.join(tmpdir(), "nordri-import-"));
   const target = path.join(directory, "cookies.sqlite");
   await copyFile(source, target);
   for (const suffix of ["-wal", "-journal"]) {

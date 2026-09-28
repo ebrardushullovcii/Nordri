@@ -1,7 +1,7 @@
 import {
   APPLICATION_SKIPPED_BY_PERSON_LABEL,
   type JobFinderWorkspaceSnapshot,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import type {
   ApplyJobStateKind,
   ApplyMode,

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type {
   JobFinderPerformanceSnapshot,
   JobFinderWorkspaceSnapshot,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { buildJobFinderDiagnosticExport } from "./build-diagnostic-export";
 
 const secretCorpus = [

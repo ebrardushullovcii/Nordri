@@ -1,5 +1,5 @@
 import { lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { projectPlanSafeguardPauses } from "@unemployed/job-finder/plan-safeguard-pauses";
+import { projectPlanSafeguardPauses } from "@nordri/job-finder/plan-safeguard-pauses";
 import type { ReactNode } from "react";
 import { jobFinderPendingActions } from "./job-finder-pending-actions";
 import { describeSavedResumeLevel } from "@renderer/features/job-finder/screens/review-queue/review-queue-status";
@@ -39,12 +39,12 @@ import type {
   SetJobFinderActivityControlInput,
   UserActionCommandInput,
   UserActionRequestState,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   AiBehaviorPreferenceSchema,
   ApplicationCrmSettingsSchema,
-} from "@unemployed/contracts";
-import { isListableCompanyName } from "@unemployed/contracts";
+} from "@nordri/contracts";
+import { isListableCompanyName } from "@nordri/contracts";
 import { countActiveSafeguardBlockers } from "@renderer/features/job-finder/lib/safeguards-blocker-count";
 import { ApplicationsScreen } from "@renderer/features/job-finder/screens/applications/applications-screen";
 import type {
@@ -1389,7 +1389,7 @@ export function JobFinderDiscoveryRoute() {
         // The listing opens in the app's own browser (ADR 0017): the same
         // window the search used, so a sign-in it holds carries over.
         onOpenListing={(url) => {
-          void window.unemployed.browser.command({ type: "open", url });
+          void window.nordri.browser.command({ type: "open", url });
         }}
         onQueueJob={context.onQueueJob}
         onRunAgentDiscovery={context.onRunAgentDiscovery}
@@ -2724,7 +2724,7 @@ async function allowSiteSavesThenRetry(input: {
   onRetry: () => void;
 }): Promise<void> {
   const { host, onRetry } = input;
-  const api = window.unemployed?.jobFinder;
+  const api = window.nordri?.jobFinder;
   if (!api || !host) {
     return;
   }

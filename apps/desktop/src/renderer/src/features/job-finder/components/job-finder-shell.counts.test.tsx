@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import type { JobFinderWorkspaceSnapshot } from "@unemployed/contracts";
+import type { JobFinderWorkspaceSnapshot } from "@nordri/contracts";
 import { cleanup, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -120,7 +120,7 @@ function getSidebar(): HTMLElement {
 }
 
 beforeEach(() => {
-  Object.defineProperty(window, "unemployed", {
+  Object.defineProperty(window, "nordri", {
     configurable: true,
     value: {
       window: {

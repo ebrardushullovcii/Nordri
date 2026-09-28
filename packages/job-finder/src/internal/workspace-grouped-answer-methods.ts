@@ -15,7 +15,7 @@ import {
   type ProjectGroupedManualAnswerCommand,
   type SnoozeGroupedDecisionInput,
   type UserActionRequest,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import {
   approveGroupedManualAnswer,

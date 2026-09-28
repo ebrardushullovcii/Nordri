@@ -1,7 +1,7 @@
 import type {
   JobDiscoveryTarget,
   SavedJobDiscoveryProvenance,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 function humanizeSourceValue(value: string): string {
   const words = value.replaceAll("_", " ");

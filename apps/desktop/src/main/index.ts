@@ -7,6 +7,7 @@ import { configureInterviewMediaPermissions } from "./setup/interview-media-perm
 import { areAdvancedInterviewSurfacesEnabled } from "./setup/interview-surface-mode";
 import { registerCoreDesktopRoutes } from "./setup/register-core-routes";
 import { getEmbeddedBrowser } from "./services/browser/embedded-browser";
+import { migrateLegacyDesktopUserData } from "./setup/legacy-user-data-migration";
 import {
   configureDesktopUserDataDirectory,
   getDesktopStartupDiagnosticsPath,
@@ -21,10 +22,19 @@ import type * as CandidateAssetLibraryApi from "./services/job-finder/candidate-
 import type { CampaignScheduler } from "./services/job-finder/campaign-scheduler";
 import type * as CampaignSchedulerApi from "./services/job-finder/campaign-scheduler";
 import type * as JobFinderServicesApi from "./services/job-finder";
-import type * as InterviewHelperApi from "./services/interview-helper";
+import type * as LiveAssistantApi from "./services/live-assistant";
 
 loadDesktopEnvironment();
-configureDesktopUserDataDirectory(app);
+const configuredUserDataDirectory = configureDesktopUserDataDirectory(app);
+try {
+  // Before the single-instance lock, the first thing that touches userData.
+  migrateLegacyDesktopUserData(app, {
+    configuredDirectory: configuredUserDataDirectory,
+  });
+} catch (error) {
+  // A failed rename leaves the old directory whole; the app still opens.
+  console.warn("Could not move the pre-rename user data directory.", error);
+}
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 const startupDiagnosticsPath = getDesktopStartupDiagnosticsPath();
@@ -56,7 +66,7 @@ const advancedInterviewSurfacesEnabled = areAdvancedInterviewSurfacesEnabled();
 type JobFinderServices = typeof JobFinderServicesApi;
 type CampaignSchedulerModule = typeof CampaignSchedulerApi;
 type CandidateAssetLibraryModule = typeof CandidateAssetLibraryApi;
-type InterviewHelperModule = typeof InterviewHelperApi;
+type LiveAssistantModule = typeof LiveAssistantApi;
 type InterviewOverlayModule = typeof InterviewOverlayApi;
 type InterviewSessionControlsModule = typeof InterviewSessionControlsApi;
 
@@ -65,7 +75,7 @@ let campaignSchedulerModulePromise: Promise<CampaignSchedulerModule> | null =
   null;
 let candidateAssetLibraryModulePromise: Promise<CandidateAssetLibraryModule> | null =
   null;
-let interviewHelperModulePromise: Promise<InterviewHelperModule> | null = null;
+let liveAssistantModulePromise: Promise<LiveAssistantModule> | null = null;
 let interviewOverlayModulePromise: Promise<InterviewOverlayModule> | null =
   null;
 let interviewSessionControlsModulePromise: Promise<InterviewSessionControlsModule> | null =
@@ -88,9 +98,9 @@ function loadCandidateAssetLibraryModule() {
   return candidateAssetLibraryModulePromise;
 }
 
-function loadInterviewHelperModule() {
-  interviewHelperModulePromise ??= import("./services/interview-helper");
-  return interviewHelperModulePromise;
+function loadLiveAssistantModule() {
+  liveAssistantModulePromise ??= import("./services/live-assistant");
+  return liveAssistantModulePromise;
 }
 
 function loadInterviewOverlayModule() {
@@ -120,7 +130,7 @@ const deferredBackgroundInit = createDeferredBackgroundInitController({
   loadJobFinderServices,
   loadCampaignSchedulerModule,
   loadCandidateAssetLibraryModule,
-  loadInterviewHelperModule,
+  loadLiveAssistantModule,
   loadInterviewOverlayModule,
   loadInterviewSessionControlsModule,
   startCampaignScheduler,
@@ -162,11 +172,11 @@ function loadJobFinderAssetRoutes(): Promise<void> {
   );
 }
 
-function loadInterviewHelperRoutes(): Promise<void> {
-  return import("./setup/register-interview-helper-routes").then(
-    ({ registerInterviewHelperDesktopRoutes }) => {
-      registerInterviewHelperDesktopRoutes(ipcMain);
-      recordStartupDiagnostic("Interview Helper routes registered");
+function loadLiveAssistantRoutes(): Promise<void> {
+  return import("./setup/register-live-assistant-routes").then(
+    ({ registerLiveAssistantDesktopRoutes }) => {
+      registerLiveAssistantDesktopRoutes(ipcMain);
+      recordStartupDiagnostic("Live Assistant routes registered");
     },
   );
 }
@@ -192,7 +202,7 @@ function createMainWindowSafely(): BrowserWindow | null {
 let jobFinderBootstrapRoutesPromise: Promise<void> | null = null;
 let jobFinderRoutesPromise: Promise<void> | null = null;
 let jobFinderAssetRoutesPromise: Promise<void> | null = null;
-let interviewHelperRoutesPromise: Promise<void> | null = null;
+let liveAssistantRoutesPromise: Promise<void> | null = null;
 
 function ensureJobFinderBootstrapRoutesReady(): Promise<void> {
   jobFinderBootstrapRoutesPromise ??= hasSingleInstanceLock
@@ -215,11 +225,11 @@ function ensureJobFinderAssetRoutesReady(): Promise<void> {
   return jobFinderAssetRoutesPromise;
 }
 
-function ensureInterviewHelperRoutesReady(): Promise<void> {
-  interviewHelperRoutesPromise ??= hasSingleInstanceLock
-    ? loadInterviewHelperRoutes()
+function ensureLiveAssistantRoutesReady(): Promise<void> {
+  liveAssistantRoutesPromise ??= hasSingleInstanceLock
+    ? loadLiveAssistantRoutes()
     : Promise.resolve();
-  return interviewHelperRoutesPromise;
+  return liveAssistantRoutesPromise;
 }
 
 if (hasSingleInstanceLock) {
@@ -228,7 +238,7 @@ if (hasSingleInstanceLock) {
     ensureJobFinderBootstrapRoutesReady,
     ensureJobFinderRoutesReady,
     ensureJobFinderAssetRoutesReady,
-    ensureInterviewHelperRoutesReady,
+    ensureLiveAssistantRoutesReady,
   );
 }
 
@@ -332,13 +342,13 @@ async function shutdownJobFinderServicesIfLoaded(): Promise<void> {
   await shutdownJobFinderWorkspaceService();
 }
 
-async function shutdownInterviewHelperIfLoaded(): Promise<void> {
-  if (!interviewHelperModulePromise) {
+async function shutdownLiveAssistantIfLoaded(): Promise<void> {
+  if (!liveAssistantModulePromise) {
     return;
   }
 
-  const { shutdownInterviewHelperService } = await interviewHelperModulePromise;
-  await shutdownInterviewHelperService();
+  const { shutdownLiveAssistantService } = await liveAssistantModulePromise;
+  await shutdownLiveAssistantService();
 }
 
 app.on("before-quit", (event) => {
@@ -387,7 +397,7 @@ app.on("before-quit", (event) => {
     () =>
       Promise.all([
         stopCampaignScheduler().then(shutdownJobFinderServicesIfLoaded),
-        shutdownInterviewHelperIfLoaded(),
+        shutdownLiveAssistantIfLoaded(),
       ]).then(() => undefined),
     jobFinderShutdownTimeoutMs,
     () => {

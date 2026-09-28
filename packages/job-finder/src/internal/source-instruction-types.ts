@@ -1,4 +1,4 @@
-import { SourceIntelligenceArtifactSchema } from "@unemployed/contracts";
+import { SourceIntelligenceArtifactSchema } from "@nordri/contracts";
 import type {
   SourceIntelligenceArtifact,
   BrowserVisualEvidenceSummary,
@@ -7,7 +7,7 @@ import type {
   SourceDebugPhaseCompletionMode,
   SourceDebugPhaseEvidence,
   SourceDebugWorkerAttempt,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { uniqueStrings } from "./shared";
 
 export interface SourceInstructionQualityAssessment {

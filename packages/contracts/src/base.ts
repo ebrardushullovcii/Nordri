@@ -4,7 +4,7 @@ export const IsoDateTimeSchema = z.string().datetime();
 export const NonEmptyStringSchema = z.string().trim().min(1);
 export const UrlStringSchema = z.string().trim().url();
 
-export const suiteModules = ["job-finder", "interview-helper"] as const;
+export const suiteModules = ["job-finder", "live-assistant"] as const;
 export type SuiteModule = (typeof suiteModules)[number];
 
 export const applicationStatusValues = [

@@ -3,7 +3,7 @@ import {
   AssistantEventSchema,
   AssistantMessageSchema,
   AssistantTurnSchema,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import {
   buildListContext,
@@ -209,6 +209,32 @@ describe("applyAssistantEvent", () => {
       startedAt: NOW,
     });
 
+  it("clears the selected chat and transient state when its store is reset", () => {
+    const state = applyAssistantEvent(
+      {
+        ...base,
+        hasOlder: true,
+        progress: ["Preparing"],
+        stall: "Waiting",
+        error: "Try again",
+      },
+      event({ type: "conversation_deleted" }),
+    );
+    expect(state).toMatchObject({
+      conversationId: null,
+      messages: [],
+      hasOlder: false,
+      activeTurn: null,
+      activity: null,
+      draftText: null,
+      progress: [],
+      stall: null,
+      plans: [],
+      pendingMessageIds: [],
+      error: null,
+    });
+  });
+
   it("replaces the streamed draft with each attempt's whole text", () => {
     let state = applyAssistantEvent(
       base,
@@ -253,6 +279,29 @@ describe("applyAssistantEvent", () => {
     expect(state.activeTurn).toBeNull();
     expect(state.progress).toEqual([]);
     expect(state.messages.map((message) => message.id)).toEqual(["msg_reply"]);
+  });
+
+  it("shows completed commentary once when streamed text becomes progress", () => {
+    const text = "I'll start by reading the page you have open. ".repeat(30);
+    let state = applyAssistantEvent(
+      base,
+      event({ type: "text_delta", attempt: 1, text }),
+    );
+    state = applyAssistantEvent(
+      state,
+      event({ type: "text_delta", attempt: 1, text: "" }),
+    );
+    state = applyAssistantEvent(
+      state,
+      event({ type: "progress", text: text.slice(0, 1_000) }),
+    );
+    expect(state.progress).toEqual([text.slice(0, 1_000)]);
+    expect(state.draftText).toBe("");
+    state = applyAssistantEvent(
+      state,
+      event({ type: "text_delta", attempt: 2, text: "I found ten jobs." }),
+    );
+    expect(state.draftText).toBe("I found ten jobs.");
   });
 
   it("ignores events for another conversation", () => {

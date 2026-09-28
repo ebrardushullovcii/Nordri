@@ -15,7 +15,7 @@ import {
   ResolveSubmissionOutcomeInputSchema,
   ResolveSubmissionOutcomeResultSchema,
   UpdateApplicationAuthorityEnvelopeInputSchema,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import {
   getJobFinderApplicationAuthorityService,

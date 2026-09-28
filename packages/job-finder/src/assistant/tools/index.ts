@@ -1,4 +1,4 @@
-import type { AssistantScreen } from "@unemployed/contracts";
+import type { AssistantScreen } from "@nordri/contracts";
 import { z } from "zod";
 
 import {

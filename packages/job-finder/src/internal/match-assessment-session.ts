@@ -3,7 +3,7 @@ import type {
   JobPosting,
   JobSearchPreferences,
   MatchAssessment,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   createMatchAssessmentPostingInput,
   type MatchAssessmentPostingInput,

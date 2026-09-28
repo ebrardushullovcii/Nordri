@@ -6,7 +6,7 @@ import type {
   ResumeImportRun,
   ResumeResearchArtifact,
   ResumeValidationResult,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 export function upsertById<TValue extends { id: string }>(
   current: readonly TValue[],

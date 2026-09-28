@@ -11,7 +11,7 @@ import {
   listBrowserImportSources,
 } from "../../src/main/services/browser/browser-profile-import";
 import { DatabaseSync } from "node:sqlite";
-import { createDeterministicJobFinderAiClient } from "@unemployed/ai-providers";
+import { createDeterministicJobFinderAiClient } from "@nordri/ai-providers";
 import {
   ensurePrepareOnlyMutationGuard,
   getLatestBlockedPrepareOnlyAttempt,
@@ -25,7 +25,7 @@ async function main() {
   let server: ReturnType<typeof createServer>;
   app.setPath(
     "userData",
-    await mkdtemp(join(tmpdir(), "unemployed-scoped-browser-")),
+    await mkdtemp(join(tmpdir(), "nordri-scoped-browser-")),
   );
   await app.whenReady();
   const mainWindow = new BrowserWindow({
@@ -129,7 +129,7 @@ async function main() {
       });
       result.isolation = await page.evaluate(() => ({
         require: typeof (globalThis as Record<string, unknown>).require,
-        bridge: typeof (globalThis as Record<string, unknown>).unemployed,
+        bridge: typeof (globalThis as Record<string, unknown>).nordri,
       }));
       const guarded = await context.newPage();
       guarded.setDefaultTimeout(5000);
@@ -166,7 +166,7 @@ async function main() {
       (await host.getSession().cookies.get({ name: "synthetic-session" }))
         .length === 1;
     // A synthetic Firefox profile stands in for the user's real browsers.
-    const home = await mkdtemp(join(tmpdir(), "unemployed-import-home-"));
+    const home = await mkdtemp(join(tmpdir(), "nordri-import-home-"));
     const profile = join(
       home,
       "Library/Application Support/Firefox/Profiles/abc.synthetic",
@@ -219,7 +219,7 @@ async function main() {
     await host.command({ type: "open", url });
     result.reopen = host.getState().tabs.length;
     const runtime = createDesktopBrowserRuntime({
-      env: { UNEMPLOYED_BROWSER_AGENT: "1" },
+      env: { NORDRI_BROWSER_AGENT: "1" },
       desktopTestApiEnabled: false,
       aiClient: createDeterministicJobFinderAiClient(),
     });

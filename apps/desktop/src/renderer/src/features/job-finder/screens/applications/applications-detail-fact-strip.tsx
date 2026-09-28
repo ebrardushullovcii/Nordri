@@ -3,7 +3,7 @@ import type {
   ApplicationAttempt,
   ApplicationRecord,
   JobFinderWorkspaceSnapshot,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import type { ReactNode } from "react";
 import {
   formatStatusLabel,

@@ -4,7 +4,7 @@ import type {
   GroupedDecisionJobLineage,
   GroupedManualAnswerDecision,
   UserActionRequest,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 /**
  * Input to the atomic grouped manual-answer repository commit. The caller

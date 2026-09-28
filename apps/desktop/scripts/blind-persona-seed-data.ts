@@ -26,7 +26,7 @@ import {
   type JobFinderRepositoryState,
   type SavedJob,
   type SavedJobDiscoveryProvenance,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 type JsonPrimitive = boolean | number | string | null;
 type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };

@@ -72,7 +72,7 @@ async function snapshot(label, page, browserWindow) {
       zoomFactor: window.webContents.getZoomFactor(),
       zoomLevel: window.webContents.getZoomLevel(),
       url: window.webContents.getURL(),
-      navigationEvents: globalThis.__unemployedRouteZoomEvents ?? [],
+      navigationEvents: globalThis.__nordriRouteZoomEvents ?? [],
     })),
     page.evaluate(() => ({
       hash: window.location.hash,
@@ -90,7 +90,7 @@ async function snapshot(label, page, browserWindow) {
 async function run() {
   await mkdir(outputDir, { recursive: true });
   const userDataDirectory = await mkdtemp(
-    path.join(os.tmpdir(), "unemployed-route-zoom-"),
+    path.join(os.tmpdir(), "nordri-route-zoom-"),
   );
   let app;
   const trace = [];
@@ -101,25 +101,25 @@ async function run() {
       cwd: desktopDir,
       env: {
         ...process.env,
-        UNEMPLOYED_BROWSER_AGENT: "0",
-        UNEMPLOYED_ENABLE_TEST_API: "1",
-        UNEMPLOYED_TEST_SYSTEM_THEME: "dark",
-        UNEMPLOYED_USER_DATA_DIR: userDataDirectory,
+        NORDRI_BROWSER_AGENT: "0",
+        NORDRI_ENABLE_TEST_API: "1",
+        NORDRI_TEST_SYSTEM_THEME: "dark",
+        NORDRI_USER_DATA_DIR: userDataDirectory,
       },
     });
 
     const page = await app.firstWindow();
     await page.waitForLoadState("domcontentloaded");
     await page.waitForFunction(
-      () => Boolean(window.unemployed?.jobFinder?.test),
+      () => Boolean(window.nordri?.jobFinder?.test),
       undefined,
       { timeout: 30_000 },
     );
     const browserWindow = await app.browserWindow(page);
     await browserWindow.evaluate((window) => {
-      globalThis.__unemployedRouteZoomEvents = [];
+      globalThis.__nordriRouteZoomEvents = [];
       window.webContents.on("did-start-navigation", (details) => {
-        globalThis.__unemployedRouteZoomEvents.push({
+        globalThis.__nordriRouteZoomEvents.push({
           type: "did-start-navigation",
           targetUrl: details.url,
           isMainFrame: details.isMainFrame,
@@ -130,7 +130,7 @@ async function run() {
       window.webContents.on(
         "did-navigate-in-page",
         (_event, targetUrl, isMainFrame) => {
-          globalThis.__unemployedRouteZoomEvents.push({
+          globalThis.__nordriRouteZoomEvents.push({
             type: "did-navigate-in-page",
             targetUrl,
             isMainFrame,
@@ -146,7 +146,7 @@ async function run() {
     const request = createActionRequest();
     await page.evaluate(
       async (state) =>
-        window.unemployed.jobFinder.test.resetWorkspaceState(state),
+        window.nordri.jobFinder.test.resetWorkspaceState(state),
       {
         ...baseline,
         profileSetupState: {

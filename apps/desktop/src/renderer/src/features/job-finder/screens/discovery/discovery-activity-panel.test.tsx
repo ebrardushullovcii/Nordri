@@ -5,7 +5,7 @@ import {
   DiscoveryActivityEventSchema,
   DiscoveryRunRecordSchema,
   type JobSearchPreferences,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { DiscoveryHistoryModal } from "./discovery-activity-panel";

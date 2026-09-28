@@ -12,7 +12,7 @@ import type {
   MatchAssessmentChangeAudit,
   ReviewQueueItem,
   SavedJob,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   useCallback,
   useEffect,
@@ -1521,7 +1521,7 @@ export function DiscoveryDetailPanel({
               )}
               <Button
                 onClick={() => {
-                  void window.unemployed.jobFinder
+                  void window.nordri.jobFinder
                     .writeClipboardText(selectedJob.canonicalUrl)
                     .then(() => {
                       setCopiedListingJobId(selectedJob.id);

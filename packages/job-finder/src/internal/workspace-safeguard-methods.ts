@@ -8,7 +8,7 @@ import {
   type SafeguardMutationInput,
   type SafeguardsOverview,
   type SavedJob,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import {
   applyCompanyApplicationEvidence,

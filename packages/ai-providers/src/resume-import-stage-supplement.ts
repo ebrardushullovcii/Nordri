@@ -1,7 +1,7 @@
 import {
   ResumeImportFieldCandidateDraftSchema,
   type ResumeImportFieldCandidateDraft,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import { uniqueStrings } from "./deterministic/utils";
 

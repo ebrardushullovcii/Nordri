@@ -11,7 +11,7 @@ import { existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { SavedJobSchema } from "@unemployed/contracts";
+import { SavedJobSchema } from "@nordri/contracts";
 
 import { createFileJobFinderRepository } from "./index";
 import {
@@ -68,7 +68,7 @@ describe("automatic workspace database backup", () => {
   let workspace: Awaited<ReturnType<typeof createTempWorkspace>>;
 
   beforeEach(async () => {
-    workspace = await createTempWorkspace("unemployed-db-backup-");
+    workspace = await createTempWorkspace("nordri-db-backup-");
   });
 
   afterEach(async () => {
@@ -321,7 +321,7 @@ describe("workspace backup rotation reconciliation", () => {
   let workspace: Awaited<ReturnType<typeof createTempWorkspace>>;
 
   beforeEach(async () => {
-    workspace = await createTempWorkspace("unemployed-db-backup-reconcile-");
+    workspace = await createTempWorkspace("nordri-db-backup-reconcile-");
   });
 
   afterEach(async () => {

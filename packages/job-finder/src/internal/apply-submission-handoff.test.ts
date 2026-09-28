@@ -1,10 +1,10 @@
-import type { ApplyAgentResult } from "@unemployed/browser-agent";
+import type { ApplyAgentResult } from "@nordri/browser-agent";
 
 import type { ApplicationSubmissionRuntimeInput } from "./application-submission-runtime";
 import {
   ApplicationAuthorityEnvelopeSchema,
   serializeApplicationAuthorityDecisionPolicyForDigest,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { createHash } from "node:crypto";
 import { describe, expect, it, test, vi } from "vitest";
 

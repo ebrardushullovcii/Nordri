@@ -3,15 +3,15 @@
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { createMemoryRouter, RouterProvider } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { DesktopPlatformPing } from "@unemployed/contracts";
+import type { DesktopPlatformPing } from "@nordri/contracts";
 import type { JobFinderStartupDatabaseRecoveryFact } from "../../../shared/job-finder-startup-db-recovery";
 import { JobFinderPage } from "./job-finder-page";
 
-function configureWindowUnemployed(input: {
+function configureWindowNordri(input: {
   getWorkspaceBootstrapError: Error;
   recoveryFact: JobFinderStartupDatabaseRecoveryFact;
 }) {
-  Object.defineProperty(window, "unemployed", {
+  Object.defineProperty(window, "nordri", {
     configurable: true,
     value: {
       ping: vi.fn<() => Promise<DesktopPlatformPing>>(() =>
@@ -51,12 +51,12 @@ function renderJobFinderPage() {
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
-  delete (window as { unemployed?: unknown }).unemployed;
+  delete (window as { nordri?: unknown }).nordri;
 });
 
 describe("JobFinderPage startup database recovery blocking", () => {
   it("blocks on the typed incident without offering a file-mutating retry", async () => {
-    configureWindowUnemployed({
+    configureWindowNordri({
       getWorkspaceBootstrapError: new Error(
         "Workspace database recovery required (salvage-required). Automatic recovery could not restore the previous workspace safely.",
       ),
@@ -80,7 +80,7 @@ describe("JobFinderPage startup database recovery blocking", () => {
   });
 
   it("keeps the generic retryable error for failures without a typed incident", async () => {
-    configureWindowUnemployed({
+    configureWindowNordri({
       getWorkspaceBootstrapError: new Error("Unable to load the workspace."),
       recoveryFact: { status: "idle" },
     });

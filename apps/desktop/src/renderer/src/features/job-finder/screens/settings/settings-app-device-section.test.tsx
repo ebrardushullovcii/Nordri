@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import type { JobFinderSettings } from "@unemployed/contracts";
+import type { JobFinderSettings } from "@nordri/contracts";
 import {
   cleanup,
   fireEvent,

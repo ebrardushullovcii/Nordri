@@ -5,7 +5,7 @@ import {
   type ApplicationAuthorityEnvelopeInput,
   type SubmissionExecutionGrantInput,
   type SubmissionPreflightRecordInput,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { describe, expect, test } from "vitest";
 
 import {

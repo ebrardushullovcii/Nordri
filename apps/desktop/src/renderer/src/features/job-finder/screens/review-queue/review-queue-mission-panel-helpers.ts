@@ -5,7 +5,7 @@ import type {
   ReviewQueueItem,
   SavedJob,
   TailoredAsset,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { JOB_FINDER_BROWSER_NAME } from "../../lib/job-finder-browser-handoff-copy";
 import {
   AI_UNAVAILABLE_RESUME_RESULT_MESSAGE,

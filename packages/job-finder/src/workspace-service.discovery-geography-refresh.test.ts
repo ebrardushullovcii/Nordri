@@ -1,5 +1,5 @@
 import { afterEach, expect, test, vi } from "vitest";
-import { JobDiscoveryTargetSchema } from "@unemployed/contracts";
+import { JobDiscoveryTargetSchema } from "@nordri/contracts";
 import {
   createSeed,
   createWorkspaceServiceHarness,

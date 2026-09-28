@@ -2,7 +2,7 @@ import {
   ApplyJobResultSchema,
   ApplyRunSchema,
   JobFinderIntelligenceStateSchema,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { describe, expect, test } from "vitest";
 import { createWorkspaceServiceHarness } from "./workspace-service.test-harness";
 import { createSeed } from "./workspace-service.test-fixtures";

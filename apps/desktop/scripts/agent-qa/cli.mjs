@@ -20,14 +20,14 @@ const { values } = parseArgs({
 if (values.help) {
   console.log(`Development QA with the installed Playwright and Electron tools.
 
-  pnpm --filter @unemployed/desktop qa
-  pnpm --filter @unemployed/desktop qa --script /absolute/path/scenario.mjs
-  pnpm --filter @unemployed/desktop qa --provider configured
-  pnpm --filter @unemployed/desktop qa --doctor
+  pnpm --filter @nordri/desktop qa
+  pnpm --filter @nordri/desktop qa --script /absolute/path/scenario.mjs
+  pnpm --filter @nordri/desktop qa --provider configured
+  pnpm --filter @nordri/desktop qa --doctor
 
 Default: fresh synthetic workspace, deterministic AI, embedded browser, private
 copy of existing build, local fixture sites on a free port. No build or release
-checks are run. Explicit UNEMPLOYED_BROWSER_HOST overrides are preserved.
+checks are run. Explicit NORDRI_BROWSER_HOST overrides are preserved.
 --trace records Playwright traces (may include request data).
 --no-fixtures skips the local sites.
 

@@ -2,7 +2,7 @@ import { describe, expect, test, vi } from "vitest";
 import {
   ResumeDraftSchema,
   type ResumeDraftPatch,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import {
   runProfileCopilotAgentTask,

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { ResumeImportFieldCandidateSummarySchema } from "@unemployed/contracts";
+import { ResumeImportFieldCandidateSummarySchema } from "@nordri/contracts";
 import { getVisibleYearsExperience } from "./profile-resume-panel-utils";
 
 describe("profile resume panel utils", () => {

@@ -8,8 +8,8 @@ import type {
   UpdateAiBehaviorInput,
   UpdateApplicationDefaultsInput,
   UpdateWorkspaceBehaviorInput,
-} from "@unemployed/contracts";
-import { ApplicationCrmSettingsSchema } from "@unemployed/contracts";
+} from "@nordri/contracts";
+import { ApplicationCrmSettingsSchema } from "@nordri/contracts";
 import type { CSSProperties, MouseEvent } from "react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";

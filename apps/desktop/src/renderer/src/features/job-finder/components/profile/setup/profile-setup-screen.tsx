@@ -13,7 +13,7 @@ import {
   type ResumeImportRun,
   type ResumeImportProgressEvent,
   type SourceDebugRunRecord,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { Button } from "@renderer/components/ui/button";
 import { LockedScreenLayout } from "../../locked-screen-layout";
 import { PageHeader } from "../../page-header";

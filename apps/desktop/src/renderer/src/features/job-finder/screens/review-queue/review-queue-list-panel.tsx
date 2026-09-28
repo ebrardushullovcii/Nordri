@@ -1,4 +1,4 @@
-import type { ReviewQueueItem, TailoredAsset } from "@unemployed/contracts";
+import type { ReviewQueueItem, TailoredAsset } from "@nordri/contracts";
 import { Button } from "@renderer/components/ui";
 import { cn } from "@renderer/lib/cn";
 import {

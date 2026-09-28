@@ -34,9 +34,9 @@ import type {
   SourceDebugPhase,
   SharedAgentCompactionPolicy,
   SavedJob,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import type { Page } from "playwright";
-import type { JobFinderAiClient } from "@unemployed/ai-providers";
+import type { JobFinderAiClient } from "@nordri/ai-providers";
 import type {
   ApplicationFinalActionResult,
   ApplicationFormObservation,

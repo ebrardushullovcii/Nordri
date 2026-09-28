@@ -8,7 +8,7 @@ import type {
   MatchAssessment,
   MatchDimensionEvidence,
   PreferenceAlignmentState,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { useId, useState } from "react";
 import type { BadgeTone } from "../lib/job-finder-types";
 import {

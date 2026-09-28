@@ -10,7 +10,7 @@ import { RotateCcw, X } from "lucide-react";
 import type {
   DiscoveryActivityEvent,
   DiscoveryRunRecord,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { Button } from "@renderer/components/ui/button";
 import {
   BoundedFloatingSurfaceScrollHint,

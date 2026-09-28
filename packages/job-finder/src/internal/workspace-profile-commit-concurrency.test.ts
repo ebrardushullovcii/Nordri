@@ -1,7 +1,7 @@
 import {
   createInMemoryJobFinderRepository,
   type JobFinderRepository,
-} from "@unemployed/db";
+} from "@nordri/db";
 import { describe, expect, test } from "vitest";
 
 import { createJobFinderWorkspaceService } from "../index";

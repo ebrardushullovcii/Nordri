@@ -4,7 +4,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import type {
   JobFinderWorkspaceSnapshot,
   SafeguardMutationInput,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { Search, ShieldAlert, ShieldCheck } from "lucide-react";
 import { Button } from "@renderer/components/ui/button";
 import { EmptyState } from "@renderer/features/job-finder/components/empty-state";

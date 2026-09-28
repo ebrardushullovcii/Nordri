@@ -22,7 +22,7 @@ import type {
   SourceDebugPhaseEvidence,
   Tool,
   ToolCall,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import type { Page } from "playwright";
 import type {
   SearchResultCardCandidate,

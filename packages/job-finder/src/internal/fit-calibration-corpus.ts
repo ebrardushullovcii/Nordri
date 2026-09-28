@@ -5,7 +5,7 @@ import {
   type CandidateProfile,
   type JobPosting,
   type JobSearchPreferences,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import type {
   FitCalibrationCase,
   FitCalibrationCorpus,

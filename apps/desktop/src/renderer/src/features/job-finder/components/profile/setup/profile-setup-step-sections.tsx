@@ -27,7 +27,7 @@ import {
   type ResumeImportRun,
   type SourceDebugRunRecord,
   workModeValues,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { getResumeImportStageFallbackNotes } from "../profile-resume-panel";
 import { getResumeImportStageFallbackSummary } from "../resume-import-quality-note";
 import type { UseFormReturn } from "react-hook-form";

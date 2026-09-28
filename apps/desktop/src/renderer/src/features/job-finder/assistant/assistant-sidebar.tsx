@@ -31,8 +31,8 @@ import type {
   AssistantEntityRef,
   AssistantMentionCandidate,
   AssistantMessage,
-} from "@unemployed/contracts";
-import { ASSISTANT_MESSAGE_MAX_CHARS } from "@unemployed/contracts";
+} from "@nordri/contracts";
+import { ASSISTANT_MESSAGE_MAX_CHARS } from "@nordri/contracts";
 
 import { cn } from "@renderer/lib/cn";
 import { isImeComposingEvent } from "../lib/job-finder-shortcuts";
@@ -112,7 +112,7 @@ function useHeaderBottom(): number {
 function useVisibleBrowserTitle(): string | null {
   const [title, setTitle] = useState<string | null>(null);
   useEffect(() => {
-    const browser = window.unemployed?.browser;
+    const browser = window.nordri?.browser;
     if (!browser) return undefined;
     const read = (state: Awaited<ReturnType<typeof browser.getState>>) => {
       const tab = state.tabs.find((entry) => entry.id === state.activeTabId);
@@ -429,7 +429,7 @@ function AssistantSidebarPanel() {
     if (mentionQuery === null) return undefined;
     let cancelled = false;
     const timer = setTimeout(() => {
-      void window.unemployed?.assistant
+      void window.nordri?.assistant
         ?.searchMentions(mentionQuery)
         .then((result) => {
           if (!cancelled) {
@@ -514,7 +514,7 @@ function AssistantSidebarPanel() {
   };
 
   const attach = async (file?: File | null) => {
-    const bridge = window.unemployed?.assistant;
+    const bridge = window.nordri?.assistant;
     if (!bridge) return;
     setAttachNote("Attaching…");
     try {
@@ -595,6 +595,9 @@ function AssistantSidebarPanel() {
     const query = findQuery.trim().toLowerCase();
     if (!findOpen || !query) return [] as string[];
     return state.messages
+      .filter(
+        (message) => !(message.role === "user" && message.origin === "host"),
+      )
       .filter((message) =>
         message.parts.some(
           (part) =>

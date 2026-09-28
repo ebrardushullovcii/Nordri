@@ -1,7 +1,7 @@
 import {
   MatchAssessmentSchema,
   type MatchAssessment,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { describe, expect, it } from "vitest";
 import { createMatchAssessmentChangeAudit } from "./match-assessment-change-audit";
 

@@ -1,5 +1,5 @@
-import type { ResumeDraftIdentity } from "@unemployed/contracts";
-import { getResumeIdentityTargetId } from "@unemployed/contracts";
+import type { ResumeDraftIdentity } from "@nordri/contracts";
+import { getResumeIdentityTargetId } from "@nordri/contracts";
 import { ChevronDown } from "lucide-react";
 import { Field, FieldLabel } from "@renderer/components/ui/field";
 import { Input } from "@renderer/components/ui/input";

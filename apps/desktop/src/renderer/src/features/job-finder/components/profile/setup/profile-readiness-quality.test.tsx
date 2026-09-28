@@ -8,7 +8,7 @@ import {
   CandidateProfileSchema,
   normalizeProfileSetupStep,
   type ProfileSetupStep,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   createProfileEditorValues,
   type ProfileEditorValues,

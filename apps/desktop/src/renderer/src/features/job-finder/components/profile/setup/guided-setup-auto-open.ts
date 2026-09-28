@@ -1,4 +1,4 @@
-import type { ProfileSetupState } from "@unemployed/contracts";
+import type { ProfileSetupState } from "@nordri/contracts";
 
 /**
  * First run used to open Home: one card, one button, and a "what happens next"

@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
 
-import { createPlaywrightApplyPageMechanics } from "@unemployed/browser-runtime";
-import type { ApplyRawPageHands } from "@unemployed/contracts";
+import { createPlaywrightApplyPageMechanics } from "@nordri/browser-runtime";
+import type { ApplyRawPageHands } from "@nordri/contracts";
 import type {
   AssistantBrowserLease,
   AssistantBrowserPort,
-} from "@unemployed/job-finder";
+} from "@nordri/job-finder";
 import type { Browser, Page } from "playwright";
 
 import type { EmbeddedBrowser } from "../browser/embedded-browser";

@@ -1,7 +1,7 @@
 import {
   CandidateProfileSchema,
   type CandidateProfile,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { describe, expect, test, vi } from "vitest";
 
 import {
@@ -9,7 +9,7 @@ import {
   createApplyGuardState,
   executeApplyProposal,
 } from "./policy-executor";
-import type { RawApplyControl, RawApplyPage } from "@unemployed/contracts";
+import type { RawApplyControl, RawApplyPage } from "@nordri/contracts";
 import { buildApplyFormObservation } from "./page-hands";
 import { runSubmitPreflight } from "./submit-preflight";
 import type {

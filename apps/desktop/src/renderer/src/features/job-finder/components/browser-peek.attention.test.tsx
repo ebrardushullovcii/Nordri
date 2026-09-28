@@ -4,7 +4,7 @@ import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import type {
   DesktopBrowserBridge,
   DesktopBrowserState,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { BrowserPeek } from "./browser-peek";
@@ -31,7 +31,7 @@ afterEach(() => {
 
 describe("BrowserPeek handoff attention", () => {
   it("clears the derived browser chip when the workspace has no unresolved handoff", async () => {
-    const previousBridge = window.unemployed;
+    const previousBridge = window.nordri;
     const browser: DesktopBrowserBridge = {
       getState: vi.fn().mockResolvedValue(staleAttentionState),
       command: vi.fn().mockResolvedValue(staleAttentionState),
@@ -47,7 +47,7 @@ describe("BrowserPeek handoff attention", () => {
       onStateChanged: vi.fn().mockReturnValue(() => undefined),
       onFocusAddress: vi.fn().mockReturnValue(() => undefined),
     };
-    Object.defineProperty(window, "unemployed", {
+    Object.defineProperty(window, "nordri", {
       configurable: true,
       value: { browser },
     });
@@ -67,7 +67,7 @@ describe("BrowserPeek handoff attention", () => {
     );
     expect(screen.queryByLabelText(/This page needs a human/)).toBeNull();
 
-    Object.defineProperty(window, "unemployed", {
+    Object.defineProperty(window, "nordri", {
       configurable: true,
       value: previousBridge,
     });

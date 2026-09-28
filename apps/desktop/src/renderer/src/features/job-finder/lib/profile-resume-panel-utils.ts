@@ -1,4 +1,4 @@
-import type { ResumeImportFieldCandidateSummary } from "@unemployed/contracts";
+import type { ResumeImportFieldCandidateSummary } from "@nordri/contracts";
 
 const monthIndexByName: Record<string, number> = {
   jan: 0,

@@ -44,13 +44,13 @@ async function waitForShell(window) {
 }
 
 async function getWorkspace(window) {
-  return window.evaluate(() => window.unemployed.jobFinder.getWorkspace())
+  return window.evaluate(() => window.nordri.jobFinder.getWorkspace())
 }
 
 async function getApplyRunDetails(window, runId, jobId) {
   return window.evaluate(
     ({ currentRunId, currentJobId }) =>
-      window.unemployed.jobFinder.getApplyRunDetails(currentRunId, currentJobId),
+      window.nordri.jobFinder.getApplyRunDetails(currentRunId, currentJobId),
     { currentRunId: runId, currentJobId: jobId },
   )
 }
@@ -61,11 +61,11 @@ function getApplicationRecords(workspace) {
 
 async function loadApplyQueueDemo(window) {
   await window.evaluate(async () => {
-    if (!window.unemployed.jobFinder.test) {
+    if (!window.nordri.jobFinder.test) {
       throw new Error('Desktop test API is unavailable in the renderer.')
     }
 
-    return window.unemployed.jobFinder.test.loadApplyQueueDemo()
+    return window.nordri.jobFinder.test.loadApplyQueueDemo()
   })
   await window.reload()
   await window.waitForLoadState('domcontentloaded')
@@ -148,7 +148,7 @@ async function selectApplicationByJobId(window, jobId) {
 
 async function stageQueueConsentRun(window) {
   const stagedSnapshot = await window.evaluate(async () => {
-    const snapshot = await window.unemployed.jobFinder.startAutoApplyQueueRun([
+    const snapshot = await window.nordri.jobFinder.startAutoApplyQueueRun([
       'job_consent_queue',
       'job_ready',
     ])
@@ -157,7 +157,7 @@ async function stageQueueConsentRun(window) {
       throw new Error('Missing queue run id after staging consent demo run.')
     }
 
-    return window.unemployed.jobFinder.approveApplyRun(runId)
+    return window.nordri.jobFinder.approveApplyRun(runId)
   })
 
   const fullWorkspace = await getWorkspace(window)
@@ -185,14 +185,14 @@ async function stageQueueConsentRun(window) {
 async function resolveConsent(window, requestId, action) {
   return window.evaluate(
     async ({ currentRequestId, currentAction }) =>
-      window.unemployed.jobFinder.resolveApplyConsentRequest(currentRequestId, currentAction),
+      window.nordri.jobFinder.resolveApplyConsentRequest(currentRequestId, currentAction),
     { currentRequestId: requestId, currentAction: action },
   )
 }
 
 async function captureApplicationsConsentStates() {
   await mkdir(outputDir, { recursive: true })
-  const userDataDirectory = await mkdtemp(path.join(os.tmpdir(), 'unemployed-applications-consent-'))
+  const userDataDirectory = await mkdtemp(path.join(os.tmpdir(), 'nordri-applications-consent-'))
 
   let app
 
@@ -202,22 +202,22 @@ async function captureApplicationsConsentStates() {
       cwd: desktopDir,
       env: {
         ...process.env,
-        UNEMPLOYED_BROWSER_AGENT: '0',
-        UNEMPLOYED_ENABLE_TEST_API: '1',
-        UNEMPLOYED_TEST_SYSTEM_THEME: process.env.UNEMPLOYED_TEST_SYSTEM_THEME ?? 'dark',
-        UNEMPLOYED_USER_DATA_DIR: userDataDirectory,
+        NORDRI_BROWSER_AGENT: '0',
+        NORDRI_ENABLE_TEST_API: '1',
+        NORDRI_TEST_SYSTEM_THEME: process.env.NORDRI_TEST_SYSTEM_THEME ?? 'dark',
+        NORDRI_USER_DATA_DIR: userDataDirectory,
       },
     })
 
     const window = await app.firstWindow()
     await window.waitForLoadState('domcontentloaded')
     await window.evaluate(async (theme) => {
-      if (!window.unemployed.jobFinder.test) {
+      if (!window.nordri.jobFinder.test) {
         throw new Error('Desktop test API is unavailable in the renderer.')
       }
 
-      await window.unemployed.jobFinder.test.setSystemThemeOverride(theme)
-    }, process.env.UNEMPLOYED_TEST_SYSTEM_THEME ?? 'dark')
+      await window.nordri.jobFinder.test.setSystemThemeOverride(theme)
+    }, process.env.NORDRI_TEST_SYSTEM_THEME ?? 'dark')
     await waitForProfileOrSetupHeading(window)
     await window.setViewportSize({ width, height })
 

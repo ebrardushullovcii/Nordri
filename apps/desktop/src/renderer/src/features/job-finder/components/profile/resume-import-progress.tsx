@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { ResumeImportProgressEvent } from "@unemployed/contracts";
+import type { ResumeImportProgressEvent } from "@nordri/contracts";
 import { LoaderCircle } from "lucide-react";
 
 const stageLabels: Record<ResumeImportProgressEvent["stage"], string> = {

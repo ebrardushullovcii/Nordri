@@ -5,9 +5,9 @@ import {
   DEFAULT_SCALE_CAMPAIGN_DISCOVERY_RUN_JOB_BUDGET,
   type DiscoveryActivityEvent,
   type JobSearchPreferences,
-} from "@unemployed/contracts";
-import type { BrowserSessionRuntime } from "@unemployed/browser-runtime";
-import type { JobFinderRepositorySeed } from "@unemployed/db";
+} from "@nordri/contracts";
+import type { BrowserSessionRuntime } from "@nordri/browser-runtime";
+import type { JobFinderRepositorySeed } from "@nordri/db";
 
 import {
   resolveDiscoveryBudgetPlan,

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
-import type { ResumeDraft } from "@unemployed/contracts";
-import { getResumePreviewTargetContext } from "@unemployed/contracts";
+import type { ResumeDraft } from "@nordri/contracts";
+import { getResumePreviewTargetContext } from "@nordri/contracts";
 
 export function useResumeWorkspaceSelection(input: {
   draft: ResumeDraft | null;

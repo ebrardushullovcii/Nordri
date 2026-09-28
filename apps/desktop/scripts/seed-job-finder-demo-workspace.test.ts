@@ -26,7 +26,7 @@ afterEach(async () => {
 describe("Job Finder demo workspace seed arguments", () => {
   it("requires exactly one explicit user-data directory", () => {
     expect(jobFinderDemoUsage).toBe(
-      "Usage: pnpm --filter @unemployed/desktop seed:job-finder-demo -- --user-data-dir /tmp/job-finder-demo",
+      "Usage: pnpm --filter @nordri/desktop seed:job-finder-demo -- --user-data-dir /tmp/job-finder-demo",
     );
     expect(() => parseSeedArguments([])).toThrow(
       "An explicit --user-data-dir is required",
@@ -115,19 +115,19 @@ describe("Job Finder demo workspace seed semantics", () => {
   it("pins the seed to deterministic, browser-agent-disabled runtime flags", () => {
     const environment = buildSeedLaunchEnvironment("/tmp/demo-workspace", {
       PATH: "/usr/bin",
-      UNEMPLOYED_BROWSER_AGENT: "1",
-      UNEMPLOYED_TEST_API_USE_LIVE_AI: "1",
-      UNEMPLOYED_CHROME_DEBUG_PORT: "9222",
+      NORDRI_BROWSER_AGENT: "1",
+      NORDRI_TEST_API_USE_LIVE_AI: "1",
+      NORDRI_CHROME_DEBUG_PORT: "9222",
     });
 
     expect(environment).toMatchObject({
       ELECTRON_RENDERER_URL: "",
-      UNEMPLOYED_BROWSER_AGENT: "0",
-      UNEMPLOYED_ENABLE_TEST_API: "1",
-      UNEMPLOYED_TEST_API_USE_LIVE_AI: "0",
-      UNEMPLOYED_USER_DATA_DIR: "/tmp/demo-workspace",
+      NORDRI_BROWSER_AGENT: "0",
+      NORDRI_ENABLE_TEST_API: "1",
+      NORDRI_TEST_API_USE_LIVE_AI: "0",
+      NORDRI_USER_DATA_DIR: "/tmp/demo-workspace",
     });
-    expect(environment.UNEMPLOYED_CHROME_DEBUG_PORT).toBeUndefined();
+    expect(environment.NORDRI_CHROME_DEBUG_PORT).toBeUndefined();
   });
 
   it("emits a copy-paste-safe relaunch contract with the test API disabled", () => {
@@ -137,9 +137,9 @@ describe("Job Finder demo workspace seed semantics", () => {
       command: ["pnpm", "exec", "electron", "out/main/index.cjs"],
       cwd: desktopDirectory,
       env: {
-        UNEMPLOYED_USER_DATA_DIR: "/tmp/demo-workspace",
-        UNEMPLOYED_BROWSER_AGENT: "0",
-        UNEMPLOYED_ENABLE_TEST_API: "0",
+        NORDRI_USER_DATA_DIR: "/tmp/demo-workspace",
+        NORDRI_BROWSER_AGENT: "0",
+        NORDRI_ENABLE_TEST_API: "0",
         ELECTRON_RENDERER_URL: "",
       },
     });

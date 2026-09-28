@@ -1,6 +1,6 @@
-import { APPLICATION_SKIPPED_BY_PERSON_LABEL } from "@unemployed/contracts";
+import { APPLICATION_SKIPPED_BY_PERSON_LABEL } from "@nordri/contracts";
 import { describe, expect, it } from "vitest";
-import type { JobFinderWorkspaceSnapshot } from "@unemployed/contracts";
+import type { JobFinderWorkspaceSnapshot } from "@nordri/contracts";
 import {
   applyActionLabel,
   applyAllActionLabel,

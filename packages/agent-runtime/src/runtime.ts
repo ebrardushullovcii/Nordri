@@ -11,7 +11,7 @@ import {
   type AgentToolPermission,
   type Tool,
   type ToolCall,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import type { z } from "zod";
 
 import { AgentTaskResultStore } from "./result-store";

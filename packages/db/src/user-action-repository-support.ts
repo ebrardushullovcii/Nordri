@@ -3,7 +3,7 @@ import {
   UserActionRequestSchema,
   type UserActionEvent,
   type UserActionRequest,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import type { SQLInputValue } from "node:sqlite";
 
 import type {

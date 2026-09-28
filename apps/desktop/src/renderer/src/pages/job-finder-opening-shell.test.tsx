@@ -10,7 +10,7 @@ import {
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { JobFinderWorkspaceSnapshot } from "@unemployed/contracts";
+import type { JobFinderWorkspaceSnapshot } from "@nordri/contracts";
 import { JobFinderShell } from "@renderer/features/job-finder/components/job-finder-shell";
 import { JobFinderOpeningShell } from "./job-finder-page";
 
@@ -18,7 +18,7 @@ afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
   window.localStorage.clear();
-  Reflect.deleteProperty(window, "unemployed");
+  Reflect.deleteProperty(window, "nordri");
 });
 
 function renderOpeningShell(
@@ -40,7 +40,7 @@ function renderOpeningShell(
     onControlsStateChange: vi.fn(() => vi.fn()),
     toggleMaximize: vi.fn().mockResolvedValue(controlsState),
   };
-  Object.defineProperty(window, "unemployed", {
+  Object.defineProperty(window, "nordri", {
     configurable: true,
     value: {
       ping: vi.fn().mockResolvedValue({ ok: true, platform }),
@@ -100,7 +100,7 @@ describe("JobFinderOpeningShell platform geometry", () => {
 
   it("paints both module names in full in the opening brand lockup", () => {
     // The first paint carries the same caption switch as the loaded shell, so
-    // "Interview Helper" is never briefly shortened to "Interview …" and the
+    // "Live Assistant" is never briefly shortened to "Interview …" and the
     // control does not relayout when the workspace arrives. It is the
     // wordmark's subtitle in the brand region, and it is the only one.
     renderOpeningShell("win32", "/job-finder/home");
@@ -148,7 +148,7 @@ describe("JobFinderOpeningShell platform geometry", () => {
 
     for (const [moduleName, label] of [
       ["job-finder", "Job Finder"],
-      ["interview-helper", "Interview Helper"],
+      ["live-assistant", "Live Assistant"],
     ] as const) {
       const option = menu.querySelector<HTMLButtonElement>(
         `[data-module-switch-option="${moduleName}"]`,
@@ -251,7 +251,7 @@ describe("JobFinderOpeningShell platform geometry", () => {
 
   it("preserves the persisted collapsed rail width while opening", () => {
     window.localStorage.setItem(
-      "unemployed.job-finder.sidebar-collapsed.v1",
+      "nordri.job-finder.sidebar-collapsed.v1",
       "true",
     );
     renderOpeningShell("darwin");
@@ -287,7 +287,7 @@ describe("JobFinderOpeningShell platform geometry", () => {
  * identical rather than trusting either copy.
  */
 function renderLoadedShell(initialEntry = "/job-finder/home") {
-  Object.defineProperty(window, "unemployed", {
+  Object.defineProperty(window, "nordri", {
     configurable: true,
     value: {
       ping: vi.fn().mockResolvedValue({ ok: true, platform: "darwin" }),
@@ -333,7 +333,7 @@ function renderLoadedShell(initialEntry = "/job-finder/home") {
 }
 
 function renderOpeningShellContainer(initialEntry = "/job-finder/home") {
-  Object.defineProperty(window, "unemployed", {
+  Object.defineProperty(window, "nordri", {
     configurable: true,
     value: {
       ping: vi.fn().mockResolvedValue({ ok: true, platform: "darwin" }),
@@ -683,7 +683,7 @@ describe("JobFinderOpeningShell parity with the loaded shell", () => {
     "paints the same collapsed %s as the loaded rail",
     async (_name, selector) => {
       window.localStorage.setItem(
-        "unemployed.job-finder.sidebar-collapsed.v1",
+        "nordri.job-finder.sidebar-collapsed.v1",
         "true",
       );
       const loaded = renderLoadedShell();

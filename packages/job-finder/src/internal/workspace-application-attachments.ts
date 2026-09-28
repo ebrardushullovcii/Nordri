@@ -3,8 +3,8 @@ import type {
   ApplicationQuestionKind,
   ApplicationQuestionRecord,
   CandidateAsset,
-} from "@unemployed/contracts";
-import type { ApplicationAttachmentArtifact } from "@unemployed/browser-runtime";
+} from "@nordri/contracts";
+import type { ApplicationAttachmentArtifact } from "@nordri/browser-runtime";
 import type { CandidateAssetResolver } from "./workspace-service-contracts";
 
 function compareAnswerRecency(

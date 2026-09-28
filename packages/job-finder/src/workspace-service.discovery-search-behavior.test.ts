@@ -1,5 +1,5 @@
-import type { BrowserSessionRuntime } from "@unemployed/browser-runtime";
-import { JobPostingSchema } from "@unemployed/contracts";
+import type { BrowserSessionRuntime } from "@nordri/browser-runtime";
+import { JobPostingSchema } from "@nordri/contracts";
 import { describe, expect, test } from "vitest";
 import {
   createAgentAiClient,
@@ -76,12 +76,15 @@ function runtimeReturning(): BrowserSessionRuntime {
 async function search(input: {
   selectivity: "best_matches" | "balanced" | "wide_net";
   remoteCountsAsAnyLocation: boolean;
+  targetRoles?: string[];
 }) {
   const seed = createSeed();
   seed.savedJobs = [];
   seed.discovery.pendingDiscoveryJobs = [];
   seed.discovery.discoveryLedger = [];
-  seed.searchPreferences.targetRoles = ["Frontend Engineer"];
+  seed.searchPreferences.targetRoles = input.targetRoles ?? [
+    "Frontend Engineer",
+  ];
   seed.searchPreferences.locations = ["Berlin, Germany"];
   seed.searchPreferences.workModes = [];
   seed.searchPreferences.excludedLocations = [];
@@ -124,6 +127,15 @@ async function search(input: {
 }
 
 describe("saved search behavior changes what a search keeps", () => {
+  test("searches an enabled source when target roles are blank", async () => {
+    const kept = await search({
+      selectivity: "wide_net",
+      remoteCountsAsAnyLocation: true,
+      targetRoles: [],
+    });
+    expect(Object.keys(kept)).toHaveLength(CARDS.length);
+  }, 60_000);
+
   test("Best matches only drops the cards that miss the title or place, with no rescue", async () => {
     const kept = await search({
       selectivity: "best_matches",
@@ -151,9 +163,14 @@ describe("saved search behavior changes what a search keeps", () => {
         selectivity,
         remoteCountsAsAnyLocation: false,
       });
-      expect(Object.keys(on).sort()).toEqual(
-        ["americas", "berlin", "data", "europe", "platform", "worldwide"],
-      );
+      expect(Object.keys(on).sort()).toEqual([
+        "americas",
+        "berlin",
+        "data",
+        "europe",
+        "platform",
+        "worldwide",
+      ]);
       expect(Object.keys(off).sort()).toEqual(Object.keys(on).sort());
       expect(off.europe).toBeLessThan(on.europe ?? 0);
       expect(off.worldwide).toBeLessThan(on.worldwide ?? 0);

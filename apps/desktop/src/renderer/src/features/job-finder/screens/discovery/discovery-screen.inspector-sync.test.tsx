@@ -13,7 +13,7 @@ import {
   type BrowserSessionState,
   type JobSearchPreferences,
   type SavedJob,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import type { ReactNode } from "react";
 import { useEffect } from "react";
 import { MemoryRouter } from "react-router-dom";

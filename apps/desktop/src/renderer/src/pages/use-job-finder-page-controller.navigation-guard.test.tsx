@@ -3,7 +3,7 @@
 import type {
   CandidateProfile,
   JobFinderWorkspaceSnapshot,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { StrictMode } from "react";
 import {
   act,
@@ -15,6 +15,7 @@ import {
 } from "@testing-library/react";
 import {
   createMemoryRouter,
+  type InitialEntry,
   Link,
   Outlet,
   RouterProvider,
@@ -89,14 +90,14 @@ function createReadyWorkspace(): JobFinderWorkspaceSnapshot {
   } as unknown as JobFinderWorkspaceSnapshot;
 }
 
-function configureWindowUnemployed(
+function configureWindowNordri(
   workspace: JobFinderWorkspaceSnapshot,
   overrides?: {
     jobFinder?: Record<string, unknown>;
     setCloseGuardState?: ReturnType<typeof vi.fn>;
   },
 ) {
-  Object.defineProperty(window, "unemployed", {
+  Object.defineProperty(window, "nordri", {
     configurable: true,
     value: {
       ping: vi.fn(() =>
@@ -109,7 +110,7 @@ function configureWindowUnemployed(
       window: {
         setCloseGuardState: overrides?.setCloseGuardState ?? vi.fn(),
       },
-    } as unknown as Window["unemployed"],
+    } as unknown as Window["nordri"],
   });
 }
 
@@ -160,7 +161,7 @@ type MountedController = ReturnType<typeof useJobFinderPageController>;
 // guarded routes swap underneath them.
 function mountGuardedController(
   options: {
-    initialEntries?: string[];
+    initialEntries?: InitialEntry[];
     strictMode?: boolean;
   } = {},
 ) {
@@ -195,6 +196,7 @@ function mountGuardedController(
         children: [
           { path: "/guard", element: <div>Guard screen</div> },
           { path: "/other", element: <div>Other screen</div> },
+          { path: "/job-finder/profile", element: <div>Profile screen</div> },
         ],
       },
     ],
@@ -250,7 +252,7 @@ async function leaveWithoutSaving() {
 
 afterEach(() => {
   cleanup();
-  Reflect.deleteProperty(window, "unemployed");
+  Reflect.deleteProperty(window, "nordri");
 });
 
 describe("composeLeaveConfirmation", () => {
@@ -315,7 +317,7 @@ describe("useJobFinderPageController failed-save acknowledgement", () => {
     // Cmd+Q for the rest of the session: nothing cleared `failed` except a
     // later successful save of that exact surface or wiping the workspace.
     const setCloseGuardState = vi.fn();
-    configureWindowUnemployed(createReadyWorkspace(), {
+    configureWindowNordri(createReadyWorkspace(), {
       jobFinder: {
         saveProfile: vi.fn(() =>
           Promise.reject(new Error("The workspace database is unavailable.")),
@@ -358,7 +360,7 @@ describe("useJobFinderPageController failed-save acknowledgement", () => {
   });
 
   it("keeps unsaved-draft protection after the failed save is dismissed", async () => {
-    configureWindowUnemployed(createReadyWorkspace(), {
+    configureWindowNordri(createReadyWorkspace(), {
       jobFinder: {
         saveProfile: vi.fn(() =>
           Promise.reject(new Error("The workspace database is unavailable.")),
@@ -392,7 +394,7 @@ describe("useJobFinderPageController failed-save acknowledgement", () => {
   });
 
   it("still blocks on a later, different save failure after one was dismissed", async () => {
-    configureWindowUnemployed(createReadyWorkspace(), {
+    configureWindowNordri(createReadyWorkspace(), {
       jobFinder: {
         saveProfile: vi.fn(() =>
           Promise.reject(new Error("The workspace database is unavailable.")),
@@ -427,7 +429,7 @@ describe("useJobFinderPageController failed-save acknowledgement", () => {
     // Settings sections stage their edits in local component state and feed no
     // flag into `composeLeaveConfirmation`, so this failure is the only thing
     // between those drafts and a navigation that discards them.
-    configureWindowUnemployed(createReadyWorkspace(), {
+    configureWindowNordri(createReadyWorkspace(), {
       jobFinder: {
         updateWorkspaceBehavior: vi.fn(() =>
           Promise.reject(new Error("The workspace database is unavailable.")),
@@ -460,7 +462,7 @@ describe("useJobFinderPageController failed-save acknowledgement", () => {
     // that named it, and the navigation it allows unmounts the staged drafts,
     // so nothing is left to protect and the failure must stop blocking.
     const setCloseGuardState = vi.fn();
-    configureWindowUnemployed(createReadyWorkspace(), {
+    configureWindowNordri(createReadyWorkspace(), {
       jobFinder: {
         updateWorkspaceBehavior: vi.fn(() =>
           Promise.reject(new Error("The workspace database is unavailable.")),
@@ -500,7 +502,7 @@ describe("useJobFinderPageController failed-save acknowledgement", () => {
 
 describe("useJobFinderPageController navigation guard", () => {
   it("lets clean navigations through without any dialog or native prompt", async () => {
-    configureWindowUnemployed(createReadyWorkspace());
+    configureWindowNordri(createReadyWorkspace());
     const confirmSpy = vi.spyOn(window, "confirm");
     const harness = mountGuardedController();
     await waitForReady(harness);
@@ -517,7 +519,7 @@ describe("useJobFinderPageController navigation guard", () => {
   });
 
   it("blocks a programmatic push with the branded dialog and Stay keeps the draft and its protection", async () => {
-    configureWindowUnemployed(createReadyWorkspace());
+    configureWindowNordri(createReadyWorkspace());
     const confirmSpy = vi.spyOn(window, "confirm");
     const harness = mountGuardedController();
     await waitForReady(harness);
@@ -549,7 +551,7 @@ describe("useJobFinderPageController navigation guard", () => {
   });
 
   it("reaches the requested route exactly once on Leave without saving and stops prompting once the draft is discarded", async () => {
-    configureWindowUnemployed(createReadyWorkspace());
+    configureWindowNordri(createReadyWorkspace());
     const confirmSpy = vi.spyOn(window, "confirm");
     const harness = mountGuardedController();
     await waitForReady(harness);
@@ -588,7 +590,7 @@ describe("useJobFinderPageController navigation guard", () => {
   });
 
   it("blocks a router-owned link click with the dialog instead of window.confirm", async () => {
-    configureWindowUnemployed(createReadyWorkspace());
+    configureWindowNordri(createReadyWorkspace());
     const confirmSpy = vi.spyOn(window, "confirm");
     const harness = mountGuardedController();
     await waitForReady(harness);
@@ -605,7 +607,7 @@ describe("useJobFinderPageController navigation guard", () => {
   });
 
   it("guards back-button history moves truthfully: Escape restores, Leave commits", async () => {
-    configureWindowUnemployed(createReadyWorkspace());
+    configureWindowNordri(createReadyWorkspace());
     const confirmSpy = vi.spyOn(window, "confirm");
     const harness = mountGuardedController({
       initialEntries: ["/other", "/guard"],
@@ -642,7 +644,7 @@ describe("useJobFinderPageController navigation guard", () => {
   });
 
   it("exempts hash-only fragment changes so in-page anchors never lose drafts", async () => {
-    configureWindowUnemployed(createReadyWorkspace());
+    configureWindowNordri(createReadyWorkspace());
     const confirmSpy = vi.spyOn(window, "confirm");
     const harness = mountGuardedController();
     await waitForReady(harness);
@@ -660,10 +662,98 @@ describe("useJobFinderPageController navigation guard", () => {
     expect(harness.router.state.location.pathname).toBe("/guard");
     expect(harness.router.state.location.hash).toBe("#section-anchor");
   });
+
+  it("allows Profile tab and focus changes while preserving protection when leaving Profile", async () => {
+    configureWindowNordri(createReadyWorkspace());
+    const harness = mountGuardedController({
+      initialEntries: ["/job-finder/profile?section=basics"],
+    });
+    await waitForReady(harness);
+    markDirty(harness);
+
+    await act(async () => {
+      await harness.router.navigate(
+        "/job-finder/profile?section=preferences&focus=target-roles",
+      );
+    });
+    expect(harness.router.state.location.search).toBe(
+      "?section=preferences&focus=target-roles",
+    );
+    expect(screen.queryByRole("dialog")).toBeNull();
+
+    await act(async () => {
+      await harness.router.navigate(-1);
+    });
+    expect(harness.router.state.location.search).toBe("?section=basics");
+    expect(screen.queryByRole("dialog")).toBeNull();
+
+    act(() => {
+      void harness.router.navigate("/other");
+    });
+    expect((await openUnsavedChangesDialog()).textContent).toContain(
+      "Unsaved profile or setup changes",
+    );
+    await stayOnPage();
+    expect(harness.router.state.location.pathname).toBe("/job-finder/profile");
+  });
+
+  it.each([
+    [
+      "/job-finder/profile?campaignId=one",
+      "/job-finder/profile?campaignId=two",
+    ],
+    ["/guard?section=basics", "/guard?section=preferences"],
+  ])("still guards other query changes from %s", async (from, to) => {
+    configureWindowNordri(createReadyWorkspace());
+    const harness = mountGuardedController({ initialEntries: [from] });
+    await waitForReady(harness);
+    markDirty(harness);
+
+    act(() => {
+      void harness.router.navigate(to);
+    });
+    await openUnsavedChangesDialog();
+    expect(
+      harness.router.state.location.pathname +
+        harness.router.state.location.search,
+    ).toBe(from);
+  });
+
+  it("protects full Profile drafts when a query change would return to unstarted setup", async () => {
+    const workspace = createReadyWorkspace();
+    workspace.profileSetupState.status = "not_started";
+    configureWindowNordri(workspace);
+    const harness = mountGuardedController({
+      initialEntries: [
+        {
+          pathname: "/job-finder/profile",
+          search: "?section=basics",
+          state: { forceFullProfile: true },
+        },
+      ],
+    });
+    await waitForReady(harness);
+    markDirty(harness);
+
+    act(() => {
+      void harness.router.navigate("/job-finder/profile?section=experience");
+    });
+    await openUnsavedChangesDialog();
+    await stayOnPage();
+    expect(harness.router.state.location.search).toBe("?section=basics");
+
+    await act(async () => {
+      await harness.router.navigate("/job-finder/profile?section=experience", {
+        state: { forceFullProfile: true },
+      });
+    });
+    expect(harness.router.state.location.search).toBe("?section=experience");
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
 });
 
 it("protects search-plan drafts on route changes and clears protection after discard", async () => {
-  configureWindowUnemployed(createReadyWorkspace());
+  configureWindowNordri(createReadyWorkspace());
   const harness = mountGuardedController();
   await waitForReady(harness);
   act(() => harness.current?.context?.onSearchPlanSurfaceDirtyChange(true));
@@ -685,7 +775,7 @@ it("protects search-plan drafts on route changes and clears protection after dis
 });
 
 it("allows navigation after the search-plan editor reports a successful save", async () => {
-  configureWindowUnemployed(createReadyWorkspace());
+  configureWindowNordri(createReadyWorkspace());
   const harness = mountGuardedController();
   await waitForReady(harness);
   act(() => {

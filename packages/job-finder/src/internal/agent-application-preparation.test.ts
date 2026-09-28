@@ -1,14 +1,14 @@
-import type { LLMClient } from "@unemployed/browser-agent";
+import type { LLMClient } from "@nordri/browser-agent";
 import {
   ApplicationAuthorityEnvelopeSchema,
   serializeApplicationAuthorityDecisionPolicyForDigest,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { createHash } from "node:crypto";
 
 import type { ApplySubmissionHandoff } from "./apply-submission-handoff";
-import type { ApplyPageSession, RawApplyPage } from "@unemployed/contracts";
-import { CandidateProfileSchema, SavedJobSchema } from "@unemployed/contracts";
-import type { ExecuteApplicationFlowInput } from "@unemployed/browser-runtime";
+import type { ApplyPageSession, RawApplyPage } from "@nordri/contracts";
+import { CandidateProfileSchema, SavedJobSchema } from "@nordri/contracts";
+import type { ExecuteApplicationFlowInput } from "@nordri/browser-runtime";
 import { describe, expect, test, vi } from "vitest";
 
 import {

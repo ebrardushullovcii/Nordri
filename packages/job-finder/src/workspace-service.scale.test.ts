@@ -12,12 +12,12 @@ import {
   UserActionEventSchema,
   UserActionRequestSchema,
   type JobFinderWorkspaceSnapshot,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   createFileJobFinderRepository,
   type JobFinderRepository,
   type JobFinderRepositorySeed,
-} from "@unemployed/db";
+} from "@nordri/db";
 import { afterEach, describe, expect, test } from "vitest";
 
 import { createJobFinderWorkspaceService } from "./index";
@@ -249,7 +249,7 @@ afterEach(async () => {
 describe("workspace snapshot scale", () => {
   test("serializes and restores a realistic 1,000-job workspace", async () => {
     const directory = await mkdtemp(
-      path.join(os.tmpdir(), "unemployed-workspace-scale-"),
+      path.join(os.tmpdir(), "nordri-workspace-scale-"),
     );
     temporaryDirectories.add(directory);
     const filePath = path.join(directory, "job-finder-state.sqlite");
@@ -334,7 +334,7 @@ describe("workspace snapshot scale", () => {
 
   test("discovery preserves every pre-existing saved job above 1,000", async () => {
     const directory = await mkdtemp(
-      path.join(os.tmpdir(), "unemployed-workspace-discovery-scale-"),
+      path.join(os.tmpdir(), "nordri-workspace-discovery-scale-"),
     );
     temporaryDirectories.add(directory);
     const filePath = path.join(directory, "job-finder-state.sqlite");

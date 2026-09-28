@@ -34,9 +34,16 @@ export interface BrowserCdpHost {
   /**
    * Automation is about to send keyboard or pointer input to this page.
    * `pointerDown` is set for a pressed pointer button, which the page then
-   * reports once as a mouse-down of its own.
+   * reports once as a mouse-down of its own. `keyDown` identifies the key
+   * before the corresponding before-input-event arrives.
    */
-  onAutomationInput?(pageId: string, input?: { pointerDown: boolean }): void;
+  onAutomationInput?(
+    pageId: string,
+    input?: {
+      pointerDown: boolean;
+      keyDown?: { code: string; key: string } | null;
+    },
+  ): void;
 }
 interface AttachedPage {
   page: BrowserCdpPage;
@@ -598,6 +605,11 @@ export class BrowserCdpBridge {
         pointerDown:
           method === "Input.dispatchMouseEvent" &&
           params.type === "mousePressed",
+        keyDown:
+          method === "Input.dispatchKeyEvent" &&
+          (params.type === "keyDown" || params.type === "rawKeyDown")
+            ? { code: string(params.code), key: string(params.key) }
+            : null,
       });
     if (this.tokenWaiters.size > 0) {
       const text = JSON.stringify(params);

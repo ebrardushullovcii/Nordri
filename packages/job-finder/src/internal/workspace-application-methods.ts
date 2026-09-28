@@ -5,7 +5,7 @@ import {
 import {
   applicationSiteKey,
   type ExecuteApplicationFlowInput,
-} from "@unemployed/browser-runtime";
+} from "@nordri/browser-runtime";
 import {
   buildApplyLetterDependencies,
   createApplyFormPreparer,
@@ -78,7 +78,7 @@ import {
   type JobFinderActivityControl,
   type ResumeClaimConfirmation,
   type WorkHistoryReviewAcknowledgment,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { isSafelyParkedApplyQueue } from "./workspace-apply-run-recovery";
 import { sanitizeTailoredAssetFailureMessage } from "./tailored-asset-failure";
 import { projectDiscoveryJobViews } from "./listing-activity";
@@ -210,7 +210,7 @@ import {
 import type {
   ApplicationAutomationMode,
   ApplicationReviewCard,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import type {
   ApplicationPreparationCapacityToken,
   TaskLocalApplicationCredentials,
@@ -338,7 +338,7 @@ type WorkspaceApplicationMethods = Omit<
     | "approveApply"
     | "focusPreparedApplicationPage"
     | "submitPreparedApplication"
-    | "recordInterviewHelperApplicationAction"
+    | "recordLiveAssistantApplicationAction"
   >,
   | "startApplyCopilotRun"
   | "approveApplyRun"
@@ -2916,7 +2916,7 @@ export function createWorkspaceApplicationMethods(
       // Preparation can overlap; every result/run transition above is still
       // committed in order. Drain active workers before cleanup or failure.
       const requestedConcurrency = Number(
-        process.env.UNEMPLOYED_APPLICATION_PREPARATION_CONCURRENCY ?? 2,
+        process.env.NORDRI_APPLICATION_PREPARATION_CONCURRENCY ?? 2,
       );
       const concurrency =
         input.mode === "single_job_auto"
@@ -4077,7 +4077,7 @@ export function createWorkspaceApplicationMethods(
         });
       }
     },
-    async recordInterviewHelperApplicationAction(rawInput) {
+    async recordLiveAssistantApplicationAction(rawInput) {
       const input = JobFinderInterviewFollowUpInputSchema.parse(rawInput);
       const locatedRecords = await ctx.repository.listApplicationRecords();
       const locatedRecord = locatedRecords.find(
@@ -4130,8 +4130,8 @@ export function createWorkspaceApplicationMethods(
               : "Interview follow-up note added";
           const eventDetail =
             note && note.length > 0
-              ? `Interview Helper session ${input.sessionId}: ${note}`
-              : `Interview Helper session ${input.sessionId} was reviewed and linked to this application record.`;
+              ? `Live Assistant session ${input.sessionId}: ${note}`
+              : `Live Assistant session ${input.sessionId} was reviewed and linked to this application record.`;
 
           if (shouldMarkInterview) {
             const savedJobs = await ctx.repository.listSavedJobs();

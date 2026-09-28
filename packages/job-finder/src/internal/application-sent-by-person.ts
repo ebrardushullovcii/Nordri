@@ -1,10 +1,10 @@
-import { hasSubmissionConfirmationText } from "@unemployed/browser-agent";
+import { hasSubmissionConfirmationText } from "@nordri/browser-agent";
 import {
   ApplicationRecordSchema,
   ApplyJobResultSchema,
   ApplyRunSchema,
   type ApplyJobResult,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import { reconcileApplyRunAfterConfirmedSubmission } from "./workspace-apply-run-support";
 import type { WorkspaceServiceContext } from "./workspace-service-context";

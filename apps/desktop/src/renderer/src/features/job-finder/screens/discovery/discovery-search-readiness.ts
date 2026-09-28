@@ -2,7 +2,7 @@ import {
   isRunnableJobDiscoveryTarget,
   type BrowserSessionState,
   type JobSearchPreferences,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { JOB_FINDER_BROWSER_NAME_SENTENCE_START } from "../../lib/job-finder-browser-handoff-copy";
 
 /**
@@ -116,7 +116,8 @@ export function getDiscoverySearchReadiness(
   const enabledSourceCount = searchPreferences.discovery.targets.filter(
     isRunnableJobDiscoveryTarget,
   ).length;
-  const setupReady = enabledSourceCount > 0 && hasSearchRoles;
+  // Saved roles refine a search; the profile also guides a run without them.
+  const setupReady = enabledSourceCount > 0;
   const runtime = session ? getDiscoveryRuntimeProjection(session) : null;
   const sourceSearchAvailable = runtime
     ? runtime.isOffline
@@ -126,13 +127,11 @@ export function getDiscoverySearchReadiness(
   const blocker: DiscoverySearchBlocker | null =
     enabledSourceCount === 0
       ? "no_enabled_sources"
-      : !hasSearchRoles
-        ? "no_search_roles"
-        : runtime?.isOffline
-          ? "offline_runtime"
-          : !sourceSearchAvailable
-            ? "browser_blocked"
-            : null;
+      : runtime?.isOffline
+        ? "offline_runtime"
+        : !sourceSearchAvailable
+          ? "browser_blocked"
+          : null;
 
   return {
     enabledSourceCount,
@@ -143,13 +142,11 @@ export function getDiscoverySearchReadiness(
     reason:
       blocker === "no_enabled_sources"
         ? "Add or enable at least one valid public job-source URL before searching."
-        : blocker === "no_search_roles"
-          ? "Add at least one target role or job family before searching so results stay relevant."
-          : blocker === "offline_runtime"
-            ? DISCOVERY_OFFLINE_SEARCH_REASON
-            : blocker === "browser_blocked"
-              ? DISCOVERY_BROWSER_BLOCKED_REASON
-              : null,
+        : blocker === "offline_runtime"
+          ? DISCOVERY_OFFLINE_SEARCH_REASON
+          : blocker === "browser_blocked"
+            ? DISCOVERY_BROWSER_BLOCKED_REASON
+            : null,
     blocker,
   };
 }

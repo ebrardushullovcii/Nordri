@@ -16,7 +16,7 @@ import type {
   SourceAccessPrompt,
   SourceDebugRunDetails,
   SourceDebugRunRecord,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { ProfileDiscoveryTargetRow } from "./profile-discovery-target-row";
 
 describe("ProfileDiscoveryTargetRow", () => {

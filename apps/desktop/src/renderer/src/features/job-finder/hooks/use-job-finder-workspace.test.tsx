@@ -9,7 +9,7 @@ import {
   JobFinderWorkspaceSnapshotSchema,
   JobSearchCampaignSchema,
   JobSearchPreferencesSchema,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import type {
   CandidateProfile,
   JobFinderSetResumeClaimConfirmationInput,
@@ -18,7 +18,7 @@ import type {
   JobFinderWorkspaceSnapshot,
   JobFinderWorkspaceSyncResult,
   ResumeImportProgressEvent,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -296,7 +296,7 @@ describe("useJobFinderWorkspace entity mutations", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    Object.defineProperty(window, "unemployed", {
+    Object.defineProperty(window, "nordri", {
       configurable: true,
       value: {
         ping: vi.fn(() => Promise.resolve({ platform: "win32" as const })),
@@ -307,19 +307,19 @@ describe("useJobFinderWorkspace entity mutations", () => {
           checkBrowserSession,
           queueJobForReview: legacyQueueJobForReview,
         },
-      } as unknown as Window["unemployed"],
+      } as unknown as Window["nordri"],
     });
   });
 
   function enableBootstrapApi() {
-    Object.assign(window.unemployed.jobFinder as object, {
+    Object.assign(window.nordri.jobFinder as object, {
       getWorkspaceBootstrap,
     });
   }
 
   afterEach(() => {
     vi.useRealTimers();
-    Reflect.deleteProperty(window, "unemployed");
+    Reflect.deleteProperty(window, "nordri");
   });
 
   it("commits a typed entity delta without calling the legacy snapshot route", async () => {
@@ -502,7 +502,7 @@ describe("useJobFinderWorkspace entity mutations", () => {
       reason: "initial",
       snapshot: initialWorkspace,
     });
-    Object.assign(window.unemployed.jobFinder as object, { importResume });
+    Object.assign(window.nordri.jobFinder as object, { importResume });
 
     const { result } = renderHook(() => useJobFinderWorkspace());
     await waitFor(() => expect(result.current.status).toBe("ready"));
@@ -687,7 +687,7 @@ describe("useJobFinderWorkspace entity mutations", () => {
         snapshot: beforeCancellation,
       })
       .mockReturnValueOnce(updateSync.promise);
-    Object.assign(window.unemployed.jobFinder as object, {
+    Object.assign(window.nordri.jobFinder as object, {
       cancelAgentDiscovery,
       onWorkspaceUpdate,
     });
@@ -999,7 +999,7 @@ describe("useJobFinderWorkspace concurrency convergence", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    Object.defineProperty(window, "unemployed", {
+    Object.defineProperty(window, "nordri", {
       configurable: true,
       value: {
         ping: vi.fn(() => Promise.resolve({ platform: "win32" as const })),
@@ -1010,17 +1010,17 @@ describe("useJobFinderWorkspace concurrency convergence", () => {
           checkBrowserSession,
           saveProfile,
         },
-      } as unknown as Window["unemployed"],
+      } as unknown as Window["nordri"],
     });
   });
 
   afterEach(() => {
-    Reflect.deleteProperty(window, "unemployed");
+    Reflect.deleteProperty(window, "nordri");
   });
 
   // Bootstrap-aware initial load; legacy-path tests never install this.
   function enableBootstrapApi() {
-    Object.assign(window.unemployed.jobFinder as object, {
+    Object.assign(window.nordri.jobFinder as object, {
       getWorkspaceBootstrap,
     });
   }
@@ -1417,7 +1417,7 @@ describe("useJobFinderWorkspace resume claim confirmation action", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    Object.defineProperty(window, "unemployed", {
+    Object.defineProperty(window, "nordri", {
       configurable: true,
       value: {
         ping: vi.fn(() => Promise.resolve({ platform: "win32" as const })),
@@ -1426,12 +1426,12 @@ describe("useJobFinderWorkspace resume claim confirmation action", () => {
           getWorkspace,
           setResumeClaimConfirmation,
         },
-      } as unknown as Window["unemployed"],
+      } as unknown as Window["nordri"],
     });
   });
 
   afterEach(() => {
-    Reflect.deleteProperty(window, "unemployed");
+    Reflect.deleteProperty(window, "nordri");
   });
 
   function snapshotSyncResult(

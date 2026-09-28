@@ -5,7 +5,7 @@ import {
   type AssistantChangeEntry,
   type JobFinderResumeWorkspace,
   type ResumeDraft,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { z } from "zod";
 
 import { AssistantEditConflictError } from "../../internal/workspace-assistant-edit-methods";

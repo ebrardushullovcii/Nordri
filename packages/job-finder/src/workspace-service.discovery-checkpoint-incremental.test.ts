@@ -1,8 +1,8 @@
-import type { BrowserSessionRuntime } from "@unemployed/browser-runtime";
+import type { BrowserSessionRuntime } from "@nordri/browser-runtime";
 import {
   JobPostingSchema,
   type DiscoveryActivityEvent,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { describe, expect, test, vi } from "vitest";
 import {
   createAgentAiClient,
@@ -10,7 +10,7 @@ import {
   createSeed,
   createWorkspaceServiceHarness,
 } from "./workspace-service.test-support";
-import type { AgentDiscoveryOptions } from "@unemployed/browser-runtime";
+import type { AgentDiscoveryOptions } from "@nordri/browser-runtime";
 
 function createCollectedJob(input: {
   token: string;

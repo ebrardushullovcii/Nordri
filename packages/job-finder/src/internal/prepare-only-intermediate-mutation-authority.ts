@@ -6,8 +6,8 @@ import {
   isApprovedApplicationAnswerSnapshot,
   serializeApprovedApplicationAnswerSnapshotForDigest,
   type SavedJob,
-} from "@unemployed/contracts";
-import type { JobFinderRepository } from "@unemployed/db";
+} from "@nordri/contracts";
+import type { JobFinderRepository } from "@nordri/db";
 
 export type PrepareOnlyIntermediateMutationAuthorityDecision =
   | {

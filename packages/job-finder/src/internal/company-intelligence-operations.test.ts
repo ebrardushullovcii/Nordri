@@ -10,7 +10,7 @@ import {
   genericCompanyNameValues,
   type SavedJob,
   SavedJobSchema,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   applyCompanyIntelligenceMutation,
   nextCompanyIntelligenceUpdatedAt,

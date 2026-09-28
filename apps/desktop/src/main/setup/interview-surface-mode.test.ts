@@ -4,7 +4,7 @@ import {
   resolveVisibleInterviewPopupInputMode,
 } from './interview-surface-mode'
 
-describe('Interview Helper surface mode', () => {
+describe('Live Assistant surface mode', () => {
   test('enables popup surfaces by default', () => {
     expect(resolveAdvancedInterviewSurfacesEnabled(undefined)).toBe(true)
     expect(resolveAdvancedInterviewSurfacesEnabled('')).toBe(true)

@@ -145,15 +145,15 @@ import type {
   UpdateAiBehaviorInput,
   WorkspaceRevision,
   UserActionCommandInput,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import type {
   JobFinderStartupDatabaseRecoveryFact,
   JobFinderStartupResetRecoveryFact,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 declare global {
   interface Window {
-    unemployed: {
+    nordri: {
       browser: DesktopBrowserBridge;
       assistant: DesktopAssistantBridge;
       ping: () => Promise<DesktopPlatformPing>;
@@ -175,7 +175,7 @@ declare global {
           listener: (request: DesktopWindowCloseRequest) => void,
         ) => () => void;
       };
-      interviewHelper: {
+      liveAssistant: {
         getWorkspace: () => Promise<InterviewWorkspaceSnapshot>;
         onWorkspaceChange: (
           listener: (workspace: InterviewWorkspaceSnapshot) => void,

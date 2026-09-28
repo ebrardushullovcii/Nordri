@@ -1,8 +1,8 @@
 import type {
   JobFinderAiClient,
   ResumeVisionProvider,
-} from "@unemployed/ai-providers";
-import type { BrowserSessionRuntime } from "@unemployed/browser-runtime";
+} from "@nordri/ai-providers";
+import type { BrowserSessionRuntime } from "@nordri/browser-runtime";
 import type {
   ApplicationCrmBulkStageMutationInput,
   ApplicationCrmExportInput,
@@ -97,11 +97,11 @@ import type {
   AssistantChangeEntry,
   JobPosting,
   ProfileCopilotPatchOperation,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import type {
   JobFinderRepository,
   JobFinderRepositorySeed,
-} from "@unemployed/db";
+} from "@nordri/db";
 import type {
   AssistantEditResult,
   AssistantUndoResult,
@@ -575,7 +575,7 @@ export interface JobFinderWorkspaceService {
     jobId: string,
     applicationRecordId?: string | null,
   ): Promise<JobFinderWorkspaceSnapshot>;
-  recordInterviewHelperApplicationAction(
+  recordLiveAssistantApplicationAction(
     input: JobFinderInterviewFollowUpInput,
   ): Promise<JobFinderWorkspaceSnapshot>;
   mutateApplicationCrm(

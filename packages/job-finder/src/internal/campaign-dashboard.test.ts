@@ -17,8 +17,8 @@ import {
   type JobFinderWorkspaceSnapshot,
   type JobSearchPreferences,
   type SaveJobSearchCampaignInput,
-} from "@unemployed/contracts";
-import { createInMemoryJobFinderRepository } from "@unemployed/db";
+} from "@nordri/contracts";
+import { createInMemoryJobFinderRepository } from "@nordri/db";
 
 import {
   assertCampaignCanRun,

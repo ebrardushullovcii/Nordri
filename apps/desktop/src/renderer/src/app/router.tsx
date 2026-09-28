@@ -23,23 +23,23 @@ import {
   JobFinderRapidReviewRoute,
 } from "../pages/job-finder-page-routes";
 
-const loadInterviewHelperRoutes = () =>
-  import("../features/interview-helper/interview-helper-page");
-const InterviewHelperPage = lazy(async () => ({
-  default: (await loadInterviewHelperRoutes()).InterviewHelperPage,
+const loadLiveAssistantRoutes = () =>
+  import("../features/live-assistant/live-assistant-page");
+const LiveAssistantPage = lazy(async () => ({
+  default: (await loadLiveAssistantRoutes()).LiveAssistantPage,
 }));
 const InterviewAnswerOverlayRoute = lazy(async () => ({
-  default: (await loadInterviewHelperRoutes()).InterviewAnswerOverlayRoute,
+  default: (await loadLiveAssistantRoutes()).InterviewAnswerOverlayRoute,
 }));
 const InterviewTranscriptOverlayRoute = lazy(async () => ({
-  default: (await loadInterviewHelperRoutes()).InterviewTranscriptOverlayRoute,
+  default: (await loadLiveAssistantRoutes()).InterviewTranscriptOverlayRoute,
 }));
 
 function InterviewRouteFallback() {
   return (
     <main className="grid min-h-full place-items-center bg-canvas px-6 py-10">
       <div role="status">
-        <h1>Loading Interview Helper</h1>
+        <h1>Loading Live Assistant</h1>
         <p>Opening your interview workspace.</p>
       </div>
     </main>
@@ -56,15 +56,15 @@ export const appRouter = createHashRouter([
     element: <Navigate replace to="/job-finder" />,
   },
   {
-    path: "/interview-helper",
-    element: withInterviewFallback(<InterviewHelperPage />),
+    path: "/live-assistant",
+    element: withInterviewFallback(<LiveAssistantPage />),
   },
   {
-    path: "/interview-helper/overlay/answer",
+    path: "/live-assistant/overlay/answer",
     element: withInterviewFallback(<InterviewAnswerOverlayRoute />),
   },
   {
-    path: "/interview-helper/overlay/transcript",
+    path: "/live-assistant/overlay/transcript",
     element: withInterviewFallback(<InterviewTranscriptOverlayRoute />),
   },
   {

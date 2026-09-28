@@ -1,4 +1,4 @@
-import type { ProfileCopilotPatchGroup } from "@unemployed/contracts";
+import type { ProfileCopilotPatchGroup } from "@nordri/contracts";
 
 import type { ReviseCandidateProfileInput } from "../shared";
 import {

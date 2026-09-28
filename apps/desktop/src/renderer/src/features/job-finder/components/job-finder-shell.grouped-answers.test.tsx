@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
 
-import type { JobFinderWorkspaceSnapshot } from "@unemployed/contracts";
+import type { JobFinderWorkspaceSnapshot } from "@nordri/contracts";
 import {
   GroupedManualAnswerDecisionSchema,
   type GroupedManualAnswerDecision,
   type UserActionRequest,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { cleanup, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -98,7 +98,7 @@ function createPendingDecision(): GroupedManualAnswerDecision {
 
 describe("JobFinderShell Needs-you badge with grouped reusable answers", () => {
   beforeEach(() => {
-    Object.defineProperty(window, "unemployed", {
+    Object.defineProperty(window, "nordri", {
       configurable: true,
       value: {
         window: {

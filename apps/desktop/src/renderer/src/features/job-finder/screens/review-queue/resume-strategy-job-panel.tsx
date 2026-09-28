@@ -5,7 +5,7 @@ import type {
   ResumeStrategySelection,
   SelectResumeStrategyInput,
   SetCampaignResumeStrategyDefaultInput,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { Button } from "@renderer/components/ui/button";
 import { formatPersistedStrategyReason } from "../resume-strategies/resume-strategy-presentation";
 

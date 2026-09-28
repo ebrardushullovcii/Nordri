@@ -1,4 +1,4 @@
-import type { JobFinderWorkspaceSnapshot } from "@unemployed/contracts";
+import type { JobFinderWorkspaceSnapshot } from "@nordri/contracts";
 import { resolveApplyStatePresentation } from "../screens/applications/apply-state";
 
 type ApplyRun = NonNullable<JobFinderWorkspaceSnapshot["applyRuns"]>[number];

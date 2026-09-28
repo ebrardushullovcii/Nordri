@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import type { JobFinderWorkspaceSnapshot } from "@unemployed/contracts";
+import type { JobFinderWorkspaceSnapshot } from "@nordri/contracts";
 import {
   act,
   cleanup,
@@ -148,7 +148,7 @@ function openModuleSwitch(control: HTMLElement): HTMLElement {
 
 function getModuleOption(
   control: HTMLElement,
-  moduleName: "interview-helper" | "job-finder",
+  moduleName: "live-assistant" | "job-finder",
 ): HTMLButtonElement {
   const option = getModuleSwitchMenu(control).querySelector<HTMLButtonElement>(
     `[data-module-switch-option="${moduleName}"]`,
@@ -189,7 +189,7 @@ describe("JobFinderShell section navigation", () => {
     vi.stubGlobal("ResizeObserver", ResizeObserverMock);
     scrollToMock.mockClear();
     scrollIntoViewMock.mockClear();
-    Object.defineProperty(window, "unemployed", {
+    Object.defineProperty(window, "nordri", {
       configurable: true,
       value: {
         window: {
@@ -330,7 +330,7 @@ describe("JobFinderShell section navigation", () => {
     expect(navigation.className).not.toContain("justify-start");
     expect(navigation.className).toContain("sm:pr-64");
     expect(navigation.className).toContain("max-[899px]:pr-40");
-    // The one way across to Interview Helper is the brand subtitle, at every
+    // The one way across to Live Assistant is the brand subtitle, at every
     // width; this card never grows a second one.
     expect(expectSoleModuleSwitchInBrand()).toBeTruthy();
     // Planning is a non-scrolling sibling, so it reserves its own width rather
@@ -401,13 +401,13 @@ describe("JobFinderShell section navigation", () => {
       getModuleOption(brandSwitch, "job-finder").getAttribute("aria-checked"),
     ).toBe("true");
     expect(
-      getModuleOption(brandSwitch, "interview-helper").getAttribute(
+      getModuleOption(brandSwitch, "live-assistant").getAttribute(
         "aria-checked",
       ),
     ).toBe("false");
     for (const [moduleName, label] of [
       ["job-finder", "Job Finder"],
-      ["interview-helper", "Interview Helper"],
+      ["live-assistant", "Live Assistant"],
     ] as const) {
       expect(getModuleOption(brandSwitch, moduleName).textContent).toContain(
         label,
@@ -420,7 +420,7 @@ describe("JobFinderShell section navigation", () => {
 
   it("gives both module names the menu's full width instead of shortening one", () => {
     // Side by side inside the 17rem rail each option got ~100px of text box
-    // and "Interview Helper" needs ~98px at --text-small in the selected
+    // and "Live Assistant" needs ~98px at --text-small in the selected
     // semibold weight, so the longer of the two module names shipped as
     // "Interview …". The switch prints one name at a time now — the active one
     // in the caption, the other in the menu — so neither is ever abbreviated.
@@ -447,7 +447,7 @@ describe("JobFinderShell section navigation", () => {
     expect(menu.getAttribute("role")).toBe("menu");
     expect(menu.getAttribute("aria-label")).toBe("Switch module");
 
-    for (const moduleName of ["job-finder", "interview-helper"] as const) {
+    for (const moduleName of ["job-finder", "live-assistant"] as const) {
       const option = getModuleOption(brandSwitch, moduleName);
       const label = option.querySelector("span");
 
@@ -465,13 +465,13 @@ describe("JobFinderShell section navigation", () => {
         expect(option.className).not.toContain(truncation);
       }
       expect(label?.textContent).toBe(
-        moduleName === "job-finder" ? "Job Finder" : "Interview Helper",
+        moduleName === "job-finder" ? "Job Finder" : "Live Assistant",
       );
     }
 
     // The current module is the checked item and opening focuses it first.
     const selected = getModuleOption(brandSwitch, "job-finder");
-    const other = getModuleOption(brandSwitch, "interview-helper");
+    const other = getModuleOption(brandSwitch, "live-assistant");
     expect(selected.getAttribute("aria-checked")).toBe("true");
     expect(other.getAttribute("aria-checked")).toBe("false");
     expect(document.activeElement).toBe(selected);
@@ -578,7 +578,7 @@ describe("JobFinderShell section navigation", () => {
     openModuleSwitch(brandSwitch);
     for (const [moduleName, label] of [
       ["job-finder", "Job Finder"],
-      ["interview-helper", "Interview Helper"],
+      ["live-assistant", "Live Assistant"],
     ] as const) {
       expect(getModuleOption(brandSwitch, moduleName).textContent).toBe(label);
     }
@@ -644,7 +644,7 @@ describe("JobFinderShell section navigation", () => {
   );
 
   it("keeps the macOS traffic-light inset when the window is maximized", async () => {
-    vi.mocked(window.unemployed.window.getControlsState).mockResolvedValueOnce({
+    vi.mocked(window.nordri.window.getControlsState).mockResolvedValueOnce({
       ...windowControlsState,
       isMaximized: true,
     });
@@ -665,7 +665,7 @@ describe("JobFinderShell section navigation", () => {
   });
 
   it("moves the macOS wordmark fully left in native fullscreen", async () => {
-    vi.mocked(window.unemployed.window.getControlsState).mockResolvedValueOnce({
+    vi.mocked(window.nordri.window.getControlsState).mockResolvedValueOnce({
       ...windowControlsState,
       isFullScreen: true,
       isMaximized: true,
@@ -1105,7 +1105,7 @@ describe("JobFinderShell section navigation", () => {
     fireEvent.click(screen.getByRole("button", { name: "Collapse sidebar" }));
 
     expect(shell?.dataset.sidebarCollapsed).toBe("true");
-    const collapsedWordmark = screen.getByText("UNEMPLOYED");
+    const collapsedWordmark = screen.getByText("NORDRI");
     const collapsedLockup = collapsedWordmark.closest<HTMLElement>(
       "[data-desktop-brand-lockup]",
     );
@@ -1131,7 +1131,7 @@ describe("JobFinderShell section navigation", () => {
       "min-[1440px]:pl-(--job-finder-side-width)",
     );
     expect(
-      window.localStorage.getItem("unemployed.job-finder.sidebar-collapsed.v1"),
+      window.localStorage.getItem("nordri.job-finder.sidebar-collapsed.v1"),
     ).toBe("true");
 
     // Collapsing the rail does not move or shrink the module switch: it stays
@@ -1147,18 +1147,18 @@ describe("JobFinderShell section navigation", () => {
     expect(collapsedTrigger.getAttribute("title")).toContain("Job Finder");
 
     openModuleSwitch(collapsedSwitch);
-    for (const moduleName of ["job-finder", "interview-helper"] as const) {
+    for (const moduleName of ["job-finder", "live-assistant"] as const) {
       const option = getModuleOption(collapsedSwitch, moduleName);
       expect(option.querySelector("svg")).not.toBeNull();
       expect(option.querySelector("span")?.textContent).toBe(
-        moduleName === "job-finder" ? "Job Finder" : "Interview Helper",
+        moduleName === "job-finder" ? "Job Finder" : "Live Assistant",
       );
     }
     expect(
-      getModuleOption(collapsedSwitch, "interview-helper").getAttribute(
+      getModuleOption(collapsedSwitch, "live-assistant").getAttribute(
         "aria-label",
       ),
-    ).toBe("Open Interview Helper");
+    ).toBe("Open Live Assistant");
     fireEvent.keyDown(getModuleSwitchMenu(collapsedSwitch), { key: "Escape" });
 
     view.unmount();
@@ -1310,7 +1310,7 @@ describe("JobFinderShell section navigation", () => {
 
   it("names rail destinations after their visible labels and shares them through tooltips", async () => {
     window.localStorage.setItem(
-      "unemployed.job-finder.sidebar-collapsed.v1",
+      "nordri.job-finder.sidebar-collapsed.v1",
       "true",
     );
     render(
@@ -1379,7 +1379,7 @@ describe("JobFinderShell section navigation", () => {
     );
 
     const initialMain = screen.getByRole("main", { name: "Find jobs" });
-    expect(document.title).toBe("Find jobs | Job Finder | UnEmployed");
+    expect(document.title).toBe("Find jobs | Job Finder | Nordri");
     expect(document.activeElement).toBe(initialMain);
     expect(screen.getByRole("status").textContent).toBe("Find jobs opened.");
 
@@ -1399,7 +1399,7 @@ describe("JobFinderShell section navigation", () => {
     );
 
     const settingsMain = screen.getByRole("main", { name: "Settings" });
-    expect(document.title).toBe("Settings | Job Finder | UnEmployed");
+    expect(document.title).toBe("Settings | Job Finder | Nordri");
     expect(document.activeElement).toBe(settingsMain);
     expect(settingsMain.className).toContain("outline-none");
     expect(screen.getByRole("status").textContent).toBe("Settings opened.");
@@ -1418,7 +1418,7 @@ describe("JobFinderShell section navigation", () => {
     );
 
     const main = screen.getByRole("main", { name: "Settings" });
-    expect(document.title).toBe("Settings | Job Finder | UnEmployed");
+    expect(document.title).toBe("Settings | Job Finder | Nordri");
     expect(document.activeElement).not.toBe(main);
     expect(scrollToMock).not.toHaveBeenCalled();
   });
@@ -1433,7 +1433,7 @@ describe("JobFinderShell section navigation", () => {
     );
 
     expect(screen.getByRole("main", { name: "Outcomes" })).toBeTruthy();
-    expect(document.title).toBe("Outcomes | Job Finder | UnEmployed");
+    expect(document.title).toBe("Outcomes | Job Finder | Nordri");
     expect(screen.getByRole("status").textContent).toBe("Outcomes opened.");
   });
 
@@ -1607,10 +1607,10 @@ describe("JobFinderShell section navigation", () => {
 
     // The module switch now heads the card, so the first control after the
     // Planning trigger in DOM order is the header search utility.
-    const interviewHelperControl = screen.getByRole("button", {
+    const liveAssistantControl = screen.getByRole("button", {
       name: "Search your workspace",
     });
-    const nextControlFocus = vi.spyOn(interviewHelperControl, "focus");
+    const nextControlFocus = vi.spyOn(liveAssistantControl, "focus");
     const tabWasPrevented = fireEvent.keyDown(
       document.activeElement as HTMLElement,
       { key: "Tab" },
@@ -1618,7 +1618,7 @@ describe("JobFinderShell section navigation", () => {
     expect(tabWasPrevented).toBe(false);
     expect(screen.queryByRole("navigation", { name: "More" })).toBeNull();
     // Tab closes the menu and continues to the next control after the planning trigger in DOM order.
-    expect(document.activeElement).toBe(interviewHelperControl);
+    expect(document.activeElement).toBe(liveAssistantControl);
     expect(nextControlFocus).toHaveBeenCalledTimes(1);
 
     fireEvent.click(moreButton);
@@ -1933,7 +1933,7 @@ describe("JobFinderShell compact nav responsive contract", () => {
     }
 
     vi.stubGlobal("ResizeObserver", ResizeObserverMock);
-    Object.defineProperty(window, "unemployed", {
+    Object.defineProperty(window, "nordri", {
       configurable: true,
       value: {
         window: {
@@ -2054,7 +2054,7 @@ describe("JobFinderShell compact nav responsive contract", () => {
       expect(strip?.contains(brandSwitch)).toBe(false);
       openModuleSwitch(brandSwitch);
       expect(
-        getModuleOption(brandSwitch, "interview-helper").getAttribute(
+        getModuleOption(brandSwitch, "live-assistant").getAttribute(
           "aria-checked",
         ),
       ).toBe("false");
@@ -2298,7 +2298,7 @@ describe("JobFinderShell keyboard shortcuts", () => {
     }
 
     vi.stubGlobal("ResizeObserver", ResizeObserverMock);
-    Object.defineProperty(window, "unemployed", {
+    Object.defineProperty(window, "nordri", {
       configurable: true,
       value: {
         window: {
@@ -2405,13 +2405,13 @@ describe("JobFinderShell keyboard shortcuts", () => {
     fireEvent.keyDown(document, { ctrlKey: true, key: "b" });
     expect(shell?.dataset.sidebarCollapsed).toBe("true");
     expect(
-      window.localStorage.getItem("unemployed.job-finder.sidebar-collapsed.v1"),
+      window.localStorage.getItem("nordri.job-finder.sidebar-collapsed.v1"),
     ).toBe("true");
 
     fireEvent.keyDown(document, { metaKey: true, key: "b" });
     expect(shell?.dataset.sidebarCollapsed).toBe("false");
     expect(
-      window.localStorage.getItem("unemployed.job-finder.sidebar-collapsed.v1"),
+      window.localStorage.getItem("nordri.job-finder.sidebar-collapsed.v1"),
     ).toBe("false");
 
     view.unmount();
@@ -2639,7 +2639,7 @@ describe("JobFinderShell responsive shell contract", () => {
     vi.stubGlobal("ResizeObserver", ResizeObserverMock);
     scrollToMock.mockClear();
     scrollIntoViewMock.mockClear();
-    Object.defineProperty(window, "unemployed", {
+    Object.defineProperty(window, "nordri", {
       configurable: true,
       value: {
         window: {
@@ -2811,7 +2811,7 @@ describe("JobFinderShell responsive shell contract", () => {
       expect(getRouteScroller().contains(brandSwitch)).toBe(false);
       openModuleSwitch(brandSwitch);
       expect(
-        screen.getAllByRole("menuitemradio", { name: "Open Interview Helper" }),
+        screen.getAllByRole("menuitemradio", { name: "Open Live Assistant" }),
       ).toHaveLength(1);
       fireEvent.keyDown(getModuleSwitchMenu(brandSwitch), { key: "Escape" });
 
@@ -2855,7 +2855,7 @@ describe("JobFinderShell responsive shell contract", () => {
       const brandSwitch = expectSoleModuleSwitchInBrand();
       expect(brandSwitch.className).not.toContain("absolute");
       openModuleSwitch(brandSwitch);
-      const moduleTwin = getModuleOption(brandSwitch, "interview-helper");
+      const moduleTwin = getModuleOption(brandSwitch, "live-assistant");
       expect(moduleTwin.getAttribute("aria-current")).toBeNull();
       expect(moduleTwin.getAttribute("aria-checked")).toBe("false");
     },
@@ -2883,9 +2883,9 @@ describe("JobFinderShell responsive shell contract", () => {
     expect(trigger.dataset.state).toBe("open");
     const menu = getModuleSwitchMenu(brandSwitch);
     const jobFinderOption = getModuleOption(brandSwitch, "job-finder");
-    const interviewHelperOption = getModuleOption(
+    const liveAssistantOption = getModuleOption(
       brandSwitch,
-      "interview-helper",
+      "live-assistant",
     );
     expect(document.activeElement).toBe(jobFinderOption);
 
@@ -2895,18 +2895,18 @@ describe("JobFinderShell responsive shell contract", () => {
     expect(jobFinderOption.getAttribute("aria-checked")).toBe("true");
     expect(jobFinderOption.getAttribute("aria-label")).toBe("Job Finder");
     expect(jobFinderOption.getAttribute("aria-current")).toBeNull();
-    expect(interviewHelperOption.getAttribute("aria-checked")).toBe("false");
-    expect(interviewHelperOption.getAttribute("aria-label")).toBe(
-      "Open Interview Helper",
+    expect(liveAssistantOption.getAttribute("aria-checked")).toBe("false");
+    expect(liveAssistantOption.getAttribute("aria-label")).toBe(
+      "Open Live Assistant",
     );
 
     // Arrow keys cycle the two items; Escape returns to the trigger.
     fireEvent.keyDown(menu, { key: "ArrowDown" });
-    expect(document.activeElement).toBe(interviewHelperOption);
+    expect(document.activeElement).toBe(liveAssistantOption);
     fireEvent.keyDown(menu, { key: "ArrowDown" });
     expect(document.activeElement).toBe(jobFinderOption);
     fireEvent.keyDown(menu, { key: "ArrowUp" });
-    expect(document.activeElement).toBe(interviewHelperOption);
+    expect(document.activeElement).toBe(liveAssistantOption);
     fireEvent.keyDown(menu, { key: "Escape" });
     expect(trigger.getAttribute("aria-expanded")).toBe("false");
     expect(document.activeElement).toBe(trigger);
@@ -3332,16 +3332,16 @@ describe("JobFinderShell responsive shell contract", () => {
     ).toBeNull();
   });
 
-  it("routes Interview Helper through the shell and makes the current module a no-op", () => {
+  it("routes Live Assistant through the shell and makes the current module a no-op", () => {
     const onNavigate = vi.fn();
     renderShell("/job-finder/discovery", onNavigate);
 
     const brandSwitch = expectSoleModuleSwitchInBrand();
 
     openModuleSwitch(brandSwitch);
-    fireEvent.click(getModuleOption(brandSwitch, "interview-helper"));
+    fireEvent.click(getModuleOption(brandSwitch, "live-assistant"));
     expect(onNavigate).toHaveBeenCalledTimes(1);
-    expect(onNavigate).toHaveBeenCalledWith("/interview-helper");
+    expect(onNavigate).toHaveBeenCalledWith("/live-assistant");
     // Choosing an item closes the menu either way.
     expect(
       getModuleSwitchTrigger(brandSwitch).getAttribute("aria-expanded"),
@@ -3357,9 +3357,9 @@ describe("JobFinderShell responsive shell contract", () => {
 
     // Reopening reaches the same destination the second time too.
     openModuleSwitch(brandSwitch);
-    fireEvent.click(getModuleOption(brandSwitch, "interview-helper"));
+    fireEvent.click(getModuleOption(brandSwitch, "live-assistant"));
     expect(onNavigate).toHaveBeenCalledTimes(2);
-    expect(onNavigate).toHaveBeenLastCalledWith("/interview-helper");
+    expect(onNavigate).toHaveBeenLastCalledWith("/live-assistant");
   });
 });
 
@@ -3452,7 +3452,7 @@ describe("compact navigation shares the header switcher's axis", () => {
     }
 
     vi.stubGlobal("ResizeObserver", ResizeObserverMock);
-    Object.defineProperty(window, "unemployed", {
+    Object.defineProperty(window, "nordri", {
       configurable: true,
       value: {
         window: {

@@ -5,14 +5,14 @@ import type {
   RoleSuitabilityState,
   SavedJob,
   TitleFamilyMatch,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import type { BadgeTone } from "./job-finder-types";
-import { isProvisionalMatchAssessment } from "@unemployed/job-finder/discovery-ordering";
+import { isProvisionalMatchAssessment } from "@nordri/job-finder/discovery-ordering";
 import {
   FIT_TITLE_ONLY_REASON,
   getFitEvidenceDepth,
   type FitEvidenceDepth,
-} from "@unemployed/job-finder/discovery-result-bands";
+} from "@nordri/job-finder/discovery-result-bands";
 
 export const fitRecommendationCopy: Record<
   FitRecommendation,
@@ -29,7 +29,7 @@ export const fitRecommendationCopy: Record<
 
 /**
  * Evidence depth and the title-only reason now live in
- * `@unemployed/job-finder/discovery-result-bands`, so a finished run's frozen
+ * `@nordri/job-finder/discovery-result-bands`, so a finished run's frozen
  * counts and this screen apply one rule. Re-exported because the renderer
  * already imports both from here.
  */

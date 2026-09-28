@@ -3,7 +3,7 @@ import {
   type AgentDiscoveryProgress,
   type SourceDebugPhase,
   type SourceDebugProgressEvent,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import { formatStatusLabel } from "./source-instructions";
 

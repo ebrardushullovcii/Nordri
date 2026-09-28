@@ -2,7 +2,7 @@ import {
   ResumeDraftPatchSchema,
   isResumeTemplateApplyEligible,
   type ResumeDraftPatch,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import {
   checkResumeAssistantProposal,

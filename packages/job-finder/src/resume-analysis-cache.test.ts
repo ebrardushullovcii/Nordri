@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
-import { CandidateProfileSchema } from "@unemployed/contracts";
+import { CandidateProfileSchema } from "@nordri/contracts";
 
 import {
   buildResumeAnalysisCacheIdentity,

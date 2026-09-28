@@ -2,11 +2,11 @@ import {
   CandidateProfileSchema,
   ResumeDocumentBundleSchema,
   ResumeImportFieldCandidateSchema,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   createInMemoryJobFinderRepository,
   type JobFinderRepository,
-} from "@unemployed/db";
+} from "@nordri/db";
 import { describe, expect, test } from "vitest";
 
 import { createJobFinderWorkspaceService } from "./index";

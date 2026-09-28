@@ -1,10 +1,10 @@
-import { isFinishedDiscoveryTargetExecutionState } from "@unemployed/contracts";
+import { isFinishedDiscoveryTargetExecutionState } from "@nordri/contracts";
 import type {
   DiscoveryActivityEvent,
   DiscoveryRunRecord,
   DiscoveryTargetExecution,
   JobSearchPreferences,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 export type DiscoveryTargetConfig =
   JobSearchPreferences["discovery"]["targets"][number];

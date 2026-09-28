@@ -46,7 +46,7 @@ import type {
   TailoredAsset,
   UserActionEvent,
   UserActionRequest,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import type {
   CreateUserActionRequestResult,
   UserActionEventQuery,

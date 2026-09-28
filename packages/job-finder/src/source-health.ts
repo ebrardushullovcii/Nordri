@@ -1,7 +1,7 @@
 import type {
   DiscoveryTargetExecutionState,
   SourceInstructionStatus,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 /**
  * Canonical source-health interpretation shared by the Home dashboard

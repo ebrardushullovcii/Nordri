@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
-import type { JobFinderWorkspaceSnapshot } from "@unemployed/contracts";
+import type { JobFinderWorkspaceSnapshot } from "@nordri/contracts";
 
 type SelectedState = string | null;
 
@@ -25,7 +25,7 @@ const NO_VALID_IDS: readonly string[] = [];
  * dropped instead of breaking selection.
  */
 const INSPECTED_SELECTION_STORAGE_KEY =
-  "unemployed.job-finder.inspected-job-selections";
+  "nordri.job-finder.inspected-job-selections";
 const INSPECTED_SELECTION_SCHEMA_VERSION = 1;
 const INSPECTED_SELECTION_MAX_ENTRIES = 32;
 const INSPECTED_SELECTION_MAX_ID_LENGTH = 200;

@@ -1,9 +1,9 @@
 import type {
   JobFinderSetWorkHistoryReviewAcknowledgmentInput,
   WorkHistoryReviewSuggestion,
-} from "@unemployed/contracts";
-import type { BrowserSessionRuntime } from "@unemployed/browser-runtime";
-import { fnv1a32 } from "@unemployed/core";
+} from "@nordri/contracts";
+import type { BrowserSessionRuntime } from "@nordri/browser-runtime";
+import { fnv1a32 } from "@nordri/core";
 import { describe, expect, test } from "vitest";
 import {
   listUnresolvedWorkHistoryOmissionSuggestions,

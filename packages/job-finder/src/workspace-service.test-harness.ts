@@ -1,12 +1,12 @@
 import type {
   JobFinderAiClient,
   ResumeVisionProvider,
-} from "@unemployed/ai-providers";
-import type { BrowserSessionRuntime } from "@unemployed/browser-runtime";
+} from "@nordri/ai-providers";
+import type { BrowserSessionRuntime } from "@nordri/browser-runtime";
 import {
   createInMemoryJobFinderRepository,
   type JobFinderRepositorySeed,
-} from "@unemployed/db";
+} from "@nordri/db";
 import {
   createJobFinderWorkspaceService,
   type ListingHtmlFetcher,

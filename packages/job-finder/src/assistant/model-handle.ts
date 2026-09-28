@@ -1,5 +1,5 @@
-import type { ConversationModel } from "@unemployed/agent-runtime";
-import type { AssistantModelRoute } from "@unemployed/ai-providers";
+import type { ConversationModel } from "@nordri/agent-runtime";
+import type { AssistantModelRoute } from "@nordri/ai-providers";
 
 import { createScriptedAssistantModel } from "./scripted-model";
 import type { AssistantModelHandle } from "./session-host";

@@ -59,18 +59,18 @@ async function launch(userDataDirectory, viewport) {
     cwd: desktopDir,
     env: {
       ...process.env,
-      UNEMPLOYED_BROWSER_AGENT: "0",
-      UNEMPLOYED_ENABLE_TEST_API: "1",
-      UNEMPLOYED_TEST_API_USE_LIVE_AI: "0",
-      UNEMPLOYED_TEST_SYSTEM_THEME: "dark",
-      UNEMPLOYED_USER_DATA_DIR: userDataDirectory,
+      NORDRI_BROWSER_AGENT: "0",
+      NORDRI_ENABLE_TEST_API: "1",
+      NORDRI_TEST_API_USE_LIVE_AI: "0",
+      NORDRI_TEST_SYSTEM_THEME: "dark",
+      NORDRI_USER_DATA_DIR: userDataDirectory,
     },
   });
   const page = await app.firstWindow();
   await page.waitForLoadState("domcontentloaded");
   await page.setViewportSize(viewport);
   await page.waitForFunction(
-    () => Boolean(window.unemployed?.jobFinder?.test),
+    () => Boolean(window.nordri?.jobFinder?.test),
     undefined,
     { timeout: 30_000 },
   );
@@ -82,7 +82,7 @@ async function resetWorkspaceState(page, seed) {
   for (let attempt = 0; attempt < 12; attempt += 1) {
     try {
       await page.evaluate(
-        (state) => window.unemployed.jobFinder.test.resetWorkspaceState(state),
+        (state) => window.nordri.jobFinder.test.resetWorkspaceState(state),
         seed,
       );
       return;
@@ -159,7 +159,7 @@ async function run() {
   await rm(outputRoot, { recursive: true, force: true });
   await mkdir(outputRoot, { recursive: true });
   const userDataDirectory = await mkdtemp(
-    path.join(os.tmpdir(), "unemployed-authority-readiness-"),
+    path.join(os.tmpdir(), "nordri-authority-readiness-"),
   );
   const baseline = JSON.parse(await readFile(baselinePath, "utf8"));
   const seed = createSeed(baseline);
@@ -199,7 +199,7 @@ async function run() {
     report.checks.push("snapshot-persists-after-restart-compact");
 
     await launched.page.evaluate(async (profile) => {
-      await window.unemployed.jobFinder.saveProfile({
+      await window.nordri.jobFinder.saveProfile({
         ...profile,
         answerBank: {
           ...profile.answerBank,

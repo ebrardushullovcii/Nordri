@@ -129,8 +129,8 @@ function buildRoute(input: {
   const client = createOpenAiCompatibleJobFinderAiClient({
     apiKey: input.apiKey,
     baseUrl:
-      input.env.UNEMPLOYED_AI_ASSISTANT_BASE_URL?.trim() ||
-      input.env.UNEMPLOYED_AI_BASE_URL ||
+      input.env.NORDRI_AI_ASSISTANT_BASE_URL?.trim() ||
+      input.env.NORDRI_AI_BASE_URL ||
       DEFAULT_OPENCODE_GO_BASE_URL,
     model: input.model,
     apiMode: input.apiMode,
@@ -139,17 +139,17 @@ function buildRoute(input: {
     label: "Job Finder assistant",
     contextWindowTokens: capabilities.contextWindowTokens,
     requestTimeoutMs: parseConfiguredPositiveInteger(
-      input.env.UNEMPLOYED_AI_ASSISTANT_TIMEOUT_MS,
+      input.env.NORDRI_AI_ASSISTANT_TIMEOUT_MS,
       1_000,
     ),
     idleTimeoutMs: parseConfiguredPositiveInteger(
-      input.env.UNEMPLOYED_AI_IDLE_TIMEOUT_MS,
+      input.env.NORDRI_AI_IDLE_TIMEOUT_MS,
       1_000,
     ),
     maxAttempts: parseConfiguredPositiveInteger(
-      input.env.UNEMPLOYED_AI_MAX_ATTEMPTS,
+      input.env.NORDRI_AI_MAX_ATTEMPTS,
     ),
-    streaming: parseConfiguredBoolean(input.env.UNEMPLOYED_AI_STREAMING),
+    streaming: parseConfiguredBoolean(input.env.NORDRI_AI_STREAMING),
   });
   return {
     model: input.model,
@@ -161,35 +161,35 @@ function buildRoute(input: {
 }
 
 /**
- * Reads `UNEMPLOYED_AI_ASSISTANT_MODEL`, `..._API_MODE`,
+ * Reads `NORDRI_AI_ASSISTANT_MODEL`, `..._API_MODE`,
  * `..._REASONING_EFFORT` and `..._CONTEXT_WINDOW_TOKENS`, falling back to the
  * shared key and base URL. The default route is DeepSeek V4.1 Flash on Chat
  * Completions; Muse Spark Contributor on Responses is the alternative. A
- * fallback route is used only when `UNEMPLOYED_AI_ASSISTANT_FALLBACK_MODEL`
+ * fallback route is used only when `NORDRI_AI_ASSISTANT_FALLBACK_MODEL`
  * names one.
  */
 export function resolveAssistantModelRouteFromEnvironment(
   env: StringMap = process.env,
 ): AssistantModelRouteResolution {
   const apiKey =
-    env.UNEMPLOYED_AI_ASSISTANT_API_KEY?.trim() ||
-    env.UNEMPLOYED_AI_API_KEY?.trim();
+    env.NORDRI_AI_ASSISTANT_API_KEY?.trim() ||
+    env.NORDRI_AI_API_KEY?.trim();
   if (!apiKey) {
     return { available: false, detail: ASSISTANT_MODEL_OUTAGE_DETAIL };
   }
   const model =
-    env.UNEMPLOYED_AI_ASSISTANT_MODEL?.trim() || DEFAULT_ASSISTANT_MODEL;
+    env.NORDRI_AI_ASSISTANT_MODEL?.trim() || DEFAULT_ASSISTANT_MODEL;
   const known = resolveAssistantModelCapabilities({ model });
   const apiMode =
-    parseModelApiMode(env.UNEMPLOYED_AI_ASSISTANT_API_MODE) ??
+    parseModelApiMode(env.NORDRI_AI_ASSISTANT_API_MODE) ??
     (model === DEFAULT_ASSISTANT_MODEL
       ? DEFAULT_ASSISTANT_API_MODE
       : known.apiMode);
   const reasoningEffort =
-    parseModelReasoningEffort(env.UNEMPLOYED_AI_ASSISTANT_REASONING_EFFORT) ??
+    parseModelReasoningEffort(env.NORDRI_AI_ASSISTANT_REASONING_EFFORT) ??
     DEFAULT_ASSISTANT_REASONING_EFFORT;
   const contextWindowTokens = parseConfiguredPositiveInteger(
-    env.UNEMPLOYED_AI_ASSISTANT_CONTEXT_WINDOW_TOKENS,
+    env.NORDRI_AI_ASSISTANT_CONTEXT_WINDOW_TOKENS,
     1_000,
   );
   const route = buildRoute({
@@ -200,7 +200,7 @@ export function resolveAssistantModelRouteFromEnvironment(
     reasoningEffort,
     contextWindowTokens,
   });
-  const fallbackModel = env.UNEMPLOYED_AI_ASSISTANT_FALLBACK_MODEL?.trim();
+  const fallbackModel = env.NORDRI_AI_ASSISTANT_FALLBACK_MODEL?.trim();
   const fallback =
     fallbackModel && fallbackModel !== model
       ? buildRoute({
@@ -208,7 +208,7 @@ export function resolveAssistantModelRouteFromEnvironment(
           apiKey,
           model: fallbackModel,
           apiMode:
-            parseModelApiMode(env.UNEMPLOYED_AI_ASSISTANT_FALLBACK_API_MODE) ??
+            parseModelApiMode(env.NORDRI_AI_ASSISTANT_FALLBACK_API_MODE) ??
             resolveAssistantModelCapabilities({ model: fallbackModel }).apiMode,
           reasoningEffort,
           contextWindowTokens: undefined,

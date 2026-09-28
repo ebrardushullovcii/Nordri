@@ -1,5 +1,5 @@
-import type { JobPosting } from "@unemployed/contracts";
-import { JobSearchPreferencesSchema } from "@unemployed/contracts";
+import type { JobPosting } from "@nordri/contracts";
+import { JobSearchPreferencesSchema } from "@nordri/contracts";
 import { describe, expect, test } from "vitest";
 
 import { createSeed } from "../workspace-service.test-fixtures";

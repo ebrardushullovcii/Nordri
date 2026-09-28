@@ -163,7 +163,7 @@ async function waitForCondition(
 }
 
 async function getWorkspace(page) {
-  return page.evaluate(() => window.unemployed.jobFinder.getWorkspace());
+  return page.evaluate(() => window.nordri.jobFinder.getWorkspace());
 }
 
 async function completeProfileSetup(page) {
@@ -171,7 +171,7 @@ async function completeProfileSetup(page) {
   const completedAt = new Date().toISOString();
   await page.evaluate(
     async ({ profileSetupState, completedAt: completionTime }) =>
-      window.unemployed.jobFinder.saveProfileSetupState({
+      window.nordri.jobFinder.saveProfileSetupState({
         ...profileSetupState,
         status: "completed",
         currentStep: "ready_check",
@@ -200,7 +200,7 @@ async function navigate(page, route) {
         const main = document.querySelector("main");
         return (
           document.activeElement === main &&
-          document.title === `${expectedLabel} | Job Finder | UnEmployed`
+          document.title === `${expectedLabel} | Job Finder | Nordri`
         );
       },
       label,
@@ -977,7 +977,7 @@ async function measureDiscoveryRevealSurface(page) {
       document.activeElement !== document.body
         ? document.activeElement
         : null;
-    const workspace = await window.unemployed.jobFinder.getWorkspace();
+    const workspace = await window.nordri.jobFinder.getWorkspace();
 
     return {
       viewport: {
@@ -1253,7 +1253,7 @@ async function probeDiscoverySelectionReveal(page, viewport, baseCapture) {
 async function run() {
   await mkdir(outputDir, { recursive: true });
   const userDataDirectory = await mkdtemp(
-    path.join(os.tmpdir(), "unemployed-deep-acceptance-"),
+    path.join(os.tmpdir(), "nordri-deep-acceptance-"),
   );
   let app;
 
@@ -1263,17 +1263,17 @@ async function run() {
       cwd: desktopDir,
       env: {
         ...process.env,
-        UNEMPLOYED_BROWSER_AGENT: "0",
-        UNEMPLOYED_ENABLE_TEST_API: "1",
-        UNEMPLOYED_TEST_PROFILE_COPILOT_DELAY_MS: "4500",
-        UNEMPLOYED_TEST_SYSTEM_THEME: "dark",
-        UNEMPLOYED_USER_DATA_DIR: userDataDirectory,
+        NORDRI_BROWSER_AGENT: "0",
+        NORDRI_ENABLE_TEST_API: "1",
+        NORDRI_TEST_PROFILE_COPILOT_DELAY_MS: "4500",
+        NORDRI_TEST_SYSTEM_THEME: "dark",
+        NORDRI_USER_DATA_DIR: userDataDirectory,
       },
     });
     const page = await app.firstWindow();
     await page.waitForLoadState("domcontentloaded");
     await page.waitForFunction(
-      () => Boolean(window.unemployed?.jobFinder?.test),
+      () => Boolean(window.nordri?.jobFinder?.test),
       undefined,
       { timeout: 30_000 },
     );
@@ -1291,7 +1291,7 @@ async function run() {
     });
 
     await page.evaluate(() =>
-      window.unemployed.jobFinder.test.setSystemThemeOverride("dark"),
+      window.nordri.jobFinder.test.setSystemThemeOverride("dark"),
     );
     await setViewport(page, browserWindow, viewportMatrix[0]);
 
@@ -1308,11 +1308,11 @@ async function run() {
     });
 
     const resumeDemo = await page.evaluate(() =>
-      window.unemployed.jobFinder.test.loadResumeWorkspaceDemo(),
+      window.nordri.jobFinder.test.loadResumeWorkspaceDemo(),
     );
     await page.evaluate(
       async (state) =>
-        window.unemployed.jobFinder.test.resetWorkspaceState(state),
+        window.nordri.jobFinder.test.resetWorkspaceState(state),
       createLongProfileState(resumeDemo),
     );
     await completeProfileSetup(page);
@@ -1568,12 +1568,12 @@ async function run() {
     });
 
     const discoveryDemo = await page.evaluate(() =>
-      window.unemployed.jobFinder.test.loadResumeWorkspaceDemo(),
+      window.nordri.jobFinder.test.loadResumeWorkspaceDemo(),
     );
     const longDiscoveryState = createLongDiscoveryState(discoveryDemo);
     await page.evaluate(
       async (state) =>
-        window.unemployed.jobFinder.test.resetWorkspaceState(state),
+        window.nordri.jobFinder.test.resetWorkspaceState(state),
       longDiscoveryState,
     );
     await completeProfileSetup(page);
@@ -1612,7 +1612,7 @@ async function run() {
     }
 
     await page.evaluate(() =>
-      window.unemployed.jobFinder.test.loadApplyQueueDemo(),
+      window.nordri.jobFinder.test.loadApplyQueueDemo(),
     );
     await completeProfileSetup(page);
     await page.reload();
@@ -1738,7 +1738,7 @@ async function run() {
     );
     await page.evaluate(
       async (state) =>
-        window.unemployed.jobFinder.test.resetWorkspaceState(state),
+        window.nordri.jobFinder.test.resetWorkspaceState(state),
       {
         ...actionBaseline,
         userActionRequests: createUserActionRequests(),
@@ -1764,7 +1764,7 @@ async function run() {
     };
 
     await page.evaluate(() =>
-      window.unemployed.jobFinder.test.loadApplyQueueDemo(),
+      window.nordri.jobFinder.test.loadApplyQueueDemo(),
     );
     await completeProfileSetup(page);
     await page.reload();

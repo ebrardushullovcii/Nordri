@@ -3,13 +3,13 @@ import type {
   ResumeImportFieldCandidateDraft,
   ResumeImportJsonValue,
   ResumeImportVisionPageImage,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   AgentProviderStatusSchema,
   NonEmptyStringSchema,
   ResumeImportFieldCandidateDraftSchema,
   ResumeImportTargetSectionSchema,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { z } from "zod";
 import {
   buildValuePreview,
@@ -746,9 +746,9 @@ export function createResumeVisionProviderFromEnvironment(
   env: StringMap = process.env,
 ): ResumeVisionProvider {
   const apiKey =
-    env.UNEMPLOYED_RESUME_VISION_API_KEY ??
-    env.UNEMPLOYED_AI_VISION_API_KEY ??
-    env.UNEMPLOYED_AI_API_KEY;
+    env.NORDRI_RESUME_VISION_API_KEY ??
+    env.NORDRI_AI_VISION_API_KEY ??
+    env.NORDRI_AI_API_KEY;
   if (!apiKey) {
     return createDeterministicResumeVisionProvider();
   }
@@ -756,44 +756,44 @@ export function createResumeVisionProviderFromEnvironment(
   return createOpenAiCompatibleResumeVisionProvider({
     apiKey,
     baseUrl:
-      env.UNEMPLOYED_RESUME_VISION_BASE_URL ??
-      env.UNEMPLOYED_AI_VISION_BASE_URL ??
-      env.UNEMPLOYED_AI_BASE_URL ??
+      env.NORDRI_RESUME_VISION_BASE_URL ??
+      env.NORDRI_AI_VISION_BASE_URL ??
+      env.NORDRI_AI_BASE_URL ??
       DEFAULT_OPENCODE_GO_BASE_URL,
     model:
-      env.UNEMPLOYED_RESUME_VISION_MODEL ??
-      env.UNEMPLOYED_AI_VISION_MODEL ??
+      env.NORDRI_RESUME_VISION_MODEL ??
+      env.NORDRI_AI_VISION_MODEL ??
       DEFAULT_RESUME_VISION_MODEL,
     apiMode:
       parseModelApiMode(
-        env.UNEMPLOYED_RESUME_VISION_API_MODE ??
-          env.UNEMPLOYED_AI_VISION_API_MODE,
+        env.NORDRI_RESUME_VISION_API_MODE ??
+          env.NORDRI_AI_VISION_API_MODE,
       ) ?? DEFAULT_VISION_MODEL_API_MODE,
     reasoningEffort:
       parseModelReasoningEffort(
-        env.UNEMPLOYED_RESUME_VISION_REASONING_EFFORT ??
-          env.UNEMPLOYED_AI_VISION_REASONING_EFFORT,
+        env.NORDRI_RESUME_VISION_REASONING_EFFORT ??
+          env.NORDRI_AI_VISION_REASONING_EFFORT,
       ) ?? DEFAULT_VISION_MODEL_REASONING_EFFORT,
     label: "Resume visual scan",
     requestTimeoutMs:
-      parseConfiguredNumber(env.UNEMPLOYED_RESUME_VISION_TIMEOUT_MS) ??
+      parseConfiguredNumber(env.NORDRI_RESUME_VISION_TIMEOUT_MS) ??
       DEFAULT_VISION_TIMEOUT_MS,
-    idleTimeoutMs: parseConfiguredNumber(env.UNEMPLOYED_AI_IDLE_TIMEOUT_MS),
-    maxAttempts: parseConfiguredPositiveInteger(env.UNEMPLOYED_AI_MAX_ATTEMPTS),
-    streaming: parseConfiguredBoolean(env.UNEMPLOYED_AI_STREAMING),
+    idleTimeoutMs: parseConfiguredNumber(env.NORDRI_AI_IDLE_TIMEOUT_MS),
+    maxAttempts: parseConfiguredPositiveInteger(env.NORDRI_AI_MAX_ATTEMPTS),
+    streaming: parseConfiguredBoolean(env.NORDRI_AI_STREAMING),
     retryBaseDelayMs: parseConfiguredPositiveInteger(
-      env.UNEMPLOYED_AI_RETRY_BASE_DELAY_MS,
+      env.NORDRI_AI_RETRY_BASE_DELAY_MS,
       0,
     ),
     contextWindowTokens:
       parseConfiguredNumber(
-        env.UNEMPLOYED_RESUME_VISION_CONTEXT_WINDOW_TOKENS,
+        env.NORDRI_RESUME_VISION_CONTEXT_WINDOW_TOKENS,
       ) ?? DEFAULT_VISION_CONTEXT_WINDOW_TOKENS,
     reservedHeadroomTokens:
-      parseConfiguredNumber(env.UNEMPLOYED_RESUME_VISION_HEADROOM_TOKENS) ??
+      parseConfiguredNumber(env.NORDRI_RESUME_VISION_HEADROOM_TOKENS) ??
       DEFAULT_VISION_RESERVED_HEADROOM_TOKENS,
     maxPagesPerBatch:
-      parseConfiguredNumber(env.UNEMPLOYED_RESUME_VISION_MAX_PAGES_PER_BATCH) ??
+      parseConfiguredNumber(env.NORDRI_RESUME_VISION_MAX_PAGES_PER_BATCH) ??
       MAX_PAGES_PER_BATCH,
   });
 }

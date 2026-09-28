@@ -1,11 +1,11 @@
-import type { BrowserSessionRuntime } from "@unemployed/browser-runtime";
+import type { BrowserSessionRuntime } from "@nordri/browser-runtime";
 import {
   BrowserSourceAccessProbeResultSchema,
   UserActionRequestSchema,
   UserActionVerificationResultSchema,
   type UserActionRequest,
-} from "@unemployed/contracts";
-import type { JobFinderRepository } from "@unemployed/db";
+} from "@nordri/contracts";
+import type { JobFinderRepository } from "@nordri/db";
 
 import { reduceUserActionVerification } from "../user-action-domain";
 import { inspectApplicationAccessPage } from "./application-access-page";

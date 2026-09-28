@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { ResumeImportJsonValueSchema } from "@unemployed/contracts";
+import { ResumeImportJsonValueSchema } from "@nordri/contracts";
 
 import {
   compactOpenAiCompatibleUserPayload,

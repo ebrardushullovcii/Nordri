@@ -51,7 +51,7 @@ async function waitForCondition(
 
 async function waitForProfileOrSetupHeading(window) {
   await window.waitForFunction(
-    () => Boolean(window.unemployed?.jobFinder?.test),
+    () => Boolean(window.nordri?.jobFinder?.test),
     undefined,
     { timeout: 15000 },
   );
@@ -77,12 +77,12 @@ async function waitForProfileOrSetupHeading(window) {
 }
 
 async function getWorkspace(window) {
-  return window.evaluate(() => window.unemployed.jobFinder.getWorkspace());
+  return window.evaluate(() => window.nordri.jobFinder.getWorkspace());
 }
 
 async function getSelectedApplyReviewData(window) {
   return window.evaluate(async () => {
-    const snapshot = await window.unemployed.jobFinder.getWorkspace();
+    const snapshot = await window.nordri.jobFinder.getWorkspace();
     const selectedRecord =
       snapshot.applicationRecords.find(
         (record) => record.id === snapshot.selectedApplicationRecordId,
@@ -107,7 +107,7 @@ async function getSelectedApplyReviewData(window) {
       return null;
     }
 
-    const details = await window.unemployed.jobFinder.getApplyRunDetails(
+    const details = await window.nordri.jobFinder.getApplyRunDetails(
       selectedApplyResult.runId,
       selectedRecord.jobId,
     );
@@ -123,18 +123,18 @@ async function getSelectedApplyReviewData(window) {
 async function getResumeWorkspace(window, jobId) {
   return window.evaluate(
     async (currentJobId) =>
-      window.unemployed.jobFinder.getResumeWorkspace(currentJobId),
+      window.nordri.jobFinder.getResumeWorkspace(currentJobId),
     jobId,
   );
 }
 
 async function loadResumeWorkspaceDemo(window) {
   await window.evaluate(async () => {
-    if (!window.unemployed.jobFinder.test) {
+    if (!window.nordri.jobFinder.test) {
       throw new Error("Desktop test API is unavailable in the renderer.");
     }
 
-    return window.unemployed.jobFinder.test.loadResumeWorkspaceDemo();
+    return window.nordri.jobFinder.test.loadResumeWorkspaceDemo();
   });
   await window.reload();
   await window.waitForLoadState("domcontentloaded");
@@ -264,7 +264,7 @@ async function startInitialCopilotRun(window) {
 async function captureApplicationsRecovery() {
   await mkdir(outputDir, { recursive: true });
   const userDataDirectory = await mkdtemp(
-    path.join(os.tmpdir(), "unemployed-applications-recovery-"),
+    path.join(os.tmpdir(), "nordri-applications-recovery-"),
   );
 
   let app;
@@ -275,23 +275,23 @@ async function captureApplicationsRecovery() {
       cwd: desktopDir,
       env: {
         ...process.env,
-        UNEMPLOYED_BROWSER_AGENT: "0",
-        UNEMPLOYED_ENABLE_TEST_API: "1",
-        UNEMPLOYED_TEST_SYSTEM_THEME:
-          process.env.UNEMPLOYED_TEST_SYSTEM_THEME ?? "dark",
-        UNEMPLOYED_USER_DATA_DIR: userDataDirectory,
+        NORDRI_BROWSER_AGENT: "0",
+        NORDRI_ENABLE_TEST_API: "1",
+        NORDRI_TEST_SYSTEM_THEME:
+          process.env.NORDRI_TEST_SYSTEM_THEME ?? "dark",
+        NORDRI_USER_DATA_DIR: userDataDirectory,
       },
     });
 
     const window = await app.firstWindow();
     await window.waitForLoadState("domcontentloaded");
     await window.evaluate(async (theme) => {
-      if (!window.unemployed.jobFinder.test) {
+      if (!window.nordri.jobFinder.test) {
         throw new Error("Desktop test API is unavailable in the renderer.");
       }
 
-      await window.unemployed.jobFinder.test.setSystemThemeOverride(theme);
-    }, process.env.UNEMPLOYED_TEST_SYSTEM_THEME ?? "dark");
+      await window.nordri.jobFinder.test.setSystemThemeOverride(theme);
+    }, process.env.NORDRI_TEST_SYSTEM_THEME ?? "dark");
     await waitForProfileOrSetupHeading(window);
     await window.setViewportSize({ width, height });
 

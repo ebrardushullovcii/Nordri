@@ -5,7 +5,7 @@ import {
   SubmissionObservationIdentitySchema,
   type SubmissionFinalControlIdentity,
   type SubmissionObservationIdentity,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import type { Page, Request } from "playwright";
 
 import {

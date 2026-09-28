@@ -7,7 +7,7 @@ import type {
   SourceDebugRunDetails,
   SourceDebugRunRecord,
   SourceInstructionArtifact,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { Badge } from "@renderer/components/ui/badge";
 import { Button } from "@renderer/components/ui/button";
 import {
@@ -16,7 +16,7 @@ import {
   stopSourceCheckQueue,
   useSourceCheckQueue,
 } from "../../lib/source-check-queue";
-import { isRunnableJobDiscoveryTarget } from "@unemployed/contracts";
+import { isRunnableJobDiscoveryTarget } from "@nordri/contracts";
 import { Checkbox } from "@renderer/components/ui/checkbox";
 import { FieldLabel } from "@renderer/components/ui/field";
 import type { UseFormReturn } from "react-hook-form";
@@ -26,7 +26,7 @@ import {
   describeLatestSourceCheck,
   isEnabledSourceNeedingAttention,
   type SourceRuntimeSignals,
-} from "@unemployed/job-finder/source-health";
+} from "@nordri/job-finder/source-health";
 import type { SearchPreferencesEditorValues } from "../../lib/profile-editor";
 import { PROFILE_DEEP_LINK_SCROLL_MARGIN_CLASSES } from "./profile-deep-link-focus";
 import { ProfileDiscoveryTargetRow } from "./profile-discovery-target-row";

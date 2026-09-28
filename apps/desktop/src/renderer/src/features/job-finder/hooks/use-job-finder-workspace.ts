@@ -62,7 +62,7 @@ import type {
   UpdateWorkspaceBehaviorInput,
   UpdateAiBehaviorInput,
   UserActionCommandInput,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import type { JobFinderShellActions } from "../lib/job-finder-types";
 import { applyJobFinderWorkspaceDelta } from "../../../pages/job-finder-workspace-delta";
 import {
@@ -109,7 +109,7 @@ type StartupDatabaseRecoveryFactRequest =
 function requestStartupDatabaseRecoveryFact(): StartupDatabaseRecoveryFactRequest {
   try {
     const recoveryBridge =
-      window.unemployed?.jobFinder?.getStartupDatabaseRecovery;
+      window.nordri?.jobFinder?.getStartupDatabaseRecovery;
     if (typeof recoveryBridge === "function") {
       return recoveryBridge().catch(() => null);
     }
@@ -188,7 +188,7 @@ export function useJobFinderWorkspace(): JobFinderWorkspaceState {
     async (sequence?: number) => {
       const requestSequence = sequence ?? beginWorkspaceRequest();
       try {
-        const result = await window.unemployed.jobFinder.syncWorkspace(null);
+        const result = await window.nordri.jobFinder.syncWorkspace(null);
         if (result.kind === "snapshot") {
           if (!isCurrentWorkspaceRequest(requestSequence)) {
             return workspaceRef.current ?? result.snapshot;
@@ -202,7 +202,7 @@ export function useJobFinderWorkspace(): JobFinderWorkspaceState {
         // Older preload builds still use the existing full-snapshot fallback.
       }
 
-      const workspace = await window.unemployed.jobFinder.getWorkspace();
+      const workspace = await window.nordri.jobFinder.getWorkspace();
       if (!isCurrentWorkspaceRequest(requestSequence)) {
         return workspaceRef.current ?? workspace;
       }
@@ -347,7 +347,7 @@ export function useJobFinderWorkspace(): JobFinderWorkspaceState {
     const baseRevision = workspaceRevisionRef.current || null;
     let result: JobFinderWorkspaceSyncResult;
     try {
-      result = await window.unemployed.jobFinder.syncWorkspace(baseRevision);
+      result = await window.nordri.jobFinder.syncWorkspace(baseRevision);
     } catch {
       return recoverFullWorkspaceOnce(sequence);
     }
@@ -373,7 +373,7 @@ export function useJobFinderWorkspace(): JobFinderWorkspaceState {
 
     try {
       const result =
-        await window.unemployed.jobFinder.syncWorkspace(baseRevision);
+        await window.nordri.jobFinder.syncWorkspace(baseRevision);
       if (workspaceCommitVersionRef.current !== commitVersion) {
         return workspaceRef.current;
       }
@@ -401,7 +401,7 @@ export function useJobFinderWorkspace(): JobFinderWorkspaceState {
       // Fall through to the legacy full-snapshot recovery below.
     }
 
-    const workspace = await window.unemployed.jobFinder.getWorkspace();
+    const workspace = await window.nordri.jobFinder.getWorkspace();
     if (workspaceCommitVersionRef.current !== commitVersion) {
       return workspaceRef.current ?? workspace;
     }
@@ -429,7 +429,7 @@ export function useJobFinderWorkspace(): JobFinderWorkspaceState {
         }
       });
     };
-    const subscribe = window.unemployed.jobFinder.onWorkspaceUpdate;
+    const subscribe = window.nordri.jobFinder.onWorkspaceUpdate;
     // Test hosts and a renderer that survived a development preload refresh
     // can briefly expose the earlier bridge shape. The next mount subscribes;
     // this mount keeps its ordinary mutation-driven convergence.
@@ -446,7 +446,7 @@ export function useJobFinderWorkspace(): JobFinderWorkspaceState {
       assertWorkspaceHydrated();
       const sequence = beginWorkspaceRequest();
       const baseRevision = workspaceRevisionRef.current || null;
-      const result = await window.unemployed.jobFinder.mutateWorkspaceEntities({
+      const result = await window.nordri.jobFinder.mutateWorkspaceEntities({
         baseRevision,
         mutation,
       });
@@ -478,24 +478,24 @@ export function useJobFinderWorkspace(): JobFinderWorkspaceState {
     () => ({
       analyzeProfileFromResume: () =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.analyzeProfileFromResume(),
+          window.nordri.jobFinder.analyzeProfileFromResume(),
         ),
       openBrowserSession: (input?: JobFinderOpenBrowserSessionInput) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.openBrowserSession(input),
+          window.nordri.jobFinder.openBrowserSession(input),
         ),
       checkBrowserSession: () =>
         runWorkspaceAction(
-          () => window.unemployed.jobFinder.checkBrowserSession(),
+          () => window.nordri.jobFinder.checkBrowserSession(),
           { allowDuringBootstrap: true },
         ),
       performUserAction: (command: UserActionCommandInput) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.performUserAction(command),
+          window.nordri.jobFinder.performUserAction(command),
         ),
       approveApply: (input: JobFinderApplicationStartTarget) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.approveApply(input),
+          window.nordri.jobFinder.approveApply(input),
         ),
       dismissDiscoveryJob: (
         jobId: string,
@@ -511,10 +511,10 @@ export function useJobFinderWorkspace(): JobFinderWorkspaceState {
           expectedNormalizedCompanyName,
         }),
       previewEmployerExclusion: (jobId: string) =>
-        window.unemployed.jobFinder.previewEmployerExclusion(jobId),
+        window.nordri.jobFinder.previewEmployerExclusion(jobId),
       removeEmployerExclusion: (input) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.removeEmployerExclusion(input),
+          window.nordri.jobFinder.removeEmployerExclusion(input),
         ),
       restoreDismissedDiscoveryJob: (jobId: string) =>
         runWorkspaceEntityMutation({
@@ -527,31 +527,31 @@ export function useJobFinderWorkspace(): JobFinderWorkspaceState {
           jobId,
         }),
       getResumeWorkspace: (jobId: string) =>
-        window.unemployed.jobFinder.getResumeWorkspace(jobId),
+        window.nordri.jobFinder.getResumeWorkspace(jobId),
       previewResumeDraft: (draft: ResumeDraft, requestId?: string) =>
-        window.unemployed.jobFinder.previewResumeDraft(draft, requestId),
+        window.nordri.jobFinder.previewResumeDraft(draft, requestId),
       saveResumeDraft: (draft: ResumeDraft) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.saveResumeDraft(draft),
+          window.nordri.jobFinder.saveResumeDraft(draft),
         ),
       regenerateResumeDraft: (jobId: string) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.regenerateResumeDraft(jobId),
+          window.nordri.jobFinder.regenerateResumeDraft(jobId),
         ),
       regenerateResumeSection: (jobId: string, sectionId: string) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.regenerateResumeSection(jobId, sectionId),
+          window.nordri.jobFinder.regenerateResumeSection(jobId, sectionId),
         ),
       restoreResumeDraftRevision: (jobId: string, revisionId: string) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.restoreResumeDraftRevision(
+          window.nordri.jobFinder.restoreResumeDraftRevision(
             jobId,
             revisionId,
           ),
         ),
       undoResumeAssistantEdit: (jobId: string, revisionId: string) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.undoResumeAssistantEdit(
+          window.nordri.jobFinder.undoResumeAssistantEdit(
             jobId,
             revisionId,
           ),
@@ -561,50 +561,50 @@ export function useJobFinderWorkspace(): JobFinderWorkspaceState {
         intent: ResumePdfExportIntent = "download",
       ) =>
         runWorkspaceResultAction(() =>
-          window.unemployed.jobFinder.exportResumePdf(jobId, intent),
+          window.nordri.jobFinder.exportResumePdf(jobId, intent),
         ),
       // Reveal is not a workspace mutation: it selects the written file in the
       // OS file manager and returns what happened, so it never refreshes.
       revealSavedFile: (path: string) =>
-        window.unemployed.jobFinder.revealSavedFile(path),
+        window.nordri.jobFinder.revealSavedFile(path),
       approveResume: (jobId: string, exportId: string) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.approveResume(jobId, exportId),
+          window.nordri.jobFinder.approveResume(jobId, exportId),
         ),
       clearResumeApproval: (jobId: string) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.clearResumeApproval(jobId),
+          window.nordri.jobFinder.clearResumeApproval(jobId),
         ),
       setWorkHistoryReviewAcknowledgment: (
         input: JobFinderSetWorkHistoryReviewAcknowledgmentInput,
       ) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.setWorkHistoryReviewAcknowledgment(input),
+          window.nordri.jobFinder.setWorkHistoryReviewAcknowledgment(input),
         ),
       setResumeClaimConfirmation: (
         input: JobFinderSetResumeClaimConfirmationInput,
       ) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.setResumeClaimConfirmation(input),
+          window.nordri.jobFinder.setResumeClaimConfirmation(input),
         ),
       applyResumePatch: (
         patch: ResumeDraftPatch,
         revisionReason?: string | null,
       ) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.applyResumePatch(patch, revisionReason),
+          window.nordri.jobFinder.applyResumePatch(patch, revisionReason),
         ),
       getResumeAssistantMessages: (jobId: string) =>
-        window.unemployed.jobFinder.getResumeAssistantMessages(jobId),
+        window.nordri.jobFinder.getResumeAssistantMessages(jobId),
       sendResumeAssistantMessage: (jobId: string, content: string) =>
-        window.unemployed.jobFinder.sendResumeAssistantMessage(jobId, content),
+        window.nordri.jobFinder.sendResumeAssistantMessage(jobId, content),
       resolveResumeAssistantProposal: (
         jobId: string,
         proposalId: string,
         action: "accept" | "reject",
         patchIds: readonly string[],
       ) =>
-        window.unemployed.jobFinder.resolveResumeAssistantProposal(
+        window.nordri.jobFinder.resolveResumeAssistantProposal(
           jobId,
           proposalId,
           action,
@@ -612,74 +612,74 @@ export function useJobFinderWorkspace(): JobFinderWorkspaceState {
         ),
       generateResume: (jobId: string) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.generateResume(jobId),
+          window.nordri.jobFinder.generateResume(jobId),
         ),
       startApplyCopilotRun: (input: JobFinderApplyCopilotActionInput) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.startApplyCopilotRun(input),
+          window.nordri.jobFinder.startApplyCopilotRun(input),
         ),
       startAutoApplyRun: (input: JobFinderApplicationStartTarget) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.startAutoApplyRun(input),
+          window.nordri.jobFinder.startAutoApplyRun(input),
         ),
       startAutoApplyQueueRun: (
         jobIds: JobFinderApplyQueueActionInput["jobIds"],
         applicationAutomationMode?: JobFinderApplyQueueActionInput["applicationAutomationMode"],
       ) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.startAutoApplyQueueRun(
+          window.nordri.jobFinder.startAutoApplyQueueRun(
             jobIds,
             applicationAutomationMode,
           ),
         ),
       approveApplyRun: (input: JobFinderApplyRunActionInput) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.approveApplyRun(input),
+          window.nordri.jobFinder.approveApplyRun(input),
         ),
       cancelApplyRun: (input: JobFinderApplyRunActionInput) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.cancelApplyRun(input),
+          window.nordri.jobFinder.cancelApplyRun(input),
         ),
       resolveApplyConsentRequest: (input: JobFinderApplyConsentActionInput) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.resolveApplyConsentRequest(input),
+          window.nordri.jobFinder.resolveApplyConsentRequest(input),
         ),
       revokeApplyRunApproval: (input: JobFinderApplyRunActionInput) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.revokeApplyRunApproval(input),
+          window.nordri.jobFinder.revokeApplyRunApproval(input),
         ),
       focusPreparedApplicationPage: (
         input: JobFinderPreparedApplicationPageInput,
       ) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.focusPreparedApplicationPage(input),
+          window.nordri.jobFinder.focusPreparedApplicationPage(input),
         ),
       submitPreparedApplication: (input: { jobId: string }) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.submitPreparedApplication(input),
+          window.nordri.jobFinder.submitPreparedApplication(input),
         ),
       sendPreparedApplications: (input: { jobIds: string[] }) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.sendPreparedApplications(input),
+          window.nordri.jobFinder.sendPreparedApplications(input),
         ),
       mutateApplicationCrm: (input: ApplicationCrmMutationInput) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.mutateApplicationCrm(input),
+          window.nordri.jobFinder.mutateApplicationCrm(input),
         ),
       mutateApplicationCrmBulkStage: (
         input: ApplicationCrmBulkStageMutationInput,
       ) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.mutateApplicationCrmBulkStage(input),
+          window.nordri.jobFinder.mutateApplicationCrmBulkStage(input),
         ),
       runApplicationNoResponseAutomation: (settings?: ApplicationCrmSettings) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.runApplicationNoResponseAutomation(
+          window.nordri.jobFinder.runApplicationNoResponseAutomation(
             settings,
           ),
         ),
       exportApplicationCrm: (input: ApplicationCrmExportInput) =>
-        window.unemployed.jobFinder.exportApplicationCrm(input),
+        window.nordri.jobFinder.exportApplicationCrm(input),
       importResume: (options?: { retryInterrupted?: boolean }) => {
         const requestSequence = ++resumeImportRequestSequenceRef.current;
         setWorkspaceState((currentState) =>
@@ -700,10 +700,10 @@ export function useJobFinderWorkspace(): JobFinderWorkspaceState {
         };
         const importPromise = runWorkspaceAction(() =>
           options?.retryInterrupted === true
-            ? window.unemployed.jobFinder.importResume(onImportProgress, {
+            ? window.nordri.jobFinder.importResume(onImportProgress, {
                 retryInterrupted: true,
               })
-            : window.unemployed.jobFinder.importResume(onImportProgress),
+            : window.nordri.jobFinder.importResume(onImportProgress),
         );
 
         return importPromise.finally(() => {
@@ -740,14 +740,14 @@ export function useJobFinderWorkspace(): JobFinderWorkspaceState {
         }),
       refreshWorkspace: syncWorkspace,
       resetWorkspace: () =>
-        runWorkspaceAction(() => window.unemployed.jobFinder.resetWorkspace()),
+        runWorkspaceAction(() => window.nordri.jobFinder.resetWorkspace()),
       runAgentDiscovery: (
         onProgress?: (event: DiscoveryActivityEvent) => void,
         targetId?: string,
         searchRequest?: JobFinderSearchRequest,
       ) =>
         runWorkspaceResultAction(() =>
-          window.unemployed.jobFinder.runAgentDiscovery(
+          window.nordri.jobFinder.runAgentDiscovery(
             onProgress,
             targetId,
             searchRequest,
@@ -755,7 +755,7 @@ export function useJobFinderWorkspace(): JobFinderWorkspaceState {
         ),
       cancelAgentDiscovery: (input) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.cancelAgentDiscovery(input),
+          window.nordri.jobFinder.cancelAgentDiscovery(input),
         ),
       runSourceDebug: (
         targetId: string,
@@ -763,115 +763,115 @@ export function useJobFinderWorkspace(): JobFinderWorkspaceState {
         options?: { readabilityTimeoutMs?: number },
       ) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.runSourceDebug(
+          window.nordri.jobFinder.runSourceDebug(
             targetId,
             onProgress,
             options,
           ),
         ),
       getSourceDebugRunDetails: (runId: string) =>
-        window.unemployed.jobFinder.getSourceDebugRunDetails(runId),
+        window.nordri.jobFinder.getSourceDebugRunDetails(runId),
       getApplyRunDetails: (input: JobFinderApplyRunDetailsQuery) =>
-        window.unemployed.jobFinder.getApplyRunDetails(input),
+        window.nordri.jobFinder.getApplyRunDetails(input),
       saveApplicationAnswer: (command: SaveApplicationAnswerCommandInput) =>
-        window.unemployed.jobFinder.saveApplicationAnswer(command),
+        window.nordri.jobFinder.saveApplicationAnswer(command),
       clearApplicationAnswer: (command: ClearApplicationAnswerCommandInput) =>
-        window.unemployed.jobFinder.clearApplicationAnswer(command),
+        window.nordri.jobFinder.clearApplicationAnswer(command),
       projectGroupedManualAnswer: (
         command: ProjectGroupedManualAnswerCommand,
       ) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.projectGroupedManualAnswer(command),
+          window.nordri.jobFinder.projectGroupedManualAnswer(command),
         ),
       applyGroupedManualAnswer: (input: ApplyGroupedManualAnswerInput) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.applyGroupedManualAnswer(input),
+          window.nordri.jobFinder.applyGroupedManualAnswer(input),
         ),
       snoozeGroupedDecision: (input: SnoozeGroupedDecisionInput) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.snoozeGroupedDecision(input),
+          window.nordri.jobFinder.snoozeGroupedDecision(input),
         ),
       exportApplicationPacket: (input: JobFinderApplyRunDetailsQuery) =>
-        window.unemployed.jobFinder.exportApplicationPacket(input),
+        window.nordri.jobFinder.exportApplicationPacket(input),
       resolveSubmissionOutcome: (input: ResolveSubmissionOutcomeInput) =>
-        window.unemployed.jobFinder.resolveSubmissionOutcome(input),
+        window.nordri.jobFinder.resolveSubmissionOutcome(input),
       saveSourceInstructionArtifact: (
         targetId: string,
         artifact: EditableSourceInstructionArtifact,
       ) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.saveSourceInstructionArtifact(
+          window.nordri.jobFinder.saveSourceInstructionArtifact(
             targetId,
             artifact,
           ),
         ),
       acceptSourceInstructionDraft: (targetId: string, instructionId: string) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.acceptSourceInstructionDraft(
+          window.nordri.jobFinder.acceptSourceInstructionDraft(
             targetId,
             instructionId,
           ),
         ),
       verifySourceInstructions: (targetId: string, instructionId: string) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.verifySourceInstructions(
+          window.nordri.jobFinder.verifySourceInstructions(
             targetId,
             instructionId,
           ),
         ),
       saveProfile: (profile: CandidateProfile) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.saveProfile(profile),
+          window.nordri.jobFinder.saveProfile(profile),
         ),
       saveWorkspaceInputs: (
         profile: CandidateProfile,
         searchPreferences: JobSearchPreferences,
       ) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.saveWorkspaceInputs(
+          window.nordri.jobFinder.saveWorkspaceInputs(
             profile,
             searchPreferences,
           ),
         ),
       saveSearchPreferences: (searchPreferences: JobSearchPreferences) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.saveSearchPreferences(searchPreferences),
+          window.nordri.jobFinder.saveSearchPreferences(searchPreferences),
         ),
       saveCampaign: (campaign: SaveJobSearchCampaignInput) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.saveCampaign(campaign),
+          window.nordri.jobFinder.saveCampaign(campaign),
         ),
       selectCampaign: (campaignId: string) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.selectCampaign(campaignId),
+          window.nordri.jobFinder.selectCampaign(campaignId),
         ),
       runCampaignNow: (campaignId?: string | null) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.runCampaignNow(
+          window.nordri.jobFinder.runCampaignNow(
             campaignId ? { campaignId } : undefined,
           ),
         ),
       markCampaignNotificationRead: (notificationId: string) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.markCampaignNotificationRead(
+          window.nordri.jobFinder.markCampaignNotificationRead(
             notificationId,
           ),
         ),
       markAllCampaignNotificationsRead: () =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.markAllCampaignNotificationsRead(),
+          window.nordri.jobFinder.markAllCampaignNotificationsRead(),
         ),
       saveCampaignRule: (campaignId: string, rule: SaveCampaignRuleInput) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.saveCampaignRule(campaignId, rule),
+          window.nordri.jobFinder.saveCampaignRule(campaignId, rule),
         ),
       deleteCampaignRule: (campaignId: string, ruleId: string) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.deleteCampaignRule(campaignId, ruleId),
+          window.nordri.jobFinder.deleteCampaignRule(campaignId, ruleId),
         ),
       deleteCampaign: async (campaignId: string) => {
         const deleted =
-          await window.unemployed.jobFinder.deleteJobSearchCampaign(campaignId);
+          await window.nordri.jobFinder.deleteJobSearchCampaign(campaignId);
         // A refused or failed deletion must leave the local snapshot alone.
         // Only a confirmed delete follows the canonical sync path so the
         // removed campaign disappears immediately and the backend-selected
@@ -891,97 +891,97 @@ export function useJobFinderWorkspace(): JobFinderWorkspaceState {
         enabled: boolean,
       ) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.toggleCampaignRule(
+          window.nordri.jobFinder.toggleCampaignRule(
             campaignId,
             ruleId,
             enabled,
           ),
         ),
       projectCampaignRuleFunnel: (campaignId: string) =>
-        window.unemployed.jobFinder.projectCampaignRuleFunnel(campaignId),
+        window.nordri.jobFinder.projectCampaignRuleFunnel(campaignId),
       setActivityControl: (input: SetJobFinderActivityControlInput) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.setActivityControl(input),
+          window.nordri.jobFinder.setActivityControl(input),
         ),
       mutateRapidReview: (input: RapidReviewMutationInput) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.mutateRapidReview(input),
+          window.nordri.jobFinder.mutateRapidReview(input),
         ),
       recordOutcome: (input: RecordOutcomeInput) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.recordOutcome(input),
+          window.nordri.jobFinder.recordOutcome(input),
         ),
       saveResumeStrategy: (input: SaveResumeStrategyInput) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.saveResumeStrategy(input),
+          window.nordri.jobFinder.saveResumeStrategy(input),
         ),
       disableResumeStrategy: (strategyId: string) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.disableResumeStrategy(strategyId),
+          window.nordri.jobFinder.disableResumeStrategy(strategyId),
         ),
       selectResumeStrategy: (input: SelectResumeStrategyInput) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.selectResumeStrategy(input),
+          window.nordri.jobFinder.selectResumeStrategy(input),
         ),
       recommendResumeStrategy: (input: RecommendResumeStrategyInput) =>
-        window.unemployed.jobFinder.recommendResumeStrategy(input),
+        window.nordri.jobFinder.recommendResumeStrategy(input),
       setCampaignResumeStrategyDefault: (
         input: SetCampaignResumeStrategyDefaultInput,
       ) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.setCampaignResumeStrategyDefault(input),
+          window.nordri.jobFinder.setCampaignResumeStrategyDefault(input),
         ),
       refreshCompanyIntelligence: () =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.refreshCompanyIntelligence(),
+          window.nordri.jobFinder.refreshCompanyIntelligence(),
         ),
       setCompanyPreference: (input: SetCompanyPreferenceInput) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.setCompanyPreference(input),
+          window.nordri.jobFinder.setCompanyPreference(input),
         ),
       reviewCompanyMerge: (input: ReviewCompanyMergeInput) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.reviewCompanyMerge(input),
+          window.nordri.jobFinder.reviewCompanyMerge(input),
         ),
       mutateCompanyIntelligence: (input: CompanyIntelligenceMutationInput) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.mutateCompanyIntelligence(input),
+          window.nordri.jobFinder.mutateCompanyIntelligence(input),
         ),
       setOutcomeSuggestionEnabled: (input: SetOutcomeSuggestionEnabledInput) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.setOutcomeSuggestionEnabled(input),
+          window.nordri.jobFinder.setOutcomeSuggestionEnabled(input),
         ),
       mutateSafeguards: (input: SafeguardMutationInput) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.mutateSafeguards(input),
+          window.nordri.jobFinder.mutateSafeguards(input),
         ),
       saveSettings: (settings: JobFinderSettings) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.saveSettings(settings),
+          window.nordri.jobFinder.saveSettings(settings),
         ),
       updateApplicationDefaults: (input: UpdateApplicationDefaultsInput) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.updateApplicationDefaults(input),
+          window.nordri.jobFinder.updateApplicationDefaults(input),
         ),
       updateWorkspaceBehavior: (input: UpdateWorkspaceBehaviorInput) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.updateWorkspaceBehavior(input),
+          window.nordri.jobFinder.updateWorkspaceBehavior(input),
         ),
       updateAiBehavior: (input: UpdateAiBehaviorInput) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.updateAiBehavior(input),
+          window.nordri.jobFinder.updateAiBehavior(input),
         ),
       updateAppearanceTheme: (appearanceTheme: AppearanceTheme) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.updateAppearanceTheme(appearanceTheme),
+          window.nordri.jobFinder.updateAppearanceTheme(appearanceTheme),
         ),
       updateTrackerCrm: (applicationCrm: ApplicationCrmSettings) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.updateTrackerCrm(applicationCrm),
+          window.nordri.jobFinder.updateTrackerCrm(applicationCrm),
         ),
       saveProfileSetupState: (profileSetupState: ProfileSetupState) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.saveProfileSetupState(profileSetupState),
+          window.nordri.jobFinder.saveProfileSetupState(profileSetupState),
         ),
       applyProfileSetupReviewAction: (
         reviewItemId: string,
@@ -989,7 +989,7 @@ export function useJobFinderWorkspace(): JobFinderWorkspaceState {
         options?: ProfileSetupReviewActionOptions,
       ) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.applyProfileSetupReviewAction(
+          window.nordri.jobFinder.applyProfileSetupReviewAction(
             reviewItemId,
             action,
             options,
@@ -1001,7 +1001,7 @@ export function useJobFinderWorkspace(): JobFinderWorkspaceState {
         action: ResumeTimelineRepairAction,
       ) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.applyResumeTimelineRepairAction(
+          window.nordri.jobFinder.applyResumeTimelineRepairAction(
             runId,
             proposalId,
             action,
@@ -1012,26 +1012,26 @@ export function useJobFinderWorkspace(): JobFinderWorkspaceState {
         context?: ProfileCopilotContext,
       ) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.sendProfileCopilotMessage(
+          window.nordri.jobFinder.sendProfileCopilotMessage(
             content,
             context,
           ),
         ),
       applyProfileCopilotPatchGroup: (patchGroupId: string) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.applyProfileCopilotPatchGroup(
+          window.nordri.jobFinder.applyProfileCopilotPatchGroup(
             patchGroupId,
           ),
         ),
       rejectProfileCopilotPatchGroup: (patchGroupId: string) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.rejectProfileCopilotPatchGroup(
+          window.nordri.jobFinder.rejectProfileCopilotPatchGroup(
             patchGroupId,
           ),
         ),
       undoProfileRevision: (revisionId: string) =>
         runWorkspaceAction(() =>
-          window.unemployed.jobFinder.undoProfileRevision(revisionId),
+          window.nordri.jobFinder.undoProfileRevision(revisionId),
         ),
     }),
     [
@@ -1052,10 +1052,10 @@ export function useJobFinderWorkspace(): JobFinderWorkspaceState {
 
       try {
         const [platformResponse, bootstrap] = await Promise.all([
-          window.unemployed.ping(),
-          typeof window.unemployed.jobFinder.getWorkspaceBootstrap ===
+          window.nordri.ping(),
+          typeof window.nordri.jobFinder.getWorkspaceBootstrap ===
           "function"
-            ? window.unemployed.jobFinder.getWorkspaceBootstrap()
+            ? window.nordri.jobFinder.getWorkspaceBootstrap()
             : recoverFullWorkspaceOnce(),
         ]);
 

@@ -1,6 +1,6 @@
-# UnEmployed
+# Nordri
 
-UnEmployed is an agent-first desktop product for job search, resume preparation, safe application assistance, and interview support. This file is a glossary only; product behavior lives in `docs/PRODUCT.md`, boundaries in `docs/ARCHITECTURE.md`, and decisions in `docs/adr/`.
+Nordri is an agent-first desktop product for job search, resume preparation, safe application assistance, and interview support. This file is a glossary only; product behavior lives in `docs/PRODUCT.md`, boundaries in `docs/ARCHITECTURE.md`, and decisions in `docs/adr/`.
 
 ## Job Finder Language
 
@@ -57,14 +57,14 @@ _Avoid_: continuous apply recording, visual auto-submit
 A bounded browser screenshot captured to explain visible page state without encoding job-board-specific workflow rules.
 _Avoid_: board-specific screenshot rule, visual shortcut
 
-## Interview Helper Language
+## Live Assistant Language
 
 **Interview live session**:
-A user-started Interview Helper session where listening, transcript context, captures, overlays, and model suggestions are active under explicit user control.
+A user-started Live Assistant session where listening, transcript context, captures, overlays, and model suggestions are active under explicit user control.
 _Avoid_: background listening, ambient interview mode
 
 **Live-session setup gate**:
-The pre-session consent step where the user enables interview capture capabilities before Interview Helper can listen, capture, send, or retain live-session context.
+The pre-session consent step where the user enables interview capture capabilities before Live Assistant can listen, capture, send, or retain live-session context.
 _Avoid_: blanket consent, hidden permission
 
 **Session audio**:
@@ -72,7 +72,7 @@ The microphone and meeting/system audio captured during an Interview live sessio
 _Avoid_: user audio only, hidden recording
 
 **Interview cue trigger**:
-The event that turns live transcript or screenshot context into a model request for an Interview Helper suggestion.
+The event that turns live transcript or screenshot context into a model request for a Live Assistant suggestion.
 _Avoid_: send everything, passive model stream
 
 **Interview cue card**:
@@ -88,19 +88,19 @@ The temporary set of screenshots collected for the next Interview cue trigger.
 _Avoid_: last screenshot only, permanent screen archive
 
 **Live answer overlay**:
-The semi-transparent Interview Helper surface that shows model-generated suggestions during an Interview live session.
+The semi-transparent Live Assistant surface that shows model-generated suggestions during an Interview live session.
 _Avoid_: main panel, transcript window
 
 **Live transcript overlay**:
-The semi-transparent Interview Helper surface that shows session transcript and queued visual context during an Interview live session.
+The semi-transparent Live Assistant surface that shows session transcript and queued visual context during an Interview live session.
 _Avoid_: answer window, raw recorder
 
 **Screen-share-private overlay**:
-An Interview Helper window that uses supported platform capture protection to keep app-owned live assistance surfaces out of ordinary screen sharing when authorized.
+A Live Assistant window that uses supported platform capture protection to keep app-owned live assistance surfaces out of ordinary screen sharing when authorized.
 _Avoid_: stealth overlay, proctoring bypass, capture evasion
 
 **Authorized capture-protection extension**:
-A product goal for future OS, meeting-platform, enterprise, or company-approved mechanisms that fully exclude Interview Helper live overlays from authorized capture surfaces with consent from the relevant parties.
+A product goal for future OS, meeting-platform, enterprise, or company-approved mechanisms that fully exclude Live Assistant live overlays from authorized capture surfaces with consent from the relevant parties.
 _Avoid_: unauthorized hiding, security bypass, proctoring evasion
 
 **Live-session history**:

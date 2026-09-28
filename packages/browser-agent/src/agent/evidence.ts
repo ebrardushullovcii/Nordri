@@ -6,7 +6,7 @@ import {
   SourceDebugPhaseEvidenceSchema,
   type JobPosting,
   type SourceDebugPhaseEvidence,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import type { AgentResult, AgentState } from "../types";
 import { uniqueStrings } from "../utils/string";
 import {

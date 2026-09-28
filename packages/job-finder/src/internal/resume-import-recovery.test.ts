@@ -4,7 +4,7 @@ import {
   ResumeImportRunSchema,
   isInterruptedResumeImportRun,
   type ResumeImportRun,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   clearSettledVisionDeferredWarnings,
   interruptedTextImportMessage,

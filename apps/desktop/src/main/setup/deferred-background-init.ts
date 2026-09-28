@@ -22,8 +22,8 @@ export interface DeferredBackgroundInitOptions {
       enforceLifecycle(): PromiseLike<unknown>;
     };
   }>;
-  loadInterviewHelperModule: () => Promise<{
-    getInterviewHelperService: () => PromiseLike<unknown>;
+  loadLiveAssistantModule: () => Promise<{
+    getLiveAssistantService: () => PromiseLike<unknown>;
   }>;
   loadInterviewOverlayModule: () => Promise<typeof InterviewOverlayApi>;
   loadInterviewSessionControlsModule: () => Promise<
@@ -139,18 +139,18 @@ export function createDeferredBackgroundInitController(
       });
   };
 
-  const initializeInterviewHelper = () => {
+  const initializeLiveAssistant = () => {
     void options
-      .loadInterviewHelperModule()
-      .then(({ getInterviewHelperService }) => {
+      .loadLiveAssistantModule()
+      .then(({ getLiveAssistantService }) => {
         if (quitHasBegun()) {
           return undefined;
         }
-        return getInterviewHelperService();
+        return getLiveAssistantService();
       })
       .catch((error) => {
         options.onError(
-          "[Desktop] Failed to initialize Interview Helper service.",
+          "[Desktop] Failed to initialize Live Assistant service.",
           error,
         );
       });
@@ -182,7 +182,7 @@ export function createDeferredBackgroundInitController(
     options.onDiagnostic("starting background services");
     initializeJobFinderWorkspace();
     enforceCandidateAssetLifecycle();
-    initializeInterviewHelper();
+    initializeLiveAssistant();
     initializeAdvancedInterviewSurfaces();
   };
 

@@ -1,4 +1,4 @@
-import type { SourceDebugRunRecord } from "@unemployed/contracts";
+import type { SourceDebugRunRecord } from "@nordri/contracts";
 import { useSourceCheckQueueRunner } from "./source-check-queue";
 
 /**

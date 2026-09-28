@@ -8,12 +8,12 @@ ADRs capture durable decisions and rejected alternatives. Use them to avoid reop
 | -------------------------------------------------------------------- | ---------- | ----------------------------------------------------------------------------------------------- |
 | [0001](0001-resume-coverage-and-apply-safe-template-catalog.md)      | accepted   | Resume coverage and apply-safe template catalog                                                 |
 | [0002](0002-parallel-vision-resume-import.md)                        | accepted   | Parallel vision resume import                                                                   |
-| [0003](0003-interview-helper-live-session-architecture.md)           | accepted   | Interview Helper live-session architecture                                                      |
+| [0003](0003-live-assistant-live-session-architecture.md)           | accepted   | Live Assistant live-session architecture                                                      |
 | [0004](0004-monorepo-electron-baseline.md)                           | accepted   | Monorepo and Electron baseline                                                                  |
 | [0005](0005-canonical-agent-documentation-system.md)                 | superseded | Canonical agent documentation system (see 0015)                                                 |
 | [0006](0006-safe-non-submitting-apply-boundary.md)                   | superseded | Safe non-submitting apply boundary                                                              |
 | [0007](0007-source-generic-browser-workflows.md)                     | accepted   | Source-generic browser workflows                                                                |
-| [0008](0008-visible-first-interview-helper.md)                       | accepted   | Visible-first Interview Helper                                                                  |
+| [0008](0008-visible-first-live-assistant.md)                       | accepted   | Visible-first Live Assistant                                                                  |
 | [0009](0009-luna-high-default-and-capability-contracts.md)           | accepted   | Luna High default and contract-first AI capabilities                                            |
 | [0010](0010-opencode-go-mixed-text-and-vision-routing.md)            | superseded | OpenCode Go mixed text and vision routing (see 0019)                                            |
 | [0011](0011-campaign-scoped-job-finder-and-local-application-crm.md) | accepted   | Campaign-scoped Job Finder and local application CRM                                            |
@@ -46,6 +46,7 @@ ADRs capture durable decisions and rejected alternatives. Use them to avoid reop
 | [0037](0037-one-assistant-in-a-side-chat.md) | accepted | One app-wide assistant in a side chat replaces the Profile and Resume chats |
 | [0038](0038-the-assistant-works-in-the-tab-you-lend-it.md) | accepted | The assistant works only in the browser tab lent to it; a click takes it back |
 | [0039](0039-written-instructions-authorize.md) | accepted | Written sidebar instructions authorize their steps, sending included, through recorded grants |
+| [0040](0040-nordri-rebrand.md) | accepted | UnEmployed becomes Nordri and Interview Helper becomes Live Assistant; existing data moves once |
 
 ## Policy
 

@@ -5,7 +5,7 @@ import {
   type SourceDebugRunRecord,
   type SourceDebugWorkerAttempt,
   type SourceInstructionArtifact,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   collectAttemptInstructionGuidance,
   evaluateSourceInstructionQuality,

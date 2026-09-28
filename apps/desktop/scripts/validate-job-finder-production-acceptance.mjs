@@ -78,7 +78,7 @@ import {
   SHELL_HEADER_GEOMETRY_FRAME_TOLERANCE_PX,
   SHELL_HEADER_GEOMETRY_OVERLAP_EPSILON_PX,
   SHELL_HEADER_GEOMETRY_SAMPLE_KEYS,
-  SHELL_HEADER_INTERVIEW_HELPER_HREF,
+  SHELL_HEADER_LIVE_ASSISTANT_HREF,
   SHELL_HEADER_LAYOUT_TRIO_NAMES,
   SHELL_HEADER_UTILITY_CONTROL_NAMES,
   compareTesterStartupGeometry,
@@ -1348,7 +1348,7 @@ try {
     JSON.stringify({
       lastValidatedTimestamp: 0,
       projects: {
-        [repositoryRoot]: { name: "unemployed", version: "0.1.0" },
+        [repositoryRoot]: { name: "nordri", version: "0.1.0" },
         [snapshotFixtureRoot]: { name: "fixture", version: "1.0.0" },
       },
     }),
@@ -1358,7 +1358,7 @@ try {
     JSON.stringify({
       lastValidatedTimestamp: 0,
       projects: {
-        [repositoryRoot]: { name: "unemployed", version: "0.1.0" },
+        [repositoryRoot]: { name: "nordri", version: "0.1.0" },
         [snapshotFixtureRoot]: { name: "fixture", version: "1.0.0" },
       },
     }),
@@ -3494,7 +3494,7 @@ const wrapper = await readFile(
           "frame",
           "groups",
           "header",
-          "interviewHelper",
+          "liveAssistant",
           "layoutTrio",
           "moduleNav",
           "theme",
@@ -3511,11 +3511,11 @@ const wrapper = await readFile(
   assert(
     Object.isFrozen(SHELL_HEADER_LAYOUT_TRIO_NAMES) &&
       stableJson(SHELL_HEADER_LAYOUT_TRIO_NAMES) ===
-        stableJson(["interviewHelper", "planning", "routeScroller"]),
-    "The frozen layout trio drifted from interviewHelper/planning/routeScroller.",
+        stableJson(["liveAssistant", "planning", "routeScroller"]),
+    "The frozen layout trio drifted from liveAssistant/planning/routeScroller.",
   );
   for (const [value, expected] of [
-    [SHELL_HEADER_INTERVIEW_HELPER_HREF, "#/interview-helper"],
+    [SHELL_HEADER_LIVE_ASSISTANT_HREF, "#/live-assistant"],
     [PRODUCTION_TESTER_SHELL_PROBE_ROUTE, "#/job-finder/campaigns"],
     [SHELL_HEADER_GEOMETRY_FRAME_TOLERANCE_PX, 0.5],
     [SHELL_HEADER_GEOMETRY_OVERLAP_EPSILON_PX, 0.5],
@@ -3530,7 +3530,7 @@ const wrapper = await readFile(
       'export const PRODUCTION_TESTER_SHELL_PROBE_ROUTE = "#/job-finder/campaigns";',
     ) &&
       wrapper.includes(
-        'export const SHELL_HEADER_INTERVIEW_HELPER_HREF = "#/interview-helper";',
+        'export const SHELL_HEADER_LIVE_ASSISTANT_HREF = "#/live-assistant";',
       ) &&
       wrapper.includes(
         "export const SHELL_HEADER_GEOMETRY_FRAME_TOLERANCE_PX = 0.5;",
@@ -3551,10 +3551,10 @@ const wrapper = await readFile(
   );
   const shellHeaderFixtureExpectations = [
     ["healthy-sampler-shaped-sample-passes", true],
-    ["missing-interview-helper-href-fails", false],
-    ["wrong-interview-helper-href-fails", false],
+    ["missing-live-assistant-href-fails", false],
+    ["wrong-live-assistant-href-fails", false],
     ["opacity-zero-utility-control-fails", false],
-    ["pointer-events-none-interview-helper-fails", false],
+    ["pointer-events-none-live-assistant-fails", false],
     ["unrendered-brand-fails", false],
     ["escaping-focusable-control-fails", false],
     ["missing-sample-key-fails", false],
@@ -3605,7 +3605,7 @@ const wrapper = await readFile(
     "prefers-color-scheme: dark",
     '[role="group"][aria-label="Notifications and actions"]',
     '[role="group"][aria-label="Window controls"]',
-    'a[aria-label="Open Interview Helper"],button[aria-label="Open Interview Helper"]',
+    'a[aria-label="Open Live Assistant"],button[aria-label="Open Live Assistant"]',
     'button[aria-label^="More"]',
     'button[aria-label^="Needs you"]',
     'button[aria-label="Search current plan and workspace"]',
@@ -3695,9 +3695,9 @@ const wrapper = await readFile(
       present: true,
       rect: shellRect(0, 0, 640, 116),
     },
-    interviewHelper: usableShellControl(350, 64, 458, 100, {
-      ariaLabel: "Open Interview Helper",
-      href: SHELL_HEADER_INTERVIEW_HELPER_HREF,
+    liveAssistant: usableShellControl(350, 64, 458, 100, {
+      ariaLabel: "Open Live Assistant",
+      href: SHELL_HEADER_LIVE_ASSISTANT_HREF,
     }),
     layoutTrio: {
       planning: usableShellControl(304, 64, 346, 100, {
@@ -3752,10 +3752,10 @@ const wrapper = await readFile(
           "documentHorizontalOverflowZero",
           "headerInternalOverflowZero",
           "headerPresentAndWithinFrame",
-          "interviewHelperCenterHitReached",
-          "interviewHelperContainedInHeaderAndViewport",
-          "interviewHelperHrefExact",
-          "interviewHelperRendered",
+          "liveAssistantCenterHitReached",
+          "liveAssistantContainedInHeaderAndViewport",
+          "liveAssistantHrefExact",
+          "liveAssistantRendered",
           "layoutTrioClearOfRenderedGroups",
           "layoutTrioPairwiseNonOverlapping",
           "layoutTrioWithinHeaderAndViewport",
@@ -3785,23 +3785,23 @@ const wrapper = await readFile(
     );
   };
   rejectShellSample(
-    "non-string Interview Helper href",
+    "non-string Live Assistant href",
     (sample) => {
-      sample.interviewHelper.href = 7;
+      sample.liveAssistant.href = 7;
     },
-    /Open Interview Helper href .* is not exactly/u,
+    /Open Live Assistant href .* is not exactly/u,
   );
   rejectShellSample(
-    "deleted Interview Helper href key",
+    "deleted Live Assistant href key",
     (sample) => {
-      delete sample.interviewHelper.href;
+      delete sample.liveAssistant.href;
     },
-    /Open Interview Helper href .* is not exactly/u,
+    /Open Live Assistant href .* is not exactly/u,
   );
   rejectShellSample(
     "missing control visibility",
     (sample) => {
-      delete sample.interviewHelper.visibility;
+      delete sample.liveAssistant.visibility;
     },
     /computes opacity 0 while claimed rendered[\S\s]*computes pointer-events none while claimed rendered/u,
   );
@@ -4015,7 +4015,7 @@ const resolver = await readFile(
   "utf8",
 );
 assert(
-  /export const DESKTOP_BUILD_ARGS = Object\.freeze\(\[\s*"--filter",\s*"@unemployed\/desktop",\s*"build",?\s*\]\)/.test(
+  /export const DESKTOP_BUILD_ARGS = Object\.freeze\(\[\s*"--filter",\s*"@nordri\/desktop",\s*"build",?\s*\]\)/.test(
     resolver,
   ),
   "Acceptance resolver does not have one explicit desktop build command.",
@@ -4039,7 +4039,7 @@ assert(
 );
 assert(
   stableJson(DESKTOP_BUILD_ARGS) ===
-    stableJson(["--filter", "@unemployed/desktop", "build"]),
+    stableJson(["--filter", "@nordri/desktop", "build"]),
   "Acceptance resolver changed the desktop build arguments.",
 );
 const cachedResolverProbe = resolveBuildInvocation({
@@ -4115,9 +4115,9 @@ assert(
       LANG: "en_US.UTF-8",
       OPENAI_API_KEY: "secret-value",
       PATH: "/usr/bin:/bin",
-      UNEMPLOYED_ENABLE_TEST_API: "1",
-      UNEMPLOYED_STARTUP_ZOOM_FACTOR: "9",
-      UNEMPLOYED_TESTER_SESSION_GEOMETRY: "0",
+      NORDRI_ENABLE_TEST_API: "1",
+      NORDRI_STARTUP_ZOOM_FACTOR: "9",
+      NORDRI_TESTER_SESSION_GEOMETRY: "0",
     },
     "/isolated/production-tester-user-data",
   );
@@ -4137,7 +4137,7 @@ assert(
     "HOME",
     "HTTPS_PROXY",
     "OPENAI_API_KEY",
-    "UNEMPLOYED_ENABLE_TEST_API",
+    "NORDRI_ENABLE_TEST_API",
   ]) {
     assert(
       !(forbiddenName in testerHardening.env),
@@ -4149,8 +4149,8 @@ assert(
     );
   }
   for (const geometryName of [
-    "UNEMPLOYED_STARTUP_ZOOM_FACTOR",
-    "UNEMPLOYED_TESTER_SESSION_GEOMETRY",
+    "NORDRI_STARTUP_ZOOM_FACTOR",
+    "NORDRI_TESTER_SESSION_GEOMETRY",
   ]) {
     assert(
       testerHardening.strippedNames.includes(geometryName),
@@ -4158,31 +4158,31 @@ assert(
     );
   }
   assert(
-    testerHardening.env.UNEMPLOYED_USER_DATA_DIR ===
+    testerHardening.env.NORDRI_USER_DATA_DIR ===
       "/isolated/production-tester-user-data" &&
-      testerHardening.env.UNEMPLOYED_TEST_API_USE_LIVE_AI === "0" &&
-      testerHardening.env.UNEMPLOYED_BROWSER_AGENT === "0" &&
+      testerHardening.env.NORDRI_TEST_API_USE_LIVE_AI === "0" &&
+      testerHardening.env.NORDRI_BROWSER_AGENT === "0" &&
       testerHardening.env
         .JOB_FINDER_PREPARE_ONLY_AUTHORIZE_INTERMEDIATE_WRITES === "0" &&
       testerHardening.env
         .JOB_FINDER_COMPLETE_FLOW_AUTHORIZED_WRITE_DIAGNOSTIC === "0" &&
-      testerHardening.env.UNEMPLOYED_TEST_AUTHORIZE_INTERMEDIATE_ATS_WRITES ===
+      testerHardening.env.NORDRI_TEST_AUTHORIZE_INTERMEDIATE_ATS_WRITES ===
         "0",
     "Production tester environment must isolate user data and force browser agent/live AI/intermediate writes/ATS writes/diagnostics off.",
   );
   assert(
     testerHardening.injectedNames.includes(
-      "UNEMPLOYED_TEST_AUTHORIZE_INTERMEDIATE_ATS_WRITES",
+      "NORDRI_TEST_AUTHORIZE_INTERMEDIATE_ATS_WRITES",
     ),
     "The ATS intermediate-write authorization flag must be an explicitly injected authority fact.",
   );
   assert(
-    testerHardening.env.UNEMPLOYED_TESTER_SESSION_GEOMETRY === "1" &&
-      testerHardening.env.UNEMPLOYED_STARTUP_WINDOW_WIDTH ===
+    testerHardening.env.NORDRI_TESTER_SESSION_GEOMETRY === "1" &&
+      testerHardening.env.NORDRI_STARTUP_WINDOW_WIDTH ===
         String(PRODUCTION_TESTER_GEOMETRY_REQUEST.width) &&
-      testerHardening.env.UNEMPLOYED_STARTUP_WINDOW_HEIGHT ===
+      testerHardening.env.NORDRI_STARTUP_WINDOW_HEIGHT ===
         String(PRODUCTION_TESTER_GEOMETRY_REQUEST.height) &&
-      testerHardening.env.UNEMPLOYED_STARTUP_ZOOM_FACTOR ===
+      testerHardening.env.NORDRI_STARTUP_ZOOM_FACTOR ===
         String(PRODUCTION_TESTER_GEOMETRY_REQUEST.zoomFactor),
     "Production tester environment must inject the canonical geometry marker and values.",
   );
@@ -4614,10 +4614,10 @@ assert(
   "Production tester probe does not request a loopback ephemeral CDP endpoint.",
 );
 assert(
-  wrapper.includes("UNEMPLOYED_TESTER_SESSION_GEOMETRY") &&
-    wrapper.includes("UNEMPLOYED_STARTUP_WINDOW_WIDTH") &&
-    wrapper.includes("UNEMPLOYED_STARTUP_WINDOW_HEIGHT") &&
-    wrapper.includes("UNEMPLOYED_STARTUP_ZOOM_FACTOR"),
+  wrapper.includes("NORDRI_TESTER_SESSION_GEOMETRY") &&
+    wrapper.includes("NORDRI_STARTUP_WINDOW_WIDTH") &&
+    wrapper.includes("NORDRI_STARTUP_WINDOW_HEIGHT") &&
+    wrapper.includes("NORDRI_STARTUP_ZOOM_FACTOR"),
   "Production tester probe does not inject the explicit startup-geometry environment.",
 );
 {
@@ -4628,10 +4628,10 @@ assert(
   assert(
     testerEnvironmentSource.length > 0 &&
       testerEnvironmentSource.includes(
-        "delete env.UNEMPLOYED_ENABLE_TEST_API",
+        "delete env.NORDRI_ENABLE_TEST_API",
       ) &&
-      !testerEnvironmentSource.includes('UNEMPLOYED_ENABLE_TEST_API = "1"') &&
-      !testerEnvironmentSource.includes("UNEMPLOYED_AI_API_KEY"),
+      !testerEnvironmentSource.includes('NORDRI_ENABLE_TEST_API = "1"') &&
+      !testerEnvironmentSource.includes("NORDRI_AI_API_KEY"),
     "Production tester environment builder must prove test API and provider keys stay absent by construction.",
   );
 }
@@ -6003,7 +6003,7 @@ assert(
     'fadeStart: "[data-job-finder-compact-navigation-fade-start]",',
     'fadeEnd: "[data-job-finder-compact-navigation-fade-end]",',
     "planningButton: 'button[aria-label^=\"More\"]',",
-    "interviewHelperLink: 'a[aria-label=\"Open Interview Helper\"]',",
+    "liveAssistantLink: 'a[aria-label=\"Open Live Assistant\"]',",
     '\'[role="group"][aria-label="Notifications and actions"]\',',
     'windowControlsGroup: \'[role="group"][aria-label="Window controls"]\',',
     'planningMenu: \'[role="navigation"][aria-label="More"]\',',
@@ -6462,12 +6462,12 @@ assert(
 assert(
   freshSource.includes("collectWordmarkEvidence") &&
     freshSource.includes('"[data-desktop-brand-wordmark]"') &&
-    freshSource.includes('text !== "UNEMPLOYED"') &&
+    freshSource.includes('text !== "NORDRI"') &&
     freshSource.includes("expectWordmark: true") &&
     freshSource.includes(
       "wordmarkEvidence: await collectWordmarkEvidence(page)",
     ),
-  "Fresh minimum-width acceptance must prove the actual UNEMPLOYED wordmark remains visible and contained when navigation collapses.",
+  "Fresh minimum-width acceptance must prove the actual NORDRI wordmark remains visible and contained when navigation collapses.",
 );
 assert(
   freshSource.includes("collectWorkspaceStateGeometry") &&
@@ -6476,7 +6476,7 @@ assert(
     freshSource.includes('"[data-workspace-state-message]"') &&
     freshSource.includes('scenarioId: "opening-workspace-desktop"') &&
     freshSource.includes("expectWorkspaceStateGeometry: true") &&
-    freshSource.includes('UNEMPLOYED_TEST_WORKSPACE_OPENING_HOLD_MS: "750"'),
+    freshSource.includes('NORDRI_TEST_WORKSPACE_OPENING_HOLD_MS: "750"'),
   "Fresh acceptance must capture and geometry-gate the centered opening workspace state.",
 );
 assert(
@@ -7357,7 +7357,7 @@ assert(
     "zoomFactor: vp.zoomFactor",
     "getZoomFactor()",
     "reloadZoomFactorExact",
-    'UNEMPLOYED_STARTUP_ZOOM_FACTOR = "9"',
+    'NORDRI_STARTUP_ZOOM_FACTOR = "9"',
   ]) {
     let fired = false;
     try {

@@ -1,5 +1,5 @@
-import type { JobPosting } from '@unemployed/contracts'
-import type { AgentLoopToolDefinition } from '@unemployed/agent-runtime'
+import type { JobPosting } from '@nordri/contracts'
+import type { AgentLoopToolDefinition } from '@nordri/agent-runtime'
 import type { AgentMessage, ToolCall } from '../types'
 
 export type AgentExtractorPageType = 'search_results' | 'job_detail'

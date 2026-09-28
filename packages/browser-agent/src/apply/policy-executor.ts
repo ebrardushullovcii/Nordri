@@ -1,4 +1,4 @@
-import type { ApplicationAttemptQuestion } from "@unemployed/contracts";
+import type { ApplicationAttemptQuestion } from "@nordri/contracts";
 
 import {
   matchOption,

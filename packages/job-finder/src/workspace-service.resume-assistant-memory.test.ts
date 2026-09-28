@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import type { ReviseResumeDraftInput } from "@unemployed/ai-providers";
+import type { ReviseResumeDraftInput } from "@nordri/ai-providers";
 import { createAiClient } from "./workspace-service.test-runtimes";
 import { createWorkspaceServiceHarness } from "./workspace-service.test-support";
 

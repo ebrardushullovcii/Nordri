@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import type { ResumeDocumentBlock } from "@unemployed/contracts";
+import type { ResumeDocumentBlock } from "@nordri/contracts";
 
 import { createPreferences, createProfile } from "../test-fixtures";
 import { selectBlocksForResumeImportStage } from "../resume-import";

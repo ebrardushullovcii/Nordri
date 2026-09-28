@@ -24,8 +24,8 @@ import {
   JobSearchPreferencesSchema,
   ProfileSetupStateSchema,
   deriveProfileSetupState,
-} from "@unemployed/contracts";
-import { createInMemoryJobFinderRepository } from "@unemployed/db";
+} from "@nordri/contracts";
+import { createInMemoryJobFinderRepository } from "@nordri/db";
 
 import {
   BLIND_PERSONA_SEED_HELP,
@@ -440,7 +440,7 @@ async function makeAcceptedRun(root: string) {
     "<html>production</html>",
   );
   const packageMetadata = {
-    name: "@unemployed/desktop",
+    name: "@nordri/desktop",
     private: true,
     version: "0.1.0",
     main: "out/main/index.cjs",
@@ -727,7 +727,7 @@ function runtimeLaunch(options: {
   const launch: LaunchSeedElectron = async ({ env }) => {
     launches += 1;
     options.onEnvironment?.(env);
-    const isSeed = env.UNEMPLOYED_ENABLE_TEST_API === "1";
+    const isSeed = env.NORDRI_ENABLE_TEST_API === "1";
     const app: ElectronSeedProcess = {
       close: async () => undefined,
       firstWindow: async () => ({
@@ -805,7 +805,7 @@ function runtimeLaunch(options: {
           }
           const snapshot = structuredClone(saved!);
           if (options.migrateResumeOnRestart) {
-            const userDataDirectory = env.UNEMPLOYED_USER_DATA_DIR;
+            const userDataDirectory = env.NORDRI_USER_DATA_DIR;
             if (!userDataDirectory) {
               throw new Error("Runtime fixture is missing its user-data path.");
             }
@@ -939,7 +939,7 @@ function driverChannelLaunch(options: {
       const filePort = options.filePortOverride?.(emittedPort) ?? emittedPort;
       if (!options.omitDevToolsActivePortFile?.(emittedPort, args)) {
         await writeFile(
-          path.join(String(env.UNEMPLOYED_USER_DATA_DIR), "DevToolsActivePort"),
+          path.join(String(env.NORDRI_USER_DATA_DIR), "DevToolsActivePort"),
           `${filePort}\nws://127.0.0.1:${emittedPort}/devtools/browser/guid\n`,
           "utf8",
         );
@@ -947,13 +947,13 @@ function driverChannelLaunch(options: {
     }
     const launchIndex = counter;
     const probeFromEnvironment = () => {
-      const width = Number(env.UNEMPLOYED_STARTUP_WINDOW_WIDTH ?? 1440);
-      const height = Number(env.UNEMPLOYED_STARTUP_WINDOW_HEIGHT ?? 920);
+      const width = Number(env.NORDRI_STARTUP_WINDOW_WIDTH ?? 1440);
+      const height = Number(env.NORDRI_STARTUP_WINDOW_HEIGHT ?? 920);
       return {
         contentBounds: { x: 0, y: 0, width, height },
         displayMode: "normal",
         outerBounds: { x: 0, y: 0, width, height },
-        zoomFactor: Number(env.UNEMPLOYED_STARTUP_ZOOM_FACTOR ?? 1),
+        zoomFactor: Number(env.NORDRI_STARTUP_ZOOM_FACTOR ?? 1),
       };
     };
     return {
@@ -965,7 +965,7 @@ function driverChannelLaunch(options: {
           _callback: (argument: A) => R | Promise<R>,
           argument: A,
         ): Promise<R> => {
-          if (env.UNEMPLOYED_ENABLE_TEST_API === "1") {
+          if (env.NORDRI_ENABLE_TEST_API === "1") {
             saved = durableSnapshot(argument as Record<string, unknown>);
             return saved as R;
           }
@@ -1132,12 +1132,12 @@ describe("blind persona accepted-build preparation", () => {
     const seeded = hardenSeedEnvironment(ambient, "/owned/P01");
     const tester = hardenTesterEnvironment(ambient, "/owned/P01");
     expect(seeded.PATH).toBe("/bin");
-    expect(seeded.UNEMPLOYED_ENABLE_TEST_API).toBe("1");
-    expect(tester.UNEMPLOYED_ENABLE_TEST_API).toBeUndefined();
+    expect(seeded.NORDRI_ENABLE_TEST_API).toBe("1");
+    expect(tester.NORDRI_ENABLE_TEST_API).toBeUndefined();
     for (const key of Object.keys(ambient).filter((key) => key !== "PATH")) {
       expect(tester[key]).toBeUndefined();
     }
-    expect(tester.UNEMPLOYED_BROWSER_AGENT).toBe("0");
+    expect(tester.NORDRI_BROWSER_AGENT).toBe("0");
   });
 
   it("distinguishes local user-recorded Applied from submitted evidence and scans broad authority", () => {
@@ -1381,7 +1381,7 @@ describe("blind persona accepted-build preparation", () => {
     const runtime = runtimeLaunch({
       onEnvironment: (env) => {
         expect(env.AWS_SESSION_TOKEN).toBeUndefined();
-        expect(env.UNEMPLOYED_BROWSER_AGENT).toBe("0");
+        expect(env.NORDRI_BROWSER_AGENT).toBe("0");
       },
     });
     const result = await prepareBlindPersonaWorkspaces(
@@ -1427,7 +1427,7 @@ describe("blind persona accepted-build preparation", () => {
     const fixture = await makeAcceptedRun(root);
     const runtime = runtimeLaunch({});
     const launch: LaunchSeedElectron = async (input) => {
-      const userDataRoot = input.env.UNEMPLOYED_USER_DATA_DIR;
+      const userDataRoot = input.env.NORDRI_USER_DATA_DIR;
       if (!userDataRoot)
         throw new Error("Runtime fixture is missing its user-data path.");
       for (const relativePath of [
@@ -1681,7 +1681,7 @@ describe("blind persona accepted-build preparation", () => {
             _callback: (argument: A) => R | Promise<R>,
             argument: A,
           ): Promise<R> => {
-            if (env.UNEMPLOYED_ENABLE_TEST_API === "1") {
+            if (env.NORDRI_ENABLE_TEST_API === "1") {
               saved = durableSnapshot(argument as Record<string, unknown>);
               return saved as R;
             }
@@ -1811,7 +1811,7 @@ describe("blind persona accepted-build preparation", () => {
       { launch: runtimeLaunch({}).launch },
     );
     const record = JSON.parse(await readFile(tester.launchRecordPath, "utf8"));
-    expect(record.environment.UNEMPLOYED_ENABLE_TEST_API).toBeUndefined();
+    expect(record.environment.NORDRI_ENABLE_TEST_API).toBeUndefined();
     expect(record.intent.socketTelemetryAvailable).toBe(false);
     expect(tester.testerBrief).toMatchObject({
       kind: "blind-persona-tester-brief",
@@ -1922,19 +1922,19 @@ describe("blind persona accepted-build preparation", () => {
         zoomFactorMatchesRequest: true,
       },
     });
-    expect(probed.environments[0]?.UNEMPLOYED_TESTER_SESSION_GEOMETRY).toBe(
+    expect(probed.environments[0]?.NORDRI_TESTER_SESSION_GEOMETRY).toBe(
       "1",
     );
-    expect(probed.environments[0]?.UNEMPLOYED_STARTUP_WINDOW_WIDTH).toBe(
+    expect(probed.environments[0]?.NORDRI_STARTUP_WINDOW_WIDTH).toBe(
       "1280",
     );
-    expect(probed.environments[0]?.UNEMPLOYED_STARTUP_WINDOW_HEIGHT).toBe(
+    expect(probed.environments[0]?.NORDRI_STARTUP_WINDOW_HEIGHT).toBe(
       "800",
     );
-    expect(probed.environments[0]?.UNEMPLOYED_STARTUP_ZOOM_FACTOR).toBe("2");
+    expect(probed.environments[0]?.NORDRI_STARTUP_ZOOM_FACTOR).toBe("2");
     // Hardening stays intact around the explicitly injected keys.
-    expect(record.environment.UNEMPLOYED_ENABLE_TEST_API).toBeUndefined();
-    expect(record.environment.UNEMPLOYED_BROWSER_AGENT).toBe("0");
+    expect(record.environment.NORDRI_ENABLE_TEST_API).toBeUndefined();
+    expect(record.environment.NORDRI_BROWSER_AGENT).toBe("0");
     // The final record references the immutable intent written before the
     // first spawn, and that intent carries a valid self-digest.
     const intent = JSON.parse(await readFile(record.launchIntent.path, "utf8"));
@@ -1959,9 +1959,9 @@ describe("blind persona accepted-build preparation", () => {
 
     // Without flags nothing is injected (marker included), even when the
     // ambient environment carries stray marker/startup values.
-    process.env.UNEMPLOYED_TESTER_SESSION_GEOMETRY = "1";
-    process.env.UNEMPLOYED_STARTUP_WINDOW_WIDTH = "99999";
-    process.env.UNEMPLOYED_STARTUP_ZOOM_FACTOR = "4";
+    process.env.NORDRI_TESTER_SESSION_GEOMETRY = "1";
+    process.env.NORDRI_STARTUP_WINDOW_WIDTH = "99999";
+    process.env.NORDRI_STARTUP_ZOOM_FACTOR = "4";
     try {
       const plainSession = await launchBlindPersonaTester(
         { attempt: 2, custodyIndexPath, personaId: "P01" },
@@ -1972,8 +1972,8 @@ describe("blind persona accepted-build preparation", () => {
       );
       expect(plainRecord.startupGeometry).toEqual({ injected: false });
       for (const key of Object.keys(plainRecord.environment)) {
-        expect(key.startsWith("UNEMPLOYED_STARTUP_")).toBe(false);
-        expect(key).not.toBe("UNEMPLOYED_TESTER_SESSION_GEOMETRY");
+        expect(key.startsWith("NORDRI_STARTUP_")).toBe(false);
+        expect(key).not.toBe("NORDRI_TESTER_SESSION_GEOMETRY");
       }
       const plainIntent = JSON.parse(
         await readFile(plainRecord.launchIntent.path, "utf8"),
@@ -1981,9 +1981,9 @@ describe("blind persona accepted-build preparation", () => {
       expect(plainIntent.requestedGeometry).toBeNull();
       await plainSession.close();
     } finally {
-      delete process.env.UNEMPLOYED_TESTER_SESSION_GEOMETRY;
-      delete process.env.UNEMPLOYED_STARTUP_WINDOW_WIDTH;
-      delete process.env.UNEMPLOYED_STARTUP_ZOOM_FACTOR;
+      delete process.env.NORDRI_TESTER_SESSION_GEOMETRY;
+      delete process.env.NORDRI_STARTUP_WINDOW_WIDTH;
+      delete process.env.NORDRI_STARTUP_ZOOM_FACTOR;
     }
   });
 
@@ -2165,13 +2165,13 @@ describe("blind persona accepted-build preparation", () => {
     expect(record.startupGeometry.applied.outerBoundsMatchRequest).toBe(true);
     expect(record.startupGeometry.applied.zoomFactorMatchesRequest).toBe(true);
     expect(
-      probed.environments[0]?.UNEMPLOYED_STARTUP_WINDOW_WIDTH,
+      probed.environments[0]?.NORDRI_STARTUP_WINDOW_WIDTH,
     ).toBeUndefined();
     expect(
-      probed.environments[0]?.UNEMPLOYED_STARTUP_WINDOW_HEIGHT,
+      probed.environments[0]?.NORDRI_STARTUP_WINDOW_HEIGHT,
     ).toBeUndefined();
-    expect(probed.environments[0]?.UNEMPLOYED_STARTUP_ZOOM_FACTOR).toBe("2");
-    expect(probed.environments[0]?.UNEMPLOYED_TESTER_SESSION_GEOMETRY).toBe(
+    expect(probed.environments[0]?.NORDRI_STARTUP_ZOOM_FACTOR).toBe("2");
+    expect(probed.environments[0]?.NORDRI_TESTER_SESSION_GEOMETRY).toBe(
       "1",
     );
     await session.close();
@@ -2216,12 +2216,12 @@ describe("blind persona accepted-build preparation", () => {
       expect(mixed.launches).toHaveLength(2);
       expect(mixed.capturedEnvironments).toHaveLength(2);
       for (const env of mixed.capturedEnvironments) {
-        expect(env.UNEMPLOYED_TESTER_SESSION_GEOMETRY).toBe("1");
-        expect(env.UNEMPLOYED_STARTUP_WINDOW_WIDTH).toBe("1280");
-        expect(env.UNEMPLOYED_STARTUP_WINDOW_HEIGHT).toBe("800");
-        expect(env.UNEMPLOYED_STARTUP_ZOOM_FACTOR).toBe("2");
-        expect(env.UNEMPLOYED_ENABLE_TEST_API).toBeUndefined();
-        expect(env.UNEMPLOYED_BROWSER_AGENT).toBe("0");
+        expect(env.NORDRI_TESTER_SESSION_GEOMETRY).toBe("1");
+        expect(env.NORDRI_STARTUP_WINDOW_WIDTH).toBe("1280");
+        expect(env.NORDRI_STARTUP_WINDOW_HEIGHT).toBe("800");
+        expect(env.NORDRI_STARTUP_ZOOM_FACTOR).toBe("2");
+        expect(env.NORDRI_ENABLE_TEST_API).toBeUndefined();
+        expect(env.NORDRI_BROWSER_AGENT).toBe("0");
       }
       for (const args of mixed.launches) {
         expect(args).toContain("--proxy-server=127.0.0.1:9");

@@ -6,7 +6,7 @@ import {
   getDiscoveryCompactObservationControlRef,
   isCurrentDiscoveryCompactObservationRef,
   type DiscoveryCompactObservation,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   captureCompactDiscoveryObservation,
   classifyOverlayCloseControl,

@@ -2,7 +2,7 @@
 
 import { performance } from "node:perf_hooks";
 
-import { SavedJobSchema, type SavedJob } from "@unemployed/contracts";
+import { SavedJobSchema, type SavedJob } from "@nordri/contracts";
 import {
   cleanup,
   fireEvent,

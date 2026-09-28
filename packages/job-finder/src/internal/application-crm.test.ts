@@ -1,13 +1,13 @@
 import { describe, expect, test } from "vitest";
-import { ApplicationRecordSchema } from "@unemployed/contracts";
+import { ApplicationRecordSchema } from "@nordri/contracts";
 import type {
   ApplicationCrmAttachment,
   ApplicationCrmInterview,
   ApplicationCrmMutation,
   ApplicationCrmReminder,
   ApplicationRecord,
-} from "@unemployed/contracts";
-import type { ApplicationRecordBatchCommitResult } from "@unemployed/db";
+} from "@nordri/contracts";
+import type { ApplicationRecordBatchCommitResult } from "@nordri/db";
 
 import {
   ApplicationCrmBulkStageRevisionConflictError,

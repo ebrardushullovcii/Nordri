@@ -15,7 +15,7 @@ import type {
   SnoozeGroupedDecisionInput,
   UserActionCommandInput,
   UserActionRequest,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { ArrowUpRight, Ban, BellOff, Check, ExternalLink } from "lucide-react";
 
 import { Badge } from "@renderer/components/ui/badge";

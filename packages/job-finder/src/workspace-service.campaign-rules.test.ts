@@ -6,7 +6,7 @@ import {
   type JobSearchCampaign,
   type SaveCampaignRuleInput,
   type SaveJobSearchCampaignInput,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import { createWorkspaceServiceHarness } from "./workspace-service.test-harness";
 

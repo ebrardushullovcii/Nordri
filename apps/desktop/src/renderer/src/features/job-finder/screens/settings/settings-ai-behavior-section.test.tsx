@@ -3,8 +3,8 @@
 import type {
   JobFinderSettings,
   UpdateAiBehaviorInput,
-} from "@unemployed/contracts";
-import { JobFinderSettingsSchema } from "@unemployed/contracts";
+} from "@nordri/contracts";
+import { JobFinderSettingsSchema } from "@nordri/contracts";
 import {
   cleanup,
   fireEvent,

@@ -146,7 +146,7 @@ describe("formatProfileSetupFinishReadiness", () => {
         ],
       }),
     ).toBe(
-      "Still needed to finish: Add a job source (Job targets step) · Review 20 imported details on this step · Review 2 imported details (Basics step).",
+      "Still needed to finish: Add a job source (Job targets step) · Fill in bluebird title (Basics step) · Review 20 imported details on this step · Review 1 imported detail (Basics step).",
     );
     // Three or fewer stay named in full, whatever they are.
     expect(

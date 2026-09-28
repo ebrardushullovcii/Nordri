@@ -2,7 +2,7 @@ import type {
   CandidateExperience,
   ResumeTimelineRepairAction,
   ResumeTimelineRepairProposal,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { RotateCcw } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@renderer/components/ui/button";

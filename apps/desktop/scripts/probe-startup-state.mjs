@@ -7,7 +7,7 @@ import { _electron as electron } from 'playwright'
 const currentDir = path.dirname(fileURLToPath(import.meta.url))
 const desktopDir = path.resolve(currentDir, '..')
 
-const userDataDirectory = await mkdtemp(path.join(os.tmpdir(), 'unemployed-startup-probe-'))
+const userDataDirectory = await mkdtemp(path.join(os.tmpdir(), 'nordri-startup-probe-'))
 
 let app
 try {
@@ -16,9 +16,9 @@ try {
     cwd: desktopDir,
     env: {
       ...process.env,
-      UNEMPLOYED_ENABLE_TEST_API: '1',
-      UNEMPLOYED_TEST_SYSTEM_THEME: process.env.UNEMPLOYED_TEST_SYSTEM_THEME ?? 'dark',
-      UNEMPLOYED_USER_DATA_DIR: userDataDirectory,
+      NORDRI_ENABLE_TEST_API: '1',
+      NORDRI_TEST_SYSTEM_THEME: process.env.NORDRI_TEST_SYSTEM_THEME ?? 'dark',
+      NORDRI_USER_DATA_DIR: userDataDirectory,
     },
   })
 
@@ -31,12 +31,12 @@ try {
     title: document.title,
     h1: document.querySelector('h1')?.textContent ?? null,
     bodyText: document.body?.innerText?.slice(0, 1000) ?? null,
-    hasJobFinderBridge: Boolean(window.unemployed?.jobFinder),
+    hasJobFinderBridge: Boolean(window.nordri?.jobFinder),
   }))
 
   if (!snapshot.hasJobFinderBridge) {
     console.error(JSON.stringify(snapshot, null, 2))
-    throw new Error('Preload bridge did not expose window.unemployed.jobFinder.')
+    throw new Error('Preload bridge did not expose window.nordri.jobFinder.')
   }
 
   console.log(JSON.stringify(snapshot, null, 2))

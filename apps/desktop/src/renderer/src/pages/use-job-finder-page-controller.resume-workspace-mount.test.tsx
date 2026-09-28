@@ -10,12 +10,12 @@ import {
   JobSearchCampaignSchema,
   JobSearchPreferencesSchema,
   ResumeDraftSchema,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import type {
   JobFinderResumeWorkspace,
   JobFinderWorkspaceSnapshot,
   ResumeAssistantMessage,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { createMemoryRouter, RouterProvider } from "react-router-dom";
 import {
@@ -346,7 +346,7 @@ describe("useJobFinderPageController resume-workspace mount loading", () => {
 
   afterEach(() => {
     cleanup();
-    Reflect.deleteProperty(window, "unemployed");
+    Reflect.deleteProperty(window, "nordri");
   });
 
   function createMountHarness() {
@@ -367,7 +367,7 @@ describe("useJobFinderPageController resume-workspace mount loading", () => {
         }),
     );
 
-    Object.defineProperty(window, "unemployed", {
+    Object.defineProperty(window, "nordri", {
       configurable: true,
       value: {
         ping: vi.fn(() => Promise.resolve({ platform: "darwin" as const })),
@@ -376,7 +376,7 @@ describe("useJobFinderPageController resume-workspace mount loading", () => {
           getResumeWorkspace,
           sendResumeAssistantMessage,
         },
-      } as unknown as Window["unemployed"],
+      } as unknown as Window["nordri"],
     });
 
     type Controller = ReturnType<typeof useJobFinderPageController>;

@@ -5,11 +5,11 @@ import type {
   ApplicationCrmMutationInput,
   ApplicationCrmSettings,
   JobFinderWorkspaceSnapshot,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   ApplicationCrmBulkStageMutationInputSchema,
   ApplicationCrmSettingsSchema,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import {
   exportApplicationCrm,

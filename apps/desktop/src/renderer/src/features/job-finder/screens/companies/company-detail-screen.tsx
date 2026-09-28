@@ -10,11 +10,11 @@ import type {
   DiscoveryJobView,
   ReviewCompanyMergeInput,
   SavedJob,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   isGenericCompanyName,
   normalizeCompanyName,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   projectCompanyApplicationHistory,
   projectCompanyDuplicateJobs,

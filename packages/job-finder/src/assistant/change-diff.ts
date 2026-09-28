@@ -1,4 +1,4 @@
-import type { AssistantChangeEntry } from "@unemployed/contracts";
+import type { AssistantChangeEntry } from "@nordri/contracts";
 
 /**
  * "Undo this change" for assistant edits (ADR 0037).

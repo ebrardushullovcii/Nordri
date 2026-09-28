@@ -3,7 +3,7 @@ import type {
   JobFinderWorkspaceSnapshot,
   JobFinderWorkspaceSyncResult,
   WorkspaceRevision,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 type EntitySlice<T> = {
   upserts: T[];

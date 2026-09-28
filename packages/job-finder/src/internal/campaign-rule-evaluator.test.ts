@@ -9,7 +9,7 @@ import {
   type CampaignRuleOperator,
   type NormalizedCompensation,
   type SavedJob,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import {
   estimateCampaignFunnel,

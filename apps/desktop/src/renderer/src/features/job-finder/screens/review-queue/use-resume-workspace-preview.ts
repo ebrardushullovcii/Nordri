@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   JobFinderResumePreview,
   ResumeDraft,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { cloneDraft } from "./resume-workspace-utils";
 import { getPreviewErrorMessage } from "./resume-workspace-screen-helpers";
 

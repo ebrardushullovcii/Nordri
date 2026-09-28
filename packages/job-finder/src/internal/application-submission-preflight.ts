@@ -15,11 +15,11 @@ import {
   type SubmissionFinalControlIdentity,
   type SubmissionObservationIdentity,
   type SubmissionPreflightRecord,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import type {
   JobFinderRepository,
   SubmissionPreflightCommitResult,
-} from "@unemployed/db";
+} from "@nordri/db";
 
 /**
  * The repository surface deliberately stops at preflight persistence. No

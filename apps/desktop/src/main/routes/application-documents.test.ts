@@ -6,7 +6,7 @@ import {
   ApplyRunDetailsSchema,
   ApplyRunSchema,
   type JobFinderWorkspaceSnapshot,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { describe, expect, it, vi } from "vitest";
 import type { ApplicationDocumentLibrary } from "../services/job-finder/application-document-library";
 

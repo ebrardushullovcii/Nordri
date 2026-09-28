@@ -2,7 +2,7 @@ import { describe, expect, test } from "vitest";
 import type {
   ApplyBlockerReason,
   JobSearchCampaignStopRules,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   evaluateCampaignApplyStopRules,
   isQuestionHandoffPauseReason,

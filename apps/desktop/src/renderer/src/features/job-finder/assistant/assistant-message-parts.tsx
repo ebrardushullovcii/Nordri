@@ -11,7 +11,7 @@ import {
 import type {
   AssistantMessage,
   AssistantMessagePart,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import { cn } from "@renderer/lib/cn";
 import { AssistantMarkdown } from "./assistant-markdown";

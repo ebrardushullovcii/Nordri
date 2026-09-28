@@ -2,7 +2,7 @@ import type {
   ApplicationAttestationKind,
   ApplicationQuestionControlType,
   ApplicationQuestionKind,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import type {
   ApplyActionKind,

@@ -12,7 +12,7 @@ import type {
   RapidReviewDecisionKind,
   RapidReviewMutationInput,
   SavedJob,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { Button } from "@renderer/components/ui/button";
 import { Link } from "react-router-dom";
 import {

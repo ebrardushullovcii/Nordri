@@ -2,8 +2,8 @@ import {
   parseToolArguments,
   type AgentLoopTool,
   type AgentLoopToolOutcome,
-} from "@unemployed/agent-runtime";
-import { describeBrowserError } from "@unemployed/contracts";
+} from "@nordri/agent-runtime";
+import { describeBrowserError } from "@nordri/contracts";
 
 import { describeObservation } from "./apply/apply-prompts";
 import type { ApplyFormObservation, ApplyPageHands } from "./apply/types";

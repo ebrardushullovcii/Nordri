@@ -2,7 +2,7 @@ import { BrowserWindow, type IpcMain } from 'electron'
 import {
   DesktopWindowCloseGuardStateSchema,
   DesktopWindowCloseResolutionSchema,
-} from '@unemployed/contracts'
+} from '@nordri/contracts'
 import { getWindowControlsState } from '../setup/window-shell'
 import { getMainWindowCloseGuard } from '../setup/main-window-close-guard'
 

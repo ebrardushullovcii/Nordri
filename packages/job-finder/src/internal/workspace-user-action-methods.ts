@@ -8,11 +8,11 @@ import {
   type UserActionRequest,
   JobFinderActivityControlSchema,
   type ApplicationQuestionRecord,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   buildApplyFormObservation,
   selectObservedSignInAction,
-} from "@unemployed/browser-agent";
+} from "@nordri/browser-agent";
 
 import {
   isUserActionTerminal,
@@ -28,7 +28,7 @@ import {
   releaseApplicationRecordAfterDismissedUserAction,
   retireCancelledApplicationUserActions,
 } from "./workspace-application-user-action";
-import type { JobFinderRepository } from "@unemployed/db";
+import type { JobFinderRepository } from "@nordri/db";
 
 import type {
   TaskLocalApplicationCredentials,

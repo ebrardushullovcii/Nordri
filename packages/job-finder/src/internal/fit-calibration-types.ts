@@ -6,7 +6,7 @@ import type {
   JobRequirementEvidenceStatus,
   JobSearchPreferences,
   MatchAssessment,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 export type FitCalibrationGrade = 0 | 1 | 2 | 3;
 

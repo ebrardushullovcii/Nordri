@@ -4,7 +4,7 @@ import type {
   BrowserSessionState,
   JobDiscoveryTarget,
   JobSearchPreferences,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -143,7 +143,9 @@ describe("DiscoverySearchBar", () => {
   it("opens the setup editor in place from one Search defaults chip, with no route change", () => {
     const { onToggleSetup } = renderBar();
 
-    const chip = screen.getByRole("button", { name: "Roles, places & sources" });
+    const chip = screen.getByRole("button", {
+      name: "Roles, places & sources",
+    });
     expect(chip.getAttribute("aria-controls")).toBe(
       "discovery-search-setup-panel",
     );
@@ -153,7 +155,9 @@ describe("DiscoverySearchBar", () => {
     expect(chip.getAttribute("title")).toContain("1 enabled source");
     fireEvent.click(chip);
     expect(onToggleSetup).toHaveBeenCalledWith("roles");
-    expect(screen.queryByRole("button", { name: "2 search targets" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "2 search targets" }),
+    ).toBeNull();
   });
 
   it("closes an open editor from the same chip", () => {
@@ -162,7 +166,9 @@ describe("DiscoverySearchBar", () => {
       openSetupChipId: "places",
     });
 
-    const chip = screen.getByRole("button", { name: "Roles, places & sources" });
+    const chip = screen.getByRole("button", {
+      name: "Roles, places & sources",
+    });
     expect(chip.getAttribute("aria-expanded")).toBe("true");
     fireEvent.click(chip);
     expect(onToggleSetup).toHaveBeenCalledWith(null);
@@ -214,12 +220,17 @@ describe("DiscoverySearchBar", () => {
       } as Partial<JobSearchPreferences>),
     });
 
-    fireEvent.change(screen.getByRole("textbox", { name: "Search focus (optional)" }), {
-      target: { value: "around engineering" },
-    });
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "Search focus (optional)" }),
+      {
+        target: { value: "around engineering" },
+      },
+    );
     // How picky a search is lives in Settings (AI behavior), so the bar no
     // longer offers a breadth choice of its own.
-    expect(screen.queryByRole("radiogroup", { name: "Search breadth" })).toBeNull();
+    expect(
+      screen.queryByRole("radiogroup", { name: "Search breadth" }),
+    ).toBeNull();
     const preferRecent = screen.getByRole("button", { name: "Prefer recent" });
     expect(preferRecent.getAttribute("title")).toContain(
       "Older or undated roles may still appear",
@@ -233,6 +244,85 @@ describe("DiscoverySearchBar", () => {
       intent: "around engineering",
       freshness: "recent",
       sourceIds: ["target_wellfound"],
+    });
+  });
+
+  it("recovers the source selection when the selected source is disabled", () => {
+    const second = target({ id: "target_example", label: "Example Careers" });
+    const props = {
+      browserSession,
+      isBrowserSessionPending: false,
+      isSearchDisabled: false,
+      isSearchPending: false,
+      isSearchRunning: false,
+      isSetupOpen: false,
+      onOpenBrowserSession: vi.fn(),
+      onRunAgentDiscovery: vi.fn(),
+      onToggleSetup: vi.fn(),
+      searchPreferences: preferences({
+        discovery: { historyLimit: 5, targets: [target(), second] },
+      }),
+    };
+    const view = render(<DiscoverySearchBar {...props} />);
+    fireEvent.click(screen.getByRole("button", { name: "All sources" }));
+    fireEvent.click(screen.getByLabelText("Example Careers"));
+    view.rerender(
+      <DiscoverySearchBar
+        {...props}
+        searchPreferences={preferences({
+          discovery: {
+            historyLimit: 5,
+            targets: [target({ enabled: false }), second],
+          },
+        })}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Search now" }));
+    expect(props.onRunAgentDiscovery).toHaveBeenCalledWith({
+      intent: "",
+      freshness: "any",
+      sourceIds: "all",
+    });
+  });
+
+  it("recovers a cleared selection when only one enabled source remains", () => {
+    const second = target({ id: "target_example", label: "Example Careers" });
+    const props = {
+      browserSession,
+      isBrowserSessionPending: false,
+      isSearchDisabled: false,
+      isSearchPending: false,
+      isSearchRunning: false,
+      isSetupOpen: false,
+      onOpenBrowserSession: vi.fn(),
+      onRunAgentDiscovery: vi.fn(),
+      onToggleSetup: vi.fn(),
+      searchPreferences: preferences({
+        discovery: { historyLimit: 5, targets: [target(), second] },
+      }),
+    };
+    const view = render(<DiscoverySearchBar {...props} />);
+    fireEvent.click(screen.getByRole("button", { name: "All sources" }));
+    fireEvent.click(screen.getByLabelText("Example Careers"));
+    fireEvent.click(screen.getByLabelText("Wellfound"));
+    expect(
+      screen
+        .getByRole("button", { name: "Search now" })
+        .hasAttribute("disabled"),
+    ).toBe(true);
+    view.rerender(
+      <DiscoverySearchBar {...props} searchPreferences={preferences()} />,
+    );
+    expect(
+      screen
+        .getByRole("button", { name: "Search now" })
+        .hasAttribute("disabled"),
+    ).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Search now" }));
+    expect(props.onRunAgentDiscovery).toHaveBeenCalledWith({
+      intent: "",
+      freshness: "any",
+      sourceIds: "all",
     });
   });
 

@@ -1,4 +1,4 @@
-import type { JobFinderWorkspaceSnapshot } from '@unemployed/contracts'
+import type { JobFinderWorkspaceSnapshot } from '@nordri/contracts'
 
 export function buildSourceDebugOutcomeMessage(
   workspace: JobFinderWorkspaceSnapshot,

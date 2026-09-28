@@ -1,4 +1,4 @@
-import type { ResumeDocumentBlock, ResumeDocumentBundle } from '@unemployed/contracts'
+import type { ResumeDocumentBlock, ResumeDocumentBundle } from '@nordri/contracts'
 
 export type ExtractResumeDocumentInput = {
   bundleId: string

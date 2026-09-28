@@ -8,7 +8,7 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-import { ApplicationRecordSchema } from "@unemployed/contracts";
+import { ApplicationRecordSchema } from "@nordri/contracts";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { ApplicationsCrmViews } from "./applications-crm-views";

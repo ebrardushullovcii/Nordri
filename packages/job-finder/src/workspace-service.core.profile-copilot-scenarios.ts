@@ -1,7 +1,7 @@
 import type {
   ProfileCopilotMessage,
   ProfileCopilotPatchGroup,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { describe, expect, test } from "vitest";
 import {
   createAiClient,

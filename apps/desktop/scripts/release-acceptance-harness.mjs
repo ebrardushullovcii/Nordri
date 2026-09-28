@@ -79,7 +79,7 @@ const ELECTRON_APP_PACKAGE_FIELDS = [
 
 export const ACCEPTANCE_VERSION = 1;
 export const SYNTHETIC_SEED =
-  "unemployed-job-finder-production-acceptance-2026-08-20-v1";
+  "nordri-job-finder-production-acceptance-2026-08-20-v1";
 export const SYNTHETIC_SEED_DIGEST = digestSeed(SYNTHETIC_SEED);
 // These are release-gate values, not values supplied by a capture report. A
 // report may include the values as evidence, but the wrapper must compare them
@@ -1880,20 +1880,20 @@ export async function ensureFreshOutputDir(outputDir) {
 }
 
 // Acceptance runs must never reach live AI providers through ambient
-// developer-shell credentials. Every Interview Helper credential variable is
-// stripped by prefix/suffix so future `UNEMPLOYED_INTERVIEW_*_API_KEY`
+// developer-shell credentials. Every Live Assistant credential variable is
+// stripped by prefix/suffix so future `NORDRI_INTERVIEW_*_API_KEY`
 // variants cannot leak, shared keys are stripped by exact name, and the narrow
 // test-mode live-AI opt-in is removed so the enabled desktop test API always
-// resolves deterministic Interview Helper providers. This literal must stay in
-// sync with packages/ai-providers/src/interview-helper.ts.
-const ACCEPTANCE_INTERVIEW_CREDENTIAL_PREFIX = "UNEMPLOYED_INTERVIEW_";
+// resolves deterministic Live Assistant providers. This literal must stay in
+// sync with packages/ai-providers/src/live-assistant.ts.
+const ACCEPTANCE_INTERVIEW_CREDENTIAL_PREFIX = "NORDRI_INTERVIEW_";
 const ACCEPTANCE_CREDENTIAL_SUFFIX = "_API_KEY";
-const INTERVIEW_HELPER_TEST_LIVE_AI_OPT_IN_ENV =
-  "UNEMPLOYED_INTERVIEW_TEST_USE_LIVE_AI";
+const LIVE_ASSISTANT_TEST_LIVE_AI_OPT_IN_ENV =
+  "NORDRI_INTERVIEW_TEST_USE_LIVE_AI";
 const ACCEPTANCE_SHARED_CREDENTIAL_ENV_NAMES = Object.freeze([
-  "UNEMPLOYED_AI_API_KEY",
-  "UNEMPLOYED_AI_VISION_API_KEY",
-  "UNEMPLOYED_RESUME_VISION_API_KEY",
+  "NORDRI_AI_API_KEY",
+  "NORDRI_AI_VISION_API_KEY",
+  "NORDRI_RESUME_VISION_API_KEY",
 ]);
 
 export function acceptanceEnvironment(extra = {}) {
@@ -1911,10 +1911,10 @@ export function acceptanceEnvironment(extra = {}) {
   for (const name of ACCEPTANCE_SHARED_CREDENTIAL_ENV_NAMES) {
     delete env[name];
   }
-  delete env[INTERVIEW_HELPER_TEST_LIVE_AI_OPT_IN_ENV];
-  env.UNEMPLOYED_BROWSER_AGENT = "0";
-  env.UNEMPLOYED_ENABLE_TEST_API = "1";
-  env.UNEMPLOYED_TEST_SYSTEM_THEME = "dark";
+  delete env[LIVE_ASSISTANT_TEST_LIVE_AI_OPT_IN_ENV];
+  env.NORDRI_BROWSER_AGENT = "0";
+  env.NORDRI_ENABLE_TEST_API = "1";
+  env.NORDRI_TEST_SYSTEM_THEME = "dark";
   return env;
 }
 
@@ -2579,7 +2579,7 @@ export async function writeJson(filePath, value) {
 }
 
 export async function makeIsolatedUserDataDirectory(
-  prefix = "unemployed-job-finder-acceptance-",
+  prefix = "nordri-job-finder-acceptance-",
 ) {
   return import("node:fs/promises").then(({ mkdtemp }) =>
     mkdtemp(path.join(os.tmpdir(), prefix)),

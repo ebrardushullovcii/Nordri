@@ -4,7 +4,7 @@ import {
   SavedJobDiscoveryProvenanceSchema,
   type JobPosting,
   type SavedJobDiscoveryProvenance,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import { createSeed } from "../workspace-service.test-fixtures";
 import {

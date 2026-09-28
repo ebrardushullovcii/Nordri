@@ -24,8 +24,8 @@ import type {
   ReviewQueueItem,
   SourceAccessPrompt,
   SavedJob,
-} from "@unemployed/contracts";
-import { isListableCompanyName } from "@unemployed/contracts";
+} from "@nordri/contracts";
+import { isListableCompanyName } from "@nordri/contracts";
 import { PauseCircle, Play, X } from "lucide-react";
 import { Button } from "@renderer/components/ui/button";
 import {

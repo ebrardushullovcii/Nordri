@@ -1,6 +1,6 @@
 import { describe, expect, test, vi } from "vitest";
-import { createInMemoryJobFinderRepository } from "@unemployed/db";
-import type { BrowserSessionRuntime } from "@unemployed/browser-runtime";
+import { createInMemoryJobFinderRepository } from "@nordri/db";
+import type { BrowserSessionRuntime } from "@nordri/browser-runtime";
 
 import { createJobFinderWorkspaceService } from "./index";
 import {

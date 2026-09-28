@@ -9,8 +9,8 @@ import {
   type CandidateProfile,
   type JobSearchPreferences,
   type ProfileCopilotPatchOperation,
-} from "@unemployed/contracts";
-import { findBulletsOnTwoCards } from "@unemployed/ai-providers";
+} from "@nordri/contracts";
+import { findBulletsOnTwoCards } from "@nordri/ai-providers";
 import { z } from "zod";
 
 import {

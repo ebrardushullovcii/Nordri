@@ -1,5 +1,5 @@
 import { useId } from "react";
-import { candidateAnswerKindValues } from "@unemployed/contracts";
+import { candidateAnswerKindValues } from "@nordri/contracts";
 import type {
   Control,
   UseFieldArrayReturn,

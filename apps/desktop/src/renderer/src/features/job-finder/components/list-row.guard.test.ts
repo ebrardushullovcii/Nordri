@@ -11,8 +11,8 @@ const featureRoot = new URL("../", import.meta.url);
 const EXTRA_ROOTS: ReadonlyArray<readonly [string, URL]> = [
   ["components/ui/", new URL("../../../components/ui/", import.meta.url)],
   [
-    "features/interview-helper/",
-    new URL("../../interview-helper/", import.meta.url),
+    "features/live-assistant/",
+    new URL("../../live-assistant/", import.meta.url),
   ],
 ];
 
@@ -71,7 +71,7 @@ describe("Job Finder list rows carry no chrome of their own", () => {
     ).toBe(true);
     expect(sources.has("components/ui/selectable-row.tsx")).toBe(true);
     expect(
-      sources.has("features/interview-helper/interview-helper-page.tsx"),
+      sources.has("features/live-assistant/live-assistant-page.tsx"),
     ).toBe(true);
 
     const rowSources = [...sources.entries()].filter(([, source]) =>

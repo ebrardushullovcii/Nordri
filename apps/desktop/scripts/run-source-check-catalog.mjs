@@ -31,7 +31,7 @@ function getDefaultUserDataDirectory() {
   if (!appData) {
     throw new Error("APPDATA is unavailable; pass --user-data-dir explicitly.");
   }
-  return path.join(appData, "@unemployed", "desktop");
+  return path.join(appData, "@nordri", "desktop");
 }
 
 function getDefaultReportPath() {
@@ -305,11 +305,11 @@ async function openApp() {
     cwd: desktopDir,
     env: {
       ...process.env,
-      UNEMPLOYED_BROWSER_AGENT: "1",
-      UNEMPLOYED_BROWSER_HEADLESS: browserHeadless ? "1" : "0",
-      UNEMPLOYED_ENABLE_TEST_API: "0",
-      UNEMPLOYED_TEST_AUTHORIZE_INTERMEDIATE_ATS_WRITES: "0",
-      UNEMPLOYED_USER_DATA_DIR: userDataDirectory,
+      NORDRI_BROWSER_AGENT: "1",
+      NORDRI_BROWSER_HEADLESS: browserHeadless ? "1" : "0",
+      NORDRI_ENABLE_TEST_API: "0",
+      NORDRI_TEST_AUTHORIZE_INTERMEDIATE_ATS_WRITES: "0",
+      NORDRI_USER_DATA_DIR: userDataDirectory,
     },
   });
   page = await app.firstWindow();
@@ -327,11 +327,11 @@ async function openApp() {
       message: error.message,
     });
   });
-  await page.exposeFunction("__unemployedSourceCheckProgress", (event) => {
+  await page.exposeFunction("__nordriSourceCheckProgress", (event) => {
     activeProgress = event;
   });
   await page.waitForLoadState("domcontentloaded");
-  await page.evaluate(() => window.unemployed.jobFinder.getWorkspace());
+  await page.evaluate(() => window.nordri.jobFinder.getWorkspace());
   await app.evaluate(({ BrowserWindow }) => {
     BrowserWindow.getAllWindows().forEach((window) => window.hide());
   });
@@ -343,7 +343,7 @@ async function cancelActiveRun() {
   await page
     .evaluate(
       (activeRunId) =>
-        window.unemployed.jobFinder.cancelSourceDebug(activeRunId),
+        window.nordri.jobFinder.cancelSourceDebug(activeRunId),
       runId,
     )
     .catch(() => undefined);
@@ -362,8 +362,8 @@ async function runOneTarget(target, index) {
   let timeoutHandle;
   const runPromise = page.evaluate(
     (targetId) =>
-      window.unemployed.jobFinder.runSourceDebug(targetId, (event) => {
-        window.__unemployedSourceCheckProgress(event);
+      window.nordri.jobFinder.runSourceDebug(targetId, (event) => {
+        window.__nordriSourceCheckProgress(event);
       }),
     target.id,
   );
@@ -385,9 +385,9 @@ async function runOneTarget(target, index) {
     }
     await runPromise.catch(() => undefined);
     const [workspace, runs] = await Promise.all([
-      page.evaluate(() => window.unemployed.jobFinder.getWorkspace()),
+      page.evaluate(() => window.nordri.jobFinder.getWorkspace()),
       page.evaluate(
-        (targetId) => window.unemployed.jobFinder.listSourceDebugRuns(targetId),
+        (targetId) => window.nordri.jobFinder.listSourceDebugRuns(targetId),
         target.id,
       ),
     ]);
@@ -430,9 +430,9 @@ async function runOneTarget(target, index) {
   }
 
   const [workspace, runs] = await Promise.all([
-    page.evaluate(() => window.unemployed.jobFinder.getWorkspace()),
+    page.evaluate(() => window.nordri.jobFinder.getWorkspace()),
     page.evaluate(
-      (targetId) => window.unemployed.jobFinder.listSourceDebugRuns(targetId),
+      (targetId) => window.nordri.jobFinder.listSourceDebugRuns(targetId),
       target.id,
     ),
   ]);

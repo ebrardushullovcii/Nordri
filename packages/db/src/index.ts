@@ -59,9 +59,9 @@ export {
   WorkspaceDatabaseRecoveryRequiredError,
 } from "./file-repository";
 export {
-  createFileInterviewHelperRepository,
-  type InterviewHelperRepository,
-} from "./interview-helper-repository";
+  createFileLiveAssistantRepository,
+  type LiveAssistantRepository,
+} from "./live-assistant-repository";
 export {
   createAssistantRepository,
   type AssistantRepository,

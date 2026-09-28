@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { createInMemoryJobFinderRepository } from "@unemployed/db";
+import { createInMemoryJobFinderRepository } from "@nordri/db";
 import {
   ApplyJobResultSchema,
   SubmissionIdempotencyRecordSchema,
@@ -8,7 +8,7 @@ import {
   type ApplicationAuthorityEnvelopeMutationResult,
   type ApprovedApplicationAnswerSnapshot,
   type CreateApplicationAuthorityEnvelopeInput,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import { createEmptyJobFinderRepositoryState } from "../../adapters/job-finder-initial-state";
 import { createJobFinderApplicationAuthorityService } from "./application-authority-service";

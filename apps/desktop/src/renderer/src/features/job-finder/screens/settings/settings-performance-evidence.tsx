@@ -4,7 +4,7 @@ import type {
   PerformanceEvidenceArea,
   PerformanceEvidenceBudgetStatus,
   PerformanceEvidenceStageId,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { Button } from "@renderer/components/ui/button";
 
 const areaLabels: Record<PerformanceEvidenceArea, string> = {
@@ -73,7 +73,7 @@ export function SettingsPerformanceEvidence() {
     }
     setState("loading");
     try {
-      const next = await window.unemployed.jobFinder.getPerformanceSnapshot();
+      const next = await window.nordri.jobFinder.getPerformanceSnapshot();
       setSnapshot(next);
       setState("ready");
     } catch {

@@ -6,12 +6,12 @@ import {
   type ApplyAuthority,
   type ApplyDocument,
   type LLMClient,
-} from "@unemployed/browser-agent";
+} from "@nordri/browser-agent";
 import {
   buildPreparationResult,
   loadVerifiedResumeBytes,
   type ExecuteApplicationFlowInput,
-} from "@unemployed/browser-runtime";
+} from "@nordri/browser-runtime";
 
 /** The application facts, without the callback that is about to use them. */
 export type ApplyPreparationInput = Omit<
@@ -32,7 +32,7 @@ import {
   AiBehaviorPreferenceSchema,
   ApplicationReviewCardSchema,
   CoverLetterPreferenceSchema,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import type {
   ApplicationAuthorityEnvelope,
   ApplyPageSession,
@@ -46,7 +46,7 @@ import type {
   CandidateProfile,
   JobFinderSettings,
   SavedJob,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 /**
  * Runs one application through the agent loop and reports it the way the rest
  * of the product already expects.

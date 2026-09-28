@@ -1,7 +1,7 @@
 import {
   CoverLetterPreferenceSchema,
   JobFinderSettingsSchema,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { describe, expect, test, vi } from "vitest";
 
 import { createApplicationLetterProvider } from "./application-letter-provider";

@@ -15,7 +15,7 @@ import {
   type ListingSignalRecord,
   type PreparedBatchSampleReview,
   type SimultaneousApplicationConflict,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import {
   applyCompanyApplicationEvidence,

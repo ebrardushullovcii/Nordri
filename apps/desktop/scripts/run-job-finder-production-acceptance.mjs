@@ -1144,7 +1144,7 @@ const productionTesterAmbientAllowlist = Object.freeze([
 // Ambient names recorded as stripped authority facts: the scripted test API,
 // home-directory hints, and anything shaped like a credential or proxy.
 const PRODUCTION_TESTER_FORBIDDEN_ENVIRONMENT_NAMES = Object.freeze([
-  "UNEMPLOYED_ENABLE_TEST_API",
+  "NORDRI_ENABLE_TEST_API",
   "HOME",
 ]);
 const productionTesterForbiddenNamePattern =
@@ -1152,10 +1152,10 @@ const productionTesterForbiddenNamePattern =
 
 function productionTesterGeometryEnvironmentNames() {
   return [
-    "UNEMPLOYED_STARTUP_WINDOW_WIDTH",
-    "UNEMPLOYED_STARTUP_WINDOW_HEIGHT",
-    "UNEMPLOYED_STARTUP_ZOOM_FACTOR",
-    "UNEMPLOYED_TESTER_SESSION_GEOMETRY",
+    "NORDRI_STARTUP_WINDOW_WIDTH",
+    "NORDRI_STARTUP_WINDOW_HEIGHT",
+    "NORDRI_STARTUP_ZOOM_FACTOR",
+    "NORDRI_TESTER_SESSION_GEOMETRY",
   ];
 }
 
@@ -1189,24 +1189,24 @@ export function productionTesterEnvironment(ambient, userDataRoot) {
   // Defensive deletions keep forbidden authority out even if an ambient name
   // ever collides with an injected one below.
   delete env.HOME;
-  delete env.UNEMPLOYED_ENABLE_TEST_API;
+  delete env.NORDRI_ENABLE_TEST_API;
   for (const name of productionTesterGeometryEnvironmentNames())
     delete env[name];
-  env.UNEMPLOYED_USER_DATA_DIR = userDataRoot;
-  env.UNEMPLOYED_TEST_API_USE_LIVE_AI = "0";
-  env.UNEMPLOYED_BROWSER_AGENT = "0";
-  env.UNEMPLOYED_BROWSER_HEADLESS = "1";
+  env.NORDRI_USER_DATA_DIR = userDataRoot;
+  env.NORDRI_TEST_API_USE_LIVE_AI = "0";
+  env.NORDRI_BROWSER_AGENT = "0";
+  env.NORDRI_BROWSER_HEADLESS = "1";
   env.JOB_FINDER_PREPARE_ONLY_AUTHORIZE_INTERMEDIATE_WRITES = "0";
   env.JOB_FINDER_COMPLETE_FLOW_AUTHORIZED_WRITE_DIAGNOSTIC = "0";
-  env.UNEMPLOYED_TEST_AUTHORIZE_INTERMEDIATE_ATS_WRITES = "0";
-  env.UNEMPLOYED_TESTER_SESSION_GEOMETRY = "1";
-  env.UNEMPLOYED_STARTUP_WINDOW_WIDTH = String(
+  env.NORDRI_TEST_AUTHORIZE_INTERMEDIATE_ATS_WRITES = "0";
+  env.NORDRI_TESTER_SESSION_GEOMETRY = "1";
+  env.NORDRI_STARTUP_WINDOW_WIDTH = String(
     PRODUCTION_TESTER_GEOMETRY_REQUEST.width,
   );
-  env.UNEMPLOYED_STARTUP_WINDOW_HEIGHT = String(
+  env.NORDRI_STARTUP_WINDOW_HEIGHT = String(
     PRODUCTION_TESTER_GEOMETRY_REQUEST.height,
   );
-  env.UNEMPLOYED_STARTUP_ZOOM_FACTOR = String(
+  env.NORDRI_STARTUP_ZOOM_FACTOR = String(
     PRODUCTION_TESTER_GEOMETRY_REQUEST.zoomFactor,
   );
   return {
@@ -1404,7 +1404,7 @@ export function compareTesterStartupGeometry(requested, measured) {
   };
 }
 
-export const SHELL_HEADER_INTERVIEW_HELPER_HREF = "#/interview-helper";
+export const SHELL_HEADER_LIVE_ASSISTANT_HREF = "#/live-assistant";
 
 // The shell header only mounts on job-finder routes, so the tester session
 // reaches it through the same real hash-router navigation the deterministic
@@ -1424,7 +1424,7 @@ export const SHELL_HEADER_UTILITY_CONTROL_NAMES = Object.freeze([
 ]);
 
 export const SHELL_HEADER_LAYOUT_TRIO_NAMES = Object.freeze([
-  "interviewHelper",
+  "liveAssistant",
   "planning",
   "routeScroller",
 ]);
@@ -1436,7 +1436,7 @@ export const SHELL_HEADER_GEOMETRY_SAMPLE_KEYS = Object.freeze([
   "frame",
   "groups",
   "header",
-  "interviewHelper",
+  "liveAssistant",
   "layoutTrio",
   "moduleNav",
   "theme",
@@ -1690,8 +1690,8 @@ export function collectShellHeaderGeometrySample() {
       windowControls: controlOf('[role="group"][aria-label="Window controls"]'),
     },
     header,
-    interviewHelper: firstVisibleControlOf(
-      'a[aria-label="Open Interview Helper"],button[aria-label="Open Interview Helper"]',
+    liveAssistant: firstVisibleControlOf(
+      'a[aria-label="Open Live Assistant"],button[aria-label="Open Live Assistant"]',
     ),
     layoutTrio: {
       planning: controlOf('button[aria-label^="More"]'),
@@ -1832,38 +1832,38 @@ export function evaluateShellHeaderGeometry(sample) {
       "rendered desktop module navigation escapes the header or viewport frame",
     );
 
-  const interviewHelper = readControl(sample?.interviewHelper);
-  const interviewHelperRendered =
-    interviewHelper.rendered &&
-    interviewHelper.opaque &&
-    interviewHelper.pointerEnabled;
-  if (!interviewHelperRendered)
+  const liveAssistant = readControl(sample?.liveAssistant);
+  const liveAssistantRendered =
+    liveAssistant.rendered &&
+    liveAssistant.opaque &&
+    liveAssistant.pointerEnabled;
+  if (!liveAssistantRendered)
     violations.push(
-      "compact Open Interview Helper link is not rendered or is opacity/pointer-events disabled",
+      "compact Open Live Assistant link is not rendered or is opacity/pointer-events disabled",
     );
   pushInteractiveVisibilityViolations(
-    "Open Interview Helper link",
-    interviewHelper,
+    "Open Live Assistant link",
+    liveAssistant,
   );
-  const interviewHelperHrefExact =
-    interviewHelper.href === SHELL_HEADER_INTERVIEW_HELPER_HREF ||
-    (interviewHelper.elementTag === "button" && interviewHelper.href === null);
-  if (!interviewHelperHrefExact)
+  const liveAssistantHrefExact =
+    liveAssistant.href === SHELL_HEADER_LIVE_ASSISTANT_HREF ||
+    (liveAssistant.elementTag === "button" && liveAssistant.href === null);
+  if (!liveAssistantHrefExact)
     violations.push(
-      `Open Interview Helper href ${JSON.stringify(interviewHelper.href)} is not exactly ${JSON.stringify(SHELL_HEADER_INTERVIEW_HELPER_HREF)}`,
+      `Open Live Assistant href ${JSON.stringify(liveAssistant.href)} is not exactly ${JSON.stringify(SHELL_HEADER_LIVE_ASSISTANT_HREF)}`,
     );
-  const interviewHelperContainedInHeaderAndViewport =
-    interviewHelperRendered &&
-    geometryRectWithinFrame(interviewHelper.rect, safeFrame, tolerancePx) &&
-    geometryRectContainsRect(headerRect, interviewHelper.rect, tolerancePx);
-  if (!interviewHelperContainedInHeaderAndViewport)
+  const liveAssistantContainedInHeaderAndViewport =
+    liveAssistantRendered &&
+    geometryRectWithinFrame(liveAssistant.rect, safeFrame, tolerancePx) &&
+    geometryRectContainsRect(headerRect, liveAssistant.rect, tolerancePx);
+  if (!liveAssistantContainedInHeaderAndViewport)
     violations.push(
-      "Open Interview Helper link is not contained in both the shell header and the viewport frame",
+      "Open Live Assistant link is not contained in both the shell header and the viewport frame",
     );
-  const interviewHelperCenterHitReached = interviewHelper.centerHitReached;
-  if (!interviewHelperCenterHitReached)
+  const liveAssistantCenterHitReached = liveAssistant.centerHitReached;
+  if (!liveAssistantCenterHitReached)
     violations.push(
-      "Open Interview Helper link center point is not hit-test reachable",
+      "Open Live Assistant link center point is not hit-test reachable",
     );
 
   const utilityControlsSource = isRecord(sample?.utilityControls)
@@ -1951,13 +1951,13 @@ export function evaluateShellHeaderGeometry(sample) {
   const layoutTrioVerdicts = new Map(
     SHELL_HEADER_LAYOUT_TRIO_NAMES.map((name) => [
       name,
-      name === "interviewHelper"
-        ? interviewHelper
+      name === "liveAssistant"
+        ? liveAssistant
         : readControl(layoutTrioSource[name]),
     ]),
   );
   for (const [name, verdict] of layoutTrioVerdicts.entries()) {
-    if (name === "interviewHelper") continue;
+    if (name === "liveAssistant") continue;
     if (!verdict.rendered)
       violations.push(`${name} compact navigation control is not rendered`);
     if (name !== "routeScroller")
@@ -1980,7 +1980,7 @@ export function evaluateShellHeaderGeometry(sample) {
   });
   if (!layoutTrioWithinHeaderAndViewport)
     violations.push(
-      "route scroller, Planning control, or Interview Helper link escapes the header or viewport frame",
+      "route scroller, Planning control, or Live Assistant link escapes the header or viewport frame",
     );
 
   const trioRects = [...layoutTrioVerdicts.values()]
@@ -1993,7 +1993,7 @@ export function evaluateShellHeaderGeometry(sample) {
   );
   if (!layoutTrioPairwiseNonOverlapping)
     violations.push(
-      "route scroller, Planning control, and Interview Helper link overlap each other",
+      "route scroller, Planning control, and Live Assistant link overlap each other",
     );
   const renderedGroupRects = [];
   if (utilityGroupRenderedWithinViewportFrame)
@@ -2029,10 +2029,10 @@ export function evaluateShellHeaderGeometry(sample) {
     documentHorizontalOverflowZero,
     headerInternalOverflowZero,
     headerPresentAndWithinFrame,
-    interviewHelperCenterHitReached,
-    interviewHelperContainedInHeaderAndViewport,
-    interviewHelperHrefExact,
-    interviewHelperRendered,
+    liveAssistantCenterHitReached,
+    liveAssistantContainedInHeaderAndViewport,
+    liveAssistantHrefExact,
+    liveAssistantRendered,
     layoutTrioClearOfRenderedGroups,
     layoutTrioPairwiseNonOverlapping,
     layoutTrioWithinHeaderAndViewport,
@@ -2109,9 +2109,9 @@ export function evaluateShellHeaderGeometryFixtureSuite() {
       present: true,
       rect: rect(0, 0, 640, 116),
     },
-    interviewHelper: usableControl(350, 64, 458, 100, {
-      ariaLabel: "Open Interview Helper",
-      href: SHELL_HEADER_INTERVIEW_HELPER_HREF,
+    liveAssistant: usableControl(350, 64, 458, 100, {
+      ariaLabel: "Open Live Assistant",
+      href: SHELL_HEADER_LIVE_ASSISTANT_HREF,
     }),
     layoutTrio: {
       planning: usableControl(304, 64, 346, 100, {
@@ -2166,16 +2166,16 @@ export function evaluateShellHeaderGeometryFixtureSuite() {
       shouldPass: true,
     },
     {
-      name: "missing-interview-helper-href-fails",
+      name: "missing-live-assistant-href-fails",
       mutate: (sample) => {
-        sample.interviewHelper.href = null;
+        sample.liveAssistant.href = null;
       },
       shouldPass: false,
     },
     {
-      name: "wrong-interview-helper-href-fails",
+      name: "wrong-live-assistant-href-fails",
       mutate: (sample) => {
-        sample.interviewHelper.href = "#/interview-helper/";
+        sample.liveAssistant.href = "#/live-assistant/";
       },
       shouldPass: false,
     },
@@ -2187,9 +2187,9 @@ export function evaluateShellHeaderGeometryFixtureSuite() {
       shouldPass: false,
     },
     {
-      name: "pointer-events-none-interview-helper-fails",
+      name: "pointer-events-none-live-assistant-fails",
       mutate: (sample) => {
-        sample.interviewHelper.visibility.pointerEnabled = false;
+        sample.liveAssistant.visibility.pointerEnabled = false;
       },
       shouldPass: false,
     },
@@ -2245,8 +2245,8 @@ export function evaluateShellHeaderGeometryFixtureSuite() {
           rendered: true,
           visibility: { opaque: true, pointerEnabled: true },
         };
-        sample.interviewHelper.elementTag = "button";
-        sample.interviewHelper.href = null;
+        sample.liveAssistant.elementTag = "button";
+        sample.liveAssistant.href = null;
       },
       shouldPass: true,
     },
@@ -2304,7 +2304,7 @@ export function evaluateShellHeaderGeometryFixtureSuite() {
     {
       name: "sub-pixel-frame-rounding-still-passes",
       mutate: (sample) => {
-        sample.interviewHelper.rect = rect(350.4, 64, 458.6, 100);
+        sample.liveAssistant.rect = rect(350.4, 64, 458.6, 100);
       },
       shouldPass: true,
     },
@@ -2514,7 +2514,7 @@ async function runAcceptedAppProductionTesterSession({
       const page = await app.firstWindow();
       await page.waitForLoadState("domcontentloaded");
       await page.waitForFunction(
-        () => Boolean(globalThis.unemployed?.jobFinder?.getWorkspace),
+        () => Boolean(globalThis.nordri?.jobFinder?.getWorkspace),
         null,
         { timeout: 30_000 },
       );
@@ -2528,11 +2528,11 @@ async function runAcceptedAppProductionTesterSession({
         href: location.href,
         innerHeight: window.innerHeight,
         innerWidth: window.innerWidth,
-        preloadReady: Boolean(globalThis.unemployed?.jobFinder?.getWorkspace),
+        preloadReady: Boolean(globalThis.nordri?.jobFinder?.getWorkspace),
         shellMounted: Boolean(
           document.querySelector("#root")?.childElementCount > 0,
         ),
-        testApiPresent: Boolean(globalThis.unemployed?.jobFinder?.test),
+        testApiPresent: Boolean(globalThis.nordri?.jobFinder?.test),
       }));
       const applied = await app.evaluate(({ app, BrowserWindow, screen }) => {
         const win = BrowserWindow.getAllWindows()[0];
@@ -2567,15 +2567,15 @@ async function runAcceptedAppProductionTesterSession({
             providerSecretNameCount: environmentNames.filter((name) =>
               /API_KEY|API_TOKEN|SECRET|TOKEN|PROXY/i.test(name),
             ).length,
-            testApiAbsent: !("UNEMPLOYED_ENABLE_TEST_API" in process.env),
+            testApiAbsent: !("NORDRI_ENABLE_TEST_API" in process.env),
             userDataDirConfigured:
-              typeof process.env.UNEMPLOYED_USER_DATA_DIR === "string" &&
-              process.env.UNEMPLOYED_USER_DATA_DIR.length > 0,
+              typeof process.env.NORDRI_USER_DATA_DIR === "string" &&
+              process.env.NORDRI_USER_DATA_DIR.length > 0,
             writeAuthorizationFlagsZero: [
               "JOB_FINDER_PREPARE_ONLY_AUTHORIZE_INTERMEDIATE_WRITES",
               "JOB_FINDER_COMPLETE_FLOW_AUTHORIZED_WRITE_DIAGNOSTIC",
-              "UNEMPLOYED_TEST_API_USE_LIVE_AI",
-              "UNEMPLOYED_TEST_AUTHORIZE_INTERMEDIATE_ATS_WRITES",
+              "NORDRI_TEST_API_USE_LIVE_AI",
+              "NORDRI_TEST_AUTHORIZE_INTERMEDIATE_ATS_WRITES",
             ].every((name) => process.env[name] === "0"),
           },
           contentBounds: win.getContentBounds(),
@@ -2620,13 +2620,13 @@ async function runAcceptedAppProductionTesterSession({
       // absent in a production-like session.
       await page.reload({ waitUntil: "domcontentloaded" });
       await page.waitForFunction(
-        () => Boolean(globalThis.unemployed?.jobFinder?.getWorkspace),
+        () => Boolean(globalThis.nordri?.jobFinder?.getWorkspace),
         null,
         { timeout: 30_000 },
       );
       const postReload = await page.evaluate(() => ({
-        preloadReady: Boolean(globalThis.unemployed?.jobFinder?.getWorkspace),
-        testApiPresent: Boolean(globalThis.unemployed?.jobFinder?.test),
+        preloadReady: Boolean(globalThis.nordri?.jobFinder?.getWorkspace),
+        testApiPresent: Boolean(globalThis.nordri?.jobFinder?.test),
       }));
       // Re-measure native zoom after the reload: Chromium re-applies
       // per-origin zoom at navigation commit, so post-reload zoom must still
@@ -2816,7 +2816,7 @@ async function runAcceptedAppProductionTesterSession({
         ),
         raw: rawChildEnvironmentAuthority ?? null,
       },
-      forbiddenNamesVerifiedAbsent: ["HOME", "UNEMPLOYED_ENABLE_TEST_API"],
+      forbiddenNamesVerifiedAbsent: ["HOME", "NORDRI_ENABLE_TEST_API"],
       injectedNames: hardenedEnvironment.injectedNames,
       strategy: "ambient-allowlist-plus-canonical-injection",
       strippedAmbientNames: hardenedEnvironment.strippedNames,
@@ -2983,7 +2983,7 @@ async function runAcceptedAppRuntimeProbe({
     args: [".", ...ACCEPTANCE_ZERO_NETWORK_LAUNCH_ARGS],
     cwd: acceptedAppRoot,
     env: acceptanceEnvironment({
-      UNEMPLOYED_USER_DATA_DIR: runtimeProbeUserDataDir,
+      NORDRI_USER_DATA_DIR: runtimeProbeUserDataDir,
     }),
   });
   // Main-process stdout/stderr capture for the deterministic launch;
@@ -2997,7 +2997,7 @@ async function runAcceptedAppRuntimeProbe({
     const page = await app.firstWindow();
     await page.waitForLoadState("domcontentloaded");
     await page.waitForFunction(
-      () => Boolean(globalThis.unemployed?.jobFinder),
+      () => Boolean(globalThis.nordri?.jobFinder),
       null,
       {
         timeout: 30_000,
@@ -3005,7 +3005,7 @@ async function runAcceptedAppRuntimeProbe({
     );
     const startup = await page.evaluate(() => ({
       href: location.href,
-      preloadReady: Boolean(globalThis.unemployed?.jobFinder),
+      preloadReady: Boolean(globalThis.nordri?.jobFinder),
       rendererReady: document.documentElement.childElementCount > 0,
       scriptCount: document.scripts.length,
     }));

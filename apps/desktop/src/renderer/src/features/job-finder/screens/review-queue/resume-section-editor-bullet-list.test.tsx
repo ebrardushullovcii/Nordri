@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   ResumeDraftBullet,
   ResumeDraftSection,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import type { createResumeDraftPatch } from "./resume-section-editor-helpers";
 import { ResumeBulletListEditor } from "./resume-section-editor-bullet-list";
 import { ResumeSectionEditor } from "./resume-section-editor";

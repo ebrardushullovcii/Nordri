@@ -2,12 +2,12 @@ import { describe, expect, test } from "vitest";
 import {
   JobSearchPreferencesSchema,
   ProfileCopilotPatchGroupSchema,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import { createDeterministicJobFinderAiClient } from "./index";
 import { createPreferences, createProfile } from "./test-fixtures";
 import { SALARY_PERIOD_AMBIGUITY_FLOOR } from "./deterministic/profile-copilot-salary";
-import type { JobSearchPreferences } from "@unemployed/contracts";
+import type { JobSearchPreferences } from "@nordri/contracts";
 
 /**
  * Focused acceptance tests for deterministic Profile Copilot salary commands

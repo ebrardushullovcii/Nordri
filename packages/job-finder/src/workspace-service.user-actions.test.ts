@@ -1,7 +1,7 @@
 import {
   createCatalogBrowserSessionRuntime,
   type BrowserSessionRuntime,
-} from "@unemployed/browser-runtime";
+} from "@nordri/browser-runtime";
 import {
   ApplicationRecordSchema,
   ApplyJobResultSchema,
@@ -9,7 +9,7 @@ import {
   UserActionRequestSchema,
   type BrowserSourceAccessProbeResult,
   type UserActionRequest,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { describe, expect, test, vi } from "vitest";
 
 import {

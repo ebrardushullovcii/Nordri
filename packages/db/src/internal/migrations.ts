@@ -4,7 +4,7 @@ import {
   JobSearchPreferencesSchema,
   getDefaultCampaignConfiguration,
   normalizeCompanyName,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 /**
  * Exact column shape every application-authority table must have. The assert

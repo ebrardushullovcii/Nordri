@@ -23,9 +23,9 @@ const contractsPath = path.resolve(
 );
 const corePath = path.resolve(currentDir, "../../packages/core/src/index.ts");
 const dbPath = path.resolve(currentDir, "../../packages/db/src/index.ts");
-const interviewHelperPath = path.resolve(
+const liveAssistantPath = path.resolve(
   currentDir,
-  "../../packages/interview-helper/src/index.ts",
+  "../../packages/live-assistant/src/index.ts",
 );
 const jobFinderDiscoveryOrderingPath = path.resolve(
   currentDir,
@@ -73,31 +73,31 @@ const osIntegrationPath = path.resolve(
 );
 
 const workspaceAliases = {
-  "@unemployed/ai-providers": aiProvidersPath,
-  "@unemployed/browser-agent": browserAgentPath,
-  "@unemployed/browser-runtime": browserRuntimePath,
-  "@unemployed/contracts": contractsPath,
-  "@unemployed/core": corePath,
-  "@unemployed/db": dbPath,
-  "@unemployed/interview-helper": interviewHelperPath,
-  "@unemployed/job-finder/discovery-ordering": jobFinderDiscoveryOrderingPath,
-  "@unemployed/job-finder/discovery-result-bands":
+  "@nordri/ai-providers": aiProvidersPath,
+  "@nordri/browser-agent": browserAgentPath,
+  "@nordri/browser-runtime": browserRuntimePath,
+  "@nordri/contracts": contractsPath,
+  "@nordri/core": corePath,
+  "@nordri/db": dbPath,
+  "@nordri/live-assistant": liveAssistantPath,
+  "@nordri/job-finder/discovery-ordering": jobFinderDiscoveryOrderingPath,
+  "@nordri/job-finder/discovery-result-bands":
     jobFinderDiscoveryResultBandsPath,
-  "@unemployed/job-finder/resume-record-identity":
+  "@nordri/job-finder/resume-record-identity":
     jobFinderResumeRecordIdentityPath,
-  "@unemployed/job-finder/resume-identity": jobFinderResumeIdentityPath,
-  "@unemployed/job-finder/apply-run-recovery": jobFinderApplyRunRecoveryPath,
-  "@unemployed/job-finder/source-health": jobFinderSourceHealthPath,
-  "@unemployed/job-finder/plan-safeguard-pauses":
+  "@nordri/job-finder/resume-identity": jobFinderResumeIdentityPath,
+  "@nordri/job-finder/apply-run-recovery": jobFinderApplyRunRecoveryPath,
+  "@nordri/job-finder/source-health": jobFinderSourceHealthPath,
+  "@nordri/job-finder/plan-safeguard-pauses":
     jobFinderPlanSafeguardPausesPath,
-  "@unemployed/job-finder": jobFinderPath,
-  "@unemployed/knowledge-base": knowledgeBasePath,
-  "@unemployed/os-integration": osIntegrationPath,
+  "@nordri/job-finder": jobFinderPath,
+  "@nordri/knowledge-base": knowledgeBasePath,
+  "@nordri/os-integration": osIntegrationPath,
 };
 
 const mainWorkspaceAliases = {
   ...workspaceAliases,
-  "@unemployed/job-finder/application-submission-runtime-main":
+  "@nordri/job-finder/application-submission-runtime-main":
     jobFinderApplicationSubmissionRuntimeMainPath,
 };
 

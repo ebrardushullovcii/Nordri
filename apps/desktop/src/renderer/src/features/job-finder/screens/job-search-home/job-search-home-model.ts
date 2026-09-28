@@ -5,16 +5,16 @@ import type {
   JobFinderWorkspaceSnapshot,
   ReviewQueueItem,
   ProfileSetupStep,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   evaluateProfileSetupReadiness,
   getProfileSetupReadinessBlockers,
-} from "@unemployed/contracts";
-import { listSourceAttentionReasons } from "@unemployed/job-finder/source-health";
+} from "@nordri/contracts";
+import { listSourceAttentionReasons } from "@nordri/job-finder/source-health";
 import {
   AUTOMATIC_APPLICATION_FAILURE_PAUSE_ID,
   projectPlanSafeguardPauses,
-} from "@unemployed/job-finder/plan-safeguard-pauses";
+} from "@nordri/job-finder/plan-safeguard-pauses";
 import type {
   JobFinderTaskCenterItem,
   JobFinderTaskCenterModel,
@@ -274,7 +274,7 @@ function formatRelativeDay(iso: string, now: number): string {
 /**
  * The summary the apply service writes on an application the person stepped
  * into while it was being filled (`PERSON_TOOK_OVER_SUMMARY` in
- * `@unemployed/job-finder`, which the renderer cannot import). The tab stays
+ * `@nordri/job-finder`, which the renderer cannot import). The tab stays
  * theirs until they press Resume agent in the browser, which carries it on.
  */
 export const PERSON_TOOK_OVER_APPLICATION_SUMMARY =

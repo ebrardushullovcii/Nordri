@@ -1,4 +1,4 @@
-import { JobPostingSchema } from "@unemployed/contracts";
+import { JobPostingSchema } from "@nordri/contracts";
 import { describe, expect, it } from "vitest";
 
 import { createWorkspaceServiceHarness } from "../workspace-service.test-support";

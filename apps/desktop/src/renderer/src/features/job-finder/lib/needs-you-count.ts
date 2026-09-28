@@ -1,8 +1,8 @@
 import type {
   GroupedManualAnswerDecision,
   JobFinderWorkspaceSnapshot,
-} from "@unemployed/contracts";
-import { projectPlanSafeguardPauses } from "@unemployed/job-finder/plan-safeguard-pauses";
+} from "@nordri/contracts";
+import { projectPlanSafeguardPauses } from "@nordri/job-finder/plan-safeguard-pauses";
 import { applicationRecordAwaitsUser } from "../screens/applications/applications-status";
 import { resolveApplyStatePresentation } from "../screens/applications/apply-state";
 

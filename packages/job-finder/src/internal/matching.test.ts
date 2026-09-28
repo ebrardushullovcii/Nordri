@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { JobSearchPreferencesSchema } from "@unemployed/contracts";
+import { JobSearchPreferencesSchema } from "@nordri/contracts";
 
 import {
   assessLocationCompatibility,

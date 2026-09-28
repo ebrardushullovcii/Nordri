@@ -7,7 +7,7 @@ import {
   type JobDiscoveryTarget,
   type JobSearchPreferences,
   type JobSource,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import {
   applyDiscoveryTitleTriage,

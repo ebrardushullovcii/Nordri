@@ -11,8 +11,8 @@ import {
   type ResumeClaimGroundingResult,
   type ResumeGenerationEvidenceItem,
   type TailoredResumeDraft,
-} from "@unemployed/ai-providers";
-import type { ResumeGenerationStrategyPolicy } from "@unemployed/ai-providers";
+} from "@nordri/ai-providers";
+import type { ResumeGenerationStrategyPolicy } from "@nordri/ai-providers";
 import {
   ResumeAssistantMessageSchema,
   ResumeDraftRevisionSchema,
@@ -45,9 +45,9 @@ import {
   type TailoredAsset,
   type WorkHistoryReviewAcknowledgment,
   type WorkHistoryReviewSuggestion,
-} from "@unemployed/contracts";
-import { fnv1a32 } from "@unemployed/core";
-import { createLocalKnowledgeIndex } from "@unemployed/knowledge-base";
+} from "@nordri/contracts";
+import { fnv1a32 } from "@nordri/core";
+import { createLocalKnowledgeIndex } from "@nordri/knowledge-base";
 import {
   createUniqueId,
   normalizeText,

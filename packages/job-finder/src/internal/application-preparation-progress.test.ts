@@ -1,5 +1,5 @@
-import { ApplyJobResultSchema } from "@unemployed/contracts";
-import { createInMemoryJobFinderRepository } from "@unemployed/db";
+import { ApplyJobResultSchema } from "@nordri/contracts";
+import { createInMemoryJobFinderRepository } from "@nordri/db";
 import { describe, expect, test } from "vitest";
 
 import {

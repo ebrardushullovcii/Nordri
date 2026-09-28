@@ -1,4 +1,4 @@
-import type { ApplicationAttempt } from "@unemployed/contracts";
+import type { ApplicationAttempt } from "@nordri/contracts";
 import {
   formatDuration,
   formatStatusLabel,

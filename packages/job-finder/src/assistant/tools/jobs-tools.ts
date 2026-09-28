@@ -4,7 +4,7 @@ import {
   NonEmptyStringSchema,
   discoveryFeedbackReasonValues,
   type DiscoveryJobView,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { z } from "zod";
 
 import { AssistantToolError, defineTool, json } from "../tool-kit";

@@ -6,7 +6,7 @@ import {
   type ReviewQueueItem,
   type TailoredAsset,
   type TailoringMode,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import type { BadgeTone } from "../../lib/job-finder-types";
 import {
   describeAiUnavailableResume,

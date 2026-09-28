@@ -3,8 +3,8 @@ import {
   DiscoveryLedgerEntrySchema,
   DiscoveryRunRecordSchema,
   SavedJobSchema,
-} from "@unemployed/contracts";
-import type { JobFinderDiscoveryState } from "@unemployed/contracts";
+} from "@nordri/contracts";
+import type { JobFinderDiscoveryState } from "@nordri/contracts";
 import { describe, expect, test } from "vitest";
 
 import {
@@ -210,7 +210,7 @@ describe("commitDiscoveryStateUpdate", () => {
   });
 
   test("file repository applies updater output atomically", async () => {
-    const temp = await createTempRepository("unemployed-db-discovery-update-");
+    const temp = await createTempRepository("nordri-db-discovery-update-");
     try {
       await expectCommitDiscoveryStateUpdateParity(() =>
         temp.createRepository(),
@@ -293,7 +293,7 @@ describe("commitDiscoveryFeedbackUpdate", () => {
   });
 
   test("file repository commits feedback atomically and survives restart", async () => {
-    const temp = await createTempRepository("unemployed-db-feedback-atomic-");
+    const temp = await createTempRepository("nordri-db-feedback-atomic-");
     try {
       const first = await temp.createRepository();
       await expectDiscoveryFeedbackAtomicity(first);
@@ -325,7 +325,7 @@ describe("commitSavedJobDelta paired discovery updates", () => {
   });
 
   test("file repository pairs saved-job and discovery mutations atomically", async () => {
-    const temp = await createTempRepository("unemployed-db-discovery-paired-");
+    const temp = await createTempRepository("nordri-db-discovery-paired-");
     try {
       await expectPairedSavedJobDiscoveryDeltaParity(() =>
         temp.createRepository(),
@@ -338,7 +338,7 @@ describe("commitSavedJobDelta paired discovery updates", () => {
 
 describe("file repository cross-handle discovery concurrency", () => {
   test("two file handles preserve paired discovery and saved-job writes", async () => {
-    const temp = await createTempRepository("unemployed-db-discovery-handles-");
+    const temp = await createTempRepository("nordri-db-discovery-handles-");
     try {
       const first = await temp.createRepository();
       const second = await temp.createRepository();
@@ -427,7 +427,7 @@ describe("file repository cross-handle discovery concurrency", () => {
 
   test("singleton revision increments only for applied discovery commits", async () => {
     const temp = await createTempRepository(
-      "unemployed-db-discovery-revision-",
+      "nordri-db-discovery-revision-",
     );
     try {
       const repository = await temp.createRepository();

@@ -1,5 +1,5 @@
 import { Sparkles } from "lucide-react";
-import type { AssistantEntityRef } from "@unemployed/contracts";
+import type { AssistantEntityRef } from "@nordri/contracts";
 
 import { cn } from "@renderer/lib/cn";
 import { useAssistant } from "./assistant-provider";

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { ApplicationReviewCardSchema } from "@unemployed/contracts";
+import { ApplicationReviewCardSchema } from "@nordri/contracts";
 import {
   cleanup,
   fireEvent,

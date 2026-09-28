@@ -20,7 +20,7 @@ export function registerCoreDesktopRoutes(
   jobFinderBootstrapRoutesReady: () => Promise<void>,
   jobFinderRoutesReady: () => Promise<void>,
   jobFinderAssetRoutesReady: () => Promise<void>,
-  interviewHelperRoutesReady: () => Promise<void>,
+  liveAssistantRoutesReady: () => Promise<void>,
 ) {
   registerSystemRouteHandlers(ipcMain);
   registerWindowRouteHandlers(ipcMain);
@@ -47,9 +47,9 @@ export function registerCoreDesktopRoutes(
     },
   );
   ipcMain.handle(
-    "system:interview-helper-routes-ready",
+    "system:live-assistant-routes-ready",
     async (): Promise<FeatureRoutesReadyResponse> => {
-      await interviewHelperRoutesReady();
+      await liveAssistantRoutesReady();
       return { ready: true };
     },
   );

@@ -7,7 +7,7 @@ import {
   useState,
   type KeyboardEvent,
 } from "react";
-import type { ApplicationRecord, ApplyJobResult } from "@unemployed/contracts";
+import type { ApplicationRecord, ApplyJobResult } from "@nordri/contracts";
 import type { ApplyMode } from "../../lib/apply-mode-contracts-stub";
 import { resolveApplyStatePresentation } from "./apply-state";
 import type { ApplyRunContext } from "./applications-recovery-state";

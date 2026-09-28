@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { CheckCircle2, ChevronDown, Sparkles, Undo2 } from "lucide-react";
-import type { ResumeValidationIssue } from "@unemployed/contracts";
+import type { ResumeValidationIssue } from "@nordri/contracts";
 import {
   getResumeEntryBulletTargetId,
   getResumeEntryFieldTargetId,
@@ -8,7 +8,7 @@ import {
   getResumeSectionBulletTargetId,
   getResumeSectionTextTargetId,
   isBlockingResumeValidationIssue,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { Button } from "@renderer/components/ui/button";
 import { StatusBadge } from "../../components/status-badge";
 

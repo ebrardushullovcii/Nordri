@@ -6,11 +6,11 @@ import {
   SubmissionExecutionGrantSchema,
   SubmissionPreflightRecordSchema,
   type ApplicationAutomationMode,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   createInMemoryJobFinderRepository,
   type AuthorizeAndArmSubmissionAttemptInput,
-} from "@unemployed/db";
+} from "@nordri/db";
 import { createHash } from "node:crypto";
 import { describe, expect, test, vi } from "vitest";
 

@@ -4,7 +4,7 @@ import type {
   JobFinderDiscoveryState,
   JobSource,
   SavedJob,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import { compareDiscoveryJobs } from "./matching-review-queue";
 

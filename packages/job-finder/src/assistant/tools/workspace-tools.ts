@@ -3,7 +3,7 @@ import {
   NonEmptyStringSchema,
   type AssistantTaskPlan,
   type JobFinderWorkspaceSnapshot,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { z } from "zod";
 
 import { AssistantToolError, argText, defineTool, json } from "../tool-kit";

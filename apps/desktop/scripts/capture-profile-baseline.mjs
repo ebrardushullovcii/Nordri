@@ -344,25 +344,25 @@ async function captureProfileBaseline() {
 
   try {
     userDataDirectory = await mkdtemp(
-      path.join(os.tmpdir(), "unemployed-profile-baseline-"),
+      path.join(os.tmpdir(), "nordri-profile-baseline-"),
     );
     app = await electron.launch({
       args: ["."],
       cwd: desktopDir,
       env: {
         ...process.env,
-        UNEMPLOYED_ENABLE_TEST_API: "1",
-        UNEMPLOYED_TEST_SYSTEM_THEME:
-          process.env.UNEMPLOYED_TEST_SYSTEM_THEME ?? "dark",
-        UNEMPLOYED_USER_DATA_DIR: userDataDirectory,
+        NORDRI_ENABLE_TEST_API: "1",
+        NORDRI_TEST_SYSTEM_THEME:
+          process.env.NORDRI_TEST_SYSTEM_THEME ?? "dark",
+        NORDRI_USER_DATA_DIR: userDataDirectory,
       },
     });
 
     const page = await app.firstWindow();
 
     await page.evaluate(async (theme) => {
-      await window.unemployed.jobFinder.test?.setSystemThemeOverride(theme);
-    }, process.env.UNEMPLOYED_TEST_SYSTEM_THEME ?? "dark");
+      await window.nordri.jobFinder.test?.setSystemThemeOverride(theme);
+    }, process.env.NORDRI_TEST_SYSTEM_THEME ?? "dark");
 
     await page.waitForLoadState("domcontentloaded");
     await waitForProfileOrSetupHeading(page);
@@ -370,12 +370,12 @@ async function captureProfileBaseline() {
 
     await page.evaluate(
       async ({ profile, searchPreferences, settings }) => {
-        await window.unemployed.jobFinder.saveWorkspaceInputs({
+        await window.nordri.jobFinder.saveWorkspaceInputs({
           profile,
           searchPreferences,
           settings,
         });
-        return window.unemployed.jobFinder.getWorkspace();
+        return window.nordri.jobFinder.getWorkspace();
       },
       {
         profile: snapshot.profile,

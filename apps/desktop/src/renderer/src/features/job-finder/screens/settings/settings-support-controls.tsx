@@ -30,7 +30,7 @@ export function SettingsSupportControls() {
     });
 
     try {
-      const result = await window.unemployed.jobFinder.exportDiagnostics();
+      const result = await window.nordri.jobFinder.exportDiagnostics();
 
       setExportState(
         result.status === "saved"

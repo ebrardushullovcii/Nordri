@@ -1,7 +1,7 @@
 import {
   createInMemoryJobFinderRepository,
   type JobFinderRepository,
-} from "@unemployed/db";
+} from "@nordri/db";
 import {
   ApplicationAttemptBlockerSchema,
   ApplicationReplayCheckpointSchema,
@@ -9,7 +9,7 @@ import {
   ApplyJobResultSchema,
   ApplyRunSchema,
   UserActionRequestSchema,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { persistApplicationUserAction } from "./internal/workspace-application-user-action";

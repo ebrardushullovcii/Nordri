@@ -26,7 +26,7 @@ describe('theme helpers', () => {
 
   test('prefers explicit override when provided for desktop test flows', () => {
     vi.stubGlobal('window', {
-      unemployed: {
+      nordri: {
         jobFinder: {
           test: {
             getSystemThemeOverride: () => 'dark',

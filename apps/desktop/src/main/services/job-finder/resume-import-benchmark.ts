@@ -6,7 +6,7 @@ import {
   createJobFinderAiClientFromEnvironment,
   createResumeVisionProviderFromEnvironment,
   type JobFinderAiClient,
-} from "@unemployed/ai-providers";
+} from "@nordri/ai-providers";
 import {
   ResumeImportBenchmarkCaseSchema,
   ResumeImportBenchmarkRequestSchema,
@@ -16,11 +16,11 @@ import {
   type ResumeImportBenchmarkCase,
   type ResumeImportBenchmarkReport,
   type ResumeImportBenchmarkRequest,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   buildBenchmarkAiClient,
   runResumeImportBenchmark,
-} from "@unemployed/job-finder";
+} from "@nordri/job-finder";
 
 import { createEmptyJobFinderRepositoryState } from "../../adapters/job-finder-initial-state";
 import { extractResumeDocument } from "../../adapters/resume-document";

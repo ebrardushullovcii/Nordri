@@ -1,7 +1,7 @@
 import type {
   CandidateProfile,
   CoverLetterPreference,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import { normalizeSignal } from "./control-classification";
 import type { ApplyAnswerSources, ApplyFormControl } from "./types";

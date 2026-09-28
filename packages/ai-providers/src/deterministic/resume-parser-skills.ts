@@ -47,6 +47,7 @@ export function inferSkills(
   );
   const rawSectionSkills = sectionLines
     .filter((line) => !skillCategoryHeadingPattern.test(line))
+    .map(stripInlineSkillCategory)
     .flatMap((line) => line.split(/[,;]|\||[\u2022\u25cf\u25aa\u25e6\u2023]/))
     .map(cleanLine)
     .filter((entry) => entry.length >= 2 && entry.length <= 28)
@@ -86,7 +87,15 @@ export function inferSkills(
     : uniqueStrings(fallbackSkills);
 }
 
+function stripInlineSkillCategory(line: string): string {
+  return line.replace(
+    /^(?:core(?: skills)?|technical skills|frameworks|programming languages|languages|databases|tools|security(?:\s*&\s*authentication)?|soft skills)\s*:\s*/i,
+    "",
+  );
+}
+
 function splitSkillLine(line: string): string[] {
+  line = stripInlineSkillCategory(line);
   const rawEntries = line
     .split(/[,;]|\||[\u2022\u25cf\u25aa\u25e6\u2023]| {2,}/)
     .map(cleanLine)

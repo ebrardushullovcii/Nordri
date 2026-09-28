@@ -75,29 +75,29 @@ async function main() {
   let app = null;
 
   try {
-    userDataDirectory = await mkdtemp(path.join(os.tmpdir(), "unemployed-resume-quality-"));
+    userDataDirectory = await mkdtemp(path.join(os.tmpdir(), "nordri-resume-quality-"));
     app = await electron.launch({
       args: ["."],
       cwd: desktopDir,
       env: {
         ...process.env,
-        UNEMPLOYED_ENABLE_TEST_API: "1",
-        UNEMPLOYED_USER_DATA_DIR: userDataDirectory,
-        ...(useConfiguredAi ? {} : { UNEMPLOYED_AI_API_KEY: "" }),
+        NORDRI_ENABLE_TEST_API: "1",
+        NORDRI_USER_DATA_DIR: userDataDirectory,
+        ...(useConfiguredAi ? {} : { NORDRI_AI_API_KEY: "" }),
       },
     });
 
     const window = await app.firstWindow();
     await window.waitForLoadState("domcontentloaded");
-    await window.waitForFunction(() => Boolean(window.unemployed?.jobFinder.test), undefined, { timeout: 15000 });
+    await window.waitForFunction(() => Boolean(window.nordri?.jobFinder.test), undefined, { timeout: 15000 });
 
     const report = await window.evaluate(
       async ({ benchmarkVersion, canaryOnly, caseIds, templateIds, outputDir, useConfiguredAi }) => {
-        if (!window.unemployed.jobFinder.test) {
+        if (!window.nordri.jobFinder.test) {
           throw new Error("Desktop test API is not available in the renderer context.");
         }
 
-        return window.unemployed.jobFinder.test.runResumeQualityBenchmark({
+        return window.nordri.jobFinder.test.runResumeQualityBenchmark({
           benchmarkVersion,
           canaryOnly,
           caseIds,

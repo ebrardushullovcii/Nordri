@@ -25,9 +25,9 @@ import {
   type ResumeApplicationMode,
   type ResumeApproach,
   type TailoringMode,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
-import type { ReviseCandidateProfileConversationTurn } from "@unemployed/ai-providers";
+import type { ReviseCandidateProfileConversationTurn } from "@nordri/ai-providers";
 
 import { resolvePendingReviewItemsAfterExplicitSave } from "./profile-setup-review-items";
 import { deriveAndPersistProfileSetupState } from "./profile-workspace-state";

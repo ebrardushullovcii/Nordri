@@ -44,9 +44,9 @@ the gateway after a 20-second gap without a completion event.
 - A gateway that ignores `stream: true` and answers with JSON is still read.
 - Timeouts keep the "Model request timed out after Ns" wording the provenance
   and studio copy already key on; an idle timeout says "of silence".
-- Operators can tune `UNEMPLOYED_AI_IDLE_TIMEOUT_MS`,
-  `UNEMPLOYED_AI_MAX_ATTEMPTS`, `UNEMPLOYED_AI_STREAMING`, and
-  `UNEMPLOYED_AI_RETRY_BASE_DELAY_MS`; `UNEMPLOYED_AI_TIMEOUT_MS` and the
+- Operators can tune `NORDRI_AI_IDLE_TIMEOUT_MS`,
+  `NORDRI_AI_MAX_ATTEMPTS`, `NORDRI_AI_STREAMING`, and
+  `NORDRI_AI_RETRY_BASE_DELAY_MS`; `NORDRI_AI_TIMEOUT_MS` and the
   resume-specific timeout remain the total budgets.
 
 ## Consequences
@@ -56,7 +56,7 @@ the gateway after a 20-second gap without a completion event.
 - Fallbacks to the deterministic path now mean the budget was exhausted or
   the failure was permanent, not that a healthy request was abandoned.
 - Reasoning summaries add a small token cost on the Responses route.
-- Interview Helper keeps its own transport for now; moving it onto the shared
+- Live Assistant keeps its own transport for now; moving it onto the shared
   one is a follow-up.
 
 ## Rejected alternatives

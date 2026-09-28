@@ -7,7 +7,7 @@ import {
 import type {
   CandidateProfile,
   ProfileCopilotRelevantReviewItem,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { ProfileCopilotUnfinishedError } from "./openai-compatible";
 import { ResumeGenerationStrategyPolicySchema } from "./shared";
 import {

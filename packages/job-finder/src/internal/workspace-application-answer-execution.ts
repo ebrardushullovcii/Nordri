@@ -2,7 +2,7 @@ import type {
   ApplicationAnswerRecord,
   ApplicationQuestionRecord,
   CandidateProfile,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { createReusableAnswerForQuestion } from "./workspace-answer-memory";
 
 function compareAnswerRecency(

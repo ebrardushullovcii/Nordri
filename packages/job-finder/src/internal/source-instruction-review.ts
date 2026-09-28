@@ -1,4 +1,4 @@
-import type { JobFinderAiClient } from "@unemployed/ai-providers";
+import type { JobFinderAiClient } from "@nordri/ai-providers";
 import {
   SharedAgentCompactionPolicySchema,
   type SharedAgentCompactionPolicy,
@@ -8,7 +8,7 @@ import {
   type JobSource,
   type SourceDebugRunRecord,
   type SourceInstructionArtifact,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import type {
   SourceInstructionFinalReviewPhaseContext,
   SourceInstructionReviewOverride,

@@ -1,7 +1,7 @@
 import type {
   ResumeAssistantConversationTurn,
   ResumeProposalCheckResult,
-} from "@unemployed/ai-providers";
+} from "@nordri/ai-providers";
 import {
   isBlockingResumeClaimAssessment,
   type CandidateProfile,
@@ -10,7 +10,7 @@ import {
   type ResumeDraft,
   type ResumeDraftPatch,
   type SavedJob,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   evaluateResumeProposalGrounding,
   sanitizeResumeDraft,

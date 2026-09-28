@@ -1,7 +1,7 @@
 import {
   DiscoveryAgentMetadataSchema,
   type DiscoveryActivityEvent,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import {

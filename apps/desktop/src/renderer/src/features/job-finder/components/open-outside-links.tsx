@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { RevealSavedFileResult } from "@unemployed/contracts";
+import type { RevealSavedFileResult } from "@nordri/contracts";
 import { TextLink } from "@renderer/components/ui/text-link";
 import { cn } from "@renderer/lib/cn";
 
@@ -14,7 +14,7 @@ import { cn } from "@renderer/lib/cn";
  */
 
 export function openUrlInJobFinderBrowser(url: string): void {
-  void window.unemployed.browser.command({ type: "open", url });
+  void window.nordri.browser.command({ type: "open", url });
 }
 
 export function ExternalUrlLink(props: {
@@ -58,7 +58,7 @@ export function SavedFileLink(props: {
         data-open-outside-path={props.path}
         onClick={() => {
           setNotice(null);
-          void window.unemployed.jobFinder
+          void window.nordri.jobFinder
             .revealSavedFile(props.path)
             .then((result) => {
               if (result.outcome !== "revealed") {

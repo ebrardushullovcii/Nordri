@@ -577,7 +577,7 @@
 /*
  * Interview overlay scope.
  *
- * The Interview Helper answer/transcript popups fork the palette outside this
+ * The Live Assistant answer/transcript popups fork the palette outside this
  * file, so their surfaces, boundaries and disabled states are unreachable from
  * the token contract every other surface is measured against. This scope is
  * the seam that ends that fork: the overlay package redeclares the same token
@@ -872,11 +872,11 @@
 }
 
 [data-job-finder-shell] :is(.shadow-xl, .shadow-2xl),
-[data-interview-helper-shell] :is(.shadow-xl, .shadow-2xl) {
+[data-live-assistant-shell] :is(.shadow-xl, .shadow-2xl) {
   box-shadow: var(--select-shadow);
 }
 
-[data-interview-helper-shell] .surface-card-tint {
+[data-live-assistant-shell] .surface-card-tint {
   box-shadow: none;
 }
 

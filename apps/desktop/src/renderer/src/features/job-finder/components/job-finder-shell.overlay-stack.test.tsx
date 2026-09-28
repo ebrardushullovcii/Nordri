@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import type { JobFinderWorkspaceSnapshot } from "@unemployed/contracts";
+import type { JobFinderWorkspaceSnapshot } from "@nordri/contracts";
 import {
   act,
   cleanup,
@@ -113,7 +113,7 @@ describe("JobFinderShell stacked overlay ownership", () => {
     }
 
     vi.stubGlobal("ResizeObserver", ResizeObserverMock);
-    Object.defineProperty(window, "unemployed", {
+    Object.defineProperty(window, "nordri", {
       configurable: true,
       value: {
         window: {

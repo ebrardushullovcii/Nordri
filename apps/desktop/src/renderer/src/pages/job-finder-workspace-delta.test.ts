@@ -1,7 +1,7 @@
 import type {
   JobFinderWorkspaceDelta,
   JobFinderWorkspaceSnapshot,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { describe, expect, it } from "vitest";
 
 import { applyJobFinderWorkspaceDelta } from "./job-finder-workspace-delta";

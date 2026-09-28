@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type {
   ResumeAssistantMessage,
   ResumeDraftRevision,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   findUnansweredAssistantRequest,
   describeAcceptedAssistantEdits,

@@ -3,7 +3,7 @@ import type {
   JobFinderSearchRequest,
   JobSearchCampaign,
   JobSearchPreferences,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { SlidersHorizontal } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@renderer/components/ui/button";
@@ -234,6 +234,23 @@ export function DiscoverySearchBar(props: {
     preferredWidth: SOURCE_PICKER_PREFERRED_WIDTH_PX,
     triggerRef: sourcePickerTriggerRef,
   });
+  const availableSourceIdsKey = JSON.stringify(
+    availableSources.map((source) => source.id).sort(),
+  );
+  useEffect(() => {
+    const enabledIds = new Set(JSON.parse(availableSourceIdsKey) as string[]);
+    setSelectedSourceIds((current) => {
+      if (current === "all") return current;
+      // A single source has no picker. Keep it searchable when setup edits
+      // or a plan change remove the previously selected sources.
+      if (enabledIds.size <= 1) return "all";
+      const retained = current.filter((id) => enabledIds.has(id));
+      if (current.length > 0 && retained.length === 0) return "all";
+      if (retained.length === enabledIds.size) return "all";
+      return retained.length === current.length ? current : retained;
+    });
+    setIsSourcePickerOpen(false);
+  }, [availableSourceIdsKey]);
   const selectedSourceCount =
     selectedSourceIds === "all"
       ? availableSources.length

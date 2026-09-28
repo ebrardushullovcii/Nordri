@@ -1,8 +1,8 @@
-# UnEmployed
+# Nordri
 
 Agent-first desktop monorepo for:
 - `Job Finder`
-- `Interview Helper`
+- `Live Assistant`
 
 ## Stack
 

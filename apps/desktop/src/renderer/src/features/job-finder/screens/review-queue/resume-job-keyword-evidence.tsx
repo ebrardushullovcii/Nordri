@@ -2,7 +2,7 @@ import type {
   JobPosting,
   ResumeDraft,
   ResumeDraftSourceRef,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { useId } from "react";
 import { StatusBadge } from "../../components/status-badge";
 

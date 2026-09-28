@@ -1,4 +1,4 @@
-import { CandidateProfileSchema } from "@unemployed/contracts";
+import { CandidateProfileSchema } from "@nordri/contracts";
 import { describe, expect, test, vi } from "vitest";
 
 import type { LLMClient } from "../agent/contracts";
@@ -8,7 +8,7 @@ import {
   checkWrittenApplicationAnswer,
   WrittenAnswerCheckUnavailableError,
 } from "./written-answer-grounding";
-import type { RawApplyControl, RawApplyPage } from "@unemployed/contracts";
+import type { RawApplyControl, RawApplyPage } from "@nordri/contracts";
 import { buildApplyFormObservation } from "./page-hands";
 import type { ApplyAgentConfig, ApplyPageHands } from "./types";
 

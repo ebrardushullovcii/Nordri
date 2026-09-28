@@ -74,7 +74,7 @@ const exposedJobFinder = (() => {
     | { jobFinder: ExposedJobFinderApi }
     | undefined;
   if (!exposed) {
-    throw new Error("Preload did not expose the unemployed API.");
+    throw new Error("Preload did not expose the nordri API.");
   }
   return exposed.jobFinder;
 })();
@@ -732,7 +732,7 @@ describe("preload application authority boundary", () => {
 
 describe("preload desktop test API boundary", () => {
   it("omits the test surface entirely when the test API is disabled", () => {
-    expect(process.env.UNEMPLOYED_ENABLE_TEST_API).not.toBe("1");
+    expect(process.env.NORDRI_ENABLE_TEST_API).not.toBe("1");
     expect(
       (exposedJobFinder as unknown as { test?: unknown }).test,
     ).toBeUndefined();

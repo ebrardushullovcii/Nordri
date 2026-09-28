@@ -166,7 +166,7 @@ async function captureGroup(page, capture, groupName, fileName) {
 async function runCapture() {
   await mkdir(outputDir, { recursive: true });
   const userDataDirectory = await mkdtemp(
-    path.join(os.tmpdir(), "unemployed-action-inbox-"),
+    path.join(os.tmpdir(), "nordri-action-inbox-"),
   );
   let app;
 
@@ -176,11 +176,11 @@ async function runCapture() {
       cwd: desktopDir,
       env: {
         ...process.env,
-        UNEMPLOYED_BROWSER_AGENT: "0",
-        UNEMPLOYED_ENABLE_TEST_API: "1",
-        UNEMPLOYED_TEST_SYSTEM_THEME:
-          process.env.UNEMPLOYED_TEST_SYSTEM_THEME ?? "dark",
-        UNEMPLOYED_USER_DATA_DIR: userDataDirectory,
+        NORDRI_BROWSER_AGENT: "0",
+        NORDRI_ENABLE_TEST_API: "1",
+        NORDRI_TEST_SYSTEM_THEME:
+          process.env.NORDRI_TEST_SYSTEM_THEME ?? "dark",
+        NORDRI_USER_DATA_DIR: userDataDirectory,
       },
     });
 
@@ -247,16 +247,16 @@ async function runCapture() {
 
     await page.evaluate(
       async ({ theme, workspaceState }) => {
-        if (!window.unemployed.jobFinder.test) {
+        if (!window.nordri.jobFinder.test) {
           throw new Error("Desktop test API is unavailable in the renderer.");
         }
-        await window.unemployed.jobFinder.test.setSystemThemeOverride(theme);
-        await window.unemployed.jobFinder.test.resetWorkspaceState(
+        await window.nordri.jobFinder.test.setSystemThemeOverride(theme);
+        await window.nordri.jobFinder.test.resetWorkspaceState(
           workspaceState,
         );
       },
       {
-        theme: process.env.UNEMPLOYED_TEST_SYSTEM_THEME ?? "dark",
+        theme: process.env.NORDRI_TEST_SYSTEM_THEME ?? "dark",
         workspaceState: state,
       },
     );

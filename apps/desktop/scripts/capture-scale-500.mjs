@@ -72,7 +72,7 @@ const COMPACT_NAVIGATION_EVIDENCE_TOKENS = Object.freeze({
     fadeStart: "[data-job-finder-compact-navigation-fade-start]",
     fadeEnd: "[data-job-finder-compact-navigation-fade-end]",
     planningButton: 'button[aria-label^="More"]',
-    interviewHelperLink: 'a[aria-label="Open Interview Helper"]',
+    liveAssistantLink: 'a[aria-label="Open Live Assistant"]',
     notificationsGroup:
       '[role="group"][aria-label="Notifications and actions"]',
     windowControlsGroup: '[role="group"][aria-label="Window controls"]',
@@ -995,7 +995,7 @@ async function waitForHeading(
 async function waitForWorkspaceHydrationComplete(page, timeout = 30_000) {
   await page.waitForFunction(
     async () => {
-      const workspace = await window.unemployed?.jobFinder?.getWorkspace?.();
+      const workspace = await window.nordri?.jobFinder?.getWorkspace?.();
       return workspace?.hydration?.phase === "complete";
     },
     undefined,
@@ -1771,7 +1771,7 @@ async function inspectCompactNavigationRail(page) {
         clusters: {
           panel,
           planningButton: describe(query(selectors.planningButton)),
-          interviewHelperLink: describe(query(selectors.interviewHelperLink)),
+          liveAssistantLink: describe(query(selectors.liveAssistantLink)),
           notificationsGroup: describe(query(selectors.notificationsGroup)),
           windowControlsGroup: describe(query(selectors.windowControlsGroup)),
         },
@@ -1805,15 +1805,15 @@ function auditCompactRailClusters(state, platform) {
         `${name} is not contained in the viewport: ${JSON.stringify(cluster.rect)}`,
       );
   }
-  const interviewHelperLink = clusters.interviewHelperLink;
+  const liveAssistantLink = clusters.liveAssistantLink;
   if (state.viewport.width < 900) {
-    if (!interviewHelperLink?.present)
-      failures.push("interviewHelperLink is missing below 900px CSS width");
+    if (!liveAssistantLink?.present)
+      failures.push("liveAssistantLink is missing below 900px CSS width");
     else if (
-      !rectInsideViewport(interviewHelperLink.rect, state.viewport, epsilon)
+      !rectInsideViewport(liveAssistantLink.rect, state.viewport, epsilon)
     )
       failures.push(
-        `interviewHelperLink is not contained in the viewport: ${JSON.stringify(interviewHelperLink.rect)}`,
+        `liveAssistantLink is not contained in the viewport: ${JSON.stringify(liveAssistantLink.rect)}`,
       );
   }
   const windowControls = clusters.windowControlsGroup;
@@ -1856,8 +1856,8 @@ function auditCompactRailClusters(state, platform) {
       clusters.planningButton?.present ? clusters.planningButton.rect : null,
     ],
   ];
-  if (interviewHelperLink?.present)
-    siblings.push(["interviewHelperLink", interviewHelperLink.rect]);
+  if (liveAssistantLink?.present)
+    siblings.push(["liveAssistantLink", liveAssistantLink.rect]);
   for (let leftIndex = 0; leftIndex < siblings.length; leftIndex += 1) {
     for (
       let rightIndex = leftIndex + 1;
@@ -3356,7 +3356,7 @@ async function run() {
   await verifyAcceptanceArtifacts(acceptance);
   await mkdir(screenshotDir, { recursive: true });
   const userDataDirectory = await makeIsolatedUserDataDirectory(
-    "unemployed-scale-500-",
+    "nordri-scale-500-",
   );
   report.safety.isolatedUserDataDir = userDataDirectory;
   report.safety.syntheticTestDataDigest = digestSeed({
@@ -3376,7 +3376,7 @@ async function run() {
       args: ["."],
       cwd: desktopDir,
       env: acceptanceEnvironment({
-        UNEMPLOYED_USER_DATA_DIR: userDataDirectory,
+        NORDRI_USER_DATA_DIR: userDataDirectory,
       }),
     });
     processOutputState = attachProcessOutput(app, report);
@@ -3412,13 +3412,13 @@ async function run() {
     log("launching bootstrap app");
     const bootstrapPage = await launch();
     await bootstrapPage.waitForFunction(
-      () => Boolean(window.unemployed?.jobFinder?.test),
+      () => Boolean(window.nordri?.jobFinder?.test),
       undefined,
       { timeout: 15_000 },
     );
     const beforeFiles = new Set();
     const baseSnapshot = await bootstrapPage.evaluate(() =>
-      window.unemployed.jobFinder.test.loadApplyQueueDemo(),
+      window.nordri.jobFinder.test.loadApplyQueueDemo(),
     );
     for (const filePath of [
       baseSnapshot.profile.baseResume.storagePath,
@@ -3437,7 +3437,7 @@ async function run() {
       `persisting synthetic scale state ${counts.jobs} jobs / ${counts.shortlisted} shortlisted / ${counts.applications} apps / ${counts.sources} sources`,
     );
     await bootstrapPage.evaluate(
-      (state) => window.unemployed.jobFinder.test.resetWorkspaceState(state),
+      (state) => window.nordri.jobFinder.test.resetWorkspaceState(state),
       scaleState,
     );
     for (const filePath of [
@@ -3454,7 +3454,7 @@ async function run() {
     });
     await waitForWorkspaceHydrationComplete(bootstrapPage);
     const bootstrappedWorkspace = await bootstrapPage.evaluate(() =>
-      window.unemployed.jobFinder.getWorkspace(),
+      window.nordri.jobFinder.getWorkspace(),
     );
     assert(
       bootstrappedWorkspace.hydration?.phase === "complete",
@@ -3579,7 +3579,7 @@ async function run() {
         }
         await launch();
         await page.waitForFunction(
-          () => Boolean(window.unemployed?.jobFinder?.getWorkspace),
+          () => Boolean(window.nordri?.jobFinder?.getWorkspace),
           undefined,
           { timeout: 15_000 },
         );
@@ -3638,7 +3638,7 @@ async function run() {
     // through IPC before any rendering assertion runs. This is the hydrated
     // contract: 5,000 discovery jobs plus every prior-cap boundary collection.
     const hydratedWorkspace = await page.evaluate(() =>
-      window.unemployed.jobFinder.getWorkspace(),
+      window.nordri.jobFinder.getWorkspace(),
     );
     assert(
       hydratedWorkspace.hydration?.phase === "complete",
@@ -4044,7 +4044,7 @@ async function run() {
       `Runtime errors detected: ${JSON.stringify(report.runtimeErrors)}`,
     );
     const finalWorkspace = await page.evaluate(() =>
-      window.unemployed.jobFinder.getWorkspace(),
+      window.nordri.jobFinder.getWorkspace(),
     );
     report.safetyEvents = observedSafetyEvents;
     report.safety.authoritativePersistedFacts = assertPrepareOnly(

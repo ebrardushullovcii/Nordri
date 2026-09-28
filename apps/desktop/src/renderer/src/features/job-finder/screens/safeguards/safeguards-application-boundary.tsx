@@ -1,4 +1,4 @@
-import type { ApplicationAuthorityEnvelope } from "@unemployed/contracts";
+import type { ApplicationAuthorityEnvelope } from "@nordri/contracts";
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@renderer/components/ui/button";
 import { StatusBadge } from "@renderer/features/job-finder/components/status-badge";
@@ -27,13 +27,13 @@ export function describeEnvelopeMode(
 export const APPLICATION_BOUNDARY_SENTENCE =
   "Job Finder fills applications and sends them only with your permission. It never asks for your password or solves CAPTCHA or MFA.";
 
-type AuthorityApi = Window["unemployed"]["jobFinder"];
+type AuthorityApi = Window["nordri"]["jobFinder"];
 
 function authorityApi(): AuthorityApi | null {
   if (typeof window === "undefined") {
     return null;
   }
-  return window.unemployed?.jobFinder ?? null;
+  return window.nordri?.jobFinder ?? null;
 }
 
 function describeEnvelope(envelope: ApplicationAuthorityEnvelope): string {

@@ -3,7 +3,7 @@ import type {
   ApplyRawPageHands,
   CandidateAsset,
   JobFinderSearchRequest,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 /**
  * What the assistant needs from the host that is not a workspace-service

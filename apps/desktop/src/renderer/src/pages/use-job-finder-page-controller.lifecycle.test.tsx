@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import type { JobFinderWorkspaceSnapshot } from "@unemployed/contracts";
+import type { JobFinderWorkspaceSnapshot } from "@nordri/contracts";
 import { StrictMode } from "react";
 import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { createMemoryRouter, RouterProvider } from "react-router-dom";
@@ -86,7 +86,7 @@ function createBatchHarness(options: { parkFirstCall?: boolean } = {}) {
     return Promise.resolve(workspace);
   });
 
-  Object.defineProperty(window, "unemployed", {
+  Object.defineProperty(window, "nordri", {
     configurable: true,
     value: {
       ping: vi.fn(() => Promise.resolve({ platform: "darwin" as const })),
@@ -94,7 +94,7 @@ function createBatchHarness(options: { parkFirstCall?: boolean } = {}) {
         getWorkspaceBootstrap: vi.fn(() => Promise.resolve(workspace)),
         generateResume,
       },
-    } as unknown as Window["unemployed"],
+    } as unknown as Window["nordri"],
   });
 
   return {
@@ -188,7 +188,7 @@ describe("useJobFinderPageController tailored-draft lifecycle", () => {
 
   afterEach(() => {
     cleanup();
-    Reflect.deleteProperty(window, "unemployed");
+    Reflect.deleteProperty(window, "nordri");
   });
 
   it("lets a truly unmounted controller stop the batch tail after both active items settle", async () => {
@@ -278,7 +278,7 @@ describe("useJobFinderPageController cross-route status lifetime", () => {
 
   afterEach(() => {
     cleanup();
-    Reflect.deleteProperty(window, "unemployed");
+    Reflect.deleteProperty(window, "nordri");
   });
 
   function mountStatusHarness(options: {
@@ -303,7 +303,7 @@ describe("useJobFinderPageController cross-route status lifetime", () => {
             snapshot: workspace,
           })),
     );
-    Object.defineProperty(window, "unemployed", {
+    Object.defineProperty(window, "nordri", {
       configurable: true,
       value: {
         ping: vi.fn(() => Promise.resolve({ platform: "darwin" as const })),
@@ -313,7 +313,7 @@ describe("useJobFinderPageController cross-route status lifetime", () => {
           startApplyCopilotRun:
             options.startApplyCopilotRun ?? (() => Promise.resolve(workspace)),
         },
-      } as unknown as Window["unemployed"],
+      } as unknown as Window["nordri"],
     });
 
     const mounted: { current: JobFinderPageController | null } = {

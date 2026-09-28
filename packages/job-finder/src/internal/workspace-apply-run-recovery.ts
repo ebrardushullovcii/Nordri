@@ -10,7 +10,7 @@ import {
   type ApplyRun,
   type JobFinderActivityControl,
   type ApplySubmitApproval,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 /** A paused queue may be resumed after restart only between jobs. */
 export function isSafelyParkedApplyQueue(input: {

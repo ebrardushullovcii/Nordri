@@ -1,4 +1,4 @@
-import { CreateApplicationAuthorityEnvelopeInputSchema } from "@unemployed/contracts";
+import { CreateApplicationAuthorityEnvelopeInputSchema } from "@nordri/contracts";
 import type {
   ApplicationAttestationKind,
   ApplicationAutomationMode,
@@ -8,7 +8,7 @@ import type {
   ApplicationAuthorityEnvelopeMutationResult,
   CreateApplicationAuthorityEnvelopeInput,
   UpdateApplicationAuthorityEnvelopeInput,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { useEffect, useId, useState } from "react";
 import { Button } from "@renderer/components/ui/button";
 import { Field, FieldLabel } from "@renderer/components/ui/field";
@@ -19,7 +19,7 @@ import { getJobFinderDateInputLocale } from "../../lib/job-finder-date-input-loc
 
 const jobFinderDateInputLocale = getJobFinderDateInputLocale();
 
-type AuthorityApi = Window["unemployed"]["jobFinder"];
+type AuthorityApi = Window["nordri"]["jobFinder"];
 
 type AuthorityDraft = {
   mode: ApplicationAutomationMode;
@@ -278,7 +278,7 @@ export function SettingsApplicationAuthoritySection({
     if (typeof window === "undefined") {
       return null;
     }
-    return window.unemployed?.jobFinder ?? null;
+    return window.nordri?.jobFinder ?? null;
   };
 
   const applyEnvelope = (envelope: ApplicationAuthorityEnvelope | null) => {

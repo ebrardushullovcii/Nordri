@@ -2,7 +2,7 @@ import type {
   ApplicationAttemptQuestion,
   UserActionCommandInput,
   UserActionRequest,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { QuestionAnswerForm, createCommand } from "../actions/actions-screen";
 
 /**

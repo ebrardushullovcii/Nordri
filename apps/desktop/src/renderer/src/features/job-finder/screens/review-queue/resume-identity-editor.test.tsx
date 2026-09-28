@@ -2,8 +2,8 @@
 
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ResumeDraftIdentity } from "@unemployed/contracts";
-import { getResumeIdentityTargetId } from "@unemployed/contracts";
+import type { ResumeDraftIdentity } from "@nordri/contracts";
+import { getResumeIdentityTargetId } from "@nordri/contracts";
 import { ResumeIdentityEditor } from "./resume-identity-editor";
 
 const identity: ResumeDraftIdentity = {

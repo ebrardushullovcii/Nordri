@@ -6,7 +6,7 @@ import {
   type JobPosting,
   type MatchAssessment,
   type SavedJob,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import { createSeed } from "../workspace-service.test-fixtures";
 import { collectResumeAffectingChangedJobIds } from "./resume-workspace-staleness";

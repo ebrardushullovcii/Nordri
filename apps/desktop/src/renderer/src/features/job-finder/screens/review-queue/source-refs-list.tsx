@@ -1,4 +1,4 @@
-import type { ResumeDraftSourceRef } from "@unemployed/contracts";
+import type { ResumeDraftSourceRef } from "@nordri/contracts";
 
 function formatSourceKindLabel(value: string): string {
   switch (value) {

@@ -1,4 +1,4 @@
-import type { AgentTaskResultReference } from "@unemployed/contracts";
+import type { AgentTaskResultReference } from "@nordri/contracts";
 
 interface StoredResult {
   readonly summary: string;

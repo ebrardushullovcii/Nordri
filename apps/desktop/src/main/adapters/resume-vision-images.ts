@@ -3,12 +3,12 @@ import {
   type ResumeDocumentFileKind,
   type ResumeImportArtifactRetention,
   type ResumeImportVisionArtifact,
-} from '@unemployed/contracts'
+} from '@nordri/contracts'
 import { runResumeVisionImageSidecar } from './resume-document-sidecar'
 import { detectResumeDocumentFileKind } from './resume-document/worker'
 
 function parseRetentionMode(env: NodeJS.ProcessEnv): ResumeImportArtifactRetention {
-  const raw = env.UNEMPLOYED_RESUME_VISION_RETAIN_ARTIFACTS?.trim().toLowerCase()
+  const raw = env.NORDRI_RESUME_VISION_RETAIN_ARTIFACTS?.trim().toLowerCase()
 
   if (raw === 'debug' || raw === 'debug_retained' || raw === '1' || raw === 'true') {
     return 'debug_retained'
@@ -22,7 +22,7 @@ function parseRetentionMode(env: NodeJS.ProcessEnv): ResumeImportArtifactRetenti
 }
 
 function parseTimeoutMs(env: NodeJS.ProcessEnv): number {
-  const parsed = Number.parseInt(env.UNEMPLOYED_RESUME_VISION_IMAGE_TIMEOUT_MS ?? '', 10)
+  const parsed = Number.parseInt(env.NORDRI_RESUME_VISION_IMAGE_TIMEOUT_MS ?? '', 10)
   return Number.isFinite(parsed) && parsed >= 1_000 ? parsed : 600_000
 }
 

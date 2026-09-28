@@ -1,4 +1,4 @@
-import { workModeValues } from "@unemployed/contracts";
+import { workModeValues } from "@nordri/contracts";
 import { useId } from "react";
 import type { UseFormReturn } from "react-hook-form";
 import { Controller } from "react-hook-form";

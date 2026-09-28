@@ -2,8 +2,8 @@ import { describe, expect, test } from "vitest";
 import type {
   ProfileCopilotPatchGroup,
   ProfileCopilotPatchOperation,
-} from "@unemployed/contracts";
-import { ProfileCopilotPatchOperationSchema } from "@unemployed/contracts";
+} from "@nordri/contracts";
+import { ProfileCopilotPatchOperationSchema } from "@nordri/contracts";
 
 import {
   getReplacementFieldOwnershipSnapshot,

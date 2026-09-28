@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { JobFinderWorkspaceSnapshot } from "@unemployed/contracts";
+import type { JobFinderWorkspaceSnapshot } from "@nordri/contracts";
 import { describePreparedApplicationsSendResult } from "./use-job-finder-page-controller-actions";
 
 describe("describePreparedApplicationsSendResult", () => {

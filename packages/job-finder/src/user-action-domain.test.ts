@@ -3,7 +3,7 @@ import {
   UserActionVerificationResultSchema,
   type UserActionRequest,
   type UserActionRequestState,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { describe, expect, test } from "vitest";
 
 import {

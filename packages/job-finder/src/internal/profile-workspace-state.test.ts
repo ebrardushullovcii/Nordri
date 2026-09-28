@@ -2,8 +2,8 @@ import {
   DiscoveryRunRecordSchema,
   JobFinderDiscoveryStateSchema,
   ProfileSetupStateSchema,
-} from "@unemployed/contracts";
-import { createInMemoryJobFinderRepository } from "@unemployed/db";
+} from "@nordri/contracts";
+import { createInMemoryJobFinderRepository } from "@nordri/db";
 import { describe, expect, test } from "vitest";
 
 import { createSeed } from "../workspace-service.test-fixtures";

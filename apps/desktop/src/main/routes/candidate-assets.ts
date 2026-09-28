@@ -10,7 +10,7 @@ import {
   CandidateAssetRestoreInputSchema,
   CandidateAssetRestoreResultSchema,
   type CandidateAsset,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { CandidateAssetLibraryError } from "../services/job-finder/candidate-asset-library";
 import type { CandidateAssetLibrary } from "../services/job-finder/candidate-asset-library";
 import { getCandidateAssetLibrary } from "../services/job-finder/candidate-asset-library-instance";

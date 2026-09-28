@@ -2,7 +2,7 @@ import {
   JobSearchCampaignCollectionSchema,
   type JobPosting,
   type SavedJob,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import { mergeDiscoveredPostings } from "./matching";
 import { createDiscoveryProvenance } from "./workspace-discovery-ledger";

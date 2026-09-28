@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
-import type { SavedJob } from "@unemployed/contracts";
+import type { SavedJob } from "@nordri/contracts";
 import {
   compareDiscoveryFitTieBreaks,
   compareDiscoveryJobs,
   getClearMismatchPenalty,
-} from "@unemployed/job-finder/discovery-ordering";
+} from "@nordri/job-finder/discovery-ordering";
 import {
   compareDiscoveryFitOrder,
   compareDiscoveryResults,

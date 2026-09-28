@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type {
   CandidateProfile,
   UserActionRequest,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { onlySavedAnswersWereAdded } from "./workspace-application-methods";
 import { findManualAnswerStepsCoveredBy } from "./workspace-user-action-methods";
 

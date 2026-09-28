@@ -42,7 +42,11 @@ const mirrorDirectory = path.join(
   "audits",
   "evidence-manifests",
 );
-const manifestKind = "unemployed-release-evidence-manifest";
+const manifestKind = "nordri-release-evidence-manifest";
+// Manifests recorded before the Nordri rename (ADR 0040) keep their kind.
+const legacyManifestKinds = new Set(["unemployed-release-evidence-manifest"]);
+const isKnownManifestKind = (kind) =>
+  kind === manifestKind || legacyManifestKinds.has(kind);
 const manifestSchemaVersion = 4;
 const rawManifestDigestSubject = "raw_full_manifest_without_manifestSha256";
 const mirrorManifestDigestSubject =
@@ -912,7 +916,7 @@ function composeCompactMirror(raw) {
   if (!isPlainObjectValue(raw)) {
     throw new Error("raw manifest must be an object");
   }
-  if (raw.kind !== manifestKind) {
+  if (!isKnownManifestKind(raw.kind)) {
     throw new Error(`unexpected manifest kind "${String(raw.kind)}"`);
   }
   if (
@@ -1739,7 +1743,7 @@ async function runSelfCheck() {
   );
   expect(
     "sha256 hex digest shape",
-    /^[0-9a-f]{64}$/u.test(sha256Hex("unemployed")),
+    /^[0-9a-f]{64}$/u.test(sha256Hex("nordri")),
   );
   expect(
     "run id shape",
@@ -2355,7 +2359,7 @@ function assertStoredRawManifestSha256Matches(raw, recomputedManifestSha256) {
 async function loadVerifiedRawManifest(rawManifestPath) {
   const resolvedPath = path.resolve(rawManifestPath);
   const raw = JSON.parse(await readFile(resolvedPath, "utf8"));
-  if (raw.kind !== manifestKind) {
+  if (!isKnownManifestKind(raw.kind)) {
     throw new Error(`unexpected manifest kind "${String(raw.kind)}"`);
   }
   if (typeof raw.runId !== "string" || typeof raw.outcome !== "string") {

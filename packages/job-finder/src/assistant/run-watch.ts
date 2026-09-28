@@ -1,7 +1,7 @@
 import type {
   AssistantRunRef,
   JobFinderWorkspaceSnapshot,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import { readBackgroundBatch } from "./tools";
 import { allJobs, compactJob } from "./tools/format";

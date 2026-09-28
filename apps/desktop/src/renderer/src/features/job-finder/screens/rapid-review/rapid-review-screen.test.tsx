@@ -6,7 +6,7 @@ import {
   type RapidReviewDecisionLog,
   type RapidReviewMutationInput,
   type SavedJob,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   cleanup,
   fireEvent,

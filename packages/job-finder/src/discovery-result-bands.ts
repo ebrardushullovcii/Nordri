@@ -2,7 +2,7 @@ import type {
   DiscoveryJobView,
   MatchAssessment,
   SavedJob,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import {
   assessmentTitleMissesTargetRoles,

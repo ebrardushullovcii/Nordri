@@ -7,7 +7,7 @@ import {
   type ResumeStrategy,
   type ResumeStrategySelection,
   type SaveResumeStrategyInputData,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   createResumeStrategy,
   disableResumeStrategy,

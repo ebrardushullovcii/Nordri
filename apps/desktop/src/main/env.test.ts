@@ -7,25 +7,25 @@ describe('desktop env loader', () => {
     expect(
       parseDotEnvContent([
         '# comment',
-        'UNEMPLOYED_AI_API_KEY=abc123',
-        'UNEMPLOYED_AI_MODEL="gpt-5.6-luna"',
-        "export UNEMPLOYED_AI_BASE_URL='https://api.openai.com/v1'"
+        'NORDRI_AI_API_KEY=abc123',
+        'NORDRI_AI_MODEL="gpt-5.6-luna"',
+        "export NORDRI_AI_BASE_URL='https://api.openai.com/v1'"
       ].join('\n'))
     ).toEqual({
-      UNEMPLOYED_AI_API_KEY: 'abc123',
-      UNEMPLOYED_AI_MODEL: 'gpt-5.6-luna',
-      UNEMPLOYED_AI_BASE_URL: 'https://api.openai.com/v1'
+      NORDRI_AI_API_KEY: 'abc123',
+      NORDRI_AI_MODEL: 'gpt-5.6-luna',
+      NORDRI_AI_BASE_URL: 'https://api.openai.com/v1'
     })
   })
 
   test('loads values without overriding existing environment', () => {
     const env: NodeJS.ProcessEnv = {
-      UNEMPLOYED_AI_MODEL: 'existing-model'
+      NORDRI_AI_MODEL: 'existing-model'
     }
 
     loadDesktopEnvironment(env, ['virtual-a.env', 'virtual-b.env'].map((entry) => path.join('Z:/', entry)))
 
-    expect(env.UNEMPLOYED_AI_MODEL).toBe('existing-model')
+    expect(env.NORDRI_AI_MODEL).toBe('existing-model')
   })
 
   test('lists root and desktop env file locations', () => {

@@ -40,8 +40,8 @@ import type {
   JobFinderWorkspaceSnapshot,
   ResumeImportProgressEvent,
   SuiteModule,
-} from "@unemployed/contracts";
-import { collapsesSideMenuWithAssistant } from "@unemployed/contracts";
+} from "@nordri/contracts";
+import { collapsesSideMenuWithAssistant } from "@nordri/contracts";
 import { useLocation, useNavigate } from "react-router-dom";
 import { Button } from "@renderer/components/ui/button";
 import { Count } from "@renderer/components/ui/count";
@@ -217,7 +217,7 @@ const NO_ROUTE_SCROLL_EDGES: CompactRouteScrollEdges = {
 };
 
 export const SIDEBAR_COLLAPSED_STORAGE_KEY =
-  "unemployed.job-finder.sidebar-collapsed.v1";
+  "nordri.job-finder.sidebar-collapsed.v1";
 
 /**
  * Inventory counts describe workspace volume and are the bare number: a plain
@@ -902,7 +902,7 @@ export function JobFinderShell({
     const hasDestinationAnchor = Boolean(location.hash);
     const usesNarrowShellReflow =
       window.matchMedia?.("(max-width: 639px)").matches ?? false;
-    document.title = `${activeScreenLabel} | Job Finder | UnEmployed`;
+    document.title = `${activeScreenLabel} | Job Finder | Nordri`;
     setRouteAnnouncement("");
     if (!hasDestinationAnchor) {
       main?.scrollTo({ top: 0 });
@@ -934,7 +934,7 @@ export function JobFinderShell({
   useEffect(() => {
     let cancelled = false;
 
-    const unsubscribe = window.unemployed.window.onControlsStateChange(
+    const unsubscribe = window.nordri.window.onControlsStateChange(
       (controlsState) => {
         if (!cancelled) {
           setWindowControlsState(controlsState);
@@ -942,7 +942,7 @@ export function JobFinderShell({
       },
     );
 
-    void window.unemployed.window
+    void window.nordri.window
       .getControlsState()
       .then((controlsState) => {
         if (!cancelled) {
@@ -971,15 +971,15 @@ export function JobFinderShell({
   }
 
   function minimizeWindow() {
-    void runWindowAction(() => window.unemployed.window.minimize());
+    void runWindowAction(() => window.nordri.window.minimize());
   }
 
   function toggleWindowExpand() {
-    void runWindowAction(() => window.unemployed.window.toggleMaximize());
+    void runWindowAction(() => window.nordri.window.toggleMaximize());
   }
 
   function closeWindow() {
-    void window.unemployed.window.close();
+    void window.nordri.window.close();
   }
 
   function handleScreenChange(nextScreen: string) {
@@ -1025,11 +1025,11 @@ export function JobFinderShell({
     }
 
     if (onNavigate) {
-      onNavigate("/interview-helper");
+      onNavigate("/live-assistant");
       return;
     }
 
-    void navigate("/interview-helper");
+    void navigate("/live-assistant");
   }
 
   function closeMoreMenuAndMoveFocus(direction: -1 | 1) {

@@ -305,7 +305,7 @@ function extractNameFromHeaderLine(line: string): string | null {
 function trimTrailingContactFragments(value: string): string {
   return cleanLine(value.split(/\s*[·|]\s*/)[0] ?? value)
     .replace(
-      /\s+(?:\(?\+?\d[\d\s().-]{7,}\d\)?|[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}|https?:\/\/\S+|(?:www\.)?(?:linkedin|github)\.com\/\S+)$/i,
+      /\s+(?:\(?\+?\d[\d\s().-]{7,}\d\)?|[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}|https?:\/\/\S+|(?:www\.)?(?:linkedin|github)\.com\/\S+).*$/i,
       "",
     )
     .trim();
@@ -406,7 +406,11 @@ function inferCurrentLocation(
   lines: readonly string[],
   fullName: string | null,
 ): string | null {
-  const headerLines = lines.slice(0, 8);
+  const firstSectionIndex = lines.findIndex(isResumeSectionHeading);
+  const headerLines = lines.slice(
+    0,
+    firstSectionIndex >= 0 ? Math.min(firstSectionIndex, 8) : 8,
+  );
   const addressLine = lines.find((line) => /^Address:/i.test(line));
 
   if (addressLine) {

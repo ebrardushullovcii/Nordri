@@ -1,9 +1,9 @@
-import type { JobFinderAiClient } from "@unemployed/ai-providers";
+import type { JobFinderAiClient } from "@nordri/ai-providers";
 import {
   ApplicationCrmSettingsSchema,
   ApplicationRecordSchema,
-} from "@unemployed/contracts";
-import { createInMemoryJobFinderRepository } from "@unemployed/db";
+} from "@nordri/contracts";
+import { createInMemoryJobFinderRepository } from "@nordri/db";
 import { describe, expect, test, vi } from "vitest";
 
 import { createJobFinderWorkspaceService } from "./index";

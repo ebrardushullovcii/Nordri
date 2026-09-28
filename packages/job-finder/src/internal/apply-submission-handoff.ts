@@ -1,10 +1,10 @@
-import type { ApplyAgentResult } from "@unemployed/browser-agent";
+import type { ApplyAgentResult } from "@nordri/browser-agent";
 import {
   ApplyExecutionResultSchema,
   type ApplicationAuthorityEnvelope,
   type ApplicationAutomationMode,
   type ApplyExecutionResult,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import type {
   SubmissionPreflightCapacityFacts,

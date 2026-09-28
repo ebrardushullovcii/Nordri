@@ -4,8 +4,8 @@ import type {
   ResumeDraftEntry,
   ResumeDraftSection,
   WorkHistoryReviewSuggestion,
-} from "@unemployed/contracts";
-import { getResumeEntryFieldTargetId } from "@unemployed/contracts";
+} from "@nordri/contracts";
+import { getResumeEntryFieldTargetId } from "@nordri/contracts";
 import { Button } from "@renderer/components/ui/button";
 import { Checkbox } from "@renderer/components/ui/checkbox";
 import { Field, FieldLabel } from "@renderer/components/ui/field";

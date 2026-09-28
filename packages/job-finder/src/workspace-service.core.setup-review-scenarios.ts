@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { ResumeImportModelRoleStateSchema } from "@unemployed/contracts";
+import { ResumeImportModelRoleStateSchema } from "@nordri/contracts";
 import {
   createSeed,
   createWorkspaceServiceHarness,

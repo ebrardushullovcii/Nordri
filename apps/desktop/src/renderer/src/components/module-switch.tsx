@@ -2,8 +2,8 @@ import type { CSSProperties, KeyboardEvent, MouseEvent } from "react";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { Briefcase, Check, ChevronDown, MessageSquareText } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { suiteModules } from "@unemployed/contracts";
-import type { SuiteModule } from "@unemployed/contracts";
+import { suiteModules } from "@nordri/contracts";
+import type { SuiteModule } from "@nordri/contracts";
 
 import { Popover } from "@renderer/components/ui/popover";
 import type { PopoverPlacement } from "@renderer/components/ui/popover";
@@ -23,31 +23,31 @@ import { cn } from "@renderer/lib/cn";
  * Earlier shapes tried in this repo, and why they lost: text labels centred
  * between the brand and the utilities in the top bar drifted with whatever
  * sat beside them; a two-option segmented control in the sidebar either
- * truncated "Interview Helper" side by side or spent two full rows stacked and
+ * truncated "Live Assistant" side by side or spent two full rows stacked and
  * read as a second navigation list above the real one.
  *
  * Semantics: the trigger is a plain button with `aria-haspopup="menu"` and
  * `aria-expanded`; the menu items are buttons with `role="menuitemradio"` and
  * `aria-checked`, so a screen reader hears "Job Finder, checked" and "Open
- * Interview Helper". Plain buttons keep the settled decision recorded on
+ * Live Assistant". Plain buttons keep the settled decision recorded on
  * `components/ui/segmented-control` (radio/tab roles broke UI automation).
  * Keyboard: Enter, Space or ArrowDown opens and focuses the first item; arrows
  * cycle; Escape closes and returns focus to the trigger; Tab away closes.
  *
  * Variants: `caption` (default; the small-caps module name plus a chevron) for
- * the expanded sidebar, the compact destination card and the Interview Helper
+ * the expanded sidebar, the compact destination card and the Live Assistant
  * brand block; `rail` for the 4rem collapsed rail, where only the module icon
  * and chevron fit and the name lives in the tooltip. `row` and `stacked` are
  * accepted as aliases of `caption` so existing call sites keep working.
  */
 export const MODULE_SWITCH_LABELS = {
   "job-finder": "Job Finder",
-  "interview-helper": "Interview Helper",
+  "live-assistant": "Live Assistant",
 } as const satisfies Record<SuiteModule, string>;
 
 const MODULE_SWITCH_ICONS = {
   "job-finder": Briefcase,
-  "interview-helper": MessageSquareText,
+  "live-assistant": MessageSquareText,
 } as const satisfies Record<SuiteModule, LucideIcon>;
 
 export type ModuleSwitchVariant = "caption" | "rail" | "row" | "stacked";
@@ -234,7 +234,7 @@ export function ModuleSwitch({
 
   return (
     <div
-      aria-label="UnEmployed modules"
+      aria-label="Nordri modules"
       className={cn("min-w-0", className)}
       data-desktop-module-navigation
       data-module-switch-variant={isRail ? "rail" : "caption"}

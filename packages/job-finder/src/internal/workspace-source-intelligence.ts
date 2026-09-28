@@ -11,7 +11,7 @@ import {
   type JobSource,
   type SourceDebugWorkerAttempt,
   type SourceInstructionArtifact,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   assessLocationCompatibility,
   getBroadLocationCompatibility,

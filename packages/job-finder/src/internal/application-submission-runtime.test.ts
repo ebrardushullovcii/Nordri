@@ -9,14 +9,14 @@ import {
   SubmissionFinalControlIdentitySchema,
   SubmissionObservationIdentitySchema,
   type ApplicationAutomationMode,
-} from "@unemployed/contracts";
-import { createInMemoryJobFinderRepository } from "@unemployed/db";
+} from "@nordri/contracts";
+import { createInMemoryJobFinderRepository } from "@nordri/db";
 import type {
   ApplicationFinalActionResult,
   ApplicationFinalControl,
   ApplicationFormObservation,
   ApplicationSafePageUrl,
-} from "@unemployed/browser-runtime";
+} from "@nordri/browser-runtime";
 import { describe, expect, test } from "vitest";
 
 import { createSeed } from "../workspace-service.test-fixtures";

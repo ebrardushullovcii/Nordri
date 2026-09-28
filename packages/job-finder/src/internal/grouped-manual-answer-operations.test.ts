@@ -17,7 +17,7 @@ import {
   type UserActionRequestKind,
   type UserActionScope,
   type UserActionVerificationStrategy,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import {
   approveGroupedManualAnswer,

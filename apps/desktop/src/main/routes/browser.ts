@@ -3,7 +3,7 @@ import {
   DesktopBrowserCommandSchema,
   DesktopBrowserImportInputSchema,
   DesktopBrowserViewportSchema,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { getEmbeddedBrowser } from "../services/browser/embedded-browser";
 import {
   importSignInsFromBrowser,

@@ -1,4 +1,4 @@
-import type { GlobalDailyApplicationPreparationCapacity } from "@unemployed/contracts";
+import type { GlobalDailyApplicationPreparationCapacity } from "@nordri/contracts";
 import { describe, expect, it } from "vitest";
 import {
   FALLBACK_DAILY_APPLICATION_PREPARATION_LIMIT,

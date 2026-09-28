@@ -2,7 +2,7 @@ import {
   AgentTaskNonRetryableProviderError,
   runAgentTask,
   type AgentTaskModel,
-} from "@unemployed/agent-runtime";
+} from "@nordri/agent-runtime";
 import {
   ProfileCopilotPatchGroupSchema,
   ProfileCopilotPatchOperationSchema,
@@ -23,7 +23,7 @@ import {
   type ResumeDraftPatch,
   type ResumeImportFieldCandidateDraft,
   type ToolCall,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { z } from "zod";
 import { buildResumeImportStageInstructions } from "./openai-compatible-resume-import";
 

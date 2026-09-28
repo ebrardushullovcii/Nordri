@@ -1,10 +1,10 @@
 import { describe, expect, test } from "vitest";
-import type { TailoredResumeDraft } from "@unemployed/ai-providers";
+import type { TailoredResumeDraft } from "@nordri/ai-providers";
 import type {
   ResumeDraft,
   WorkHistoryReviewAcknowledgment,
-} from "@unemployed/contracts";
-import { fnv1a32 } from "@unemployed/core";
+} from "@nordri/contracts";
+import { fnv1a32 } from "@nordri/core";
 import {
   buildResumeRenderDocument,
   buildResumeDraftFromTailoredDraft,

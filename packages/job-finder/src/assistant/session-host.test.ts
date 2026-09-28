@@ -4,8 +4,8 @@ import {
   type AssistantContextReference,
   type AssistantEvent,
   type AssistantMessage,
-} from "@unemployed/contracts";
-import { createAssistantRepository } from "@unemployed/db";
+} from "@nordri/contracts";
+import { createAssistantRepository } from "@nordri/db";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
@@ -14,10 +14,13 @@ import {
 } from "../workspace-service.test-support";
 import { createScriptedAssistantModelHandle } from "./model-handle";
 import type { AssistantHostPorts } from "./ports";
-import { createTokenCalibrator } from "@unemployed/agent-runtime";
+import { createTokenCalibrator } from "@nordri/agent-runtime";
 
 import { assembleModelInput } from "./context-assembly";
-import { AssistantSessionHost } from "./session-host";
+import {
+  AssistantSessionHost,
+  type AssistantModelHandle,
+} from "./session-host";
 
 function context(
   overrides: Partial<AssistantContextReference> = {},
@@ -101,6 +104,7 @@ describe("assistant session host", () => {
       delayMs?: number;
       budgetOverrideTokens?: number;
       seed?: ReturnType<typeof createSeed>;
+      modelHandle?: AssistantModelHandle;
     } = {},
   ) {
     const harness = createWorkspaceServiceHarness(
@@ -109,9 +113,11 @@ describe("assistant session host", () => {
     const repository = createAssistantRepository({ filePath: ":memory:" });
     const ports = createPorts();
     const events: AssistantEvent[] = [];
-    const handle = createScriptedAssistantModelHandle(
-      options.delayMs !== undefined ? { delayMs: options.delayMs } : {},
-    );
+    const handle =
+      options.modelHandle ??
+      createScriptedAssistantModelHandle(
+        options.delayMs !== undefined ? { delayMs: options.delayMs } : {},
+      );
     const host = new AssistantSessionHost({
       repository,
       service: harness.workspaceService,
@@ -145,6 +151,47 @@ describe("assistant session host", () => {
     );
     return result;
   }
+
+  it("clears streamed commentary before publishing its shortened progress note", async () => {
+    const text = "Reading the profile before changing it. ".repeat(40);
+    let calls = 0;
+    const { host, events } = setup({
+      modelHandle: {
+        ...createScriptedAssistantModelHandle(),
+        createModel: () => ({
+          chatWithTools: (_messages, _tools, options) => {
+            calls += 1;
+            if (calls > 1) return Promise.resolve({ content: "Done." });
+            options?.onStreamEvent?.({ type: "attempt_started", attempt: 1 });
+            options?.onStreamEvent?.({ type: "text_delta", text });
+            return Promise.resolve({
+              content: text,
+              toolCalls: [
+                {
+                  id: "read_profile_for_commentary",
+                  type: "function",
+                  function: { name: "read_profile", arguments: "{}" },
+                },
+              ],
+            });
+          },
+        }),
+      },
+    });
+    await sendAndWait(host, "Read my profile.");
+    const index = events.findIndex(
+      (event) => event.payload.type === "progress",
+    );
+    expect(index).toBeGreaterThan(0);
+    expect(events[index]?.payload).toEqual({
+      type: "progress",
+      text: text.trim().slice(0, 1_000).trim(),
+    });
+    expect(events[index - 1]?.payload).toMatchObject({
+      type: "text_delta",
+      text: "",
+    });
+  });
 
   function reply(messages: readonly AssistantMessage[]): AssistantMessage {
     return messages.filter((message) => message.role === "assistant").at(-1)!;

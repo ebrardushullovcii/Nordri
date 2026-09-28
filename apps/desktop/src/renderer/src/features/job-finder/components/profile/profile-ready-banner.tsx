@@ -4,7 +4,7 @@ import { Button } from "@renderer/components/ui/button";
 import { JOB_FINDER_ROUTE_PATHS } from "../../lib/job-finder-route-hrefs";
 
 const PROFILE_READY_BANNER_DISMISSED_KEY =
-  "unemployed.profile-ready-banner-dismissed-v1";
+  "nordri.profile-ready-banner-dismissed-v1";
 
 function getReadyBannerDismissedKey(completionIdentity: string): string {
   return `${PROFILE_READY_BANNER_DISMISSED_KEY}:${encodeURIComponent(completionIdentity)}`;

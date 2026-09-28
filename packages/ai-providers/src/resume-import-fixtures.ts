@@ -3,7 +3,7 @@ import type {
   ResumeDocumentBundle,
   ResumeDocumentPage,
   ResumeImportBenchmarkCase,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 function createPage(input: Partial<ResumeDocumentPage> & Pick<ResumeDocumentPage, "pageNumber">): ResumeDocumentPage {
   return {

@@ -2,7 +2,7 @@ import {
   CandidateProfileSchema,
   JobPostingSchema,
   type RawApplyPage,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { describe, expect, test, vi } from "vitest";
 
 import type { JobExtractor, LLMClient } from "../agent/contracts";

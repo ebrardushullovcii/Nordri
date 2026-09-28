@@ -8,7 +8,7 @@ import {
   type ResumeImportRun,
   type ResumeImportProgressEvent,
   type SourceDebugRunRecord,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import type { UseFieldArrayReturn, UseFormReturn } from "react-hook-form";
 import { Button } from "@renderer/components/ui/button";
 import {

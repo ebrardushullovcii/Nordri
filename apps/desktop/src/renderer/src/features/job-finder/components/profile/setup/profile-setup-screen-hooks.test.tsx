@@ -3,11 +3,11 @@
 import type {
   ProfileSetupState,
   ResumeImportFieldCandidateSummary,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   CandidateProfileSchema,
   JobSearchPreferencesSchema,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { act, renderHook } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { buildProfileSetupPayload } from "./profile-setup-screen-actions";

@@ -4,7 +4,7 @@ import type {
   CandidateProfile,
   ProjectGroupedManualAnswerCommand,
   UserActionRequest,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { Layers3, RotateCcw } from "lucide-react";
 
 import { Badge } from "@renderer/components/ui/badge";

@@ -5,7 +5,7 @@ import {
   type ApplicationPacket,
   type ApplicationPrivacyDestination,
   type ApplyRunDetails,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import type { WorkspaceServiceContext } from "./workspace-service-context";
 
 function parsePersistedTimestamp(value: string) {

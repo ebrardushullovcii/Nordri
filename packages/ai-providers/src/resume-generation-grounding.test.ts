@@ -1477,6 +1477,29 @@ describe("collectListingRequestedSkills", () => {
     expect(collected.join(" ")).not.toMatch(/Strong|Workflow platform/i);
   });
 
+  it("does not turn a request for evidence into an aggressive skill", () => {
+    const collected = collectListingRequestedSkills({
+      keySkills: ["TypeScript", "Workflow Automation", "Platform Reliability"],
+      minimumQualifications: [
+        "Evidence of workflow automation and production reliability work.",
+        "Evidence of experience with React and TypeScript.",
+      ],
+    });
+
+    expect(collected).not.toContain("Evidence");
+    expect(collected).toEqual(
+      expect.arrayContaining([
+        "TypeScript",
+        "React",
+        "Workflow Automation",
+        "Platform Reliability",
+      ]),
+    );
+    expect(collectListingRequestedSkills({ keySkills: ["Evidence"] })).toEqual([
+      "Evidence",
+    ]);
+  });
+
   it("collects technologies from including-lists and year-prefixed qualification lines", () => {
     expect(
       collectListingRequestedSkills({

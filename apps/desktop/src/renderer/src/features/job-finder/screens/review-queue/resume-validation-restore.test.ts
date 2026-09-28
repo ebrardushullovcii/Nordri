@@ -3,7 +3,7 @@ import type {
   ResumeDraft,
   ResumeDraftRevision,
   ResumeValidationIssue,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { findResumeValidationRestoreCandidate } from "./resume-validation-restore";
 
 const liveUngroundedSummary =

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ListingActivity } from "@unemployed/contracts";
+import type { ListingActivity } from "@nordri/contracts";
 import { presentListingActivity } from "./listing-activity-presentation";
 
 describe("presentListingActivity", () => {

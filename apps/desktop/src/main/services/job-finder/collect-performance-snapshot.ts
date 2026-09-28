@@ -1,11 +1,11 @@
 import type {
   JobFinderPerformanceSnapshot,
   JobFinderWorkspaceSnapshot,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   buildJobFinderPerformanceSnapshot,
   type JobFinderWorkspaceService,
-} from "@unemployed/job-finder";
+} from "@nordri/job-finder";
 
 type PerformanceWorkspaceService = Pick<
   JobFinderWorkspaceService,

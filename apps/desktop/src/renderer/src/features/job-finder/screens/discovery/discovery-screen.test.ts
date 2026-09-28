@@ -4,7 +4,7 @@ import type {
   JobDiscoveryTarget,
   JobSearchPreferences,
   SavedJob,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   DISCOVERY_CLEAR_MISMATCH_SCORE_FLOOR,
   getDiscoveryConfiguredFilters,
@@ -219,7 +219,7 @@ describe("getDiscoveryConfiguredFilters", () => {
 });
 
 describe("getDiscoverySearchReadiness", () => {
-  it("requires both an explicit search target and an enabled source", () => {
+  it("allows profile-guided searches without explicit targets and still requires a source", () => {
     const noRole = getDiscoverySearchReadiness(
       createSearchPreferences({
         discovery: {
@@ -247,9 +247,10 @@ describe("getDiscoverySearchReadiness", () => {
       createSearchPreferences({ targetRoles: ["Engineer"] }),
     );
 
-    expect(noRole.ready).toBe(false);
+    expect(noRole.ready).toBe(true);
     expect(noRole.hasSearchRoles).toBe(false);
-    expect(noRole.reason).toContain("target role or job family");
+    expect(noRole.reason).toBeNull();
+    expect(noRole.blocker).toBeNull();
     expect(noSource.ready).toBe(false);
     expect(noSource.reason).toContain("job-source URL");
   });

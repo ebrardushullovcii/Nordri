@@ -4,7 +4,7 @@ import type {
   ApplicationDocumentRevision,
   ApplicationRecord,
   ApplyRunDetails,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { cn } from "@renderer/lib/cn";
 import { APPLICATION_DETAIL_FACT_LABEL_CLASS } from "./applications-detail-fact-strip";
 import { Button } from "@renderer/components/ui";
@@ -13,7 +13,7 @@ import { formatApplicationEmployerLine } from "../../lib/job-employer-location-d
 import { StatusBadge } from "../../components/status-badge";
 
 export const CANDIDATE_ASSETS_CHANGED_EVENT =
-  "unemployed:candidate-assets-changed";
+  "nordri:candidate-assets-changed";
 
 export function ApplicationsApplicationDocuments(props: {
   applicationRecord: ApplicationRecord;
@@ -61,7 +61,7 @@ export function ApplicationsApplicationDocuments(props: {
   async function refresh() {
     setStatus("loading");
     try {
-      const result = await window.unemployed.jobFinder.listApplicationDocuments(
+      const result = await window.nordri.jobFinder.listApplicationDocuments(
         {
           jobId: applicationRecord.jobId,
           applicationRecordId: applicationRecord.id,
@@ -110,7 +110,7 @@ export function ApplicationsApplicationDocuments(props: {
     );
     try {
       const document =
-        await window.unemployed.jobFinder.proposeApplicationDocument({
+        await window.nordri.jobFinder.proposeApplicationDocument({
           kind,
           jobId: applicationRecord.jobId,
           applicationRecordId: applicationRecord.id,
@@ -143,7 +143,7 @@ export function ApplicationsApplicationDocuments(props: {
     setMessage(null);
     try {
       const approved =
-        await window.unemployed.jobFinder.approveApplicationDocument({
+        await window.nordri.jobFinder.approveApplicationDocument({
           documentId: selectedDocument.id,
           expectedRevision: selectedDocument.revision,
         });
@@ -177,7 +177,7 @@ export function ApplicationsApplicationDocuments(props: {
     setStatus("working");
     setMessage(null);
     try {
-      const edited = await window.unemployed.jobFinder.editApplicationDocument({
+      const edited = await window.nordri.jobFinder.editApplicationDocument({
         documentId: selectedDocument.id,
         expectedRevision: selectedDocument.revision,
         content,
@@ -202,7 +202,7 @@ export function ApplicationsApplicationDocuments(props: {
     setMessage(null);
     try {
       const result =
-        await window.unemployed.jobFinder.exportApplicationDocument({
+        await window.nordri.jobFinder.exportApplicationDocument({
           documentId: selectedDocument.id,
           expectedRevision: selectedDocument.revision,
         });

@@ -1,4 +1,4 @@
-import type { ResumeApplicationMode, TailoringMode } from "@unemployed/contracts";
+import type { ResumeApplicationMode, TailoringMode } from "@nordri/contracts";
 
 /**
  * The resume approaches a person may choose, in the order guided setup offers

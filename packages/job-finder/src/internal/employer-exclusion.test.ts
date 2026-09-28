@@ -5,7 +5,7 @@ import {
   JobSearchPreferencesSchema,
   SavedJobSchema,
   type CompanyEntity,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import { createSeed } from "../workspace-service.test-fixtures";
 import {

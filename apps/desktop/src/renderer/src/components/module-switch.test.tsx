@@ -41,7 +41,7 @@ function getMenu(): HTMLElement {
 }
 
 function getOption(
-  moduleName: "interview-helper" | "job-finder",
+  moduleName: "live-assistant" | "job-finder",
 ): HTMLButtonElement {
   const option = document.querySelector<HTMLButtonElement>(
     `[data-module-switch-option="${moduleName}"]`,
@@ -56,7 +56,7 @@ describe("ModuleSwitch", () => {
   it("states the active module and offers to switch it", () => {
     const { trigger } = renderSwitch();
 
-    const group = screen.getByRole("group", { name: "UnEmployed modules" });
+    const group = screen.getByRole("group", { name: "Nordri modules" });
     expect(group.dataset.moduleSwitchVariant).toBe("caption");
     expect(group.contains(trigger)).toBe(true);
 
@@ -87,13 +87,13 @@ describe("ModuleSwitch", () => {
     expect(trigger.getAttribute("aria-controls")).toBe(menu.id);
 
     const jobFinder = getOption("job-finder");
-    const interviewHelper = getOption("interview-helper");
+    const liveAssistant = getOption("live-assistant");
     expect(jobFinder.getAttribute("role")).toBe("menuitemradio");
     expect(jobFinder.getAttribute("aria-checked")).toBe("true");
     expect(jobFinder.getAttribute("aria-label")).toBe("Job Finder");
-    expect(interviewHelper.getAttribute("aria-checked")).toBe("false");
-    expect(interviewHelper.getAttribute("aria-label")).toBe(
-      "Open Interview Helper",
+    expect(liveAssistant.getAttribute("aria-checked")).toBe("false");
+    expect(liveAssistant.getAttribute("aria-label")).toBe(
+      "Open Live Assistant",
     );
     expect(document.activeElement).toBe(jobFinder);
   });
@@ -130,15 +130,15 @@ describe("ModuleSwitch", () => {
     fireEvent.click(trigger);
     const menu = getMenu();
     const jobFinder = getOption("job-finder");
-    const interviewHelper = getOption("interview-helper");
+    const liveAssistant = getOption("live-assistant");
 
     fireEvent.keyDown(menu, { key: "ArrowDown" });
-    expect(document.activeElement).toBe(interviewHelper);
+    expect(document.activeElement).toBe(liveAssistant);
     // Past the last item the focus wraps rather than stopping.
     fireEvent.keyDown(menu, { key: "ArrowDown" });
     expect(document.activeElement).toBe(jobFinder);
     fireEvent.keyDown(menu, { key: "ArrowUp" });
-    expect(document.activeElement).toBe(interviewHelper);
+    expect(document.activeElement).toBe(liveAssistant);
     fireEvent.keyDown(menu, { key: "ArrowUp" });
     expect(document.activeElement).toBe(jobFinder);
   });
@@ -168,10 +168,10 @@ describe("ModuleSwitch", () => {
     const { onSelectModule, trigger } = renderSwitch();
 
     fireEvent.click(trigger);
-    fireEvent.click(getOption("interview-helper"));
+    fireEvent.click(getOption("live-assistant"));
 
     expect(onSelectModule).toHaveBeenCalledTimes(1);
-    expect(onSelectModule).toHaveBeenCalledWith("interview-helper");
+    expect(onSelectModule).toHaveBeenCalledWith("live-assistant");
     expect(screen.queryByRole("menu")).toBeNull();
   });
 
@@ -192,7 +192,7 @@ describe("ModuleSwitch", () => {
     fireEvent.click(trigger);
     // A mousedown inside the menu must not read as an outside click, or
     // choosing an item would close the menu before the click lands.
-    fireEvent.mouseDown(getOption("interview-helper"));
+    fireEvent.mouseDown(getOption("live-assistant"));
     expect(screen.getByRole("menu")).toBeTruthy();
 
     fireEvent.mouseDown(document.body);
@@ -204,7 +204,7 @@ describe("ModuleSwitch", () => {
     const { trigger } = renderSwitch({ variant: "rail" });
 
     expect(
-      screen.getByRole("group", { name: "UnEmployed modules" }).dataset
+      screen.getByRole("group", { name: "Nordri modules" }).dataset
         .moduleSwitchVariant,
     ).toBe("rail");
     expect(trigger.textContent).toBe("");
@@ -215,14 +215,14 @@ describe("ModuleSwitch", () => {
     );
 
     fireEvent.click(trigger);
-    expect(getOption("interview-helper").textContent).toBe("Interview Helper");
+    expect(getOption("live-assistant").textContent).toBe("Live Assistant");
   });
 
   it("treats the legacy row and stacked variants as the caption variant", () => {
     for (const variant of ["row", "stacked"] as const) {
       renderSwitch({ variant });
       expect(
-        screen.getByRole("group", { name: "UnEmployed modules" }).dataset
+        screen.getByRole("group", { name: "Nordri modules" }).dataset
           .moduleSwitchVariant,
       ).toBe("caption");
       expect(getTrigger().textContent).toBe("Job Finder");
@@ -230,16 +230,16 @@ describe("ModuleSwitch", () => {
     }
   });
 
-  it("names Interview Helper as the active module when that is where the user is", () => {
-    const { trigger } = renderSwitch({ activeModule: "interview-helper" });
+  it("names Live Assistant as the active module when that is where the user is", () => {
+    const { trigger } = renderSwitch({ activeModule: "live-assistant" });
 
     expect(trigger.getAttribute("aria-label")).toBe(
-      "Interview Helper, switch module",
+      "Live Assistant, switch module",
     );
-    expect(trigger.textContent).toBe("Interview Helper");
+    expect(trigger.textContent).toBe("Live Assistant");
 
     fireEvent.click(trigger);
-    expect(getOption("interview-helper").getAttribute("aria-checked")).toBe(
+    expect(getOption("live-assistant").getAttribute("aria-checked")).toBe(
       "true",
     );
     expect(getOption("job-finder").getAttribute("aria-label")).toBe(

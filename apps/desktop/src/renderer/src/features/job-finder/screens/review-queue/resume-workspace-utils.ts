@@ -6,7 +6,7 @@ import type {
   ResumeDraftOrigin,
   ResumeDraftRevision,
   TailoredAsset,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 const generatedResumeOrigins = new Set<ResumeDraftOrigin>([
   "ai_generated",

@@ -12,7 +12,7 @@ import os from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { SavedJobSchema } from "@unemployed/contracts";
+import { SavedJobSchema } from "@nordri/contracts";
 
 import { createFileJobFinderRepository } from "./index";
 import {
@@ -72,7 +72,7 @@ function createDeterministicEnvironment(): WorkspaceRecoveryEnvironment {
 
 async function createRecoveryFixture(): Promise<RecoveryFixture> {
   const tempDirectory = await mkdtemp(
-    path.join(os.tmpdir(), "unemployed-db-recovery-"),
+    path.join(os.tmpdir(), "nordri-db-recovery-"),
   );
   const filePath = path.join(tempDirectory, DATABASE_FILE_NAME);
   const backupPaths = getWorkspaceDatabaseBackupPaths(filePath);

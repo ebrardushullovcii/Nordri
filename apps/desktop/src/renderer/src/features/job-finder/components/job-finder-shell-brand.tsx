@@ -1,5 +1,5 @@
 import type { CSSProperties } from "react";
-import type { SuiteModule } from "@unemployed/contracts";
+import type { SuiteModule } from "@nordri/contracts";
 
 import { ModuleSwitch } from "@renderer/components/module-switch";
 import { cn } from "@renderer/lib/cn";
@@ -44,7 +44,7 @@ export function JobFinderShellBrand(props: {
         className="font-display text-[1.45rem] font-black leading-[1.05] tracking-[-0.08em] text-(--headline-primary) max-[639px]:hidden sm:text-[1.6rem]"
         data-desktop-brand-wordmark
       >
-        UNEMPLOYED
+        NORDRI
       </span>
       {/* The module name is the subtitle of the wordmark, and that subtitle is
           the module switcher: one line, always visible, in the one place a

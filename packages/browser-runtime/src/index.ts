@@ -13,7 +13,7 @@ export type {
 export type {
   BrowserVisualSnapshotRef,
   BrowserVisualSnapshotRequest,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 export {
   createCatalogBrowserSessionRuntime,

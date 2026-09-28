@@ -8,7 +8,7 @@ import {
   JobSearchPreferencesSchema,
   createFreshStartCandidateProfile,
   PROFILE_SETUP_PLACEHOLDER_HEADLINE,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   createProfileEditorValues,
   createSearchPreferencesEditorValues,
@@ -329,6 +329,33 @@ describe("formatProfileSetupReviewValue", () => {
 });
 
 describe("getProfileSetupReviewItemCopy", () => {
+  it.each(["authorizedWorkCountries", "requiresVisaSponsorship"])(
+    "counts missing %s as required but keeps imported answers optional to review",
+    (key) => {
+      const item = {
+        severity: "recommended" as const,
+        status: "pending" as const,
+        target: { domain: "work_eligibility" as const, key, recordId: null },
+        proposedValue: null,
+        sourceCandidateId: null,
+        sourceRunId: null,
+      };
+      expect(isFinishBlockingReviewItem(item)).toBe(true);
+      expect(isReviewableSuggestionItem(item)).toBe(false);
+      expect(
+        isFinishBlockingReviewItem({
+          ...item,
+          proposedValue: "Germany",
+          sourceCandidateId: "import_work_country",
+          sourceRunId: "import_1",
+        }),
+      ).toBe(false);
+      expect(isFinishBlockingReviewItem({ ...item, status: "dismissed" })).toBe(
+        false,
+      );
+    },
+  );
+
   it("preserves the explanation for an imported eligibility conflict", () => {
     const reason =
       "Your resume differs from your saved answer. Confirm which answer to use.";
@@ -511,7 +538,20 @@ describe("profile setup review priority", () => {
         hasDiscoverySource: true,
         hasWorkEligibilityAnswers: true,
       },
-      reviewItems: [recommendedImportedLocation, requiredMissingWorkMode],
+      reviewItems: [
+        recommendedImportedLocation,
+        requiredMissingWorkMode,
+        // Work authorization/sponsorship may already be satisfied through
+        // saved screener answers rather than the structured country field.
+        {
+          ...requiredMissingWorkMode,
+          target: {
+            domain: "work_eligibility",
+            key: "authorizedWorkCountries",
+            recordId: null,
+          },
+        },
+      ],
     });
     expect(presentation.blockingPendingReviewItemCount).toBe(0);
     expect(presentation.remainingBlockerCount).toBe(0);

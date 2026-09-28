@@ -9,7 +9,7 @@ import {
   type UserActionRequest,
   type UserActionRequestState,
   type UserActionVerificationResultInput,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 const terminalUserActionStates: ReadonlySet<UserActionRequestState> = new Set([
   "resolved",

@@ -8,7 +8,7 @@ import {
   type CampaignRuleOperator,
   type JobSearchCampaign,
   type SaveCampaignRuleInput,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { Button } from "@renderer/components/ui/button";
 import { Input } from "@renderer/components/ui/input";
 import { useEffect, useMemo, useState } from "react";

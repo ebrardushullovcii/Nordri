@@ -11,8 +11,8 @@ import {
   type TailoredAsset,
   type TailoringMode,
   type WorkHistoryReviewSuggestion,
-} from "@unemployed/contracts";
-import { fnv1a32 } from "@unemployed/core";
+} from "@nordri/contracts";
+import { fnv1a32 } from "@nordri/core";
 import {
   buildResumeRenderDocument,
   buildTailoredAssetBridge,

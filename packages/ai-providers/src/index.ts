@@ -2,7 +2,7 @@ export * from "./shared";
 export * from "./resume-import";
 export * from "./resume-vision";
 export * from "./browser-visual-analysis";
-export * from "./interview-helper";
+export * from "./live-assistant";
 export * from "./resume-import-helpers";
 export * from "./resume-import-fixtures";
 export * from "./resume-generation-grounding";

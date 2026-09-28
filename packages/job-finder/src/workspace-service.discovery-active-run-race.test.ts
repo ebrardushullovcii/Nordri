@@ -1,12 +1,12 @@
-import type { DiscoveryActivityEvent } from "@unemployed/contracts";
+import type { DiscoveryActivityEvent } from "@nordri/contracts";
 import {
   DiscoveryLedgerEntrySchema,
   type DiscoveryLedgerEntry,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   createFileJobFinderRepository,
   createInMemoryJobFinderRepository,
-} from "@unemployed/db";
+} from "@nordri/db";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -398,7 +398,7 @@ describe("active-run concurrent user decisions", () => {
     const temporaryDirectories = new Set<string>();
     try {
       const directory = await mkdtemp(
-        path.join(os.tmpdir(), "unemployed-discovery-race-"),
+        path.join(os.tmpdir(), "nordri-discovery-race-"),
       );
       temporaryDirectories.add(directory);
       const filePath = path.join(directory, "job-finder-state.sqlite");

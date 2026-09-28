@@ -9,7 +9,7 @@ import {
   type RapidReviewUndo,
   RapidReviewUndoSchema,
   type SavedJob,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 /**
  * Pure, append-only operations over `RapidReviewDecisionLog` entries.

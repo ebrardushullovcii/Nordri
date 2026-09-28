@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import type { ProfileCopilotPatchOperation } from "@unemployed/contracts";
+import type { ProfileCopilotPatchOperation } from "@nordri/contracts";
 
 import {
   findBulletsOnTwoCards,
@@ -77,7 +77,7 @@ interface ProfileOperationCase {
 }
 
 // Compile-time exhaustive map over ProfileCopilotPatchOperation discriminants.
-// Adding or removing an operation kind in @unemployed/contracts must update
+// Adding or removing an operation kind in @nordri/contracts must update
 // this table or this file fails to typecheck.
 const operationCases: Record<
   ProfileCopilotPatchOperation["operation"],

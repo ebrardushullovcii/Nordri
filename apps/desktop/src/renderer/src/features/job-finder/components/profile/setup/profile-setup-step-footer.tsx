@@ -1,7 +1,7 @@
 import {
   normalizeProfileSetupStep,
   type ProfileSetupStep,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { Button } from "@renderer/components/ui/button";
 import { PROFILE_SETUP_VALIDATION_ALERT_ID } from "./profile-setup-screen-helpers";
 import { getNextProfileSetupStep } from "./profile-setup-steps";
@@ -111,12 +111,12 @@ export function formatProfileSetupFinishReadiness(input: {
 }
 
 const NAMED_BLOCKER_LIMIT = 3;
-const REVIEW_LABEL_PATTERN = /^(?:Confirm|Fill in) /u;
+const REVIEW_LABEL_PATTERN = /^Confirm /u;
 const STEP_SUFFIX_PATTERN = /\s\((.+) step\)$/u;
 
 /**
  * A short list is named in full. A long one is mostly imported details
- * waiting for a "Confirm" or "Fill in", and naming twenty-three of them turned
+ * waiting for a "Confirm", and naming twenty-three of them turned
  * the footer into a paragraph that pushed the form off screen. Real blockers
  * (a missing source, a missing name) stay named; the review items collapse
  * into one count per step, since the step itself lists them.

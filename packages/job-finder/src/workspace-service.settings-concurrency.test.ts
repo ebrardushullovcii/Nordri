@@ -1,9 +1,9 @@
-import type { ApplicationRecord } from "@unemployed/contracts";
-import { ApplicationCrmSettingsSchema } from "@unemployed/contracts";
+import type { ApplicationRecord } from "@nordri/contracts";
+import { ApplicationCrmSettingsSchema } from "@nordri/contracts";
 import {
   createInMemoryJobFinderRepository,
   type JobFinderRepository,
-} from "@unemployed/db";
+} from "@nordri/db";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 
 import { createJobFinderWorkspaceService } from "./index";

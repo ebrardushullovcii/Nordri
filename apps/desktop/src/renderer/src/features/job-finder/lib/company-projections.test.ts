@@ -5,7 +5,7 @@ import type {
   CompanyEntity,
   DiscoveryJobView,
   SavedJob,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   indexCompanyJobs,
   projectCompanyApplicationHistory,

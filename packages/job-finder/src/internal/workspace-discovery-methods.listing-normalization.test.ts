@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { JobPostingSchema } from "@unemployed/contracts";
+import { JobPostingSchema } from "@nordri/contracts";
 
 import { stripPictographGlyphs } from "./listing-detail-extraction";
 import { createMatchAssessment } from "./matching";

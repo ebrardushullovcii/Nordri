@@ -1,7 +1,7 @@
 import {
   filterCandidateFacingResumeKeywords,
   type TailoredResumeDraft,
-} from "@unemployed/ai-providers";
+} from "@nordri/ai-providers";
 import type {
   CandidateProfile,
   ResumeDraft,
@@ -17,9 +17,9 @@ import type {
   TailoredAsset,
   TailoredResumeCoverageMetadata,
   WorkHistoryReviewAcknowledgment,
-} from "@unemployed/contracts";
-import { ResumeDraftSchema } from "@unemployed/contracts";
-import { fnv1a32 } from "@unemployed/core";
+} from "@nordri/contracts";
+import { ResumeDraftSchema } from "@nordri/contracts";
+import { fnv1a32 } from "@nordri/core";
 import {
   createEntry,
   createSection,

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { JobFinderWorkspaceSnapshot } from "@unemployed/contracts";
+import type { JobFinderWorkspaceSnapshot } from "@nordri/contracts";
 
 import {
   countApplicationLedgerEntries,

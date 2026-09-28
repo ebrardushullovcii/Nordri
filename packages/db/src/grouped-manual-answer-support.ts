@@ -11,7 +11,7 @@ import {
   type GroupedManualAnswerDecision,
   type UserActionEvent,
   type UserActionRequest,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import type {
   CommitGroupedManualAnswerInput,
