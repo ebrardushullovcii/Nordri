@@ -1,0 +1,281 @@
+import { APPLICATION_SKIPPED_BY_PERSON_LABEL } from "@unemployed/contracts";
+import type {
+  ApplicationRecord,
+  AssistantMessagePart,
+  DiscoveryJobView,
+  JobFinderWorkspaceSnapshot,
+  ReviewQueueItem,
+  SavedJob,
+} from "@unemployed/contracts";
+
+/**
+ * Compact shapes for the model and the rows the person sees. Every read is
+ * bounded; a long list goes into a result set the model pages through.
+ */
+
+// The same links global search uses, so a row opens the record in the app.
+export const JOB_ROUTE = (jobId: string) =>
+  `/job-finder/discovery?jobId=${encodeURIComponent(jobId)}`;
+export const SHORTLIST_ROUTE = (jobId: string) =>
+  `/job-finder/review-queue?jobId=${encodeURIComponent(jobId)}`;
+export const RESUME_ROUTE = (jobId: string) =>
+  `/job-finder/review-queue/${encodeURIComponent(jobId)}/resume`;
+export const APPLICATION_ROUTE = (recordId: string) =>
+  `/job-finder/applications?applicationRecordId=${encodeURIComponent(recordId)}`;
+
+export function compactJob(job: SavedJob | DiscoveryJobView) {
+  return {
+    id: job.id,
+    title: job.title,
+    company: job.company,
+    location: job.location,
+    workMode: job.workMode,
+    status: job.status,
+    score: job.matchAssessment.score,
+    recommendation: job.matchAssessment.recommendation,
+    postedAt: job.postedAt,
+    salary: job.salaryText,
+    url: job.applicationUrl ?? job.canonicalUrl,
+    listing:
+      "listingActivity" in job && job.listingActivity
+        ? job.listingActivity.status
+        : undefined,
+  };
+}
+
+export function jobEvidence(job: SavedJob | DiscoveryJobView) {
+  return {
+    ...compactJob(job),
+    reasons: job.matchAssessment.reasons.slice(0, 6),
+    gaps: job.matchAssessment.gaps.slice(0, 6),
+    rationale: job.matchAssessment.recommendationRationale,
+    keySkills: job.keySkills.slice(0, 20),
+    seniority: job.seniority,
+    employmentType: job.employmentType,
+    resumeLevel: job.resumeTailoringMode ?? null,
+    resumeMode: job.resumeApplicationMode ?? null,
+  };
+}
+
+export function jobDetail(job: SavedJob | DiscoveryJobView) {
+  return {
+    ...jobEvidence(job),
+    summary: job.summary,
+    description: job.description.slice(0, 6_000),
+    responsibilities: job.responsibilities.slice(0, 15),
+    minimumQualifications: job.minimumQualifications.slice(0, 15),
+    preferredQualifications: job.preferredQualifications.slice(0, 15),
+    benefits: job.benefits.slice(0, 10),
+  };
+}
+
+export function compactShortlistItem(item: ReviewQueueItem) {
+  return {
+    jobId: item.jobId,
+    title: item.title,
+    company: item.company,
+    location: item.location,
+    score: item.matchScore,
+    resume: item.resumeReview.status,
+    resumeMode: item.resumeApplicationMode,
+    resumeLevel: item.resumeTailoringMode ?? null,
+    linesToDecide: item.resumeLinesToDecide ?? 0,
+    assetStatus: item.assetStatus,
+  };
+}
+
+export function compactApplication(record: ApplicationRecord) {
+  return {
+    id: record.id,
+    jobId: record.jobId,
+    title: record.title,
+    company: record.company,
+    status: record.status,
+    lastAttempt: record.lastAttemptState,
+    next: record.nextActionLabel,
+    last: record.lastActionLabel,
+    blocker: record.latestBlocker?.summary ?? null,
+    stage: record.crm?.stage ?? null,
+    crmRevision: record.crm?.revision ?? 0,
+    mode: record.automationMode,
+    updatedAt: record.lastUpdatedAt,
+  };
+}
+
+/** Every saved job the snapshot knows, deduplicated by id. */
+export function allJobs(
+  snapshot: JobFinderWorkspaceSnapshot,
+): DiscoveryJobView[] {
+  const byId = new Map<string, DiscoveryJobView>();
+  for (const job of [
+    ...snapshot.discoveryJobs,
+    ...snapshot.companyJobs,
+    ...snapshot.dismissedDiscoveryJobs,
+  ]) {
+    if (!byId.has(job.id)) byId.set(job.id, job);
+  }
+  return [...byId.values()];
+}
+
+export function findJob(
+  snapshot: JobFinderWorkspaceSnapshot,
+  jobId: string,
+): DiscoveryJobView | null {
+  return allJobs(snapshot).find((job) => job.id === jobId) ?? null;
+}
+
+export function jobRowsPart(input: {
+  jobs: readonly (SavedJob | DiscoveryJobView)[];
+  title: string | null;
+  resultSetId: string | null;
+  totalCount?: number;
+}): AssistantMessagePart {
+  return {
+    type: "records",
+    kind: "jobs",
+    title: input.title,
+    resultSetId: input.resultSetId,
+    totalCount: input.totalCount ?? input.jobs.length,
+    rows: input.jobs.slice(0, 25).map((job) => ({
+      id: job.id,
+      title: job.title.slice(0, 300),
+      subtitle: `${job.company} · ${job.location}`.slice(0, 300),
+      status: `${job.matchAssessment.score}% match`,
+      route:
+        job.status === "discovered"
+          ? JOB_ROUTE(job.id)
+          : SHORTLIST_ROUTE(job.id),
+    })),
+  };
+}
+
+export function applicationRowsPart(input: {
+  records: readonly ApplicationRecord[];
+  title: string | null;
+  resultSetId?: string | null;
+}): AssistantMessagePart {
+  return {
+    type: "records",
+    kind: "applications",
+    title: input.title,
+    resultSetId: input.resultSetId ?? null,
+    totalCount: input.records.length,
+    rows: input.records.slice(0, 25).map((record) => ({
+      id: record.id,
+      title: record.title.slice(0, 300),
+      subtitle: record.company.slice(0, 300),
+      status: record.nextActionLabel ?? record.lastActionLabel,
+      route: APPLICATION_ROUTE(record.id),
+    })),
+  };
+}
+
+export function plural(count: number, noun: string, pluralNoun = `${noun}s`) {
+  return `${count} ${count === 1 ? noun : pluralNoun}`;
+}
+
+export function unresolvedUserActions(snapshot: JobFinderWorkspaceSnapshot) {
+  return snapshot.userActionRequests.filter(
+    (request) =>
+      !["resolved", "cancelled", "skipped", "expired", "superseded"].includes(
+        request.state,
+      ),
+  );
+}
+
+/** Lowercase letters and digits only, for comparing company names and titles. */
+export function comparableName(value: string | null | undefined): string {
+  return (value ?? "")
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[^a-z0-9]+/gu, " ")
+    .trim();
+}
+
+export interface JobCaveats {
+  /** The person excluded this employer. */
+  excludedEmployer: boolean;
+  /** Another saved job with the same title and listing text already has an application. */
+  alreadyAppliedAs: { jobId: string; status: string } | null;
+}
+
+/**
+ * Facts a job pick must respect (employer exclusions, and ADR 0030's one
+ * listing per job: the same posting found on two sites is one job).
+ */
+export function createJobCaveats(snapshot: JobFinderWorkspaceSnapshot) {
+  const excluded = new Set(
+    snapshot.searchPreferences.companyBlacklist.map(comparableName),
+  );
+  const jobs = allJobs(snapshot);
+  const byId = new Map(jobs.map((job) => [job.id, job]));
+  const applied: { job: DiscoveryJobView; status: string }[] = [];
+  for (const record of snapshot.applicationRecords) {
+    const job = byId.get(record.jobId);
+    if (job) applied.push({ job, status: record.status });
+  }
+  const descriptionKey = (job: DiscoveryJobView) =>
+    comparableName(job.description).slice(0, 240);
+  return (job: DiscoveryJobView): JobCaveats => {
+    const title = comparableName(job.title);
+    const twin = applied.find(
+      (entry) =>
+        entry.job.id !== job.id &&
+        comparableName(entry.job.title) === title &&
+        (comparableName(entry.job.company) === comparableName(job.company) ||
+          (descriptionKey(job).length > 40 &&
+            descriptionKey(entry.job) === descriptionKey(job))),
+    );
+    const ownRecord = snapshot.applicationRecords.find(
+      (record) => record.jobId === job.id,
+    );
+    return {
+      excludedEmployer: excluded.has(comparableName(job.company)),
+      alreadyAppliedAs: ownRecord
+        ? { jobId: job.id, status: ownRecord.status }
+        : twin
+          ? { jobId: twin.job.id, status: twin.status }
+          : null,
+    };
+  };
+}
+
+/** Where a job's application stands, in plain words, from its records. */
+export function describeApplicationStanding(
+  snapshot: JobFinderWorkspaceSnapshot,
+  jobId: string,
+): string {
+  const record = snapshot.applicationRecords.find(
+    (entry) => entry.jobId === jobId,
+  );
+  if (!record) return "not applied";
+  if (record.lastActionLabel === APPLICATION_SKIPPED_BY_PERSON_LABEL)
+    return "skipped";
+  return record.status.replaceAll("_", " ");
+}
+
+/**
+ * Background work is paused only by the person (Home's Pause, Safeguards or
+ * asking the assistant). Work that would run in the background waits for
+ * them instead of lifting their brake on its own.
+ */
+export function pausedByPersonMessage(
+  activityControl:
+    | {
+        paused?: boolean | null;
+        pausedAt?: string | null;
+        reason?: string | null;
+      }
+    | null
+    | undefined,
+  what: string,
+): string | null {
+  if (!activityControl?.paused) return null;
+  const since = activityControl.pausedAt
+    ? ` since ${activityControl.pausedAt.slice(0, 16).replace("T", " ")} UTC`
+    : "";
+  const reason = activityControl.reason
+    ? ` (reason: ${activityControl.reason})`
+    : "";
+  return `Nothing started: the person paused background work${since}${reason}, so ${what} cannot run. Do not resume it yourself. Tell them it is paused and ask whether to resume it and go ahead. Resume with pause_activity only if their message already says to go ahead even though it is paused, and say that you resumed it.`;
+}

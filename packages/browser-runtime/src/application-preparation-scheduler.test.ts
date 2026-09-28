@@ -90,4 +90,35 @@ describe("application preparation ownership", () => {
     const next = await scheduler.acquire("https://three.example/apply");
     next.release();
   });
+
+  test("a form waiting for a browser tab lets others on its site carry on", async () => {
+    const scheduler = createApplicationPreparationScheduler(1);
+    const retry = await scheduler.acquire(
+      "http://127.0.0.1:47950/greenhouse/apply/9",
+    );
+    let tabFree: () => void = () => undefined;
+    const waitingForTab = retry.suspend(
+      () => new Promise<void>((resolve) => (tabFree = resolve)),
+    );
+    // Another application on the same site (and the only worker slot) is
+    // not blocked by the retry that is waiting for a tab.
+    const other = await scheduler.acquire(
+      "http://127.0.0.1:47950/greenhouse/apply/8",
+    );
+    other.release();
+    tabFree();
+    await waitingForTab;
+    // The retry has the site again after its wait.
+    let thirdGranted = false;
+    const third = scheduler
+      .acquire("http://127.0.0.1:47950/greenhouse/apply/3")
+      .then((lease) => {
+        thirdGranted = true;
+        return lease;
+      });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(thirdGranted).toBe(false);
+    retry.release();
+    (await third).release();
+  });
 });

@@ -32,6 +32,8 @@ export const DEFAULT_VISION_MODEL_REASONING_EFFORT: ModelReasoningEffort =
 export type CompatibleMessage = {
   role: "system" | "user" | "assistant" | "tool";
   content: unknown;
+  /** DeepSeek thinking-mode continuation, sent back on later tool turns. */
+  reasoning_content?: string;
   tool_call_id?: string;
   tool_calls?: Array<{
     id: string;
@@ -49,10 +51,24 @@ export type CompatibleTool = {
   };
 };
 
+export type ModelUsagePayload = {
+  prompt_tokens?: number | undefined;
+  completion_tokens?: number | undefined;
+  prompt_tokens_details?: { cached_tokens?: number | undefined } | undefined;
+  completion_tokens_details?:
+    | { reasoning_tokens?: number | undefined }
+    | undefined;
+  /** DeepSeek reports cache hits under its own names. */
+  prompt_cache_hit_tokens?: number | undefined;
+};
+
 export type ChatCompletionsPayload = {
+  usage?: ModelUsagePayload;
   choices?: Array<{
+    finish_reason?: string;
     message?: {
       content?: string;
+      reasoning_content?: string;
       tool_calls?: Array<{
         id: string;
         type: string;
@@ -75,6 +91,13 @@ export type ResponsesPayload = {
     content?: Array<{ type?: string; text?: string }>;
   }>;
   output_text?: string;
+  usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+    input_tokens_details?: { cached_tokens?: number };
+    output_tokens_details?: { reasoning_tokens?: number };
+  };
+  status?: string;
   error?: { message?: string };
 };
 
@@ -193,8 +216,24 @@ function normalizeResponsesPayload(
             ? { tool_calls: toolCalls }
             : {}),
         },
+        ...(payload.status ? { finish_reason: payload.status } : {}),
       },
     ],
+    ...(payload.usage
+      ? {
+          usage: {
+            prompt_tokens: payload.usage.input_tokens,
+            completion_tokens: payload.usage.output_tokens,
+            prompt_tokens_details: {
+              cached_tokens: payload.usage.input_tokens_details?.cached_tokens,
+            },
+            completion_tokens_details: {
+              reasoning_tokens:
+                payload.usage.output_tokens_details?.reasoning_tokens,
+            },
+          },
+        }
+      : {}),
     ...(payload.error ? { error: payload.error } : {}),
   };
 }
@@ -368,9 +407,14 @@ export function buildModelRequestBody(input: {
    * 4–15s, versus total silence without it).
    */
   reasoningSummary?: boolean | undefined;
+  /** Chat Completions only: ask for a usage chunk at the end of a stream. */
+  includeStreamUsage?: boolean | undefined;
 }): Record<string, unknown> {
   if (input.apiMode === "chat_completions") {
     return {
+      ...(input.includeStreamUsage
+        ? { stream_options: { include_usage: true } }
+        : {}),
       model: input.model,
       ...(!input.reasoningEffort ? { temperature: 0.2 } : {}),
       ...(input.reasoningEffort

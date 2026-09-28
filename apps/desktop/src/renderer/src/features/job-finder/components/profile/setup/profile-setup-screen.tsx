@@ -4,9 +4,7 @@ import {
   RESUME_IMPORT_INTERRUPTED_MESSAGE,
   evaluateProfileSetupReadiness,
   type CandidateProfile,
-  type JobFinderWorkspaceSnapshot,
   type JobSearchPreferences,
-  type ProfileCopilotContext,
   type ProfileSetupReviewActionOptions,
   type ProfileSetupState,
   type ProfileSetupStep,
@@ -19,20 +17,22 @@ import {
 import { Button } from "@renderer/components/ui/button";
 import { LockedScreenLayout } from "../../locked-screen-layout";
 import { PageHeader } from "../../page-header";
-import { ProfileCopilotRail } from "../profile-copilot-rail";
-import { COPILOT_BOTTOM_OFFSET } from "../profile-copilot-rail-layout";
+import { AskAssistantButton } from "../../../assistant/ask-assistant-button";
+import { useAssistantContextSource } from "../../../assistant/assistant-provider";
+import {
+  flattenDirtyFields,
+  profileFieldForEditorPath,
+} from "../../../assistant/assistant-context-capture";
 import { buildCopilotStarterQuestion } from "../profile-copilot-prompts";
 import { ProfileSetupStepEditor } from "./profile-setup-step-editor";
 import { ProfileSetupStepFooter } from "./profile-setup-step-footer";
 import {
   buildProfileSetupReadinessPresentation,
-  buildSetupCopilotPlaceholder,
   getProfileSetupReadinessBlockerLabel,
   getProfileSetupReadinessBlockerStep,
   getProfileSetupReviewItemCopy,
   isFinishBlockingReviewItem,
   isProfileSetupMissingFieldReviewItem,
-  buildStepEditorContext,
 } from "./profile-setup-screen-helpers";
 import {
   ProfileSetupPathCard,
@@ -68,10 +68,6 @@ const activeSetupTopClassName = "grid min-w-0 gap-3 overflow-visible pb-3";
 // extra content tail only creates a blank scroll range after review cards
 // collapse.
 export const PROFILE_SETUP_FOOTER_CLEARANCE_CLASS_NAME = "";
-const unsavedSetupCopilotMessage =
-  "Save this step before asking the Assistant to edit it so your current setup draft does not get overwritten.";
-const unsavedSetupCopilotActionsMessage =
-  "Save this step before applying, rejecting, or undoing copilot changes so your current setup draft stays intact.";
 const unsavedSetupReviewActionsMessage =
   "Save this step before confirming, dismissing, or clearing review items so your current setup draft stays intact.";
 /**
@@ -121,12 +117,9 @@ export function ProfileSetupScreen(props: {
   isImportResumePending: boolean;
   isProfileSetupPending: boolean;
   isReviewItemPending: (reviewItemId: string) => boolean;
-  profileCopilotBusy: boolean;
-  profileMutationPending: boolean;
   latestResumeImportReviewCandidates: readonly ResumeImportFieldCandidateSummary[];
   latestResumeImportRun: ResumeImportRun | null;
   resumeImportProgress: ResumeImportProgressEvent | null;
-  onApplyProfileCopilotPatchGroup: (patchGroupId: string) => void;
   onApplyProfileSetupReviewAction: (
     reviewItemId: string,
     action: "confirm" | "dismiss" | "clear_value",
@@ -146,8 +139,6 @@ export function ProfileSetupScreen(props: {
    * exact-request save retry captured before the edit.
    */
   onProfileSurfaceDraftEdited?: () => void;
-  profileCopilotPendingContextKey: string | null;
-  onRejectProfileCopilotPatchGroup: (patchGroupId: string) => void;
   onResumeSetup: (step: ProfileSetupStep) => void;
   onRunSourceDebug?: (
     targetId: string,
@@ -165,14 +156,7 @@ export function ProfileSetupScreen(props: {
       stayOnCurrentStep?: boolean;
     },
   ) => void;
-  onSendProfileCopilotMessage: (
-    content: string,
-    context?: ProfileCopilotContext,
-  ) => void | Promise<boolean>;
-  onUndoProfileRevision: (revisionId: string) => void;
   profile: CandidateProfile;
-  profileCopilotMessages: readonly JobFinderWorkspaceSnapshot["profileCopilotMessages"][number][];
-  profileRevisions: readonly JobFinderWorkspaceSnapshot["profileRevisions"][number][];
   profileSetupState: ProfileSetupState;
   recentSourceDebugRuns?: readonly SourceDebugRunRecord[];
   resumeApplicationMode?: ResumeApplicationMode;
@@ -184,12 +168,9 @@ export function ProfileSetupScreen(props: {
     isImportResumePending,
     isProfileSetupPending,
     isReviewItemPending,
-    profileCopilotBusy,
-    profileMutationPending,
     latestResumeImportReviewCandidates,
     latestResumeImportRun,
     resumeImportProgress,
-    onApplyProfileCopilotPatchGroup,
     onApplyProfileSetupReviewAction,
     onContinueToProfile,
     onImportResume,
@@ -199,16 +180,10 @@ export function ProfileSetupScreen(props: {
     onCancelImportResume,
     onProfileSurfaceDirtyChange,
     onProfileSurfaceDraftEdited,
-    profileCopilotPendingContextKey,
-    onRejectProfileCopilotPatchGroup,
     onResumeSetup,
     onRunSourceDebug,
     onSaveSetupStep,
-    onSendProfileCopilotMessage,
-    onUndoProfileRevision,
     profile,
-    profileCopilotMessages,
-    profileRevisions,
     profileSetupState,
     recentSourceDebugRuns = [],
     resumeApplicationMode,
@@ -276,9 +251,6 @@ export function ProfileSetupScreen(props: {
     return () => window.cancelAnimationFrame(frameId);
   }, [profileSetupState.currentStep]);
 
-  const setupCopilotContext = buildStepEditorContext(
-    profileSetupState.currentStep,
-  );
   const {
     currentStepReviewItems,
     focusedReviewItemId,
@@ -348,15 +320,25 @@ export function ProfileSetupScreen(props: {
   const setupActionsDisabledReason = isResumeImportProcessing
     ? "Resume import is updating this workspace. Wait for it to finish before editing or reviewing profile details."
     : null;
-  const profileCopilotActionsBusy =
-    profileCopilotBusy || profileMutationPending;
-  const profileCopilotActionsDisabledReason =
-    setupActionsDisabledReason ??
-    (profileMutationPending
-      ? "A profile update is in progress. Wait for it to finish before changing Assistant proposals."
-      : hasUserDraftChanges
-        ? unsavedSetupCopilotActionsMessage
-        : null);
+  // Guided setup as the person sees it, for the assistant (ADR 0037).
+  useAssistantContextSource("profile-setup", () => {
+    const dirtyPaths = [
+      ...flattenDirtyFields(profileForm.formState.dirtyFields),
+      ...flattenDirtyFields(preferencesForm.formState.dirtyFields),
+    ];
+    return {
+      sectionLabel: formatProfileSetupStepLabel(profileSetupState.currentStep),
+      editor: {
+        editor: "profile",
+        savedRevision: null,
+        draftVersion: dirtyPaths.length,
+        dirtyFields: [...new Set(dirtyPaths.map(profileFieldForEditorPath))].slice(0, 80),
+        unsavedValues: {},
+        section: profileSetupState.currentStep,
+        selection: null,
+      },
+    };
+  });
 
   // Canonical readiness derivation: every visible setup count reads this one
   // presentation model, so the summary card and sticky footer cannot diverge
@@ -454,6 +436,8 @@ export function ProfileSetupScreen(props: {
             actions={
               // First run opens guided setup directly, so setup owns the way
               // back out of it.
+              <div className="flex flex-wrap items-center gap-2">
+              <AskAssistantButton prompt={starterQuestion ?? undefined} />
               <Button
                 onClick={() => {
                   markGuidedSetupAutoOpenSpent();
@@ -465,6 +449,7 @@ export function ProfileSetupScreen(props: {
               >
                 Back to Home
               </Button>
+              </div>
             }
             eyebrow="Profile setup"
             title="Guided setup"
@@ -636,34 +621,6 @@ export function ProfileSetupScreen(props: {
           <div className={profileSetupLayoutClassNames.reviewRail}>
             {profileSetupState.currentStep !== "targeting" ? reviewQueue : null}
 
-            <ProfileCopilotRail
-              busy={profileCopilotActionsBusy}
-              actionsDisabledReason={profileCopilotActionsDisabledReason}
-              context={setupCopilotContext}
-              emptyStateDescription="Ask why a field matters or request a specific change for this step. You review every proposal before anything is applied."
-              emptyStateTitle="No requests yet"
-              // Keep the setup conversation available across steps; message
-              // context chips identify which step each exchange belongs to.
-              messages={profileCopilotMessages.filter(
-                (message) => message.context.surface === "setup",
-              )}
-              onApplyPatchGroup={onApplyProfileCopilotPatchGroup}
-              onRejectPatchGroup={onRejectProfileCopilotPatchGroup}
-              onSendMessage={onSendProfileCopilotMessage}
-              onUndoRevision={onUndoProfileRevision}
-              pendingContextKey={profileCopilotPendingContextKey}
-              placeholder={buildSetupCopilotPlaceholder(
-                profileSetupState.currentStep,
-              )}
-              revisions={profileRevisions}
-              sendDisabledReason={
-                setupActionsDisabledReason ??
-                (hasUserDraftChanges ? unsavedSetupCopilotMessage : null)
-              }
-              starterQuestion={starterQuestion}
-              showProactivePrompt={false}
-              minBottomOffset={COPILOT_BOTTOM_OFFSET}
-            />
           </div>
         </div>
       )}

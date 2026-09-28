@@ -37,14 +37,10 @@ import {
   JobFinderApplyResumePatchInputSchema,
   JobFinderApproveResumeInputSchema,
   JobFinderPreviewResumeDraftInputSchema,
-  JobFinderProfileCopilotMessageInputSchema,
-  JobFinderProfileCopilotPatchGroupActionInputSchema,
   JobFinderProfileSetupReviewActionInputSchema,
   JobFinderResumeTimelineRepairActionInputSchema,
   JobFinderResumePreviewSchema,
   JobFinderResumePreviewModeSchema,
-  JobFinderResumeAssistantMessageInputSchema,
-  JobFinderResolveResumeAssistantProposalInputSchema,
   JobFinderRepositoryStateSchema,
   JobFinderSetResumeClaimConfirmationInputSchema,
   JobFinderSetWorkHistoryReviewAcknowledgmentInputSchema,
@@ -132,7 +128,6 @@ import type {
   JobFinderWorkspaceSnapshot,
 } from "@unemployed/contracts";
 import {
-  createJobFinderProductActionToolRegistry,
   recordApplicationAuthoritySuccessor,
   resolveApplicationAuthoritySuccessorId,
   resolveTailoredAssetLabel,
@@ -151,7 +146,6 @@ import {
   startApplyBatch,
 } from "../services/job-finder/start-apply-batch";
 import {
-  getDesktopTestDelayMs,
   getJobFinderApplicationAuthorityService,
   getJobFinderRepositoryForWorkspaceService,
   getJobFinderWorkspaceService,
@@ -200,7 +194,7 @@ function canonicalOrigin(value: string | null | undefined): string | null {
  * authority. Settings never stores an empty envelope: the exact jobs,
  * resumes, and known application origins only exist when the task starts.
  */
-async function syncApplicationAuthorityForSavedMode(
+export async function syncApplicationAuthorityForSavedMode(
   workspaceService: Awaited<ReturnType<typeof getJobFinderWorkspaceService>>,
   jobIds: readonly string[],
   modeOverride?: JobFinderApplyQueueActionInput["applicationAutomationMode"],
@@ -471,7 +465,7 @@ async function syncApplicationAuthorityForSavedMode(
  * against that run), so the agent can press Send on each kept page.
  */
 /** The requested jobs whose newest result is a filled-in form not yet sent. */
-async function listJobsStillReadyToSend(
+export async function listJobsStillReadyToSend(
   workspaceService: Awaited<ReturnType<typeof getJobFinderWorkspaceService>>,
   jobIds: readonly string[],
 ): Promise<string[]> {
@@ -491,15 +485,23 @@ async function listJobsStillReadyToSend(
   });
 }
 
-async function scopeSendPermissionToPreparedJobs(
+export async function scopeSendPermissionToPreparedJobs(
   workspaceService: Awaited<ReturnType<typeof getJobFinderWorkspaceService>>,
   jobIds: readonly string[],
+  /**
+   * A written instruction in the assistant sidebar that says to send
+   * (ADR 0039) stands in for the Send press, whatever the saved mode.
+   */
+  modeOverride?: JobFinderApplyQueueActionInput["applicationAutomationMode"],
 ): Promise<void> {
   const repository =
     getJobFinderRepositoryForWorkspaceService(workspaceService);
   if (!repository) return;
   const settings = await repository.getSettings();
-  if ((settings.applicationAutomationMode ?? "prepare_only") === "prepare_only")
+  if (
+    !modeOverride &&
+    (settings.applicationAutomationMode ?? "prepare_only") === "prepare_only"
+  )
     return;
   const [runs, results] = await Promise.all([
     repository.listApplyRuns(),
@@ -517,7 +519,7 @@ async function scopeSendPermissionToPreparedJobs(
   await syncApplicationAuthorityForSavedMode(
     workspaceService,
     jobIds,
-    undefined,
+    modeOverride,
     perRunFloor,
   );
 }
@@ -534,7 +536,7 @@ export interface HeldBackApplicationResume {
   reason: string;
 }
 
-async function approveApplicationResumes(
+export async function approveApplicationResumes(
   workspaceService: Awaited<ReturnType<typeof getJobFinderWorkspaceService>>,
   jobIds: readonly string[],
   options?: {
@@ -799,6 +801,10 @@ function workspaceMutationResponse(
 
   return snapshot;
 }
+
+/** Returned to any caller of the retired Profile and Resume chat writes. */
+export const RETIRED_CHAT_MESSAGE =
+  "The old Profile and Resume chats are retired. Use the assistant in the side chat; old conversations stay readable there.";
 
 export function registerJobFinderRouteHandlers(
   ipcMain: IpcMain,
@@ -1274,67 +1280,22 @@ export function registerJobFinderRouteHandlers(
     },
   );
 
-  ipcMain.handle(
-    "job-finder:send-profile-copilot-message",
-    async (_event, payload: unknown) => {
-      const { content, context } =
-        JobFinderProfileCopilotMessageInputSchema.parse(payload);
-      const testDelayMs = isDesktopTestApiEnabled()
-        ? getDesktopTestDelayMs(
-            process.env.UNEMPLOYED_TEST_PROFILE_COPILOT_DELAY_MS,
-            "UNEMPLOYED_TEST_PROFILE_COPILOT_DELAY_MS",
-          )
-        : 0;
-
-      if (testDelayMs > 0) {
-        await new Promise((resolve) => setTimeout(resolve, testDelayMs));
-      }
-
-      const jobFinderWorkspaceService = await getJobFinderWorkspaceService();
-      const productActions = createJobFinderProductActionToolRegistry(
-        jobFinderWorkspaceService,
-      );
-      const proposal = await productActions.execute("propose_profile_change", {
-        request: content,
-        context,
-      });
-      if (!proposal.ok) {
-        throw new Error(proposal.error.message);
-      }
-      const snapshot = await jobFinderWorkspaceService.getWorkspaceSnapshot();
-
-      return workspaceMutationResponse(snapshot);
-    },
+  // The old chat is retired (ADR 0037): the assistant sidebar is the only
+  // writer. Archived histories stay readable through the assistant.
+  ipcMain.handle("job-finder:send-profile-copilot-message", () =>
+    Promise.reject(new Error(RETIRED_CHAT_MESSAGE)),
   );
 
-  handleJobFinderSaveRoute(
-    "job-finder:apply-profile-copilot-patch-group",
-    async (_event, payload: unknown) => {
-      const { patchGroupId } =
-        JobFinderProfileCopilotPatchGroupActionInputSchema.parse(payload);
-      const jobFinderWorkspaceService = await getJobFinderWorkspaceService();
-      const snapshot =
-        await jobFinderWorkspaceService.applyProfileCopilotPatchGroup(
-          patchGroupId,
-        );
-
-      return workspaceMutationResponse(snapshot);
-    },
+  // The old chat is retired (ADR 0037): the assistant sidebar is the only
+  // writer. Archived histories stay readable through the assistant.
+  ipcMain.handle("job-finder:apply-profile-copilot-patch-group", () =>
+    Promise.reject(new Error(RETIRED_CHAT_MESSAGE)),
   );
 
-  ipcMain.handle(
-    "job-finder:reject-profile-copilot-patch-group",
-    async (_event, payload: unknown) => {
-      const { patchGroupId } =
-        JobFinderProfileCopilotPatchGroupActionInputSchema.parse(payload);
-      const jobFinderWorkspaceService = await getJobFinderWorkspaceService();
-      const snapshot =
-        await jobFinderWorkspaceService.rejectProfileCopilotPatchGroup(
-          patchGroupId,
-        );
-
-      return workspaceMutationResponse(snapshot);
-    },
+  // The old chat is retired (ADR 0037): the assistant sidebar is the only
+  // writer. Archived histories stay readable through the assistant.
+  ipcMain.handle("job-finder:reject-profile-copilot-patch-group", () =>
+    Promise.reject(new Error(RETIRED_CHAT_MESSAGE)),
   );
 
   ipcMain.handle(
@@ -1677,6 +1638,30 @@ export function registerJobFinderRouteHandlers(
               secondaryApplicationUrl: new URL(
                 candidate.secondaryApplicationUrl,
               ).href,
+            }
+          : {}),
+        ...(typeof candidate.jobTitle === "string"
+          ? { jobTitle: candidate.jobTitle.slice(0, 200) }
+          : {}),
+        ...(typeof candidate.jobCompany === "string"
+          ? { jobCompany: candidate.jobCompany.slice(0, 200) }
+          : {}),
+        ...(Array.isArray(candidate.foundJobs)
+          ? {
+              foundJobs: candidate.foundJobs.slice(0, 10).flatMap((entry) => {
+                const found = entry as Record<string, unknown>;
+                return typeof found.title === "string" &&
+                  typeof found.company === "string" &&
+                  typeof found.applicationUrl === "string"
+                  ? [
+                      {
+                        title: found.title.slice(0, 200),
+                        company: found.company.slice(0, 200),
+                        applicationUrl: new URL(found.applicationUrl).href,
+                      },
+                    ]
+                  : [];
+              }),
             }
           : {}),
       };
@@ -2770,50 +2755,16 @@ export function registerJobFinderRouteHandlers(
     },
   );
 
-  ipcMain.handle(
-    "job-finder:send-resume-assistant-message",
-    async (event, payload: unknown) => {
-      const { jobId, content } =
-        JobFinderResumeAssistantMessageInputSchema.parse(payload);
-      const jobFinderWorkspaceService = await getJobFinderWorkspaceService();
-      const messages =
-        await jobFinderWorkspaceService.sendResumeAssistantMessage(
-          jobId,
-          content,
-        );
-      // An edit the Assistant applied changes the draft, and with it the
-      // job's standing in Shortlisted and on Home; the reply carries only
-      // messages, so tell the screens to catch up.
-      publishJobFinderWorkspaceUpdate(event.sender);
-
-      return JobFinderResumeWorkspaceSchema.shape.assistantMessages.parse(
-        messages,
-      );
-    },
+  // The old chat is retired (ADR 0037): the assistant sidebar is the only
+  // writer. Archived histories stay readable through the assistant.
+  ipcMain.handle("job-finder:send-resume-assistant-message", () =>
+    Promise.reject(new Error(RETIRED_CHAT_MESSAGE)),
   );
 
-  ipcMain.handle(
-    "job-finder:resolve-resume-assistant-proposal",
-    async (event, payload: unknown) => {
-      const { jobId, proposalId, action, patchIds } =
-        JobFinderResolveResumeAssistantProposalInputSchema.parse(payload);
-      const jobFinderWorkspaceService = await getJobFinderWorkspaceService();
-      const messages =
-        await jobFinderWorkspaceService.resolveResumeAssistantProposal(
-          jobId,
-          proposalId,
-          action,
-          patchIds,
-        );
-      // "Accept anyway" can leave a line to decide: Shortlisted and Home
-      // kept calling the resume ready (and Apply then refused it) because
-      // nothing told them the draft had changed.
-      publishJobFinderWorkspaceUpdate(event.sender);
-
-      return JobFinderResumeWorkspaceSchema.shape.assistantMessages.parse(
-        messages,
-      );
-    },
+  // The old chat is retired (ADR 0037): the assistant sidebar is the only
+  // writer. Archived histories stay readable through the assistant.
+  ipcMain.handle("job-finder:resolve-resume-assistant-proposal", () =>
+    Promise.reject(new Error(RETIRED_CHAT_MESSAGE)),
   );
 
   ipcMain.handle(

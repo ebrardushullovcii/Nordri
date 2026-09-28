@@ -2272,7 +2272,7 @@ describe("JobFinderShell compact nav responsive contract", () => {
     const keycaps = [...dialog.querySelectorAll("kbd")].map(
       (cap) => cap.textContent,
     );
-    expect(keycaps).toEqual(["⌘", "K", "/", "⌘", "B", "?"]);
+    expect(keycaps).toEqual(["⌘", "K", "/", "⌘", "B", "⌘", "I", "?"]);
     expect(within(dialog).getAllByText("/")).toHaveLength(1);
     expect(shortcutText).not.toContain(
       "Anywhere in Job Finder; Outside text fields",

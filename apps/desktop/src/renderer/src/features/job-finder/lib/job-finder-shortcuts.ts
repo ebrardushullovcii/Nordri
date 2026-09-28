@@ -3,9 +3,10 @@ export type JobFinderPlatform = "darwin" | "linux" | "win32";
 export type JobFinderShortcutId =
   | "open-global-search"
   | "open-shortcuts"
+  | "toggle-assistant"
   | "toggle-sidebar";
 
-export type JobFinderShortcutCombo = "/" | "?" | "mod+b" | "mod+k";
+export type JobFinderShortcutCombo = "/" | "?" | "mod+b" | "mod+i" | "mod+k";
 
 const LITERAL_KEY_COMBOS: readonly JobFinderShortcutCombo[] = ["/", "?"];
 
@@ -41,6 +42,12 @@ export const JOB_FINDER_SHORTCUTS: readonly JobFinderShortcutDefinition[] = [
     // layout breakpoint while no overlay or search surface is open and the
     // focus is outside editable fields.
     scope: "Wide layout only, outside overlays, search, and editable fields",
+  },
+  {
+    combo: "mod+i",
+    id: "toggle-assistant",
+    label: "Show or hide the assistant",
+    scope: "Anywhere in Job Finder",
   },
   {
     combo: "?",

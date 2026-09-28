@@ -2,7 +2,6 @@
 
 import type {
   CandidateProfile,
-  JobFinderWorkspaceSnapshot,
   JobSearchPreferences,
   ProfileSetupState,
   ResumeImportFieldCandidateSummary,
@@ -84,7 +83,6 @@ function buildProfileScreenProps(
     latestResumeImportReviewCandidates:
       [] as readonly ResumeImportFieldCandidateSummary[],
     latestResumeImportRun: null,
-    onApplyProfileCopilotPatchGroup: vi.fn(),
     onApplyProfileSetupReviewAction: vi.fn(),
     onApplyResumeTimelineRepairAction: async () => {},
     onAnalyzeProfileFromResume: vi.fn(),
@@ -93,14 +91,10 @@ function buildProfileScreenProps(
     onImportResume: vi.fn(),
     onOpenBrowserSessionForTarget: vi.fn(),
     onProfileSurfaceDirtyChange: vi.fn(),
-    profileCopilotPendingContextKey: null,
-    onRejectProfileCopilotPatchGroup: vi.fn(),
     onResumeProfileSetup: vi.fn(),
     onRunSourceDebug: vi.fn(),
     onSaveAll: vi.fn(),
     onSaveSourceInstructionArtifact: vi.fn(),
-    onSendProfileCopilotMessage: vi.fn(),
-    onUndoProfileRevision: vi.fn(),
     onVerifySourceInstructions: vi.fn(),
     pendingActions: {
       analyzeProfile: false,
@@ -116,10 +110,6 @@ function buildProfileScreenProps(
       targetDiscovery: () => false,
     },
     profile,
-    profileCopilotMessages:
-      [] as readonly JobFinderWorkspaceSnapshot["profileCopilotMessages"][number][],
-    profileRevisions:
-      [] as readonly JobFinderWorkspaceSnapshot["profileRevisions"][number][],
     profileSetupState,
     recentSourceDebugRuns: [],
     resumeImportProgress: null,

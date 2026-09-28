@@ -568,6 +568,78 @@ describe("apply policy executor", () => {
     expect(fillText).toHaveBeenCalledWith("c0", "robin.ashford@example.test");
   });
 
+  // A value about the person goes into the form exactly as stored, whatever
+  // the model typed and however the record id was shortened.
+  test.each([
+    {
+      label: "Phone",
+      inputType: "tel",
+      typed: "+49 555 0000000",
+      expected: "+49 555 1234567-88",
+    },
+    {
+      label: "LinkedIn URL",
+      inputType: "url",
+      typed: "https://www.linkedin.com/in/robin-ashford",
+      expected: "https://www.linkedin.com/in/robin-ashford-test-profile-2026",
+    },
+    {
+      label: "GitHub",
+      inputType: "url",
+      typed: "https://github.com/robin",
+      expected: "https://github.com/robin-ashford-builds",
+    },
+    {
+      label: "Portfolio website",
+      inputType: "url",
+      typed: "https://robin.example.test",
+      expected: "https://portfolio.example.test/robin-ashford/work",
+    },
+  ])(
+    "writes the stored $label exactly",
+    async ({ label, inputType, typed, expected }) => {
+      const page = rawPage({
+        controls: [rawControl({ index: 0, label, inputType })],
+      });
+      const { config, hands } = configFor(page);
+      const stored = config.sources.profile;
+      stored.phone = "+49 555 1234567-88";
+      stored.linkedinUrl =
+        "https://www.linkedin.com/in/robin-ashford-test-profile-2026";
+      stored.githubUrl = "https://github.com/robin-ashford-builds";
+      stored.portfolioUrl = "https://portfolio.example.test/robin-ashford/work";
+      stored.links = [
+        {
+          // Record ids are built from a shortened URL; the value is the url.
+          id: "link_linkedin_https_www_linkedin_com_in_robin_ashford_",
+          label: "LinkedIn",
+          url: "https://www.linkedin.com/in/robin-ashford-test-profile-2026",
+          kind: "linkedin",
+          isDraft: false,
+        },
+        {
+          id: "link_github_https_github_com_robin_",
+          label: "GitHub",
+          url: "https://github.com/robin-ashford-builds",
+          kind: "github",
+          isDraft: false,
+        },
+      ];
+      const fillText = vi.spyOn(hands, "fillText");
+      const observation = observationOf(page);
+
+      const outcome = await executeApplyProposal(
+        { tool: "type", ref: "c0", text: typed },
+        observation.signature,
+        { config, now, guardState: createApplyGuardState() },
+      );
+
+      expect(outcome.kind).toBe("filled");
+      expect(fillText).toHaveBeenCalledTimes(1);
+      expect(fillText.mock.calls[0]?.[1]).toBe(expected);
+    },
+  );
+
   test("does not add unsupported technologies to a technical-skills answer", async () => {
     const page = rawPage({
       controls: [

@@ -22,6 +22,8 @@ export interface UseJobFinderShellShortcutsInput {
   isSearchOpen: boolean;
   onOpenGlobalSearch: () => void;
   onOpenShortcuts: () => void;
+  /** Cmd/Ctrl+I shows or hides the assistant sidebar, anywhere. */
+  onToggleAssistant?: () => void;
   onToggleSidebar: () => void;
 }
 
@@ -45,6 +47,7 @@ export function useJobFinderShellShortcuts(
     isSearchOpen,
     onOpenGlobalSearch,
     onOpenShortcuts,
+    onToggleAssistant,
     onToggleSidebar,
   } = input;
   const hasRegisteredOverlays = useHasOpenJobFinderOverlays();
@@ -74,6 +77,12 @@ export function useJobFinderShellShortcuts(
       if (eventMatchesJobFinderShortcut(event, "mod+k")) {
         event.preventDefault();
         onOpenGlobalSearch();
+        return;
+      }
+
+      if (onToggleAssistant && eventMatchesJobFinderShortcut(event, "mod+i")) {
+        event.preventDefault();
+        onToggleAssistant();
         return;
       }
 
@@ -121,6 +130,7 @@ export function useJobFinderShellShortcuts(
     isWideLayout,
     onOpenGlobalSearch,
     onOpenShortcuts,
+    onToggleAssistant,
     onToggleSidebar,
   ]);
 

@@ -885,6 +885,12 @@ export const JobFinderSettingsSchema = z.object({
   resumeTemplateId: ResumeTemplateIdSchema,
   fontPreset: DocumentFontPresetSchema,
   appearanceTheme: AppearanceThemeSchema.default("system"),
+  /**
+   * Fold the left side menu to icons while the assistant sidebar is docked,
+   * so the page keeps room. Absent means on (older workspaces never stored
+   * it): read it through `collapsesSideMenuWithAssistant`.
+   */
+  collapseSideMenuWithAssistant: z.boolean().optional(),
   humanReviewRequired: z.boolean(),
   allowAutoSubmitOverride: z.boolean(),
   /** The person's ordinary default for new application runs. */
@@ -901,6 +907,13 @@ export const JobFinderSettingsSchema = z.object({
   aiBehavior: AiBehaviorPreferenceSchema.default({}).optional(),
 });
 export type JobFinderSettings = z.infer<typeof JobFinderSettingsSchema>;
+
+/** On unless the person turned it off. */
+export function collapsesSideMenuWithAssistant(
+  settings: Pick<JobFinderSettings, "collapseSideMenuWithAssistant">,
+): boolean {
+  return settings.collapseSideMenuWithAssistant !== false;
+}
 
 const PersistedDiscoveryRunRecordSchema: z.ZodType<
   z.output<typeof DiscoveryRunRecordSchema>,
@@ -1760,6 +1773,7 @@ export type UpdateApplicationDefaultsInput = z.infer<
 export const UpdateWorkspaceBehaviorInputSchema = z.object({
   keepSessionAlive: z.boolean().optional(),
   discoveryOnly: z.boolean().optional(),
+  collapseSideMenuWithAssistant: z.boolean().optional(),
 });
 export type UpdateWorkspaceBehaviorInput = z.infer<
   typeof UpdateWorkspaceBehaviorInputSchema

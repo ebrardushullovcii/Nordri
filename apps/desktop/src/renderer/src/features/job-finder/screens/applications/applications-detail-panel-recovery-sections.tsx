@@ -47,6 +47,7 @@ export function ApplicationsDetailPanelRecoverySections(props: {
   selectedRecordJobId: string;
   selectedApplicationRecordId: string;
   selectedRecordLatestBlockerCode?: string | null;
+  selectedRecordLastActionLabel?: string | null;
   selectedRun: JobFinderWorkspaceSnapshot["applyRuns"][number] | null;
   /** What the visible result's run is doing (a planned job's standing). */
   visibleApplyRunContext?: ApplyRunContext | null;
@@ -77,6 +78,7 @@ export function ApplicationsDetailPanelRecoverySections(props: {
     selectedQueueRecoveryJobIds,
     selectedApplicationRecordId,
     selectedRecordLatestBlockerCode,
+    selectedRecordLastActionLabel = null,
     pausedQuestionCount,
     selectedRecordJobId,
     selectedRun,
@@ -109,6 +111,7 @@ export function ApplicationsDetailPanelRecoverySections(props: {
       selectedQueueRecoveryEntries={selectedQueueRecoveryEntries}
       selectedQueueRecoveryJobIds={selectedQueueRecoveryJobIds}
       selectedApplicationRecordId={selectedApplicationRecordId}
+      selectedRecordLastActionLabel={selectedRecordLastActionLabel}
       {...(selectedRecordLatestBlockerCode !== undefined
         ? { selectedRecordLatestBlockerCode }
         : {})}

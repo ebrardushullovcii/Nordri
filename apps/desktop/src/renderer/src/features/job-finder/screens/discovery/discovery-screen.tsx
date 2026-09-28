@@ -81,6 +81,7 @@ import type {
   JobFinderQueuedJobOutcome,
 } from "@renderer/features/job-finder/lib/job-finder-types";
 import { cn } from "@renderer/lib/cn";
+import { useAssistantContextSource } from "../../assistant/assistant-provider";
 
 export function getDiscoveryConfiguredFilters(
   searchPreferences: JobSearchPreferences,
@@ -743,6 +744,17 @@ export function DiscoveryScreen(props: {
     selectedJob?.id ?? null,
     displayedSelection?.jobId,
   );
+  // What "this job" means for the assistant (ADR 0037): the inspected row is
+  // focus. The results panel publishes the list and the ticked rows.
+  useAssistantContextSource("discovery-focus", () => ({
+    focus: inspectedJob
+      ? {
+          kind: "job",
+          id: inspectedJob.id,
+          label: `${inspectedJob.title} at ${inspectedJob.company}`,
+        }
+      : null,
+  }));
   // Only the inspected job's own resolved outcome is eligible for display;
   // switching rows drops every other entry so no stale outcome replays later.
   useEffect(() => {
@@ -1078,7 +1090,7 @@ export function DiscoveryScreen(props: {
       className={cn(
         "grid min-h-0 min-w-0 grid-cols-1 items-stretch gap-4 xl:h-full xl:min-h-0 xl:overflow-hidden",
         hasInspectableJob
-          ? "xl:grid-cols-[minmax(30rem,1.35fr)_minmax(25rem,0.9fr)]"
+          ? "xl:grid-cols-[minmax(30rem,1.35fr)_minmax(25rem,0.9fr)] assistant-docked:xl:grid-cols-[minmax(0,1.35fr)_minmax(20rem,0.9fr)]"
           : "xl:grid-cols-1",
       )}
       id="discovery-workspace-content"

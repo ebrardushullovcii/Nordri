@@ -1,13 +1,7 @@
 // @vitest-environment jsdom
 
 import { act } from "react";
-import {
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-  within,
-} from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import type {
   JobFinderResumePreview,
   JobFinderResumeWorkspace,
@@ -836,294 +830,6 @@ describe("ResumeWorkspaceScreen", () => {
         name: /template: Engineering Spec · Skills First$/,
       }).length,
     ).toBeGreaterThan(0);
-    expect(
-      screen.getAllByRole("button", { name: /^Open the Assistant/ }).length,
-    ).toBeGreaterThan(0);
-  });
-
-  it("keeps preview and editor visible after assistant replies on desktop", async () => {
-    renderScreen({
-      assistantMessages: [
-        buildAssistantMessage({
-          content: "Tightened the summary and refreshed one bullet.",
-        }),
-      ],
-    });
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(100);
-    });
-
-    expect(screen.getAllByTitle("Live resume preview").length).toBeGreaterThan(
-      0,
-    );
-    expect(screen.getAllByText("Edit resume").length).toBeGreaterThan(0);
-    expect(
-      screen.getAllByRole("button", { name: /assistant/i }).length,
-    ).toBeGreaterThan(0);
-  });
-
-  it("docks the untouched guided edits launcher in the studio header", async () => {
-    // Previously "anchors the untouched guided edits bubble to the viewport
-    // bottom-right": it asserted a body-portalled floating root at
-    // `bottom: 16px; right: 16px`. That pill rested over the tools column, and
-    // no reservation inside a scrolling column can keep a fixed pill off live
-    // content at every scroll position, so the collapsed launcher is now an
-    // ordinary button in the sticky header that already owns this screen's
-    // actions — and nothing floats while it is collapsed.
-    renderScreen();
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(100);
-    });
-
-    expect(
-      document.querySelector("[data-resume-guided-edits-open]"),
-    ).toBeNull();
-
-    const launcher = screen.getByRole("button", {
-      name: /^Open the Assistant/,
-    });
-
-    expect(
-      launcher.closest("[data-resume-studio-assistant-launcher-slot]"),
-    ).not.toBeNull();
-    expect(
-      launcher.closest("[data-resume-studio-compact-header]"),
-    ).not.toBeNull();
-  });
-  it("opens the guided edits popup from the always-available bubble", async () => {
-    renderScreen();
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(100);
-    });
-
-    fireEvent.click(
-      screen.getByRole("button", { name: /^Open the Assistant/ }),
-    );
-
-    const guidedEditToggle = screen
-      .getAllByRole("button", { name: "Minimize the Assistant" })
-      .at(-1);
-
-    expect(screen.getByRole("dialog", { name: "Assistant" })).toBeTruthy();
-    expect(guidedEditToggle?.getAttribute("aria-expanded")).toBe("true");
-    expect(
-      screen.getAllByText("Ask for a change, or ask what to change").length,
-    ).toBeGreaterThan(0);
-    // Three ready questions, the first being the one most people want.
-    expect(
-      screen.getAllByRole("button", {
-        name: "What would you change to fit this job better?",
-      }).length,
-    ).toBeGreaterThan(0);
-  });
-
-  it("keeps the same floating Assistant at compact widths when a reply lands", async () => {
-    // There is no compact `Assistant` tab any more: the floating panel is the
-    // Assistant at every width, so a reply lands in the open panel without the
-    // studio changing layout underneath it.
-    Object.defineProperty(window, "matchMedia", {
-      configurable: true,
-      value: vi.fn(() => ({
-        addEventListener: vi.fn(),
-        matches: false,
-        removeEventListener: vi.fn(),
-      })),
-    });
-
-    const onPreviewDraft = vi.fn(
-      () => new Promise<JobFinderResumePreview>(() => {}),
-    );
-
-    const { rerender } = render(
-      <ResumeWorkspaceScreen
-        actionMessage={null}
-        assistantMessages={[]}
-        assistantPending={false}
-        availableResumeTemplates={availableResumeTemplates}
-        isWorkspacePending={false}
-        jobId="job_ready"
-        onApplyPatch={vi.fn()}
-        onApproveCurrentResume={vi.fn()}
-        onApproveResume={vi.fn()}
-        onBack={vi.fn()}
-        onClearResumeApproval={vi.fn()}
-        onDirtyChange={vi.fn()}
-        onExportPdf={vi.fn()}
-        onPreviewDraft={onPreviewDraft}
-        onRefresh={vi.fn()}
-        onRegenerateDraft={vi.fn()}
-        onRestoreRevision={vi.fn()}
-        onUndoAiEdit={vi.fn()}
-        onSaveDraft={vi.fn()}
-        onSaveDraftAndThen={vi.fn()}
-        onSendAssistantMessage={vi.fn()}
-        onSetWorkHistoryReviewAcknowledgment={vi.fn()}
-        workspace={buildWorkspace()}
-      />,
-    );
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(100);
-    });
-
-    expect(screen.queryByRole("tab", { name: "Assistant" })).toBeNull();
-    const tabNames = screen.getAllByRole("tab").map((tab) => tab.textContent);
-    expect(tabNames).toEqual(["Preview", "Tools"]);
-
-    fireEvent.click(
-      screen.getByRole("button", { name: /^Open the Assistant/ }),
-    );
-    expect(screen.getByRole("dialog", { name: "Assistant" })).toBeTruthy();
-
-    act(() => {
-      rerender(
-        <ResumeWorkspaceScreen
-          actionMessage={null}
-          assistantMessages={[
-            buildAssistantMessage({
-              content: "Here is the update you asked for.",
-            }),
-          ]}
-          assistantPending={false}
-          availableResumeTemplates={availableResumeTemplates}
-          isWorkspacePending={false}
-          jobId="job_ready"
-          onApplyPatch={vi.fn()}
-          onApproveCurrentResume={vi.fn()}
-          onApproveResume={vi.fn()}
-          onBack={vi.fn()}
-          onClearResumeApproval={vi.fn()}
-          onDirtyChange={vi.fn()}
-          onExportPdf={vi.fn()}
-          onPreviewDraft={onPreviewDraft}
-          onRefresh={vi.fn()}
-          onRegenerateDraft={vi.fn()}
-          onRestoreRevision={vi.fn()}
-          onUndoAiEdit={vi.fn()}
-          onSaveDraft={vi.fn()}
-          onSaveDraftAndThen={vi.fn()}
-          onSendAssistantMessage={vi.fn()}
-          onSetWorkHistoryReviewAcknowledgment={vi.fn()}
-          workspace={buildWorkspace()}
-        />,
-      );
-    });
-
-    expect(screen.getByRole("dialog", { name: "Assistant" })).toBeTruthy();
-    expect(
-      screen.getAllByText("Here is the update you asked for.").length,
-    ).toBeGreaterThan(0);
-    // One transcript, at this width too.
-    expect(
-      document.querySelectorAll("[data-resume-assistant-panel]"),
-    ).toHaveLength(1);
-  });
-
-  it("previews assistant patches and applies only the selected proposal changes", async () => {
-    const workspace = buildWorkspace();
-    const section = workspace.draft.sections.find((entry) => entry.text);
-    if (!section) {
-      throw new Error("Expected a text section for proposal preview coverage.");
-    }
-    workspace.validation = {
-      id: "validation_demo",
-      draftId: workspace.draft.id,
-      issues: [],
-      draftContentHash: null,
-      claimAssessments: [
-        {
-          id: "claim_demo_section",
-          field: "section_text",
-          sectionId: section.id,
-          entryId: null,
-          bulletId: null,
-          claimText: section.text!,
-          claimOrigin: "ai_generated",
-          contentHash: "fnv1a32:00000000",
-          status: "exact",
-          evidenceRefs: [],
-          verifier: "deterministic_candidate_evidence_v1",
-          assessedAt: "2026-04-27T00:00:00.000Z",
-        },
-      ],
-      coverageComparison: null,
-      pageCount: null,
-      validatedAt: "2026-04-27T00:00:00.000Z",
-    };
-    const onResolveAssistantProposal = vi.fn();
-    renderScreen({
-      assistantMessages: [
-        buildAssistantMessage({
-          id: "proposal_1",
-          proposalStatus: "pending",
-          baseDraftUpdatedAt: workspace.draft.updatedAt,
-          patches: [
-            {
-              id: "proposal_patch_1",
-              draftId: workspace.draft.id,
-              operation: "replace_section_text",
-              targetSectionId: section.id,
-              targetEntryId: null,
-              anchorEntryId: null,
-              targetBulletId: null,
-              anchorBulletId: null,
-              position: null,
-              newText: "A clearer proposed summary.",
-              newIncluded: null,
-              newLocked: null,
-              newBullets: null,
-              appliedAt: "2026-04-27T00:01:00.000Z",
-              origin: "assistant",
-              conflictReason: null,
-            },
-          ],
-        }),
-      ],
-      onResolveAssistantProposal,
-      workspace,
-    });
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(100);
-    });
-
-    // The studio never renders an Assistant of its own, so the floating panel
-    // is the only transcript at any width.
-    fireEvent.click(
-      screen.getByRole("button", { name: /^Open the Assistant/ }),
-    );
-
-    expect(screen.getAllByText(section.text!).length).toBeGreaterThan(0);
-    expect(
-      screen.getAllByText("A clearer proposed summary.").length,
-    ).toBeGreaterThan(0);
-
-    // Exactly one assistant surface renders, and it receives the saved
-    // validation and shows the grounding verdict with its reason attached
-    // rather than hidden behind a collapsed summary.
-    expect(
-      document.querySelectorAll("[data-resume-assistant-panel]"),
-    ).toHaveLength(1);
-    const groundingVerdicts = screen.getAllByText(
-      "Checked against your saved evidence",
-    );
-    expect(groundingVerdicts.length).toBe(1);
-    expect(
-      screen.getAllByText("Current saved text: Exact evidence.").length,
-    ).toBe(1);
-
-    fireEvent.click(
-      screen.getAllByRole("button", { name: "Accept selected (1)" }).at(-1)!,
-    );
-    expect(onResolveAssistantProposal).toHaveBeenCalledWith(
-      "job_ready",
-      "proposal_1",
-      "accept",
-      ["proposal_patch_1"],
-    );
   });
 
   it("sets a pending guided edits proposal aside when the resume is approved and says so", async () => {
@@ -1204,58 +910,6 @@ describe("ResumeWorkspaceScreen", () => {
     expect(screen.getAllByLabelText("Section text")[0]).not.toBe(
       document.activeElement,
     );
-  });
-
-  it("saves unsaved edits before the Assistant writes a new AI draft", async () => {
-    const onPreviewDraft = vi.fn((previewDraft: ResumeDraft) =>
-      Promise.resolve(buildPreview(previewDraft.updatedAt, "ready-preview")),
-    );
-    const onRegenerateDraft = vi.fn();
-    const onSaveDraftAndThen = vi.fn();
-
-    renderScreen({
-      onPreviewDraft,
-      onRegenerateDraft,
-      onSaveDraftAndThen,
-    });
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(100);
-    });
-
-    const summaryInput = screen.getAllByLabelText(
-      "Section text",
-    )[0] as HTMLTextAreaElement;
-    fireEvent.change(summaryInput, {
-      target: {
-        value:
-          "Unsaved stale summary that should not be persisted before rebuild.",
-      },
-    });
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(400);
-    });
-
-    fireEvent.click(
-      screen.getAllByRole("button", { name: /^Open the Assistant/ })[0]!,
-    );
-    fireEvent.click(
-      screen.getByRole("button", {
-        name: "Create a new AI draft — this replaces your edits",
-      }),
-    );
-    // The whole-draft rewrite states what it replaces and asks once.
-    fireEvent.click(screen.getByRole("button", { name: "Replace my draft" }));
-
-    expect(onSaveDraftAndThen).toHaveBeenCalledTimes(1);
-    expect(onRegenerateDraft).not.toHaveBeenCalled();
-    const followUp = onSaveDraftAndThen.mock.calls[0]?.[1] as
-      | (() => void | Promise<void>)
-      | undefined;
-    expect(followUp).toBeTypeOf("function");
-    await followUp?.();
-    expect(onRegenerateDraft).toHaveBeenCalledWith("job_ready");
   });
 
   it("saves unsaved edits before restoring an earlier draft", async () => {
@@ -1437,9 +1091,11 @@ describe("ResumeWorkspaceScreen", () => {
     expect(
       screen.queryAllByRole("button", { name: /refresh draft/i }),
     ).toHaveLength(0);
+    // The studio has no assistant of its own; the app-wide sidebar is the
+    // one assistant (ADR 0037).
     expect(
-      screen.getAllByRole("button", { name: /^Open the Assistant/ }).length,
-    ).toBeGreaterThan(0);
+      screen.queryAllByRole("button", { name: /^Open the Assistant/ }),
+    ).toHaveLength(0);
   });
 
   it("shows work-history review guidance in the editor", async () => {
@@ -1963,208 +1619,6 @@ describe("ResumeWorkspaceScreen", () => {
     );
   });
 
-  it("saves unsaved edits once before accepting a guided edits proposal and resolves only after the save", async () => {
-    const { workspace, message } = buildPendingProposalWorkspaceAndMessage();
-    const onSaveDraftAndThen = vi.fn();
-    const onResolveAssistantProposal = vi.fn();
-
-    renderScreen({
-      assistantMessages: [message],
-      onResolveAssistantProposal,
-      onSaveDraftAndThen,
-      workspace,
-    });
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(100);
-    });
-
-    fireEvent.click(
-      screen.getByRole("button", { name: /^Open the Assistant/ }),
-    );
-
-    fireEvent.change(screen.getAllByLabelText("Section text")[0]!, {
-      target: {
-        value: "Unsaved summary kept while accepting this proposal.",
-      },
-    });
-
-    fireEvent.click(
-      screen.getAllByRole("button", { name: "Accept selected (1)" }).at(-1)!,
-    );
-
-    expect(onSaveDraftAndThen).toHaveBeenCalledTimes(1);
-    expect(onResolveAssistantProposal).not.toHaveBeenCalled();
-
-    const savedDraft = onSaveDraftAndThen.mock.calls[0]?.[0] as ResumeDraft;
-    expect(
-      savedDraft.sections.some(
-        (section) =>
-          section.text ===
-          "Unsaved summary kept while accepting this proposal.",
-      ),
-    ).toBe(true);
-
-    const followUp = onSaveDraftAndThen.mock.calls[0]?.[1] as
-      | (() => void | Promise<void>)
-      | undefined;
-    expect(followUp).toBeTypeOf("function");
-
-    await act(async () => {
-      await followUp?.();
-    });
-
-    expect(onResolveAssistantProposal).toHaveBeenCalledTimes(1);
-    expect(onResolveAssistantProposal).toHaveBeenCalledWith(
-      "job_ready",
-      "proposal_1",
-      "accept",
-      ["proposal_patch_1"],
-    );
-  });
-
-  it("saves unsaved edits before rejecting a guided edits proposal and resolves only after the save", async () => {
-    const { workspace, message } = buildPendingProposalWorkspaceAndMessage();
-    const onSaveDraftAndThen = vi.fn();
-    const onResolveAssistantProposal = vi.fn();
-
-    renderScreen({
-      assistantMessages: [message],
-      onResolveAssistantProposal,
-      onSaveDraftAndThen,
-      workspace,
-    });
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(100);
-    });
-
-    fireEvent.click(
-      screen.getByRole("button", { name: /^Open the Assistant/ }),
-    );
-
-    fireEvent.change(screen.getAllByLabelText("Section text")[0]!, {
-      target: {
-        value: "Unsaved summary kept while rejecting this proposal.",
-      },
-    });
-
-    fireEvent.click(
-      screen.getAllByRole("button", { name: "Reject proposal" }).at(-1)!,
-    );
-
-    expect(onSaveDraftAndThen).toHaveBeenCalledTimes(1);
-    expect(onSaveDraftAndThen.mock.calls[0]?.[2]).toBe(
-      "Saved your draft before resolving this proposal.",
-    );
-    expect(onResolveAssistantProposal).not.toHaveBeenCalled();
-
-    const savedDraft = onSaveDraftAndThen.mock.calls[0]?.[0] as ResumeDraft;
-    expect(
-      savedDraft.sections.some(
-        (section) =>
-          section.text ===
-          "Unsaved summary kept while rejecting this proposal.",
-      ),
-    ).toBe(true);
-
-    const followUp = onSaveDraftAndThen.mock.calls[0]?.[1] as
-      | (() => void | Promise<void>)
-      | undefined;
-    expect(followUp).toBeTypeOf("function");
-
-    await act(async () => {
-      await followUp?.();
-    });
-
-    expect(onResolveAssistantProposal).toHaveBeenCalledTimes(1);
-    expect(onResolveAssistantProposal).toHaveBeenCalledWith(
-      "job_ready",
-      "proposal_1",
-      "reject",
-      [],
-    );
-  });
-
-  it("keeps unsaved edits and never resolves a guided edits proposal when the pre-action save fails or is stale", async () => {
-    const { workspace, message } = buildPendingProposalWorkspaceAndMessage();
-    // Mirrors the real save-and-then pipeline on failure/stale/conflict:
-    // the follow-up action is suppressed and an actionable error is shown.
-    const onSaveDraftAndThen = vi.fn();
-    const onResolveAssistantProposal = vi.fn();
-
-    renderScreen({
-      assistantMessages: [message],
-      onResolveAssistantProposal,
-      onSaveDraftAndThen,
-      workspace,
-    });
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(100);
-    });
-
-    fireEvent.click(
-      screen.getByRole("button", { name: /^Open the Assistant/ }),
-    );
-
-    fireEvent.change(screen.getAllByLabelText("Section text")[0]!, {
-      target: { value: "Local edit that must survive a failed save." },
-    });
-
-    fireEvent.click(
-      screen.getAllByRole("button", { name: "Accept selected (1)" }).at(-1)!,
-    );
-
-    expect(onSaveDraftAndThen).toHaveBeenCalledTimes(1);
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(400);
-    });
-
-    expect(onSaveDraftAndThen).toHaveBeenCalledTimes(1);
-    expect(onResolveAssistantProposal).not.toHaveBeenCalled();
-    expect(
-      (onSaveDraftAndThen.mock.calls[0]?.[0] as ResumeDraft).sections.some(
-        (section) =>
-          section.text === "Local edit that must survive a failed save.",
-      ),
-    ).toBe(true);
-  });
-
-  it("resolves a guided edits proposal exactly once without saving when there are no dirty edits", async () => {
-    const { workspace, message } = buildPendingProposalWorkspaceAndMessage();
-    const onSaveDraftAndThen = vi.fn();
-    const onResolveAssistantProposal = vi.fn();
-
-    renderScreen({
-      assistantMessages: [message],
-      onResolveAssistantProposal,
-      onSaveDraftAndThen,
-      workspace,
-    });
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(100);
-    });
-
-    fireEvent.click(
-      screen.getByRole("button", { name: /^Open the Assistant/ }),
-    );
-    fireEvent.click(
-      screen.getAllByRole("button", { name: "Accept selected (1)" }).at(-1)!,
-    );
-
-    expect(onSaveDraftAndThen).not.toHaveBeenCalled();
-    expect(onResolveAssistantProposal).toHaveBeenCalledTimes(1);
-    expect(onResolveAssistantProposal).toHaveBeenCalledWith(
-      "job_ready",
-      "proposal_1",
-      "accept",
-      ["proposal_patch_1"],
-    );
-  });
-
   describe("draft-edit revision signals", () => {
     // These cases mount the full studio and exercise several mutation paths;
     // keep headroom above the default 5s when the full desktop suite is busy.
@@ -2220,7 +1674,76 @@ describe("ResumeWorkspaceScreen", () => {
       expect(onDraftEdited).toHaveBeenCalledTimes(4);
     }, 15_000);
 
-    it("stays silent while canonical revisions refresh and assistant proposals resolve", async () => {
+    it("keeps unsaved edits when the saved draft changes in the background and offers the saved version", async () => {
+      const { workspace, message } = buildPendingProposalWorkspaceAndMessage();
+      const buildElement = (currentWorkspace: JobFinderResumeWorkspace) => (
+        <ResumeWorkspaceScreen
+          actionMessage={null}
+          assistantMessages={[message]}
+          assistantPending={false}
+          availableResumeTemplates={availableResumeTemplates}
+          isWorkspacePending={false}
+          jobId="job_ready"
+          onApplyPatch={vi.fn()}
+          onApproveCurrentResume={vi.fn()}
+          onApproveResume={vi.fn()}
+          onBack={vi.fn()}
+          onClearResumeApproval={vi.fn()}
+          onDirtyChange={vi.fn()}
+          onExportPdf={vi.fn()}
+          onPreviewDraft={() =>
+            Promise.resolve(buildPreview("preview_ready", "ready-preview"))
+          }
+          onRefresh={vi.fn()}
+          onRegenerateDraft={vi.fn()}
+          onRestoreRevision={vi.fn()}
+          onUndoAiEdit={vi.fn()}
+          onSaveDraft={vi.fn()}
+          onSaveDraftAndThen={vi.fn()}
+          onSendAssistantMessage={vi.fn()}
+          onSetWorkHistoryReviewAcknowledgment={vi.fn()}
+          workspace={currentWorkspace}
+        />
+      );
+      const view = render(buildElement(workspace));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(100);
+      });
+      const textarea = () =>
+        screen.getAllByLabelText("Section text")[0] as HTMLTextAreaElement;
+      fireEvent.change(textarea(), {
+        target: { value: "My own unsaved wording." },
+      });
+      const refreshedWorkspace = JobFinderResumeWorkspaceSchema.parse({
+        ...workspace,
+        draft: {
+          ...workspace.draft,
+          updatedAt: "2026-04-27T00:07:00.000Z",
+          sections: workspace.draft.sections.map((section) =>
+            section.text
+              ? { ...section, text: "Assistant saved wording." }
+              : section,
+          ),
+        },
+      });
+      await act(async () => {
+        view.rerender(buildElement(refreshedWorkspace));
+        await vi.advanceTimersByTimeAsync(100);
+      });
+      expect(textarea().value).toBe("My own unsaved wording.");
+      expect(
+        document.querySelector("[data-resume-background-change]"),
+      ).not.toBeNull();
+      fireEvent.click(
+        screen.getByRole("button", { name: "Load the saved version" }),
+      );
+      expect(textarea().value).toBe("Assistant saved wording.");
+      expect(
+        document.querySelector("[data-resume-background-change]"),
+      ).toBeNull();
+    }, 15_000);
+
+    it("stays silent while canonical revisions refresh", async () => {
       const onDraftEdited = vi.fn();
       const onResolveAssistantProposal = vi.fn();
       const { workspace, message } = buildPendingProposalWorkspaceAndMessage();
@@ -2264,17 +1787,6 @@ describe("ResumeWorkspaceScreen", () => {
       });
 
       // Mount-time canonical hydration and preview refreshes never signal.
-      expect(onDraftEdited).not.toHaveBeenCalled();
-
-      // Assistant-authored proposal resolution flows through saved actions,
-      // not local draft mutation, so accepting one must not signal.
-      fireEvent.click(
-        screen.getByRole("button", { name: /^Open the Assistant/ }),
-      );
-      fireEvent.click(
-        screen.getAllByRole("button", { name: "Accept selected (1)" }).at(-1)!,
-      );
-      expect(onResolveAssistantProposal).toHaveBeenCalledTimes(1);
       expect(onDraftEdited).not.toHaveBeenCalled();
 
       // A later canonical revision re-clones the saved draft silently even
@@ -2502,181 +2014,5 @@ describe("ResumeWorkspaceScreen", () => {
     // Accept/Reject ~37,000px below the fold. The Assistant is now one bounded
     // floating panel at every width. These four sizes are the ones the gate
     // captures.
-    it.each([
-      [1440, 920],
-      [1440, 840],
-      [1280, 720],
-      [1200, 640],
-    ])(
-      "keeps the Assistant thread and its decision controls inside the bounded studio at %ix%i",
-      async (width, height) => {
-        const originalWidth = window.innerWidth;
-        const originalHeight = window.innerHeight;
-        Object.defineProperty(window, "innerWidth", {
-          configurable: true,
-          value: width,
-          writable: true,
-        });
-        Object.defineProperty(window, "innerHeight", {
-          configurable: true,
-          value: height,
-          writable: true,
-        });
-
-        try {
-          const { workspace, message } =
-            buildPendingProposalWorkspaceAndMessage();
-          renderScreen({ assistantMessages: [message], workspace });
-
-          await act(async () => {
-            await vi.advanceTimersByTimeAsync(100);
-          });
-
-          // The one Assistant, in its one placement, at every size.
-          fireEvent.click(
-            screen.getByRole("button", { name: /^Open the Assistant/ }),
-          );
-
-          const contentArea = document.querySelector<HTMLElement>(
-            "[data-resume-studio-content-area]",
-          );
-
-          // The route never grows with the thread: the studio is pinned to the
-          // viewport at every width, not only from xl up.
-          expect(contentArea?.className).toContain(
-            "h-(--resume-studio-height)",
-          );
-          expect(contentArea?.className).toContain("overflow-hidden");
-          expect(
-            contentArea?.style.getPropertyValue("--resume-studio-height"),
-          ).toMatch(/^calc\(100dvh - \d+px\)$/);
-
-          // Exactly one Assistant implementation, and every rendered copy of it
-          // fills its container instead of sizing itself.
-          const panels = Array.from(
-            document.querySelectorAll<HTMLElement>(
-              "[data-resume-assistant-panel]",
-            ),
-          );
-          expect(panels.length).toBeGreaterThan(0);
-          for (const panel of panels) {
-            expect(panel.className).toContain("h-full");
-            expect(panel.className).toContain("min-h-0");
-          }
-
-          // The retired second implementation is gone from every placement.
-          expect(document.body.textContent).not.toContain("Guided edits");
-          expect(document.body.textContent).not.toContain("Send request");
-
-          // Accept/Reject live inside the transcript's own scroll region, so
-          // they can only ever be one scroll away inside the bounded panel.
-          const decisionControls = [
-            ...screen.getAllByRole("button", { name: /^Accept selected/ }),
-            ...screen.getAllByRole("button", { name: "Reject proposal" }),
-          ];
-          expect(decisionControls.length).toBeGreaterThan(0);
-          for (const control of decisionControls) {
-            const transcript = control.closest(
-              "[data-resume-guided-edits-transcript]",
-            );
-            expect(transcript).not.toBeNull();
-            expect(
-              transcript?.closest("[data-resume-assistant-panel]"),
-            ).not.toBeNull();
-          }
-        } finally {
-          Object.defineProperty(window, "innerWidth", {
-            configurable: true,
-            value: originalWidth,
-            writable: true,
-          });
-          Object.defineProperty(window, "innerHeight", {
-            configurable: true,
-            value: originalHeight,
-            writable: true,
-          });
-        }
-      },
-    );
-
-    it("docks the open Assistant beside the panes instead of over them", async () => {
-      renderScreen();
-
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(100);
-      });
-
-      const readStudio = () => {
-        const grid = document.querySelector<HTMLElement>(
-          "[data-resume-studio-grid-columns]",
-        );
-
-        return {
-          gridClass: grid?.className ?? null,
-          gridColumns:
-            grid?.getAttribute("data-resume-studio-grid-columns") ?? null,
-          previewClass:
-            grid?.querySelector<HTMLElement>(
-              "[data-resume-studio-preview-pane]",
-            )?.className ?? null,
-          toolsClass:
-            grid?.querySelector<HTMLElement>("[data-resume-studio-tools-pane]")
-              ?.className ?? null,
-        };
-      };
-      const dockSlot = () =>
-        document.querySelector<HTMLElement>(
-          "[data-resume-studio-assistant-dock-slot]",
-        );
-
-      const closed = readStudio();
-      expect(closed.gridColumns).toBe("preview-tools");
-      expect(closed.previewClass).toBeTruthy();
-      expect(closed.toolsClass).toBeTruthy();
-      expect(dockSlot()?.className).toContain("hidden");
-      expect(dockSlot()?.childElementCount).toBe(0);
-
-      fireEvent.click(
-        screen.getByRole("button", { name: /^Open the Assistant/ }),
-      );
-
-      const panel = screen.getByRole("dialog", { name: "Assistant" });
-      const opened = readStudio();
-
-      // The floating panel rested over the tools column (Save, template,
-      // editor). Open, it is now a column of its own in the studio body:
-      // never inside the preview/tools grid, never portalled over the page.
-      expect(panel.parentElement).toBe(dockSlot());
-      expect(panel.closest("[data-resume-studio-grid-columns]")).toBeNull();
-      expect(panel.getAttribute("data-resume-guided-edits-docked")).toBe(
-        "true",
-      );
-      expect(
-        dockSlot()?.getAttribute("data-resume-studio-assistant-docked"),
-      ).toBe("true");
-      expect(dockSlot()?.className).toContain(
-        "w-(--resume-assistant-dock-width)",
-      );
-      // The panes themselves are untouched; only the grid narrows to make room.
-      expect(opened.previewClass).toBe(closed.previewClass);
-      expect(opened.toolsClass).toBe(closed.toolsClass);
-      expect(opened.gridColumns).toBe(closed.gridColumns);
-      // Docked, it has no drag grip: there is nowhere to drag it to.
-      expect(within(panel).queryByLabelText("Drag the Assistant")).toBeNull();
-
-      fireEvent.click(
-        screen.getAllByRole("button", { name: "Minimize the Assistant" })[0]!,
-      );
-
-      // Minimized back to the launcher: the studio is exactly as it was.
-      expect(readStudio()).toEqual(closed);
-      expect(
-        document.querySelector("[data-resume-guided-edits-panel]"),
-      ).toBeNull();
-      expect(dockSlot()?.className).toContain("hidden");
-      expect(
-        screen.getByRole("button", { name: /^Open the Assistant/ }),
-      ).toBeTruthy();
-    });
   });
 });

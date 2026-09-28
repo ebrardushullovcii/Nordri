@@ -28,6 +28,7 @@
 import {
   type ChatCompletionsPayload,
   type ModelApiMode,
+  type ModelUsagePayload,
   type ResponsesPayload,
   normalizeModelPayload,
 } from "./openai-compatible-transport";
@@ -61,6 +62,18 @@ export type ModelRequestEvent =
       detail: string;
     };
 
+/**
+ * What a streamed answer looks like while it arrives, normalized across
+ * Chat Completions and Responses. Text deltas belong to one attempt: a
+ * retried attempt starts with `attempt_started` and its text replaces the
+ * earlier partial text rather than extending it.
+ */
+export type ModelStreamEvent =
+  | { type: "attempt_started"; attempt: number }
+  | { type: "text_delta"; text: string }
+  | { type: "reasoning_delta"; text: string }
+  | { type: "tool_call_started"; index: number; name: string };
+
 export interface ModelRequestResilienceOptions {
   /** Longest silence tolerated before an attempt is presumed dead. */
   idleTimeoutMs?: number | undefined;
@@ -82,6 +95,8 @@ export interface PerformModelRequestInput extends ModelRequestResilienceOptions 
   signal?: AbortSignal | undefined;
   fetchImpl?: typeof fetch | undefined;
   onEvent?: ((event: ModelRequestEvent) => void) | undefined;
+  /** Normalized deltas as a streamed answer arrives (see ModelStreamEvent). */
+  onStreamEvent?: ((event: ModelStreamEvent) => void) | undefined;
 }
 
 export class ModelRequestHttpError extends Error {
@@ -247,18 +262,29 @@ type ToolCallAccumulator = { id: string; name: string; arguments: string };
  * Folds one Chat Completions stream chunk into the running message. Tool
  * calls stream as fragments keyed by `index`; arguments arrive in pieces.
  */
+interface ChatStreamState {
+  content: string;
+  reasoningContent: string;
+  toolCalls: Map<number, ToolCallAccumulator>;
+  finished: boolean;
+  finishReason: string | null;
+  usage: Record<string, unknown> | null;
+}
+
 function foldChatCompletionsChunk(
   chunk: unknown,
-  state: {
-    content: string;
-    toolCalls: Map<number, ToolCallAccumulator>;
-    finished: boolean;
-  },
+  state: ChatStreamState,
+  emit?: (event: ModelStreamEvent) => void,
 ): void {
   if (!isRecord(chunk)) {
     return;
   }
   rejectIncompleteOutput(chunk, "chat_completions");
+  // With `stream_options.include_usage` the usage arrives on a final chunk
+  // whose choices are empty.
+  if (isRecord(chunk.usage)) {
+    state.usage = chunk.usage;
+  }
   const choices: unknown[] = Array.isArray(chunk.choices)
     ? (chunk.choices as unknown[])
     : [];
@@ -270,6 +296,15 @@ function foldChatCompletionsChunk(
   if (delta) {
     if (typeof delta.content === "string") {
       state.content += delta.content;
+      if (delta.content) emit?.({ type: "text_delta", text: delta.content });
+    }
+    // DeepSeek thinking mode streams its reasoning separately. It is private
+    // continuation for later tool turns, never shown to the person.
+    if (typeof delta.reasoning_content === "string") {
+      state.reasoningContent += delta.reasoning_content;
+      if (delta.reasoning_content) {
+        emit?.({ type: "reasoning_delta", text: delta.reasoning_content });
+      }
     }
     const toolCalls: unknown[] = Array.isArray(delta.tool_calls)
       ? (delta.tool_calls as unknown[])
@@ -291,6 +326,9 @@ function foldChatCompletionsChunk(
       const fn = isRecord(fragment.function) ? fragment.function : null;
       if (fn) {
         if (typeof fn.name === "string" && fn.name) {
+          if (!entry.name) {
+            emit?.({ type: "tool_call_started", index, name: fn.name });
+          }
           entry.name = fn.name;
         }
         if (typeof fn.arguments === "string") {
@@ -305,6 +343,9 @@ function foldChatCompletionsChunk(
   if (message && !delta) {
     if (typeof message.content === "string") {
       state.content += message.content;
+    }
+    if (typeof message.reasoning_content === "string") {
+      state.reasoningContent += message.reasoning_content;
     }
     const toolCalls: unknown[] = Array.isArray(message.tool_calls)
       ? (message.tool_calls as unknown[])
@@ -323,13 +364,13 @@ function foldChatCompletionsChunk(
   }
   if (typeof choice.finish_reason === "string" && choice.finish_reason) {
     state.finished = true;
+    state.finishReason = choice.finish_reason;
   }
 }
 
-function buildChatPayloadFromStream(state: {
-  content: string;
-  toolCalls: Map<number, ToolCallAccumulator>;
-}): ChatCompletionsPayload {
+function buildChatPayloadFromStream(
+  state: ChatStreamState,
+): ChatCompletionsPayload {
   const toolCalls = [...state.toolCalls.entries()]
     .sort((left, right) => left[0] - right[0])
     .map(([, call]) => ({
@@ -343,10 +384,15 @@ function buildChatPayloadFromStream(state: {
       {
         message: {
           ...(state.content ? { content: state.content } : {}),
+          ...(state.reasoningContent
+            ? { reasoning_content: state.reasoningContent }
+            : {}),
           ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
         },
+        ...(state.finishReason ? { finish_reason: state.finishReason } : {}),
       },
     ],
+    ...(state.usage ? { usage: state.usage as ModelUsagePayload } : {}),
   };
 }
 
@@ -359,6 +405,7 @@ async function readStreamedPayload(
   apiMode: ModelApiMode,
   onActivity: () => void,
   signal: AbortSignal,
+  emit?: (event: ModelStreamEvent) => void,
 ): Promise<ChatCompletionsPayload> {
   const body = response.body;
   if (!body) {
@@ -373,10 +420,13 @@ async function readStreamedPayload(
   let buffered = "";
   let dataLines: string[] = [];
   let sawDone = false;
-  const chat = {
+  const chat: ChatStreamState = {
     content: "",
+    reasoningContent: "",
     toolCalls: new Map<number, ToolCallAccumulator>(),
     finished: false,
+    finishReason: null,
+    usage: null,
   };
   const responses: {
     completed: ResponsesPayload | null;
@@ -400,7 +450,7 @@ async function readStreamedPayload(
       throw new Error(errorMessage);
     }
     if (apiMode === "chat_completions") {
-      foldChatCompletionsChunk(parsed, chat);
+      foldChatCompletionsChunk(parsed, chat, emit);
       return;
     }
     if (!isRecord(parsed)) {
@@ -446,6 +496,21 @@ async function readStreamedPayload(
       typeof parsed.delta === "string"
     ) {
       responses.text += parsed.delta;
+      if (parsed.delta) emit?.({ type: "text_delta", text: parsed.delta });
+      return;
+    }
+    if (
+      type === "response.output_item.added" &&
+      isRecord(parsed.item) &&
+      parsed.item.type === "function_call" &&
+      typeof parsed.item.name === "string"
+    ) {
+      emit?.({
+        type: "tool_call_started",
+        index:
+          typeof parsed.output_index === "number" ? parsed.output_index : 0,
+        name: parsed.item.name,
+      });
       return;
     }
     if (type === "response.output_item.done" && isRecord(parsed.item)) {
@@ -663,6 +728,7 @@ export async function performModelRequest(
     }
 
     input.onEvent?.({ type: "attempt_started", attempt, maxAttempts });
+    input.onStreamEvent?.({ type: "attempt_started", attempt });
 
     const attemptController = new AbortController();
     let abortReason: "idle" | "total" | "caller" | null = null;
@@ -725,6 +791,7 @@ export async function performModelRequest(
           input.apiMode,
           armIdle,
           attemptController.signal,
+          input.onStreamEvent,
         );
       }
 

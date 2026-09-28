@@ -13,6 +13,8 @@ import {
   type DiscoveryRunHealthFields,
   type DiscoverySourceHealthFields,
   type SourceRuntimeSignals,
+  describeLatestSourceCheck,
+  type SourceCheckHealthFields,
 } from "./source-health";
 import type {
   DiscoveryTargetExecutionState,
@@ -704,5 +706,47 @@ describe("deriveRepeatedlyFailingTargetIds", () => {
 
     expect(listSourceAttentionReasons(target, runtime)).toContain("failing");
     expect(isEnabledSourceNeedingAttention(target, runtime)).toBe(true);
+  });
+});
+
+describe("the source row after Check source", () => {
+  const check = (overrides: Partial<SourceCheckHealthFields> = {}) => ({
+    targetId: "target_board",
+    state: "completed",
+    startedAt: "2026-09-28T01:00:00.000Z",
+    completedAt: "2026-09-28T01:02:00.000Z",
+    finalSummary: "Saved instructions for reading this board's job list.",
+    ...overrides,
+  });
+
+  test("shows the check when it is newer than the last search", () => {
+    expect(
+      describeLatestSourceCheck({ id: "target_board" }, [check()], {
+        completedAt: "2026-09-28T00:30:00.000Z",
+      }),
+    ).toBe(
+      "Latest check: Saved instructions for reading this board's job list.",
+    );
+  });
+
+  test("keeps the search line when a search ran after the check", () => {
+    expect(
+      describeLatestSourceCheck({ id: "target_board" }, [check()], {
+        completedAt: "2026-09-28T02:00:00.000Z",
+      }),
+    ).toBeNull();
+  });
+
+  test("says a check is running, and ignores other sources' checks", () => {
+    expect(
+      describeLatestSourceCheck(
+        { id: "target_board" },
+        [check({ state: "running", completedAt: null })],
+        { completedAt: "2026-09-28T02:00:00.000Z" },
+      ),
+    ).toBe("Checking this source now.");
+    expect(
+      describeLatestSourceCheck({ id: "other" }, [check()], null),
+    ).toBeNull();
   });
 });

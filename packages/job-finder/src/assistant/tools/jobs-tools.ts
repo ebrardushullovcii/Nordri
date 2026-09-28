@@ -1,0 +1,728 @@
+import {
+  DiscoveryFeedbackReasonSchema,
+  JobDiscoveryTargetSchema,
+  NonEmptyStringSchema,
+  discoveryFeedbackReasonValues,
+  type DiscoveryJobView,
+} from "@unemployed/contracts";
+import { z } from "zod";
+
+import { AssistantToolError, defineTool, json } from "../tool-kit";
+import {
+  allJobs,
+  comparableName,
+  compactJob,
+  createJobCaveats,
+  describeApplicationStanding,
+  findJob,
+  jobDetail,
+  jobEvidence,
+  jobRowsPart,
+  pausedByPersonMessage,
+  plural,
+} from "./format";
+
+const Id = NonEmptyStringSchema.max(200);
+
+const QueryInput = z.object({
+  scope: z.enum(["found", "shortlisted", "dismissed", "all"]).default("found"),
+  text: z.string().trim().max(200).optional(),
+  minScore: z.number().int().min(0).max(100).optional(),
+  workMode: z.enum(["remote", "hybrid", "onsite"]).optional(),
+  postedWithinDays: z.number().int().min(1).max(365).optional(),
+  onlyIds: z.array(Id).max(3000).optional(),
+  sort: z.enum(["score", "recent"]).default("score"),
+  limit: z.number().int().min(1).max(25).default(10),
+  includeExcludedEmployers: z.boolean().default(false),
+});
+
+function filterJobs(
+  jobs: readonly DiscoveryJobView[],
+  input: z.infer<typeof QueryInput>,
+  now: number,
+): DiscoveryJobView[] {
+  const words = (input.text ?? "")
+    .toLowerCase()
+    .split(/\s+/u)
+    .filter((word) => word.length > 1);
+  const only = input.onlyIds ? new Set(input.onlyIds) : null;
+  const filtered = jobs.filter((job) => {
+    if (only && !only.has(job.id)) return false;
+    if (input.scope === "found" && job.status !== "discovered") return false;
+    if (
+      input.scope === "shortlisted" &&
+      !["shortlisted", "drafting", "ready_for_review", "approved"].includes(
+        job.status,
+      )
+    )
+      return false;
+    if (input.scope === "dismissed" && job.status !== "archived") return false;
+    if (
+      typeof input.minScore === "number" &&
+      job.matchAssessment.score < input.minScore
+    )
+      return false;
+    if (input.workMode && !job.workMode.includes(input.workMode)) return false;
+    if (input.postedWithinDays) {
+      const posted = Date.parse(job.postedAt ?? job.discoveredAt);
+      if (
+        !Number.isFinite(posted) ||
+        now - posted > input.postedWithinDays * 86_400_000
+      )
+        return false;
+    }
+    if (words.length > 0) {
+      const haystack =
+        `${job.title} ${job.company} ${job.location} ${job.keySkills.join(" ")}`.toLowerCase();
+      if (!words.every((word) => haystack.includes(word))) return false;
+    }
+    return true;
+  });
+  return filtered.sort((left, right) =>
+    input.sort === "recent"
+      ? (right.postedAt ?? right.discoveredAt).localeCompare(
+          left.postedAt ?? left.discoveredAt,
+        )
+      : right.matchAssessment.score - left.matchAssessment.score,
+  );
+}
+
+export const queryJobsTool = defineTool({
+  name: "query_jobs",
+  group: "jobs",
+  description:
+    "Lists saved jobs with fit evidence: found (not yet shortlisted), shortlisted, dismissed or all, filtered by words, minimum match score, work mode or recency, or restricted to given ids (a result set from the screen). All matches go into a result set in stable order; the rows shown are the first ones. Jobs from excluded employers are left out; rows marked alreadyApplied are the same posting as one the person applied to (one job across sources), so don't pick them without asking.",
+  parameters: json.object({
+    scope: json.enumOf(["found", "shortlisted", "dismissed", "all"]),
+    text: json.string("Words in the title, company, location or skills."),
+    minScore: json.number(),
+    workMode: json.enumOf(["remote", "hybrid", "onsite"]),
+    postedWithinDays: json.number(),
+    onlyIds: json.ids("Restrict to these job ids."),
+    sort: json.enumOf(["score", "recent"]),
+    limit: json.number("Rows to show, at most 25."),
+    includeExcludedEmployers: json.boolean(
+      "Only when the person names an excluded employer.",
+    ),
+  }),
+  input: QueryInput,
+  label: () => "Looking through your jobs",
+  effect: "read",
+  async execute(input, { service, session }) {
+    const snapshot = await service.getWorkspaceSnapshot();
+    const caveatsFor = createJobCaveats(snapshot);
+    const all = filterJobs(allJobs(snapshot), input, Date.now());
+    // Jobs from an employer the person excluded never come back in a pick
+    // unless asked for by name.
+    const matches = input.includeExcludedEmployers
+      ? all
+      : all.filter((job) => !caveatsFor(job).excludedEmployer);
+    const hiddenExcluded = all.length - matches.length;
+    const resultSet = await session.createResultSet({
+      kind: "jobs",
+      label: `Jobs: ${input.scope}${input.text ? ` matching "${input.text}"` : ""}`,
+      itemIds: matches.map((job) => job.id),
+      source: "tool_query",
+    });
+    const shown = matches.slice(0, input.limit);
+    return {
+      summary: `${plural(matches.length, "job")} match (result set ${resultSet.id}).${hiddenExcluded > 0 ? ` ${plural(hiddenExcluded, "job")} from employers the person excluded left out.` : ""}`,
+      data: {
+        resultSetId: resultSet.id,
+        total: matches.length,
+        jobs: shown.map((job, index) => {
+          const caveats = caveatsFor(job);
+          return {
+            position: index + 1,
+            ...jobEvidence(job),
+            application: describeApplicationStanding(snapshot, job.id),
+            ...(caveats.excludedEmployer ? { excludedEmployer: true } : {}),
+            ...(caveats.alreadyAppliedAs
+              ? {
+                  alreadyApplied:
+                    caveats.alreadyAppliedAs.jobId === job.id
+                      ? `This job already has an application (${caveats.alreadyAppliedAs.status}).`
+                      : `Same posting as job ${caveats.alreadyAppliedAs.jobId}, which already has an application (${caveats.alreadyAppliedAs.status}).`,
+                }
+              : {}),
+          };
+        }),
+      },
+      parts:
+        shown.length > 0
+          ? [
+              jobRowsPart({
+                jobs: shown,
+                title: null,
+                resultSetId: resultSet.id,
+                totalCount: matches.length,
+              }),
+            ]
+          : [],
+    };
+  },
+});
+
+export const getJobTool = defineTool({
+  name: "get_job",
+  group: "jobs",
+  description:
+    "Reads one job in full: the listing text, requirements, fit reasons and gaps, and its resume level.",
+  parameters: json.object({ jobId: json.string() }, ["jobId"]),
+  input: z.object({ jobId: Id }),
+  label: () => "Reading the job",
+  effect: "read",
+  async execute(input, { service }) {
+    const snapshot = await service.getWorkspaceSnapshot();
+    const job = findJob(snapshot, input.jobId);
+    if (!job)
+      throw new AssistantToolError("not_found", "No saved job with that id.");
+    return { summary: `${job.title} at ${job.company}.`, data: jobDetail(job) };
+  },
+});
+
+export const compareJobsTool = defineTool({
+  name: "compare_jobs",
+  group: "jobs",
+  description:
+    "Puts up to eight jobs side by side with their fit evidence (score, reasons, gaps, pay, location, work mode).",
+  parameters: json.object({ jobIds: json.ids() }, ["jobIds"]),
+  input: z.object({ jobIds: z.array(Id).min(2).max(8) }),
+  label: (input) =>
+    `Comparing ${plural(Array.isArray(input.jobIds) ? input.jobIds.length : 2, "job")}`,
+  effect: "read",
+  async execute(input, { service }) {
+    const snapshot = await service.getWorkspaceSnapshot();
+    const jobs = input.jobIds.map((id) => findJob(snapshot, id));
+    const missing = input.jobIds.filter((_id, index) => !jobs[index]);
+    const found = jobs.filter((job): job is DiscoveryJobView => job !== null);
+    return {
+      summary: `Compared ${plural(found.length, "job")}${missing.length ? `; not found: ${missing.join(", ")}` : ""}.`,
+      data: found.map(jobEvidence),
+    };
+  },
+});
+
+const JobIdsInput = z.object({ jobIds: z.array(Id).min(1).max(100) });
+
+export const shortlistJobsTool = defineTool({
+  name: "shortlist_jobs",
+  group: "jobs",
+  description:
+    "Moves jobs to Shortlisted. Each job gets its own outcome: shortlisted, already there, or held back (a closed listing, an excluded employer, or the same posting as a job already applied to). Set evenIfExcludedOrApplied only when the person asked for that job knowing it.",
+  parameters: json.object(
+    { jobIds: json.ids(), evenIfExcludedOrApplied: json.boolean() },
+    ["jobIds"],
+  ),
+  input: JobIdsInput.extend({
+    evenIfExcludedOrApplied: z.boolean().default(false),
+  }),
+  label: (input) =>
+    `Shortlisting ${plural(Array.isArray(input.jobIds) ? input.jobIds.length : 1, "job")}`,
+  effect: "local_write",
+  async execute(input, { service, session, ports }) {
+    const snapshot = await service.getWorkspaceSnapshot();
+    const caveatsFor = createJobCaveats(snapshot);
+    const outcomes: { jobId: string; outcome: string }[] = [];
+    for (const jobId of [...new Set(input.jobIds)]) {
+      const job = findJob(snapshot, jobId);
+      if (!job) {
+        outcomes.push({ jobId, outcome: "not found" });
+        continue;
+      }
+      const caveats = caveatsFor(job);
+      if (!input.evenIfExcludedOrApplied && caveats.excludedEmployer) {
+        outcomes.push({
+          jobId,
+          outcome: `held back: the person excluded ${job.company}`,
+        });
+        continue;
+      }
+      if (
+        !input.evenIfExcludedOrApplied &&
+        caveats.alreadyAppliedAs &&
+        caveats.alreadyAppliedAs.jobId !== job.id
+      ) {
+        outcomes.push({
+          jobId,
+          outcome: `held back: same posting as job ${caveats.alreadyAppliedAs.jobId}, already applied (${caveats.alreadyAppliedAs.status})`,
+        });
+        continue;
+      }
+      if (job.status !== "discovered") {
+        outcomes.push({ jobId, outcome: `already ${job.status}` });
+        continue;
+      }
+      if (job.listingActivity.status === "closed") {
+        outcomes.push({
+          jobId,
+          outcome: "refused: the listing says it is closed",
+        });
+        continue;
+      }
+      session.assertCurrent();
+      try {
+        await service.queueJobForReview(jobId);
+        outcomes.push({ jobId, outcome: "shortlisted" });
+      } catch (error) {
+        outcomes.push({
+          jobId,
+          outcome: `failed: ${error instanceof Error ? error.message.slice(0, 200) : "error"}`,
+        });
+      }
+    }
+    ports.publishWorkspaceUpdate();
+    const done = outcomes.filter(
+      (entry) => entry.outcome === "shortlisted",
+    ).length;
+    const after = await service.getWorkspaceSnapshot();
+    const shortlisted = outcomes
+      .filter((entry) => entry.outcome === "shortlisted")
+      .map((entry) => findJob(after, entry.jobId))
+      .filter((job): job is DiscoveryJobView => job !== null);
+    return {
+      summary: `Shortlisted ${plural(done, "job")} of ${input.jobIds.length}.`,
+      data: outcomes,
+      parts: shortlisted.length
+        ? [
+            jobRowsPart({
+              jobs: shortlisted,
+              title: "Shortlisted",
+              resultSetId: null,
+            }),
+          ]
+        : [],
+    };
+  },
+});
+
+export const removeFromShortlistTool = defineTool({
+  name: "remove_from_shortlist",
+  group: "jobs",
+  description: "Takes jobs off Shortlisted and back to the found list.",
+  parameters: json.object({ jobIds: json.ids() }, ["jobIds"]),
+  input: JobIdsInput,
+  label: () => "Removing jobs from Shortlisted",
+  effect: "local_write",
+  async execute(input, { service, session, ports }) {
+    const outcomes: { jobId: string; outcome: string }[] = [];
+    for (const jobId of input.jobIds) {
+      session.assertCurrent();
+      try {
+        await service.removeJobFromReview(jobId);
+        outcomes.push({ jobId, outcome: "removed" });
+      } catch (error) {
+        outcomes.push({
+          jobId,
+          outcome: `failed: ${error instanceof Error ? error.message.slice(0, 200) : "error"}`,
+        });
+      }
+    }
+    ports.publishWorkspaceUpdate();
+    return {
+      summary: `Removed ${plural(outcomes.filter((entry) => entry.outcome === "removed").length, "job")} from Shortlisted.`,
+      data: outcomes,
+    };
+  },
+});
+
+export const dismissJobsTool = defineTool({
+  name: "dismiss_jobs",
+  group: "jobs",
+  description: `Hides jobs from the found list with the reasons the person gave (${discoveryFeedbackReasonValues.join(", ")}). They can be restored.`,
+  parameters: json.object(
+    {
+      jobIds: json.ids(),
+      reasons: json.array(json.enumOf(discoveryFeedbackReasonValues)),
+    },
+    ["jobIds", "reasons"],
+  ),
+  input: z.object({
+    jobIds: z.array(Id).min(1).max(100),
+    reasons: z.array(DiscoveryFeedbackReasonSchema).min(1).max(9),
+  }),
+  label: () => "Hiding jobs",
+  effect: "local_write",
+  async execute(input, { service, session, ports }) {
+    const outcomes: { jobId: string; outcome: string }[] = [];
+    const before = await service.getWorkspaceSnapshot();
+    const shortlistedBefore = new Set(
+      before.reviewQueue.map((item) => item.jobId),
+    );
+    for (const jobId of input.jobIds) {
+      session.assertCurrent();
+      try {
+        await service.dismissDiscoveryJob({ jobId, reasons: input.reasons });
+        outcomes.push({ jobId, outcome: "hidden" });
+      } catch (error) {
+        outcomes.push({
+          jobId,
+          outcome: `failed: ${error instanceof Error ? error.message.slice(0, 200) : "error"}`,
+        });
+      }
+    }
+    ports.publishWorkspaceUpdate();
+    // Say what hiding did to the shortlist, from the records.
+    const after = await service.getWorkspaceSnapshot();
+    const shortlistedAfter = new Set(
+      after.reviewQueue.map((item) => item.jobId),
+    );
+    const leftShortlist = input.jobIds.filter(
+      (jobId) => shortlistedBefore.has(jobId) && !shortlistedAfter.has(jobId),
+    );
+    return {
+      summary: `Hid ${plural(outcomes.filter((entry) => entry.outcome === "hidden").length, "job")}.${leftShortlist.length > 0 ? ` These were on the shortlist and are no longer: ${leftShortlist.join(", ")}.` : ""}`,
+      data: outcomes.map((entry) => ({
+        ...entry,
+        leftShortlist: leftShortlist.includes(entry.jobId),
+      })),
+    };
+  },
+});
+
+export const restoreJobsTool = defineTool({
+  name: "restore_jobs",
+  group: "jobs",
+  description: "Brings hidden jobs back to the found list.",
+  parameters: json.object({ jobIds: json.ids() }, ["jobIds"]),
+  input: JobIdsInput,
+  label: () => "Restoring hidden jobs",
+  effect: "local_write",
+  async execute(input, { service, session, ports }) {
+    for (const jobId of input.jobIds) {
+      session.assertCurrent();
+      await service.restoreDismissedDiscoveryJob(jobId);
+    }
+    ports.publishWorkspaceUpdate();
+    return { summary: `Restored ${plural(input.jobIds.length, "job")}.` };
+  },
+});
+
+export const excludeEmployerTool = defineTool({
+  name: "exclude_employer",
+  group: "jobs",
+  description:
+    "Excludes the employer of this job (exact company name) from future searches and hides every found job from them. Jobs already shortlisted or applied to stay where they are. Reversible with include_employer (and restore_jobs for the hidden ones).",
+  parameters: json.object({ jobId: json.string() }, ["jobId"]),
+  input: z.object({ jobId: Id }),
+  label: () => "Excluding an employer",
+  effect: "local_write",
+  async execute(input, { service, session, ports }) {
+    const preview = await service.previewEmployerExclusion(input.jobId);
+    if (preview.status !== "available") {
+      throw new AssistantToolError(
+        "refused",
+        `This employer cannot be excluded (${preview.reason.replaceAll("_", " ")}).`,
+      );
+    }
+    session.assertCurrent();
+    const before = await service.getWorkspaceSnapshot();
+    const employer = comparableName(preview.displayCompanyName);
+    const sameEmployer = (job: DiscoveryJobView) =>
+      comparableName(job.company) === employer;
+    await service.dismissDiscoveryJob({
+      jobId: input.jobId,
+      reasons: ["company"],
+      action: "hide_and_exclude_employer",
+      expectedNormalizedCompanyName: preview.normalizedCompanyName,
+    });
+    const others = allJobs(before).filter(
+      (job) =>
+        job.id !== input.jobId &&
+        job.status === "discovered" &&
+        sameEmployer(job),
+    );
+    const failed: string[] = [];
+    for (const job of others) {
+      session.assertCurrent();
+      try {
+        await service.dismissDiscoveryJob({
+          jobId: job.id,
+          reasons: ["company"],
+          action: "hide_job",
+        });
+      } catch {
+        failed.push(job.id);
+      }
+    }
+    ports.publishWorkspaceUpdate();
+    // Report what the workspace now shows, not what was intended.
+    const after = await service.getWorkspaceSnapshot();
+    const stillFound = after.discoveryJobs.filter(
+      (job) => job.status === "discovered" && sameEmployer(job),
+    );
+    const keptElsewhere = allJobs(after).filter(
+      (job) =>
+        sameEmployer(job) &&
+        job.status !== "discovered" &&
+        job.status !== "archived",
+    );
+    return {
+      summary: [
+        `Excluded ${preview.displayCompanyName} from future searches.`,
+        `Hidden now: ${plural(others.length + 1 - failed.length, "found job")}.`,
+        stillFound.length > 0
+          ? `Still listed in Find jobs: ${plural(stillFound.length, "job")} (${stillFound
+              .slice(0, 5)
+              .map((job) => job.title)
+              .join("; ")}).`
+          : "No found jobs from them are listed any more.",
+        keptElsewhere.length > 0
+          ? `Left as they are (shortlisted or applied): ${plural(keptElsewhere.length, "job")}.`
+          : "",
+      ]
+        .filter(Boolean)
+        .join(" "),
+      data: {
+        normalizedCompanyName: preview.normalizedCompanyName,
+        hiddenJobIds: [input.jobId, ...others.map((job) => job.id)].filter(
+          (id) => !failed.includes(id),
+        ),
+        stillListedJobIds: stillFound.map((job) => job.id),
+      },
+    };
+  },
+});
+
+export const includeEmployerTool = defineTool({
+  name: "include_employer",
+  group: "jobs",
+  description:
+    "Lifts an employer exclusion made earlier: give a job from that employer and the exact company name returned when it was excluded.",
+  parameters: json.object(
+    { jobId: json.string(), normalizedCompanyName: json.string() },
+    ["jobId", "normalizedCompanyName"],
+  ),
+  input: z.object({
+    jobId: Id,
+    normalizedCompanyName: NonEmptyStringSchema.max(300),
+  }),
+  label: () => "Lifting an employer exclusion",
+  effect: "local_write",
+  async execute(input, { service, session, ports }) {
+    session.assertCurrent();
+    await service.removeEmployerExclusion({
+      jobId: input.jobId,
+      normalizedCompanyName: input.normalizedCompanyName,
+    });
+    ports.publishWorkspaceUpdate();
+    return { summary: `Jobs from ${input.normalizedCompanyName} show again.` };
+  },
+});
+
+export const searchForJobsTool = defineTool({
+  name: "search_for_jobs",
+  group: "jobs",
+  description:
+    "Starts a job search across all or chosen sources with the person's goal in plain words, as Find jobs does. It runs in the background; the conversation continues with the results when it ends. Criteria given only for this search stay in the goal and do not change saved preferences.",
+  parameters: json.object(
+    {
+      goal: json.string(
+        "What to look for, in the person's words plus what you know of their profile.",
+      ),
+      breadth: json.enumOf(["best_only", "wide"]),
+      freshness: json.enumOf(["any", "recent"]),
+      sourceIds: json.ids("Only these sources; omit for all."),
+    },
+    ["goal"],
+  ),
+  input: z.object({
+    goal: z.string().trim().min(1).max(1_000),
+    breadth: z.enum(["best_only", "wide"]).optional(),
+    freshness: z.enum(["any", "recent"]).default("any"),
+    sourceIds: z.array(Id).min(1).max(1_000).optional(),
+  }),
+  label: () => "Starting a job search",
+  effect: "external",
+  async execute(input, { ports, session, service }) {
+    const before = await service.getWorkspaceSnapshot();
+    const paused = pausedByPersonMessage(before.activityControl, "a search");
+    if (paused) throw new AssistantToolError("refused", paused);
+    if (before.activeDiscoveryRun?.state === "running") {
+      await session.watchRun(
+        { kind: "discovery", id: before.activeDiscoveryRun.id, jobIds: [] },
+        "Waiting for the search already running",
+      );
+      return {
+        summary: `A search is already running (run ${before.activeDiscoveryRun.id}); this conversation continues when it ends.`,
+        data: { runId: before.activeDiscoveryRun.id },
+      };
+    }
+    session.assertCurrent();
+    const started = await ports.startSearch({
+      searchRequest: {
+        intent: input.goal,
+        ...(input.breadth ? { breadth: input.breadth } : {}),
+        freshness: input.freshness,
+        sourceIds: input.sourceIds ?? "all",
+      },
+      targetId: null,
+    });
+    if (!started.runId) {
+      throw new AssistantToolError("refused", started.message);
+    }
+    await session.watchRun(
+      { kind: "discovery", id: started.runId, jobIds: [] },
+      "Searching for jobs",
+    );
+    return {
+      summary: `The search started (run ${started.runId}). This conversation continues when it ends; do not wait for it.`,
+      data: { runId: started.runId },
+    };
+  },
+});
+
+export const cancelSearchTool = defineTool({
+  name: "cancel_search",
+  group: "jobs",
+  description: "Stops a running search; jobs already found are kept.",
+  parameters: json.object({ runId: json.string() }, ["runId"]),
+  input: z.object({ runId: Id }),
+  label: () => "Stopping the search",
+  effect: "local_write",
+  async execute(input, { ports }) {
+    await ports.cancelSearch(input.runId);
+    return { summary: "The search is stopping; what it found is kept." };
+  },
+});
+
+export const listSourcesTool = defineTool({
+  name: "list_sources",
+  group: "jobs",
+  description:
+    "Lists the job sources searches read, with ids, addresses, whether each is on, and its last check.",
+  parameters: json.object({}),
+  input: z.object({}).passthrough(),
+  label: () => "Reading your job sources",
+  effect: "read",
+  async execute(_input, { service }) {
+    const snapshot = await service.getWorkspaceSnapshot();
+    const targets = snapshot.searchPreferences.discovery.targets;
+    return {
+      summary: `${plural(targets.length, "source")}, ${targets.filter((target) => target.enabled).length} on.`,
+      data: targets.slice(0, 200).map((target) => ({
+        id: target.id,
+        label: target.label,
+        url: target.startingUrl,
+        enabled: target.enabled,
+        instructions: target.instructionStatus,
+        lastVerifiedAt: target.lastVerifiedAt,
+        staleReason: target.staleReason,
+      })),
+    };
+  },
+});
+
+function sourceLabel(url: string): string {
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.replace(/^www\./u, "");
+    const first = parsed.pathname.split("/").filter(Boolean)[0];
+    return ["localhost", "127.0.0.1", "[::1]"].includes(host) && first
+      ? `${parsed.host}/${first}`
+      : host;
+  } catch {
+    return url;
+  }
+}
+
+export const updateSourcesTool = defineTool({
+  name: "update_sources",
+  group: "jobs",
+  description:
+    "Adds job sources by address, or turns sources on or off by id. Added sources are on and searched at once; a check is optional.",
+  parameters: json.object({
+    addUrls: json.ids("Addresses to add."),
+    enableIds: json.ids(),
+    disableIds: json.ids(),
+  }),
+  input: z.object({
+    addUrls: z.array(z.string().trim().url()).max(200).default([]),
+    enableIds: z.array(Id).max(500).default([]),
+    disableIds: z.array(Id).max(500).default([]),
+  }),
+  label: () => "Updating your job sources",
+  effect: "local_write",
+  async execute(input, { service, session, ports }) {
+    const snapshot = await service.getWorkspaceSnapshot();
+    const preferences = snapshot.searchPreferences;
+    const existing = new Set(
+      preferences.discovery.targets.map((target) =>
+        target.startingUrl.replace(/\/+$/u, ""),
+      ),
+    );
+    const additions = input.addUrls
+      .filter((url) => !existing.has(url.replace(/\/+$/u, "")))
+      .map((url) =>
+        JobDiscoveryTargetSchema.parse({
+          id: session.createId("target"),
+          label: sourceLabel(url),
+          startingUrl: url,
+          enabled: true,
+          adapterKind: "auto",
+        }),
+      );
+    const targets = [
+      ...preferences.discovery.targets.map((target) =>
+        input.enableIds.includes(target.id)
+          ? { ...target, enabled: true }
+          : input.disableIds.includes(target.id)
+            ? { ...target, enabled: false }
+            : target,
+      ),
+      ...additions,
+    ];
+    session.assertCurrent();
+    await service.saveSearchPreferences({
+      ...preferences,
+      discovery: { ...preferences.discovery, targets },
+    });
+    ports.publishWorkspaceUpdate();
+    return {
+      summary: `Added ${plural(additions.length, "source")}; ${input.enableIds.length} turned on, ${input.disableIds.length} turned off.`,
+      data: {
+        added: additions.map((target) => ({
+          id: target.id,
+          url: target.startingUrl,
+        })),
+      },
+    };
+  },
+});
+
+export const checkSourceTool = defineTool({
+  name: "check_source",
+  group: "jobs",
+  description:
+    "Runs a source check (the agent learns how to read the site) for one source by id. Optional: sources are searched without one.",
+  parameters: json.object({ sourceId: json.string() }, ["sourceId"]),
+  input: z.object({ sourceId: Id }),
+  label: () => "Checking a job source",
+  effect: "external",
+  async execute(input, { ports, session }) {
+    session.assertCurrent();
+    await ports.checkSource(input.sourceId);
+    return {
+      summary: "The source check finished; list_sources shows its result.",
+    };
+  },
+});
+
+export const jobsTools = [
+  queryJobsTool,
+  getJobTool,
+  compareJobsTool,
+  shortlistJobsTool,
+  removeFromShortlistTool,
+  dismissJobsTool,
+  restoreJobsTool,
+  excludeEmployerTool,
+  includeEmployerTool,
+  searchForJobsTool,
+  cancelSearchTool,
+  listSourcesTool,
+  updateSourcesTool,
+  checkSourceTool,
+];
+
+export { compactJob };

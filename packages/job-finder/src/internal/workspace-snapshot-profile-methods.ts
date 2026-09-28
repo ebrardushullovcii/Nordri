@@ -326,7 +326,12 @@ export function createWorkspaceSnapshotProfileMethods(
   | "updateAiBehavior"
   | "updateTrackerCrm"
   | "updateAppearanceTheme"
-> {
+> & {
+  /** Internal: the assistant sidebar's profile commit (ADR 0037). */
+  applyAssistantProfilePatchGroup: ReturnType<
+    typeof createWorkspaceProfileCopilotMethods
+  >["applyAssistantProfilePatchGroup"];
+} {
   const { buildBundleFromStoredResume, getCurrentSetupStateContext } =
     createWorkspaceProfileSetupContextHelpers(ctx);
 
@@ -1931,6 +1936,8 @@ export function createWorkspaceSnapshotProfileMethods(
       return getWorkspaceSnapshot();
     },
     sendProfileCopilotMessage: profileCopilotMethods.sendProfileCopilotMessage,
+    applyAssistantProfilePatchGroup:
+      profileCopilotMethods.applyAssistantProfilePatchGroup,
     proposeProfileCopilotChange:
       profileCopilotMethods.proposeProfileCopilotChange,
     applyProfileCopilotPatchGroup:
@@ -2059,6 +2066,8 @@ export function createWorkspaceSnapshotProfileMethods(
       const behaviorFields = pickDefined({
         keepSessionAlive: parsedInput.keepSessionAlive,
         discoveryOnly: parsedInput.discoveryOnly,
+        collapseSideMenuWithAssistant:
+          parsedInput.collapseSideMenuWithAssistant,
       });
       await ctx.repository.commitSettingsUpdate((current) =>
         JobFinderSettingsSchema.parse({ ...current, ...behaviorFields }),

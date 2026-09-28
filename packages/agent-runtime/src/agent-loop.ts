@@ -18,10 +18,26 @@
  * the person is the model's. See ADR 0023.
  */
 
+/**
+ * Private model state a route needs back on its later tool turns (for
+ * example DeepSeek thinking-mode reasoning). Opaque to the loop; providers
+ * send it only to the route that produced it.
+ */
+export interface AgentLoopContinuation {
+  kind: "reasoning_content";
+  route: string;
+  text: string;
+}
+
 export type AgentLoopMessage =
   | { role: "system"; content: string }
   | { role: "user"; content: string }
-  | { role: "assistant"; content: string; toolCalls?: AgentLoopToolCall[] }
+  | {
+      role: "assistant";
+      content: string;
+      toolCalls?: AgentLoopToolCall[];
+      continuation?: AgentLoopContinuation;
+    }
   | { role: "tool"; toolCallId: string; content: string };
 
 export interface AgentLoopToolCall {
@@ -65,7 +81,16 @@ export interface AgentLoopFinish {
 
 export type AgentLoopToolOutcome =
   /** The tool did its work, or refused with a reason. Either way the model reads it. */
-  | { kind: "ok"; content: string; progress?: boolean }
+  | {
+      kind: "ok";
+      content: string;
+      progress?: boolean;
+      /**
+       * How the step went, for hosts that show activity: a refusal or a
+       * failed attempt still hands its words back to the model.
+       */
+      status?: "done" | "failed" | "refused";
+    }
   /** The model finished. */
   | { kind: "finish"; finish: AgentLoopFinish }
   /** A safety rule ended the run. The person reads `reason`. */
@@ -181,7 +206,7 @@ function isRetryableModelHttpError(error: unknown): boolean {
   if (!(error instanceof Error) || error.name !== "ModelRequestHttpError") {
     return false;
   }
-  const status = Reflect.get(error, "status");
+  const status: unknown = Reflect.get(error, "status");
   return (
     typeof status === "number" && RETRYABLE_MODEL_HTTP_STATUSES.has(status)
   );

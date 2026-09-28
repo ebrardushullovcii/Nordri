@@ -94,11 +94,19 @@ import type {
   UpdateAiBehaviorInput,
   UserActionCommandInput,
   CandidateAssetKind,
+  AssistantChangeEntry,
+  JobPosting,
+  ProfileCopilotPatchOperation,
 } from "@unemployed/contracts";
 import type {
   JobFinderRepository,
   JobFinderRepositorySeed,
 } from "@unemployed/db";
+import type {
+  AssistantEditResult,
+  AssistantUndoResult,
+} from "./workspace-assistant-edit-methods";
+import type { ResumeSpecialistResult } from "./workspace-assistant-resume-specialist";
 import type { ResumeExportFileVerifier } from "./workspace-service-context";
 import type { ResumeRenderDocument } from "./resume-workspace-structure";
 import type { ListingHtmlFetcher } from "./listing-detail-enrichment";
@@ -533,7 +541,14 @@ export interface JobFinderWorkspaceService {
     applicationAutomationMode?: ApplicationAutomationMode,
   ): Promise<JobFinderWorkspaceSnapshot>;
   approveApplyRun(runId: string): Promise<JobFinderWorkspaceSnapshot>;
-  cancelApplyRun(runId: string): Promise<JobFinderWorkspaceSnapshot>;
+  /**
+   * `skippedByPerson` names jobs the person chose to skip, so they read as
+   * skipped rather than as an application that could not be finished.
+   */
+  cancelApplyRun(
+    runId: string,
+    options?: { skippedByPerson?: readonly string[] },
+  ): Promise<JobFinderWorkspaceSnapshot>;
   resolveApplyConsentRequest(
     requestId: string,
     action: "approve" | "decline",
@@ -575,6 +590,73 @@ export interface JobFinderWorkspaceService {
   exportApplicationCrm(
     command: ApplicationCrmExportInput,
   ): Promise<ApplicationCrmExportResult>;
+  /**
+   * The shared assistant-edit operation (ADR 0037): typed profile operations
+   * committed with attribution, returning the exact values touched so one
+   * change can be undone later without losing other edits.
+   */
+  applyAssistantProfileOperations(request: {
+    operations: readonly ProfileCopilotPatchOperation[];
+    summary: string;
+    messageId: string | null;
+  }): Promise<AssistantEditResult>;
+  undoAssistantProfileChange(request: {
+    profileEntries: readonly AssistantChangeEntry[];
+    searchPreferencesEntries: readonly AssistantChangeEntry[];
+    reason: string;
+  }): Promise<AssistantUndoResult>;
+  undoAssistantSettingsChange(request: {
+    entries: readonly AssistantChangeEntry[];
+  }): Promise<AssistantUndoResult>;
+  applyAssistantResumePatches(request: {
+    jobId: string;
+    patches: readonly Omit<
+      ResumeDraftPatch,
+      "draftId" | "origin" | "appliedAt" | "id"
+    >[];
+    expectedDraftUpdatedAt: string | null;
+    summary: string;
+  }): Promise<AssistantEditResult & { draftUpdatedAt: string }>;
+  applyAssistantResumeRevision(request: {
+    jobId: string;
+    patches: readonly ResumeDraftPatch[];
+    baseDraftUpdatedAt: string;
+    summary: string;
+  }): Promise<AssistantEditResult & { draftUpdatedAt: string }>;
+  undoAssistantResumeChange(request: {
+    jobId: string;
+    entries: readonly AssistantChangeEntry[];
+    reason: string;
+  }): Promise<AssistantUndoResult>;
+  /**
+   * Runs the resume revision specialist for a substantial rewrite and returns
+   * gate-checked patches without storing any chat message.
+   */
+  /** Reads the job postings on a page the assistant was lent (no writes). */
+  extractJobsFromPageText(input: {
+    pageText: string;
+    pageUrl: string;
+    pageType: "search_results" | "job_detail";
+    maxJobs: number;
+    signal?: AbortSignal;
+  }): Promise<JobPosting[]>;
+  /**
+   * Saves postings the person picked from a page through the canonical merge
+   * (ADR 0030) into the active search plan.
+   */
+  saveJobsFromPage(input: {
+    postings: readonly JobPosting[];
+    pageUrl: string;
+  }): Promise<{
+    savedJobIds: string[];
+    newJobIds: string[];
+    mergedJobIds: string[];
+  }>;
+  runResumeRevisionSpecialist(input: {
+    jobId: string;
+    brief: string;
+    recentExcerpt: readonly { role: "user" | "assistant"; content: string }[];
+  }): Promise<ResumeSpecialistResult>;
 }
 
 type DiscoveryTargetPipelineSharedOptions = {

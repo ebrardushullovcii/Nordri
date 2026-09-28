@@ -1,5 +1,10 @@
-import { contextBridge, ipcRenderer as nativeIpcRenderer } from "electron";
+import {
+  contextBridge,
+  ipcRenderer as nativeIpcRenderer,
+  webUtils,
+} from "electron";
 import { browserBridge } from "./browser";
+import { createAssistantBridge } from "./assistant";
 import type {
   ApplicationCrmBulkStageMutationInput,
   ApplicationCrmExportInput,
@@ -317,8 +322,22 @@ function toSaveWorkspaceInputsPayload(
   };
 }
 
+const assistantBridge = createAssistantBridge({
+  // Deferred like every job-finder channel: calls wait for the routes.
+  invoke: (channel, ...args) =>
+    ipcRenderer.invoke(channel, ...args) as Promise<unknown>,
+  on: (channel, listener) => {
+    nativeIpcRenderer.on(channel, listener);
+  },
+  removeListener: (channel, listener) => {
+    nativeIpcRenderer.removeListener(channel, listener);
+  },
+  pathForFile: (file) => webUtils.getPathForFile(file),
+});
+
 const desktopApi = {
   browser: browserBridge,
+  assistant: assistantBridge,
   ping: () => ipcRenderer.invoke("system:ping") as Promise<DesktopPlatformPing>,
   window: {
     close: () => ipcRenderer.invoke("window:close") as Promise<{ ok: true }>,
@@ -1415,6 +1434,13 @@ const desktopApi = {
               sourceUrl: string;
               applicationUrl: string;
               secondaryApplicationUrl?: string;
+              jobTitle?: string;
+              jobCompany?: string;
+              foundJobs?: {
+                title: string;
+                company: string;
+                applicationUrl: string;
+              }[];
             }) =>
               ipcRenderer.invoke(
                 "job-finder:test-load-agent-owned-browser-demo",

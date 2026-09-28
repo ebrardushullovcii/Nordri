@@ -47,16 +47,7 @@ function readSource(relativePath: string): string {
  * when that zone lands.
  */
 const PENDING_ADOPTION: ReadonlyArray<{ owner: string; path: string }> = [
-  // PKG-05 — Copilot rail. `ThinkingDots` is *defined* here as well as used.
-  {
-    owner: "PKG-05",
-    path: "features/job-finder/components/profile/profile-copilot-rail-sections.tsx",
-  },
   // PKG-08 — Shortlisted and Resume Studio zone.
-  {
-    owner: "PKG-08",
-    path: "features/job-finder/screens/review-queue/resume-assistant-panel.tsx",
-  },
   {
     owner: "PKG-08",
     path: "features/job-finder/screens/review-queue/resume-studio-preview-pane.tsx",
@@ -82,11 +73,9 @@ const PENDING_ADOPTION: ReadonlyArray<{ owner: string; path: string }> = [
 const SPINNER_PATTERN = /ThinkingDots|LoaderCircle|Loader2|animate-spin/;
 
 const SCANNED_FILES = [
-  "features/job-finder/components/profile/profile-copilot-rail-sections.tsx",
   "features/job-finder/components/profile/resume-import-progress.tsx",
   "features/job-finder/components/job-finder-save-status.tsx",
   "features/job-finder/components/startup-database-recovery-notice.tsx",
-  "features/job-finder/screens/review-queue/resume-assistant-panel.tsx",
   "features/job-finder/screens/review-queue/resume-studio-preview-pane.tsx",
   "features/job-finder/screens/review-queue/review-queue-preview-panel.tsx",
   "features/job-finder/screens/applications/applications-detail-panel-recovery-actions-section.tsx",

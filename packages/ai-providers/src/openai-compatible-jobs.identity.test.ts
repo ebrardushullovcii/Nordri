@@ -20,6 +20,18 @@ describe("posting URL identity", () => {
     },
   );
 
+  test("a listing's own company wins over the site's brand", () => {
+    const prompt = buildJobsExtractionPrompt({
+      pageHostLabel: "careers.example.test",
+      pageType: "search_results",
+      effectiveMaxJobs: 2,
+    });
+    expect(prompt).toContain(
+      "When a listing names its own company, use that name, even when the site's header or title shows a different brand.",
+    );
+    expect(prompt).toContain("and the listings name no company");
+  });
+
   test("keeps explicit distinct URLs for separate roles with matching titles and companies", () => {
     const urls = [
       "https://careers.example.test/jobs/one",

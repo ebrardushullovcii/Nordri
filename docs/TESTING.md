@@ -50,6 +50,12 @@ Other entry points: `pnpm test:correctness`, `pnpm test:performance` (serial, no
 - AI capabilities: `pnpm ai:benchmark plan | full <lane> | canary luna_high | full-report`. Keep each lane serial. Deterministic fallbacks are reported separately and never credited to the model.
 - Live discovery audit: `pnpm --filter @unemployed/desktop audit:job-finder-live` needs network access and must never execute application actions.
 
+## Assistant
+
+- Unit and host tests: `pnpm validate:package job-finder` (session host, grants, change diff, action inventory) and `pnpm validate:package agent-runtime`.
+- Eval lane: `pnpm --filter @unemployed/ai-evals assistant-lane` runs the scripted-model cases; add `-- --model live` for the configured assistant model (serial; `--case <id prefix>`, `--out <dir>`). Report actual passes and failures, not percentages.
+- Built app: after a desktop build, `pnpm --filter @unemployed/desktop qa --script scripts/test-job-finder-assistant.mjs` drives the sidebar with the scripted model (set `UNEMPLOYED_TEST_ASSISTANT_DELAY_MS=600` to exercise Stop). With `--provider configured` it also sends one application, only to the qa launcher's replica site, and refuses any other target before sending. `scripts/test-job-finder-assistant-fixes.mjs` (configured provider; `UNEMPLOYED_QA_ONLY=M1,M4` runs chosen journeys) re-checks selection, truthful replies, exclusions, the studio refresh and an authorized send to the replica; `scripts/test-job-finder-assistant-browser.mjs` checks the browser side of the sidebar. A Playwright-launched window does not get OS focus, so that script reports the window as focused inside Electron; say so when you report its results.
+
 ## Local replica job sites
 
 From the repo root, run `node apps/desktop/test-fixtures/job-sites/serve.mjs` with Node 22 or newer. Open `http://127.0.0.1:47950/` for the index; set `PORT` to override the port. Each listing URL below is a Job Finder source with ten fictional software jobs.

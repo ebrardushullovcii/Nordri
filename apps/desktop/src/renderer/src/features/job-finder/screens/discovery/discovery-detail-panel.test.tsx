@@ -476,6 +476,18 @@ describe("DiscoveryDetailPanel", () => {
         "Optional feedback stays local. It hides this result but never changes job facts or fit scoring.",
       ),
     ).toBeTruthy();
+    // With the feedback choices open, the job text stays clipped to its
+    // frame and the actions scroll within their share of the panel, so
+    // "About this job" never paints over "Not interested because…".
+    expect(getByTestId("discovery-detail-scroll-frame").className).toContain(
+      "overflow-hidden",
+    );
+    expect(getByTestId("discovery-detail-actions").className).toContain(
+      "overflow-y-auto",
+    );
+    expect(getByTestId("discovery-detail-actions").className).toContain(
+      "max-h-[55%]",
+    );
     const locationReason = getByRole("button", { name: "Location" });
     fireEvent.click(locationReason);
     expect(locationReason.getAttribute("aria-pressed")).toBe("true");

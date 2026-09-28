@@ -824,6 +824,30 @@ function answerLibraryScore(
 }
 
 /** An answer the person saved earlier, matched on the question they saved it for. */
+/** A saved answer whose question is exactly this control's question. */
+export function resolveExactQuestionAnswer(
+  control: ApplyFormControl,
+  reusableAnswers: readonly CandidateReusableAnswer[],
+): ApplyAnswer | null {
+  // A radio or checkbox group asks its question in the group label, and
+  // each option's own label is only "Yes" or "No".
+  const group = normalizeSignal(control.groupLabel);
+  const exact = reusableAnswers.find(
+    (saved) =>
+      answerLibraryScore(control, saved) === 1 ||
+      (group.length > 0 && normalizeSignal(saved.question) === group),
+  );
+  if (!exact) return null;
+  return {
+    value: exact.answer,
+    kind: control.questionKind,
+    sourceKind: "answer_library",
+    sourceId: `answerLibrary.${exact.id}`,
+    provenanceLabel: "your answer to this question",
+    groundedIn: ["your answer to this question"],
+  };
+}
+
 export function resolveReusableAnswer(
   control: ApplyFormControl,
   reusableAnswers: readonly CandidateReusableAnswer[],
@@ -995,7 +1019,12 @@ export function resolveApplyAnswer(input: {
     };
   }
 
+  // An answer saved for this exact question (the person answered it in
+  // Needs you or the application's questions) beats a general profile
+  // answer: "Yes" to "Are you authorized to work in this country?" must not
+  // lose to a saved sentence that fits none of the choices.
   const direct =
+    resolveExactQuestionAnswer(control, sources.reusableAnswers) ??
     postingLocationAnswer(control, sources.posting) ??
     (asksForPostingLocation(control)
       ? null

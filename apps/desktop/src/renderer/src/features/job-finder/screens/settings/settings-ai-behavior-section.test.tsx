@@ -60,7 +60,17 @@ describe("SettingsAiBehaviorSection", () => {
   it("shows the four groups with the original behaviour selected by default", () => {
     renderSection(vi.fn(() => Promise.resolve(true)));
 
-    expect(screen.getByText("Profile assistant")).toBeTruthy();
+    expect(
+      within(screen.getByTestId("settings-ai-profile-assistant")).getByText(
+        "Assistant",
+      ),
+    ).toBeTruthy();
+    // The side-chat assistant, not the old profile-only one.
+    expect(
+      screen.getByRole("radiogroup", {
+        name: "How much the assistant suggests",
+      }),
+    ).toBeTruthy();
     expect(screen.getByText("Finding jobs")).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Resumes" })).toBeTruthy();
     expect(

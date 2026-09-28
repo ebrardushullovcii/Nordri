@@ -5,7 +5,6 @@ import {
   ResumeDraftPatchSchema,
   assessJobPostingDetailQuality,
   type ProfileCopilotReply,
-  type ToolCall,
 } from "@unemployed/contracts";
 import {
   JobFitAssessmentSchema,
@@ -14,6 +13,7 @@ import {
   ResumeProfileExtractionSchema,
   type AgentCapableJobFinderAiClient,
   type ChatWithToolsOptions,
+  type ChatWithToolsResult,
   type CreateResumeDraftInput,
   type JobFinderAiClient,
   type OpenAiCompatibleJobFinderAiClientOptions,
@@ -52,6 +52,7 @@ import {
   parseModelApiMode,
   parseModelReasoningEffort,
   type ModelReasoningEffort,
+  type ModelUsagePayload,
 } from "./openai-compatible-transport";
 import {
   type ModelRequestResilienceOptions,
@@ -118,6 +119,28 @@ const SEARCH_RESULTS_EXTRACTION_PAGE_TEXT_LIMIT = 8_000;
 const JOB_DETAIL_EXTRACTION_PAGE_TEXT_LIMIT = 12_000;
 const SEARCH_RESULTS_MAX_MODEL_JOBS = 12;
 const DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS = 196_000;
+
+/** Token usage in one shape whatever API reported it. */
+export function normalizeModelUsage(usage: ModelUsagePayload): {
+  inputTokens: number;
+  outputTokens: number;
+  cachedInputTokens: number;
+  reasoningTokens: number;
+} {
+  const count = (value: number | undefined) =>
+    typeof value === "number" && Number.isFinite(value)
+      ? Math.max(0, Math.round(value))
+      : 0;
+  return {
+    inputTokens: count(usage.prompt_tokens),
+    outputTokens: count(usage.completion_tokens),
+    cachedInputTokens: Math.max(
+      count(usage.prompt_tokens_details?.cached_tokens),
+      count(usage.prompt_cache_hit_tokens),
+    ),
+    reasoningTokens: count(usage.completion_tokens_details?.reasoning_tokens),
+  };
+}
 function buildResumeRewriteProposalPrompt(
   tailoringMode: "conservative" | "balanced" | "aggressive",
   strategy?: ResumeGenerationStrategyPolicy | null,
@@ -656,6 +679,7 @@ export function createOpenAiCompatibleJobFinderAiClient(
 
       try {
         const apiMode = validatedOptions.apiMode ?? "chat_completions";
+        const streamingEnabled = resilience.streaming !== false;
         const payload = await performModelRequest({
           url: buildModelUrl(validatedOptions.baseUrl, apiMode),
           headers: buildModelRequestHeaders({
@@ -668,12 +692,22 @@ export function createOpenAiCompatibleJobFinderAiClient(
             apiMode,
             model: validatedOptions.model,
             reasoningEffort: agentReasoningEffort,
-            reasoningSummary: resilience.streaming !== false,
+            reasoningSummary: streamingEnabled,
+            // Usage for the context budget; only asked for where the caller
+            // listens to the stream, so older callers send the same body.
+            includeStreamUsage:
+              streamingEnabled && options?.onStreamEvent !== undefined,
             messages: messages.map((msg) => {
               const base = { role: msg.role, content: msg.content };
               if (msg.role === "assistant" && msg.toolCalls) {
                 return {
                   ...base,
+                  // Private continuation goes back only to the route that
+                  // produced it.
+                  ...(msg.continuation?.kind === "reasoning_content" &&
+                  msg.continuation.route === validatedOptions.model
+                    ? { reasoning_content: msg.continuation.text }
+                    : {}),
                   tool_calls: msg.toolCalls.map((tc) => ({
                     id: tc.id,
                     type: tc.type,
@@ -700,21 +734,32 @@ export function createOpenAiCompatibleJobFinderAiClient(
           totalTimeoutMs: timeoutMs,
           ...resilience,
           signal: options?.signal,
+          onStreamEvent: options?.onStreamEvent,
         });
 
-        const message = payload.choices?.[0]?.message;
+        const choice = payload.choices?.[0];
+        const message = choice?.message;
 
-        const result: {
-          content?: string;
-          toolCalls?: ToolCall[];
-          reasoning?: string;
-        } = {};
+        const result: ChatWithToolsResult = {};
         const requestedToolNames = new Set(
           tools.map((tool) => tool.function.name),
         );
 
         if (message?.content) {
           result.content = message.content;
+        }
+        if (message?.reasoning_content) {
+          result.continuation = {
+            kind: "reasoning_content",
+            route: validatedOptions.model,
+            text: message.reasoning_content,
+          };
+        }
+        if (choice?.finish_reason) {
+          result.finishReason = choice.finish_reason;
+        }
+        if (payload.usage) {
+          result.usage = normalizeModelUsage(payload.usage);
         }
 
         if (

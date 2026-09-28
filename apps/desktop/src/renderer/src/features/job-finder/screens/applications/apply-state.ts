@@ -1,4 +1,7 @@
-import type { JobFinderWorkspaceSnapshot } from "@unemployed/contracts";
+import {
+  APPLICATION_SKIPPED_BY_PERSON_LABEL,
+  type JobFinderWorkspaceSnapshot,
+} from "@unemployed/contracts";
 import type {
   ApplyJobStateKind,
   ApplyMode,
@@ -112,10 +115,26 @@ export function resolveApplyStatePresentation(input: {
    * batch read "Filling in (N min)" for ever.
    */
   run?: ApplyRunContext | null;
+  /** The record's last action; a person's skip is not a failure. */
+  recordLastActionLabel?: string | null;
 }): ApplyStatePresentation {
   const { mode, now = Date.now(), pendingQuestionCount = 0, result } = input;
   const questionsLeftLabel = formatQuestionsLeft(pendingQuestionCount);
   const reason = getApplicationStopReasonSentence(result);
+
+  if (
+    input.recordLastActionLabel === APPLICATION_SKIPPED_BY_PERSON_LABEL &&
+    result?.state !== "submitted"
+  ) {
+    return {
+      kind: "could_not_apply",
+      title: "Skipped",
+      sentence: "You asked to skip this one. Nothing was sent.",
+      action: "try_again",
+      actionLabel: "Apply again",
+      questionsLeftLabel: null,
+    };
+  }
 
   const plannedStanding = resolvePlannedApplyStanding(result, input.run);
   if (plannedStanding === "not_started") {

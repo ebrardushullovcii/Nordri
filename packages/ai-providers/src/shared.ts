@@ -43,6 +43,7 @@ import {
   modelApiModes,
   modelReasoningEfforts,
 } from "./openai-compatible-transport";
+import type { ModelStreamEvent } from "./model-request-transport";
 import type {
   AdjudicateResumeImportCandidatesInput,
   ExtractResumeImportStageInput,
@@ -595,10 +596,34 @@ export interface ExtractResumeImportStageTransportInput extends ExtractResumeImp
   documentBundle: ResumeDocumentBundle;
 }
 
+/**
+ * Private model state that must go back to the same route on later tool
+ * turns (DeepSeek thinking mode's `reasoning_content`). Never shown to the
+ * person and never sent to a different model.
+ */
+export interface ModelContinuation {
+  kind: "reasoning_content";
+  /** The model id that produced it; another route drops it. */
+  route: string;
+  text: string;
+}
+
+export interface ModelTurnUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cachedInputTokens: number;
+  reasoningTokens: number;
+}
+
 export type AgentMessage =
   | { role: "system"; content: string }
   | { role: "user"; content: string }
-  | { role: "assistant"; content: string; toolCalls?: ToolCall[] }
+  | {
+      role: "assistant";
+      content: string;
+      toolCalls?: ToolCall[];
+      continuation?: ModelContinuation;
+    }
   | { role: "tool"; toolCallId: string; content: string };
 
 export interface JobFinderAiClient {
@@ -635,6 +660,17 @@ export interface ChatWithToolsOptions {
   maxOutputTokens?: number;
   /** Which product conversation this turn continues; see model-request-identity. */
   conversationKey?: string;
+  /** Normalized deltas while the answer streams (assistant sidebar). */
+  onStreamEvent?: (event: ModelStreamEvent) => void;
+}
+
+export interface ChatWithToolsResult {
+  content?: string;
+  toolCalls?: ToolCall[];
+  reasoning?: string;
+  usage?: ModelTurnUsage;
+  finishReason?: string;
+  continuation?: ModelContinuation;
 }
 
 export interface AgentCapableJobFinderAiClient extends JobFinderAiClient {
@@ -642,11 +678,7 @@ export interface AgentCapableJobFinderAiClient extends JobFinderAiClient {
     messages: AgentMessage[],
     tools: Tool[],
     options?: ChatWithToolsOptions,
-  ): Promise<{
-    content?: string;
-    toolCalls?: ToolCall[];
-    reasoning?: string;
-  }>;
+  ): Promise<ChatWithToolsResult>;
 }
 
 export type OpenAiCompatibleJobFinderAiClientOptions = z.infer<

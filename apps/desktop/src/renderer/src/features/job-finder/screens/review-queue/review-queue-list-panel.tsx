@@ -24,6 +24,8 @@ import { jobFinderListRegionClassName } from "../../components/list-row";
 import { usePersistedCollectionView } from "../../hooks/use-persisted-collection-view";
 import { useStableCallback } from "../../hooks/use-stable-callback";
 import { ReviewQueueRow } from "./review-queue-list-row";
+import { useAssistantContextSource } from "../../assistant/assistant-provider";
+import { buildListContext } from "../../assistant/assistant-context-capture";
 import { stripInternalCodeParenthetical } from "./review-queue-mission-panel-helpers";
 import {
   focusCollectionItem,
@@ -134,6 +136,7 @@ export function ReviewQueueListPanel({
     ],
   );
   const [queuePage, setQueuePage] = useState(1);
+  const choosingResumeIdsRef = useRef<ReadonlySet<string>>(new Set());
   const [pendingFocusId, setPendingFocusId] = useState<string | null>(null);
   const queueListRegionRef = useRef<HTMLDivElement | null>(null);
   const queuePageCount = Math.max(
@@ -175,6 +178,23 @@ export function ReviewQueueListPanel({
       ),
     [currentQueuePage, visibleQueue],
   );
+  // The shortlist for the assistant (ADR 0037): jobs ticked under "Choose
+  // jobs" are the selection; the open job is focus, published by the screen.
+  useAssistantContextSource(
+    "shortlist-list",
+    () => ({
+      list: buildListContext({
+        listKind: "shortlist",
+        checkedIds: choosingResumeIdsRef.current,
+        displayedIds: pagedVisibleQueue.map((item) => item.jobId),
+        filteredIds: visibleQueue.map((item) => item.jobId),
+        filterSummary: deferredQuery.trim()
+          ? `matching "${deferredQuery.trim()}"`
+          : null,
+      }),
+    }),
+    { priority: 1 },
+  );
   const unavailableApplicationJobIds = useMemo(
     () =>
       new Set([
@@ -215,6 +235,7 @@ export function ReviewQueueListPanel({
       ? resumeSelection.jobIds.filter((id) => eligibleResumeIds.has(id))
       : [],
   );
+  choosingResumeIdsRef.current = selectedResumeIds;
   const toggleResume = useStableCallback((jobId: string) => {
     if (!eligibleResumeIds.has(jobId)) return;
     const next = new Set(selectedResumeIds);

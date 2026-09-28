@@ -6,7 +6,6 @@ import type {
   EditableSourceInstructionArtifact,
   JobFinderWorkspaceSnapshot,
   JobSearchPreferences,
-  ProfileCopilotContext,
   ProfileSetupState,
   ProfileSetupReviewActionOptions,
   ProfileSetupStep,
@@ -28,14 +27,12 @@ import { LockedScreenLayout } from "../components/locked-screen-layout";
 import { ProfileActiveSectionContent } from "../components/profile/profile-active-section-content";
 import { DiscoveryRunFeedbackCallout } from "./discovery/discovery-run-feedback-callout";
 import type { DiscoveryRunFeedback } from "./discovery/discovery-run-feedback";
-import { ProfileCopilotRail } from "../components/profile/profile-copilot-rail";
 import {
   PROFILE_SECTION_SCROLL_AREA_ID,
   focusProfileDeepLink,
   resetProfileSectionScroll,
   type ProfileDeepLinkFocus,
 } from "../components/profile/profile-deep-link-focus";
-import { COPILOT_BOTTOM_OFFSET } from "../components/profile/profile-copilot-rail-layout";
 import { buildProfileSectionStarterQuestion } from "../components/profile/profile-copilot-prompts";
 import { ProfileResumePanel } from "../components/profile/profile-resume-panel";
 import { ProfileReadyBanner } from "../components/profile/profile-ready-banner";
@@ -65,11 +62,13 @@ import {
   buildCanonicalAwareProfilePayload,
   useProfileScreenForms,
 } from "./profile-screen-hooks";
+import { AskAssistantButton } from "../assistant/ask-assistant-button";
+import { useAssistantContextSource } from "../assistant/assistant-provider";
+import {
+  flattenDirtyFields,
+  profileFieldForEditorPath,
+} from "../assistant/assistant-context-capture";
 
-const unsavedProfileCopilotMessage =
-  "Save this page before asking the Assistant to edit it so your current profile draft does not get overwritten.";
-const unsavedProfileCopilotActionsMessage =
-  "Save this page before applying, rejecting, or undoing copilot changes so your current profile draft stays intact.";
 const unsavedProfileSourceActionMessage =
   "Save your current profile and source setup before running source checks or searches so those actions use the latest saved configuration.";
 const unsavedProfileSourceSignInMessage =
@@ -108,7 +107,6 @@ export function ProfileScreen(props: {
   discoveryRunFeedback?: DiscoveryRunFeedback | null;
   importResumeGuardMessage: string | null;
   pendingActions: ProfileScreenPendingActions;
-  onApplyProfileCopilotPatchGroup: (patchGroupId: string) => void;
   onApplyProfileSetupReviewAction: (
     reviewItemId: string,
     action: "confirm" | "dismiss" | "clear_value",
@@ -131,8 +129,6 @@ export function ProfileScreen(props: {
    * exact-request save retry captured before the edit.
    */
   onProfileSurfaceDraftEdited?: () => void;
-  profileCopilotPendingContextKey: string | null;
-  onRejectProfileCopilotPatchGroup: (patchGroupId: string) => void;
   onResumeProfileSetup: (step?: ProfileSetupStep) => void;
   onRunDiscoveryForTarget?: (targetId: string) => void;
   onRunSourceDebug: (
@@ -147,18 +143,11 @@ export function ProfileScreen(props: {
     profile: CandidateProfile,
     searchPreferences: JobSearchPreferences,
   ) => void;
-  onSendProfileCopilotMessage: (
-    content: string,
-    context?: ProfileCopilotContext,
-  ) => void | Promise<boolean>;
-  onUndoProfileRevision: (revisionId: string) => void;
   onVerifySourceInstructions: (targetId: string, instructionId: string) => void;
   latestResumeImportReviewCandidates: readonly ResumeImportFieldCandidateSummary[];
   latestResumeImportRun: ResumeImportRun | null;
   resumeImportProgress: ResumeImportProgressEvent | null;
   profile: CandidateProfile;
-  profileCopilotMessages: readonly JobFinderWorkspaceSnapshot["profileCopilotMessages"][number][];
-  profileRevisions: readonly JobFinderWorkspaceSnapshot["profileRevisions"][number][];
   profileSetupState: ProfileSetupState;
   /**
    * Discovery runs behind source health. The Job sources tab classifies from
@@ -175,7 +164,6 @@ export function ProfileScreen(props: {
     importResumeGuardMessage,
     pendingActions,
     discoveryRunFeedback = null,
-    onApplyProfileCopilotPatchGroup,
     onAnalyzeProfileFromResume,
     onGetSourceDebugRunDetails,
     onImportResume,
@@ -183,22 +171,16 @@ export function ProfileScreen(props: {
     onOpenBrowserSessionForTarget,
     onProfileSurfaceDirtyChange,
     onProfileSurfaceDraftEdited,
-    profileCopilotPendingContextKey,
-    onRejectProfileCopilotPatchGroup,
     onResumeProfileSetup,
     onRunDiscoveryForTarget,
     onRunSourceDebug,
     onSaveSourceInstructionArtifact,
     onSaveAll,
-    onSendProfileCopilotMessage,
-    onUndoProfileRevision,
     onVerifySourceInstructions,
     latestResumeImportReviewCandidates,
     latestResumeImportRun,
     resumeImportProgress,
     profile,
-    profileCopilotMessages,
-    profileRevisions,
     profileSetupState,
     activeDiscoveryRun = null,
     discoveryRuns = [],
@@ -241,14 +223,6 @@ export function ProfileScreen(props: {
     profile,
     searchPreferences,
   });
-
-  const profileCopilotActionsBusy =
-    pendingActions.profileCopilotBusy || pendingActions.profileMutation;
-  const profileCopilotActionsDisabledReason = pendingActions.profileMutation
-    ? "A profile update is in progress. Wait for it to finish before changing Assistant proposals."
-    : hasUserDraftChanges
-      ? unsavedProfileCopilotActionsMessage
-      : null;
 
   useEffect(() => {
     onProfileSurfaceDirtyChange(hasUserDraftChanges);
@@ -383,16 +357,40 @@ export function ProfileScreen(props: {
     activeSection === "sources" || activeSection === "files"
       ? "preferences"
       : activeSection;
-  const profileCopilotContext: ProfileCopilotContext = {
-    surface: "profile",
-    section: copilotSection,
-  };
-
-  // Keep one durable profile conversation visible while the section changes;
-  // each message carries its own context chip in the rail.
-  const visibleProfileCopilotMessages = profileCopilotMessages.filter(
-    (message) => message.context.surface === "profile",
-  );
+  // The profile editor as the person sees it, for the assistant (ADR 0037):
+  // the section, and the fields with unsaved edits and their values.
+  useAssistantContextSource("profile-editor", () => {
+    const dirtyPaths = [
+      ...flattenDirtyFields(profileForm.formState.dirtyFields),
+      ...flattenDirtyFields(preferencesForm.formState.dirtyFields),
+    ];
+    const dirtyFields = [...new Set(dirtyPaths.map(profileFieldForEditorPath))];
+    const values = {
+      ...profileForm.getValues(),
+      ...preferencesForm.getValues(),
+    } as Record<string, unknown>;
+    const unsavedValues: Record<string, unknown> = {};
+    for (const root of new Set(
+      dirtyPaths.map((path) => path.split(".")[0] ?? path),
+    )) {
+      if (Object.keys(unsavedValues).length >= 20) break;
+      const value: unknown = values[root];
+      if (JSON.stringify(value ?? "").length < 4_000)
+        unsavedValues[root] = value;
+    }
+    return {
+      sectionLabel: activeSection,
+      editor: {
+        editor: "profile",
+        savedRevision: null,
+        draftVersion: dirtyPaths.length,
+        dirtyFields: dirtyFields.slice(0, 80),
+        unsavedValues,
+        section: copilotSection,
+        selection: null,
+      },
+    };
+  });
   const starterQuestion = buildProfileSectionStarterQuestion(
     profileSetupState.reviewItems,
     copilotSection,
@@ -612,7 +610,17 @@ export function ProfileScreen(props: {
         <>
           <PageHeaderStack
             title="Your profile"
-            description="Everything Job Finder knows about you. Edit any field, or ask the Assistant to change it for you."
+            description="Everything Job Finder knows about you. Edit any field, or ask the assistant to change it for you."
+            actions={
+              <AskAssistantButton
+                prompt={starterQuestion ?? undefined}
+                mention={{
+                  kind: "profile_section",
+                  id: copilotSection,
+                  label: `Profile: ${copilotSection}`,
+                }}
+              />
+            }
           />
 
           {profileSetupState.status !== "completed" ? (
@@ -898,31 +906,6 @@ export function ProfileScreen(props: {
           </div>
         </div>
       </section>
-      {activeSection !== "sources" ? (
-        <ProfileCopilotRail
-          busy={profileCopilotActionsBusy}
-          actionsDisabledReason={profileCopilotActionsDisabledReason}
-          context={profileCopilotContext}
-          emptyStateDescription="Ask for a tighter headline, stronger summary, or another specific change. You review every proposal before anything is applied."
-          emptyStateTitle="No requests yet"
-          messages={visibleProfileCopilotMessages}
-          onApplyPatchGroup={onApplyProfileCopilotPatchGroup}
-          onRejectPatchGroup={onRejectProfileCopilotPatchGroup}
-          onSendMessage={onSendProfileCopilotMessage}
-          onUndoRevision={onUndoProfileRevision}
-          pendingContextKey={profileCopilotPendingContextKey}
-          placeholder={
-            'Example: update my headline to "Principal systems designer focused on workflow platforms"'
-          }
-          revisions={profileRevisions}
-          sendDisabledReason={
-            hasUserDraftChanges ? unsavedProfileCopilotMessage : null
-          }
-          starterQuestion={starterQuestion}
-          showProactivePrompt={false}
-          minBottomOffset={COPILOT_BOTTOM_OFFSET}
-        />
-      ) : null}
     </LockedScreenLayout>
   );
 }

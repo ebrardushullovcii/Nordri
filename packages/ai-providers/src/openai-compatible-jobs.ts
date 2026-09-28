@@ -133,7 +133,7 @@ export function buildJobsExtractionPrompt(input: {
         `You extract job listings from a careers or job-search page on ${input.pageHostLabel}.`,
         'Return JSON with a "jobs" array.',
         "Jobs may appear in any language. Preserve the original language of titles, companies, locations, and descriptions.",
-        "When the page belongs to one employer (a company careers site rather than a job board), company is that employer's name for every job; a city, region or team name is never a company. Put places in location.",
+        "When a listing names its own company, use that name, even when the site's header or title shows a different brand. When the page belongs to one employer (a company careers site rather than a job board) and the listings name no company, company is that employer's name for every job; a city, region or team name is never a company. Put places in location.",
         "Only real job postings count: an entry needs a role title a person could apply for. Skip industry pages, product pages, categories, departments, navigation links and anything whose title is not a job.",
         "Each job should include: sourceJobId when explicit, canonicalUrl when stable, title, company, location, salaryText (or null), description, summary when confidently available, workMode, keySkills when visible, postedAt or postedAtText when visible, employerWebsiteUrl when proven, applyPath, and easyApplyEligible.",
         'Use only these applyPath values: "easy_apply", "external_redirect", or "unknown". Use "unknown" when the page does not prove the path.',

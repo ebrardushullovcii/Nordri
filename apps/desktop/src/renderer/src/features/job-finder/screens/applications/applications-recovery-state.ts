@@ -1,4 +1,7 @@
-import type { JobFinderWorkspaceSnapshot } from "@unemployed/contracts";
+import {
+  APPLICATION_SKIPPED_BY_PERSON_LABEL,
+  type JobFinderWorkspaceSnapshot,
+} from "@unemployed/contracts";
 import {
   JOB_FINDER_BROWSER_NAME,
   OPEN_JOB_FINDER_BROWSER_ACTION,
@@ -551,6 +554,8 @@ export function resolveApplicationRecoveryPresentation(input: {
   now?: number;
   /** Current record blocker after resume-state reconciliation. */
   recordLatestBlockerCode?: string | null;
+  /** The record's last action; a person's skip is not a failure. */
+  recordLastActionLabel?: string | null;
   /** What the result's run is doing; a planned job means nothing without it. */
   run?: ApplyRunContext | null;
   visibleApplyResult: ApplyResult;
@@ -566,6 +571,18 @@ export function resolveApplicationRecoveryPresentation(input: {
     visibleApplyResult,
   } = input;
   const reasonSentence = getApplicationStopReasonSentence(visibleApplyResult);
+  if (
+    input.recordLastActionLabel === APPLICATION_SKIPPED_BY_PERSON_LABEL &&
+    visibleApplyResult?.state !== "submitted"
+  ) {
+    return {
+      state: "retry",
+      statusLine: "Skipped at your request",
+      reasonSentence: "Nothing was sent. Apply again if you change your mind.",
+      primaryAction: "try_again",
+      primaryActionLabel: "Apply again",
+    };
+  }
   const isServiceWorkerBlocked =
     applyResultIsServiceWorkerBlocked(visibleApplyResult);
   // A pause with questions on file is a question step, not a browser

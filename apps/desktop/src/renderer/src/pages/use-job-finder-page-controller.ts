@@ -930,6 +930,30 @@ export function useJobFinderPageController() {
     [actions, isCurrentResumeWorkspaceJob, applyResumeWorkspaceSnapshot],
   );
 
+  // The assistant (or any background work) can change the open resume.
+  // Follow workspace updates so the studio shows the saved draft instead of a
+  // stale copy that a later Save would be refused for (ADR 0037).
+  const refreshResumeWorkspaceRef = useRef(refreshResumeWorkspace);
+  refreshResumeWorkspaceRef.current = refreshResumeWorkspace;
+  useEffect(() => {
+    const subscribe = window.unemployed?.jobFinder?.onWorkspaceUpdate;
+    if (typeof subscribe !== "function") return undefined;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const unsubscribe = subscribe(() => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        timer = null;
+        const jobId = activeResumeWorkspaceJobIdRef.current;
+        if (!jobId) return;
+        void refreshResumeWorkspaceRef.current(jobId).catch(() => undefined);
+      }, 300);
+    });
+    return () => {
+      if (timer) clearTimeout(timer);
+      unsubscribe();
+    };
+  }, []);
+
   useEffect(() => {
     if (
       resumeWorkspace?.job.id &&

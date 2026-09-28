@@ -37,7 +37,10 @@ import { ResumeWorkspaceHeader } from "./resume-workspace-header";
 import { ResumeWorkspaceContextDisclosure } from "./resume-workspace-context-disclosure";
 import { ResumeStrategyContextPanel } from "./resume-strategy-context-panel";
 import { ResumeWorkspaceSidebar } from "./resume-workspace-sidebar";
-import { ResumeGuidedEditsPopup } from "./resume-guided-edits-popup";
+import {
+  useAssistant,
+  useAssistantContextSource,
+} from "../../assistant/assistant-provider";
 import { ResumeStudioPreviewPane } from "./resume-studio-preview-pane";
 import {
   ResumeWorkspaceStudioShell,
@@ -52,7 +55,6 @@ import {
   describeResumeExportClaimBlock,
   describeResumeGenerationPath,
   findLatestAssistantEditRevisionId,
-  findUnansweredAssistantRequest,
   resumeExportClaimBlockActionLabel,
 } from "./resume-workspace-utils";
 import {
@@ -89,16 +91,20 @@ const STUDIO_FALLBACK_TITLE_ROW = 72;
 const STUDIO_FALLBACK_TOP_OFFSET =
   56 + STUDIO_FALLBACK_TITLE_ROW + STUDIO_BOTTOM_GUTTER;
 
+/** A draft's content without its save stamp, to tell edits from saves. */
+function draftContentKey(draft: ResumeDraft): string {
+  return JSON.stringify({ ...draft, updatedAt: null });
+}
+
 export function ResumeWorkspaceScreen(props: ResumeWorkspaceScreenProps) {
   const [draft, setDraft] = useState<ResumeDraft | null>(
     props.workspace ? cloneDraft(props.workspace.draft) : null,
   );
   const [mobileStudioTab, setMobileStudioTab] =
     useState<ResumeStudioMobileTab>("preview");
-  const [assistantOpenRequestKey, setAssistantOpenRequestKey] = useState(0);
-  // Open, the Assistant docks as the studio's right-hand column, so the shell
-  // needs to know to make room for it.
-  const [isAssistantOpen, setIsAssistantOpen] = useState(false);
+  // The app-wide assistant sidebar (ADR 0037) replaces the studio's own
+  // assistant; the studio publishes its draft, selection and saved revision.
+  const assistant = useAssistant();
   // The level an Original job is being moved to by the studio's one-press
   // route. The job stops being Original as soon as the level is saved, but
   // until the new resume is written the header keeps saying what is happening
@@ -217,29 +223,50 @@ export function ResumeWorkspaceScreen(props: ResumeWorkspaceScreenProps) {
     ? `${props.workspace.draft.id}:${props.workspace.draft.updatedAt}`
     : null;
 
+  // A newer saved draft replaces the screen's copy, unless the person has
+  // unsaved edits of their own: those are kept and a notice offers the saved
+  // version (the assistant may have changed it; ADR 0037).
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+  const persistedDraftRef = useRef<ResumeDraft | null>(
+    props.workspace?.draft ?? null,
+  );
+  const [backgroundDraft, setBackgroundDraft] = useState<ResumeDraft | null>(
+    null,
+  );
   useEffect(() => {
-    if (!props.workspace) {
+    const persistedDraft = props.workspace?.draft ?? null;
+    const previousPersisted = persistedDraftRef.current;
+    persistedDraftRef.current = persistedDraft;
+    if (!persistedDraft) {
       setDraft(null);
+      setBackgroundDraft(null);
       return;
     }
-
-    setDraft((currentDraft) => {
-      const persistedDraft = props.workspace?.draft;
-
-      if (!persistedDraft) {
-        return null;
+    const currentDraft = draftRef.current;
+    if (
+      currentDraft &&
+      currentDraft.id === persistedDraft.id &&
+      currentDraft.updatedAt === persistedDraft.updatedAt
+    ) {
+      return;
+    }
+    if (
+      currentDraft &&
+      previousPersisted &&
+      currentDraft.id === persistedDraft.id &&
+      previousPersisted.id === persistedDraft.id
+    ) {
+      const currentKey = draftContentKey(currentDraft);
+      const hadUnsavedEdits = currentKey !== draftContentKey(previousPersisted);
+      const isOwnSave = currentKey === draftContentKey(persistedDraft);
+      if (hadUnsavedEdits && !isOwnSave) {
+        setBackgroundDraft(persistedDraft);
+        return;
       }
-
-      if (
-        currentDraft &&
-        currentDraft.id === persistedDraft.id &&
-        currentDraft.updatedAt === persistedDraft.updatedAt
-      ) {
-        return currentDraft;
-      }
-
-      return cloneDraft(persistedDraft);
-    });
+    }
+    setBackgroundDraft(null);
+    setDraft(cloneDraft(persistedDraft));
   }, [workspaceDraftRevisionKey, props.workspace?.draft]);
 
   const {
@@ -265,6 +292,46 @@ export function ResumeWorkspaceScreen(props: ResumeWorkspaceScreenProps) {
       ? serializedDraft !== serializedWorkspaceDraft
       : false;
   const lastDirtyValueRef = useRef<boolean | null>(null);
+
+  useAssistantContextSource("resume-studio", () => {
+    if (!draft) return null;
+    const bulletMatch = selectedTargetId
+      ? /:bullet:([^:]+)$/u.exec(selectedTargetId)
+      : null;
+    let bulletId: string | null = null;
+    if (bulletMatch?.[1]) {
+      try {
+        bulletId = decodeURIComponent(bulletMatch[1]);
+      } catch {
+        bulletId = bulletMatch[1];
+      }
+    }
+    const hasSelection = Boolean(selectedSectionId || selectedEntryId || bulletId);
+    return {
+      focus: {
+        kind: "job",
+        id: props.jobId,
+        label: props.workspace?.job.title ?? null,
+      },
+      editor: {
+        editor: "resume",
+        jobId: props.jobId,
+        draftId: draft.id,
+        savedRevision: props.workspace?.draft.updatedAt ?? null,
+        draftVersion: hasUnsavedChanges ? 1 : 0,
+        hasUnsavedEdits: hasUnsavedChanges,
+        mode: props.originalResumeRoute ? "original" : "editable",
+        selection: hasSelection
+          ? {
+              sectionId: selectedSectionId ?? null,
+              entryId: selectedEntryId ?? null,
+              bulletIds: bulletId ? [bulletId] : [],
+              text: null,
+            }
+          : null,
+      },
+    };
+  });
 
   useEffect(() => {
     if (lastDirtyValueRef.current === hasUnsavedChanges) {
@@ -597,20 +664,18 @@ export function ResumeWorkspaceScreen(props: ResumeWorkspaceScreenProps) {
   );
   const handleAskAiFix = useCallback(
     (issue: Parameters<typeof buildResumeValidationAiPrompt>[0]) => {
-      // The Assistant is a floating panel, not a tab: opening it leaves the
-      // studio exactly where the user left it.
-      setAssistantOpenRequestKey((current) => current + 1);
-
+      // The sidebar sits beside the studio: opening it leaves the studio
+      // exactly where the person left it.
       runWithSavedDraftAsync(
         () =>
-          props.onSendAssistantMessage(
-            props.jobId,
-            buildResumeValidationAiPrompt(issue),
-          ),
+          assistant?.openWith({
+            text: buildResumeValidationAiPrompt(issue),
+            sendNow: true,
+          }),
         "Saved your draft before sending this request.",
       );
     },
-    [props.jobId, props.onSendAssistantMessage, runWithSavedDraftAsync],
+    [assistant, runWithSavedDraftAsync],
   );
 
   // A blocked generated claim usually replaced text the user already had. The
@@ -754,25 +819,6 @@ export function ResumeWorkspaceScreen(props: ResumeWorkspaceScreenProps) {
     ],
   );
 
-  const resolveAssistantProposal = useCallback(
-    (
-      proposalId: string,
-      action: "accept" | "reject",
-      patchIds: readonly string[],
-    ) => {
-      const resolveProposal = props.onResolveAssistantProposal;
-
-      if (!resolveProposal) {
-        return;
-      }
-
-      runWithSavedDraftAsync(() => {
-        resolveProposal(props.jobId, proposalId, action, patchIds);
-      }, "Saved your draft before resolving this proposal.");
-    },
-    [props.jobId, props.onResolveAssistantProposal, runWithSavedDraftAsync],
-  );
-
   const pendingAssistantProposalIds = props.assistantMessages
     .filter(
       (message) =>
@@ -858,20 +904,7 @@ export function ResumeWorkspaceScreen(props: ResumeWorkspaceScreenProps) {
     ) : null;
 
   const openAssistant = () => {
-    setAssistantOpenRequestKey((current) => current + 1);
-  };
-
-  // "Edit this wording myself" opens the exact editor field a blocked proposal
-  // lands on. It never writes the proposed text into the draft: the block says
-  // the wording is unsupported, so the user writes their own.
-  const editProposalWording = (targetId: string) => {
-    const targetContext = getResumePreviewTargetContext(targetId);
-    handlePreviewTargetSelect({
-      entryId: targetContext.entryId,
-      sectionId: targetContext.sectionId,
-      targetId,
-    });
-    setMobileStudioTab("editor");
+    assistant?.openWith();
   };
 
   const editorPanel = (
@@ -1067,6 +1100,30 @@ export function ResumeWorkspaceScreen(props: ResumeWorkspaceScreenProps) {
             jobTitle={job.title}
             onBack={props.onBack}
           />
+          {backgroundDraft ? (
+            <div
+              className="mt-2 flex flex-wrap items-center gap-3 rounded-(--radius-field) border border-(--control-border) bg-(--surface-panel) px-3 py-2 text-(length:--text-small)"
+              data-resume-background-change
+              role="status"
+            >
+              <span className="min-w-0 flex-1">
+                This resume was changed in the background (for example by the
+                assistant). Your unsaved edits are kept here; saving them is
+                refused until you load the saved version.
+              </span>
+              <Button
+                onClick={() => {
+                  setDraft(cloneDraft(backgroundDraft));
+                  setBackgroundDraft(null);
+                }}
+                size="sm"
+                type="button"
+                variant="outline"
+              >
+                Load the saved version
+              </Button>
+            </div>
+          ) : null}
         </div>
       }
     >
@@ -1080,7 +1137,6 @@ export function ResumeWorkspaceScreen(props: ResumeWorkspaceScreenProps) {
         }
       >
         <ResumeWorkspaceStudioShell
-          assistantDocked={isAssistantOpen}
           approvalBlockedReason={approvalBlockedReason}
           approvalStateLabel={approvalStateLabel}
           approvedExportPageCount={approvedExport?.pageCount ?? null}
@@ -1190,10 +1246,9 @@ export function ResumeWorkspaceScreen(props: ResumeWorkspaceScreenProps) {
                     props.originalResumeRoute?.levelLabel ??
                     "",
                   writing: writingEditableLevel !== null,
-                  onWriteEditableResume: () =>
-                    startEditableResumeRoute(
-                      findUnansweredAssistantRequest(props.assistantMessages),
-                    ),
+                  // The old resume chat is retired (ADR 0037); nothing is
+                  // re-sent to it.
+                  onWriteEditableResume: () => startEditableResumeRoute(null),
                 },
               }
             : {})}
@@ -1218,43 +1273,6 @@ export function ResumeWorkspaceScreen(props: ResumeWorkspaceScreenProps) {
           validationIssues={visibleValidationIssues}
         />
       </section>
-      {/* One Assistant, one placement: open, it docks as the studio's
-          right-hand column at every width and the panes beside it narrow, so
-          it never rests over the controls the person is using; minimized, it
-          is a button in the studio's action row. */}
-      <ResumeGuidedEditsPopup
-        assistantMessages={props.assistantMessages}
-        assistantPending={props.assistantPending}
-        draft={draft}
-        isWorkspacePending={props.isWorkspacePending}
-        onOpenChange={setIsAssistantOpen}
-        openRequestKey={assistantOpenRequestKey}
-        onSendAssistantMessage={(content) =>
-          runWithSavedDraftAsync(
-            () => props.onSendAssistantMessage(props.jobId, content),
-            "Saved your draft before sending this request.",
-          )
-        }
-        onReloadWorkspace={() =>
-          runWithSavedDraftAsync(
-            () => props.onRefresh(),
-            "Saved your changes before reloading the latest version.",
-          )
-        }
-        onRegenerateDraft={() =>
-          props.originalResumeRoute
-            ? // A new draft for an Original job would still not be sent; the
-              // one route that makes it count moves the job to the saved level.
-              startEditableResumeRoute(null)
-            : runWithSavedDraft(
-                () => props.onRegenerateDraft(props.jobId),
-                "Saved your draft before writing a new AI draft.",
-              )
-        }
-        onEditProposalWording={editProposalWording}
-        onResolveProposal={resolveAssistantProposal}
-        validation={props.workspace.validation ?? null}
-      />
     </LockedScreenLayout>
   );
 }

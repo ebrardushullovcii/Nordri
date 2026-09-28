@@ -91,6 +91,8 @@ import {
 import { getDiscoveryListingRecencyKey } from "@unemployed/job-finder/discovery-ordering";
 import type { DiscoveryLatestRunVerdict } from "./discovery-run-feedback";
 import { getDiscoverySourceLabels } from "./discovery-source-attribution";
+import { useAssistantContextSource } from "../../assistant/assistant-provider";
+import { buildListContext } from "../../assistant/assistant-context-capture";
 import {
   DISCOVERY_OFFLINE_RUNTIME_LABEL,
   DISCOVERY_OFFLINE_SETUP_NOTICE,
@@ -899,6 +901,27 @@ export function DiscoveryResultsPanel({
       job.status !== "shortlisted" &&
       job.status !== "submitted" &&
       getListingActivity(job).status !== "closed",
+  );
+  // The list for the assistant (ADR 0037): ticked rows are the selection,
+  // the page is what is displayed, and the filtered, sorted set is "all".
+  useAssistantContextSource("discovery-list", () =>
+    ({
+      list: buildListContext({
+        listKind: "jobs",
+        checkedIds: bulkSelectedJobIds,
+        displayedIds: visibleJobs.map((job) => job.id),
+        filteredIds: orderedJobs.map((job) => job.id),
+        filterSummary:
+          [
+            deferredQuery.trim() ? `matching "${deferredQuery.trim()}"` : null,
+            activeFilterCount > 0 ? `${activeFilterCount} filters on` : null,
+            areAlsoFoundShown ? "including also-found jobs" : null,
+          ]
+            .filter(Boolean)
+            .join(", ") || null,
+      }),
+    }),
+    { priority: 1 },
   );
   const shortlistSelected = async () => {
     const jobIds = shortlistableJobs

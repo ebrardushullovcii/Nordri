@@ -1,3 +1,4 @@
+import { AssistantProvider } from "../features/job-finder/assistant/assistant-provider";
 import {
   COMPACT_NAV_PILL_ACTIVE_CLASS,
   COMPACT_NAV_PILL_CLASS,
@@ -1234,6 +1235,7 @@ export function JobFinderPage() {
         onRunSourceDebug={context.onRunSourceDebug}
         recentSourceDebugRuns={workspace.recentSourceDebugRuns}
       />
+      <AssistantProvider>
       <JobFinderShell
         isDiscoveryPending={context.isAnyPending([
           jobFinderPendingActions.discoveryAll(),
@@ -1294,6 +1296,7 @@ export function JobFinderPage() {
           <JobFinderRouteReadyMarker />
         </Suspense>
       </JobFinderShell>
+      </AssistantProvider>
       <ApplyCopilotVisualCheckpointDialog
         onClose={cancelApplyCopilotVisualCheckpointRequest}
         onResolve={resolveApplyCopilotVisualCheckpointRequest}

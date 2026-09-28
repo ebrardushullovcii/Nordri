@@ -1,3 +1,4 @@
+import { APPLICATION_SKIPPED_BY_PERSON_LABEL } from "@unemployed/contracts";
 import { describe, expect, it } from "vitest";
 import type { JobFinderWorkspaceSnapshot } from "@unemployed/contracts";
 import {
@@ -315,6 +316,21 @@ describe("the five apply states (ADR 0022)", () => {
         /form state|safe advance|authority envelope|configured model|prepare-only|verified writes|submit click/i,
       );
     }
+  });
+});
+
+describe("a job the person asked to skip", () => {
+  it("reads Skipped, not Could not apply", () => {
+    const presentation = resolveApplyStatePresentation({
+      mode: "apply_for_me",
+      recordLastActionLabel: APPLICATION_SKIPPED_BY_PERSON_LABEL,
+      result: buildResult({ state: "skipped", summary: "Not started." }),
+    });
+    expect(presentation).toMatchObject({
+      title: "Skipped",
+      actionLabel: "Apply again",
+    });
+    expect(presentation.sentence).toContain("Nothing was sent");
   });
 });
 

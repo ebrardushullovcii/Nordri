@@ -62,3 +62,9 @@ export {
   createFileInterviewHelperRepository,
   type InterviewHelperRepository,
 } from "./interview-helper-repository";
+export {
+  createAssistantRepository,
+  type AssistantRepository,
+  type AssistantRepositoryOptions,
+  type AssistantTranscriptItem,
+} from "./assistant-repository";

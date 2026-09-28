@@ -945,7 +945,7 @@ export function DiscoveryDetailPanel({
           </div>
 
           <div
-            className="relative flex min-h-0 min-w-0 flex-1 flex-col"
+            className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
             data-testid="discovery-detail-scroll-frame"
           >
             <div
@@ -1291,7 +1291,10 @@ export function DiscoveryDetailPanel({
           </div>
 
           <div
-            className="grid min-w-0 shrink-0 gap-2 border-t border-(--surface-panel-border) bg-(--surface-panel) px-6 py-3"
+            // The actions (and the "Not interested because…" choices) scroll
+            // within half the panel, and the job text above is clipped to its
+            // own frame, so the two never paint over each other.
+            className="grid max-h-[55%] min-w-0 shrink-0 gap-2 overflow-y-auto border-t border-(--surface-panel-border) bg-(--surface-panel) px-6 py-3"
             data-testid="discovery-detail-actions"
           >
             {queueFeedback ? (

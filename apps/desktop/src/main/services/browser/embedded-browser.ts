@@ -20,6 +20,7 @@ import {
   type DesktopBrowserViewport,
 } from "@unemployed/contracts";
 import path from "node:path";
+import { createAgentInputLedger } from "./agent-input-ledger";
 import { BrowserCdpBridge, type BrowserCdpPage } from "./browser-cdp-bridge";
 import { getEmbeddedBrowserFocusAction } from "./embedded-browser-focus-policy";
 import {
@@ -108,6 +109,12 @@ export class EmbeddedBrowser {
   >();
   /** Tabs the person opened themselves; automation never uses or closes them. */
   private readonly personTabs = new Set<string>();
+  /**
+   * Tabs the person lent the assistant by sending a message while looking at
+   * them (ADR 0038). Only the assistant's lease works there; the person's own
+   * click or key in the tab takes it back at once.
+   */
+  private readonly lentTabs = new Set<string>();
   private activityHooks: ActivityHooks | null = null;
   private viewport: DesktopBrowserViewport = {
     x: 50,
@@ -126,6 +133,8 @@ export class EmbeddedBrowser {
   private readonly operations = new Map<AbortController, string>();
   /** When automation last sent pointer or keyboard input to each tab. */
   private readonly automationInputAt = new Map<string, number>();
+  /** The agent's pointer presses, told apart from the person's by source. */
+  private readonly agentPresses = createAgentInputLedger();
   private readonly operationClaims = new Map<
     AbortController,
     { id: string; owner: string | null; tabs: Set<string> }
@@ -628,12 +637,29 @@ export class EmbeddedBrowser {
     // watching an application fill in must never end it. Only a real click or
     // keypress on the page, with the pointer over it, is the user stepping in.
     // Then the agent stops and their input lands, without a control button.
-    const handleUserInput = () => {
-      // The agent's own clicks and keys arrive here too. Input that follows
-      // automation input to this tab within a moment is the agent's, even if
-      // the person happens to move the pointer across the view meanwhile.
-      if (Date.now() - (this.automationInputAt.get(page.id) ?? 0) < 750) return;
-      if (!this.isUserOnPage(page)) return;
+    const handleUserInput = (kind: "pointer" | "key") => {
+      if (kind === "pointer") {
+        // Every press automation sends is noted before it reaches the page,
+        // so a mouse-down with no noted press behind it is the person's own
+        // click, even a second click without moving the pointer or one just
+        // after the agent's own input.
+        if (this.agentPresses.claimPress(page.id)) return;
+        if (!this.isPointerOverPage(page)) return;
+      } else {
+        // Keys cannot be matched one to one, so a key that follows automation
+        // input to this tab within a moment is the agent's, and the pointer
+        // must have moved onto the page just now.
+        if (Date.now() - (this.automationInputAt.get(page.id) ?? 0) < 750)
+          return;
+        if (!this.cursorMovedRecently() || !this.isPointerOverPage(page))
+          return;
+      }
+      if (this.lentTabs.has(page.id)) {
+        // The person's click or key in a lent tab takes it back from the
+        // assistant, and only from the assistant (ADR 0038).
+        this.revokeLoan(page.id, "You took this tab back.");
+        if (this.personTabs.has(page.id)) return;
+      }
       const focusAction = getEmbeddedBrowserFocusAction({
         focusedTabId: page.id,
         operations: this.describeOperations(),
@@ -659,8 +685,8 @@ export class EmbeddedBrowser {
       }
     };
     page.contents.on("input-event", (_event, input) => {
-      if (input.type === "mouseDown" || input.type === "keyDown")
-        handleUserInput();
+      if (input.type === "mouseDown") handleUserInput("pointer");
+      else if (input.type === "keyDown") handleUserInput("key");
     });
     page.contents.on("before-input-event", (event, input) => {
       if (input.type !== "keyDown") return;
@@ -700,9 +726,11 @@ export class EmbeddedBrowser {
     });
     page.contents.once("destroyed", () => {
       this.pageMap.delete(page.id);
+      this.agentPresses.forget(page.id);
       this.parkedTabs.delete(page.id);
       this.heldTabs.delete(page.id);
       this.personTabs.delete(page.id);
+      this.lentTabs.delete(page.id);
       for (const claim of this.operationClaims.values())
         claim.tabs.delete(page.id);
       if (this.activeTabId === page.id)
@@ -916,6 +944,67 @@ export class EmbeddedBrowser {
     this.emit();
   }
 
+  /**
+   * Lends one tab to the assistant (ADR 0038). A tab another run is working
+   * in is refused; a tab the person opened becomes reachable by automation
+   * for the length of the loan only.
+   */
+  async lendTab(tabId: string): Promise<void> {
+    const page = this.pageMap.get(tabId);
+    if (!page || page.contents.isDestroyed())
+      throw new Error("That browser tab is closed.");
+    const busy = [...this.operationClaims.values()].some(
+      (claim) =>
+        claim.tabs.has(tabId) && !(claim.owner ?? "").startsWith("assistant:"),
+    );
+    if (busy)
+      throw new Error(
+        "A search or an application is working in that tab. Use another tab or wait for it to finish.",
+      );
+    this.lentTabs.add(tabId);
+    if (this.bridge) await this.bridge.reclaimPage(page);
+  }
+
+  /** Ends a loan; a tab that belongs to the person leaves automation again. */
+  endLoan(tabId: string): void {
+    if (!this.lentTabs.delete(tabId)) return;
+    if (
+      this.heldTabs.has(tabId) ||
+      this.parkedTabs.has(tabId) ||
+      this.personTabs.has(tabId)
+    )
+      this.bridge?.releasePage(tabId);
+  }
+
+  isTabLent(tabId: string): boolean {
+    return this.lentTabs.has(tabId);
+  }
+
+  /** Stops the assistant work in a lent tab and ends the loan. */
+  revokeLoan(tabId: string, reason: string): void {
+    for (const [controller, claim] of this.operationClaims) {
+      if (claim.tabs.has(tabId) && (claim.owner ?? "").startsWith("assistant:"))
+        controller.abort(new DOMException(reason, "AbortError"));
+    }
+    this.endLoan(tabId);
+    this.emit();
+  }
+
+  /** Which tab an automation page is, told by the connection itself. */
+  async identifyAutomationPage(page: {
+    evaluate: (
+      fn: (token: string) => string,
+      token: string,
+    ) => Promise<unknown>;
+  }): Promise<string | null> {
+    const bridge = this.bridge;
+    if (!bridge) return null;
+    const token = `unemployed-identify-${randomUUID()}`;
+    const landed = bridge.waitForToken(token, 3_000);
+    void page.evaluate((value) => value, token).catch(() => undefined);
+    return landed;
+  }
+
   async getOpenBrowser(): Promise<Browser | null> {
     if (this.pageMap.size === 0 || this.closing) return null;
     return this.connectInternal(true);
@@ -940,9 +1029,10 @@ export class EmbeddedBrowser {
         pages: () =>
           [...this.pageMap.values()].filter(
             (page) =>
-              !this.heldTabs.has(page.id) &&
-              !this.parkedTabs.has(page.id) &&
-              !this.personTabs.has(page.id),
+              this.lentTabs.has(page.id) ||
+              (!this.heldTabs.has(page.id) &&
+                !this.parkedTabs.has(page.id) &&
+                !this.personTabs.has(page.id)),
           ),
         createPage: (url) =>
           Promise.resolve(
@@ -957,8 +1047,10 @@ export class EmbeddedBrowser {
         userAgent: () => this.getSession().getUserAgent(),
         emulateFocus: () =>
           this.operations.size > 0 && !this.automationRefused(),
-        onAutomationInput: (pageId) =>
-          this.automationInputAt.set(pageId, Date.now()),
+        onAutomationInput: (pageId, input) => {
+          this.automationInputAt.set(pageId, Date.now());
+          if (input?.pointerDown) this.agentPresses.notePress(pageId);
+        },
       });
       this.bridge = bridge;
       const transport = await bridge.start();
@@ -1244,8 +1336,8 @@ export class EmbeddedBrowser {
     return now - this.lastCursor.movedAt < 2_500;
   }
 
-  private isUserOnPage(page: BrowserPage): boolean {
-    if (!this.cursorMovedRecently()) return false;
+  /** The page is on screen and the pointer is over it. */
+  private isPointerOverPage(page: BrowserPage): boolean {
     if (
       page.host === "backstage" ||
       !this.window ||

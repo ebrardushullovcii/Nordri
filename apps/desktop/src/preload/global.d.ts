@@ -1,4 +1,5 @@
 import type {
+  DesktopAssistantBridge,
   DesktopBrowserBridge,
   ApplicationAuthorityEnvelope,
   ApplicationAuthorityEnvelopeMutationResult,
@@ -154,6 +155,7 @@ declare global {
   interface Window {
     unemployed: {
       browser: DesktopBrowserBridge;
+      assistant: DesktopAssistantBridge;
       ping: () => Promise<DesktopPlatformPing>;
       window: {
         close: () => Promise<{ ok: true }>;
@@ -646,6 +648,13 @@ declare global {
             sourceUrl: string;
             applicationUrl: string;
             secondaryApplicationUrl?: string;
+            jobTitle?: string;
+            jobCompany?: string;
+            foundJobs?: {
+              title: string;
+              company: string;
+              applicationUrl: string;
+            }[];
           }) => Promise<JobFinderWorkspaceSnapshot>;
           /**
            * Arms exactly the next save on one protected surface to fail, then
