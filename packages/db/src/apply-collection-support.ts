@@ -9,7 +9,7 @@ import {
   ApplicationReplayCheckpointSchema,
   ApplicationAttemptSchema,
   type ApplyJobResult,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import type { SQLInputValue } from "node:sqlite";
 
 export const APPLY_INDEXED_COLLECTION_CONFIGS = {

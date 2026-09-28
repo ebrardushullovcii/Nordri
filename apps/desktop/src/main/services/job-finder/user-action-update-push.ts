@@ -1,4 +1,4 @@
-import type { JobFinderRepository } from "@unemployed/db";
+import type { JobFinderRepository } from "@nordri/db";
 
 /**
  * Tells the renderer whenever a step in Needs you changes state.

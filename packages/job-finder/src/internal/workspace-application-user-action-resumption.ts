@@ -1,9 +1,9 @@
-import type { ExecuteApplicationFlowInput } from "@unemployed/browser-runtime";
+import type { ExecuteApplicationFlowInput } from "@nordri/browser-runtime";
 import {
   completeTaskLocalSignIn,
   createApplyPageHands,
-} from "@unemployed/browser-agent";
-import type { ApplyPageSession } from "@unemployed/contracts";
+} from "@nordri/browser-agent";
+import type { ApplyPageSession } from "@nordri/contracts";
 import {
   buildApplyLetterDependencies,
   createApplyFormPreparer,
@@ -32,7 +32,7 @@ import {
   type JobSource,
   type SavedJob,
   type UserActionRequest,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   isUserActionTerminal,
   reduceUserActionCommand,

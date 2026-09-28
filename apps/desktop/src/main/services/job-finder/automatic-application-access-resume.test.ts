@@ -3,7 +3,7 @@ import type {
   DesktopBrowserState,
   RawApplyPage,
   UserActionRequest,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { installAutomaticApplicationAccessResume } from "./automatic-application-access-resume";
 
 const request = {

@@ -4,8 +4,8 @@ import type {
   JobPosting,
   ApplicationResumeArtifact,
   SavedJob,
-} from "@unemployed/contracts";
-import { SavedJobSchema } from "@unemployed/contracts";
+} from "@nordri/contracts";
+import { SavedJobSchema } from "@nordri/contracts";
 import { describe, expect, test } from "vitest";
 import { createProfile } from "../agent.test-fixtures";
 import { createCatalogSessionAgent } from "./session-agent";

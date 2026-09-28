@@ -8,7 +8,7 @@ import {
   collapsesSideMenuWithAssistant,
   type AssistantMessagePart,
   type JobFinderWorkspaceSnapshot,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { z } from "zod";
 
 import { diffValues } from "../change-diff";
@@ -30,7 +30,7 @@ const SETTINGS_LABELS: Record<string, string> = {
   resumeApplicationMode: "Resume level",
   coverLetter: "Cover letters",
   aiBehavior: "AI behavior",
-  keepSessionAlive: "Keep sessions signed in",
+  keepSessionAlive: "Keep browser tabs after runs",
   discoveryOnly: "Search only",
   collapseSideMenuWithAssistant:
     "Collapse the side menu while the assistant is open",
@@ -213,7 +213,7 @@ export const updateWorkspaceBehaviorTool = defineTool({
   name: "update_workspace_behavior",
   group: "settings",
   description:
-    "Changes whether sessions stay signed in, whether Job Finder only searches (never prepares applications), and whether the left side menu folds to icons while this assistant sidebar is open (Settings > App & device). Send only the fields to change.",
+    "Changes whether browser tabs stay open after runs, whether Job Finder only searches (never prepares applications), and whether the left side menu folds to icons while this assistant sidebar is open (Settings > App & device). Send only the fields to change.",
   parameters: json.object({
     keepSessionAlive: json.boolean(),
     discoveryOnly: json.boolean(),

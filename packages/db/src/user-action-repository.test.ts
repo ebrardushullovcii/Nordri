@@ -5,7 +5,7 @@ import {
   UserActionRequestSchema,
   type UserActionEvent,
   type UserActionRequest,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { afterEach, describe, expect, test } from "vitest";
 
 import {
@@ -158,7 +158,7 @@ describe("user action repository persistence", () => {
   });
 
   test("survives SQLite restart without duplicating a completed command", async () => {
-    const fixture = await createTempRepository("unemployed-user-actions-");
+    const fixture = await createTempRepository("nordri-user-actions-");
     temporaryDirectories.push(fixture.tempDirectory);
     const firstRepository = await fixture.createRepository();
     const initialRequest = createRequest();
@@ -212,7 +212,7 @@ describe("user action repository persistence", () => {
 
   test("preserves in-flight verification and its final result across SQLite restarts", async () => {
     const fixture = await createTempRepository(
-      "unemployed-user-action-verification-restart-",
+      "nordri-user-action-verification-restart-",
     );
     temporaryDirectories.push(fixture.tempDirectory);
     const firstRepository = await fixture.createRepository();
@@ -318,7 +318,7 @@ describe("user action repository persistence", () => {
   });
   test("repairs a legacy database missing user-action tables without changing workspace data", async () => {
     const fixture = await createTempRepository(
-      "unemployed-user-actions-legacy-",
+      "nordri-user-actions-legacy-",
     );
     temporaryDirectories.push(fixture.tempDirectory);
     const firstRepository = await fixture.createRepository();

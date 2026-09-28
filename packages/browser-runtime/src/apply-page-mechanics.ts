@@ -13,11 +13,11 @@ import type {
   RawApplyControl,
   RawApplyLink,
   RawApplyPage,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   describeBrowserError,
   isPageReplacedError,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import type { Frame, Locator, Page } from "playwright";
 
 import {

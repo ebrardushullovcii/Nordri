@@ -10,12 +10,12 @@ import type {
   ResumeAssistantMessage,
   ResumeTemplateDefinition,
   WorkHistoryReviewAcknowledgment,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   getResumeIdentityTargetId,
   ResumeDraftRevisionSchema,
-} from "@unemployed/contracts";
-import { JobFinderResumeWorkspaceSchema } from "@unemployed/contracts";
+} from "@nordri/contracts";
+import { JobFinderResumeWorkspaceSchema } from "@nordri/contracts";
 import {
   afterAll,
   afterEach,
@@ -428,7 +428,7 @@ function openEditorSection(sectionId: string): void {
   }
 }
 
-function renderScreen(options?: {
+function buildScreenElement(options?: {
   assistantMessages?: ResumeAssistantMessage[];
   assistantPending?: boolean;
   onApplyPatch?: (
@@ -436,6 +436,8 @@ function renderScreen(options?: {
     revisionReason?: string | null,
   ) => void;
   onDraftEdited?: () => void;
+  onDirtyChange?: (dirty: boolean) => void;
+  onSaveDraft?: (draft: ResumeDraft) => void;
   onPreviewDraft?: (draft: ResumeDraft) => Promise<JobFinderResumePreview>;
   onRegenerateDraft?: (jobId: string) => void;
   onResolveAssistantProposal?: (
@@ -461,7 +463,7 @@ function renderScreen(options?: {
     options?.onPreviewDraft ??
     (() => Promise.resolve(buildPreview("preview_ready", "ready-preview")));
 
-  return render(
+  return (
     <ResumeWorkspaceScreen
       actionMessage={null}
       assistantMessages={options?.assistantMessages ?? []}
@@ -474,7 +476,7 @@ function renderScreen(options?: {
       onApproveResume={vi.fn()}
       onBack={vi.fn()}
       onClearResumeApproval={vi.fn()}
-      onDirtyChange={vi.fn()}
+      onDirtyChange={options?.onDirtyChange ?? vi.fn()}
       {...(options?.onDraftEdited
         ? { onDraftEdited: options.onDraftEdited }
         : {})}
@@ -487,7 +489,7 @@ function renderScreen(options?: {
       }
       onRestoreRevision={options?.onRestoreRevision ?? vi.fn()}
       onUndoAiEdit={options?.onUndoAiEdit ?? vi.fn()}
-      onSaveDraft={vi.fn()}
+      onSaveDraft={options?.onSaveDraft ?? vi.fn()}
       onSaveDraftAndThen={options?.onSaveDraftAndThen ?? vi.fn()}
       onSendAssistantMessage={vi.fn()}
       onSetWorkHistoryReviewAcknowledgment={
@@ -496,8 +498,12 @@ function renderScreen(options?: {
       workspace={
         options && "workspace" in options ? options.workspace : buildWorkspace()
       }
-    />,
+    />
   );
+}
+
+function renderScreen(options?: Parameters<typeof buildScreenElement>[0]) {
+  return render(buildScreenElement(options));
 }
 
 describe("ResumeWorkspaceScreen", () => {
@@ -1672,6 +1678,50 @@ describe("ResumeWorkspaceScreen", () => {
           .at(-1)!,
       );
       expect(onDraftEdited).toHaveBeenCalledTimes(4);
+    }, 15_000);
+
+    it("adopts a saved template change when the server reopens approval", async () => {
+      const workspace = buildWorkspace();
+      const onSaveDraft = vi.fn<(draft: ResumeDraft) => void>();
+      const onDirtyChange = vi.fn<(dirty: boolean) => void>();
+      const options = { workspace, onSaveDraft, onDirtyChange };
+      const view = renderScreen(options);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(100);
+      });
+      fireEvent.click(
+        screen.getAllByRole("button", { name: "Change template" })[0]!,
+      );
+      fireEvent.click(
+        screen
+          .getAllByRole("button", { name: /^Use template: Engineering Spec/ })
+          .at(-1)!,
+      );
+      fireEvent.click(screen.getByRole("button", { name: /^Save draft/ }));
+      const submittedDraft = onSaveDraft.mock.calls[0]?.[0];
+      expect(submittedDraft).toBeDefined();
+      const savedWorkspace = JobFinderResumeWorkspaceSchema.parse({
+        ...workspace,
+        draft: {
+          ...submittedDraft,
+          status: "stale",
+          approvedAt: null,
+          approvedExportId: null,
+          staleReason: "Draft changed after approval and needs a fresh review.",
+          updatedAt: "2026-04-27T00:07:00.000Z",
+        },
+      });
+      await act(async () => {
+        view.rerender(
+          buildScreenElement({ ...options, workspace: savedWorkspace }),
+        );
+        await vi.advanceTimersByTimeAsync(100);
+      });
+      expect(
+        document.querySelector("[data-resume-background-change]"),
+      ).toBeNull();
+      expect(onDirtyChange).toHaveBeenLastCalledWith(false);
+      expect(screen.getByRole("button", { name: "Approve resume" })).toBeTruthy();
     }, 15_000);
 
     it("keeps unsaved edits when the saved draft changes in the background and offers the saved version", async () => {

@@ -17,7 +17,7 @@ import {
   type ProductActionExecutionResult,
   type ProductActionReceipt,
   type StrictObjectJsonSchema,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import { PROFILE_ASSISTANT_UNAVAILABLE_MESSAGE } from "./internal/workspace-profile-copilot-methods";
 import type { JobFinderWorkspaceService } from "./internal/workspace-service-contracts";

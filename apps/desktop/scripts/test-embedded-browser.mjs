@@ -9,7 +9,7 @@ import { build } from "vite";
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(join(desktop, "package.json"));
 const output = await mkdtemp(
-  join(tmpdir(), "unemployed-embedded-browser-test-"),
+  join(tmpdir(), "nordri-embedded-browser-test-"),
 );
 await build({
   configFile: false,
@@ -28,7 +28,7 @@ await build({
           source.startsWith("/") ||
           source.startsWith("\0") ||
           /^[A-Za-z]:/.test(source) ||
-          source.startsWith("@unemployed/")
+          source.startsWith("@nordri/")
         )
           return null;
         return { id: createRequire(importer).resolve(source), external: true };

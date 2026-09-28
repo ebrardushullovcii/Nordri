@@ -8,7 +8,7 @@ import {
   screen,
   within,
 } from "@testing-library/react";
-import { ApplicationRecordSchema } from "@unemployed/contracts";
+import { ApplicationRecordSchema } from "@nordri/contracts";
 import type {
   ApplicationAutomationMode,
   ApplicationRecord,
@@ -18,7 +18,7 @@ import type {
   ReviewQueueItem,
   SavedJob,
   TailoredAsset,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 import type { JobFinderAutoApplyQueueStartOutcome } from "@renderer/features/job-finder/lib/job-finder-types";

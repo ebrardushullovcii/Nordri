@@ -1,9 +1,9 @@
 import { useState } from "react";
-import type { ProfileSetupState } from "@unemployed/contracts";
+import type { ProfileSetupState } from "@nordri/contracts";
 import { Button } from "@renderer/components/ui/button";
 
 const PROFILE_SETUP_REMINDER_DISMISSED_KEY =
-  "unemployed.profile-setup-reminder-dismissed-v1";
+  "nordri.profile-setup-reminder-dismissed-v1";
 
 // Mirrors the friendly step language used on Home so the reminder never
 // exposes raw setup step identifiers.

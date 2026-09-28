@@ -12,7 +12,7 @@ import {
   type SaveResumeStrategyInput,
   type SaveResumeStrategyInputData,
   type SelectResumeStrategyInput,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 /**
  * Pure, immutable operations over the named resume strategies and resume

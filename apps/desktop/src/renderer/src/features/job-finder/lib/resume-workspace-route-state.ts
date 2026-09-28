@@ -1,4 +1,4 @@
-import type { JobFinderWorkspaceSnapshot } from "@unemployed/contracts";
+import type { JobFinderWorkspaceSnapshot } from "@nordri/contracts";
 
 export const RESUME_WORKSPACE_REQUIRED_COLLECTIONS = [
   "discovery_jobs",

@@ -2,7 +2,7 @@ import type {
   CandidateProfile,
   JobPosting,
   ResumeDraftPatch,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import type {
   CreateResumeDraftInput,
   ResumeGenerationStrategyPolicy,

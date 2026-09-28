@@ -8,8 +8,8 @@ import {
   JobFinderIntelligenceStateSchema,
   SavedJobSchema,
   type JobSearchCampaignLimits,
-} from "@unemployed/contracts";
-import type { BrowserSessionRuntime } from "@unemployed/browser-runtime";
+} from "@nordri/contracts";
+import type { BrowserSessionRuntime } from "@nordri/browser-runtime";
 import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 
 import {

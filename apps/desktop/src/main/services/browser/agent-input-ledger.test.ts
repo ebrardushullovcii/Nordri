@@ -33,4 +33,40 @@ describe("telling the agent's clicks from the person's", () => {
     expect(ledger.claimPress("tab_2", 1_001)).toBe(false);
     expect(ledger.claimPress("tab_1", 4_000)).toBe(false);
   });
+
+  it("distinguishes native keys from an agent key sent just before them", () => {
+    const ledger = createAgentInputLedger();
+    ledger.noteKey("tab_1", { code: "Tab", key: "Tab" }, 1_000);
+    // A different key pressed by the person is theirs, even within 750ms.
+    expect(ledger.claimKey("tab_1", { code: "KeyA", key: "a" }, 1_001)).toBe(
+      false,
+    );
+    expect(ledger.claimKey("tab_1", { code: "Tab", key: "Tab" }, 1_002)).toBe(
+      true,
+    );
+    // Once the agent key is accounted for, a repeat native key is the person's.
+    expect(ledger.claimKey("tab_1", { code: "Tab", key: "Tab" }, 1_003)).toBe(
+      false,
+    );
+  });
+
+  it("keeps key notes apart by tab, matches a key without a code, and expires missed keys", () => {
+    const ledger = createAgentInputLedger();
+    ledger.noteKey("tab_1", { code: "KeyA", key: "a" }, 1_000);
+    expect(ledger.claimKey("tab_2", { code: "KeyA", key: "a" }, 1_001)).toBe(
+      false,
+    );
+    expect(ledger.claimKey("tab_1", { code: "KeyA", key: "a" }, 4_000)).toBe(
+      false,
+    );
+    ledger.noteKey("tab_1", { code: "", key: "A" }, 5_000);
+    expect(ledger.claimKey("tab_1", { code: "KeyA", key: "a" }, 5_001)).toBe(
+      true,
+    );
+    ledger.noteKey("tab_1", { code: "Enter", key: "Enter" }, 6_000);
+    ledger.forget("tab_1");
+    expect(
+      ledger.claimKey("tab_1", { code: "Enter", key: "Enter" }, 6_001),
+    ).toBe(false);
+  });
 });

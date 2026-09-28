@@ -4,13 +4,13 @@ import type {
   ResumeClaimAssessment,
   ResumeClaimConfirmation,
   ResumeDraft,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   isBlockingResumeClaimAssessment,
   isResumeClaimAssessmentApprovable,
   isResumeSkillClaimAssessment,
   resumeClaimOwnershipStatement,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { Button } from "@renderer/components/ui/button";
 import { StatusBadge } from "../../components/status-badge";
 import { formatResumeClaimLocatorLabel } from "./resume-assistant-proposal-provenance";

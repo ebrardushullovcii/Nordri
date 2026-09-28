@@ -5,13 +5,13 @@ import {
   RESUME_IMPORT_INTERRUPTED_MESSAGE,
   type CandidateProfile,
   type ResumeImportRun,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { Button } from "@renderer/components/ui/button";
 import { getResumeImportStageFallbackNotes } from "../profile-resume-panel";
 import { getResumeImportStageFallbackSummary } from "../resume-import-quality-note";
 
 const NOTICE_DISMISSED_STORAGE_KEY_PREFIX =
-  "unemployed.profile-setup-import-notice-dismissed-v1:";
+  "nordri.profile-setup-import-notice-dismissed-v1:";
 
 function readNoticeDismissed(key: string): boolean {
   try {

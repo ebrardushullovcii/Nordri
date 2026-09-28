@@ -5,7 +5,7 @@ import {
   ResumeDocumentBundleSchema,
   ResumeValidationResultSchema,
   type SaveResumeStrategyInput,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import { createWorkspaceServiceHarness } from "./workspace-service.test-harness";
 import { createAiClient } from "./workspace-service.test-runtimes";

@@ -5,7 +5,7 @@ import {
   ApplyJobResultSchema,
   ApplyRunDetailsSchema,
   ApplyRunSchema,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 
 type Handler = (
@@ -197,7 +197,7 @@ describe("typed preload/main exact application-record transport", () => {
       } as unknown as IpcMain,
       { includeBootstrapRoutes: false },
     );
-    const exposed = exposedValues.get("unemployed") as
+    const exposed = exposedValues.get("nordri") as
       | { jobFinder?: JobFinderApi }
       | undefined;
     if (!exposed?.jobFinder) throw new Error("Preload API was not exposed.");

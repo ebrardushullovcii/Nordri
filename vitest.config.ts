@@ -7,59 +7,59 @@ const currentDir = path.dirname(fileURLToPath(import.meta.url));
 export default defineConfig({
   resolve: {
     alias: {
-      "@unemployed/ai-providers": path.resolve(
+      "@nordri/ai-providers": path.resolve(
         currentDir,
         "packages/ai-providers/src/index.ts",
       ),
       "@renderer": path.resolve(currentDir, "apps/desktop/src/renderer/src"),
-      "@unemployed/browser-agent": path.resolve(
+      "@nordri/browser-agent": path.resolve(
         currentDir,
         "packages/browser-agent/src/index.ts",
       ),
-      "@unemployed/browser-runtime": path.resolve(
+      "@nordri/browser-runtime": path.resolve(
         currentDir,
         "packages/browser-runtime/src/index.ts",
       ),
-      "@unemployed/contracts": path.resolve(
+      "@nordri/contracts": path.resolve(
         currentDir,
         "packages/contracts/src/index.ts",
       ),
-      "@unemployed/db": path.resolve(currentDir, "packages/db/src/index.ts"),
-      "@unemployed/job-finder/discovery-ordering": path.resolve(
+      "@nordri/db": path.resolve(currentDir, "packages/db/src/index.ts"),
+      "@nordri/job-finder/discovery-ordering": path.resolve(
         currentDir,
         "packages/job-finder/src/discovery-ordering.ts",
       ),
-      "@unemployed/job-finder/discovery-result-bands": path.resolve(
+      "@nordri/job-finder/discovery-result-bands": path.resolve(
         currentDir,
         "packages/job-finder/src/discovery-result-bands.ts",
       ),
-      "@unemployed/job-finder/resume-record-identity": path.resolve(
+      "@nordri/job-finder/resume-record-identity": path.resolve(
         currentDir,
         "packages/job-finder/src/resume-record-identity.ts",
       ),
-      "@unemployed/job-finder/plan-safeguard-pauses": path.resolve(currentDir, "packages/job-finder/src/plan-safeguard-pauses.ts"),
-      "@unemployed/job-finder/resume-identity": path.resolve(
+      "@nordri/job-finder/plan-safeguard-pauses": path.resolve(currentDir, "packages/job-finder/src/plan-safeguard-pauses.ts"),
+      "@nordri/job-finder/resume-identity": path.resolve(
         currentDir,
         "packages/job-finder/src/internal/resume-identity.ts",
       ),
-      "@unemployed/job-finder/apply-run-recovery": path.resolve(
+      "@nordri/job-finder/apply-run-recovery": path.resolve(
         currentDir,
         "packages/job-finder/src/internal/workspace-apply-run-recovery.ts",
       ),
-      "@unemployed/job-finder/source-health": path.resolve(
+      "@nordri/job-finder/source-health": path.resolve(
         currentDir,
         "packages/job-finder/src/source-health.ts",
       ),
-      "@unemployed/job-finder/application-submission-runtime-main":
+      "@nordri/job-finder/application-submission-runtime-main":
         path.resolve(
           currentDir,
           "packages/job-finder/src/application-submission-runtime-main.ts",
         ),
-      "@unemployed/job-finder": path.resolve(
+      "@nordri/job-finder": path.resolve(
         currentDir,
         "packages/job-finder/src/index.ts",
       ),
-      "@unemployed/knowledge-base": path.resolve(
+      "@nordri/knowledge-base": path.resolve(
         currentDir,
         "packages/knowledge-base/src/index.ts",
       ),

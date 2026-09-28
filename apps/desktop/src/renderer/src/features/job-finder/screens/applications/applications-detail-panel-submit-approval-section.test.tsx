@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import type { ApplyRunDetails } from "@unemployed/contracts";
+import type { ApplyRunDetails } from "@nordri/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ApplicationsDetailPanelSubmitApprovalSection,

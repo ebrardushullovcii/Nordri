@@ -9,7 +9,7 @@ export {
   normalizeTitleCompanyPair,
 } from "./deterministic/job-extraction";
 export { deriveResumeCoveragePlan } from "./deterministic/resume-coverage";
-export type { ResumeCoverageDecision } from "@unemployed/contracts";
+export type { ResumeCoverageDecision } from "@nordri/contracts";
 export {
   composeDeterministicFullText,
   buildDeterministicResumeText,

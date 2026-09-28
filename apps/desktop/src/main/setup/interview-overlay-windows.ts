@@ -14,8 +14,8 @@ import type {
   InterviewProtectedSurface,
   InterviewProtectedSurfaceKind,
   InterviewWorkspaceSnapshot,
-} from "@unemployed/contracts";
-import { getInterviewHelperService } from "../services/interview-helper";
+} from "@nordri/contracts";
+import { getLiveAssistantService } from "../services/live-assistant";
 import { resolveVisibleInterviewPopupInputMode } from "./interview-surface-mode";
 
 type InterviewOverlayKind = "answer" | "transcript";
@@ -88,7 +88,7 @@ function persistOverlayLayout(entry: InterviewOverlayWindowEntry) {
       const display = screen.getDisplayMatching(bounds);
       overlayLayoutPersistenceChain = overlayLayoutPersistenceChain
         .then(async () => {
-          const service = await getInterviewHelperService();
+          const service = await getLiveAssistantService();
           return service.updateOverlayPreference({
             surfaceKind: toSurfaceKind(entry.kind),
             bounds,
@@ -97,7 +97,7 @@ function persistOverlayLayout(entry: InterviewOverlayWindowEntry) {
         })
         .catch((error: unknown) => {
           console.warn(
-            "[InterviewHelper] Failed to persist overlay layout.",
+            "[LiveAssistant] Failed to persist overlay layout.",
             error,
           );
           return lastSnapshot;
@@ -129,7 +129,7 @@ function bindOverlayLayoutPersistence(entry: InterviewOverlayWindowEntry) {
 
     overlayLayoutPersistenceChain = overlayLayoutPersistenceChain
       .then(async () => {
-        const service = await getInterviewHelperService();
+        const service = await getLiveAssistantService();
         const snapshot = await service.updateOverlayPreference({
           surfaceKind: toSurfaceKind(entry.kind),
           visible: false,
@@ -140,7 +140,7 @@ function bindOverlayLayoutPersistence(entry: InterviewOverlayWindowEntry) {
       })
       .catch((error: unknown) => {
         console.warn(
-          "[InterviewHelper] Failed to reconcile a closed popup.",
+          "[LiveAssistant] Failed to reconcile a closed popup.",
           error,
         );
         return lastSnapshot;
@@ -214,8 +214,8 @@ function ensureOverlayEntries() {
 
   closeInterviewOverlayWindows();
   overlayEntries = [
-    createOverlayWindow("answer", "/interview-helper/overlay/answer"),
-    createOverlayWindow("transcript", "/interview-helper/overlay/transcript"),
+    createOverlayWindow("answer", "/live-assistant/overlay/answer"),
+    createOverlayWindow("transcript", "/live-assistant/overlay/transcript"),
   ];
   return overlayEntries;
 }
@@ -304,7 +304,7 @@ export function syncInterviewOverlayWindows(
 
   for (const window of BrowserWindow.getAllWindows()) {
     if (!window.isDestroyed() && !window.webContents.isLoading()) {
-      window.webContents.send("interview-helper:workspace-changed", snapshot);
+      window.webContents.send("live-assistant:workspace-changed", snapshot);
     }
   }
 }
@@ -383,7 +383,7 @@ export async function revalidateInterviewOverlayProtectionAfterDisplayChange(inp
     return lastSnapshot;
   }
 
-  const service = await getInterviewHelperService();
+  const service = await getLiveAssistantService();
   const marked = await service.recordDisplayChange(
     input.detail === undefined
       ? { reason: input.reason }
@@ -429,7 +429,7 @@ function scheduleDisplayChangeRevalidation(input: {
       )
       .catch((error: unknown) => {
         console.warn(
-          "[InterviewHelper] Failed to revalidate overlay protection after display change.",
+          "[LiveAssistant] Failed to revalidate overlay protection after display change.",
           error,
         );
         return lastSnapshot;

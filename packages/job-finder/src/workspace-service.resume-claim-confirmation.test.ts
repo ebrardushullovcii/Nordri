@@ -1,11 +1,11 @@
 import type {
   JobFinderSetResumeClaimConfirmationInput,
   ResumeClaimAssessment,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   buildResumeIssueApprovalContentHash,
   resumeClaimOwnershipStatement,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { describe, expect, test } from "vitest";
 import { createAiClient } from "./workspace-service.test-runtimes";
 import {

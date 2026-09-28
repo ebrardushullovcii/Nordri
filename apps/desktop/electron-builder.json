@@ -1,6 +1,6 @@
 {
-  "appId": "com.unemployed.desktop",
-  "productName": "UnEmployed",
+  "appId": "com.nordri.desktop",
+  "productName": "Nordri",
   "artifactName": "${productName}-${version}-${arch}.${ext}",
   "publish": null,
   "directories": {
@@ -21,7 +21,7 @@
     }
   ],
   "win": {
-    "executableName": "UnEmployed",
+    "executableName": "Nordri",
     "icon": "build/icon.ico",
     "target": [
       {

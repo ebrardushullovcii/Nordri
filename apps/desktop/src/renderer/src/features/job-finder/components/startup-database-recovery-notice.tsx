@@ -77,7 +77,7 @@ export function StartupDatabaseRecoveryNotice() {
 
     try {
       const recoveryBridge =
-        window.unemployed?.jobFinder?.getStartupDatabaseRecovery;
+        window.nordri?.jobFinder?.getStartupDatabaseRecovery;
       recoveryBridge?.()
         .then((recoveryFact) => {
           if (
@@ -109,7 +109,7 @@ export function StartupDatabaseRecoveryNotice() {
     setIsDismissed(true);
     try {
       const dismissBridge =
-        window.unemployed?.jobFinder?.dismissStartupDatabaseRecoveryNotice;
+        window.nordri?.jobFinder?.dismissStartupDatabaseRecoveryNotice;
       void dismissBridge?.().catch(() => undefined);
     } catch {
       // Keep the in-memory dismissal when the desktop bridge is unavailable.

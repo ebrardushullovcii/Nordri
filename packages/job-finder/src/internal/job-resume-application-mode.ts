@@ -2,7 +2,7 @@ import type {
   JobFinderSettings,
   ResumeApplicationMode,
   SavedJob,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 export const DEFAULT_RESUME_APPLICATION_MODE: ResumeApplicationMode =
   "tailored_per_job";

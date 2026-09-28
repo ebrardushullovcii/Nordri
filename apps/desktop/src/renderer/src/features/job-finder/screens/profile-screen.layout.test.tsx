@@ -6,14 +6,14 @@ import type {
   ProfileSetupState,
   ResumeImportFieldCandidateSummary,
   SourceDebugRunDetails,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   CandidateProfileSchema,
   JobSearchPreferencesSchema,
   ResumeImportFieldCandidateSummarySchema,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ProfileScreen } from "./profile-screen";
 
@@ -155,13 +155,54 @@ describe("ProfileScreen ready-state density and save-bar footprint", () => {
 
     vi.stubGlobal("ResizeObserver", ResizeObserverStub);
     window.localStorage.removeItem(
-      "unemployed.profile-ready-banner-dismissed-v1",
+      "nordri.profile-ready-banner-dismissed-v1",
     );
   });
 
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
+  });
+
+  it("keeps the full-Profile route state and draft when switching tabs before setup", () => {
+    const props = buildProfileScreenProps();
+    props.profileSetupState = {
+      ...props.profileSetupState,
+      status: "not_started",
+    };
+    function LocationProbe() {
+      const location = useLocation();
+      return (
+        <output data-testid="profile-route-state">
+          {JSON.stringify(location.state)}
+        </output>
+      );
+    }
+    render(
+      <MemoryRouter
+        initialEntries={[
+          {
+            pathname: "/job-finder/profile",
+            state: { forceFullProfile: true },
+          },
+        ]}
+      >
+        <ProfileScreen {...props} />
+        <LocationProbe />
+      </MemoryRouter>,
+    );
+    fireEvent.change(screen.getByLabelText("Headline"), {
+      target: { value: "Unsaved profile headline" },
+    });
+    fireEvent.click(screen.getByRole("tab", { name: /Work history/ }));
+    expect(screen.getByTestId("profile-route-state").textContent).toBe(
+      '{"forceFullProfile":true}',
+    );
+    fireEvent.click(screen.getByRole("tab", { name: /Basics/ }));
+    expect(screen.getByLabelText("Headline")).toHaveProperty(
+      "value",
+      "Unsaved profile headline",
+    );
   });
 
   it.each(["experience", "education"] as const)(

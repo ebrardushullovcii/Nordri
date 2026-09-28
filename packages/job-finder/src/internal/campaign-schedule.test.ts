@@ -9,7 +9,7 @@ import {
   type DiscoveryTargetExecution,
   type DiscoveryTargetExecutionState,
   type JobSearchCampaignSchedule,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import {
   classifyCampaignRunOutcome,

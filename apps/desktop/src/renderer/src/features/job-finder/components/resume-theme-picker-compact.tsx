@@ -1,8 +1,8 @@
 import type {
   ResumeTemplateDefinition,
   ResumeTemplateId,
-} from "@unemployed/contracts";
-import { getResumeTemplateDeliveryLane } from "@unemployed/contracts";
+} from "@nordri/contracts";
+import { getResumeTemplateDeliveryLane } from "@nordri/contracts";
 import { Badge } from "@renderer/components/ui/badge";
 import { Button } from "@renderer/components/ui/button";
 import { cn } from "@renderer/lib/utils";

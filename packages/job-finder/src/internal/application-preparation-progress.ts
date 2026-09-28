@@ -1,6 +1,6 @@
-import type { ApplicationPreparationProgress } from "@unemployed/browser-runtime";
-import { ApplyJobResultSchema } from "@unemployed/contracts";
-import type { JobFinderRepository } from "@unemployed/db";
+import type { ApplicationPreparationProgress } from "@nordri/browser-runtime";
+import { ApplyJobResultSchema } from "@nordri/contracts";
+import type { JobFinderRepository } from "@nordri/db";
 
 /**
  * Turns an agent/tool note into a safe sentence for durable UI state.

@@ -26,16 +26,16 @@ import {
   type DiscoveryRunResult,
   type JobPosting,
   type JobSource,
-} from "@unemployed/contracts";
-import type { ApplyRawPageHands } from "@unemployed/contracts";
-import type { JobFinderAiClient } from "@unemployed/ai-providers";
+} from "@nordri/contracts";
+import type { ApplyRawPageHands } from "@nordri/contracts";
+import type { JobFinderAiClient } from "@nordri/ai-providers";
 import {
   createApplyPageHands,
   runJobSearchAgent,
   type AgentConfig,
   type AgentExtractorPageType,
   type LLMClient,
-} from "@unemployed/browser-agent";
+} from "@nordri/browser-agent";
 import type {
   AgentDiscoveryOptions,
   BrowserSessionRuntime,
@@ -378,7 +378,7 @@ async function markManagedChromeProfileExitedCleanly(
       return;
     }
 
-    const temporaryPath = `${preferencesPath}.unemployed-clean-exit-${process.pid}`;
+    const temporaryPath = `${preferencesPath}.nordri-clean-exit-${process.pid}`;
     await writeFile(
       temporaryPath,
       JSON.stringify({
@@ -641,7 +641,7 @@ async function resolveChromeExecutable(explicitPath?: string): Promise<string> {
   }
 
   throw new Error(
-    "A Chrome executable was not found for the dedicated browser agent. Set UNEMPLOYED_CHROME_PATH to a local Chrome installation.",
+    "A Chrome executable was not found for the dedicated browser agent. Set NORDRI_CHROME_PATH to a local Chrome installation.",
   );
 }
 
@@ -865,7 +865,7 @@ async function resolveBrowserDebugPort(
     }
 
     throw new Error(
-      `Remote debugging port ${preferredDebugPort} is occupied by a non-Chrome process. Close that process or set UNEMPLOYED_CHROME_DEBUG_PORT to a free port.`,
+      `Remote debugging port ${preferredDebugPort} is occupied by a non-Chrome process. Close that process or set NORDRI_CHROME_DEBUG_PORT to a free port.`,
     );
   }
 
@@ -886,7 +886,7 @@ async function resolveBrowserDebugPort(
   }
 
   throw new Error(
-    `Remote debugging port ${preferredDebugPort} is already serving another browser session. Close that browser or set UNEMPLOYED_CHROME_DEBUG_PORT to a free port.`,
+    `Remote debugging port ${preferredDebugPort} is already serving another browser session. Close that browser or set NORDRI_CHROME_DEBUG_PORT to a free port.`,
   );
 }
 
@@ -1290,7 +1290,7 @@ export function createBrowserAgentRuntime(
   let launchedChromeProcess: ChildProcess | null = null;
   let ownsChromeProcess = false;
   const configuredApplicationConcurrency = Number.parseInt(
-    process.env.UNEMPLOYED_APPLICATION_PREPARATION_CONCURRENCY ?? "2",
+    process.env.NORDRI_APPLICATION_PREPARATION_CONCURRENCY ?? "2",
     10,
   );
   const applicationPreparationScheduler = createApplicationPreparationScheduler(
@@ -1311,7 +1311,7 @@ export function createBrowserAgentRuntime(
   // takeover or pause drops the automation connection, and every Page handle
   // with it, while the tab itself stays open on the filled form; the key the
   // tab carries finds that exact tab again. No URL is ever compared.
-  const PREPARED_PAGE_MARK = "__unemployedPreparedApplication";
+  const PREPARED_PAGE_MARK = "__nordriPreparedApplication";
   // Pages a run is working in right now. A host may share one browser
   // between runs (the desktop app searches several sources and fills an
   // application at once); a run must never reuse, navigate or close a page
@@ -1437,7 +1437,7 @@ export function createBrowserAgentRuntime(
   }
   const windowBoundsPath = join(
     options.userDataDir,
-    "unemployed-browser-window-bounds.json",
+    "nordri-browser-window-bounds.json",
   );
 
   function parseManagedBrowserWindowBounds(

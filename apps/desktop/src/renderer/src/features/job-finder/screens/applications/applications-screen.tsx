@@ -19,8 +19,8 @@ import type {
   JobFinderApplyRunDetailsQuery,
   JobFinderExactApplicationTarget,
   UserActionCommandInput,
-} from "@unemployed/contracts";
-import { isListableCompanyName } from "@unemployed/contracts";
+} from "@nordri/contracts";
+import { isListableCompanyName } from "@nordri/contracts";
 import { ArrowLeft } from "lucide-react";
 import { Button } from "@renderer/components/ui/button";
 import { LockedScreenLayout } from "../../components/locked-screen-layout";
@@ -751,6 +751,8 @@ export function ApplicationsScreen(props: {
               "The application you had selected is not shown by this view's search or lifecycle filter, so its tracking tools are unavailable here. Clearing the search box, switching the lifecycle view, or choosing Show all applications will bring it back.",
           };
 
+  const applicationCount = countApplicationLedgerEntries(applicationRecords);
+
   return (
     <LockedScreenLayout
       contentClassName={
@@ -819,7 +821,7 @@ export function ApplicationsScreen(props: {
             description={
               workspaceView === "crm"
                 ? "Stages you record yourself, plus notes, reminders and export. Recording a stage is a local note; it never submits anything."
-                : `${countApplicationLedgerEntries(applicationRecords)} applications. Each one shows where it stands and what it needs from you.`
+                : `${applicationCount} ${applicationCount === 1 ? "application" : "applications"}. Each one shows where it stands and what it needs from you.`
             }
             title={workspaceView === "crm" ? "Tracker" : "Applications"}
           />

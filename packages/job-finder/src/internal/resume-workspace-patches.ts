@@ -1,4 +1,4 @@
-import { ResumeDraftSchema, type ResumeDraft, type ResumeDraftBullet, type ResumeDraftOrigin, type ResumeDraftPatch, type ResumeDraftSection } from "@unemployed/contracts";
+import { ResumeDraftSchema, type ResumeDraft, type ResumeDraftBullet, type ResumeDraftOrigin, type ResumeDraftPatch, type ResumeDraftSection } from "@nordri/contracts";
 import {
   moveSectionEntry,
   resetSectionEntryOrderToChronology,

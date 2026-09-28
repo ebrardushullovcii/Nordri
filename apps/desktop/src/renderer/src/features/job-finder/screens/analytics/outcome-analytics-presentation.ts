@@ -8,10 +8,10 @@ import {
   type OutcomeSuggestionKind,
   type OutcomeUncertaintyLevel,
   outcomeBucketDimensionValues,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import { recordedJobSourceName } from "../../lib/job-source-display-name";
-import { UNKNOWN_JOB_SOURCE_BUCKET_KEY } from "@unemployed/contracts";
+import { UNKNOWN_JOB_SOURCE_BUCKET_KEY } from "@nordri/contracts";
 
 /**
  * Pure presentation derivation for campaign-scoped outcome analytics.
@@ -46,7 +46,9 @@ export const outcomeDimensionOrder: readonly OutcomeBucketDimension[] =
 
 export function outcomeDimensionNoun(
   dimension: OutcomeBucketDimension,
+  count?: number,
 ): string {
+  if (count === 1) return outcomeDimensionLabels[dimension].toLowerCase();
   switch (dimension) {
     case "campaign":
       return "search plans";
@@ -528,7 +530,9 @@ export function bucketDisplayLabel(
     if (bucket.key === UNKNOWN_JOB_SOURCE_BUCKET_KEY) {
       return "Unknown source";
     }
-    return resolvers.sourceName?.(bucket.key) ?? recordedJobSourceName(bucket.key);
+    return (
+      resolvers.sourceName?.(bucket.key) ?? recordedJobSourceName(bucket.key)
+    );
   }
   return bucket.label ?? bucket.key;
 }

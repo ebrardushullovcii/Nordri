@@ -3,7 +3,7 @@ import type {
   ResumeCoverageClaimChange,
   ResumeCoverageComparison,
   ResumeCoverageRoleComparison,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { Badge } from "@renderer/components/ui/badge";
 import { Button } from "@renderer/components/ui/button";
 import {

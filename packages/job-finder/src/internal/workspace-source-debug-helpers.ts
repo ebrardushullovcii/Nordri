@@ -1,4 +1,4 @@
-import type { BrowserSessionRuntime } from "@unemployed/browser-runtime";
+import type { BrowserSessionRuntime } from "@nordri/browser-runtime";
 import {
   SourceDebugPhaseSummarySchema,
   type JobDiscoveryTarget,
@@ -9,7 +9,7 @@ import {
   type SourceDebugPhaseSummary,
   type SourceDebugWorkerAttempt,
   type SourceInstructionArtifact,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   formatStatusLabel,
   isExplicitSearchProbeDisproof,

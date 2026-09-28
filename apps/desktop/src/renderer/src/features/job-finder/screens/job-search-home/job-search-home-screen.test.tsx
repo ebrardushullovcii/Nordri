@@ -4,7 +4,7 @@ import type {
   CampaignNotification,
   JobFinderWorkspaceSnapshot,
   ReviewQueueItem,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   cleanup,
   fireEvent,

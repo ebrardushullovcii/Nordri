@@ -5,8 +5,8 @@ import type {
   BrowserSessionState,
   JobSearchPreferences,
   SavedJob,
-} from "@unemployed/contracts";
-import { SavedJobSchema } from "@unemployed/contracts";
+} from "@nordri/contracts";
+import { SavedJobSchema } from "@nordri/contracts";
 import type { ReactNode } from "react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";

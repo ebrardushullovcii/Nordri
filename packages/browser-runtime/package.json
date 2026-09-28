@@ -1,5 +1,5 @@
 {
-  "name": "@unemployed/browser-runtime",
+  "name": "@nordri/browser-runtime",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -13,9 +13,9 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@unemployed/ai-providers": "workspace:*",
-    "@unemployed/browser-agent": "workspace:*",
-    "@unemployed/contracts": "workspace:*",
+    "@nordri/ai-providers": "workspace:*",
+    "@nordri/browser-agent": "workspace:*",
+    "@nordri/contracts": "workspace:*",
     "playwright": "^1.63.0"
   }
 }

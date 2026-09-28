@@ -28,7 +28,7 @@ import {
   type JobFinderDiscoveryState,
   type JobFinderSettings,
   type SourceDebugRunRecord,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { readFile } from "node:fs/promises";
 
 import type { JobFinderRepositorySeed } from "../repository-types";

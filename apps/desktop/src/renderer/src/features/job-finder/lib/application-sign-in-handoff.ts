@@ -1,4 +1,4 @@
-import type { UserActionRequest } from "@unemployed/contracts";
+import type { UserActionRequest } from "@nordri/contracts";
 import { JOB_FINDER_BROWSER_NAME } from "./job-finder-browser-handoff-copy";
 
 const SIGN_IN_KINDS = new Set<UserActionRequest["kind"]>([

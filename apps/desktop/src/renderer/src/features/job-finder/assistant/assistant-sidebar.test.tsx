@@ -3,7 +3,7 @@
 import {
   ASSISTANT_MESSAGE_MAX_CHARS,
   AssistantConversationSchema,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   act,
   cleanup,
@@ -90,11 +90,11 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
-  delete (window as { unemployed?: unknown }).unemployed;
+  delete (window as { nordri?: unknown }).nordri;
 });
 
 async function renderSidebar(bridge: ReturnType<typeof fakeBridge>) {
-  (window as unknown as { unemployed: unknown }).unemployed = {
+  (window as unknown as { nordri: unknown }).nordri = {
     assistant: bridge,
   };
   render(

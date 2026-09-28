@@ -1,5 +1,5 @@
 {
-  "name": "@unemployed/job-finder",
+  "name": "@nordri/job-finder",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -22,14 +22,14 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@unemployed/agent-runtime": "workspace:*",
-    "@unemployed/ai-providers": "workspace:*",
-    "@unemployed/browser-agent": "workspace:*",
-    "@unemployed/browser-runtime": "workspace:*",
-    "@unemployed/contracts": "workspace:*",
-    "@unemployed/core": "workspace:*",
-    "@unemployed/db": "workspace:*",
-    "@unemployed/knowledge-base": "workspace:*",
+    "@nordri/agent-runtime": "workspace:*",
+    "@nordri/ai-providers": "workspace:*",
+    "@nordri/browser-agent": "workspace:*",
+    "@nordri/browser-runtime": "workspace:*",
+    "@nordri/contracts": "workspace:*",
+    "@nordri/core": "workspace:*",
+    "@nordri/db": "workspace:*",
+    "@nordri/knowledge-base": "workspace:*",
     "zod": "^3.24.2"
   }
 }

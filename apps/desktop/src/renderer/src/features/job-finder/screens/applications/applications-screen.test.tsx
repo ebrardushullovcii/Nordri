@@ -18,13 +18,13 @@ import type {
   ApplicationRecord,
   BrowserVisualEvidenceSummary,
   JobFinderWorkspaceSnapshot,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   ApplicationAttemptSchema,
   ApplicationCrmSettingsSchema,
   ApplicationRecordSchema,
   JobFinderIntelligenceSafeguardsSchema,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { countActiveSafeguardBlockers } from "../../lib/safeguards-blocker-count";
 import { formatDailyPreparationCapacityReachedText } from "../../lib/job-finder-daily-capacity";
 import { ApplicationsScreen } from "./applications-screen";
@@ -82,7 +82,7 @@ describe("ApplicationsScreen", () => {
   }
 
   function stubCandidateAssetsBridge() {
-    Object.defineProperty(window, "unemployed", {
+    Object.defineProperty(window, "nordri", {
       configurable: true,
       value: {
         jobFinder: {

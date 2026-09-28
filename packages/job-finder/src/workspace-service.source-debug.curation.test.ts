@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { createInMemoryJobFinderRepository } from "@unemployed/db";
+import { createInMemoryJobFinderRepository } from "@nordri/db";
 import { createJobFinderWorkspaceService } from "./index";
 import {
   createAgentAiClient,

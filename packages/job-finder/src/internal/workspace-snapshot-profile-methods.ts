@@ -36,8 +36,8 @@ import {
   type UpdateApplicationDefaultsInput,
   type UpdateWorkspaceBehaviorInput,
   type UserActionRequest,
-} from "@unemployed/contracts";
-import type { JobFinderRepositorySeed } from "@unemployed/db";
+} from "@nordri/contracts";
+import type { JobFinderRepositorySeed } from "@nordri/db";
 
 import { runApplicationNoResponseAutomation } from "./application-crm";
 import {

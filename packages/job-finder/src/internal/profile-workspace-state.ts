@@ -8,7 +8,7 @@ import {
   type ProfileSetupState,
   type ResumeImportFieldCandidate,
   type ResumeImportFieldCandidateSummary,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import { buildProfileSetupReviewItems } from "./profile-setup-review-items";
 import type { WorkspaceServiceContext } from "./workspace-service-context";

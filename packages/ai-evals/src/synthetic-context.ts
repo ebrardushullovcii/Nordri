@@ -5,7 +5,7 @@ import {
   JobSearchPreferencesSchema,
   ResumeDocumentBundleSchema,
   ResumeDraftSchema,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 export function createSyntheticCandidateProfile() {
   return CandidateProfileSchema.parse({

@@ -3,7 +3,7 @@ import {
   type CandidateProfile,
   type ResumeIdentityOwnershipAcknowledgement,
   type ResumeImportFieldCandidate,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import { normalizeText } from "./shared";
 

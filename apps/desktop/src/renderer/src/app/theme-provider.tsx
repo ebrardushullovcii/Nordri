@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import type { AppearanceTheme } from '@unemployed/contracts'
+import type { AppearanceTheme } from '@nordri/contracts'
 import {
   applyAppearancePreference,
   DARK_QUERY,

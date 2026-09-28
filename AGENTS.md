@@ -1,12 +1,12 @@
-# UnEmployed
+# Nordri
 
-Local-first Electron monorepo (pnpm + turbo) with two modules: `Job Finder` and `Interview Helper`. Doc map: `docs/README.md`. Read relevant `docs/adr/` decisions before changing behavior they govern; code shows current behavior, not permission to discard a deliberate decision.
+Local-first Electron monorepo (pnpm + turbo) with two modules: `Job Finder` and `Live Assistant`. Doc map: `docs/README.md`. Read relevant `docs/adr/` decisions before changing behavior they govern; code shows current behavior, not permission to discard a deliberate decision.
 
 ## Rules
 
 - Never commit, push, or create/update a PR unless the user explicitly asks. When the user asks for a commit, push it to the remote in the same step: a commit that stays local is not done. If the current branch was already merged, put the work on a new branch off `origin/main` and push that.
 - Do not run `pnpm verify`, `pnpm test:evidence`, fingerprints, seals, custody, persona waves, or any release-acceptance chain unless the user explicitly declares a release candidate (ADR 0014). Run the smallest check that proves the change; the picker is in `docs/TESTING.md`.
-- Never kill a process you did not start. No `pkill -f electron`, `pkill -f UnEmployed`, or `killall Electron`; those match the user's own `pnpm desktop:dev` instance. Stop only the instance you launched, through its own handle or PID tree, and report survivors instead of sweeping.
+- Never kill a process you did not start. No `pkill -f electron`, `pkill -f Nordri`, or `killall Electron`; those match the user's own `pnpm desktop:dev` instance. Stop only the instance you launched, through its own handle or PID tree, and report survivors instead of sweeping.
 - Final submission, account creation, credentials, CAPTCHA, MFA, and legal consent are the person's to give. The agent never asks for a password; if the person supplies one, turns on Send for me, or otherwise authorizes a step, the agent does it (ADR 0012, ADR 0024). Test runs may send only to the local replica job sites (`docs/TESTING.md`); against any other site they stay `prepare_only` with `submitAuthorized: false`. Warnings and callouts are dismissible.
 - Keep durable knowledge in `docs/` and `docs/adr/`. Do not add status logs, handoff notes, evidence logs, or plan files to the repo; git history and the scratchpad cover that. Write an ADR when a decision would surprise a future reader.
 - Do not edit docs unless the user asks or a doc contradicts the change you just made.
@@ -26,4 +26,4 @@ Local-first Electron monorepo (pnpm + turbo) with two modules: `Job Finder` and 
 
 ## Testing the app
 
-The user usually has `pnpm desktop:dev` running. For "use it like a user" checks: build with `pnpm --filter @unemployed/desktop build`, launch an isolated instance with a temporary user-data directory and synthetic profile data, drive it, keep screenshots, and batch the fixes. Rebuild when needed and verify that the inspected app contains the final changes. Details and safety rules: `docs/TESTING.md`.
+The user usually has `pnpm desktop:dev` running. For "use it like a user" checks: build with `pnpm --filter @nordri/desktop build`, launch an isolated instance with a temporary user-data directory and synthetic profile data, drive it, keep screenshots, and batch the fixes. Rebuild when needed and verify that the inspected app contains the final changes. Details and safety rules: `docs/TESTING.md`.

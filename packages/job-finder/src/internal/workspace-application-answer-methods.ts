@@ -10,7 +10,7 @@ import {
   type ClearApplicationAnswerCommand,
   type SaveApplicationAnswerCommand,
   type UserActionCommand,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   createReusableAnswerForQuestion,
   normalizeAnswerQuestion,

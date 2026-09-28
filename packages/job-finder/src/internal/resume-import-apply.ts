@@ -7,7 +7,7 @@ import {
   type ResumeImportRun,
   type WorkMode,
   workModeValues,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import {
   mergeCertificationRecords,

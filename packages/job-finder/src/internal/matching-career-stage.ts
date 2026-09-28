@@ -1,7 +1,7 @@
 import type {
   CandidateProfile,
   JobRequirementAssessment,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import type { MatchAssessmentPostingInput } from "./match-assessment-posting-input";
 

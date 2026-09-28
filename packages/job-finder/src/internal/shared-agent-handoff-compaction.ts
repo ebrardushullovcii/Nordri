@@ -4,7 +4,7 @@ import {
   SharedAgentHandoffCompactionSchema,
   type SharedAgentCompactionPolicy,
   type SharedAgentHandoffCompaction,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import { uniqueStrings } from "./shared";
 import type { SourceInstructionFinalReviewPhaseContext } from "./source-instruction-types";

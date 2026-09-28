@@ -28,7 +28,7 @@ function createOptions() {
     jobFinderServices: 0,
     campaignSchedulerModule: 0,
     candidateAssetLibrary: 0,
-    interviewHelper: 0,
+    liveAssistant: 0,
     interviewOverlay: 0,
     interviewSessionControls: 0,
   };
@@ -65,11 +65,11 @@ function createOptions() {
         }),
       });
     },
-    loadInterviewHelperModule: () => {
-      counts.interviewHelper += 1;
+    loadLiveAssistantModule: () => {
+      counts.liveAssistant += 1;
       return Promise.resolve({
-        getInterviewHelperService: () => {
-          calls.push("interview-helper");
+        getLiveAssistantService: () => {
+          calls.push("live-assistant");
           return Promise.resolve(undefined);
         },
       });
@@ -135,7 +135,7 @@ describe("deferred background initialization", () => {
     expect(counts.jobFinderServices).toBe(1);
     expect(calls).toContain("workspace");
     expect(calls).toContain("asset-lifecycle");
-    expect(calls).toContain("interview-helper");
+    expect(calls).toContain("live-assistant");
     expect(startedSchedulerFactories).toHaveLength(1);
     expect(surfaceInitializations).toEqual([true]);
     expect(errors).toEqual([]);
@@ -152,7 +152,7 @@ describe("deferred background initialization", () => {
 
     expect(counts.jobFinderServices).toBe(0);
     expect(counts.candidateAssetLibrary).toBe(0);
-    expect(counts.interviewHelper).toBe(0);
+    expect(counts.liveAssistant).toBe(0);
     expect(controller.isQuitTeardownStarted()).toBe(true);
   });
 

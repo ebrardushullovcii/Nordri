@@ -11,7 +11,7 @@ const confirmation = "Thank you! Your application has been received.";
 const directory = new URL("./", import.meta.url);
 const submissionsLogPath = join(
   tmpdir(),
-  `unemployed-job-sites-check-${process.pid}.log`,
+  `nordri-job-sites-check-${process.pid}.log`,
 );
 const server = spawn(
   process.execPath,
@@ -20,7 +20,7 @@ const server = spawn(
     env: {
       ...process.env,
       PORT: "0",
-      UNEMPLOYED_FIXTURE_SUBMISSIONS_LOG: submissionsLogPath,
+      NORDRI_FIXTURE_SUBMISSIONS_LOG: submissionsLogPath,
     },
     stdio: ["ignore", "pipe", "pipe"],
   },

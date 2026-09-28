@@ -2,7 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
   DiscoveryActivityEventSchema,
   DiscoveryRunRecordSchema,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import {
   appendDiscoveryEvent,

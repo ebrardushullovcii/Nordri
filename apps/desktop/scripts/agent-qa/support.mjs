@@ -83,7 +83,7 @@ export async function processConflicts() {
 export async function acquireLease(root = repoRoot) {
   const lock = path.join(
     os.tmpdir(),
-    `unemployed-agent-qa-${Buffer.from(root).toString("base64url")}.lock`,
+    `nordri-agent-qa-${Buffer.from(root).toString("base64url")}.lock`,
   );
   try {
     await mkdir(lock);
@@ -135,7 +135,7 @@ export async function snapshotBuild(runDir) {
   const source = path.join(desktopDir, "out");
   await stat(path.join(source, "main/index.cjs")).catch(() => {
     throw new Error(
-      "No desktop build. When other agents are not building, run pnpm --filter @unemployed/desktop build once, then retry.",
+      "No desktop build. When other agents are not building, run pnpm --filter @nordri/desktop build once, then retry.",
     );
   });
   const before = await inventory(source);
@@ -197,21 +197,21 @@ export async function sessionEnvironment(provider, overrides = {}) {
   delete env.ELECTRON_RENDERER_URL;
   delete env.NODE_OPTIONS;
   // Test hooks retain the legacy external host unless QA explicitly selects one.
-  env.UNEMPLOYED_BROWSER_HOST ||= "embedded";
+  env.NORDRI_BROWSER_HOST ||= "embedded";
   // Test APIs otherwise force deterministic providers despite valid credentials.
   // The selected mode wins over ambient flags from another QA session.
-  env.UNEMPLOYED_TEST_API_USE_LIVE_AI = provider === "configured" ? "1" : "0";
-  env.UNEMPLOYED_INTERVIEW_TEST_USE_LIVE_AI =
+  env.NORDRI_TEST_API_USE_LIVE_AI = provider === "configured" ? "1" : "0";
+  env.NORDRI_INTERVIEW_TEST_USE_LIVE_AI =
     provider === "configured" ? "1" : "0";
   if (provider === "deterministic") {
     for (const key of Object.keys(env)) {
       if (/(?:API_KEY|TOKEN|SECRET|PASSWORD)$/.test(key)) env[key] = "";
     }
     for (const key of [
-      "UNEMPLOYED_AI_API_KEY",
-      "UNEMPLOYED_AI_VISION_API_KEY",
-      "UNEMPLOYED_INTERVIEW_AI_API_KEY",
-      "UNEMPLOYED_INTERVIEW_VISION_API_KEY",
+      "NORDRI_AI_API_KEY",
+      "NORDRI_AI_VISION_API_KEY",
+      "NORDRI_INTERVIEW_AI_API_KEY",
+      "NORDRI_INTERVIEW_VISION_API_KEY",
     ])
       env[key] = "";
   }
@@ -250,7 +250,7 @@ export async function startFixtureSites(runDir) {
       env: {
         ...process.env,
         PORT: "0",
-        UNEMPLOYED_FIXTURE_SUBMISSIONS_LOG: log,
+        NORDRI_FIXTURE_SUBMISSIONS_LOG: log,
       },
       stdio: ["ignore", "pipe", "pipe"],
     },
@@ -292,7 +292,7 @@ export async function startFixtureSites(runDir) {
 }
 
 export async function newRunDirectory() {
-  return mkdtemp(path.join(os.tmpdir(), "unemployed-agent-qa-"));
+  return mkdtemp(path.join(os.tmpdir(), "nordri-agent-qa-"));
 }
 
 export function journal(runDir, env) {

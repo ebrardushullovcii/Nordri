@@ -42,7 +42,7 @@ The benchmark also showed that model selection is not the main blocker in severa
 ### Negative
 
 - Luna High is not the aggregate benchmark winner; the accepted product decision prioritizes price and sufficient quality over the benchmark's Sol Low lead.
-- A meaningful refactor is required across contracts, AI providers, browser agent, Job Finder, Interview Helper, diagnostics, and UI state.
+- A meaningful refactor is required across contracts, AI providers, browser agent, Job Finder, Live Assistant, diagnostics, and UI state.
 - Existing prompts and adapters cannot all remain backward-compatible internally.
 
 ### Mitigations

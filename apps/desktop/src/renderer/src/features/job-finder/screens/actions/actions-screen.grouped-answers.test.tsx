@@ -11,7 +11,7 @@ import {
   type ProjectGroupedManualAnswerCommand,
   type SnoozeGroupedDecisionInput,
   type UserActionCommandInput,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ActionsScreen } from "./actions-screen";

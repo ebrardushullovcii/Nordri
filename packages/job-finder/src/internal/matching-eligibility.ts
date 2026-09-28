@@ -2,7 +2,7 @@ import type {
   CandidateProfile,
   JobRequirementAssessment,
   ResumeRequirementEvidence,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import { inferAdministrativeAreaCountry } from "./location-normalization";
 import type { MatchAssessmentPostingInput } from "./match-assessment-posting-input";

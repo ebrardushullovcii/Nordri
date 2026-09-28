@@ -287,7 +287,7 @@ async function waitForCondition(check, description, timeoutMs = 30000) {
   throw new Error(`Timed out waiting for ${description}.`);
 }
 async function getWorkspace(page) {
-  return page.evaluate(() => window.unemployed.jobFinder.getWorkspace());
+  return page.evaluate(() => window.nordri.jobFinder.getWorkspace());
 }
 async function setViewport(page, browserWindow, viewport) {
   await page.setViewportSize({
@@ -778,7 +778,7 @@ async function collectWordmarkEvidence(page) {
     if (!visible) failures.push("wordmark is not visibly rendered");
     if (!insideViewport)
       failures.push("wordmark is clipped outside the viewport");
-    if (text !== "UNEMPLOYED")
+    if (text !== "NORDRI")
       failures.push(`unexpected wordmark text: ${text}`);
     return {
       collapsed,
@@ -1008,7 +1008,7 @@ async function collectOpeningHeaderEvidence(page) {
         (headerRect.left + headerRect.width / 2),
     );
     const failures = [];
-    if (wordmark.textContent?.trim() !== "UNEMPLOYED")
+    if (wordmark.textContent?.trim() !== "NORDRI")
       failures.push("opening-shell wordmark is not the production wordmark");
     if (headerRect.height !== 56)
       failures.push(`opening-shell header height is ${headerRect.height}px`);
@@ -1525,7 +1525,7 @@ async function capture(page, label, metadata = {}) {
     );
   if (metadata.expectWordmark && metadata.wordmarkEvidence?.pass !== true)
     failures.push(
-      `visible UNEMPLOYED wordmark evidence failed: ${JSON.stringify(metadata.wordmarkEvidence?.failures ?? [])}`,
+      `visible NORDRI wordmark evidence failed: ${JSON.stringify(metadata.wordmarkEvidence?.failures ?? [])}`,
     );
   if (
     metadata.expectWorkspaceStateGeometry &&
@@ -2999,11 +2999,11 @@ async function waitForWorkspaceHydrated(page, timeoutMs = 30000) {
   );
 }
 async function createEmptyStateInRenderer(page) {
-  await page.evaluate(() => window.unemployed.jobFinder.resetWorkspace());
+  await page.evaluate(() => window.nordri.jobFinder.resetWorkspace());
   await page.reload();
   await page.waitForLoadState("domcontentloaded");
   await page.waitForFunction(
-    () => Boolean(window.unemployed?.jobFinder?.getWorkspace),
+    () => Boolean(window.nordri?.jobFinder?.getWorkspace),
     undefined,
     { timeout: 15000 },
   );
@@ -3013,7 +3013,7 @@ async function run() {
   await ensureFreshOutputDir(outputDir);
   await verifyAcceptanceArtifacts(acceptance);
   const userDataDirectory = await makeIsolatedUserDataDirectory(
-    "unemployed-fresh-flows-",
+    "nordri-fresh-flows-",
   );
   report.safety.isolatedUserDataDir = userDataDirectory;
   report.safety.syntheticTestDataDigest = digestSeed({
@@ -3036,8 +3036,8 @@ async function run() {
       args: ["."],
       cwd: desktopDir,
       env: acceptanceEnvironment({
-        UNEMPLOYED_USER_DATA_DIR: userDataDirectory,
-        UNEMPLOYED_TEST_WORKSPACE_OPENING_HOLD_MS: "750",
+        NORDRI_USER_DATA_DIR: userDataDirectory,
+        NORDRI_TEST_WORKSPACE_OPENING_HOLD_MS: "750",
       }),
     });
     processOutputState = attachProcessOutput(app, report);
@@ -3057,14 +3057,14 @@ async function run() {
     await page.waitForLoadState("domcontentloaded");
     await assertFileRenderer(page);
     await page.waitForFunction(
-      () => Boolean(window.unemployed?.jobFinder?.test),
+      () => Boolean(window.nordri?.jobFinder?.test),
       undefined,
       { timeout: 30000 },
     );
     const browserWindow = await resolveStartupBrowserWindow(app, page);
     activeBrowserWindow = browserWindow;
     await page.evaluate(() =>
-      window.unemployed.jobFinder.test.setSystemThemeOverride("dark"),
+      window.nordri.jobFinder.test.setSystemThemeOverride("dark"),
     );
     await setViewport(page, browserWindow, viewports[0]);
 
@@ -3088,10 +3088,10 @@ async function run() {
     }
 
     const baseApplySnapshot = await page.evaluate(() =>
-      window.unemployed.jobFinder.test.loadApplyQueueDemo(),
+      window.nordri.jobFinder.test.loadApplyQueueDemo(),
     );
     const baseResumeSnapshot = await page.evaluate(() =>
-      window.unemployed.jobFinder.test.loadResumeWorkspaceDemo(),
+      window.nordri.jobFinder.test.loadResumeWorkspaceDemo(),
     );
 
     console.log(
@@ -3106,13 +3106,13 @@ async function run() {
       lastResumedAt: "2026-03-20T10:05:00.000Z",
     };
     await page.evaluate(
-      (state) => window.unemployed.jobFinder.test.resetWorkspaceState(state),
+      (state) => window.nordri.jobFinder.test.resetWorkspaceState(state),
       populatedProfileSnapshot,
     );
     await page.reload();
     await page.waitForLoadState("domcontentloaded");
     await page.waitForFunction(
-      () => Boolean(window.unemployed?.jobFinder?.getWorkspace),
+      () => Boolean(window.nordri?.jobFinder?.getWorkspace),
       undefined,
       { timeout: 15000 },
     );
@@ -3277,13 +3277,13 @@ async function run() {
     if (!sourceState.profile.lastName)
       sourceState.profile.lastName = "Vanguard";
     await page.evaluate(
-      (state) => window.unemployed.jobFinder.test.resetWorkspaceState(state),
+      (state) => window.nordri.jobFinder.test.resetWorkspaceState(state),
       sourceState,
     );
     await page.reload();
     await page.waitForLoadState("domcontentloaded");
     await page.waitForFunction(
-      () => Boolean(window.unemployed?.jobFinder?.getWorkspace),
+      () => Boolean(window.nordri?.jobFinder?.getWorkspace),
       undefined,
       { timeout: 10000 },
     );
@@ -3499,13 +3499,13 @@ async function run() {
       lastResumedAt: new Date().toISOString(),
     };
     await page.evaluate(
-      (state) => window.unemployed.jobFinder.test.resetWorkspaceState(state),
+      (state) => window.nordri.jobFinder.test.resetWorkspaceState(state),
       discoveryState,
     );
     await page.reload();
     await page.waitForLoadState("domcontentloaded");
     await page.waitForFunction(
-      () => Boolean(window.unemployed?.jobFinder?.getWorkspace),
+      () => Boolean(window.nordri?.jobFinder?.getWorkspace),
       undefined,
       { timeout: 10000 },
     );
@@ -3652,13 +3652,13 @@ async function run() {
       longLabelState.activeCampaignId = "campaign_long_label_truth";
     }
     await page.evaluate(
-      (state) => window.unemployed.jobFinder.test.resetWorkspaceState(state),
+      (state) => window.nordri.jobFinder.test.resetWorkspaceState(state),
       longLabelState,
     );
     await page.reload();
     await page.waitForLoadState("domcontentloaded");
     await page.waitForFunction(
-      () => Boolean(window.unemployed?.jobFinder?.getWorkspace),
+      () => Boolean(window.nordri?.jobFinder?.getWorkspace),
       undefined,
       { timeout: 10000 },
     );
@@ -3790,13 +3790,13 @@ async function run() {
         longLabelSources;
     }
     await page.evaluate(
-      (state) => window.unemployed.jobFinder.test.resetWorkspaceState(state),
+      (state) => window.nordri.jobFinder.test.resetWorkspaceState(state),
       longLabelSourcesState,
     );
     await page.reload();
     await page.waitForLoadState("domcontentloaded");
     await page.waitForFunction(
-      () => Boolean(window.unemployed?.jobFinder?.getWorkspace),
+      () => Boolean(window.nordri?.jobFinder?.getWorkspace),
       undefined,
       { timeout: 10000 },
     );

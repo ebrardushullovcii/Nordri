@@ -2,7 +2,7 @@ import type {
   DiscoveryActivityEvent,
   DiscoveryRunRecord,
   DiscoveryRunReport,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 /**
  * The counts a finished run froze about itself, read verbatim.

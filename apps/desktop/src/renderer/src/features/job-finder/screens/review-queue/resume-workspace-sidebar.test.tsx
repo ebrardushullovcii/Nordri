@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { cleanup, render, screen } from "@testing-library/react";
-import { JobFinderResumeWorkspaceSchema } from "@unemployed/contracts";
+import { JobFinderResumeWorkspaceSchema } from "@nordri/contracts";
 import { afterEach, describe, expect, it } from "vitest";
 import { createApplyQueueDemoState } from "../../../../../../main/adapters/job-finder-demo-state";
 import { ResumeWorkspaceSidebar } from "./resume-workspace-sidebar";

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { JobFinderIntelligenceSafeguardsSchema } from "@unemployed/contracts";
+import { JobFinderIntelligenceSafeguardsSchema } from "@nordri/contracts";
 import { countActiveSafeguardBlockers } from "./safeguards-blocker-count";
 
 const detectedAt = "2026-08-15T10:00:00.000Z";

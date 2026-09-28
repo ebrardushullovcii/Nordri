@@ -1,8 +1,8 @@
-import { buildValuePreview } from "@unemployed/ai-providers";
+import { buildValuePreview } from "@nordri/ai-providers";
 import {
   ResumeImportFieldCandidateSchema,
   type ResumeImportFieldCandidate,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import {
   isObject,

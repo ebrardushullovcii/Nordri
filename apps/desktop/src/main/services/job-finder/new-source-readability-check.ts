@@ -1,4 +1,4 @@
-import type { JobSearchPreferences } from "@unemployed/contracts";
+import type { JobSearchPreferences } from "@nordri/contracts";
 
 export const NEW_SOURCE_READABILITY_TIMEOUT_MS = 15_000;
 

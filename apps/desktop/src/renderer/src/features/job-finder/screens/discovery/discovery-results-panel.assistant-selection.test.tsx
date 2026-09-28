@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { SavedJobSchema, type SavedJob } from "@unemployed/contracts";
+import { SavedJobSchema, type SavedJob } from "@nordri/contracts";
 import {
   act,
   cleanup,

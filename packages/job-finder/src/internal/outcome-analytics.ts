@@ -13,7 +13,7 @@ import {
   type OutcomeUncertaintyLevel,
   outcomeBucketDimensionValues,
   UNKNOWN_JOB_SOURCE_BUCKET_KEY,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 /**
  * Pure outcome-analytics operations over `JobFinderIntelligenceState`.

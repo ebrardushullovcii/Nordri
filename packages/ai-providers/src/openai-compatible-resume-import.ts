@@ -5,7 +5,7 @@ import {
   type ResumeImportFieldCandidateDraft,
   type ResumeImportJsonValue,
   ResumeImportVisualEvidenceRefSchema,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   ResumeImportAdjudicationResultSchema,
   ResumeImportStageExtractionResultSchema,

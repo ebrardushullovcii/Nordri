@@ -122,17 +122,17 @@ import {
   UserActionCommandSchema,
   WriteClipboardTextInputSchema,
   WriteClipboardTextResultSchema,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import type {
   JobFinderApplyQueueActionInput,
   JobFinderWorkspaceSnapshot,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   recordApplicationAuthoritySuccessor,
   resolveApplicationAuthoritySuccessorId,
   resolveTailoredAssetLabel,
   withApplicationAuthorityGate,
-} from "@unemployed/job-finder";
+} from "@nordri/job-finder";
 import { buildJobFinderDiagnosticExport } from "../services/job-finder/build-diagnostic-export";
 import { collectJobFinderPerformanceSnapshot } from "../services/job-finder/collect-performance-snapshot";
 import { createJobFinderWorkspaceDeltaTracker } from "../services/job-finder/workspace-delta";
@@ -756,7 +756,7 @@ function buildApplicationPacketExportDefaultPath(
 /**
  * Mutation responses carry the exact workspace snapshot the service just
  * produced. `getWorkspaceSnapshot` already schema-parses that value inside
- * `@unemployed/job-finder`, so re-parsing it in every route handler validated
+ * `@nordri/job-finder`, so re-parsing it in every route handler validated
  * every job, application record, and stored answer a second time on every
  * user action. That cost grows linearly with everything the user has ever
  * discovered — the repository's own scale gate is 5,000 jobs / 1,001
@@ -833,7 +833,7 @@ export function registerJobFinderRouteHandlers(
   /**
    * Registers one protected save channel. The only behavior it adds is the
    * desktop test API's one-shot synthetic save failure, which is inert unless
-   * a tester armed that exact surface while UNEMPLOYED_ENABLE_TEST_API is set.
+   * a tester armed that exact surface while NORDRI_ENABLE_TEST_API is set.
    * Production builds run the listener verbatim.
    */
   function handleJobFinderSaveRoute<TResult>(
@@ -1542,7 +1542,7 @@ export function registerJobFinderRouteHandlers(
     async (_event, payload: unknown) => {
       if (!isDesktopTestApiEnabled()) {
         throw new Error(
-          "Desktop test API is disabled. Set UNEMPLOYED_ENABLE_TEST_API=1 to enable scripted UI flows.",
+          "Desktop test API is disabled. Set NORDRI_ENABLE_TEST_API=1 to enable scripted UI flows.",
         );
       }
 
@@ -1561,7 +1561,7 @@ export function registerJobFinderRouteHandlers(
   ipcMain.handle("job-finder:test-load-resume-workspace-demo", async () => {
     if (!isDesktopTestApiEnabled()) {
       throw new Error(
-        "Desktop test API is disabled. Set UNEMPLOYED_ENABLE_TEST_API=1 to enable scripted UI flows.",
+        "Desktop test API is disabled. Set NORDRI_ENABLE_TEST_API=1 to enable scripted UI flows.",
       );
     }
 
@@ -1575,13 +1575,13 @@ export function registerJobFinderRouteHandlers(
     async (_event, payload: unknown) => {
       if (!isDesktopTestApiEnabled()) {
         throw new Error(
-          "Desktop test API is disabled. Set UNEMPLOYED_ENABLE_TEST_API=1 to enable scripted UI flows.",
+          "Desktop test API is disabled. Set NORDRI_ENABLE_TEST_API=1 to enable scripted UI flows.",
         );
       }
 
       const mode = JobFinderResumePreviewModeSchema.parse(payload);
       await setJobFinderWorkspaceServiceTestEnv({
-        UNEMPLOYED_TEST_RESUME_PREVIEW: mode,
+        NORDRI_TEST_RESUME_PREVIEW: mode,
       });
 
       return DesktopTestOkResponseSchema.parse({ ok: true });
@@ -1591,7 +1591,7 @@ export function registerJobFinderRouteHandlers(
   ipcMain.handle("job-finder:test-load-apply-queue-demo", async () => {
     if (!isDesktopTestApiEnabled()) {
       throw new Error(
-        "Desktop test API is disabled. Set UNEMPLOYED_ENABLE_TEST_API=1 to enable scripted UI flows.",
+        "Desktop test API is disabled. Set NORDRI_ENABLE_TEST_API=1 to enable scripted UI flows.",
       );
     }
 
@@ -1603,7 +1603,7 @@ export function registerJobFinderRouteHandlers(
   ipcMain.handle("job-finder:test-load-work-history-review-demo", async () => {
     if (!isDesktopTestApiEnabled()) {
       throw new Error(
-        "Desktop test API is disabled. Set UNEMPLOYED_ENABLE_TEST_API=1 to enable scripted UI flows.",
+        "Desktop test API is disabled. Set NORDRI_ENABLE_TEST_API=1 to enable scripted UI flows.",
       );
     }
 
@@ -1617,7 +1617,7 @@ export function registerJobFinderRouteHandlers(
     async (_event, rawInput: unknown) => {
       if (!isDesktopTestApiEnabled()) {
         throw new Error(
-          "Desktop test API is disabled. Set UNEMPLOYED_ENABLE_TEST_API=1 to enable scripted UI flows.",
+          "Desktop test API is disabled. Set NORDRI_ENABLE_TEST_API=1 to enable scripted UI flows.",
         );
       }
       if (!rawInput || typeof rawInput !== "object") {
@@ -1674,7 +1674,7 @@ export function registerJobFinderRouteHandlers(
     (_event, payload: unknown) => {
       if (!isDesktopTestApiEnabled()) {
         throw new Error(
-          "Desktop test API is disabled. Set UNEMPLOYED_ENABLE_TEST_API=1 to enable scripted UI flows.",
+          "Desktop test API is disabled. Set NORDRI_ENABLE_TEST_API=1 to enable scripted UI flows.",
         );
       }
 
@@ -1699,7 +1699,7 @@ export function registerJobFinderRouteHandlers(
   ipcMain.handle("job-finder:test-get-performance-snapshot", async () => {
     if (!isDesktopTestApiEnabled()) {
       throw new Error(
-        "Desktop test API is disabled. Set UNEMPLOYED_ENABLE_TEST_API=1 to enable scripted UI flows.",
+        "Desktop test API is disabled. Set NORDRI_ENABLE_TEST_API=1 to enable scripted UI flows.",
       );
     }
     const service = await getJobFinderWorkspaceService();
@@ -1715,7 +1715,7 @@ export function registerJobFinderRouteHandlers(
     async (_event, payload: unknown) => {
       if (!isDesktopTestApiEnabled()) {
         throw new Error(
-          "Desktop test API is disabled. Set UNEMPLOYED_ENABLE_TEST_API=1 to enable scripted UI flows.",
+          "Desktop test API is disabled. Set NORDRI_ENABLE_TEST_API=1 to enable scripted UI flows.",
         );
       }
 
@@ -1746,7 +1746,7 @@ export function registerJobFinderRouteHandlers(
   ipcMain.handle("job-finder:test-get-resume-import-benchmark-cases", () => {
     if (!isDesktopTestApiEnabled()) {
       throw new Error(
-        "Desktop test API is disabled. Set UNEMPLOYED_ENABLE_TEST_API=1 to enable scripted UI flows.",
+        "Desktop test API is disabled. Set NORDRI_ENABLE_TEST_API=1 to enable scripted UI flows.",
       );
     }
 
@@ -1756,7 +1756,7 @@ export function registerJobFinderRouteHandlers(
   ipcMain.handle("job-finder:test-get-resume-import-state", async () => {
     if (!isDesktopTestApiEnabled()) {
       throw new Error(
-        "Desktop test API is disabled. Set UNEMPLOYED_ENABLE_TEST_API=1 to enable scripted UI flows.",
+        "Desktop test API is disabled. Set NORDRI_ENABLE_TEST_API=1 to enable scripted UI flows.",
       );
     }
 
@@ -1782,7 +1782,7 @@ export function registerJobFinderRouteHandlers(
     async (_event, payload: unknown) => {
       if (!isDesktopTestApiEnabled()) {
         throw new Error(
-          "Desktop test API is disabled. Set UNEMPLOYED_ENABLE_TEST_API=1 to enable scripted UI flows.",
+          "Desktop test API is disabled. Set NORDRI_ENABLE_TEST_API=1 to enable scripted UI flows.",
         );
       }
 
@@ -1818,7 +1818,7 @@ export function registerJobFinderRouteHandlers(
     async (_event, payload: unknown) => {
       if (!isDesktopTestApiEnabled()) {
         throw new Error(
-          "Desktop test API is disabled. Set UNEMPLOYED_ENABLE_TEST_API=1 to enable scripted UI flows.",
+          "Desktop test API is disabled. Set NORDRI_ENABLE_TEST_API=1 to enable scripted UI flows.",
         );
       }
 
@@ -2418,7 +2418,7 @@ export function registerJobFinderRouteHandlers(
     }
     const browserWindow = BrowserWindow.fromWebContents(event.sender);
     const options: SaveDialogOptions = {
-      defaultPath: "unemployed-job-finder-diagnostics.json",
+      defaultPath: "nordri-job-finder-diagnostics.json",
       filters: [{ name: "JSON", extensions: ["json"] }],
       properties: ["createDirectory", "showOverwriteConfirmation"],
       title: "Export Job Finder diagnostics",

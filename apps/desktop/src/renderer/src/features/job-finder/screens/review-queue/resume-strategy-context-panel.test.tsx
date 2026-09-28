@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { JobFinderResumeWorkspaceStrategyContextSchema } from "@unemployed/contracts";
+import { JobFinderResumeWorkspaceStrategyContextSchema } from "@nordri/contracts";
 import { ResumeStrategyContextPanel } from "./resume-strategy-context-panel";
 
 describe("ResumeStrategyContextPanel", () => {

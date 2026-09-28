@@ -1,4 +1,4 @@
-import { JobFinderWorkspaceSnapshotSchema } from "@unemployed/contracts";
+import { JobFinderWorkspaceSnapshotSchema } from "@nordri/contracts";
 import type { IpcMain } from "electron";
 import {
   getDesktopTestDelayMs,
@@ -7,7 +7,7 @@ import {
 } from "../services/job-finder";
 
 export const TEST_WORKSPACE_OPENING_HOLD_ENV =
-  "UNEMPLOYED_TEST_WORKSPACE_OPENING_HOLD_MS";
+  "NORDRI_TEST_WORKSPACE_OPENING_HOLD_MS";
 const MAX_TEST_WORKSPACE_OPENING_HOLD_MS = 5_000;
 
 export function getTestWorkspaceOpeningHoldMs(
@@ -19,7 +19,7 @@ export function getTestWorkspaceOpeningHoldMs(
 
   return Math.min(
     getDesktopTestDelayMs(
-      env.UNEMPLOYED_TEST_WORKSPACE_OPENING_HOLD_MS,
+      env.NORDRI_TEST_WORKSPACE_OPENING_HOLD_MS,
       TEST_WORKSPACE_OPENING_HOLD_ENV,
     ),
     MAX_TEST_WORKSPACE_OPENING_HOLD_MS,

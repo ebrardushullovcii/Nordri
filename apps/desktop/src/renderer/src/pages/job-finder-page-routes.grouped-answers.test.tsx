@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import type {
   GroupedManualAnswerDecision,
   JobFinderWorkspaceSnapshot,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import type { JobFinderPageContext } from "./job-finder-page-context";
 import { jobFinderPendingActions } from "./job-finder-pending-actions";
 import { selectJobFinderActionsScope } from "./job-finder-page-routes";

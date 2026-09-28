@@ -196,7 +196,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) and [ADR 0007](adr/0007-source-generic-br
 
 - `Job Finder`: profile, resume import, discovery, source-debug, resume workspace,
   applications, and apply flows governed by the user's selected authority mode.
-- `Interview Helper`: target-context setup, rehearsal, transcript-aware live cues, protected overlays, retention, and post-session review.
+- `Live Assistant`: target-context setup, rehearsal, transcript-aware live cues, protected overlays, retention, and post-session review.
 - Shared platform: local profile, document memory, application history, browser runtime, AI provider roles, desktop shell, tray, hotkeys, and settings.
 
 ## Durable Priorities
@@ -213,7 +213,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) and [ADR 0007](adr/0007-source-generic-br
 ## Delivery Shape
 
 - Foundations and Job Finder baseline are landed.
-- Interview Helper first integrated desktop workflow is landed.
+- Live Assistant first integrated desktop workflow is landed.
 - Quality, truth, and recovery outrank maximum speed: an honest blocker or a
   truthful failure report beats a fast unverifiable claim, and fixes land only
   after root-cause review.

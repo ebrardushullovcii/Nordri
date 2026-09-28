@@ -9,7 +9,7 @@ import type {
   JobFinderWorkspaceSnapshot,
   JobFinderApplyConsentActionInput,
   SaveApplicationAnswerCommandInput,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { cn } from "@renderer/lib/cn";
@@ -596,7 +596,7 @@ function ApplicationQuestionAnswerEditor(props: {
     let active = true;
     const loadCandidateAssets = () => {
       setCandidateAssetStatus("loading");
-      void window.unemployed.jobFinder
+      void window.nordri.jobFinder
         .listCandidateAssets({ includeDeleted: false })
         .then((result) => {
           if (!active) return;

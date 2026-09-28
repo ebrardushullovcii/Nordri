@@ -17,7 +17,7 @@ import {
   type SavedJob,
   type SourceDebugRunRecord,
   type SourceDebugWorkerAttempt,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import {
   deriveCampaignNotifications,

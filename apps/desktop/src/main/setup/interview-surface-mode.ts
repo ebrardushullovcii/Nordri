@@ -6,7 +6,7 @@ export function resolveAdvancedInterviewSurfacesEnabled(
 
 export function areAdvancedInterviewSurfacesEnabled() {
   return resolveAdvancedInterviewSurfacesEnabled(
-    process.env.UNEMPLOYED_INTERVIEW_ADVANCED_SURFACES,
+    process.env.NORDRI_INTERVIEW_ADVANCED_SURFACES,
   )
 }
 

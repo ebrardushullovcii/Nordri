@@ -13,7 +13,7 @@ import {
   type BrowserSessionState,
   type JobPosting,
   type JobSource,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import type {
   AgentDiscoveryOptions,
   BrowserSessionRuntime,

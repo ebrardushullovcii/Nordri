@@ -2,7 +2,7 @@ import {
   DISCOVERY_RUN_ALREADY_ACTIVE_MESSAGE,
   type DiscoveryRunRecord,
   type PlanSafeguardPause,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   JOB_FINDER_BROWSER_NAME,
   JOB_FINDER_BROWSER_NAME_SENTENCE_START,

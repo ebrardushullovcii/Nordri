@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import type { ApplyJobResult, ApplyRun } from "@unemployed/contracts";
-import { PERSON_TOOK_OVER_SUMMARY } from "@unemployed/job-finder";
+import type { ApplyJobResult, ApplyRun } from "@nordri/contracts";
+import { PERSON_TOOK_OVER_SUMMARY } from "@nordri/job-finder";
 import { continueApplicationsAfterHandback } from "./continue-after-browser-handback";
 
 function result(

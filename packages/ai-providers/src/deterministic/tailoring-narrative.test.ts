@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import type { CandidateProfile } from "@unemployed/contracts";
+import type { CandidateProfile } from "@nordri/contracts";
 import {
   createJobPosting,
   createPreferences,

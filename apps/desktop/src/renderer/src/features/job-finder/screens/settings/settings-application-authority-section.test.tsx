@@ -4,7 +4,7 @@ import type {
   ApplicationAuthorityEnvelope,
   ApplicationAuthorityEnvelopeMutationResult,
   ApplicationAuthorityReadiness,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   cleanup,
   fireEvent,
@@ -78,7 +78,7 @@ function applied(
 }
 
 function installApi(
-  overrides: Partial<Window["unemployed"]["jobFinder"]> = {},
+  overrides: Partial<Window["nordri"]["jobFinder"]> = {},
 ) {
   const api = {
     getApplicationAuthorityReadiness: vi.fn(() => Promise.resolve(readiness)),
@@ -107,9 +107,9 @@ function installApi(
       Promise.resolve(applied(envelope({ revision: 2 }))),
     ),
     ...overrides,
-  } as Window["unemployed"]["jobFinder"];
+  } as Window["nordri"]["jobFinder"];
 
-  Object.defineProperty(window, "unemployed", {
+  Object.defineProperty(window, "nordri", {
     configurable: true,
     value: { jobFinder: api },
   });
@@ -119,7 +119,7 @@ function installApi(
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
-  Object.defineProperty(window, "unemployed", {
+  Object.defineProperty(window, "nordri", {
     configurable: true,
     value: undefined,
   });

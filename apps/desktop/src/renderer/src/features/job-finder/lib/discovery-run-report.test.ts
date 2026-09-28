@@ -1,7 +1,7 @@
 import type {
   DiscoveryRunRecord,
   JobFinderWorkspaceSnapshot,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { describe, expect, test } from "vitest";
 
 import { buildJobFinderTaskCenterModel } from "../components/task-center/job-finder-task-center-model";

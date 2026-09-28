@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
   ApplicationCrmStage,
   ApplicationRecord,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { Button } from "@renderer/components/ui/button";
 import { cn } from "@renderer/lib/utils";
 import { Badge } from "@renderer/components/ui/badge";
@@ -205,7 +205,7 @@ export function ApplicationsCrmViews(props: {
   const [savedView, setSavedView] = useState<CrmSavedView>(() => {
     try {
       const stored = window.localStorage.getItem(
-        "unemployed.job-finder.applications-crm.saved-view.v1",
+        "nordri.job-finder.applications-crm.saved-view.v1",
       );
       return crmSavedViewValues.includes(stored as CrmSavedView)
         ? (stored as CrmSavedView)
@@ -219,7 +219,7 @@ export function ApplicationsCrmViews(props: {
       try {
         const stored = JSON.parse(
           window.localStorage.getItem(
-            "unemployed.job-finder.applications-crm.columns.v1",
+            "nordri.job-finder.applications-crm.columns.v1",
           ) ?? "null",
         ) as unknown;
         return Array.isArray(stored)
@@ -247,11 +247,11 @@ export function ApplicationsCrmViews(props: {
   useEffect(() => {
     try {
       window.localStorage.setItem(
-        "unemployed.job-finder.applications-crm.saved-view.v1",
+        "nordri.job-finder.applications-crm.saved-view.v1",
         savedView,
       );
       window.localStorage.setItem(
-        "unemployed.job-finder.applications-crm.columns.v1",
+        "nordri.job-finder.applications-crm.columns.v1",
         JSON.stringify(visibleColumns),
       );
     } catch {

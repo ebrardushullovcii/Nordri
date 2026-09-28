@@ -1,4 +1,4 @@
-import type { ResumeImportRun } from "@unemployed/contracts";
+import type { ResumeImportRun } from "@nordri/contracts";
 
 /**
  * The one text stage that is deterministic by design. It never had a model

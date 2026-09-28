@@ -5,7 +5,7 @@ import {
   UserActionRequestSchema,
   userActionRequestKindValues,
   type UserActionCommandInput,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ActionsScreen, userActionKindPresentations } from "./actions-screen";

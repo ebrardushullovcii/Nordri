@@ -1,10 +1,10 @@
-import type { BrowserSessionRuntime } from "@unemployed/browser-runtime";
+import type { BrowserSessionRuntime } from "@nordri/browser-runtime";
 import {
   createInMemoryJobFinderRepository,
   type JobFinderRepositorySeed,
-} from "@unemployed/db";
+} from "@nordri/db";
 import { describe, expect, test, vi } from "vitest";
-import { CandidateAssetSchema } from "@unemployed/contracts";
+import { CandidateAssetSchema } from "@nordri/contracts";
 
 import { createJobFinderWorkspaceService } from "../workspace-service";
 import { createSeed } from "../workspace-service.test-fixtures";

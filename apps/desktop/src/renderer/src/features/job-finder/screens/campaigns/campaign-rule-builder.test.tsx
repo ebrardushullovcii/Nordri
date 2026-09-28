@@ -6,7 +6,7 @@ import {
   type CampaignRuleFunnelProjection,
   type JobSearchCampaign,
   type SaveCampaignRuleInput,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   cleanup,
   fireEvent,

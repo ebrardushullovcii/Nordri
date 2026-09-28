@@ -5,7 +5,7 @@ import {
   type CampaignRunFacts,
   type DiscoveryRunRecord,
   type JobSearchCampaignSchedule,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 /**
  * Pure campaign schedule math.

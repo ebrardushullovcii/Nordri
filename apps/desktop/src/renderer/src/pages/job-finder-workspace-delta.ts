@@ -2,7 +2,7 @@ import type {
   JobFinderWorkspaceDelta,
   JobFinderWorkspaceSnapshot,
   WorkspaceRevision,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 export type WorkspaceDeltaApplyResult =
   | {

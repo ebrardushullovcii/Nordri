@@ -9,12 +9,12 @@ import {
   SourceDebugRunRecordSchema,
   UserActionEventSchema,
   UserActionRequestSchema,
-} from "@unemployed/contracts";
-import type { JobFinderRepositorySeed } from "@unemployed/db";
+} from "@nordri/contracts";
+import type { JobFinderRepositorySeed } from "@nordri/db";
 import type {
   BrowserSessionRuntime,
   ExecuteApplicationFlowInput,
-} from "@unemployed/browser-runtime";
+} from "@nordri/browser-runtime";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import {
@@ -628,7 +628,7 @@ describe("apply run cancellation and application record concurrency", () => {
     expect(settled?.crm).toMatchObject({ revision: 2, stage: "assessment" });
   });
 
-  test("interview-helper writes and CRM mutations serialize per job without deadlock", async () => {
+  test("live-assistant writes and CRM mutations serialize per job without deadlock", async () => {
     const { workspaceService, repository } = createOriginalResumeHarness();
     await approveTailoredResume(workspaceService, "job_ready");
     await workspaceService.startApplyCopilotRun("job_ready");
@@ -639,7 +639,7 @@ describe("apply run cancellation and application record concurrency", () => {
     const priorEventIds = record.events.map((event) => event.id);
 
     await Promise.all([
-      workspaceService.recordInterviewHelperApplicationAction({
+      workspaceService.recordLiveAssistantApplicationAction({
         applicationRecordId: record.id,
         sessionId: "session_1",
         action: "mark_interviewed",
@@ -1098,7 +1098,7 @@ describe("apply run cancellation and application record concurrency", () => {
 
   test("a failed consent relaunch parks the run instead of leaving it falsely running", async () => {
     // Keep the second job queued to exercise the relaunch failure itself.
-    vi.stubEnv("UNEMPLOYED_APPLICATION_PREPARATION_CONCURRENCY", "1");
+    vi.stubEnv("NORDRI_APPLICATION_PREPARATION_CONCURRENCY", "1");
     const seed = createSeed();
     stageReadyTailoredJob(seed, "job_ready", "linkedin_signal_ready", {
       filePath: "/tmp/job-ready-resume.pdf",

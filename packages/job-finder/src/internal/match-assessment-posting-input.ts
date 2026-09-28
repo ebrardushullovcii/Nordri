@@ -1,4 +1,4 @@
-import type { JobPosting } from "@unemployed/contracts";
+import type { JobPosting } from "@nordri/contracts";
 
 export const MATCH_ASSESSMENT_POSTING_INPUT_FIELDS = [
   "title",

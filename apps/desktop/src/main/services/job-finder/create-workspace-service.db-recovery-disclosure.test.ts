@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
-import { WorkspaceDatabaseRecoveryRequiredError } from "@unemployed/db";
+import { WorkspaceDatabaseRecoveryRequiredError } from "@nordri/db";
 import {
   createJobFinderWorkspaceServiceAsync,
   dismissJobFinderStartupDatabaseRecoveryNotice,
@@ -12,9 +12,9 @@ import {
 
 const temporaryDirectories: string[] = [];
 const originalEnv: Record<string, string | undefined> = {
-  UNEMPLOYED_USER_DATA_DIR: process.env.UNEMPLOYED_USER_DATA_DIR,
-  UNEMPLOYED_ENABLE_TEST_API: process.env.UNEMPLOYED_ENABLE_TEST_API,
-  UNEMPLOYED_BROWSER_AGENT: process.env.UNEMPLOYED_BROWSER_AGENT,
+  NORDRI_USER_DATA_DIR: process.env.NORDRI_USER_DATA_DIR,
+  NORDRI_ENABLE_TEST_API: process.env.NORDRI_ENABLE_TEST_API,
+  NORDRI_BROWSER_AGENT: process.env.NORDRI_BROWSER_AGENT,
 };
 
 afterEach(async () => {
@@ -35,7 +35,7 @@ afterEach(async () => {
 
 async function createUserDataDirectory(): Promise<string> {
   const temporaryRoot = await mkdtemp(
-    path.join(os.tmpdir(), "unemployed-db-recovery-disclosure-"),
+    path.join(os.tmpdir(), "nordri-db-recovery-disclosure-"),
   );
   temporaryDirectories.push(temporaryRoot);
   return path.join(temporaryRoot, "user-data");
@@ -50,13 +50,13 @@ function factFilePath(userDataDirectory: string): string {
 }
 
 async function createWorkspaceService(userDataDirectory: string) {
-  process.env.UNEMPLOYED_USER_DATA_DIR = userDataDirectory;
-  process.env.UNEMPLOYED_ENABLE_TEST_API = "1";
-  process.env.UNEMPLOYED_BROWSER_AGENT = "0";
+  process.env.NORDRI_USER_DATA_DIR = userDataDirectory;
+  process.env.NORDRI_ENABLE_TEST_API = "1";
+  process.env.NORDRI_BROWSER_AGENT = "0";
   return createJobFinderWorkspaceServiceAsync({
-    UNEMPLOYED_USER_DATA_DIR: userDataDirectory,
-    UNEMPLOYED_ENABLE_TEST_API: "1",
-    UNEMPLOYED_BROWSER_AGENT: "0",
+    NORDRI_USER_DATA_DIR: userDataDirectory,
+    NORDRI_ENABLE_TEST_API: "1",
+    NORDRI_BROWSER_AGENT: "0",
   });
 }
 

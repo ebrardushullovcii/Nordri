@@ -16,7 +16,7 @@ import {
   type ResumeApproach,
   type UpdateAiBehaviorInput,
   type WrittenAnswerLength,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { Field, FieldLabel } from "@renderer/components/ui/field";
 import { Input } from "@renderer/components/ui/input";
 import { Textarea } from "@renderer/components/ui/textarea";
@@ -374,7 +374,7 @@ export function SettingsAiBehaviorSection({
             {SETTINGS_AI_BEHAVIOR_LABEL}
           </h3>
           <p className="text-(length:--text-description) leading-5 text-foreground-soft">
-            How the AI works for you: how it talks on your Profile, how picky
+            How the AI works for you: how it talks in the side chat, how picky
             it is when it searches, how far it rewrites your resume, and what
             it writes when it applies. These choices change what it does and
             how it sounds, never what it is allowed to do. Sending, signing

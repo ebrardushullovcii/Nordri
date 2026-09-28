@@ -1,12 +1,12 @@
 import type {
   JobFinderAiClient,
   ReviseCandidateProfileInput,
-} from "@unemployed/ai-providers";
+} from "@nordri/ai-providers";
 import type {
   ProfileCopilotPatchOperation,
   ResumeApplicationMode,
   TailoringMode,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { describe, expect, test } from "vitest";
 
 import {

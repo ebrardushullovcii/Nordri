@@ -1,5 +1,5 @@
-import type { JobFinderRepository } from "@unemployed/db";
-import { SubmissionExecutionGrantSchema } from "@unemployed/contracts";
+import type { JobFinderRepository } from "@nordri/db";
+import { SubmissionExecutionGrantSchema } from "@nordri/contracts";
 import {
   SubmissionArmedMarkerSchema,
   SubmissionOutcomeRecordSchema,
@@ -14,7 +14,7 @@ import {
   type SubmissionOutcomeRecord,
   type SubmissionOutcomeRetryEligibility,
   type SubmissionPreflightRecord,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import {
   evaluateApplicationSubmissionPolicy,

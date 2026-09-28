@@ -2,7 +2,7 @@ import type {
   ResumeDocumentBundle,
   ResumeImportFieldCandidate,
   ResumeImportFieldCandidateDraft,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import { toCandidate } from "./resume-import-candidate-utils";
 import { isClearlyResumeDateRange } from "./resume-import-common";

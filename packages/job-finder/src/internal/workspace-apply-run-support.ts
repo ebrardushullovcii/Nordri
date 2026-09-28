@@ -19,7 +19,7 @@ import {
   type BrowserVisualEvidenceSummary,
   type JobFinderWorkspaceSnapshot,
   type SavedJob,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import { createUniqueId } from "./shared";
 

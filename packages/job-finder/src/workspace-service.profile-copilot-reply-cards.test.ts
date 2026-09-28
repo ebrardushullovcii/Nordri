@@ -1,5 +1,5 @@
-import type { JobFinderAiClient } from "@unemployed/ai-providers";
-import type { ProfileCopilotPatchGroup } from "@unemployed/contracts";
+import type { JobFinderAiClient } from "@nordri/ai-providers";
+import type { ProfileCopilotPatchGroup } from "@nordri/contracts";
 import { describe, expect, test } from "vitest";
 
 import {

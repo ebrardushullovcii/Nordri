@@ -12,7 +12,7 @@ import type {
   SourceDebugRunDetails,
   SourceDebugRunRecord,
   SourceInstructionArtifact,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { formatRunStateLabel } from "@renderer/features/job-finder/lib/job-finder-utils";
 import type { SearchPreferencesEditorValues } from "../../lib/profile-editor";
 import { ProfileSourceDebugReviewModal } from "./profile-source-debug-review-modal";

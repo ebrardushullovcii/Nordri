@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   APPLICATION_SKIPPED_BY_PERSON_LABEL,
   type JobFinderWorkspaceSnapshot,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   applyResultStoppedStructurally,
   buildApplyRunContextReader,

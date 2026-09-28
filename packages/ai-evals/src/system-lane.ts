@@ -7,25 +7,25 @@ import {
   createOpenAiCompatibleResumeVisionProvider,
   runProfileCopilotAgentTask,
   runResumeEditAgentTask,
-} from "@unemployed/ai-providers";
+} from "@nordri/ai-providers";
 import {
   createApplyPageHands,
   runJobSearchAgent,
   type AgentConfig,
-} from "@unemployed/browser-agent";
-import { createPlaywrightApplyPageMechanics } from "@unemployed/browser-runtime";
+} from "@nordri/browser-agent";
+import { createPlaywrightApplyPageMechanics } from "@nordri/browser-runtime";
 import {
   BrowserVisualAnalysisInputSchema,
   JobDiscoveryTargetSchema,
   SourceDebugRunRecordSchema,
   SourceDebugWorkerAttemptSchema,
   SourceInstructionVerificationSchema,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   reviewSourceInstructionArtifactWithAi,
   synthesizeSourceInstructionArtifact,
   type SourceInstructionFinalReviewPhaseContext,
-} from "@unemployed/job-finder/source-instruction-review";
+} from "@nordri/job-finder/source-instruction-review";
 import { chromium } from "playwright";
 
 import {
@@ -347,11 +347,11 @@ async function finalizeSyntheticSourceInstruction(input: {
 export function readSystemLaneEnvironment(
   env: Record<string, string | undefined>,
 ): SystemLaneEnvironment {
-  const apiKey = env.UNEMPLOYED_AI_API_KEY?.trim();
-  const baseUrl = env.UNEMPLOYED_AI_BASE_URL?.trim();
+  const apiKey = env.NORDRI_AI_API_KEY?.trim();
+  const baseUrl = env.NORDRI_AI_BASE_URL?.trim();
   if (!apiKey || !baseUrl) {
     throw new Error(
-      "Configured benchmark requires UNEMPLOYED_AI_API_KEY and UNEMPLOYED_AI_BASE_URL.",
+      "Configured benchmark requires NORDRI_AI_API_KEY and NORDRI_AI_BASE_URL.",
     );
   }
   return {

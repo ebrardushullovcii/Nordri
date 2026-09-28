@@ -3,7 +3,7 @@ import type {
   DiscoveryActivityEvent,
   JobFinderWorkspaceSnapshot,
   ResumeImportProgressEvent,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { ListChecks, X } from "lucide-react";
 import { Button } from "@renderer/components/ui/button";
 import { StatusBadge } from "../status-badge";
@@ -40,7 +40,7 @@ interface JobFinderTaskCenterProps {
 }
 
 const CLEARED_ACTIVITY_STORAGE_KEY =
-  "unemployed.job-finder.cleared-activity.v1";
+  "nordri.job-finder.cleared-activity.v1";
 
 function readClearedActivityIds(): ReadonlySet<string> {
   try {

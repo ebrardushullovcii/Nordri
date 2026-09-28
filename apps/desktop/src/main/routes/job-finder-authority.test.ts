@@ -1,7 +1,7 @@
 import type { IpcMain, IpcMainInvokeEvent } from "electron";
 import { describe, expect, it, vi } from "vitest";
 
-import { ApplicationAuthorityReadinessSchema } from "@unemployed/contracts";
+import { ApplicationAuthorityReadinessSchema } from "@nordri/contracts";
 import type { JobFinderApplicationAuthorityService } from "../services/job-finder";
 import { registerJobFinderAuthorityRouteHandlers } from "./job-finder-authority";
 

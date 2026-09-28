@@ -2,7 +2,7 @@ import {
   ProfileCopilotReplySchema,
   type ProfileCopilotPatchGroup,
   type ProfileCopilotReply,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import type { ReviseCandidateProfileInput } from "../shared";
 import {

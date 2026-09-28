@@ -7,8 +7,8 @@ import type {
   JobSearchPreferences,
   PlanSafeguardPause,
   SavedJob,
-} from "@unemployed/contracts";
-import { buildDiscoveryCardOnlyEvidenceWarning } from "@unemployed/contracts";
+} from "@nordri/contracts";
+import { buildDiscoveryCardOnlyEvidenceWarning } from "@nordri/contracts";
 import type { ReactNode } from "react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";

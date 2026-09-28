@@ -4,7 +4,7 @@ import {
   type JobFinderSettings,
   type ResumeDraft,
   type SavedJob,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 function toProfileResumeStalenessSignature(profile: CandidateProfile) {
   return {

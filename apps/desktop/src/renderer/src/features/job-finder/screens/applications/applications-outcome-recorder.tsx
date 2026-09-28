@@ -2,7 +2,7 @@ import { useState } from "react";
 import type {
   ApplicationOutcome,
   RecordOutcomeInput,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { Button } from "@renderer/components/ui/button";
 
 export const outcomeRecordingOptions: ReadonlyArray<{

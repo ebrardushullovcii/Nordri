@@ -11,18 +11,18 @@ import type {
   ResumeDraftPatch,
   ResumeValidationIssue,
   WorkHistoryReviewSuggestion,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   getResumePreviewTargetContext,
   buildResumeIssueApprovalContentHash,
   isBlockingResumeClaimAssessment,
   isResumeClaimAssessmentApprovable,
   isBlockingResumeValidationIssue,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   getResumeTemplateDeliveryLane,
   isResumeTemplateApprovalEligible,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { Button } from "@renderer/components/ui/button";
 import { EmptyState } from "../../components/empty-state";
 import { LockedScreenLayout } from "../../components/locked-screen-layout";
@@ -91,9 +91,16 @@ const STUDIO_FALLBACK_TITLE_ROW = 72;
 const STUDIO_FALLBACK_TOP_OFFSET =
   56 + STUDIO_FALLBACK_TITLE_ROW + STUDIO_BOTTOM_GUTTER;
 
-/** A draft's content without its save stamp, to tell edits from saves. */
+/** Editable content, excluding server-owned approval and review metadata. */
 function draftContentKey(draft: ResumeDraft): string {
-  return JSON.stringify({ ...draft, updatedAt: null });
+  return JSON.stringify({
+    id: draft.id,
+    jobId: draft.jobId,
+    templateId: draft.templateId,
+    identity: draft.identity,
+    sections: draft.sections,
+    targetPageCount: draft.targetPageCount,
+  });
 }
 
 export function ResumeWorkspaceScreen(props: ResumeWorkspaceScreenProps) {

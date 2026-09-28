@@ -9,7 +9,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { MemoryRouter, Outlet, Route, Routes } from "react-router-dom";
-import type { JobFinderWorkspaceSnapshot } from "@unemployed/contracts";
+import type { JobFinderWorkspaceSnapshot } from "@nordri/contracts";
 import type { FinishInBrowserInput } from "@renderer/features/job-finder/screens/applications/applications-detail-panel-recovery-actions-section";
 import type { JobFinderPageContext } from "./job-finder-page-context";
 import {

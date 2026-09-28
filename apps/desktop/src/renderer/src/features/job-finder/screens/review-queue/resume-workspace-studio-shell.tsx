@@ -11,7 +11,7 @@ import {
 import {
   isBlockingResumeValidationIssue,
   type ResumeValidationIssue,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { Badge } from "@renderer/components/ui/badge";
 import { Button } from "@renderer/components/ui/button";
 import { cn } from "@renderer/lib/cn";

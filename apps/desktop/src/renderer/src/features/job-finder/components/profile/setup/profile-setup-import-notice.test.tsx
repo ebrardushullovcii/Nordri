@@ -6,7 +6,7 @@ import {
   CandidateProfileSchema,
   RESUME_IMPORT_INTERRUPTED_MESSAGE,
   ResumeImportRunSchema,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   ProfileSetupImportNotice,
   buildProfileSetupImportNotice,

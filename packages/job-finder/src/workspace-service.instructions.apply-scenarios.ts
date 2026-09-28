@@ -1,4 +1,4 @@
-import type { BrowserSessionRuntime } from "@unemployed/browser-runtime";
+import type { BrowserSessionRuntime } from "@nordri/browser-runtime";
 import { describe, expect, test } from "vitest";
 import {
   createSavedJobDiscoveryProvenance,

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { ApplyRun } from "@unemployed/contracts";
+import type { ApplyRun } from "@nordri/contracts";
 
 import { listJobsNotInProgress, startApplyBatch } from "./start-apply-batch";
 

@@ -1,13 +1,13 @@
 import { describe, expect, test } from "vitest";
 
-import type { ResumeDraft, ResumeDraftEntry } from "@unemployed/contracts";
+import type { ResumeDraft, ResumeDraftEntry } from "@nordri/contracts";
 import {
   ResumeClaimConfirmationSchema,
   ResumeDraftSchema,
   resumeClaimOwnershipStatement,
-} from "@unemployed/contracts";
-import { fnv1a32 } from "@unemployed/core";
-import { ResumeGenerationStrategyPolicySchema } from "@unemployed/ai-providers";
+} from "@nordri/contracts";
+import { fnv1a32 } from "@nordri/core";
+import { ResumeGenerationStrategyPolicySchema } from "@nordri/ai-providers";
 import {
   buildResumeCoverageComparison,
   buildResumeDraftContentHash,

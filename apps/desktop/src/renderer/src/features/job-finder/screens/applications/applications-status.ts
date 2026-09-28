@@ -3,7 +3,7 @@ import type {
   ApplicationAttemptQuestion,
   ApplicationRecord,
   ApplyJobResult,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   formatStatusLabel,
   getApplicationTone,

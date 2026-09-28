@@ -1099,7 +1099,7 @@ export type AssistantMentionSearchResult = z.infer<
   typeof AssistantMentionSearchResultSchema
 >;
 
-/** The typed preload bridge the sidebar uses (`window.unemployed.assistant`). */
+/** The typed preload bridge the sidebar uses (`window.nordri.assistant`). */
 export interface DesktopAssistantBridge {
   getStatus(): Promise<AssistantStatus>;
   listConversations(): Promise<AssistantConversationList>;

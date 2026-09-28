@@ -7,7 +7,7 @@ import {
   type ResumeTemplateDefinition,
   type ResumeTemplateDeliveryLane,
   type ResumeTemplateId,
-} from '@unemployed/contracts'
+} from '@nordri/contracts'
 
 const resumeTemplates = [
   {

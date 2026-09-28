@@ -10,7 +10,7 @@
 - `packages/browser-runtime`: browser lifecycle and generic automation primitives
 - `packages/browser-agent`: browser workflow policy, prompts, tool use, structured outputs
 - `packages/job-finder`: discovery, source-debug, resume, apply orchestration
-- `packages/interview-helper`: prep, live session, transcript, cues
+- `packages/live-assistant`: prep, live session, transcript, cues
 - `packages/ai-providers`: provider interfaces and adapters for chat, vision, STT, and embeddings
 - `packages/os-integration`: tray, hotkeys, windows, capture-policy adapters
 - `packages/testing`: fixtures, fakes, harness helpers
@@ -25,7 +25,7 @@
 - source-specific code is acceptable only for reusable provider adapters or contained `browser-agent` extraction/navigation quirks
 - reusable provider adapters currently include public Ashby board ingestion and exact-job Workday candidate-experience ingestion; they normalize provider payloads into shared discovery contracts without adding board-specific workflow policy
 - `pnpm source-generic:check` guards the browser/discovery boundary
-- interview conversation/session state belongs to `interview-helper`; Electron media permissions and optional overlay windows stay in desktop adapters, while reusable OS capture/hotkey policy belongs to `os-integration`
+- interview conversation/session state belongs to `live-assistant`; Electron media permissions and optional overlay windows stay in desktop adapters, while reusable OS capture/hotkey policy belongs to `os-integration`
 - native helpers are a last resort and must stay behind `packages/os-integration`
 
 See [ADR 0007](adr/0007-source-generic-browser-workflows.md) for the source-generic browser decision.
@@ -54,10 +54,10 @@ See [ADR 0007](adr/0007-source-generic-browser-workflows.md) for the source-gene
   status, and lifecycle identity but never raw answer text or a caller-supplied
   digest. An approved snapshot does not grant, arm, or execute anything.
 - product actions: schema-validated local tools call a narrow injected subset of the `job-finder` workspace service. They never expose raw IPC, browser primitives, arbitrary navigation, or filesystem access; the retired Profile Copilot's proposal-only calls persist reviewable patch groups without applying them
-- assistant (ADR 0037-0039): renderer sidebar -> typed preload `assistant` bridge -> `job-finder:assistant:*` IPC -> the main-process session host in `packages/job-finder/src/assistant`. The host runs `runConversationTurn` from `packages/agent-runtime` (product-neutral: steering at tool boundaries, per-tool deadlines, generation fencing, streaming) with Job Finder tools that call the workspace service and desktop ports (searches, application runs, sends, files, the lent browser tab). Conversations, events, operations, change receipts, grants, plans, result sets and checkpoints persist in `assistant.sqlite` through `packages/db`'s assistant repository. Renderer screens publish context references (route, focus, list ids, editor snapshots) and never call tools. Model routes and streaming come from `packages/ai-providers` (`UNEMPLOYED_AI_ASSISTANT_*`).
+- assistant (ADR 0037-0039): renderer sidebar -> typed preload `assistant` bridge -> `job-finder:assistant:*` IPC -> the main-process session host in `packages/job-finder/src/assistant`. The host runs `runConversationTurn` from `packages/agent-runtime` (product-neutral: steering at tool boundaries, per-tool deadlines, generation fencing, streaming) with Job Finder tools that call the workspace service and desktop ports (searches, application runs, sends, files, the lent browser tab). Conversations, events, operations, change receipts, grants, plans, result sets and checkpoints persist in `assistant.sqlite` through `packages/db`'s assistant repository. Renderer screens publish context references (route, focus, list ids, editor snapshots) and never call tools. Model routes and streaming come from `packages/ai-providers` (`NORDRI_AI_ASSISTANT_*`).
 - source-debug: `job-finder` orchestrates phases and artifacts, `browser-agent` returns structured attempts, `db` persists runs and evidence
 - browser visual evidence: `browser-runtime` owns screenshot capture and cleanup; `browser-agent` owns generic trigger policy and interpretation; `job-finder` persists only schema-validated summaries
-- interview live session: visible chat/audio UI -> typed preload -> Electron main-hosted `interview-helper` service -> typed AI/audio/screenshot adapters -> visible responses, source-labeled transcript, and post-session review
+- interview live session: visible chat/audio UI -> typed preload -> Electron main-hosted `live-assistant` service -> typed AI/audio/screenshot adapters -> visible responses, source-labeled transcript, and post-session review
 - generative AI: domain services -> a small product-specific agent harness -> `packages/ai-providers` -> OpenCode Go. Muse Spark 1.3 Contributor handles text, tool, and image work through the Responses API with requested `xhigh` reasoning; DeepSeek V4.1 Flash handles aggressive resume tailoring through Chat Completions with `high` reasoning (ADR 0019). The harness gives the model narrow typed read/write/validate tools over a temporary task transaction, records every call, and separates direct work, correction, validation, fallback, and final product output. Domain code still owns canonical state and user-review rules. Local Codex bridges remain replaceable loopback development transports. Audio transcription stays a separate local Whisper or explicit audio-model role.
 
 ### Persistence safety
@@ -120,7 +120,7 @@ See [ADR 0007](adr/0007-source-generic-browser-workflows.md) for the source-gene
   application observation/exact-one-action hands only to main-process
   composition. Job Finder owns the authority/preflight/idempotency policy around
   those mechanics through the explicit
-  `@unemployed/job-finder/application-submission-runtime-main` subpath. No
+  `@nordri/job-finder/application-submission-runtime-main` subpath. No
   renderer, preload, IPC, or legacy apply route calls that seam; browser-local
   action facts can record only `not_submitted` or `outcome_uncertain`, never
   prove `submitted`
@@ -140,9 +140,9 @@ See [ADR 0007](adr/0007-source-generic-browser-workflows.md) for the source-gene
 
 ## Interview Capture Protection
 
-Interview Helper defaults to the ordinary visible main window. Advanced overlay windows and global/tray controls initialize only when `UNEMPLOYED_INTERVIEW_ADVANCED_SURFACES=1`. When enabled, overlay capture exclusion remains adapter-owned capability state: Electron `BrowserWindow.setContentProtection(true)` is a request, while real platform-specific verification and any future authorized stronger capture-exclusion path must stay behind `packages/os-integration`.
+Live Assistant defaults to the ordinary visible main window. Advanced overlay windows and global/tray controls initialize only when `NORDRI_INTERVIEW_ADVANCED_SURFACES=1`. When enabled, overlay capture exclusion remains adapter-owned capability state: Electron `BrowserWindow.setContentProtection(true)` is a request, while real platform-specific verification and any future authorized stronger capture-exclusion path must stay behind `packages/os-integration`.
 
-See [ADR 0003](adr/0003-interview-helper-live-session-architecture.md) and [ADR 0008](adr/0008-visible-first-interview-helper.md).
+See [ADR 0003](adr/0003-live-assistant-live-session-architecture.md) and [ADR 0008](adr/0008-visible-first-live-assistant.md).
 
 See [ADR 0010](adr/0010-opencode-go-mixed-text-and-vision-routing.md) for configured text/vision routing and [ADR 0009](adr/0009-luna-high-default-and-capability-contracts.md) for the contract-first AI boundary that remains in force.
 

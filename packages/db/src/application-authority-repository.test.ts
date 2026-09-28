@@ -1,4 +1,4 @@
-import type { ApplicationAttestationKind } from "@unemployed/contracts";
+import type { ApplicationAttestationKind } from "@nordri/contracts";
 import {
   ApplyJobResultSchema,
   ApplicationAuthorityEnvelopeSchema,
@@ -8,7 +8,7 @@ import {
   SubmissionExecutionGrantSchema,
   SubmissionOutcomeRecordSchema,
   SubmissionPreflightRecordSchema,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { afterEach, describe, expect, test } from "vitest";
 import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
@@ -1297,7 +1297,7 @@ describe("application authority repository", () => {
   });
 
   test("rewrites only the authority rows a mutation changed", async () => {
-    const temp = await createTempRepository("unemployed-authority-row-diff-");
+    const temp = await createTempRepository("nordri-authority-row-diff-");
     cleanupDirectories.push(temp.tempDirectory);
     const repository = await temp.createRepository();
     const fixture = createAuthorityFixture("row_diff", "confirm_before_submit");
@@ -1381,7 +1381,7 @@ describe("application authority repository", () => {
   });
 
   test("enforces one-shot lifecycle atomically and survives SQLite reopen", async () => {
-    const temp = await createTempRepository("unemployed-authority-");
+    const temp = await createTempRepository("nordri-authority-");
     cleanupDirectories.push(temp.tempDirectory);
     let repository = await temp.createRepository();
     await exerciseAuthorityLifecycle(repository);
@@ -1438,7 +1438,7 @@ describe("application authority repository", () => {
   });
 
   test("resets SQLite authority parents and children without violating foreign keys", async () => {
-    const temp = await createTempRepository("unemployed-authority-reset-");
+    const temp = await createTempRepository("nordri-authority-reset-");
     cleanupDirectories.push(temp.tempDirectory);
     let repository = await temp.createRepository();
     const fixture = createAuthorityFixture(
@@ -1469,7 +1469,7 @@ describe("application authority repository", () => {
   });
 
   test("atomically gates attempts, rolls back rejected transitions, and survives SQLite reopen", async () => {
-    const temp = await createTempRepository("unemployed-authority-compound-");
+    const temp = await createTempRepository("nordri-authority-compound-");
     cleanupDirectories.push(temp.tempDirectory);
     let repository = await temp.createRepository();
     await exerciseCompoundAuthorityTransition(repository);
@@ -1514,7 +1514,7 @@ describe("application authority repository", () => {
   });
 
   test("atomically rotates authority, guarantees one active envelope, and survives SQLite reopen", async () => {
-    const temp = await createTempRepository("unemployed-authority-replace-");
+    const temp = await createTempRepository("nordri-authority-replace-");
     cleanupDirectories.push(temp.tempDirectory);
     let repository = await temp.createRepository();
     const activeId = await exerciseAuthorityReplacement(repository);
@@ -1554,7 +1554,7 @@ describe("application authority repository", () => {
     {
       label: "in SQLite",
       create: async () => {
-        const temp = await createTempRepository("unemployed-outcome-receipt-");
+        const temp = await createTempRepository("nordri-outcome-receipt-");
         cleanupDirectories.push(temp.tempDirectory);
         return temp.createRepository();
       },
@@ -1666,7 +1666,7 @@ describe("application authority repository", () => {
     {
       label: "in SQLite",
       create: async () => {
-        const temp = await createTempRepository("unemployed-outcome-current-");
+        const temp = await createTempRepository("nordri-outcome-current-");
         cleanupDirectories.push(temp.tempDirectory);
         return temp.createRepository();
       },
@@ -1798,7 +1798,7 @@ describe("application authority repository", () => {
     {
       label: "in SQLite",
       create: async () => {
-        const temp = await createTempRepository("unemployed-outcome-record-");
+        const temp = await createTempRepository("nordri-outcome-record-");
         cleanupDirectories.push(temp.tempDirectory);
         return temp.createRepository();
       },
@@ -1859,7 +1859,7 @@ describe("application authority repository", () => {
     {
       label: "in SQLite",
       create: async () => {
-        const temp = await createTempRepository("unemployed-outcome-record-");
+        const temp = await createTempRepository("nordri-outcome-record-");
         cleanupDirectories.push(temp.tempDirectory);
         return temp.createRepository();
       },
@@ -1915,7 +1915,7 @@ describe("application authority repository", () => {
     {
       label: "in SQLite",
       create: async () => {
-        const temp = await createTempRepository("unemployed-outcome-lineage-");
+        const temp = await createTempRepository("nordri-outcome-lineage-");
         cleanupDirectories.push(temp.tempDirectory);
         return temp.createRepository();
       },
@@ -2031,7 +2031,7 @@ describe("application authority repository", () => {
     {
       label: "in SQLite",
       create: async () => {
-        const temp = await createTempRepository("unemployed-outcome-recovery-");
+        const temp = await createTempRepository("nordri-outcome-recovery-");
         cleanupDirectories.push(temp.tempDirectory);
         return temp.createRepository();
       },

@@ -4,7 +4,7 @@ import { cleanup, fireEvent, render } from "@testing-library/react";
 import {
   UserActionRequestSchema,
   type JobFinderWorkspaceSnapshot,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ActionsScreen, isSameSiteApplicationActive } from "./actions-screen";

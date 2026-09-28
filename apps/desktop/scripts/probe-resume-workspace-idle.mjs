@@ -48,7 +48,7 @@ async function main() {
   await rm(outputDir, { recursive: true, force: true });
   await mkdir(outputDir, { recursive: true });
   const userDataDirectory = await mkdtemp(
-    path.join(os.tmpdir(), "unemployed-resume-idle-"),
+    path.join(os.tmpdir(), "nordri-resume-idle-"),
   );
 
   let app;
@@ -60,28 +60,28 @@ async function main() {
       cwd: desktopDir,
       env: {
         ...process.env,
-        UNEMPLOYED_BROWSER_AGENT: "0",
-        UNEMPLOYED_ENABLE_TEST_API: "1",
-        UNEMPLOYED_USER_DATA_DIR: userDataDirectory,
+        NORDRI_BROWSER_AGENT: "0",
+        NORDRI_ENABLE_TEST_API: "1",
+        NORDRI_USER_DATA_DIR: userDataDirectory,
       },
     });
 
     const window = await app.firstWindow();
     await window.waitForLoadState("domcontentloaded");
     await window.waitForFunction(
-      () => Boolean(window.unemployed?.jobFinder?.test),
+      () => Boolean(window.nordri?.jobFinder?.test),
       undefined,
       { timeout: 15000 },
     );
 
     // Seed the demo workspace, then force the app to open on the resume URL.
     await window.evaluate(async () => {
-      await window.unemployed.jobFinder.test.loadResumeWorkspaceDemo();
+      await window.nordri.jobFinder.test.loadResumeWorkspaceDemo();
     });
     await window.reload();
     await window.waitForLoadState("domcontentloaded");
     await window.waitForFunction(
-      () => Boolean(window.unemployed?.jobFinder?.test),
+      () => Boolean(window.nordri?.jobFinder?.test),
       undefined,
       { timeout: 15000 },
     );
@@ -111,7 +111,7 @@ async function main() {
     });
     await window.waitForLoadState("domcontentloaded");
     await window.waitForFunction(
-      () => Boolean(window.unemployed?.jobFinder?.test),
+      () => Boolean(window.nordri?.jobFinder?.test),
       undefined,
       { timeout: 15000 },
     );
@@ -145,7 +145,7 @@ async function main() {
     // workspace is open. This is what happens after a failed discovery run
     // returns updated fit scores.
     await window.evaluate(async () => {
-      await window.unemployed.jobFinder.syncWorkspace(null);
+      await window.nordri.jobFinder.syncWorkspace(null);
     });
     timeline.push(await poll("after-background-sync"));
 
@@ -163,12 +163,12 @@ async function main() {
     // snapshot exactly like a restart with a stale workspace URL. The route
     // must stay and explain instead of silently bouncing to Shortlisted.
     await window.evaluate(async () => {
-      await window.unemployed.jobFinder.removeJobFromReview("job_ready");
+      await window.nordri.jobFinder.removeJobFromReview("job_ready");
     });
     await window.reload();
     await window.waitForLoadState("domcontentloaded");
     await window.waitForFunction(
-      () => Boolean(window.unemployed?.jobFinder?.test),
+      () => Boolean(window.nordri?.jobFinder?.test),
       undefined,
       { timeout: 15000 },
     );

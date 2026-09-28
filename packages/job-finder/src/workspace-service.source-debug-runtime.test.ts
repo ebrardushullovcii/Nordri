@@ -1,13 +1,13 @@
 import {
   createCatalogBrowserSessionRuntime,
   type BrowserSessionRuntime,
-} from "@unemployed/browser-runtime";
+} from "@nordri/browser-runtime";
 import {
   DiscoveryRunResultSchema,
   JobPostingSchema,
   type DiscoveryRunResultInput,
   type SourceDebugProgressEvent,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { describe, expect, test } from "vitest";
 import {
   createAgentAiClient,

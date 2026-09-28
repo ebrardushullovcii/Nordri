@@ -12,7 +12,7 @@ import type {
   DiscoveryRunRecord,
   JobSearchCampaign,
   SaveJobSearchCampaignInput,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { resetJobFinderOverlaysForTests } from "../../lib/job-finder-overlay-ownership";
 import { deviceTimeZone } from "../../lib/job-finder-timestamp-format";
@@ -512,7 +512,7 @@ describe("CampaignsScreen", () => {
 
   it("keeps no-match copy for a real persisted query even with no plans", () => {
     window.localStorage.setItem(
-      "unemployed.job-finder.collection.campaigns.v1",
+      "nordri.job-finder.collection.campaigns.v1",
       JSON.stringify({
         density: "comfortable",
         query: "backend",

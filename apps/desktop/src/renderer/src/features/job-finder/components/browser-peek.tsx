@@ -33,7 +33,7 @@ import {
   type DesktopBrowserCommand,
   type DesktopBrowserImportSource,
   type DesktopBrowserState,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   JOB_FINDER_BROWSER_LABEL,
   OPEN_JOB_FINDER_BROWSER_ACTION,
@@ -107,7 +107,7 @@ export function BrowserPeek(props: {
    */
   chromeInsetStart?: string | undefined;
 }) {
-  const bridge = window.unemployed?.browser;
+  const bridge = window.nordri?.browser;
   const [state, setState] = useState(initialState);
   const [address, setAddress] = useState("");
   const [message, setMessage] = useState<string | null>(null);

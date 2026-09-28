@@ -8,7 +8,7 @@ import type {
   CandidateProfile,
   ProfileSetupState,
   SourceDebugRunRecord,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import type {
   BadgeTone,
   BooleanSelectValue,

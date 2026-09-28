@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { SavedJob } from "@unemployed/contracts";
+import type { SavedJob } from "@nordri/contracts";
 import {
   formatNormalizedCompensation,
   formatStatedNormalizedCompensation,

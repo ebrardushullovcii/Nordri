@@ -13,7 +13,7 @@ import type {
   ReviewQueueItem,
   SavedJob,
   TailoredAsset,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   APPLICATION_PREPARATION_BATCH_LIMIT,
   collectInProgressApplicationJobIds,

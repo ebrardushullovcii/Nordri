@@ -4,7 +4,7 @@ import {
   type OutcomeBucketDimension,
   type OutcomeEvent,
   OutcomeEventSchema,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { UNNAMED_JOB_SOURCE_NAME } from "../../lib/job-source-display-name";
 import {
   OUTCOME_VIEW_MINIMUM_SAMPLE_FOR_CONFIDENCE,

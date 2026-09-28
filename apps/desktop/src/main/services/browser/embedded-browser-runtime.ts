@@ -1,19 +1,19 @@
 import type {
   BrowserSessionRuntime,
   OpenBrowserSessionOptions,
-} from "@unemployed/browser-runtime";
+} from "@nordri/browser-runtime";
 import type {
   ApplyExecutionResult,
   BrowserSessionState,
   DiscoveryRunResult,
   JobSource,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   classifySourceAccess,
   collectVisibleAccessSignals,
   type VisibleAccessSignals,
-} from "@unemployed/browser-runtime";
-import { describeApplicationPreparationProgress } from "@unemployed/job-finder";
+} from "@nordri/browser-runtime";
+import { describeApplicationPreparationProgress } from "@nordri/job-finder";
 import { browserDisplayUrl } from "./browser-navigation";
 import type { EmbeddedBrowser } from "./embedded-browser";
 

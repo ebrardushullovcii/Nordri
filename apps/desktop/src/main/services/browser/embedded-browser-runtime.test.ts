@@ -2,8 +2,8 @@ import {
   createStubBrowserSessionRuntime,
   type AgentDiscoveryOptions,
   type BrowserSessionRuntime,
-} from "@unemployed/browser-runtime";
-import { DiscoveryRunResultSchema } from "@unemployed/contracts";
+} from "@nordri/browser-runtime";
+import { DiscoveryRunResultSchema } from "@nordri/contracts";
 import { describe, expect, test, vi } from "vitest";
 
 import type { EmbeddedBrowser } from "./embedded-browser";
@@ -11,7 +11,7 @@ import {
   resolveSourceAccessProbeTab,
   withEmbeddedBrowserActivity,
 } from "./embedded-browser-runtime";
-import { describeApplicationPreparationProgress } from "@unemployed/job-finder";
+import { describeApplicationPreparationProgress } from "@nordri/job-finder";
 
 describe("withEmbeddedBrowserActivity", () => {
   test("keeps form values out of the visible progress label", () => {

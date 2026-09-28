@@ -8,7 +8,7 @@ import {
   type ConversationModel,
   type ConversationTurnEvent,
   type TokenCalibrator,
-} from "@unemployed/agent-runtime";
+} from "@nordri/agent-runtime";
 import {
   AssistantContextReferenceSchema,
   AssistantSendMessageInputSchema,
@@ -38,8 +38,8 @@ import {
   type JobFinderWorkspaceSnapshot,
   type ProfileCopilotPatchOperation,
   type ResumeDraftPatch,
-} from "@unemployed/contracts";
-import type { AssistantRepository } from "@unemployed/db";
+} from "@nordri/contracts";
+import type { AssistantRepository } from "@nordri/db";
 
 import type { JobFinderWorkspaceService } from "../internal/workspace-service-contracts";
 import {
@@ -940,6 +940,12 @@ export class AssistantSessionHost {
         return;
       }
       case "commentary": {
+        live.draftText = "";
+        await this.emit(conversationId, live.turn.id, {
+          type: "text_delta",
+          attempt: live.attempt,
+          text: "",
+        });
         await this.emit(conversationId, live.turn.id, {
           type: "progress",
           text: event.text.slice(0, 1_000),

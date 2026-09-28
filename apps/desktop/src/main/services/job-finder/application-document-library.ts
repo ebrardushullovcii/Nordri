@@ -12,7 +12,7 @@ import {
   type CandidateProfile,
   type ListApplicationDocumentsInput,
   type SavedJob,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import type { CandidateAssetLibrary } from "./candidate-asset-library";
 
 interface ApplicationDocumentIndex {

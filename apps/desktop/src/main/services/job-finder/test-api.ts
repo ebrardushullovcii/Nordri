@@ -1,7 +1,7 @@
 import {
   BrowserSessionStatusSchema,
   type BrowserSessionStatus,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   isDisabled,
   isEnabled,
@@ -46,13 +46,13 @@ function warnInvalidEnvValue(
 export function isDesktopTestApiEnabled(
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
-  return isEnabled(env.UNEMPLOYED_ENABLE_TEST_API);
+  return isEnabled(env.NORDRI_ENABLE_TEST_API);
 }
 
 export function isBrowserAgentEnabled(
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
-  const configuredValue = env.UNEMPLOYED_BROWSER_AGENT;
+  const configuredValue = env.NORDRI_BROWSER_AGENT;
   const normalizedValue = normalizeFlagValue(configuredValue);
 
   if (normalizedValue == null) {
@@ -68,7 +68,7 @@ export function isBrowserAgentEnabled(
   }
 
   warnInvalidEnvValue(
-    "UNEMPLOYED_BROWSER_AGENT",
+    "NORDRI_BROWSER_AGENT",
     normalizedValue,
     "the default enabled behavior",
   );
@@ -78,7 +78,7 @@ export function isBrowserAgentEnabled(
 export function isBrowserHeadlessEnabled(
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
-  return isEnabled(env.UNEMPLOYED_BROWSER_HEADLESS);
+  return isEnabled(env.NORDRI_BROWSER_HEADLESS);
 }
 
 export function parseResumeImportPathPayload(
@@ -118,7 +118,7 @@ function readTrimmedEnvValue(value: string | undefined): string | null {
 export function getResumePreviewTestMode(
   env: NodeJS.ProcessEnv = process.env,
 ): ResumePreviewTestMode {
-  const configuredValue = readTrimmedEnvValue(env.UNEMPLOYED_TEST_RESUME_PREVIEW);
+  const configuredValue = readTrimmedEnvValue(env.NORDRI_TEST_RESUME_PREVIEW);
 
   if (configuredValue == null) {
     return "ok";
@@ -129,7 +129,7 @@ export function getResumePreviewTestMode(
   }
 
   warnInvalidEnvValue(
-    "UNEMPLOYED_TEST_RESUME_PREVIEW",
+    "NORDRI_TEST_RESUME_PREVIEW",
     configuredValue,
     'the default "ok" behavior',
   );
@@ -141,7 +141,7 @@ export function getTestBrowserSessionStatus(
   env: NodeJS.ProcessEnv = process.env,
 ): BrowserSessionStatus | null {
   const configuredValue = readTrimmedEnvValue(
-    env.UNEMPLOYED_TEST_BROWSER_SESSION_STATUS,
+    env.NORDRI_TEST_BROWSER_SESSION_STATUS,
   );
 
   if (configuredValue == null) {
@@ -155,7 +155,7 @@ export function getTestBrowserSessionStatus(
   }
 
   warnInvalidEnvValue(
-    "UNEMPLOYED_TEST_BROWSER_SESSION_STATUS",
+    "NORDRI_TEST_BROWSER_SESSION_STATUS",
     configuredValue,
     "the default no-override behavior",
   );
@@ -166,13 +166,13 @@ export function getTestBrowserSessionStatus(
 export function getTestBrowserSessionLabel(
   env: NodeJS.ProcessEnv = process.env,
 ): string | null {
-  return readTrimmedEnvValue(env.UNEMPLOYED_TEST_BROWSER_SESSION_LABEL);
+  return readTrimmedEnvValue(env.NORDRI_TEST_BROWSER_SESSION_LABEL);
 }
 
 export function getTestBrowserSessionDetail(
   env: NodeJS.ProcessEnv = process.env,
 ): string | null {
-  return readTrimmedEnvValue(env.UNEMPLOYED_TEST_BROWSER_SESSION_DETAIL);
+  return readTrimmedEnvValue(env.NORDRI_TEST_BROWSER_SESSION_DETAIL);
 }
 
 export function getDesktopTestDelayMs(

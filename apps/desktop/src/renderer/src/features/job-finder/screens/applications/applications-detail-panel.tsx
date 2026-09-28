@@ -14,7 +14,7 @@ import type {
   JobFinderExactApplicationTarget,
   UserActionCommandInput,
   UserActionRequest,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import type { ApplicationAnswerStep } from "./applications-answer-step";
 import { Mic } from "lucide-react";
 import { Button } from "@renderer/components/ui";
@@ -51,7 +51,7 @@ import {
 } from "./applications-status";
 import { formatApplicationEmployerLine } from "../../lib/job-employer-location-display";
 
-function buildInterviewHelperApplicationHref(input: {
+function buildLiveAssistantApplicationHref(input: {
   record: ApplicationRecord;
   relatedJob: JobFinderWorkspaceSnapshot["discoveryJobs"][number] | null;
 }) {
@@ -83,7 +83,7 @@ function buildInterviewHelperApplicationHref(input: {
         : `Application record for ${record.title}.`),
   });
 
-  return `/interview-helper?${params.toString()}`;
+  return `/live-assistant?${params.toString()}`;
 }
 
 interface ApplicationsDetailPanelProps {
@@ -487,7 +487,7 @@ export function ApplicationsDetailPanel({
               variant="link"
             >
               <a
-                href={`#${buildInterviewHelperApplicationHref({
+                href={`#${buildLiveAssistantApplicationHref({
                   record: selectedRecord,
                   relatedJob: selectedRecordJob,
                 })}`}
@@ -506,7 +506,7 @@ export function ApplicationsDetailPanel({
           variant="secondary"
         >
           <a
-            href={`#${buildInterviewHelperApplicationHref({
+            href={`#${buildLiveAssistantApplicationHref({
               record: selectedRecord,
               relatedJob: selectedRecordJob,
             })}`}

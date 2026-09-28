@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ApplyRunDetails } from "@unemployed/contracts";
+import type { ApplyRunDetails } from "@nordri/contracts";
 import { pickLatestIsoTimestamp } from "./applications-screen-helpers";
 
 interface UseApplicationsApplyRunDetailsInput {

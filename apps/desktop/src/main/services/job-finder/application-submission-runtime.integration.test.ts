@@ -10,16 +10,16 @@ import {
   ApplicationAuthorityEnvelopeSchema,
   ApplicationRecordSchema,
   serializeApplicationAuthorityDecisionPolicyForDigest,
-} from "@unemployed/contracts";
-import { createFileJobFinderRepository } from "@unemployed/db";
+} from "@nordri/contracts";
+import { createFileJobFinderRepository } from "@nordri/db";
 import {
   executeExactlyOneFinalAction,
   observeApplicationForm,
-} from "@unemployed/browser-runtime";
+} from "@nordri/browser-runtime";
 import {
   runApplicationSubmissionRuntime,
   type ApplicationSubmissionBrowserRuntime,
-} from "@unemployed/job-finder/application-submission-runtime-main";
+} from "@nordri/job-finder/application-submission-runtime-main";
 import { chromium, type Browser, type BrowserContext } from "playwright";
 import { afterEach, describe, expect, test } from "vitest";
 
@@ -198,7 +198,7 @@ describe("desktop main application submission composition", () => {
 
   test("executes one local action, persists uncertainty, and blocks the same key", async () => {
     const temporaryDirectory = await mkdtemp(
-      path.join(os.tmpdir(), "unemployed-desktop-submission-"),
+      path.join(os.tmpdir(), "nordri-desktop-submission-"),
     );
     temporaryDirectories.push(temporaryDirectory);
     const fixture = await startSubmissionFixtureServer();

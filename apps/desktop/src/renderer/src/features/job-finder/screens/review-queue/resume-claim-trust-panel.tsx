@@ -3,7 +3,7 @@ import type {
   ResumeClaimAssessment,
   ResumeDraftOrigin,
   ResumeValidationResult,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { Button } from "@renderer/components/ui/button";
 import { StatusBadge } from "../../components/status-badge";
 

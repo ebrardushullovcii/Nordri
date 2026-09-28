@@ -8,7 +8,7 @@ import {
   DesktopBrowserStateSchema,
   DesktopBrowserViewportSchema,
   type DesktopBrowserBridge,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 export const browserBridge: DesktopBrowserBridge = {
   getState: async () =>

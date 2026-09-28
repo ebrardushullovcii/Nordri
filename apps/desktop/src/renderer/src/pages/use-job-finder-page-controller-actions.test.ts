@@ -8,7 +8,7 @@ import {
   type JobFinderAgentDiscoveryResult,
   type JobFinderWorkspaceSnapshot,
   type ResumeExtractionStatus,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import type {
   ActionState,
   JobFinderShellActions,

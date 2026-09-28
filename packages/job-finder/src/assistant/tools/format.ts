@@ -1,4 +1,4 @@
-import { APPLICATION_SKIPPED_BY_PERSON_LABEL } from "@unemployed/contracts";
+import { APPLICATION_SKIPPED_BY_PERSON_LABEL } from "@nordri/contracts";
 import type {
   ApplicationRecord,
   AssistantMessagePart,
@@ -6,7 +6,7 @@ import type {
   JobFinderWorkspaceSnapshot,
   ReviewQueueItem,
   SavedJob,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 /**
  * Compact shapes for the model and the rows the person sees. Every read is

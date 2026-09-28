@@ -10,7 +10,7 @@ import {
   type JobFinderSetResumeClaimConfirmationInput,
   type ResumeClaimAssessment,
   type ResumeClaimConfirmation,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   afterAll,
   afterEach,

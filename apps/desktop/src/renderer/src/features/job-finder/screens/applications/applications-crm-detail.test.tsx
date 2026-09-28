@@ -11,14 +11,14 @@ import {
 import {
   ApplicationCrmSettingsSchema,
   ApplicationRecordSchema,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import type {
   ApplicationCrmInterview,
   ApplicationCrmMutation,
   ApplicationCrmMutationInput,
   ApplicationCrmReminder,
   ApplicationRecord,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import { ApplicationsCrmDetail } from "./applications-crm-detail";
@@ -57,7 +57,7 @@ afterEach(() => {
 
 describe("ApplicationsCrmDetail", () => {
   test("renders preparation-only approval timeline copy without a submit approval claim", () => {
-    Object.defineProperty(window, "unemployed", {
+    Object.defineProperty(window, "nordri", {
       configurable: true,
       value: {
         jobFinder: {
@@ -116,7 +116,7 @@ describe("ApplicationsCrmDetail", () => {
   });
 
   test("translates only the exact legacy submit-approval event for display", () => {
-    Object.defineProperty(window, "unemployed", {
+    Object.defineProperty(window, "nordri", {
       configurable: true,
       value: {
         jobFinder: {
@@ -210,7 +210,7 @@ describe("ApplicationsCrmDetail", () => {
   });
 
   test("sends a revision-bound manual stage mutation and explains the no-submit boundary", async () => {
-    Object.defineProperty(window, "unemployed", {
+    Object.defineProperty(window, "nordri", {
       configurable: true,
       value: {
         jobFinder: {
@@ -269,7 +269,7 @@ describe("ApplicationsCrmDetail", () => {
   });
 
   test("requires confirmation before saving an external claim and cancel leaves it unchanged", async () => {
-    Object.defineProperty(window, "unemployed", {
+    Object.defineProperty(window, "nordri", {
       configurable: true,
       value: {
         jobFinder: {
@@ -356,7 +356,7 @@ describe("ApplicationsCrmDetail", () => {
   });
 
   test("isolates background focus, traps traversal, and restores the opener on Escape and backdrop cancel", () => {
-    Object.defineProperty(window, "unemployed", {
+    Object.defineProperty(window, "nordri", {
       configurable: true,
       value: {
         jobFinder: {
@@ -438,7 +438,7 @@ describe("ApplicationsCrmDetail", () => {
   });
 
   test("restores preexisting root isolation and removes listeners when unmounted", () => {
-    Object.defineProperty(window, "unemployed", {
+    Object.defineProperty(window, "nordri", {
       configurable: true,
       value: {
         jobFinder: {
@@ -490,7 +490,7 @@ describe("ApplicationsCrmDetail", () => {
   });
 
   test("names the tracked role and company in its header", () => {
-    Object.defineProperty(window, "unemployed", {
+    Object.defineProperty(window, "nordri", {
       configurable: true,
       value: {
         jobFinder: {
@@ -529,7 +529,7 @@ describe("ApplicationsCrmDetail", () => {
   });
 
   test("applies the canonical field recipe to editable controls", () => {
-    Object.defineProperty(window, "unemployed", {
+    Object.defineProperty(window, "nordri", {
       configurable: true,
       value: {
         jobFinder: {
@@ -568,7 +568,7 @@ describe("ApplicationsCrmDetail", () => {
   });
 
   function stubCandidateAssets() {
-    Object.defineProperty(window, "unemployed", {
+    Object.defineProperty(window, "nordri", {
       configurable: true,
       value: {
         jobFinder: {

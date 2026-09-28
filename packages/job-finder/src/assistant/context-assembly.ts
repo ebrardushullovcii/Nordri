@@ -4,15 +4,15 @@ import {
   estimateTokens,
   type AgentLoopMessage,
   type TokenCalibrator,
-} from "@unemployed/agent-runtime";
+} from "@nordri/agent-runtime";
 import {
   AssistantCheckpointSchema,
   type AssistantCheckpoint,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import type {
   AssistantRepository,
   AssistantTranscriptItem,
-} from "@unemployed/db";
+} from "@nordri/db";
 import { z } from "zod";
 
 /**

@@ -3,8 +3,8 @@
 import type {
   BrowserSessionState,
   JobFinderSettings,
-} from "@unemployed/contracts";
-import { ApplicationCrmSettingsSchema } from "@unemployed/contracts";
+} from "@nordri/contracts";
+import { ApplicationCrmSettingsSchema } from "@nordri/contracts";
 import {
   act,
   cleanup,

@@ -5,7 +5,7 @@ import type {
   JobRequirementImportance,
   MatchLocationReach,
   ResumeRequirementEvidence,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import type { MatchAssessmentPostingInput } from "./match-assessment-posting-input";
 import { buildCareerStageRequirement } from "./matching-career-stage";

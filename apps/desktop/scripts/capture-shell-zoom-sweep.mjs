@@ -7,7 +7,7 @@
  * 100/125/150/200% and records header geometry, overlap candidates, horizontal
  * overflow, and More-menu reachability at compact widths.
  *
- * Usage (after `pnpm --filter @unemployed/desktop build`):
+ * Usage (after `pnpm --filter @nordri/desktop build`):
  *   node ./scripts/capture-shell-zoom-sweep.mjs
  */
 
@@ -155,9 +155,9 @@ async function probeLayout(page) {
       { label: "brand-text", element: brand?.querySelector("div") ?? brand },
       { label: "module-strip", element: moduleStrip },
       {
-        label: "interview-helper-button",
+        label: "live-assistant-button",
         element: Array.from(moduleStrip?.querySelectorAll("button") ?? []).find(
-          (button) => button.textContent?.includes("Interview Helper"),
+          (button) => button.textContent?.includes("Live Assistant"),
         ),
       },
       { label: "compact-strip", element: compactStrip },
@@ -223,9 +223,9 @@ async function probeLayout(page) {
       hitTests: [
         hitTest("more-button", moreButton),
         hitTest(
-          "module-interview-helper",
+          "module-live-assistant",
           Array.from(moduleStrip?.querySelectorAll("button") ?? []).find(
-            (button) => button.textContent?.includes("Interview Helper"),
+            (button) => button.textContent?.includes("Live Assistant"),
           ),
         ),
         hitTest("needs-you-button", needsYou),
@@ -278,7 +278,7 @@ async function seedWorkspace(page) {
     try {
       await page.evaluate(
         async (state) =>
-          window.unemployed.jobFinder.test.resetWorkspaceState(state),
+          window.nordri.jobFinder.test.resetWorkspaceState(state),
         seededState,
       );
       lastError = null;
@@ -309,7 +309,7 @@ async function seedWorkspace(page) {
 async function run() {
   await mkdir(outputDir, { recursive: true });
   const userDataDirectory = await mkdtemp(
-    path.join(os.tmpdir(), "unemployed-shell-zoom-"),
+    path.join(os.tmpdir(), "nordri-shell-zoom-"),
   );
   const report = {
     startedAt: new Date().toISOString(),
@@ -327,16 +327,16 @@ async function run() {
       cwd: desktopDir,
       env: {
         ...process.env,
-        UNEMPLOYED_BROWSER_AGENT: "0",
-        UNEMPLOYED_ENABLE_TEST_API: "1",
-        UNEMPLOYED_TEST_SYSTEM_THEME: "dark",
-        UNEMPLOYED_USER_DATA_DIR: userDataDirectory,
+        NORDRI_BROWSER_AGENT: "0",
+        NORDRI_ENABLE_TEST_API: "1",
+        NORDRI_TEST_SYSTEM_THEME: "dark",
+        NORDRI_USER_DATA_DIR: userDataDirectory,
       },
     });
     const page = await app.firstWindow();
     await page.waitForLoadState("domcontentloaded");
     await page.waitForFunction(
-      () => Boolean(window.unemployed?.jobFinder?.test),
+      () => Boolean(window.nordri?.jobFinder?.test),
       undefined,
       { timeout: 30_000 },
     );
@@ -348,7 +348,7 @@ async function run() {
     await seedWorkspace(page);
     await page.waitForLoadState("domcontentloaded");
     await page.waitForFunction(
-      () => Boolean(window.unemployed?.jobFinder?.test),
+      () => Boolean(window.nordri?.jobFinder?.test),
       undefined,
       { timeout: 30_000 },
     );

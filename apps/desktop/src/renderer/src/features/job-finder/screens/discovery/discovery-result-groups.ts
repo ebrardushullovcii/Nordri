@@ -1,4 +1,4 @@
-import type { SavedJob } from "@unemployed/contracts";
+import type { SavedJob } from "@nordri/contracts";
 import {
   DISCOVERY_CLEAR_MISMATCH_SCORE_FLOOR,
   DISCOVERY_WEAKER_MATCH_SCORE_FLOOR,
@@ -7,10 +7,10 @@ import {
   isDiscoveryClearMismatch,
   isDiscoveryWorthOpeningResult,
   type DiscoveryResultGroupId,
-} from "@unemployed/job-finder/discovery-result-bands";
+} from "@nordri/job-finder/discovery-result-bands";
 
 /**
- * Banding rules moved to `@unemployed/job-finder/discovery-result-bands` so a
+ * Banding rules moved to `@nordri/job-finder/discovery-result-bands` so a
  * finished run can freeze its own "worth opening" count with the same rule
  * this screen applies. Re-exported here because every Find jobs surface
  * already imports them from this module.

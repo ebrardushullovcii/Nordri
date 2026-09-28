@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { ResumeImportFieldCandidateSchema } from "@unemployed/contracts";
+import { ResumeImportFieldCandidateSchema } from "@nordri/contracts";
 import { reconcileCandidates } from "./internal/resume-import-reconciliation";
 import { createSeed } from "./workspace-service.test-fixtures";
 import { createStageCandidate } from "./workspace-service.resume-analysis.shared";

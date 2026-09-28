@@ -61,7 +61,7 @@ import {
   useState,
 } from "react";
 import type { CSSProperties, ReactNode } from "react";
-import type { DesktopWindowControlsState } from "@unemployed/contracts";
+import type { DesktopWindowControlsState } from "@nordri/contracts";
 import { createPortal } from "react-dom";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { buildJobFinderStartupDatabaseRecoveryBlockedDetail } from "../../../shared/job-finder-startup-db-recovery";
@@ -335,7 +335,7 @@ function JobFinderOpeningShell() {
 
   useEffect(() => {
     let cancelled = false;
-    void window.unemployed
+    void window.nordri
       .ping()
       .then((response) => {
         if (!cancelled) {
@@ -352,7 +352,7 @@ function JobFinderOpeningShell() {
   }, []);
 
   useEffect(() => {
-    const windowBridge = window.unemployed.window;
+    const windowBridge = window.nordri.window;
     if (
       !windowBridge ||
       typeof windowBridge.onControlsStateChange !== "function" ||
@@ -570,7 +570,7 @@ function JobFinderOpeningShell() {
               <JobFinderShellBrand
                 moduleSwitch={{
                   onSelectModule: () => {
-                    void navigate("/interview-helper");
+                    void navigate("/live-assistant");
                   },
                   style: noDragRegionStyle,
                 }}
@@ -607,7 +607,7 @@ function JobFinderOpeningShell() {
                   disabled={!windowControlsState.isMinimizable}
                   onClick={() => {
                     void runWindowAction(() =>
-                      window.unemployed.window.minimize(),
+                      window.nordri.window.minimize(),
                     );
                   }}
                   size="icon-xs"
@@ -625,7 +625,7 @@ function JobFinderOpeningShell() {
                   className="h-full w-11 rounded-none border-0 bg-transparent p-0 text-muted-foreground shadow-none hover:bg-(--surface-panel-raised) hover:text-foreground"
                   onClick={() => {
                     void runWindowAction(() =>
-                      window.unemployed.window.toggleMaximize(),
+                      window.nordri.window.toggleMaximize(),
                     );
                   }}
                   size="icon-xs"
@@ -639,7 +639,7 @@ function JobFinderOpeningShell() {
                   className="h-full w-12 rounded-none border-0 bg-transparent p-0 text-muted-foreground shadow-none hover:bg-(--button-close-hover) hover:text-primary-fill-foreground"
                   disabled={!windowControlsState.isClosable}
                   onClick={() => {
-                    void window.unemployed.window.close();
+                    void window.nordri.window.close();
                   }}
                   size="icon-xs"
                   type="button"

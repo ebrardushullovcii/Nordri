@@ -16,7 +16,7 @@ import {
   MatchAssessmentSchema,
   type ListingActivity,
   type SavedJob,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   DISCOVERY_DETAIL_HEADING_ID,
   DISCOVERY_DETAIL_REGION_ID,
@@ -95,7 +95,7 @@ describe("DiscoveryDetailPanel listing capture copy", () => {
 
   it("copies the canonical listing URL through the desktop bridge", async () => {
     const writeClipboardText = vi.fn().mockResolvedValue({ written: true });
-    Object.defineProperty(window, "unemployed", {
+    Object.defineProperty(window, "nordri", {
       configurable: true,
       value: { jobFinder: { writeClipboardText } },
     });

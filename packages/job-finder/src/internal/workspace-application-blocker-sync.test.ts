@@ -1,4 +1,4 @@
-import { ApplicationRecordSchema } from "@unemployed/contracts";
+import { ApplicationRecordSchema } from "@nordri/contracts";
 import { describe, expect, test } from "vitest";
 
 import { createSeed } from "../workspace-service.test-fixtures";

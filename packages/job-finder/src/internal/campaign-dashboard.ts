@@ -18,10 +18,10 @@ import {
   type SavedJob,
   type GroupedManualAnswerDecision,
   type UserActionRequest,
-} from "@unemployed/contracts";
-import type { JobFinderRepository } from "@unemployed/db";
+} from "@nordri/contracts";
+import type { JobFinderRepository } from "@nordri/db";
 import { projectPlanSafeguardPauses } from "../plan-safeguard-pauses";
-import type { SourceAccessPrompt } from "@unemployed/contracts";
+import type { SourceAccessPrompt } from "@nordri/contracts";
 import {
   getApplicationCrmData,
   isApplicationAwaitingUserApproval,

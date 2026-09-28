@@ -12,8 +12,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   JobFinderWorkspaceSnapshot,
   SafeguardMutationInput,
-} from "@unemployed/contracts";
-import { JobFinderIntelligenceSafeguardsSchema } from "@unemployed/contracts";
+} from "@nordri/contracts";
+import { JobFinderIntelligenceSafeguardsSchema } from "@nordri/contracts";
 import { SafeguardsScreen } from "./safeguards-screen";
 
 const now = "2026-08-15T10:00:00.000Z";
@@ -578,7 +578,7 @@ describe("SafeguardsScreen", () => {
       .fn()
       .mockResolvedValueOnce([envelope])
       .mockResolvedValue([{ ...envelope, status: "revoked" }]);
-    (window as unknown as Record<string, unknown>).unemployed = {
+    (window as unknown as Record<string, unknown>).nordri = {
       jobFinder: {
         listApplicationAuthorityEnvelopes,
         revokeApplicationAuthorityEnvelope,
@@ -616,6 +616,6 @@ describe("SafeguardsScreen", () => {
       ).toBeTruthy();
     });
 
-    delete (window as unknown as Record<string, unknown>).unemployed;
+    delete (window as unknown as Record<string, unknown>).nordri;
   });
 });

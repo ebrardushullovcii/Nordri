@@ -9,7 +9,7 @@ import {
   type CampaignNotification,
   type CampaignRunFacts,
   type DiscoveryRunRecord,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import {
   MAX_CAMPAIGN_NOTIFICATIONS,

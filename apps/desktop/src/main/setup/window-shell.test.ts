@@ -202,7 +202,7 @@ vi.mock("electron", () => ({
   BrowserWindow: function FakeBrowserWindow(options: unknown) {
     return electronMock.createWindow(options);
   },
-  app: { getPath: () => "/fake-unemployed-user-data", isPackaged: false },
+  app: { getPath: () => "/fake-nordri-user-data", isPackaged: false },
   dialog: {},
   screen: {
     getAllDisplays: () => [electronMock.display],
@@ -392,10 +392,10 @@ describe("main renderer security policy", () => {
 });
 
 describe("startup window geometry", () => {
-  const widthEnvName = "UNEMPLOYED_STARTUP_WINDOW_WIDTH";
-  const heightEnvName = "UNEMPLOYED_STARTUP_WINDOW_HEIGHT";
-  const zoomEnvName = "UNEMPLOYED_STARTUP_ZOOM_FACTOR";
-  const markerEnvName = "UNEMPLOYED_TESTER_SESSION_GEOMETRY";
+  const widthEnvName = "NORDRI_STARTUP_WINDOW_WIDTH";
+  const heightEnvName = "NORDRI_STARTUP_WINDOW_HEIGHT";
+  const zoomEnvName = "NORDRI_STARTUP_ZOOM_FACTOR";
+  const markerEnvName = "NORDRI_TESTER_SESSION_GEOMETRY";
 
   function createStartupZoomHarness() {
     const windowListeners = new Map<string, Array<() => void>>();
@@ -445,13 +445,13 @@ describe("startup window geometry", () => {
   test("requests nothing when the startup environment is absent", () => {
     expect(parseStartupWindowGeometryRequest({})).toBeNull();
     expect(
-      parseStartupWindowGeometryRequest({ UNEMPLOYED_USER_DATA_DIR: "/x" }),
+      parseStartupWindowGeometryRequest({ NORDRI_USER_DATA_DIR: "/x" }),
     ).toBeNull();
   });
 
   test("ignores stray ambient startup variables without the tester marker", () => {
     // Normal .env/default startup behavior must be unaffected by ambient
-    // UNEMPLOYED_STARTUP_* values that leak from a developer shell.
+    // NORDRI_STARTUP_* values that leak from a developer shell.
     expect(
       parseStartupWindowGeometryRequest({
         [heightEnvName]: "800",
@@ -683,11 +683,11 @@ describe("startup window geometry", () => {
 describe("createMainWindow zoom wiring order", () => {
   const geometryEnvironmentNames = [
     "ELECTRON_RENDERER_URL",
-    "UNEMPLOYED_STARTUP_WINDOW_HEIGHT",
-    "UNEMPLOYED_STARTUP_WINDOW_WIDTH",
-    "UNEMPLOYED_STARTUP_ZOOM_FACTOR",
-    "UNEMPLOYED_TESTER_SESSION_GEOMETRY",
-    "UNEMPLOYED_USER_DATA_DIR",
+    "NORDRI_STARTUP_WINDOW_HEIGHT",
+    "NORDRI_STARTUP_WINDOW_WIDTH",
+    "NORDRI_STARTUP_ZOOM_FACTOR",
+    "NORDRI_TESTER_SESSION_GEOMETRY",
+    "NORDRI_USER_DATA_DIR",
   ];
   let savedEnvironment: Array<[string, string | undefined]>;
 
@@ -759,8 +759,8 @@ describe("createMainWindow zoom wiring order", () => {
   }
 
   test("pins registration order: startup request writer first, owned-session writer last", () => {
-    process.env.UNEMPLOYED_TESTER_SESSION_GEOMETRY = "1";
-    process.env.UNEMPLOYED_STARTUP_ZOOM_FACTOR = "1.25";
+    process.env.NORDRI_TESTER_SESSION_GEOMETRY = "1";
+    process.env.NORDRI_STARTUP_ZOOM_FACTOR = "1.25";
     const instance = createWiredMainWindow();
 
     // Real wiring adopted the parsed request as the owned factor and wrote it

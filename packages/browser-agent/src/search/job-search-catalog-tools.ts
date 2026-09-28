@@ -1,8 +1,8 @@
 import {
   parseToolArguments,
   type AgentLoopTool,
-} from "@unemployed/agent-runtime";
-import type { JobPosting } from "@unemployed/contracts";
+} from "@nordri/agent-runtime";
+import type { JobPosting } from "@nordri/contracts";
 
 /** The model selects existing records; it cannot invent or rewrite feed jobs. */
 export function createSearchCatalogTools(input: {

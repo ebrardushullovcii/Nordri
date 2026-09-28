@@ -1,8 +1,8 @@
 import type {
   DiscoveryRunRecord,
   DiscoverySourceHealthState,
-} from "@unemployed/contracts";
-import { buildDiscoveryCardOnlyEvidenceWarning } from "@unemployed/contracts";
+} from "@nordri/contracts";
+import { buildDiscoveryCardOnlyEvidenceWarning } from "@nordri/contracts";
 
 /**
  * Home's source-health line, collapsed.

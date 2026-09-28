@@ -9,7 +9,7 @@ import {
   CandidateProfileSchema,
   ResumeImportFieldCandidateSummarySchema,
   ResumeImportRunSchema,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   createProfileEditorValues,
   type ProfileEditorValues,

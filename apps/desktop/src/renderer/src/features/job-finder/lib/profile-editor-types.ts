@@ -1,4 +1,4 @@
-import type { JobSearchPreferences } from "@unemployed/contracts";
+import type { JobSearchPreferences } from "@nordri/contracts";
 import type {
   BooleanSelectValue,
   CertificationFormEntry,

@@ -68,7 +68,7 @@ interface StartupFixture {
 
 async function createStartupFixture(): Promise<StartupFixture> {
   const tempDirectory = await mkdtemp(
-    path.join(os.tmpdir(), "unemployed-db-startup-recovery-"),
+    path.join(os.tmpdir(), "nordri-db-startup-recovery-"),
   );
   const filePath = path.join(tempDirectory, "job-finder-state.sqlite");
   const backupPaths = getWorkspaceDatabaseBackupPaths(filePath);

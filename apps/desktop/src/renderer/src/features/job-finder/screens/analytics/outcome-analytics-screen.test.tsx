@@ -2,14 +2,14 @@
 
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { OutcomeEventSchema } from "@unemployed/contracts";
+import { OutcomeEventSchema } from "@nordri/contracts";
 import type {
   JobSearchCampaign,
   OutcomeAnalyticsOverview,
   OutcomeEvent,
   ResumeStrategy,
   SetOutcomeSuggestionEnabledInput,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { MemoryRouter } from "react-router-dom";
 import { OutcomeAnalyticsScreen } from "./outcome-analytics-screen";
 

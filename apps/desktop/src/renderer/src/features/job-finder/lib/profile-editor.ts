@@ -7,7 +7,7 @@ import {
   type CandidateProfile,
   type JobDiscoveryTarget,
   type JobSearchPreferences,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import type {
   DiscoveryTargetEditorValue,
   ProofBankEntryFormEntry,

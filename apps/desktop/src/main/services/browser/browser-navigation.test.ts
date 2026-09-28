@@ -55,8 +55,8 @@ describe("embedded browser navigation boundary", () => {
   test("removes packaging tokens without inventing a different browser or platform", () => {
     expect(
       browserUserAgent(
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) UnEmployed/0.1.0 Chrome/152.0.7977.76 Electron/44.2.0 Safari/537.36",
-        "UnEmployed",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Nordri/0.1.0 Chrome/152.0.7977.76 Electron/44.2.0 Safari/537.36",
+        "Nordri",
       ),
     ).toBe(
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/152.0.7977.76 Safari/537.36",

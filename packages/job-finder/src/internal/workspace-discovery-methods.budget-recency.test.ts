@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import type { JobPosting } from "@unemployed/contracts";
+import type { JobPosting } from "@nordri/contracts";
 
 import { createSeed } from "../workspace-service.test-fixtures";
 import { selectDiscoveryBudgetPostings } from "./workspace-discovery-methods";

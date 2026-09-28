@@ -1,7 +1,7 @@
 import {
   JobSearchPreferencesSchema,
   SavedJobSchema,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { describe, expect, it } from "vitest";
 
 import {

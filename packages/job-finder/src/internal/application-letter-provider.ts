@@ -1,8 +1,8 @@
 import type {
   ApplyDocument,
   ApplyLetterProvider,
-} from "@unemployed/browser-agent";
-import type { CoverLetterPreference } from "@unemployed/contracts";
+} from "@nordri/browser-agent";
+import type { CoverLetterPreference } from "@nordri/contracts";
 
 /**
  * The application documents one application sends.

@@ -4,7 +4,7 @@ import {
   type AppearanceTheme,
   type JobFinderSettings,
   type UpdateWorkspaceBehaviorInput,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { ToggleField } from "../../components/toggle-field";
 import {
   applyAppearancePreference,

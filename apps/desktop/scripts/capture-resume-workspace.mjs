@@ -107,7 +107,7 @@ function encodeContractSegment(value) {
 async function getResumeWorkspace(window, jobId) {
   return window.evaluate(
     async (currentJobId) =>
-      window.unemployed.jobFinder.getResumeWorkspace(currentJobId),
+      window.nordri.jobFinder.getResumeWorkspace(currentJobId),
     jobId,
   );
 }
@@ -115,13 +115,13 @@ async function getResumeWorkspace(window, jobId) {
 async function getResumeAssistantMessages(window, jobId) {
   return window.evaluate(
     async (currentJobId) =>
-      window.unemployed.jobFinder.getResumeAssistantMessages(currentJobId),
+      window.nordri.jobFinder.getResumeAssistantMessages(currentJobId),
     jobId,
   );
 }
 
 async function getWorkspace(window) {
-  return window.evaluate(() => window.unemployed.jobFinder.getWorkspace());
+  return window.evaluate(() => window.nordri.jobFinder.getWorkspace());
 }
 
 function getDraftSummaryText(workspace) {
@@ -329,7 +329,7 @@ function getLatestBy(items, getTimestamp) {
 
 async function waitForProfileOrSetupHeading(window) {
   await window.waitForFunction(
-    () => Boolean(window.unemployed?.jobFinder?.test),
+    () => Boolean(window.nordri?.jobFinder?.test),
     undefined,
     { timeout: 15000 },
   );
@@ -351,7 +351,7 @@ async function waitForProfileOrSetupHeading(window) {
     await window.reload();
     await window.waitForLoadState("domcontentloaded");
     await window.waitForFunction(
-      () => Boolean(window.unemployed?.jobFinder?.test),
+      () => Boolean(window.nordri?.jobFinder?.test),
       undefined,
       { timeout: 15000 },
     );
@@ -398,12 +398,12 @@ function assistantField(window) {
 
 async function loadResumeWorkspaceDemo(window, previewMode = "ok") {
   const state = await window.evaluate(async (mode) => {
-    if (!window.unemployed.jobFinder.test) {
+    if (!window.nordri.jobFinder.test) {
       throw new Error("Desktop test API is unavailable in the renderer.");
     }
 
-    await window.unemployed.jobFinder.test.setResumePreviewMode(mode);
-    return window.unemployed.jobFinder.test.loadResumeWorkspaceDemo();
+    await window.nordri.jobFinder.test.setResumePreviewMode(mode);
+    return window.nordri.jobFinder.test.loadResumeWorkspaceDemo();
   }, previewMode);
 
   await window.reload();
@@ -592,7 +592,7 @@ async function captureResumeWorkspace() {
   await rm(outputDir, { recursive: true, force: true });
   await mkdir(outputDir, { recursive: true });
   const userDataDirectory = await mkdtemp(
-    path.join(os.tmpdir(), "unemployed-resume-workspace-"),
+    path.join(os.tmpdir(), "nordri-resume-workspace-"),
   );
 
   let app;
@@ -603,24 +603,24 @@ async function captureResumeWorkspace() {
       cwd: desktopDir,
       env: {
         ...process.env,
-        UNEMPLOYED_BROWSER_AGENT: "0",
-        UNEMPLOYED_ENABLE_TEST_API: "1",
-        UNEMPLOYED_TEST_SYSTEM_THEME:
-          process.env.UNEMPLOYED_TEST_SYSTEM_THEME ?? "dark",
-        UNEMPLOYED_USER_DATA_DIR: userDataDirectory,
+        NORDRI_BROWSER_AGENT: "0",
+        NORDRI_ENABLE_TEST_API: "1",
+        NORDRI_TEST_SYSTEM_THEME:
+          process.env.NORDRI_TEST_SYSTEM_THEME ?? "dark",
+        NORDRI_USER_DATA_DIR: userDataDirectory,
       },
     });
 
     const window = await app.firstWindow();
     await window.waitForLoadState("domcontentloaded");
     await window.waitForFunction(
-      () => Boolean(window.unemployed?.jobFinder?.test),
+      () => Boolean(window.nordri?.jobFinder?.test),
       undefined,
       { timeout: 15_000 },
     );
     await window.evaluate(async (theme) => {
-      await window.unemployed.jobFinder.test?.setSystemThemeOverride(theme);
-    }, process.env.UNEMPLOYED_TEST_SYSTEM_THEME ?? "dark");
+      await window.nordri.jobFinder.test?.setSystemThemeOverride(theme);
+    }, process.env.NORDRI_TEST_SYSTEM_THEME ?? "dark");
     await waitForProfileOrSetupHeading(window);
     await window.setViewportSize({ width, height });
 

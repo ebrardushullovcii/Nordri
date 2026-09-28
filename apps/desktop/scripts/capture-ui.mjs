@@ -104,11 +104,11 @@ async function loadDemoDataForScreen(window, screen) {
     screen.fileName === "review-queue.png"
   ) {
     await window.evaluate(async () => {
-      if (!window.unemployed?.jobFinder?.test) {
+      if (!window.nordri?.jobFinder?.test) {
         throw new Error("Desktop test API is unavailable in the renderer.");
       }
 
-      await window.unemployed.jobFinder.test.loadResumeWorkspaceDemo();
+      await window.nordri.jobFinder.test.loadResumeWorkspaceDemo();
     });
     await window.reload();
     await window.waitForLoadState("domcontentloaded");
@@ -120,7 +120,7 @@ async function loadDemoDataForScreen(window, screen) {
 async function captureScreens() {
   await mkdir(outputDir, { recursive: true });
   const userDataDirectory = await mkdtemp(
-    path.join(os.tmpdir(), "unemployed-ui-capture-"),
+    path.join(os.tmpdir(), "nordri-ui-capture-"),
   );
 
   const app = await electron.launch({
@@ -128,10 +128,10 @@ async function captureScreens() {
     cwd: desktopDir,
     env: {
       ...process.env,
-      UNEMPLOYED_ENABLE_TEST_API: "1",
-      UNEMPLOYED_TEST_SYSTEM_THEME:
-        process.env.UNEMPLOYED_TEST_SYSTEM_THEME ?? "dark",
-      UNEMPLOYED_USER_DATA_DIR: userDataDirectory,
+      NORDRI_ENABLE_TEST_API: "1",
+      NORDRI_TEST_SYSTEM_THEME:
+        process.env.NORDRI_TEST_SYSTEM_THEME ?? "dark",
+      NORDRI_USER_DATA_DIR: userDataDirectory,
     },
   });
 
@@ -148,8 +148,8 @@ async function captureScreens() {
 
     await window.waitForLoadState("domcontentloaded");
     await window.evaluate(async (theme) => {
-      await window.unemployed.jobFinder.test?.setSystemThemeOverride(theme);
-    }, process.env.UNEMPLOYED_TEST_SYSTEM_THEME ?? "dark");
+      await window.nordri.jobFinder.test?.setSystemThemeOverride(theme);
+    }, process.env.NORDRI_TEST_SYSTEM_THEME ?? "dark");
     try {
       await waitForProfileOrSetupHeading(window);
     } catch (error) {
@@ -180,13 +180,13 @@ async function captureScreens() {
       });
     }
 
-    await window.getByRole("button", { name: "Open Interview Helper" }).click();
+    await window.getByRole("button", { name: "Open Live Assistant" }).click();
     await window
-      .locator("[data-interview-helper-shell]")
+      .locator("[data-live-assistant-shell]")
       .waitFor({ state: "visible", timeout: 15000 });
     await window.screenshot({
       animations: "disabled",
-      path: path.join(outputDir, "interview-helper.png"),
+      path: path.join(outputDir, "live-assistant.png"),
     });
   } finally {
     await app.close();

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DiscoveryRunRecordSchema } from "@unemployed/contracts";
+import { DiscoveryRunRecordSchema } from "@nordri/contracts";
 
 import {
   buildDiscoveryRunReport,

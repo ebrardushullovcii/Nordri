@@ -2,7 +2,7 @@
 
 import { cleanup, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import type { BrowserSessionState } from "@unemployed/contracts";
+import type { BrowserSessionState } from "@nordri/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { DiscoveryResultsPanel } from "./discovery-results-panel";

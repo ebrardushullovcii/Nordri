@@ -14,7 +14,7 @@ import {
   type JobSearchPreferences,
   type SaveCampaignRuleInput,
   type SaveJobSearchCampaignInput,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { ChevronRight } from "lucide-react";
 import { Button } from "@renderer/components/ui/button";
 import { Input } from "@renderer/components/ui/input";

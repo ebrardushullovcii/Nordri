@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   CandidateProfileSchema,
   JobSearchPreferencesSchema,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   createProfileEditorValues,
   createSearchPreferencesEditorValues,

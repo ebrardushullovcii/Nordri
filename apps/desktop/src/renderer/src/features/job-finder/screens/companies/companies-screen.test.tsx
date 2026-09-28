@@ -5,7 +5,7 @@ import {
   SavedJobSchema,
   type CompanyEntity,
   type DiscoveryJobView,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CompaniesScreen } from "./companies-screen";
 

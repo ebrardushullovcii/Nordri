@@ -27,7 +27,7 @@ import {
   type AssistantTaskPlan,
   type AssistantTurn,
   type AssistantTurnStatus,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";

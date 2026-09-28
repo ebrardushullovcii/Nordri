@@ -1,14 +1,14 @@
 import type {
   ResumeProfileExtraction,
   TailoredResumeDraft,
-} from "@unemployed/ai-providers";
+} from "@nordri/ai-providers";
 import {
   CandidateProfileSchema,
   JobSearchPreferencesSchema,
   type CandidateProfile,
   type JobSearchPreferences,
   type SavedJob,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   areEquivalentEducationRecords,
   areEquivalentExperienceRecords,

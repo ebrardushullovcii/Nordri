@@ -28,7 +28,7 @@ import {
   type SetCampaignResumeStrategyDefaultInput,
   type SetCompanyPreferenceInput,
   type SetOutcomeSuggestionEnabledInput,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import {
   appendRapidReviewDecisions,

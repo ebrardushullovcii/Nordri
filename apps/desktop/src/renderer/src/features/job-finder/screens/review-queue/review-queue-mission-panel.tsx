@@ -14,7 +14,7 @@ import type {
   ReviewQueueItem,
   SavedJob,
   TailoredAsset,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { Button, ProgressBar } from "@renderer/components/ui";
 import { cn } from "@renderer/lib/cn";
 import { openUrlInJobFinderBrowser } from "../../components/open-outside-links";
@@ -32,7 +32,7 @@ import {
   describeAiUnavailableResume,
   describeUntailorableListing,
 } from "./resume-workspace-utils";
-import { resolveResumeIdentity } from "@unemployed/job-finder/resume-identity";
+import { resolveResumeIdentity } from "@nordri/job-finder/resume-identity";
 import { ResumeIdentityChoiceNotice } from "../../components/profile/resume-identity-choice-notice";
 
 const dailyCapacityLimitDescriptionId =

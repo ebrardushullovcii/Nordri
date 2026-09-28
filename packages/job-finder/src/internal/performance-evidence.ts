@@ -9,7 +9,7 @@ import {
   type PerformanceEvidenceBudgetStatus,
   type PerformanceEvidenceStageDuration,
   type SourceDebugRunDetails,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import { buildDiscoveryPerformanceBudgetEvaluations } from "./performance-budget-evaluation";
 

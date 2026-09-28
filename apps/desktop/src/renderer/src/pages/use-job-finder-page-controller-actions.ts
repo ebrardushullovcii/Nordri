@@ -9,7 +9,7 @@ import {
   evaluateProfileSetupReadiness,
   getProfileSetupReadinessBlockers,
   isRunnableJobDiscoveryTarget,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import type {
   AppearanceTheme,
   ApplicationCrmSettings,
@@ -47,7 +47,7 @@ import type {
   UpdateApplicationDefaultsInput,
   UpdateWorkspaceBehaviorInput,
   UpdateAiBehaviorInput,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   collectPreparedApplicationJobIds,
   countTailoredDraftPreparationEligible,
@@ -119,7 +119,7 @@ import { COMMAND_PENDING_RELEASE_MS } from "@renderer/features/job-finder/lib/di
 import {
   describeResumeIdentityOwnershipChoice,
   useResumeSourceNameForProfile,
-} from "@unemployed/job-finder/resume-identity";
+} from "@nordri/job-finder/resume-identity";
 import { describeFailure } from "@renderer/features/job-finder/lib/describe-failure";
 import { describeApplicationDefaultsSave } from "@renderer/features/job-finder/screens/settings/settings-application-defaults-save-copy";
 

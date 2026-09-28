@@ -1,5 +1,5 @@
 {
-  "name": "@unemployed/ai-providers",
+  "name": "@nordri/ai-providers",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -13,8 +13,8 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@unemployed/agent-runtime": "workspace:*",
-    "@unemployed/contracts": "workspace:*",
+    "@nordri/agent-runtime": "workspace:*",
+    "@nordri/contracts": "workspace:*",
     "zod": "^3.24.2"
   }
 }

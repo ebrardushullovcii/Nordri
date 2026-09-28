@@ -1,4 +1,4 @@
-import type { DiscoveryFeedbackReason } from "@unemployed/contracts";
+import type { DiscoveryFeedbackReason } from "@nordri/contracts";
 
 export const discoveryFeedbackOptions: ReadonlyArray<{
   value: DiscoveryFeedbackReason;

@@ -7,7 +7,7 @@ import {
   createFreshStartCandidateProfile,
   evaluateProfileSetupReadiness,
   type JobSearchPreferences,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   buildProfileSetupReadinessPresentation,
   getProfileSetupReadinessBlockerLabel,

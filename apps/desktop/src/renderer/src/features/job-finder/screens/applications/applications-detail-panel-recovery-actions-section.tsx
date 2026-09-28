@@ -2,7 +2,7 @@ import type {
   GlobalDailyApplicationPreparationCapacity,
   JobFinderExactApplicationTarget,
   JobFinderWorkspaceSnapshot,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { useId, useState } from "react";
 import {
   ApplicationAnswerStepCard,
@@ -371,7 +371,7 @@ export function ApplicationsDetailPanelRecoveryActionsSection(props: {
     const resultId = visibleApplyResult.id;
     const reportOutcome = (outcome: FinishInBrowserOutcome | void) => {
       if (outcome?.kind === "opened_application_page") {
-        void window.unemployed?.browser?.command({ type: "open" });
+        void window.nordri?.browser?.command({ type: "open" });
       }
       setFinishInBrowserReport(outcome ? { resultId, outcome } : null);
     };

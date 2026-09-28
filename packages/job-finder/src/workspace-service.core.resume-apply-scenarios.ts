@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import type { BrowserSessionRuntime } from "@unemployed/browser-runtime";
+import type { BrowserSessionRuntime } from "@nordri/browser-runtime";
 import {
   ApplicationAuthorityDecisionPolicySchema,
   ApplicationAuthorityEnvelopeSchema,
@@ -14,8 +14,8 @@ import {
   SavedJobSchema,
   serializeApplicationAuthorityDecisionPolicyForDigest,
   serializeApprovedApplicationAnswerSnapshotForDigest,
-} from "@unemployed/contracts";
-import type { JobFinderRepository } from "@unemployed/db";
+} from "@nordri/contracts";
+import type { JobFinderRepository } from "@nordri/db";
 import type { JobFinderDocumentManager } from "./internal/workspace-service-contracts";
 import { isApprovedTailoredResumeReadyForApply } from "./internal/matching-review-queue";
 import { describe, expect, test, vi } from "vitest";
@@ -678,7 +678,7 @@ describe("createJobFinderWorkspaceService", () => {
     );
   });
 
-  test("records explicit Interview Helper follow-up actions on application records", async () => {
+  test("records explicit Live Assistant follow-up actions on application records", async () => {
     const { repository, workspaceService } = createWorkspaceServiceHarness();
 
     const initialSnapshot =
@@ -690,7 +690,7 @@ describe("createJobFinderWorkspaceService", () => {
     expect(applicationRecord).toBeTruthy();
 
     const interviewedSnapshot =
-      await workspaceService.recordInterviewHelperApplicationAction({
+      await workspaceService.recordLiveAssistantApplicationAction({
         applicationRecordId: applicationRecord!.id,
         sessionId: "interview_session_1",
         action: "mark_interviewed",
@@ -718,7 +718,7 @@ describe("createJobFinderWorkspaceService", () => {
     expect(interviewedJob?.status).toBe("interview");
 
     const notedSnapshot =
-      await workspaceService.recordInterviewHelperApplicationAction({
+      await workspaceService.recordLiveAssistantApplicationAction({
         applicationRecordId: applicationRecord!.id,
         sessionId: "interview_session_1",
         action: "add_follow_up_note",
@@ -736,7 +736,7 @@ describe("createJobFinderWorkspaceService", () => {
     ).toMatchObject({
       title: "Interview follow-up note added",
       detail:
-        "Interview Helper session interview_session_1: Recruiter asked for availability next week.",
+        "Live Assistant session interview_session_1: Recruiter asked for availability next week.",
       emphasis: "neutral",
     });
   });

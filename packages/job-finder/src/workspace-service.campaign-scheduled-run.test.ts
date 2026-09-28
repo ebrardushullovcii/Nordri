@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import type { BrowserSessionRuntime } from "@unemployed/browser-runtime";
+import type { BrowserSessionRuntime } from "@nordri/browser-runtime";
 import {
   CampaignNotificationSchema,
   type CampaignPauseWindow,
@@ -9,8 +9,8 @@ import {
   type JobSearchCampaignSchedule,
   type JobSearchPreferences,
   type SaveJobSearchCampaignInput,
-} from "@unemployed/contracts";
-import { JobSearchCampaignScheduleSchema } from "@unemployed/contracts";
+} from "@nordri/contracts";
+import { JobSearchCampaignScheduleSchema } from "@nordri/contracts";
 
 import { createWorkspaceServiceHarness } from "./workspace-service.test-harness";
 import {

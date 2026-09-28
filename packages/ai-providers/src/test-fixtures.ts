@@ -3,20 +3,20 @@ import type {
   JobFinderSettings,
   JobPosting,
   JobSearchPreferences,
-} from '@unemployed/contracts'
-import { JobPostingSchema } from '@unemployed/contracts'
+} from '@nordri/contracts'
+import { JobPostingSchema } from '@nordri/contracts'
 import type { JobFinderAiClient } from './shared'
 
 export function createEnvironment(
   overrides: Partial<Record<string, string | undefined>> = {}
 ) {
   return {
-    UNEMPLOYED_AI_API_KEY: 'test-key',
-    UNEMPLOYED_AI_BASE_URL: 'https://example.com/v1',
-    UNEMPLOYED_AI_MODEL: 'test-model',
-    UNEMPLOYED_AI_API_MODE: 'chat_completions',
-    UNEMPLOYED_AI_TIMEOUT_MS: undefined,
-    UNEMPLOYED_AI_RESUME_TIMEOUT_MS: undefined,
+    NORDRI_AI_API_KEY: 'test-key',
+    NORDRI_AI_BASE_URL: 'https://example.com/v1',
+    NORDRI_AI_MODEL: 'test-model',
+    NORDRI_AI_API_MODE: 'chat_completions',
+    NORDRI_AI_TIMEOUT_MS: undefined,
+    NORDRI_AI_RESUME_TIMEOUT_MS: undefined,
     ...overrides
   }
 }

@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { SavedJobSchema, type SavedJob } from "@unemployed/contracts";
-import { TITLE_MISSES_TARGET_ROLES_GAPS } from "@unemployed/job-finder/discovery-ordering";
+import { SavedJobSchema, type SavedJob } from "@nordri/contracts";
+import { TITLE_MISSES_TARGET_ROLES_GAPS } from "@nordri/job-finder/discovery-ordering";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {

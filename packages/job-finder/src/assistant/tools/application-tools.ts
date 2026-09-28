@@ -9,7 +9,7 @@ import {
   type ApplicationAutomationMode,
   type AssistantInstructionGrant,
   type JobFinderWorkspaceSnapshot,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { z } from "zod";
 
 import type { JobFinderWorkspaceService } from "../../internal/workspace-service-contracts";

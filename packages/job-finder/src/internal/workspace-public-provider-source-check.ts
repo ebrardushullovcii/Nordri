@@ -9,7 +9,7 @@ import {
   type SourceDebugWorkerAttempt,
   type SourceInstructionArtifact,
   type SourceInstructionVersionInfo,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import { evaluateSourceInstructionQuality } from "./source-instructions";
 import { uniqueStrings } from "./shared";

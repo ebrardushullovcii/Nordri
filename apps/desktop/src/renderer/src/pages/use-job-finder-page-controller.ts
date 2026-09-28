@@ -8,9 +8,11 @@ import type {
   ProfileCopilotMessage,
   ResumeAssistantMessage,
   ResumeImportProgressEvent,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { useJobFinderWorkspace } from "@renderer/features/job-finder/hooks/use-job-finder-workspace";
 import { resolveResumeWorkspaceRouteState } from "@renderer/features/job-finder/lib/resume-workspace-route-state";
+import { JOB_FINDER_ROUTE_PATHS } from "@renderer/features/job-finder/lib/job-finder-route-hrefs";
+import { getDefaultProfileRoute } from "@renderer/features/job-finder/lib/job-finder-utils";
 import type {
   ActionState,
   JobFinderShellActions,
@@ -292,7 +294,7 @@ export function useJobFinderPageController() {
   });
   // The window-close mirror lives exactly as long as this controller: a
   // restored failed-save receipt can block closes before any editor mounts,
-  // and leaving the Job Finder surface (for example to Interview Helper,
+  // and leaving the Job Finder surface (for example to Live Assistant,
   // which is only reachable once the route blocker cleared dirty state) must
   // release native close protection again.
   useEffect(() => {
@@ -408,7 +410,7 @@ export function useJobFinderPageController() {
       return;
     }
 
-    window.unemployed.jobFinder.cancelImportResume();
+    window.nordri.jobFinder.cancelImportResume();
     clearResumeLifecyclePending([scope]);
   }, [clearResumeLifecyclePending]);
   const [liveDiscoveryEvents, setLiveDiscoveryEvents] = useState<
@@ -712,14 +714,35 @@ export function useJobFinderPageController() {
   // click, and back/forward) with the single composed confirmation above.
   // Instead of a native browser confirm, a protected navigation is parked in
   // the blocker's `blocked` state and the branded dialog below resolves it.
-  // Hash-only changes are exempt: they never unmount the current surface or
-  // drop draft state.
+  // Hash-only changes and Profile tab/focus changes keep the same form
+  // mounted, so they do not discard its draft.
   const routeChangeBlocker = useBlocker(({ currentLocation, nextLocation }) => {
-    if (
+    const keepsMountedSurface =
       currentLocation.pathname === nextLocation.pathname &&
-      currentLocation.search === nextLocation.search
-    ) {
+      (currentLocation.pathname !== JOB_FINDER_ROUTE_PATHS.profile ||
+        (workspaceState.status === "ready" &&
+          getDefaultProfileRoute(workspaceState.workspace.profileSetupState, {
+            forceFullProfile: Boolean(
+              (nextLocation.state as { forceFullProfile?: boolean } | null)
+                ?.forceFullProfile,
+            ),
+          }) === JOB_FINDER_ROUTE_PATHS.profile));
+    if (keepsMountedSurface && currentLocation.search === nextLocation.search) {
       return false;
+    }
+
+    if (
+      keepsMountedSurface &&
+      currentLocation.pathname === JOB_FINDER_ROUTE_PATHS.profile
+    ) {
+      const currentParams = new URLSearchParams(currentLocation.search);
+      const nextParams = new URLSearchParams(nextLocation.search);
+      for (const params of [currentParams, nextParams]) {
+        params.delete("section");
+        params.delete("focus");
+        params.sort();
+      }
+      if (currentParams.toString() === nextParams.toString()) return false;
     }
 
     return composeLeaveConfirmation(navigationGuardRef.current) !== null;
@@ -936,7 +959,7 @@ export function useJobFinderPageController() {
   const refreshResumeWorkspaceRef = useRef(refreshResumeWorkspace);
   refreshResumeWorkspaceRef.current = refreshResumeWorkspace;
   useEffect(() => {
-    const subscribe = window.unemployed?.jobFinder?.onWorkspaceUpdate;
+    const subscribe = window.nordri?.jobFinder?.onWorkspaceUpdate;
     if (typeof subscribe !== "function") return undefined;
     let timer: ReturnType<typeof setTimeout> | null = null;
     const unsubscribe = subscribe(() => {

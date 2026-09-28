@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { Suspense } from "react";
-import type { JobFinderWorkspaceSnapshot } from "@unemployed/contracts";
+import type { JobFinderWorkspaceSnapshot } from "@nordri/contracts";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import {
   MemoryRouter,

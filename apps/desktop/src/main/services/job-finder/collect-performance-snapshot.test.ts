@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { JobFinderWorkspaceSnapshot } from "@unemployed/contracts";
+import type { JobFinderWorkspaceSnapshot } from "@nordri/contracts";
 
 import { collectJobFinderPerformanceSnapshot } from "./collect-performance-snapshot";
 

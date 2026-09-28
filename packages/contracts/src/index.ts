@@ -31,6 +31,6 @@ export * from "./job-finder-intelligence";
 export * from "./application-crm";
 export * from "./campaign-operations";
 export * from "./user-action";
-export * from "./interview-helper";
+export * from "./live-assistant";
 export * from "./interview-chat";
 export * from "./startup-recovery";

@@ -7,7 +7,7 @@ import {
   ApplicationReplayCheckpointSchema,
   ApplyJobResultSchema,
   ApplyRunSchema,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { describe, expect, test } from "vitest";
 
 import {

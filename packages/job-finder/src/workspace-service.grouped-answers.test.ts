@@ -10,7 +10,7 @@ import {
   type ApplicationAnswerRecord,
   type ApplicationQuestionRecord,
   type UserActionRequest,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { describe, expect, test } from "vitest";
 
 import {

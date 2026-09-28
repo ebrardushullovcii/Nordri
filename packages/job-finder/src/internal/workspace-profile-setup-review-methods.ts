@@ -12,7 +12,7 @@ import {
   type ProfileSetupReviewActionOptions,
   type ProfileSetupState,
   type ResumeImportFieldCandidate,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import {
   isSearchLocationCandidateTarget,

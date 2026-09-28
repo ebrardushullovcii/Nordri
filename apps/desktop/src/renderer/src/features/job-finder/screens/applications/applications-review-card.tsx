@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { ApplicationReviewCard } from "@unemployed/contracts";
+import type { ApplicationReviewCard } from "@nordri/contracts";
 import { Button } from "@renderer/components/ui/button";
 import { ExternalUrlLink } from "../../components/open-outside-links";
 import {

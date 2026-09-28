@@ -4,7 +4,7 @@ import {
   JobPostingSchema,
   type DiscoveryLedgerEntry,
   type JobPosting,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import { createDiscoveryListingFingerprints } from "./workspace-discovery-ledger";
 import { createDiscoveryRefreshDecision } from "./workspace-discovery-refresh-schedule";

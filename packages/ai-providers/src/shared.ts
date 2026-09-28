@@ -37,7 +37,7 @@ import {
   type TailoringMode,
   type Tool,
   type ToolCall,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { z } from "zod";
 import {
   modelApiModes,

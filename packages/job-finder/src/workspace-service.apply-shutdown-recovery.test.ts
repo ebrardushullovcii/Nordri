@@ -1,9 +1,9 @@
-import type { BrowserSessionRuntime } from "@unemployed/browser-runtime";
+import type { BrowserSessionRuntime } from "@nordri/browser-runtime";
 import {
   ApplicationRecordSchema,
   ApplicationAttemptSchema,
   SavedJobSchema,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { createWorkspaceServiceHarness } from "./workspace-service.test-harness";

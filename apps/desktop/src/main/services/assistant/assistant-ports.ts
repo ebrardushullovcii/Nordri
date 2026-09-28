@@ -2,8 +2,8 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { app } from "electron";
-import type { CandidateAsset } from "@unemployed/contracts";
-import type { AssistantHostPorts } from "@unemployed/job-finder";
+import type { CandidateAsset } from "@nordri/contracts";
+import type { AssistantHostPorts } from "@nordri/job-finder";
 
 import { extractResumeDocument } from "../../adapters/resume-document";
 import {

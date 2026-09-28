@@ -147,7 +147,7 @@ import type {
   WorkspaceRevision,
   WriteClipboardTextResult,
   UserActionCommandInput,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { SYSTEM_THEME_CHANGE_EVENT } from "../shared/system-theme";
 import {
   ApplicationAuthorityEnvelopeMutationResultSchema,
@@ -166,19 +166,19 @@ import {
   ResolveSubmissionOutcomeInputSchema,
   ResolveSubmissionOutcomeResultSchema,
   UpdateApplicationAuthorityEnvelopeInputSchema,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 let activeAgentDiscoveryRequestId: string | null = null;
 let activeResumeImportRequestId: string | null = null;
 let activeSourceDebugRequestId: string | null = null;
 
 const testApiEnabled =
-  process.env.UNEMPLOYED_ENABLE_TEST_API === "1" ||
-  process.env.UNEMPLOYED_ENABLE_TEST_API === "true";
+  process.env.NORDRI_ENABLE_TEST_API === "1" ||
+  process.env.NORDRI_ENABLE_TEST_API === "true";
 const configuredSystemThemeOverride =
-  process.env.UNEMPLOYED_TEST_SYSTEM_THEME === "dark" ||
-  process.env.UNEMPLOYED_TEST_SYSTEM_THEME === "light"
-    ? process.env.UNEMPLOYED_TEST_SYSTEM_THEME
+  process.env.NORDRI_TEST_SYSTEM_THEME === "dark" ||
+  process.env.NORDRI_TEST_SYSTEM_THEME === "light"
+    ? process.env.NORDRI_TEST_SYSTEM_THEME
     : null;
 let currentSystemThemeOverride: "dark" | "light" | null =
   configuredSystemThemeOverride;
@@ -186,7 +186,7 @@ let currentSystemThemeOverride: "dark" | "light" | null =
 let jobFinderBootstrapRoutesReadyPromise: Promise<void> | null = null;
 let jobFinderRoutesReadyPromise: Promise<void> | null = null;
 let jobFinderAssetRoutesReadyPromise: Promise<void> | null = null;
-let interviewHelperRoutesReadyPromise: Promise<void> | null = null;
+let liveAssistantRoutesReadyPromise: Promise<void> | null = null;
 
 const jobFinderAssetChannels = new Set([
   "job-finder:list-application-documents",
@@ -200,7 +200,7 @@ function isDeferredFeatureChannel(channel: unknown): channel is string {
   return (
     typeof channel === "string" &&
     (channel.startsWith("job-finder:") ||
-      channel.startsWith("interview-helper:"))
+      channel.startsWith("live-assistant:"))
   );
 }
 
@@ -230,10 +230,10 @@ function ensureFeatureRoutesReady(channel: string): Promise<void> {
     return jobFinderRoutesReadyPromise;
   }
 
-  interviewHelperRoutesReadyPromise ??= nativeIpcRenderer
-    .invoke("system:interview-helper-routes-ready")
+  liveAssistantRoutesReadyPromise ??= nativeIpcRenderer
+    .invoke("system:live-assistant-routes-ready")
     .then(() => undefined);
-  return interviewHelperRoutesReadyPromise;
+  return liveAssistantRoutesReadyPromise;
 }
 
 // Keep the public bridge implementation unchanged while serializing all
@@ -294,7 +294,7 @@ function isInterviewWorkspaceSnapshot(
   if (typeof value !== "object" || value === null) return false;
   const candidate = value as Record<string, unknown>;
   return (
-    candidate.module === "interview-helper" &&
+    candidate.module === "live-assistant" &&
     typeof candidate.generatedAt === "string" &&
     typeof candidate.setup === "object" &&
     typeof candidate.answerOverlay === "object" &&
@@ -394,10 +394,10 @@ const desktopApi = {
       };
     },
   },
-  interviewHelper: {
+  liveAssistant: {
     getWorkspace: () =>
       ipcRenderer.invoke(
-        "interview-helper:get-workspace",
+        "live-assistant:get-workspace",
       ) as Promise<InterviewWorkspaceSnapshot>,
     onWorkspaceChange: (
       listener: (workspace: InterviewWorkspaceSnapshot) => void,
@@ -409,113 +409,113 @@ const desktopApi = {
         if (isInterviewWorkspaceSnapshot(workspace)) listener(workspace);
       };
 
-      ipcRenderer.on("interview-helper:workspace-changed", handler);
+      ipcRenderer.on("live-assistant:workspace-changed", handler);
 
       return () => {
-        ipcRenderer.off("interview-helper:workspace-changed", handler);
+        ipcRenderer.off("live-assistant:workspace-changed", handler);
       };
     },
     saveSetup: (input: SaveInterviewSetupInput) =>
       ipcRenderer.invoke(
-        "interview-helper:save-setup",
+        "live-assistant:save-setup",
         input,
       ) as Promise<InterviewWorkspaceSnapshot>,
     runRehearsal: () =>
       ipcRenderer.invoke(
-        "interview-helper:run-rehearsal",
+        "live-assistant:run-rehearsal",
       ) as Promise<InterviewWorkspaceSnapshot>,
     startSession: () =>
       ipcRenderer.invoke(
-        "interview-helper:start-session",
+        "live-assistant:start-session",
       ) as Promise<InterviewWorkspaceSnapshot>,
     beginReconfiguration: () =>
       ipcRenderer.invoke(
-        "interview-helper:begin-reconfiguration",
+        "live-assistant:begin-reconfiguration",
       ) as Promise<InterviewWorkspaceSnapshot>,
     finishReconfiguration: () =>
       ipcRenderer.invoke(
-        "interview-helper:finish-reconfiguration",
+        "live-assistant:finish-reconfiguration",
       ) as Promise<InterviewWorkspaceSnapshot>,
     performAction: (action: InterviewHotkeyAction) =>
-      ipcRenderer.invoke("interview-helper:perform-action", {
+      ipcRenderer.invoke("live-assistant:perform-action", {
         action,
       }) as Promise<InterviewWorkspaceSnapshot>,
     moveOverlayWindow: (input: InterviewOverlayMoveInput) =>
       ipcRenderer.invoke(
-        "interview-helper:move-overlay-window",
+        "live-assistant:move-overlay-window",
         input,
       ) as Promise<{ moved: boolean }>,
     updateOverlayPreference: (input: UpdateInterviewOverlayPreferenceInput) =>
       ipcRenderer.invoke(
-        "interview-helper:update-overlay-preference",
+        "live-assistant:update-overlay-preference",
         input,
       ) as Promise<InterviewWorkspaceSnapshot>,
     deleteSession: (sessionId: string) =>
-      ipcRenderer.invoke("interview-helper:delete-session", {
+      ipcRenderer.invoke("live-assistant:delete-session", {
         sessionId,
       }) as Promise<InterviewWorkspaceSnapshot>,
     saveCueAsPrepArtifact: (input: InterviewPrepArtifactFromCueInput) =>
       ipcRenderer.invoke(
-        "interview-helper:save-cue-as-prep-artifact",
+        "live-assistant:save-cue-as-prep-artifact",
         input,
       ) as Promise<InterviewWorkspaceSnapshot>,
     addTranscriptAnnotation: (input: InterviewTranscriptAnnotationInput) =>
       ipcRenderer.invoke(
-        "interview-helper:add-transcript-annotation",
+        "live-assistant:add-transcript-annotation",
         input,
       ) as Promise<InterviewWorkspaceSnapshot>,
     addTranscriptSegment: (input: InterviewTranscriptSegmentInput) =>
       ipcRenderer.invoke(
-        "interview-helper:add-transcript-segment",
+        "live-assistant:add-transcript-segment",
         input,
       ) as Promise<InterviewWorkspaceSnapshot>,
     sendChatMessage: (input: SendInterviewChatMessageInput) =>
       ipcRenderer.invoke(
-        "interview-helper:send-chat-message",
+        "live-assistant:send-chat-message",
         input,
       ) as Promise<InterviewChatTurn>,
     transcribeAudioChunk: (input: InterviewAudioTranscriptionInput) =>
       ipcRenderer.invoke(
-        "interview-helper:transcribe-audio-chunk",
+        "live-assistant:transcribe-audio-chunk",
         input,
       ) as Promise<InterviewWorkspaceSnapshot>,
     verifyOverlayProtection: () =>
       ipcRenderer.invoke(
-        "interview-helper:verify-overlay-protection",
+        "live-assistant:verify-overlay-protection",
       ) as Promise<InterviewWorkspaceSnapshot>,
     resetOverlayPreferences: () =>
       ipcRenderer.invoke(
-        "interview-helper:reset-overlay-preferences",
+        "live-assistant:reset-overlay-preferences",
       ) as Promise<InterviewWorkspaceSnapshot>,
     readClipboardText: () =>
       ipcRenderer.invoke(
-        "interview-helper:read-clipboard-text",
+        "live-assistant:read-clipboard-text",
       ) as Promise<InterviewClipboardTextResult>,
     writeClipboardText: (input: InterviewClipboardWriteInput) =>
       ipcRenderer.invoke(
-        "interview-helper:write-clipboard-text",
+        "live-assistant:write-clipboard-text",
         input,
       ) as Promise<{ written: true }>,
     selectCaptionFile: () =>
       ipcRenderer.invoke(
-        "interview-helper:select-caption-file",
+        "live-assistant:select-caption-file",
       ) as Promise<InterviewCaptionFileTextResult>,
     readCaptionFile: (input: InterviewCaptionFileReadInput) =>
       ipcRenderer.invoke(
-        "interview-helper:read-caption-file",
+        "live-assistant:read-caption-file",
         input,
       ) as Promise<InterviewCaptionFileTextResult>,
     exportSession: (
       sessionId: string,
       format: InterviewExportFormat = "markdown",
     ) =>
-      ipcRenderer.invoke("interview-helper:export-session", {
+      ipcRenderer.invoke("live-assistant:export-session", {
         sessionId,
         format,
       }) as Promise<InterviewExportResult>,
     recordJobFinderFollowUp: (input: JobFinderInterviewFollowUpInput) =>
       ipcRenderer.invoke(
-        "interview-helper:record-job-finder-follow-up",
+        "live-assistant:record-job-finder-follow-up",
         input,
       ) as Promise<JobFinderWorkspaceSnapshot>,
   },
@@ -1500,4 +1500,4 @@ const desktopApi = {
   },
 };
 
-contextBridge.exposeInMainWorld("unemployed", desktopApi);
+contextBridge.exposeInMainWorld("nordri", desktopApi);

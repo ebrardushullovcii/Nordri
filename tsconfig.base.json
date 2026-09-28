@@ -19,37 +19,37 @@
     "sourceMap": true,
     "baseUrl": ".",
     "paths": {
-      "@unemployed/agent-runtime": ["packages/agent-runtime/src/index.ts"],
-      "@unemployed/ai-evals": ["packages/ai-evals/src/index.ts"],
-      "@unemployed/ai-providers": ["packages/ai-providers/src/index.ts"],
-      "@unemployed/browser-agent": ["packages/browser-agent/src/index.ts"],
-      "@unemployed/browser-runtime": ["packages/browser-runtime/src/index.ts"],
-      "@unemployed/contracts": ["packages/contracts/src/index.ts"],
-      "@unemployed/core": ["packages/core/src/index.ts"],
-      "@unemployed/db": ["packages/db/src/index.ts"],
-      "@unemployed/knowledge-base": ["packages/knowledge-base/src/index.ts"],
-      "@unemployed/job-finder/discovery-ordering": [
+      "@nordri/agent-runtime": ["packages/agent-runtime/src/index.ts"],
+      "@nordri/ai-evals": ["packages/ai-evals/src/index.ts"],
+      "@nordri/ai-providers": ["packages/ai-providers/src/index.ts"],
+      "@nordri/browser-agent": ["packages/browser-agent/src/index.ts"],
+      "@nordri/browser-runtime": ["packages/browser-runtime/src/index.ts"],
+      "@nordri/contracts": ["packages/contracts/src/index.ts"],
+      "@nordri/core": ["packages/core/src/index.ts"],
+      "@nordri/db": ["packages/db/src/index.ts"],
+      "@nordri/knowledge-base": ["packages/knowledge-base/src/index.ts"],
+      "@nordri/job-finder/discovery-ordering": [
         "packages/job-finder/src/discovery-ordering.ts"
       ],
-      "@unemployed/job-finder/discovery-result-bands": [
+      "@nordri/job-finder/discovery-result-bands": [
         "packages/job-finder/src/discovery-result-bands.ts"
       ],
-      "@unemployed/job-finder/resume-record-identity": [
+      "@nordri/job-finder/resume-record-identity": [
         "packages/job-finder/src/resume-record-identity.ts"
       ],
-      "@unemployed/job-finder/plan-safeguard-pauses": ["packages/job-finder/src/plan-safeguard-pauses.ts"],
-      "@unemployed/job-finder/source-health": [
+      "@nordri/job-finder/plan-safeguard-pauses": ["packages/job-finder/src/plan-safeguard-pauses.ts"],
+      "@nordri/job-finder/source-health": [
         "packages/job-finder/src/source-health.ts"
       ],
-      "@unemployed/job-finder/source-instruction-review": [
+      "@nordri/job-finder/source-instruction-review": [
         "packages/job-finder/src/source-instruction-review.ts"
       ],
-      "@unemployed/job-finder": ["packages/job-finder/src/index.ts"],
-      "@unemployed/interview-helper": [
-        "packages/interview-helper/src/index.ts"
+      "@nordri/job-finder": ["packages/job-finder/src/index.ts"],
+      "@nordri/live-assistant": [
+        "packages/live-assistant/src/index.ts"
       ],
-      "@unemployed/os-integration": ["packages/os-integration/src/index.ts"],
-      "@unemployed/testing": ["packages/testing/src/index.ts"]
+      "@nordri/os-integration": ["packages/os-integration/src/index.ts"],
+      "@nordri/testing": ["packages/testing/src/index.ts"]
     }
   }
 }

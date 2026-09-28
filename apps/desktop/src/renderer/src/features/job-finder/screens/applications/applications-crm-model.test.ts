@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { ApplicationRecordSchema } from "@unemployed/contracts";
+import { ApplicationRecordSchema } from "@nordri/contracts";
 
 import {
   APPLICATION_CRM_STAGE_LABELS,

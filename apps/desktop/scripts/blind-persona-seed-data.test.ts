@@ -7,7 +7,7 @@ import {
   JobFinderRepositoryStateSchema,
   SavedJobDiscoveryProvenanceSchema,
   type JobFinderRepositoryState,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { deriveSourceAccessPrompts } from "../../../packages/job-finder/src/internal/workspace-source-access-prompts";
 import { describe, expect, it } from "vitest";
 

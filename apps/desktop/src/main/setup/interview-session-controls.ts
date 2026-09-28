@@ -1,6 +1,6 @@
 import { Menu, Tray, dialog, globalShortcut, nativeImage } from 'electron'
-import type { InterviewHotkeyAction } from '@unemployed/contracts'
-import { getInterviewHelperService } from '../services/interview-helper'
+import type { InterviewHotkeyAction } from '@nordri/contracts'
+import { getLiveAssistantService } from '../services/live-assistant'
 import { syncInterviewOverlayWindows } from './interview-overlay-windows'
 
 const hotkeyBindings: ReadonlyArray<{
@@ -19,7 +19,7 @@ const hotkeyBindings: ReadonlyArray<{
 let interviewTray: Tray | null = null
 
 async function performInterviewAction(action: InterviewHotkeyAction) {
-  const service = await getInterviewHelperService()
+  const service = await getLiveAssistantService()
   const workspace = await service.performAction({ action })
   syncInterviewOverlayWindows(workspace)
 }
@@ -30,8 +30,8 @@ async function endSessionWithConfirmation() {
     buttons: ['End session', 'Cancel'],
     defaultId: 1,
     cancelId: 1,
-    title: 'End Interview Helper session?',
-    message: 'End the active Interview Helper session?',
+    title: 'End Live Assistant session?',
+    message: 'End the active Live Assistant session?',
     detail: 'Audio and screenshot capture actions stop, overlays close, and the session moves to post-session review.',
   })
 
@@ -106,12 +106,12 @@ export function initializeInterviewSessionControls() {
     })
 
     if (!registered) {
-      console.warn(`[InterviewHelper] Failed to register global hotkey ${binding.accelerator}.`)
+      console.warn(`[LiveAssistant] Failed to register global hotkey ${binding.accelerator}.`)
     }
   }
 
   interviewTray = new Tray(createTrayImage())
-  interviewTray.setToolTip('Interview Helper')
+  interviewTray.setToolTip('Live Assistant')
   interviewTray.setContextMenu(buildInterviewTrayMenu())
 }
 

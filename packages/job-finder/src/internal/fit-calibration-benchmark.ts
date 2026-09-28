@@ -2,7 +2,7 @@ import {
   SavedJobSchema,
   type FitRecommendation,
   type MatchAssessment,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import { createMatchAssessmentSession } from "./match-assessment-session";
 import { createMatchAssessment } from "./matching";

@@ -1,4 +1,4 @@
-import { describeProfileAssistantBehavior } from "@unemployed/ai-providers";
+import { describeProfileAssistantBehavior } from "@nordri/ai-providers";
 import {
   ASSISTANT_SCREEN_LABELS,
   AiBehaviorPreferenceSchema,
@@ -7,7 +7,7 @@ import {
   type AssistantResultSet,
   type AssistantTaskPlan,
   type JobFinderWorkspaceSnapshot,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 /**
  * The sidebar's model input (ADR 0037).

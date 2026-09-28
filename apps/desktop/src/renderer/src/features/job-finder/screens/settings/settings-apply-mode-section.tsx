@@ -5,7 +5,7 @@ import {
   APPLY_MODE_OPTIONS,
   ChoiceCards,
 } from "@renderer/features/job-finder/components/choice-cards";
-import type { ApplicationAutomationMode } from "@unemployed/contracts";
+import type { ApplicationAutomationMode } from "@nordri/contracts";
 import { useRegisterSettingsDirtySection } from "./settings-dirty-sections";
 import {
   hasOutstandingSectionChanges,

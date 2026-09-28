@@ -1,4 +1,4 @@
-import type { JobFinderAiClient } from "@unemployed/ai-providers";
+import type { JobFinderAiClient } from "@nordri/ai-providers";
 import {
   SavedJobDiscoveryProvenanceSchema,
   SavedJobSchema,
@@ -14,7 +14,7 @@ import {
   type SavedJob,
   type SavedJobDiscoveryProvenance,
   type WorkMode,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   evaluateCompensationFit,
   parseNormalizedCompensation,

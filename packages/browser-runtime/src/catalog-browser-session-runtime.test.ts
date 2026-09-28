@@ -5,7 +5,7 @@ import {
   type ApplicationResumeArtifact,
   type ApplyExecutionResult,
   type JobFinderSettings,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { describe, expect, test } from "vitest";
 import {
   createCatalogBrowserSessionRuntime,

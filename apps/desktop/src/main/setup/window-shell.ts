@@ -8,7 +8,7 @@ import {
 } from "electron";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { DesktopWindowControlsStateSchema } from "@unemployed/contracts";
+import { DesktopWindowControlsStateSchema } from "@nordri/contracts";
 import {
   bindMainWindowStatePersistence,
   loadMainWindowState,
@@ -28,10 +28,10 @@ const defaultMainWindowBounds = {
   height: 920,
 } as const;
 
-const startupWindowWidthEnvName = "UNEMPLOYED_STARTUP_WINDOW_WIDTH";
-const startupWindowHeightEnvName = "UNEMPLOYED_STARTUP_WINDOW_HEIGHT";
-const startupZoomFactorEnvName = "UNEMPLOYED_STARTUP_ZOOM_FACTOR";
-const testerSessionGeometryEnvName = "UNEMPLOYED_TESTER_SESSION_GEOMETRY";
+const startupWindowWidthEnvName = "NORDRI_STARTUP_WINDOW_WIDTH";
+const startupWindowHeightEnvName = "NORDRI_STARTUP_WINDOW_HEIGHT";
+const startupZoomFactorEnvName = "NORDRI_STARTUP_ZOOM_FACTOR";
+const testerSessionGeometryEnvName = "NORDRI_TESTER_SESSION_GEOMETRY";
 
 export const STARTUP_WINDOW_MIN_DIMENSION_PX = 400;
 export const STARTUP_ZOOM_MIN_FACTOR = 1;
@@ -110,7 +110,7 @@ export function parseStartupWindowGeometryRequest(
 ): StartupWindowGeometryRequest | null {
   // The strict startup-geometry surface belongs to launcher-driven tester
   // sessions only. Without the explicit tester marker, ambient
-  // UNEMPLOYED_STARTUP_* variables (for example from a developer's shell or a
+  // NORDRI_STARTUP_* variables (for example from a developer's shell or a
   // .env file) are ignored entirely so normal startup behavior never changes.
   const marker = env[testerSessionGeometryEnvName];
   if (marker === undefined) {
@@ -384,15 +384,15 @@ function bindWindowControlsState(window: BrowserWindow) {
 function getMainWindowFailureTitle(failure: MainWindowFailure): string {
   switch (failure.reason) {
     case "renderer-unresponsive":
-      return "UnEmployed stopped responding";
+      return "Nordri stopped responding";
     case "renderer-crashed":
-      return "UnEmployed encountered a window error";
+      return "Nordri encountered a window error";
     case "startup-load-timeout":
-      return "UnEmployed is taking too long to start";
+      return "Nordri is taking too long to start";
     case "renderer-recovery-failed":
-      return "UnEmployed could not recover the window";
+      return "Nordri could not recover the window";
     case "renderer-load-failed":
-      return "UnEmployed could not load the window";
+      return "Nordri could not load the window";
   }
 }
 
@@ -468,7 +468,7 @@ export function createMainWindow(currentDir: string) {
     minWidth: 1024,
     minHeight: 720,
     show: true,
-    title: "UnEmployed",
+    title: "Nordri",
     backgroundColor: "#0e1726",
     autoHideMenuBar: true,
     frame: !(isMac || isWindows),

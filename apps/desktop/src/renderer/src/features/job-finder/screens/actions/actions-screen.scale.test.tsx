@@ -14,7 +14,7 @@ import {
   type JobFinderWorkspaceSnapshot,
   type UserActionCommandInput,
   type UserActionRequest,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { COLLECTION_PAGE_SIZE } from "../../components/collection-pagination";

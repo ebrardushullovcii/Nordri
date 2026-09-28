@@ -1,4 +1,4 @@
-import { DiscoveryRunRecordSchema } from "@unemployed/contracts";
+import { DiscoveryRunRecordSchema } from "@nordri/contracts";
 import { describe, expect, it } from "vitest";
 import {
   buildDiscoveryPerformanceBudgetEvaluations,

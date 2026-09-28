@@ -1,7 +1,7 @@
 import type {
   BrowserSessionRuntime,
   OpenBrowserSessionOptions,
-} from "@unemployed/browser-runtime";
+} from "@nordri/browser-runtime";
 import { randomUUID } from "node:crypto";
 import { recordApplicationsSentByPerson } from "./internal/application-sent-by-person";
 import { refreshAutomaticApplicationFailurePauses } from "./internal/automatic-safeguards";
@@ -25,7 +25,7 @@ import {
   type SavedJob,
   type SetJobFinderActivityControlInput,
   type SourceDebugRunRecord,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { mergeSessionStates } from "./internal/workspace-service-helpers";
 import {
   getActiveDiscoveryTargets,

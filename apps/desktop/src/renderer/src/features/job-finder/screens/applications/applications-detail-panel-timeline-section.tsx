@@ -1,4 +1,4 @@
-import type { ApplicationRecord } from "@unemployed/contracts";
+import type { ApplicationRecord } from "@nordri/contracts";
 import { cn } from "@renderer/lib/utils";
 import {
   formatTimestamp,

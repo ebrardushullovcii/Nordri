@@ -9,8 +9,8 @@ import {
   deriveApprovedApplicationAnswerSnapshotContent,
   serializeApplicationAuthorityDecisionPolicyForDigest,
   serializeApprovedApplicationAnswerSnapshotForDigest,
-} from "@unemployed/contracts";
-import { createInMemoryJobFinderRepository } from "@unemployed/db";
+} from "@nordri/contracts";
+import { createInMemoryJobFinderRepository } from "@nordri/db";
 
 import { createSeed } from "../workspace-service.test-fixtures";
 import { resolvePrepareOnlyIntermediateMutationAuthority } from "./prepare-only-intermediate-mutation-authority";

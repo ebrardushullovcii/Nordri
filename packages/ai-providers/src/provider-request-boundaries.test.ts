@@ -58,10 +58,10 @@ test.each(["429", "timeout"] as const)(
     vi.stubGlobal("fetch", fetchMock);
     const client = createJobFinderAiClientFromEnvironment(
       createEnvironment({
-        UNEMPLOYED_AI_MAX_ATTEMPTS: "3",
-        UNEMPLOYED_AI_TIMEOUT_MS: "5000",
-        UNEMPLOYED_AI_IDLE_TIMEOUT_MS: "1000",
-        UNEMPLOYED_AI_RETRY_BASE_DELAY_MS: "1",
+        NORDRI_AI_MAX_ATTEMPTS: "3",
+        NORDRI_AI_TIMEOUT_MS: "5000",
+        NORDRI_AI_IDLE_TIMEOUT_MS: "1000",
+        NORDRI_AI_RETRY_BASE_DELAY_MS: "1",
       }),
     );
     const reply = client.reviseCandidateProfile({
@@ -118,10 +118,10 @@ test.each(["responses", "chat_completions"] as const)(
     );
     const client = createJobFinderAiClientFromEnvironment(
       createEnvironment({
-        UNEMPLOYED_AI_MODEL: "configured-route",
-        UNEMPLOYED_AI_API_MODE: apiMode,
-        UNEMPLOYED_AI_REASONING_EFFORT: "high",
-        UNEMPLOYED_AI_AGENT_REASONING_EFFORT: "low",
+        NORDRI_AI_MODEL: "configured-route",
+        NORDRI_AI_API_MODE: apiMode,
+        NORDRI_AI_REASONING_EFFORT: "high",
+        NORDRI_AI_AGENT_REASONING_EFFORT: "low",
       }),
     );
     await client.extractJobsFromPage(extraction);

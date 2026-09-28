@@ -1,7 +1,7 @@
 import {
   ApplicationAuthorityEnvelopeSchema,
   serializeApplicationAuthorityDecisionPolicyForDigest,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { createHash } from "node:crypto";
 import { describe, expect, test } from "vitest";
 

@@ -4,7 +4,7 @@ import {
   SavedJobSchema,
   type MatchAssessment,
   type SavedJob,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { describe, expect, it } from "vitest";
 
 import { createSeed } from "../workspace-service.test-fixtures";

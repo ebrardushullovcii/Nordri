@@ -5,7 +5,7 @@ import {
   serializeApprovedApplicationAnswerSnapshotForDigest,
   type ApprovedApplicationAnswerSnapshot,
   type ApprovedApplicationAnswerSnapshotContent,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { describe, expect, test } from "vitest";
 
 import {
@@ -122,7 +122,7 @@ describe("application answer snapshot repository", () => {
   });
 
   test("persists, reopens, and resets the append-only collection in SQLite", async () => {
-    const temp = await createTempRepository("unemployed-answer-snapshot-");
+    const temp = await createTempRepository("nordri-answer-snapshot-");
     let repository: FileRepository | null = null;
     let reopened: FileRepository | null = null;
     try {

@@ -3,7 +3,7 @@
 import type {
   JobFinderWorkspaceSnapshot,
   DesktopPlatformPing,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -29,11 +29,11 @@ function workspaceSnapshot(): JobFinderWorkspaceSnapshot {
   } as unknown as JobFinderWorkspaceSnapshot;
 }
 
-function configureWindowUnemployed(overrides: {
+function configureWindowNordri(overrides: {
   getWorkspaceBootstrap?: () => Promise<JobFinderWorkspaceSnapshot>;
   getStartupDatabaseRecovery?: () => Promise<unknown>;
 }) {
-  Object.defineProperty(window, "unemployed", {
+  Object.defineProperty(window, "nordri", {
     configurable: true,
     value: {
       ping: vi.fn<() => Promise<DesktopPlatformPing>>(() =>
@@ -54,12 +54,12 @@ function configureWindowUnemployed(overrides: {
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
-  delete (window as { unemployed?: unknown }).unemployed;
+  delete (window as { nordri?: unknown }).nordri;
 });
 
 describe("useJobFinderWorkspace startup database recovery", () => {
   it("carries the typed blocking incident when the workspace cannot open", async () => {
-    configureWindowUnemployed({
+    configureWindowNordri({
       getWorkspaceBootstrap: vi.fn(() =>
         Promise.reject(
           new Error("Workspace database recovery required (salvage-required)."),
@@ -87,7 +87,7 @@ describe("useJobFinderWorkspace startup database recovery", () => {
   });
 
   it("fails closed to the generic error when the recovery fact is malformed", async () => {
-    configureWindowUnemployed({
+    configureWindowNordri({
       getWorkspaceBootstrap: vi.fn(() =>
         Promise.reject(new Error("Unable to load the workspace.")),
       ),
@@ -108,7 +108,7 @@ describe("useJobFinderWorkspace startup database recovery", () => {
   });
 
   it("keeps the generic error when the preload bridge lacks the recovery API", async () => {
-    configureWindowUnemployed({
+    configureWindowNordri({
       getWorkspaceBootstrap: vi.fn(() =>
         Promise.reject(new Error("Unable to load the workspace.")),
       ),
@@ -126,7 +126,7 @@ describe("useJobFinderWorkspace startup database recovery", () => {
   });
 
   it("does not block a workspace that opened even if a stale incident was fetched", async () => {
-    configureWindowUnemployed({
+    configureWindowNordri({
       getWorkspaceBootstrap: vi.fn(() => Promise.resolve(workspaceSnapshot())),
       getStartupDatabaseRecovery: vi.fn(() => Promise.resolve(blockedFact())),
     });

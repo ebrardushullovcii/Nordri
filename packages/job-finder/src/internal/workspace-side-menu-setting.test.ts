@@ -1,4 +1,4 @@
-import { collapsesSideMenuWithAssistant } from "@unemployed/contracts";
+import { collapsesSideMenuWithAssistant } from "@nordri/contracts";
 import { describe, expect, it } from "vitest";
 
 import { createWorkspaceServiceHarness } from "../workspace-service.test-support";

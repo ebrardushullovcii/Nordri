@@ -1,4 +1,4 @@
-import type { ListingActivity } from "@unemployed/contracts";
+import type { ListingActivity } from "@nordri/contracts";
 import { formatOptionalDateOnly } from "./job-finder-utils";
 
 export const listingActivityStatuses = [

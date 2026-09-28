@@ -7,16 +7,16 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../
 export default defineConfig({
   resolve: {
     alias: {
-      "@unemployed/ai-providers": path.resolve(
+      "@nordri/ai-providers": path.resolve(
         repoRoot,
         "packages/ai-providers/src/index.ts",
       ),
       "@renderer": path.resolve(repoRoot, "apps/desktop/src/renderer/src"),
-      "@unemployed/contracts": path.resolve(
+      "@nordri/contracts": path.resolve(
         repoRoot,
         "packages/contracts/src/index.ts",
       ),
-      "@unemployed/job-finder": path.resolve(
+      "@nordri/job-finder": path.resolve(
         repoRoot,
         "packages/job-finder/src/index.ts",
       ),

@@ -1,12 +1,12 @@
 import { randomUUID } from "node:crypto";
 
-import type { ApplyAuthority } from "@unemployed/browser-agent";
+import type { ApplyAuthority } from "@nordri/browser-agent";
 import {
   ApplicationAuthorityEnvelopeSchema,
   isActiveApplicationAuthorityEnvelope,
   type ApplicationAuthorityEnvelope,
-} from "@unemployed/contracts";
-import type { JobFinderRepository } from "@unemployed/db";
+} from "@nordri/contracts";
+import type { JobFinderRepository } from "@nordri/db";
 
 import {
   recordApplicationAuthoritySuccessor,

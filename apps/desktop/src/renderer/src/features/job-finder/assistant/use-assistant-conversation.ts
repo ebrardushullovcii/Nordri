@@ -10,7 +10,7 @@ import type {
   AssistantStatus,
   AssistantTaskPlan,
   AssistantTurn,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { describeFailure } from "../lib/describe-failure";
 
 /**
@@ -108,6 +108,12 @@ export function applyAssistantEvent(
             activeTurn: null,
             activity: null,
             draftText: null,
+            hasOlder: false,
+            progress: [],
+            stall: null,
+            plans: [],
+            pendingMessageIds: [],
+            error: null,
           }
         : {}),
     };
@@ -172,12 +178,13 @@ export function useAssistantConversation(options: {
   onOpenRoute: (route: string) => void;
 }) {
   const bridge =
-    typeof window === "undefined" ? undefined : window.unemployed?.assistant;
+    typeof window === "undefined" ? undefined : window.nordri?.assistant;
   const [state, setState] = useState<AssistantConversationState>(initialState);
   const stateRef = useRef(state);
   stateRef.current = state;
   const cursor = useRef(0);
   const replaying = useRef(false);
+  const loadingOlder = useRef(new Set<string>());
   const onOpenRoute = useRef(options.onOpenRoute);
   onOpenRoute.current = options.onOpenRoute;
 
@@ -468,17 +475,40 @@ export function useAssistantConversation(options: {
   const loadOlder = useCallback(async () => {
     const current = stateRef.current;
     if (!bridge || !current.conversationId || !current.hasOlder) return;
+    const conversationId = current.conversationId;
+    if (loadingOlder.current.has(conversationId)) return;
     const oldest = current.messages[0];
     if (!oldest) return;
-    const view = await bridge.readConversation({
-      conversationId: current.conversationId,
-      beforeMessageId: oldest.id,
-    });
-    setState((previous) => ({
-      ...previous,
-      messages: [...view.messages, ...previous.messages],
-      hasOlder: view.hasOlderMessages,
-    }));
+    loadingOlder.current.add(conversationId);
+    try {
+      const view = await bridge.readConversation({
+        conversationId,
+        beforeMessageId: oldest.id,
+      });
+      setState((previous) => {
+        if (previous.conversationId !== conversationId) return previous;
+        const existingIds = new Set(
+          previous.messages.map((message) => message.id),
+        );
+        return {
+          ...previous,
+          messages: [
+            ...view.messages.filter((message) => !existingIds.has(message.id)),
+            ...previous.messages,
+          ],
+          hasOlder: view.hasOlderMessages,
+          error: null,
+        };
+      });
+    } catch (error) {
+      setState((previous) =>
+        previous.conversationId === conversationId
+          ? { ...previous, error: describeError(error) }
+          : previous,
+      );
+    } finally {
+      loadingOlder.current.delete(conversationId);
+    }
   }, [bridge]);
 
   const refreshStatus = useCallback(async () => {

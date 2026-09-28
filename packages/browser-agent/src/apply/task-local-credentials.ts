@@ -1,4 +1,4 @@
-import type { ApplyWriteResult } from "@unemployed/contracts";
+import type { ApplyWriteResult } from "@nordri/contracts";
 
 import { normalizeSignal } from "./control-classification";
 import type { ApplyFormObservation, ApplyPageHands } from "./types";

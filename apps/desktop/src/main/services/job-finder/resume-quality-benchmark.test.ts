@@ -5,11 +5,11 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import type {
   ResumeQualityBenchmarkMetrics,
   ResumeTemplateDefinition,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   deriveResumeCoveragePlan,
   type TailoredResumeDraft,
-} from "@unemployed/ai-providers";
+} from "@nordri/ai-providers";
 
 import {
   applyFixtureDraftOverride,

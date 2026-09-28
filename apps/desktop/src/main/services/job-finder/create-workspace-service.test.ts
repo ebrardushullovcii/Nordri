@@ -1,7 +1,7 @@
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import type { OpenBrowserSessionOptions } from "@unemployed/browser-runtime";
+import type { OpenBrowserSessionOptions } from "@nordri/browser-runtime";
 import { createDesktopBrowserRuntime, createDesktopJobFinderAiClient, createDesktopResumeVisionProvider } from "./create-workspace-service";
 import {
   getDesktopTestDelayMs,
@@ -14,8 +14,8 @@ import {
 
 describe("createDesktopJobFinderAiClient", () => {
   test.each([
-    ["with an API key present", { UNEMPLOYED_ENABLE_TEST_API: "1", UNEMPLOYED_AI_API_KEY: "test-api-key" }],
-    ["without an API key configured", { UNEMPLOYED_ENABLE_TEST_API: "1" }],
+    ["with an API key present", { NORDRI_ENABLE_TEST_API: "1", NORDRI_AI_API_KEY: "test-api-key" }],
+    ["without an API key configured", { NORDRI_ENABLE_TEST_API: "1" }],
   ])(
     "keeps the deterministic client when the desktop test API is enabled %s",
     (_label, env) => {
@@ -28,11 +28,11 @@ describe("createDesktopJobFinderAiClient", () => {
 
   test("allows live AI when the test API explicitly requests it", () => {
     const client = createDesktopJobFinderAiClient({
-      UNEMPLOYED_ENABLE_TEST_API: "1",
-      UNEMPLOYED_TEST_API_USE_LIVE_AI: "1",
-      UNEMPLOYED_AI_API_KEY: "test-api-key",
-      UNEMPLOYED_AI_BASE_URL: "https://example.invalid/v1",
-      UNEMPLOYED_AI_MODEL: "test-model",
+      NORDRI_ENABLE_TEST_API: "1",
+      NORDRI_TEST_API_USE_LIVE_AI: "1",
+      NORDRI_AI_API_KEY: "test-api-key",
+      NORDRI_AI_BASE_URL: "https://example.invalid/v1",
+      NORDRI_AI_MODEL: "test-model",
     });
 
     expect(client.chatWithTools).toBeTypeOf("function");
@@ -41,8 +41,8 @@ describe("createDesktopJobFinderAiClient", () => {
 
   test("keeps deterministic behavior when live AI is requested without an API key", () => {
     const client = createDesktopJobFinderAiClient({
-      UNEMPLOYED_ENABLE_TEST_API: "1",
-      UNEMPLOYED_TEST_API_USE_LIVE_AI: "1",
+      NORDRI_ENABLE_TEST_API: "1",
+      NORDRI_TEST_API_USE_LIVE_AI: "1",
     });
 
     expect(client.chatWithTools).toBeUndefined();
@@ -53,8 +53,8 @@ describe("createDesktopJobFinderAiClient", () => {
 describe("createDesktopResumeVisionProvider", () => {
   test("keeps deterministic vision when the desktop test API is enabled", () => {
     const provider = createDesktopResumeVisionProvider({
-      UNEMPLOYED_ENABLE_TEST_API: "1",
-      UNEMPLOYED_AI_API_KEY: "test-api-key",
+      NORDRI_ENABLE_TEST_API: "1",
+      NORDRI_AI_API_KEY: "test-api-key",
     });
 
     expect(provider.getStatus().kind).toBe("deterministic");
@@ -62,10 +62,10 @@ describe("createDesktopResumeVisionProvider", () => {
 
   test("allows live configured vision when the test API explicitly requests it", () => {
     const provider = createDesktopResumeVisionProvider({
-      UNEMPLOYED_ENABLE_TEST_API: "1",
-      UNEMPLOYED_TEST_API_USE_LIVE_AI: "1",
-      UNEMPLOYED_AI_API_KEY: "test-api-key",
-      UNEMPLOYED_AI_BASE_URL: "https://example.invalid/v1",
+      NORDRI_ENABLE_TEST_API: "1",
+      NORDRI_TEST_API_USE_LIVE_AI: "1",
+      NORDRI_AI_API_KEY: "test-api-key",
+      NORDRI_AI_BASE_URL: "https://example.invalid/v1",
     });
 
     const status = provider.getStatus();
@@ -79,8 +79,8 @@ describe("createDesktopResumeVisionProvider", () => {
 describe("createDesktopBrowserRuntime", () => {
   test("rejects targeted browser opens when the browser agent runtime is disabled", async () => {
     const browserRuntime = createDesktopBrowserRuntime({
-      env: { UNEMPLOYED_BROWSER_AGENT: "0" },
-      aiClient: createDesktopJobFinderAiClient({ UNEMPLOYED_BROWSER_AGENT: "0" }),
+      env: { NORDRI_BROWSER_AGENT: "0" },
+      aiClient: createDesktopJobFinderAiClient({ NORDRI_BROWSER_AGENT: "0" }),
       desktopTestApiEnabled: false,
     });
 
@@ -95,8 +95,8 @@ describe("createDesktopBrowserRuntime", () => {
 
   test("rejects target-id browser opens when the browser agent runtime is disabled", async () => {
     const browserRuntime = createDesktopBrowserRuntime({
-      env: { UNEMPLOYED_BROWSER_AGENT: "0" },
-      aiClient: createDesktopJobFinderAiClient({ UNEMPLOYED_BROWSER_AGENT: "0" }),
+      env: { NORDRI_BROWSER_AGENT: "0" },
+      aiClient: createDesktopJobFinderAiClient({ NORDRI_BROWSER_AGENT: "0" }),
       desktopTestApiEnabled: false,
     });
 
@@ -111,8 +111,8 @@ describe("createDesktopBrowserRuntime", () => {
 
   test("keeps generic browser opens available when the browser agent runtime is disabled", async () => {
     const browserRuntime = createDesktopBrowserRuntime({
-      env: { UNEMPLOYED_BROWSER_AGENT: "0" },
-      aiClient: createDesktopJobFinderAiClient({ UNEMPLOYED_BROWSER_AGENT: "0" }),
+      env: { NORDRI_BROWSER_AGENT: "0" },
+      aiClient: createDesktopJobFinderAiClient({ NORDRI_BROWSER_AGENT: "0" }),
       desktopTestApiEnabled: false,
     });
 
@@ -126,8 +126,8 @@ describe("createDesktopBrowserRuntime", () => {
   // directory so the lane can be constructed without an Electron app.
   beforeEach(() => {
     vi.stubEnv(
-      "UNEMPLOYED_USER_DATA_DIR",
-      path.join(tmpdir(), "unemployed-browser-lane-test"),
+      "NORDRI_USER_DATA_DIR",
+      path.join(tmpdir(), "nordri-browser-lane-test"),
     );
   });
 
@@ -140,8 +140,8 @@ describe("createDesktopBrowserRuntime", () => {
     // screen reads. Reporting the catalog lane here makes a working
     // agent-backed build tell the user it cannot search.
     const env = {
-      UNEMPLOYED_ENABLE_TEST_API: "1",
-      UNEMPLOYED_BROWSER_HOST: "embedded",
+      NORDRI_ENABLE_TEST_API: "1",
+      NORDRI_BROWSER_HOST: "embedded",
     };
     const browserRuntime = createDesktopBrowserRuntime({
       env,
@@ -157,8 +157,8 @@ describe("createDesktopBrowserRuntime", () => {
 
   test("reports the connected Chrome lane when the browser host is external", async () => {
     const env = {
-      UNEMPLOYED_ENABLE_TEST_API: "1",
-      UNEMPLOYED_BROWSER_HOST: "external",
+      NORDRI_ENABLE_TEST_API: "1",
+      NORDRI_BROWSER_HOST: "external",
     };
     const browserRuntime = createDesktopBrowserRuntime({
       env,
@@ -192,8 +192,8 @@ describe("isBrowserAgentEnabled", () => {
       .spyOn(console, "warn")
       .mockImplementation(() => undefined);
 
-    expect(isBrowserAgentEnabled({ UNEMPLOYED_BROWSER_AGENT: "" })).toBe(true);
-    expect(isBrowserAgentEnabled({ UNEMPLOYED_BROWSER_AGENT: "   " })).toBe(
+    expect(isBrowserAgentEnabled({ NORDRI_BROWSER_AGENT: "" })).toBe(true);
+    expect(isBrowserAgentEnabled({ NORDRI_BROWSER_AGENT: "   " })).toBe(
       true,
     );
     expect(warnSpy).not.toHaveBeenCalled();
@@ -201,18 +201,18 @@ describe("isBrowserAgentEnabled", () => {
 
   test("ignores the removed LinkedIn-specific alias when the generic flag is unset", () => {
     expect(
-      isBrowserAgentEnabled({ UNEMPLOYED_LINKEDIN_BROWSER_AGENT: "0" }),
+      isBrowserAgentEnabled({ NORDRI_LINKEDIN_BROWSER_AGENT: "0" }),
     ).toBe(true);
   });
 
   test("disables only for explicit false values", () => {
-    expect(isBrowserAgentEnabled({ UNEMPLOYED_BROWSER_AGENT: "0" })).toBe(
+    expect(isBrowserAgentEnabled({ NORDRI_BROWSER_AGENT: "0" })).toBe(
       false,
     );
-    expect(isBrowserAgentEnabled({ UNEMPLOYED_BROWSER_AGENT: "false" })).toBe(
+    expect(isBrowserAgentEnabled({ NORDRI_BROWSER_AGENT: "false" })).toBe(
       false,
     );
-    expect(isBrowserAgentEnabled({ UNEMPLOYED_BROWSER_AGENT: " FALSE " })).toBe(
+    expect(isBrowserAgentEnabled({ NORDRI_BROWSER_AGENT: " FALSE " })).toBe(
       false,
     );
   });
@@ -222,19 +222,19 @@ describe("isBrowserAgentEnabled", () => {
       .spyOn(console, "warn")
       .mockImplementation(() => undefined);
 
-    expect(isBrowserAgentEnabled({ UNEMPLOYED_BROWSER_AGENT: "1" })).toBe(true);
-    expect(isBrowserAgentEnabled({ UNEMPLOYED_BROWSER_AGENT: "TRUE" })).toBe(
+    expect(isBrowserAgentEnabled({ NORDRI_BROWSER_AGENT: "1" })).toBe(true);
+    expect(isBrowserAgentEnabled({ NORDRI_BROWSER_AGENT: "TRUE" })).toBe(
       true,
     );
-    expect(isBrowserAgentEnabled({ UNEMPLOYED_BROWSER_AGENT: "yes" })).toBe(
+    expect(isBrowserAgentEnabled({ NORDRI_BROWSER_AGENT: "yes" })).toBe(
       true,
     );
-    expect(isBrowserAgentEnabled({ UNEMPLOYED_BROWSER_AGENT: "yes" })).toBe(
+    expect(isBrowserAgentEnabled({ NORDRI_BROWSER_AGENT: "yes" })).toBe(
       true,
     );
     expect(warnSpy).toHaveBeenCalledTimes(1);
     expect(warnSpy).toHaveBeenCalledWith(
-      '[desktop test-api] Unrecognized UNEMPLOYED_BROWSER_AGENT value: "yes". Falling back to the default enabled behavior.',
+      '[desktop test-api] Unrecognized NORDRI_BROWSER_AGENT value: "yes". Falling back to the default enabled behavior.',
     );
   });
 
@@ -243,16 +243,16 @@ describe("isBrowserAgentEnabled", () => {
       .spyOn(console, "warn")
       .mockImplementation(() => undefined);
 
-    expect(isBrowserAgentEnabled({ UNEMPLOYED_BROWSER_AGENT: " yes " })).toBe(
+    expect(isBrowserAgentEnabled({ NORDRI_BROWSER_AGENT: " yes " })).toBe(
       true,
     );
-    expect(isBrowserAgentEnabled({ UNEMPLOYED_BROWSER_AGENT: "YES" })).toBe(
+    expect(isBrowserAgentEnabled({ NORDRI_BROWSER_AGENT: "YES" })).toBe(
       true,
     );
 
     expect(warnSpy).toHaveBeenCalledTimes(1);
     expect(warnSpy).toHaveBeenCalledWith(
-      '[desktop test-api] Unrecognized UNEMPLOYED_BROWSER_AGENT value: "yes". Falling back to the default enabled behavior.',
+      '[desktop test-api] Unrecognized NORDRI_BROWSER_AGENT value: "yes". Falling back to the default enabled behavior.',
     );
   });
 });
@@ -310,7 +310,7 @@ describe("getTestBrowserSessionStatus", () => {
 
     expect(getTestBrowserSessionStatus({})).toBeNull();
     expect(
-      getTestBrowserSessionStatus({ UNEMPLOYED_TEST_BROWSER_SESSION_STATUS: "   " }),
+      getTestBrowserSessionStatus({ NORDRI_TEST_BROWSER_SESSION_STATUS: "   " }),
     ).toBeNull();
     expect(warnSpy).not.toHaveBeenCalled();
   });
@@ -318,12 +318,12 @@ describe("getTestBrowserSessionStatus", () => {
   test("parses valid browser session statuses", () => {
     expect(
       getTestBrowserSessionStatus({
-        UNEMPLOYED_TEST_BROWSER_SESSION_STATUS: "login_required",
+        NORDRI_TEST_BROWSER_SESSION_STATUS: "login_required",
       }),
     ).toBe("login_required");
     expect(
       getTestBrowserSessionStatus({
-        UNEMPLOYED_TEST_BROWSER_SESSION_STATUS: " blocked ",
+        NORDRI_TEST_BROWSER_SESSION_STATUS: " blocked ",
       }),
     ).toBe("blocked");
   });
@@ -335,17 +335,17 @@ describe("getTestBrowserSessionStatus", () => {
 
     expect(
       getTestBrowserSessionStatus({
-        UNEMPLOYED_TEST_BROWSER_SESSION_STATUS: "needs_login",
+        NORDRI_TEST_BROWSER_SESSION_STATUS: "needs_login",
       }),
     ).toBeNull();
     expect(
       getTestBrowserSessionStatus({
-        UNEMPLOYED_TEST_BROWSER_SESSION_STATUS: "needs_login",
+        NORDRI_TEST_BROWSER_SESSION_STATUS: "needs_login",
       }),
     ).toBeNull();
     expect(warnSpy).toHaveBeenCalledTimes(1);
     expect(warnSpy).toHaveBeenCalledWith(
-      '[desktop test-api] Unrecognized UNEMPLOYED_TEST_BROWSER_SESSION_STATUS value: "needs_login". Falling back to the default no-override behavior.',
+      '[desktop test-api] Unrecognized NORDRI_TEST_BROWSER_SESSION_STATUS value: "needs_login". Falling back to the default no-override behavior.',
     );
   });
 });
@@ -363,7 +363,7 @@ describe("getDesktopTestDelayMs", () => {
 
   test("accepts trimmed numeric delay values", () => {
     expect(
-      getDesktopTestDelayMs(" 250 ", "UNEMPLOYED_TEST_PROFILE_COPILOT_DELAY_MS"),
+      getDesktopTestDelayMs(" 250 ", "NORDRI_TEST_PROFILE_COPILOT_DELAY_MS"),
     ).toBe(250);
   });
 
@@ -373,10 +373,10 @@ describe("getDesktopTestDelayMs", () => {
       .mockImplementation(() => undefined);
 
     expect(
-      getDesktopTestDelayMs("250ms", "UNEMPLOYED_TEST_PROFILE_COPILOT_DELAY_MS"),
+      getDesktopTestDelayMs("250ms", "NORDRI_TEST_PROFILE_COPILOT_DELAY_MS"),
     ).toBe(0);
     expect(warnSpy).toHaveBeenCalledWith(
-      '[desktop test-api] Unrecognized UNEMPLOYED_TEST_PROFILE_COPILOT_DELAY_MS value: "250ms". Falling back to the default disabled behavior.',
+      '[desktop test-api] Unrecognized NORDRI_TEST_PROFILE_COPILOT_DELAY_MS value: "250ms". Falling back to the default disabled behavior.',
     );
   });
 });
@@ -396,22 +396,22 @@ describe("getResumePreviewTestMode", () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
     expect(getResumePreviewTestMode({})).toBe("ok");
-    expect(getResumePreviewTestMode({ UNEMPLOYED_TEST_RESUME_PREVIEW: "   " })).toBe("ok");
+    expect(getResumePreviewTestMode({ NORDRI_TEST_RESUME_PREVIEW: "   " })).toBe("ok");
     expect(warnSpy).not.toHaveBeenCalled();
   });
 
   test("accepts fail_once override", () => {
-    expect(getResumePreviewTestMode({ UNEMPLOYED_TEST_RESUME_PREVIEW: "fail_once" })).toBe("fail_once");
+    expect(getResumePreviewTestMode({ NORDRI_TEST_RESUME_PREVIEW: "fail_once" })).toBe("fail_once");
   });
 
   test("warns once and falls back to ok for invalid overrides", () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
-    expect(getResumePreviewTestMode({ UNEMPLOYED_TEST_RESUME_PREVIEW: "broken" })).toBe("ok");
-    expect(getResumePreviewTestMode({ UNEMPLOYED_TEST_RESUME_PREVIEW: "broken" })).toBe("ok");
+    expect(getResumePreviewTestMode({ NORDRI_TEST_RESUME_PREVIEW: "broken" })).toBe("ok");
+    expect(getResumePreviewTestMode({ NORDRI_TEST_RESUME_PREVIEW: "broken" })).toBe("ok");
     expect(warnSpy).toHaveBeenCalledTimes(1);
     expect(warnSpy).toHaveBeenCalledWith(
-      '[desktop test-api] Unrecognized UNEMPLOYED_TEST_RESUME_PREVIEW value: "broken". Falling back to the default "ok" behavior.',
+      '[desktop test-api] Unrecognized NORDRI_TEST_RESUME_PREVIEW value: "broken". Falling back to the default "ok" behavior.',
     );
   });
 });

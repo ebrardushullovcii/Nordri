@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
-import { createInMemoryJobFinderRepository } from "@unemployed/db";
-import type { JobFinderRepository } from "@unemployed/db";
+import { createInMemoryJobFinderRepository } from "@nordri/db";
+import type { JobFinderRepository } from "@nordri/db";
 
 import { createJobFinderWorkspaceService } from "./index";
 import {

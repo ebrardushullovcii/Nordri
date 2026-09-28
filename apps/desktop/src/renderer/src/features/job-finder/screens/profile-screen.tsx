@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useLocation, useSearchParams } from "react-router-dom";
 import type {
   CandidateProfile,
   DiscoveryRunRecord,
@@ -16,12 +16,12 @@ import type {
   SourceDebugRunDetails,
   SourceDebugRunRecord,
   SourceInstructionArtifact,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { Button } from "@renderer/components/ui/button";
 import {
   describeResumeIdentityOwnershipChoice,
   useResumeSourceNameForProfile,
-} from "@unemployed/job-finder/resume-identity";
+} from "@nordri/job-finder/resume-identity";
 import { buildComparableValueFingerprint } from "../lib/profile-editor-review-candidates";
 import { LockedScreenLayout } from "../components/locked-screen-layout";
 import { ProfileActiveSectionContent } from "../components/profile/profile-active-section-content";
@@ -46,7 +46,7 @@ import { formatProfileSetupReviewValue } from "../components/profile/setup/profi
 import {
   areEquivalentExperienceRecords,
   areEquivalentEducationRecords,
-} from "@unemployed/job-finder/resume-record-identity";
+} from "@nordri/job-finder/resume-record-identity";
 import { getJobFinderScrollBehavior } from "../lib/job-finder-scroll-behavior";
 
 import { ResumeIdentityChoiceNotice } from "../components/profile/resume-identity-choice-notice";
@@ -191,6 +191,7 @@ export function ProfileScreen(props: {
   } = props;
 
   const [searchParams, setSearchParams] = useSearchParams();
+  const location = useLocation();
   const requestedSection = searchParams.get("section");
   const requestedFocus = searchParams.get("focus");
   const [activeSection, setActiveSection] = useState<ProfileSection>(
@@ -559,7 +560,10 @@ export function ProfileScreen(props: {
     const nextSearchParams = new URLSearchParams(searchParams);
     nextSearchParams.set("section", section);
     nextSearchParams.delete("focus");
-    setSearchParams(nextSearchParams, { replace: true });
+    setSearchParams(nextSearchParams, {
+      replace: true,
+      state: location.state as unknown,
+    });
   }
 
   return (

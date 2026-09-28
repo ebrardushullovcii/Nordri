@@ -33,14 +33,18 @@ describe("publishOnApplyStandingChanges", () => {
     vi.useFakeTimers();
     let swapWins = false;
     const repository = {
-      upsertApplyRun: vi.fn((_run: unknown) => Promise.resolve()),
-      upsertApplyJobResult: vi.fn((_result: unknown) => Promise.resolve()),
-      compareAndSwapApplyJobResult: vi.fn((_input: unknown) =>
-        Promise.resolve(swapWins),
+      upsertApplyRun: vi.fn<(run: unknown) => Promise<void>>(() =>
+        Promise.resolve(),
       ),
-      markApplicationPreparationStarted: vi.fn((_input: unknown) =>
-        Promise.resolve({ result: {}, didStart: true }),
+      upsertApplyJobResult: vi.fn<(result: unknown) => Promise<void>>(() =>
+        Promise.resolve(),
       ),
+      compareAndSwapApplyJobResult: vi.fn<(input: unknown) => Promise<boolean>>(
+        () => Promise.resolve(swapWins),
+      ),
+      markApplicationPreparationStarted: vi.fn<
+        (input: unknown) => Promise<{ result: object; didStart: boolean }>
+      >(() => Promise.resolve({ result: {}, didStart: true })),
     };
     const publish = vi.fn();
     publishOnApplyStandingChanges(repository as never, publish);

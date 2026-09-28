@@ -5,7 +5,7 @@ import {
   getResumeEntryFieldTargetId,
   type ResumeCoverageComparison,
   type ResumeDraft,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { createRoot, type Root } from "react-dom/client";
 import {
   afterAll,

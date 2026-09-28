@@ -9,14 +9,14 @@ import {
   ResumeImportRunSchema,
   type CandidateExperience,
   type ResumeImportFieldCandidate,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import {
   applyResumeTimelineRepairAction,
   deriveResumeTimelineRepairProposals,
   persistResumeTimelineRepairAction,
 } from "./resume-timeline-repair";
-import { createFileJobFinderRepository } from "@unemployed/db";
+import { createFileJobFinderRepository } from "@nordri/db";
 import { createSeed } from "../workspace-service.test-fixtures";
 
 function experience(
@@ -276,7 +276,7 @@ describe("resume timeline repair", () => {
   });
   test("persists accepted and undone proposal state with the profile across SQLite restart", async () => {
     const tempDirectory = await mkdtemp(
-      path.join(os.tmpdir(), "unemployed-timeline-repair-"),
+      path.join(os.tmpdir(), "nordri-timeline-repair-"),
     );
     const filePath = path.join(tempDirectory, "job-finder.sqlite");
     const record = experience("persisted_reversed", {

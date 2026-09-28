@@ -23,7 +23,7 @@ import {
   type ContradictoryAnswerDetection,
   type SnoozeGroupedDecisionInput,
   type UserActionRequest,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { normalizeAnswerQuestion } from "./workspace-answer-memory";
 
 /**

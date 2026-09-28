@@ -1,12 +1,12 @@
 import { describe, expect, test } from "vitest";
-import type { ResumeDraft, ResumeDraftPatch } from "@unemployed/contracts";
+import type { ResumeDraft, ResumeDraftPatch } from "@nordri/contracts";
 
 import { applyPatchToResumeDraft } from "./resume-workspace-patches";
 import {
   hasBlockingResumeClaimAssessment,
   validateResumeDraft,
 } from "./resume-workspace-helpers";
-import { fnv1a32 } from "@unemployed/core";
+import { fnv1a32 } from "@nordri/core";
 import { normalizeText } from "./shared";
 import { createSeed } from "../workspace-service.test-support";
 

@@ -3,7 +3,7 @@ import type {
   ReviewQueueItem,
   SavedJob,
   TailoredAsset,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { describe, expect, it } from "vitest";
 import { JOB_FINDER_BROWSER_NAME } from "../../lib/job-finder-browser-handoff-copy";
 import {

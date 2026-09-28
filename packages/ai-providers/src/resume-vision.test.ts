@@ -46,7 +46,7 @@ describe("resume vision provider", () => {
   afterEach(() => {
     // Individual mocks restore fetch explicitly; this keeps tests isolated when assertions fail early.
     vi.restoreAllMocks();
-    delete process.env.UNEMPLOYED_RESUME_VISION_API_KEY;
+    delete process.env.NORDRI_RESUME_VISION_API_KEY;
   });
 
   test("normalizes model candidates and preserves visual evidence", async () => {
@@ -250,8 +250,8 @@ describe("resume vision provider", () => {
 
   test("uses the shared AI provider config for vision when vision-specific config is absent", () => {
     const provider = createResumeVisionProviderFromEnvironment({
-      UNEMPLOYED_AI_API_KEY: "shared-test-key",
-      UNEMPLOYED_AI_BASE_URL: "https://shared.example.com/v1",
+      NORDRI_AI_API_KEY: "shared-test-key",
+      NORDRI_AI_BASE_URL: "https://shared.example.com/v1",
     });
 
     expect(provider.getStatus()).toMatchObject({
@@ -308,8 +308,8 @@ describe("resume vision provider", () => {
     }) as typeof fetch;
 
     const provider = createResumeVisionProviderFromEnvironment({
-      UNEMPLOYED_AI_API_KEY: "shared-test-key",
-      UNEMPLOYED_AI_BASE_URL: "https://shared.example.com/v1",
+      NORDRI_AI_API_KEY: "shared-test-key",
+      NORDRI_AI_BASE_URL: "https://shared.example.com/v1",
     });
     const bundle = createResumeImportFixtureBundle({
       id: "shared_vision_config_bundle",
@@ -464,14 +464,14 @@ describe("resume vision provider", () => {
 
   test("prefers vision-specific config over the shared AI provider config", () => {
     const provider = createResumeVisionProviderFromEnvironment({
-      UNEMPLOYED_AI_API_KEY: "shared-test-key",
-      UNEMPLOYED_AI_BASE_URL: "https://shared.example.com/v1",
-      UNEMPLOYED_AI_VISION_API_KEY: "vision-test-key",
-      UNEMPLOYED_AI_VISION_BASE_URL: "https://vision.example.com/v1",
-      UNEMPLOYED_AI_VISION_MODEL: "test-vision-model",
-      UNEMPLOYED_RESUME_VISION_API_KEY: "resume-vision-test-key",
-      UNEMPLOYED_RESUME_VISION_BASE_URL: "https://resume-vision.example.com/v1",
-      UNEMPLOYED_RESUME_VISION_MODEL: "resume-vision-model",
+      NORDRI_AI_API_KEY: "shared-test-key",
+      NORDRI_AI_BASE_URL: "https://shared.example.com/v1",
+      NORDRI_AI_VISION_API_KEY: "vision-test-key",
+      NORDRI_AI_VISION_BASE_URL: "https://vision.example.com/v1",
+      NORDRI_AI_VISION_MODEL: "test-vision-model",
+      NORDRI_RESUME_VISION_API_KEY: "resume-vision-test-key",
+      NORDRI_RESUME_VISION_BASE_URL: "https://resume-vision.example.com/v1",
+      NORDRI_RESUME_VISION_MODEL: "resume-vision-model",
     });
 
     expect(provider.getStatus()).toMatchObject({
@@ -484,9 +484,9 @@ describe("resume vision provider", () => {
 
   test("uses the shared AI vision model override with the shared API key", () => {
     const provider = createResumeVisionProviderFromEnvironment({
-      UNEMPLOYED_AI_API_KEY: "shared-test-key",
-      UNEMPLOYED_AI_BASE_URL: "https://shared.example.com/v1",
-      UNEMPLOYED_AI_VISION_MODEL: "shared-vision-model",
+      NORDRI_AI_API_KEY: "shared-test-key",
+      NORDRI_AI_BASE_URL: "https://shared.example.com/v1",
+      NORDRI_AI_VISION_MODEL: "shared-vision-model",
     });
 
     expect(provider.getStatus()).toMatchObject({
@@ -499,14 +499,14 @@ describe("resume vision provider", () => {
 
   test("keeps shared vision routing separate from a Chat Completions text provider", () => {
     const provider = createResumeVisionProviderFromEnvironment({
-      UNEMPLOYED_AI_API_KEY: "go-test-key",
-      UNEMPLOYED_AI_BASE_URL: "https://text.example.com/v1",
-      UNEMPLOYED_AI_API_MODE: "chat_completions",
-      UNEMPLOYED_AI_REASONING_EFFORT: "max",
-      UNEMPLOYED_AI_VISION_BASE_URL: "https://vision.example.com/v1",
-      UNEMPLOYED_AI_VISION_MODEL: "gpt-5.6-luna",
-      UNEMPLOYED_AI_VISION_API_MODE: "responses",
-      UNEMPLOYED_AI_VISION_REASONING_EFFORT: "high",
+      NORDRI_AI_API_KEY: "go-test-key",
+      NORDRI_AI_BASE_URL: "https://text.example.com/v1",
+      NORDRI_AI_API_MODE: "chat_completions",
+      NORDRI_AI_REASONING_EFFORT: "max",
+      NORDRI_AI_VISION_BASE_URL: "https://vision.example.com/v1",
+      NORDRI_AI_VISION_MODEL: "gpt-5.6-luna",
+      NORDRI_AI_VISION_API_MODE: "responses",
+      NORDRI_AI_VISION_REASONING_EFFORT: "high",
     });
 
     expect(provider.getStatus()).toMatchObject({

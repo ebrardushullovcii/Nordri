@@ -2,7 +2,7 @@
 
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import type { ResumeTemplateDefinition } from "@unemployed/contracts";
+import type { ResumeTemplateDefinition } from "@nordri/contracts";
 import {
   afterAll,
   afterEach,

@@ -2,7 +2,7 @@ import type {
   AgentLoopMessage,
   AgentLoopToolCall,
   ConversationModel,
-} from "@unemployed/agent-runtime";
+} from "@nordri/agent-runtime";
 
 /**
  * A deterministic stand-in for the sidebar's model, used when no live AI is

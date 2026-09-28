@@ -36,7 +36,7 @@ import {
   TailoredAssetSchema,
   type CandidateProfile,
   type JobFinderRepositoryState,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { basename } from "node:path";

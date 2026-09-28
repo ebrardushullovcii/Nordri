@@ -1,4 +1,4 @@
-import type { JobPosting, SourceDebugWorkerAttempt } from "@unemployed/contracts";
+import type { JobPosting, SourceDebugWorkerAttempt } from "@nordri/contracts";
 import { normalizeText, uniqueStrings } from "./shared";
 import {
   filterSourceInstructionLines,

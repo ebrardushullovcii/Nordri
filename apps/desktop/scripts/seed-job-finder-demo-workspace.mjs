@@ -17,7 +17,7 @@ const builtAppFiles = [
 ];
 
 export const jobFinderDemoUsage =
-  "Usage: pnpm --filter @unemployed/desktop seed:job-finder-demo -- --user-data-dir /tmp/job-finder-demo";
+  "Usage: pnpm --filter @nordri/desktop seed:job-finder-demo -- --user-data-dir /tmp/job-finder-demo";
 
 function isPathInside(candidate, root, allowRoot = false) {
   const relative = path.relative(root, candidate);
@@ -220,19 +220,19 @@ export function buildSeedLaunchEnvironment(
     // Keep the seed offline and deterministic even when the shell has local
     // model, renderer, browser, or tester overrides configured.
     ELECTRON_RENDERER_URL: "",
-    UNEMPLOYED_BROWSER_AGENT: "0",
-    UNEMPLOYED_ENABLE_TEST_API: "1",
-    UNEMPLOYED_INTERVIEW_ADVANCED_SURFACES: "0",
-    UNEMPLOYED_TEST_API_USE_LIVE_AI: "0",
-    UNEMPLOYED_TEST_BROWSER_SESSION_STATUS: "ready",
-    UNEMPLOYED_TEST_RESUME_PREVIEW: "ok",
-    UNEMPLOYED_TEST_SYSTEM_THEME: "dark",
-    UNEMPLOYED_USER_DATA_DIR: userDataDirectory,
+    NORDRI_BROWSER_AGENT: "0",
+    NORDRI_ENABLE_TEST_API: "1",
+    NORDRI_INTERVIEW_ADVANCED_SURFACES: "0",
+    NORDRI_TEST_API_USE_LIVE_AI: "0",
+    NORDRI_TEST_BROWSER_SESSION_STATUS: "ready",
+    NORDRI_TEST_RESUME_PREVIEW: "ok",
+    NORDRI_TEST_SYSTEM_THEME: "dark",
+    NORDRI_USER_DATA_DIR: userDataDirectory,
   };
 
-  delete environment.UNEMPLOYED_CHROME_DEBUG_PORT;
-  delete environment.UNEMPLOYED_CHROME_PATH;
-  delete environment.UNEMPLOYED_TEST_AUTHORIZE_INTERMEDIATE_ATS_WRITES;
+  delete environment.NORDRI_CHROME_DEBUG_PORT;
+  delete environment.NORDRI_CHROME_PATH;
+  delete environment.NORDRI_TEST_AUTHORIZE_INTERMEDIATE_ATS_WRITES;
   return environment;
 }
 
@@ -241,9 +241,9 @@ export function buildRelaunchLaunchContract(userDataDirectory) {
     command: ["pnpm", "exec", "electron", ...jobFinderDemoLaunchArgs],
     cwd: desktopDirectory,
     env: {
-      UNEMPLOYED_USER_DATA_DIR: userDataDirectory,
-      UNEMPLOYED_BROWSER_AGENT: "0",
-      UNEMPLOYED_ENABLE_TEST_API: "0",
+      NORDRI_USER_DATA_DIR: userDataDirectory,
+      NORDRI_BROWSER_AGENT: "0",
+      NORDRI_ENABLE_TEST_API: "0",
       ELECTRON_RENDERER_URL: "",
     },
   };
@@ -284,14 +284,14 @@ export function summarizeDemoSnapshot(snapshot) {
 export async function loadApplyQueueDemoSnapshot(page) {
   await page.waitForFunction(
     () =>
-      typeof globalThis.unemployed?.jobFinder?.test?.loadApplyQueueDemo ===
+      typeof globalThis.nordri?.jobFinder?.test?.loadApplyQueueDemo ===
       "function",
     undefined,
     { timeout: 20_000 },
   );
 
   return page.evaluate(async () => {
-    const loader = globalThis.unemployed?.jobFinder?.test?.loadApplyQueueDemo;
+    const loader = globalThis.nordri?.jobFinder?.test?.loadApplyQueueDemo;
     if (typeof loader !== "function") {
       throw new Error("Desktop test API is unavailable in the renderer.");
     }

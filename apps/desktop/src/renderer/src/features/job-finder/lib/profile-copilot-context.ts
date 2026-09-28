@@ -1,4 +1,4 @@
-import type { ProfileCopilotContext } from "@unemployed/contracts";
+import type { ProfileCopilotContext } from "@nordri/contracts";
 
 export function getProfileCopilotContextKey(
   context: ProfileCopilotContext,

@@ -5,11 +5,11 @@ import {
   type AgentLoopModel,
   type AgentLoopTool,
   type AgentLoopToolOutcome,
-} from "@unemployed/agent-runtime";
+} from "@nordri/agent-runtime";
 import {
   describeBrowserError,
   type ApplicationAttemptQuestion,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import type { LLMClient } from "../agent/contracts";
 import { createPageTools } from "../page-tools";

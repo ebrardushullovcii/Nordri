@@ -2,7 +2,7 @@ import type {
   ApplicationAutomationMode,
   ApplyRun,
   JobFinderWorkspaceSnapshot,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 /**
  * The parts of the workspace service "Apply to all" and "Try again for all"

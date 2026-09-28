@@ -1,4 +1,4 @@
-import { ProfileCopilotReplySchema, type ProfileCopilotReply } from "@unemployed/contracts";
+import { ProfileCopilotReplySchema, type ProfileCopilotReply } from "@nordri/contracts";
 
 import type { ReviseCandidateProfileInput } from "../shared";
 import {

@@ -3,7 +3,7 @@ import type {
   ResumeDraftPatch,
   ResumeDraftRevision,
   ResumeValidationIssue,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 /**
  * The text a blocked claim replaced, plus the exact user patch that puts it

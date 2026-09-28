@@ -5,7 +5,7 @@ import type {
   BrowserSessionState,
   JobSearchPreferences,
   SavedJob,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import type { ReactNode } from "react";
 // The real screen header renders a router Link for visible source recovery,
 // so every full-screen render needs router context (same as the other

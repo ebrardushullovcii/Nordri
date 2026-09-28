@@ -18,7 +18,7 @@ import {
   type DesktopBrowserCommand,
   type DesktopBrowserSnapshot,
   type DesktopBrowserViewport,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import path from "node:path";
 import { createAgentInputLedger } from "./agent-input-ledger";
 import { BrowserCdpBridge, type BrowserCdpPage } from "./browser-cdp-bridge";
@@ -37,7 +37,7 @@ import {
   normalizeBrowserNavigation,
 } from "./browser-navigation";
 
-export const EMBEDDED_BROWSER_PARTITION = "persist:unemployed-browser";
+export const EMBEDDED_BROWSER_PARTITION = "persist:nordri-browser";
 const MAX_TABS = 8;
 interface BrowserPage extends BrowserCdpPage {
   view: WebContentsView;
@@ -131,9 +131,7 @@ export class EmbeddedBrowser {
     height: 640,
   };
   private readonly operations = new Map<AbortController, string>();
-  /** When automation last sent pointer or keyboard input to each tab. */
-  private readonly automationInputAt = new Map<string, number>();
-  /** The agent's pointer presses, told apart from the person's by source. */
+  /** The agent's input, told apart from the person's by source. */
   private readonly agentPresses = createAgentInputLedger();
   private readonly operationClaims = new Map<
     AbortController,
@@ -635,9 +633,12 @@ export class EmbeddedBrowser {
     // take native focus on their own (a script focusing a field, a new tab),
     // so focus with the pointer merely resting over the view is not the user:
     // watching an application fill in must never end it. Only a real click or
-    // keypress on the page, with the pointer over it, is the user stepping in.
+    // keypress on the page is the user stepping in.
     // Then the agent stops and their input lands, without a control button.
-    const handleUserInput = (kind: "pointer" | "key") => {
+    const handleUserInput = (
+      kind: "pointer" | "key",
+      key?: { code: string; key: string },
+    ) => {
       if (kind === "pointer") {
         // Every press automation sends is noted before it reaches the page,
         // so a mouse-down with no noted press behind it is the person's own
@@ -646,13 +647,7 @@ export class EmbeddedBrowser {
         if (this.agentPresses.claimPress(page.id)) return;
         if (!this.isPointerOverPage(page)) return;
       } else {
-        // Keys cannot be matched one to one, so a key that follows automation
-        // input to this tab within a moment is the agent's, and the pointer
-        // must have moved onto the page just now.
-        if (Date.now() - (this.automationInputAt.get(page.id) ?? 0) < 750)
-          return;
-        if (!this.cursorMovedRecently() || !this.isPointerOverPage(page))
-          return;
+        if (key && this.agentPresses.claimKey(page.id, key)) return;
       }
       if (this.lentTabs.has(page.id)) {
         // The person's click or key in a lent tab takes it back from the
@@ -686,10 +681,12 @@ export class EmbeddedBrowser {
     };
     page.contents.on("input-event", (_event, input) => {
       if (input.type === "mouseDown") handleUserInput("pointer");
-      else if (input.type === "keyDown") handleUserInput("key");
     });
     page.contents.on("before-input-event", (event, input) => {
       if (input.type !== "keyDown") return;
+      // Native input-event reports rawKeyDown; before-input-event supplies
+      // the same key code that was recorded before an automation dispatch.
+      handleUserInput("key", { code: input.code, key: input.key });
       const mod = process.platform === "darwin" ? input.meta : input.control;
       if (input.key === "Escape" && !input.isComposing) {
         event.preventDefault();
@@ -999,7 +996,7 @@ export class EmbeddedBrowser {
   }): Promise<string | null> {
     const bridge = this.bridge;
     if (!bridge) return null;
-    const token = `unemployed-identify-${randomUUID()}`;
+    const token = `nordri-identify-${randomUUID()}`;
     const landed = bridge.waitForToken(token, 3_000);
     void page.evaluate((value) => value, token).catch(() => undefined);
     return landed;
@@ -1036,7 +1033,14 @@ export class EmbeddedBrowser {
           ),
         createPage: (url) =>
           Promise.resolve(
-            this.createPage(url, undefined, undefined, undefined, undefined, false),
+            this.createPage(
+              url,
+              undefined,
+              undefined,
+              undefined,
+              undefined,
+              false,
+            ),
           ),
         closePage: (id) => this.closePageForAutomation(id),
         selectPage: (id) => this.selectPage(id),
@@ -1048,8 +1052,8 @@ export class EmbeddedBrowser {
         emulateFocus: () =>
           this.operations.size > 0 && !this.automationRefused(),
         onAutomationInput: (pageId, input) => {
-          this.automationInputAt.set(pageId, Date.now());
           if (input?.pointerDown) this.agentPresses.notePress(pageId);
+          if (input?.keyDown) this.agentPresses.noteKey(pageId, input.keyDown);
         },
       });
       this.bridge = bridge;
@@ -1112,7 +1116,7 @@ export class EmbeddedBrowser {
     const claimPage: ClaimAutomationPage = (page) => {
       const bridge = this.bridge;
       if (!bridge || !this.operations.has(controller)) return;
-      const token = `unemployed-claim-${randomUUID()}`;
+      const token = `nordri-claim-${randomUUID()}`;
       const landed = bridge
         .waitForToken(token, 5_000)
         .then((tabId) => {
@@ -1317,23 +1321,6 @@ export class EmbeddedBrowser {
     this.handoverPromise = handover;
     this.emit();
     return handover;
-  }
-
-  // Where the pointer last was and when it last moved. A pointer resting
-  // over the browser view while the agent works is not the person stepping
-  // in; only a pointer that moved there just now is.
-  private lastCursor: { x: number; y: number; movedAt: number } | null = null;
-  private cursorMovedRecently(): boolean {
-    const point = screen.getCursorScreenPoint();
-    const now = Date.now();
-    const previous = this.lastCursor;
-    const moved = !previous || previous.x !== point.x || previous.y !== point.y;
-    this.lastCursor = {
-      x: point.x,
-      y: point.y,
-      movedAt: moved ? now : (previous?.movedAt ?? 0),
-    };
-    return now - this.lastCursor.movedAt < 2_500;
   }
 
   /** The page is on screen and the pointer is over it. */

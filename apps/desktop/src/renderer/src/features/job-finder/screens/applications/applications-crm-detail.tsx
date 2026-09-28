@@ -17,7 +17,7 @@ import type {
   ApplicationRecord,
   CandidateAsset,
   RecordOutcomeInput,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { Button } from "@renderer/components/ui/button";
 
 import {
@@ -196,7 +196,7 @@ export function ApplicationsCrmDetail(props: {
 
   useEffect(() => {
     let active = true;
-    void window.unemployed.jobFinder
+    void window.nordri.jobFinder
       .listCandidateAssets({ includeDeleted: false })
       .then((result) => {
         if (!active) return;

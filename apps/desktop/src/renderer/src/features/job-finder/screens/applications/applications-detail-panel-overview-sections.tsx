@@ -2,7 +2,7 @@ import type {
   ApplicationAttempt,
   ApplicationRecord,
   JobFinderWorkspaceSnapshot,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { ApplicationsDetailFactStrip } from "./applications-detail-fact-strip";
 import type { PlannedApplyStanding } from "./applications-recovery-state";
 

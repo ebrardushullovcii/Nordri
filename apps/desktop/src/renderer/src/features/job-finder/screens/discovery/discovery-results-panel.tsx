@@ -16,13 +16,13 @@ import type {
   ListingActivity,
   SavedJob,
   WorkMode,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   describeInterruptedDiscoveryRun,
   fitRecommendationValues,
   getDiscoveryRunPhase,
   workModeValues,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { ChevronDown } from "lucide-react";
 import { Badge } from "@renderer/components/ui/badge";
 import { Button } from "@renderer/components/ui/button";
@@ -88,7 +88,7 @@ import {
   type DiscoveryResultsSortField,
   useDiscoveryResultsSort,
 } from "./discovery-results-sort";
-import { getDiscoveryListingRecencyKey } from "@unemployed/job-finder/discovery-ordering";
+import { getDiscoveryListingRecencyKey } from "@nordri/job-finder/discovery-ordering";
 import type { DiscoveryLatestRunVerdict } from "./discovery-run-feedback";
 import { getDiscoverySourceLabels } from "./discovery-source-attribution";
 import { useAssistantContextSource } from "../../assistant/assistant-provider";
@@ -203,12 +203,12 @@ const WORK_MODE_UNSPECIFIED_FILTER = "Not specified";
 // storage can never grow with plan count and plans never see each other's
 // filters.
 const FACET_FILTERS_STORAGE_KEY =
-  "unemployed.job-finder.discovery.result-filters.v2";
+  "nordri.job-finder.discovery.result-filters.v2";
 // Legacy unscoped snapshot from before plan scoping existed. Read once as
 // the migrating value for whichever plan is active, then removed after the
 // first successful scoped write.
 const LEGACY_FACET_FILTERS_STORAGE_KEY =
-  "unemployed.job-finder.discovery.result-filters.v1";
+  "nordri.job-finder.discovery.result-filters.v1";
 const FACET_SCOPE_FALLBACK = "default";
 const MAX_FACET_SCOPES = 8;
 const MAX_PERSISTED_FACET_VALUES = 24;

@@ -1,4 +1,4 @@
-import type { ApplyBlockedAttempt } from "@unemployed/contracts";
+import type { ApplyBlockedAttempt } from "@nordri/contracts";
 import { describe, expect, test } from "vitest";
 
 import { attemptKey, judgeBlockedAttempt } from "./blocked-attempts";

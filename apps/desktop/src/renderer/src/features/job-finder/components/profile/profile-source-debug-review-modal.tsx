@@ -4,7 +4,7 @@ import { X } from "lucide-react";
 import type {
   SourceDebugRunDetails,
   SourceDebugRunRecord,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { Button } from "@renderer/components/ui/button";
 import { ProfileSourceDebugReviewModalContent } from "./profile-source-debug-review-modal-content";
 import { useModalFocusTrap } from "./use-modal-focus-trap";

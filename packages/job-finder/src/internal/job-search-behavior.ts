@@ -2,7 +2,7 @@ import {
   AiBehaviorPreferenceSchema,
   type JobFinderSettings,
   type JobSearchPreferences,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 /**
  * Carries Settings' "Count remote jobs as any location" into the search

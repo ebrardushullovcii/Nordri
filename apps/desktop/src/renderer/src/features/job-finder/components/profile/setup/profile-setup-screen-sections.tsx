@@ -11,7 +11,7 @@ import type {
   ProfileSetupStep,
   ResumeImportFieldCandidateSummary,
   ResumeImportProgressEvent,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { Badge } from "@renderer/components/ui/badge";
 import { Button } from "@renderer/components/ui/button";
 import {
@@ -564,7 +564,10 @@ export function ProfileSetupReviewQueueCard(props: {
                             <Badge
                               variant={badgeVariantForSeverity(item.severity)}
                             >
-                              {formatReviewSeverity(item.severity)}
+                              {isFinishBlockingReviewItem(item) &&
+                              isProfileSetupMissingFieldReviewItem(item)
+                                ? "Required"
+                                : formatReviewSeverity(item.severity)}
                             </Badge>
                           ) : (
                             <Badge
@@ -752,19 +755,26 @@ export function ProfileSetupReviewQueueCard(props: {
                             Clear current value
                           </Button>
                         ) : null}
-                        <Button
-                          disabled={
-                            Boolean(props.actionsDisabledReason) ||
-                            props.isReviewItemPending(item.id)
-                          }
-                          pending={isRowReviewActionPending}
-                          onClick={() => applyReviewAction(item.id, "dismiss")}
-                          size="sm"
-                          type="button"
-                          variant="ghost"
-                        >
-                          Dismiss for now
-                        </Button>
+                        {!(
+                          isFinishBlockingReviewItem(item) &&
+                          isProfileSetupMissingFieldReviewItem(item)
+                        ) ? (
+                          <Button
+                            disabled={
+                              Boolean(props.actionsDisabledReason) ||
+                              props.isReviewItemPending(item.id)
+                            }
+                            pending={isRowReviewActionPending}
+                            onClick={() =>
+                              applyReviewAction(item.id, "dismiss")
+                            }
+                            size="sm"
+                            type="button"
+                            variant="ghost"
+                          >
+                            Dismiss for now
+                          </Button>
+                        ) : null}
                       </div>
                     ) : null}
                     {item.status === "pending" &&

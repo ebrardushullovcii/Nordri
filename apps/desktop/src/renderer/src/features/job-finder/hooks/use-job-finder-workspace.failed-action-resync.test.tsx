@@ -3,7 +3,7 @@
 import type {
   JobFinderWorkspaceSnapshot,
   JobFinderWorkspaceSyncResult,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -61,7 +61,7 @@ describe("useJobFinderWorkspace after a failed action", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    Object.defineProperty(window, "unemployed", {
+    Object.defineProperty(window, "nordri", {
       configurable: true,
       value: {
         ping: vi.fn(() => Promise.resolve({ platform: "win32" as const })),
@@ -71,13 +71,13 @@ describe("useJobFinderWorkspace after a failed action", () => {
           getWorkspace,
           checkBrowserSession,
         },
-      } as unknown as Window["unemployed"],
+      } as unknown as Window["nordri"],
     });
   });
 
   afterEach(() => {
     cleanup();
-    Reflect.deleteProperty(window, "unemployed");
+    Reflect.deleteProperty(window, "nordri");
   });
 
   it("re-syncs so a resume run that failed shows its recorded failure", async () => {

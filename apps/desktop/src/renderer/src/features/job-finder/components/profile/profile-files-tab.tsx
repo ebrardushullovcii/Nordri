@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { CandidateAsset, CandidateAssetKind } from "@unemployed/contracts";
+import type { CandidateAsset, CandidateAssetKind } from "@nordri/contracts";
 import { Button } from "@renderer/components/ui/button";
 import { FormSelect } from "../form-select";
 import { getJobFinderErrorDetail } from "../../lib/describe-failure";
@@ -26,7 +26,7 @@ const kindOptions: readonly { value: CandidateAssetKind; label: string }[] = [
 ];
 
 /** Fired by Applications when it approves a letter into the person's files. */
-const PROFILE_FILES_CHANGED_EVENT = "unemployed:candidate-assets-changed";
+const PROFILE_FILES_CHANGED_EVENT = "nordri:candidate-assets-changed";
 
 function formatByteSize(byteSize: number) {
   if (byteSize < 1024) return `${byteSize} B`;
@@ -87,7 +87,7 @@ export function ProfileFilesTab({
 
   const refreshAssets = useCallback(async (message?: string) => {
     try {
-      const result = await window.unemployed.jobFinder.listCandidateAssets({
+      const result = await window.nordri.jobFinder.listCandidateAssets({
         includeDeleted: true,
       });
       if (!mountedRef.current) return false;
@@ -119,7 +119,7 @@ export function ProfileFilesTab({
     setPendingAction("import");
     setStatus(null);
     try {
-      const result = await window.unemployed.jobFinder.importCandidateAsset({
+      const result = await window.nordri.jobFinder.importCandidateAsset({
         kind,
         sensitivity: "sensitive",
         // Every file added here is added in order to be attached; the old
@@ -146,7 +146,7 @@ export function ProfileFilesTab({
     setPendingAction(asset.id);
     setStatus(null);
     try {
-      await window.unemployed.jobFinder.deleteCandidateAsset({
+      await window.nordri.jobFinder.deleteCandidateAsset({
         assetId: asset.id,
       });
       await refreshAssets(
@@ -164,7 +164,7 @@ export function ProfileFilesTab({
     setPendingAction(`restore:${asset.id}`);
     setStatus(null);
     try {
-      const result = await window.unemployed.jobFinder.restoreCandidateAsset({
+      const result = await window.nordri.jobFinder.restoreCandidateAsset({
         assetId: asset.id,
         retention: asset.retention,
       });

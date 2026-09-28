@@ -1,9 +1,9 @@
 # Product
 
-`UnEmployed` is one local-first desktop app with two modules:
+`Nordri` is one local-first desktop app with two modules:
 
 - `Job Finder`
-- `Interview Helper`
+- `Live Assistant`
 
 ## Shared Baseline
 
@@ -150,7 +150,7 @@ saved envelope with preflight and one idempotency key; `accountCreationAuthorize
 stays false and test runs stay `prepare_only` (ADR 0024, ADR 0027). See
 [ADR 0012](adr/0012-user-scoped-autonomous-application-authority.md).
 
-## Interview Helper
+## Live Assistant
 
 Current baseline:
 
@@ -165,7 +165,7 @@ Current baseline:
 - popup workspace updates are event-driven rather than renderer reloads so live audio/transcript changes cannot erase an in-progress answer draft or pending image attachment; popup position and size persist across sessions
 - personal-story requests without candidate evidence produce a bracketed STAR scaffold instead of invented employers, incidents, technology, timelines, metrics, or outcomes; screenshot-dependent questions use model-backed visual observations when available and otherwise disclose that visual analysis is unavailable instead of guessing from earlier transcript context
 
-- active sessions expose a derived Session health summary for microphone/system-audio signal, transcription backlog and fallback, cue latency and fallback, popup visibility, and the latest recoverable failure. It uses existing local session state, preserves the session on failure, and never writes back to Job Finder automatically\r\n\r\nHard rule: capture, screenshots, attachments, advanced overlays, and model use must stay explicit, visible, auditable, and adapter-owned. See [ADR 0003](adr/0003-interview-helper-live-session-architecture.md) and [ADR 0008](adr/0008-visible-first-interview-helper.md).
+- active sessions expose a derived Session health summary for microphone/system-audio signal, transcription backlog and fallback, cue latency and fallback, popup visibility, and the latest recoverable failure. It uses existing local session state, preserves the session on failure, and never writes back to Job Finder automatically\r\n\r\nHard rule: capture, screenshots, attachments, advanced overlays, and model use must stay explicit, visible, auditable, and adapter-owned. See [ADR 0003](adr/0003-live-assistant-live-session-architecture.md) and [ADR 0008](adr/0008-visible-first-live-assistant.md).
 
 ## Product Defaults
 

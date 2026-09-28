@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { BrowserWindow } from "electron";
-import type { JobFinderDocumentManager } from "@unemployed/job-finder";
+import type { JobFinderDocumentManager } from "@nordri/job-finder";
 import JSZip from "jszip";
 
 import { getPdfPageCount } from "./resume-document";

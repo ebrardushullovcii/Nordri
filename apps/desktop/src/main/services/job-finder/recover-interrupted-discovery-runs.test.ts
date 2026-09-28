@@ -4,7 +4,7 @@ import {
   getDiscoveryRunPhase,
   type DiscoveryRunRecord,
   type JobFinderDiscoveryState,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { describe, expect, it } from "vitest";
 
 import { recoverInterruptedDiscoveryRuns } from "./recover-interrupted-discovery-runs";

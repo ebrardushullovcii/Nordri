@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { act, renderHook } from "@testing-library/react";
-import type { JobFinderWorkspaceSnapshot } from "@unemployed/contracts";
+import type { JobFinderWorkspaceSnapshot } from "@nordri/contracts";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -172,7 +172,7 @@ describe("useRetainedSelection", () => {
 });
 
 const INSPECTED_SELECTION_STORAGE_KEY =
-  "unemployed.job-finder.inspected-job-selections";
+  "nordri.job-finder.inspected-job-selections";
 
 type InspectedSelectionSurfaceForTest = "discovery" | "review";
 

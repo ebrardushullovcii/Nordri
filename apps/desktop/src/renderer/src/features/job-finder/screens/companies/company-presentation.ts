@@ -2,7 +2,7 @@ import type {
   CompanyEntity,
   CompanyPreference,
   CompanySalaryOfferEvidence,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 export const companyPreferenceLabels: Record<CompanyPreference, string> = {
   neutral: "Company tracking: neutral",

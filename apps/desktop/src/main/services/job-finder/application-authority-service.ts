@@ -37,8 +37,8 @@ import {
   type ResolveSubmissionOutcomeInput,
   type ResolveSubmissionOutcomeResult,
   type UpdateApplicationAuthorityEnvelopeInput,
-} from "@unemployed/contracts";
-import type { JobFinderRepository } from "@unemployed/db";
+} from "@nordri/contracts";
+import type { JobFinderRepository } from "@nordri/db";
 
 import { getJobFinderRepositoryForWorkspaceService } from "./create-workspace-service";
 import { getJobFinderWorkspaceService } from "./workspace-service";

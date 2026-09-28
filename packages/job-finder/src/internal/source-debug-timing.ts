@@ -5,7 +5,7 @@ import {
   type SourceDebugProgressEvent,
   type SourceDebugRunRecord,
   type SourceDebugRunTimingSummary,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import {
   calculateDurationMs,

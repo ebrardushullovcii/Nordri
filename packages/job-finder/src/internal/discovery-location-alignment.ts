@@ -3,7 +3,7 @@ import type {
   JobSearchPreferences,
   MatchAssessment,
   SavedJob,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   assessLocationCompatibility,
   readLocationMatchOptions,

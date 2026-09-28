@@ -8,7 +8,7 @@ import {
   within,
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ResumeCoverageComparison } from "@unemployed/contracts";
+import type { ResumeCoverageComparison } from "@nordri/contracts";
 import { ResumeCoverageComparisonPanel } from "./resume-coverage-comparison-panel";
 
 const baseComparison: ResumeCoverageComparison = {

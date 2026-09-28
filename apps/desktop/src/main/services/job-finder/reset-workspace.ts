@@ -11,8 +11,8 @@ import {
 } from "node:fs/promises";
 import type { Dirent } from "node:fs";
 import path from "node:path";
-import type { JobFinderRepository } from "@unemployed/db";
-import { JobFinderWorkspaceSnapshotSchema } from "@unemployed/contracts";
+import type { JobFinderRepository } from "@nordri/db";
+import { JobFinderWorkspaceSnapshotSchema } from "@nordri/contracts";
 import { createEmptyJobFinderRepositoryState } from "../../adapters/job-finder-initial-state";
 import type { JobFinderStartupResetRecoveryFact } from "../../../shared/job-finder-startup-reset-recovery";
 import {

@@ -5,7 +5,7 @@ import {
   DiscoveryRunReportSchema,
   DiscoveryRunRecordSchema,
   type DiscoveryRunRecord,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import { describeCampaignRunSummary } from "./workspace-campaign-methods";
 

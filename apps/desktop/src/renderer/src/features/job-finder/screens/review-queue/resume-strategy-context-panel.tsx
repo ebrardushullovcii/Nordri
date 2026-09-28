@@ -1,4 +1,4 @@
-import type { JobFinderResumeWorkspaceStrategyContext } from "@unemployed/contracts";
+import type { JobFinderResumeWorkspaceStrategyContext } from "@nordri/contracts";
 import {
   formatPersistedStrategyReason,
   resumeCoveragePolicyLabels,

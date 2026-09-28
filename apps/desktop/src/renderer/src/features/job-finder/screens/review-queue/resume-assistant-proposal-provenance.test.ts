@@ -5,7 +5,7 @@ import type {
   ResumeDraft,
   ResumeDraftPatch,
   ResumeDraftSourceRef,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { describe, expect, it } from "vitest";
 import {
   findCurrentClaimAssessment,

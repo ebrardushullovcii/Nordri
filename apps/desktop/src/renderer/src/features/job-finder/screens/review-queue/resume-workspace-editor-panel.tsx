@@ -6,7 +6,7 @@ import type {
   ResumeDraft,
   ResumeDraftPatch,
   WorkHistoryReviewSuggestion,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { Button } from "@renderer/components/ui/button";
 import { ResumeCoverageComparisonPanel } from "./resume-coverage-comparison-panel";
 import { ResumeMissingSkillChips } from "./resume-missing-skill-chips";

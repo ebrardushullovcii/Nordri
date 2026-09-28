@@ -4,7 +4,7 @@ import {
   createKnownJobSourceTargetsForFixtures,
   JobSearchPreferencesSchema,
   ResumeImportFieldCandidateSummarySchema,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   buildProfilePayload,
   buildSearchPreferencesPayload,

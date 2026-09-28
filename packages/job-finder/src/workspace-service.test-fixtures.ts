@@ -1,11 +1,11 @@
-import type { ResumeProfileExtraction } from "@unemployed/ai-providers";
-import type { JobFinderRepositorySeed } from "@unemployed/db";
+import type { ResumeProfileExtraction } from "@nordri/ai-providers";
+import type { JobFinderRepositorySeed } from "@nordri/db";
 import type {
   SavedJob,
   SavedJobDiscoveryProvenance,
   SourceDebugPhase,
   SourceInstructionArtifact,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   FRESH_START_CANDIDATE_PROFILE_ID,
   JobFinderDiscoveryStateSchema,
@@ -13,7 +13,7 @@ import {
   SavedJobDiscoveryProvenanceSchema,
   SavedJobSchema,
   SourceInstructionArtifactSchema,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 export type SourceDebugPhaseMap<TValue> = Partial<
   Record<SourceDebugPhase, TValue>

@@ -1,4 +1,4 @@
-import type { ApplyBlockedAttempt } from "@unemployed/contracts";
+import type { ApplyBlockedAttempt } from "@nordri/contracts";
 
 /**
  * Deciding whether something the guard blocked is worth stopping for.

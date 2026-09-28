@@ -1,11 +1,11 @@
 import type {
   JobFinderAiClient,
   ResumeVisionProvider,
-} from "@unemployed/ai-providers";
+} from "@nordri/ai-providers";
 import type {
   BrowserSessionRuntime,
   OpenBrowserSessionOptions,
-} from "@unemployed/browser-runtime";
+} from "@nordri/browser-runtime";
 import type {
   ApplyJobResult,
   JobFinderDiscoveryState,
@@ -17,8 +17,8 @@ import type {
   SavedJob,
   SourceDebugRunRecord,
   UserActionRequest,
-} from "@unemployed/contracts";
-import type { JobFinderRepository } from "@unemployed/db";
+} from "@nordri/contracts";
+import type { JobFinderRepository } from "@nordri/db";
 import type {
   CandidateAssetResolver,
   JobFinderDocumentManager,

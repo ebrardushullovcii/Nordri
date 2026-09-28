@@ -11,8 +11,8 @@ import type {
   AssistantResultSet,
   AssistantRunRef,
   AssistantTaskPlan,
-} from "@unemployed/contracts";
-import type { ConversationTool } from "@unemployed/agent-runtime";
+} from "@nordri/contracts";
+import type { ConversationTool } from "@nordri/agent-runtime";
 import type { z, ZodTypeAny } from "zod";
 
 import type { JobFinderWorkspaceService } from "../internal/workspace-service-contracts";

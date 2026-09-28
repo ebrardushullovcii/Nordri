@@ -4,6 +4,56 @@ import { createPreferences, createProfile } from "../test-fixtures";
 import { buildDeterministicResumeProfileExtraction } from "./resume-parser";
 
 describe("plan 019 deterministic resume parser regressions", () => {
+  test("reads the generated PDF contact location and excludes inline skill labels", () => {
+    const extraction = buildDeterministicResumeProfileExtraction(
+      {
+        existingProfile: createProfile(),
+        existingSearchPreferences: createPreferences(),
+        resumeText: [
+          "Alex Vanguard",
+          "Senior systems designer",
+          "London, UK alex@example.com +44 7700 900123 linkedin.com/in/alex-vanguard",
+          "SUMMARY",
+          "Builds resilient workflows for design systems, workflow automation, and operations platforms.",
+          "SKILLS",
+          "Core: React, Design Systems, Figma",
+          "EXPERIENCE",
+        ].join("\n"),
+      },
+      "deterministic",
+      "Test provider",
+    );
+
+    expect(extraction.currentLocation).toBe("London, UK");
+    expect(extraction.preferredLocations).toEqual(["London, UK"]);
+    expect(extraction.skills).toEqual(
+      expect.arrayContaining(["React", "Design Systems", "Figma"]),
+    );
+    expect(extraction.skills).not.toContain("Core: React");
+    expect(extraction.skillGroups.coreSkills).not.toContain("Core: React");
+  });
+
+  test("never uses a comma-separated skills line as a missing contact location", () => {
+    const extraction = buildDeterministicResumeProfileExtraction(
+      {
+        existingProfile: createProfile(),
+        existingSearchPreferences: createPreferences(),
+        resumeText: [
+          "Alex Vanguard",
+          "Senior systems designer",
+          "SKILLS",
+          "Core: React, Design Systems, Figma",
+        ].join("\n"),
+      },
+      "deterministic",
+      "Test provider",
+      { preserveExistingValues: false },
+    );
+
+    expect(extraction.currentLocation).toBeNull();
+    expect(extraction.preferredLocations).toEqual([]);
+  });
+
   test("extracts a name from inline contact header content", () => {
     const extraction = buildDeterministicResumeProfileExtraction(
       {

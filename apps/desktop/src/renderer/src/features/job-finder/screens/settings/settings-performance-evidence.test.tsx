@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
-import { JobFinderPerformanceSnapshotSchema } from "@unemployed/contracts";
+import { JobFinderPerformanceSnapshotSchema } from "@nordri/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { SettingsPerformanceEvidence } from "./settings-performance-evidence";
@@ -61,7 +61,7 @@ describe("SettingsPerformanceEvidence", () => {
       ],
     });
     const getPerformanceSnapshot = vi.fn().mockResolvedValue(snapshot);
-    Object.defineProperty(window, "unemployed", {
+    Object.defineProperty(window, "nordri", {
       configurable: true,
       value: { jobFinder: { getPerformanceSnapshot } },
     });

@@ -3,7 +3,7 @@ import {
   ApplyRunDetailsSchema,
   UserActionRequestSchema,
   type JobFinderWorkspaceSnapshot,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import { createJobFinderProductActionToolRegistry } from "./product-action-tools";
 import {

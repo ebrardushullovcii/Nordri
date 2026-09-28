@@ -1,6 +1,6 @@
 import { describe, expect, test, vi } from "vitest";
-import { ResumeDraftSchema } from "@unemployed/contracts";
-import type { ResumeDocumentBundle } from "@unemployed/contracts";
+import { ResumeDraftSchema } from "@nordri/contracts";
+import type { ResumeDocumentBundle } from "@nordri/contracts";
 import {
   createJobFinderAiClientFromEnvironment,
   createOpenAiCompatibleJobFinderAiClient,
@@ -98,7 +98,7 @@ describe("ai provider config and fallback behavior", () => {
   test("falls back to deterministic mode without an API key", () => {
     const client = createJobFinderAiClientFromEnvironment(
       createEnvironment({
-        UNEMPLOYED_AI_API_KEY: undefined,
+        NORDRI_AI_API_KEY: undefined,
       }),
     );
 
@@ -111,7 +111,7 @@ describe("ai provider config and fallback behavior", () => {
     // import used to finish "Ready" and the Assistant replied as if it were
     // the model.
     const client = createJobFinderAiClientFromEnvironment(
-      createEnvironment({ UNEMPLOYED_AI_API_KEY: undefined }),
+      createEnvironment({ NORDRI_AI_API_KEY: undefined }),
     );
 
     const stage = await client.extractResumeImportStage({
@@ -166,8 +166,8 @@ describe("ai provider config and fallback behavior", () => {
 
     try {
       const client = createJobFinderAiClientFromEnvironment({
-        UNEMPLOYED_AI_API_KEY: "test-key",
-        UNEMPLOYED_AI_MODEL: "ordinary-model",
+        NORDRI_AI_API_KEY: "test-key",
+        NORDRI_AI_MODEL: "ordinary-model",
       });
 
       await client.tailorResume({
@@ -192,9 +192,9 @@ describe("ai provider config and fallback behavior", () => {
 
     try {
       const client = createJobFinderAiClientFromEnvironment({
-        UNEMPLOYED_AI_API_KEY: "test-key",
-        UNEMPLOYED_AI_MODEL: "ordinary-model",
-        UNEMPLOYED_AI_AGGRESSIVE_REASONING_EFFORT: "high",
+        NORDRI_AI_API_KEY: "test-key",
+        NORDRI_AI_MODEL: "ordinary-model",
+        NORDRI_AI_AGGRESSIVE_REASONING_EFFORT: "high",
       });
 
       await client.tailorResume({
@@ -238,10 +238,10 @@ describe("ai provider config and fallback behavior", () => {
 
     try {
       const client = createJobFinderAiClientFromEnvironment({
-        UNEMPLOYED_AI_API_KEY: "test-key",
-        UNEMPLOYED_AI_MODEL: "ordinary-model",
-        UNEMPLOYED_AI_AGGRESSIVE_MODEL: "custom-aggressive-model",
-        UNEMPLOYED_AI_AGGRESSIVE_REASONING_EFFORT: "high",
+        NORDRI_AI_API_KEY: "test-key",
+        NORDRI_AI_MODEL: "ordinary-model",
+        NORDRI_AI_AGGRESSIVE_MODEL: "custom-aggressive-model",
+        NORDRI_AI_AGGRESSIVE_REASONING_EFFORT: "high",
       });
 
       await client.tailorResume({
@@ -285,9 +285,9 @@ describe("ai provider config and fallback behavior", () => {
 
     try {
       const client = createJobFinderAiClientFromEnvironment({
-        UNEMPLOYED_AI_API_KEY: "test-key",
-        UNEMPLOYED_AI_MODEL: "ordinary-model",
-        UNEMPLOYED_AI_AGGRESSIVE_REASONING_EFFORT: "high",
+        NORDRI_AI_API_KEY: "test-key",
+        NORDRI_AI_MODEL: "ordinary-model",
+        NORDRI_AI_AGGRESSIVE_REASONING_EFFORT: "high",
       });
 
       await client.reviseResumeDraft({
@@ -336,9 +336,9 @@ describe("ai provider config and fallback behavior", () => {
 
     try {
       const client = createJobFinderAiClientFromEnvironment({
-        UNEMPLOYED_AI_API_KEY: "test-key",
-        UNEMPLOYED_AI_MODEL: "ordinary-model",
-        UNEMPLOYED_AI_AGGRESSIVE_REASONING_EFFORT: "high",
+        NORDRI_AI_API_KEY: "test-key",
+        NORDRI_AI_MODEL: "ordinary-model",
+        NORDRI_AI_AGGRESSIVE_REASONING_EFFORT: "high",
       });
 
       await client.reviseResumeDraft({
@@ -377,7 +377,7 @@ describe("ai provider config and fallback behavior", () => {
 
   test("defaults ordinary text work to Muse Spark 1.3 on OpenCode Go", () => {
     const client = createJobFinderAiClientFromEnvironment({
-      UNEMPLOYED_AI_API_KEY: "go-test-key",
+      NORDRI_AI_API_KEY: "go-test-key",
     });
 
     expect(client.getStatus()).toMatchObject({
@@ -687,7 +687,7 @@ describe("ai provider config and fallback behavior", () => {
     try {
       const client = createJobFinderAiClientFromEnvironment(
         createEnvironment({
-          UNEMPLOYED_AI_RESUME_TIMEOUT_MS: "90000",
+          NORDRI_AI_RESUME_TIMEOUT_MS: "90000",
         }),
       );
 
@@ -1466,8 +1466,8 @@ describe("ai provider config and fallback behavior", () => {
 
     try {
       const client = createJobFinderAiClientFromEnvironment({
-        UNEMPLOYED_AI_API_KEY: "test-key",
-        UNEMPLOYED_AI_MODEL: "ordinary-model",
+        NORDRI_AI_API_KEY: "test-key",
+        NORDRI_AI_MODEL: "ordinary-model",
       });
 
       const reply = await client.reviseResumeDraft({

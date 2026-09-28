@@ -43,7 +43,7 @@ export async function createAgentSession({
       runDir,
       build,
       provider,
-      browserHost: env.UNEMPLOYED_BROWSER_HOST,
+      browserHost: env.NORDRI_BROWSER_HOST,
       userDataDir: path.join(runDir, "user-data"),
       sites: null,
       app: null,
@@ -96,8 +96,8 @@ export async function createAgentSession({
         timeout: 30000,
         env: {
           ...env,
-          UNEMPLOYED_ENABLE_TEST_API: env.UNEMPLOYED_ENABLE_TEST_API ?? "1",
-          UNEMPLOYED_USER_DATA_DIR: qa.userDataDir,
+          NORDRI_ENABLE_TEST_API: env.NORDRI_ENABLE_TEST_API ?? "1",
+          NORDRI_USER_DATA_DIR: qa.userDataDir,
         },
       });
       child = qa.app.process();
@@ -148,7 +148,7 @@ export async function createAgentSession({
       qa.page = await qa.app.firstWindow();
       await qa.page.waitForLoadState("domcontentloaded");
       await qa.page.waitForFunction(
-        () => Boolean(window.unemployed?.jobFinder),
+        () => Boolean(window.nordri?.jobFinder),
         null,
         { timeout: 30000 },
       );

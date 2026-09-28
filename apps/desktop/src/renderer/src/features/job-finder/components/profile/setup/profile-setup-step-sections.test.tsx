@@ -7,7 +7,7 @@ import {
   CandidateProfileSchema,
   ResumeImportFieldCandidateSummarySchema,
   ResumeImportRunSchema,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { ProfileSetupReviewQueueCard } from "./profile-setup-screen-sections";
 import { ProfileSetupImportStep } from "./profile-setup-step-sections";
 
@@ -447,6 +447,50 @@ describe("ProfileSetupImportStep", () => {
     expect(container?.textContent).toContain(
       "Compare Document text and Visual scan before confirming.",
     );
+  });
+
+  it("shows missing work eligibility as required with an edit action and no dismissal", () => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    act(() => {
+      root?.render(
+        <ProfileSetupReviewQueueCard
+          actionsDisabledReason={null}
+          isReviewItemPending={() => false}
+          items={[
+            {
+              id: "missing_eligibility",
+              step: "targeting",
+              target: {
+                domain: "work_eligibility",
+                key: "authorizedWorkCountries",
+                recordId: null,
+              },
+              label: "Work eligibility",
+              reason: "Answer before finishing setup.",
+              severity: "recommended",
+              status: "pending",
+              savedStatus: "pending",
+              statusSource: "saved",
+              proposedValue: null,
+              sourceSnippet: null,
+              sourceCandidateId: null,
+              sourceRunId: null,
+              createdAt: "2026-04-11T10:00:00.000Z",
+              resolvedAt: null,
+            },
+          ]}
+          latestResumeImportReviewCandidates={[]}
+          onApplyReviewAction={vi.fn()}
+          onEditReviewItem={vi.fn()}
+        />,
+      );
+    });
+    expect(container?.textContent).toContain("Required");
+    expect(container?.textContent).not.toContain("Recommended");
+    expect(container?.textContent).toContain("Edit this");
+    expect(container?.textContent).not.toContain("Dismiss for now");
   });
 
   it("shows the shared edit hint once per queue instead of above every item", () => {

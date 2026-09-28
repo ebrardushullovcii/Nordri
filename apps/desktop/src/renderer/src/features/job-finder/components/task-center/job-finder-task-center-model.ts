@@ -6,7 +6,7 @@ import type {
   ResumeImportProgressEvent,
   ResumeImportRun,
   SourceDebugRunRecord,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   classifyPausedApplyRun,
   hasPendingSampleReview,

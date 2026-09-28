@@ -2,13 +2,13 @@ import {
   ResumeImportExtractionStageSchema,
   buildCandidateConfidenceBreakdown,
   buildValuePreview,
-} from "@unemployed/ai-providers";
+} from "@nordri/ai-providers";
 import {
   ResumeImportFieldCandidateSchema,
   type ResumeDocumentBundle,
   type ResumeImportFieldCandidate,
   type ResumeImportFieldCandidateDraft,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import { buildExtractionId } from "./profile-merge";
 

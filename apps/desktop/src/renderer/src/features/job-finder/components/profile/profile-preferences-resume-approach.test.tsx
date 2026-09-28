@@ -3,7 +3,7 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import { useForm } from "react-hook-form";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { JobSearchPreferencesSchema } from "@unemployed/contracts";
+import { JobSearchPreferencesSchema } from "@nordri/contracts";
 import {
   createSearchPreferencesEditorValues,
   type SearchPreferencesEditorValues,

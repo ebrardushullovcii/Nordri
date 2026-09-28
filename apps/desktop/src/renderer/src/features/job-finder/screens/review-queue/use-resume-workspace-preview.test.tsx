@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   JobFinderResumePreview,
   ResumeDraft,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { useResumeWorkspacePreview } from "./use-resume-workspace-preview";
 
 async function actAndFlush(action: () => void): Promise<void> {

@@ -4,7 +4,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import type {
   WorkHistoryReviewAcknowledgment,
   WorkHistoryReviewSuggestion,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   buildWorkHistoryReviewAcknowledgmentCommandInput,

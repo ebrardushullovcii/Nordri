@@ -1,7 +1,7 @@
 import {
   DISCOVERY_NO_JOB_SITES_MESSAGE,
   buildDiscoveryCardOnlyEvidenceWarning,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { describe, expect, it } from "vitest";
 import {
   createDiscoveryRunCancelledFeedback,

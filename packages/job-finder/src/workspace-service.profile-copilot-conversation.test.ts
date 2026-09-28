@@ -2,11 +2,11 @@ import {
   ProfileCopilotPatchGroupSchema,
   type AgentTaskExecutionReceipt,
   type ProfileCopilotMessage,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import type {
   JobFinderAiClient,
   ReviseCandidateProfileInput,
-} from "@unemployed/ai-providers";
+} from "@nordri/ai-providers";
 import { describe, expect, test } from "vitest";
 
 import {

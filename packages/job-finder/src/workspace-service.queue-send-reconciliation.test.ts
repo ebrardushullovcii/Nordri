@@ -7,8 +7,8 @@ import {
   deriveApprovedApplicationAnswerSnapshotContent,
   serializeApplicationAuthorityDecisionPolicyForDigest,
   serializeApprovedApplicationAnswerSnapshotForDigest,
-} from "@unemployed/contracts";
-import type { JobFinderRepository } from "@unemployed/db";
+} from "@nordri/contracts";
+import type { JobFinderRepository } from "@nordri/db";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import { createSeed } from "./workspace-service.test-fixtures";

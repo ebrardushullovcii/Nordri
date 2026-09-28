@@ -1,4 +1,4 @@
-import type { ListingActivity, SavedJob } from "@unemployed/contracts";
+import type { ListingActivity, SavedJob } from "@nordri/contracts";
 
 /**
  * A candidate as the ordering sees it. `listingActivity` is a projection, so

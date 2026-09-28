@@ -65,28 +65,28 @@ importers:
       '@radix-ui/react-tabs':
         specifier: ^1.1.13
         version: 1.1.13(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
-      '@unemployed/ai-providers':
+      '@nordri/ai-providers':
         specifier: workspace:*
         version: link:../../packages/ai-providers
-      '@unemployed/browser-runtime':
+      '@nordri/browser-runtime':
         specifier: workspace:*
         version: link:../../packages/browser-runtime
-      '@unemployed/contracts':
+      '@nordri/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
-      '@unemployed/db':
+      '@nordri/db':
         specifier: workspace:*
         version: link:../../packages/db
-      '@unemployed/interview-helper':
+      '@nordri/live-assistant':
         specifier: workspace:*
-        version: link:../../packages/interview-helper
-      '@unemployed/job-finder':
+        version: link:../../packages/live-assistant
+      '@nordri/job-finder':
         specifier: workspace:*
         version: link:../../packages/job-finder
-      '@unemployed/knowledge-base':
+      '@nordri/knowledge-base':
         specifier: workspace:*
         version: link:../../packages/knowledge-base
-      '@unemployed/os-integration':
+      '@nordri/os-integration':
         specifier: workspace:*
         version: link:../../packages/os-integration
       chromium-bidi:
@@ -174,7 +174,7 @@ importers:
 
   packages/agent-runtime:
     dependencies:
-      '@unemployed/contracts':
+      '@nordri/contracts':
         specifier: workspace:*
         version: link:../contracts
       zod:
@@ -183,22 +183,22 @@ importers:
 
   packages/ai-evals:
     dependencies:
-      '@unemployed/ai-providers':
+      '@nordri/ai-providers':
         specifier: workspace:*
         version: link:../ai-providers
-      '@unemployed/browser-agent':
+      '@nordri/browser-agent':
         specifier: workspace:*
         version: link:../browser-agent
-      '@unemployed/browser-runtime':
+      '@nordri/browser-runtime':
         specifier: workspace:*
         version: link:../browser-runtime
-      '@unemployed/contracts':
+      '@nordri/contracts':
         specifier: workspace:*
         version: link:../contracts
-      '@unemployed/db':
+      '@nordri/db':
         specifier: workspace:*
         version: link:../db
-      '@unemployed/job-finder':
+      '@nordri/job-finder':
         specifier: workspace:*
         version: link:../job-finder
       playwright:
@@ -214,10 +214,10 @@ importers:
 
   packages/ai-providers:
     dependencies:
-      '@unemployed/agent-runtime':
+      '@nordri/agent-runtime':
         specifier: workspace:*
         version: link:../agent-runtime
-      '@unemployed/contracts':
+      '@nordri/contracts':
         specifier: workspace:*
         version: link:../contracts
       zod:
@@ -226,10 +226,10 @@ importers:
 
   packages/browser-agent:
     dependencies:
-      '@unemployed/agent-runtime':
+      '@nordri/agent-runtime':
         specifier: workspace:*
         version: link:../agent-runtime
-      '@unemployed/contracts':
+      '@nordri/contracts':
         specifier: workspace:*
         version: link:../contracts
       playwright:
@@ -245,13 +245,13 @@ importers:
 
   packages/browser-runtime:
     dependencies:
-      '@unemployed/ai-providers':
+      '@nordri/ai-providers':
         specifier: workspace:*
         version: link:../ai-providers
-      '@unemployed/browser-agent':
+      '@nordri/browser-agent':
         specifier: workspace:*
         version: link:../browser-agent
-      '@unemployed/contracts':
+      '@nordri/contracts':
         specifier: workspace:*
         version: link:../contracts
       playwright:
@@ -268,47 +268,47 @@ importers:
 
   packages/db:
     dependencies:
-      '@unemployed/contracts':
+      '@nordri/contracts':
         specifier: workspace:*
         version: link:../contracts
 
-  packages/interview-helper:
+  packages/live-assistant:
     dependencies:
-      '@unemployed/contracts':
+      '@nordri/contracts':
         specifier: workspace:*
         version: link:../contracts
-      '@unemployed/os-integration':
+      '@nordri/os-integration':
         specifier: workspace:*
         version: link:../os-integration
     devDependencies:
-      '@unemployed/ai-providers':
+      '@nordri/ai-providers':
         specifier: workspace:*
         version: link:../ai-providers
 
   packages/job-finder:
     dependencies:
-      '@unemployed/agent-runtime':
+      '@nordri/agent-runtime':
         specifier: workspace:*
         version: link:../agent-runtime
-      '@unemployed/ai-providers':
+      '@nordri/ai-providers':
         specifier: workspace:*
         version: link:../ai-providers
-      '@unemployed/browser-agent':
+      '@nordri/browser-agent':
         specifier: workspace:*
         version: link:../browser-agent
-      '@unemployed/browser-runtime':
+      '@nordri/browser-runtime':
         specifier: workspace:*
         version: link:../browser-runtime
-      '@unemployed/contracts':
+      '@nordri/contracts':
         specifier: workspace:*
         version: link:../contracts
-      '@unemployed/core':
+      '@nordri/core':
         specifier: workspace:*
         version: link:../core
-      '@unemployed/db':
+      '@nordri/db':
         specifier: workspace:*
         version: link:../db
-      '@unemployed/knowledge-base':
+      '@nordri/knowledge-base':
         specifier: workspace:*
         version: link:../knowledge-base
       zod:

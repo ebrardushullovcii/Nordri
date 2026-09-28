@@ -8,8 +8,8 @@ import {
   UserActionRequestSchema,
   type ApplyPageSession,
   type RawApplyPage,
-} from "@unemployed/contracts";
-import type { BrowserSessionRuntime } from "@unemployed/browser-runtime";
+} from "@nordri/contracts";
+import type { BrowserSessionRuntime } from "@nordri/browser-runtime";
 import { describe, expect, test, vi } from "vitest";
 
 import {

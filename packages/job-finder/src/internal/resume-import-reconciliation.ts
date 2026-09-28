@@ -1,4 +1,4 @@
-import { buildValuePreview } from "@unemployed/ai-providers";
+import { buildValuePreview } from "@nordri/ai-providers";
 import {
   ResumeImportFieldCandidateSchema,
   hasProfileSetupPlaceholderValue,
@@ -7,7 +7,7 @@ import {
   type JobSearchPreferences,
   type ResumeImportConflictChoice,
   type ResumeImportFieldCandidate,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import {
   areEquivalentRecordCandidates,

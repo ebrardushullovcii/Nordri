@@ -12,7 +12,7 @@ import {
   type ProfileSetupReadiness,
   type ProfileSetupState,
   type ProfileSetupStep,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { profileSetupStepDefinitions } from "./profile-setup-steps";
 import { deriveJobSourceLabel } from "../../../lib/job-source-display-name";
 
@@ -177,9 +177,23 @@ export function isFinishBlockingReviewItem(
     return true;
   }
 
+  // ADR 0029 requires these answers at Finish. Older review drafts still
+  // carry recommended severity, so present the missing answers consistently
+  // with the footer without changing persisted review or completed setups.
+  if (
+    item.target?.domain === "work_eligibility" &&
+    (item.target.key === "authorizedWorkCountries" ||
+      item.target.key === "requiresVisaSponsorship") &&
+    item.sourceCandidateId === null &&
+    item.sourceRunId === null &&
+    item.proposedValue === null
+  ) {
+    return true;
+  }
+
   // Finishing needs a name, a way to be contacted, and a job source (ADR
-  // 0024). A recommended field that the resume did not fill (location, years
-  // of experience, work eligibility) is a hint, not a gate: it must not stand
+  // 0024). Other recommended fields that the resume did not fill are hints,
+  // not gates: they must not stand
   // between a person with a resume and their first search.
   return false;
 }
@@ -261,9 +275,19 @@ export function buildProfileSetupReadinessPresentation(input: {
   // Only finish-gating items count toward the remaining total; recommended
   // imported suggestions are reported separately so they can never disable
   // the Finish action.
-  const blockingPendingReviewItemCount = input.reviewItems.filter(
-    isFinishBlockingReviewItem,
-  ).length;
+  const blockingPendingReviewItemCount = input.reviewItems.filter((item) => {
+    // Saved screener answers also satisfy ADR 0029, even if an older
+    // missing-field review item still points at the structured country list.
+    if (
+      input.readiness.hasWorkEligibilityAnswers &&
+      item.severity !== "critical" &&
+      item.target?.domain === "work_eligibility" &&
+      item.sourceCandidateId === null
+    ) {
+      return false;
+    }
+    return isFinishBlockingReviewItem(item);
+  }).length;
 
   return {
     blockers,

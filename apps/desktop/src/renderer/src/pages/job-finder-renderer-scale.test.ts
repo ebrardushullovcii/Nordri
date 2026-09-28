@@ -12,7 +12,7 @@ import {
   type ReviewQueueItem,
   type SavedJob,
   type UserActionRequest,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { describe, expect, test } from "vitest";
 
 import { listUnresolvedUserActions } from "../features/job-finder/screens/actions/actions-screen";

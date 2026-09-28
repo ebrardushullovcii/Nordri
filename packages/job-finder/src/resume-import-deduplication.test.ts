@@ -3,7 +3,7 @@ import { describe, expect, test, vi } from "vitest";
 import {
   PROFILE_SETUP_PLACEHOLDER_HEADLINE,
   PROFILE_SETUP_PLACEHOLDER_SUMMARY,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import {
   mergeEducationRecords,

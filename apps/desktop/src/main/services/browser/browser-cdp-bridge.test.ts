@@ -55,6 +55,7 @@ async function fixture() {
   const closed: string[] = [];
   const automationInput: string[] = [];
   const pointerDowns: boolean[] = [];
+  const keyDowns: Array<{ code: string; key: string } | null> = [];
   const bridge = new BrowserCdpBridge({
     pages: () => [page],
     createPage: () => Promise.reject(new Error("Not used")),
@@ -67,6 +68,7 @@ async function fixture() {
     onAutomationInput: (id, input) => {
       automationInput.push(id);
       pointerDowns.push(input?.pointerDown ?? false);
+      keyDowns.push(input?.keyDown ?? null);
     },
   });
   const transport = await bridge.start();
@@ -80,6 +82,7 @@ async function fixture() {
     closed,
     automationInput,
     pointerDowns,
+    keyDowns,
   };
 }
 
@@ -287,7 +290,8 @@ describe("scoped embedded browser transport", () => {
   });
 
   test("tells the host when automation sends input to a tab, so it is not mistaken for the person", async () => {
-    const { transport, automationInput, pointerDowns } = await fixture();
+    const { transport, automationInput, pointerDowns, keyDowns } =
+      await fixture();
     const client = await connect(transport);
     await client.send("Target.setAutoAttach", { autoAttach: true });
     const session = String(
@@ -310,5 +314,27 @@ describe("scoped embedded browser transport", () => {
     );
     // Only the press is a mouse-down the page will report back.
     expect(pointerDowns).toEqual([true, false]);
+    await client.send(
+      "Input.dispatchKeyEvent",
+      { type: "rawKeyDown", code: "KeyA", key: "a" },
+      session,
+    );
+    await client.send(
+      "Input.dispatchKeyEvent",
+      { type: "keyUp", code: "KeyA", key: "a" },
+      session,
+    );
+    await client.send(
+      "Input.dispatchKeyEvent",
+      { type: "char", code: "KeyA", key: "a", text: "a" },
+      session,
+    );
+    expect(keyDowns).toEqual([
+      null,
+      null,
+      { code: "KeyA", key: "a" },
+      null,
+      null,
+    ]);
   });
 });

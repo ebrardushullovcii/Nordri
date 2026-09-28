@@ -4,8 +4,8 @@ import type {
   AssistantMessagePart,
   ProfileCopilotMessage,
   ResumeAssistantMessage,
-} from "@unemployed/contracts";
-import type { AssistantRepository } from "@unemployed/db";
+} from "@nordri/contracts";
+import type { AssistantRepository } from "@nordri/db";
 
 /**
  * The two retired chats become archived conversations (plan §8).

@@ -9,7 +9,7 @@ import {
   type JobFinderIntelligenceState,
   type UserActionEvent,
   type UserActionRequest,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import { APPLY_INDEXED_COLLECTION_CONFIGS } from "./apply-collection-support";
 import {

@@ -2,7 +2,7 @@
 
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ResumeDraftSection } from "@unemployed/contracts";
+import type { ResumeDraftSection } from "@nordri/contracts";
 import { ResumeSectionHeaderActions } from "./resume-section-editor-header";
 
 function buildSection(

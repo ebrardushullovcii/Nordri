@@ -5,7 +5,7 @@ import {
   ResumeDraftSchema,
   ResumeValidationResultSchema,
   type ResumeDraft,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { describe, expect, test } from "vitest";
 
 import {
@@ -98,7 +98,7 @@ function createValidation(draft: ResumeDraft, index: number) {
 
 describe("resume revision SQLite performance", () => {
   test("keeps atomic save and restore mutation p95 bounded at the retained history cap", async () => {
-    const temp = await createTempRepository("unemployed-db-revision-perf-");
+    const temp = await createTempRepository("nordri-db-revision-perf-");
     let repository: FileRepository | null = null;
 
     try {

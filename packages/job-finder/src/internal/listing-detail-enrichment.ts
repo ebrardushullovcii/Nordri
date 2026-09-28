@@ -8,7 +8,7 @@ import {
   type ListingDetailFetchOutcome,
   type MatchAssessment,
   type SavedJob,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   extractListingDetailFromHtml,
   findApplyLinkInHtml,

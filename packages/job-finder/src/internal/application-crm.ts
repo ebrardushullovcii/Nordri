@@ -10,8 +10,8 @@ import type {
   ApplicationCrmSettings,
   ApplicationCrmStage,
   ApplicationRecord,
-} from "@unemployed/contracts";
-import type { ApplicationRecordBatchCommitResult } from "@unemployed/db";
+} from "@nordri/contracts";
+import type { ApplicationRecordBatchCommitResult } from "@nordri/db";
 import {
   ApplicationCrmDataSchema,
   ApplicationCrmBulkStageMutationInputSchema,
@@ -21,7 +21,7 @@ import {
   ApplicationRecordSchema,
   resolveApplicationCrmStageSource,
   resolveApplicationCrmTrackedStage,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 export interface ApplicationCrmRepository {
   listApplicationRecords(): Promise<readonly ApplicationRecord[]>;

@@ -6,8 +6,8 @@ import type {
   ReviewQueueItem,
   SavedJob,
   TailoredAsset,
-} from "@unemployed/contracts";
-import { ApplicationRecordSchema } from "@unemployed/contracts";
+} from "@nordri/contracts";
+import { ApplicationRecordSchema } from "@nordri/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ReviewQueueMissionPanel } from "./review-queue-mission-panel";
 

@@ -8,7 +8,7 @@ import type {
   OutcomeEvent,
   ResumeStrategy,
   SetOutcomeSuggestionEnabledInput,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { Button } from "@renderer/components/ui/button";
 import { jobSourceLabel } from "../../lib/job-source-display-name";
 import { Input } from "@renderer/components/ui/input";
@@ -268,8 +268,10 @@ function BucketCard(props: {
   );
 }
 
-const EMPTY_SOURCE_TARGETS: readonly Pick<JobDiscoveryTarget, "id" | "label">[] =
-  [];
+const EMPTY_SOURCE_TARGETS: readonly Pick<
+  JobDiscoveryTarget,
+  "id" | "label"
+>[] = [];
 
 export function OutcomeAnalyticsScreen(props: {
   actionMessage: string | null;
@@ -634,8 +636,8 @@ export function OutcomeAnalyticsScreen(props: {
               className="text-(length:--text-small) text-foreground-muted"
             >
               {normalizeQuery(query) !== ""
-                ? `${visibleBuckets.length} of ${bucketsForDimension.length} ${outcomeDimensionNoun(dimension)} match`
-                : `${bucketsForDimension.length} ${outcomeDimensionNoun(dimension)} in scope`}
+                ? `${visibleBuckets.length} of ${bucketsForDimension.length} ${outcomeDimensionNoun(dimension, bucketsForDimension.length)} matched`
+                : `${bucketsForDimension.length} ${outcomeDimensionNoun(dimension, bucketsForDimension.length)} in scope`}
             </p>
           </div>
 

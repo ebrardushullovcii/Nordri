@@ -2,7 +2,7 @@ import { useId, useMemo } from "react";
 import type {
   ResumeTemplateDefinition,
   ResumeTemplateId,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { ResumeThemePickerCompact } from "./resume-theme-picker-compact";
 import { ResumeThemePickerFull } from "./resume-theme-picker-full";
 import {

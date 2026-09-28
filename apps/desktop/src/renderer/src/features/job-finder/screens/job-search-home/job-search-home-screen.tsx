@@ -8,7 +8,7 @@ import type {
   JobFinderWorkspaceSnapshot,
   ProfileSetupStep,
   ResumeImportProgressEvent,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { Button } from "@renderer/components/ui/button";
 import { cn } from "@renderer/lib/cn";
 import { PageHeaderStack } from "../../components/page-header";

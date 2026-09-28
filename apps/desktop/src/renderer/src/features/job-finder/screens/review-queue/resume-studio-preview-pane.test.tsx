@@ -8,7 +8,7 @@ import {
   screen,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { JobFinderResumePreview } from "@unemployed/contracts";
+import type { JobFinderResumePreview } from "@nordri/contracts";
 import { LockedScreenLayout } from "../../components/locked-screen-layout";
 import { ResumeStudioPreviewPane } from "./resume-studio-preview-pane";
 

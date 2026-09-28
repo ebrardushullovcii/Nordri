@@ -5,7 +5,7 @@ import {
   ResumeImportRunSchema,
   type CandidateProfile,
   type ResumeImportRun,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 const deferredVisionWarningPattern =
   /^Visual scan is still running(?: after text import completed;|\.)/;

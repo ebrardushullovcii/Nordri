@@ -3,7 +3,7 @@ import {
   type CandidateProfile,
   type RawApplyControl,
   type RawApplyPage,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { describe, expect, test } from "vitest";
 
 import type { LLMClient } from "../agent/contracts";

@@ -1,6 +1,6 @@
 import http from "node:http";
 import type { AddressInfo } from "node:net";
-import type { ApplyBlockedAttempt } from "@unemployed/contracts";
+import type { ApplyBlockedAttempt } from "@nordri/contracts";
 import {
   chromium,
   type Browser,
@@ -213,7 +213,7 @@ describe("Prepare-only guard real-Chromium fixtures", () => {
         expect(
           await page.evaluate(() => {
             const state = (window as unknown as Record<string, unknown>)[
-              "__unemployedPrepareOnlyMutationGuardV1"
+              "__nordriPrepareOnlyMutationGuardV1"
             ] as { authorizedFormActionWindow: { expiresAtMs: number } };
             return state.authorizedFormActionWindow.expiresAtMs;
           }),

@@ -14,7 +14,7 @@ import {
   type SourceDebugVisualFinding,
   type SourceInstructionArtifact,
   type SourceDebugWorkerAttempt,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { runSequentialArtifactOrchestrator } from "../orchestrator";
 import {
   filterSourceDebugWarnings,

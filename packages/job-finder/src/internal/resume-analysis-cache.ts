@@ -12,7 +12,7 @@ import {
   type ResumeImportFieldCandidate,
   type ResumeImportRun,
   type ResumeImportVisionArtifact,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import type { WorkspaceServiceContext } from "./workspace-service-context";
 import { createUniqueId } from "./shared";

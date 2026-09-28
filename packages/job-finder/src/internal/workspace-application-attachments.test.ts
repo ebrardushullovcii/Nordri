@@ -2,7 +2,7 @@ import {
   ApplicationAnswerRecordSchema,
   ApplicationQuestionRecordSchema,
   CandidateAssetSchema,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { describe, expect, it, vi } from "vitest";
 import { resolveApplicationAttachmentsForExecution } from "./workspace-application-attachments";
 

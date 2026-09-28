@@ -1,9 +1,9 @@
-import type { BrowserSessionRuntime } from "@unemployed/browser-runtime";
+import type { BrowserSessionRuntime } from "@nordri/browser-runtime";
 import {
   JobPostingSchema,
   SavedJobSchema,
   type DiscoveryActivityEvent,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import { describe, expect, test, vi } from "vitest";
 import {
   createAgentAiClient,

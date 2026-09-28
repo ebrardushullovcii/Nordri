@@ -1,7 +1,7 @@
 import type {
   SourceInstructionArtifact,
   SourceIntelligenceArtifact,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 export interface LearnedInstructionIntelligenceSummaryItem {
   label: string;

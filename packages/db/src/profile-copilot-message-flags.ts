@@ -1,4 +1,4 @@
-import type { ProfileCopilotMessage } from "@unemployed/contracts";
+import type { ProfileCopilotMessage } from "@nordri/contracts";
 import type { ProfileCopilotMessagePatchFlag } from "./repository-types";
 
 /**

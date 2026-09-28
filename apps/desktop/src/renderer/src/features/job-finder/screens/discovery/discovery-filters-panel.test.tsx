@@ -7,7 +7,7 @@ import type {
   JobSearchPreferences,
   SavedJob,
   SourceAccessPrompt,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   DiscoveryFiltersPanel,
   getDiscoveryOtherActiveCriteria,

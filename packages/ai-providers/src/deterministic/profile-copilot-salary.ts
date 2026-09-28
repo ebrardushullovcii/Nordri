@@ -3,7 +3,7 @@ import {
   type CompensationInterval,
   type ProfileCompensationPreferencePatchFields,
   type ProfileCopilotPatchGroup,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import type { ReviseCandidateProfileInput } from "../shared";
 import { createUniqueId, normalizeFactText } from "./profile-copilot-helpers";

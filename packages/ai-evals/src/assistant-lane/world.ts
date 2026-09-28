@@ -1,8 +1,8 @@
 import {
   createDeterministicJobFinderAiClient,
   resolveAssistantModelRouteFromEnvironment,
-} from "@unemployed/ai-providers";
-import { createStubBrowserSessionRuntime } from "@unemployed/browser-runtime";
+} from "@nordri/ai-providers";
+import { createStubBrowserSessionRuntime } from "@nordri/browser-runtime";
 import {
   JobFinderIntelligenceStateSchema,
   JobFinderSettingsSchema,
@@ -16,11 +16,11 @@ import {
   type JobFinderRepositoryState,
   type JobFinderWorkspaceSnapshot,
   type SavedJob,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   createAssistantRepository,
   createInMemoryJobFinderRepository,
-} from "@unemployed/db";
+} from "@nordri/db";
 import {
   AssistantSessionHost,
   createAssistantModelHandle,
@@ -28,7 +28,7 @@ import {
   createScriptedAssistantModelHandle,
   type AssistantHostPorts,
   type AssistantModelResolution,
-} from "@unemployed/job-finder";
+} from "@nordri/job-finder";
 
 /**
  * One isolated Job Finder workspace with the assistant attached, built from
@@ -164,7 +164,7 @@ function laneSeed(): JobFinderRepositoryState {
         id: "resume_lane",
         fileName: "riley-okafor.txt",
         uploadedAt: NOW,
-        storagePath: "/tmp/unemployed-assistant-lane/riley-okafor.txt",
+        storagePath: "/tmp/nordri-assistant-lane/riley-okafor.txt",
         textContent:
           "Riley Okafor\nProduct designer\nFigma, prototyping, design systems\nLead designer at Example Freight 2020-2026",
         textUpdatedAt: NOW,

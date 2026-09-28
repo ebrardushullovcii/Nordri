@@ -1,5 +1,5 @@
 import { ApplicationsDisclosureSummary } from "./applications-disclosure-summary";
-import type { JobFinderWorkspaceSnapshot } from "@unemployed/contracts";
+import type { JobFinderWorkspaceSnapshot } from "@nordri/contracts";
 import { cn } from "@renderer/lib/utils";
 import {
   formatTimestamp,

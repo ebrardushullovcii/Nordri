@@ -1,6 +1,6 @@
-import { buildApplyFormObservation } from "@unemployed/browser-agent";
-import type { BrowserSessionRuntime } from "@unemployed/browser-runtime";
-import type { UserActionRequest } from "@unemployed/contracts";
+import { buildApplyFormObservation } from "@nordri/browser-agent";
+import type { BrowserSessionRuntime } from "@nordri/browser-runtime";
+import type { UserActionRequest } from "@nordri/contracts";
 
 /**
  * Blockers that still need the person on an application page. A page that

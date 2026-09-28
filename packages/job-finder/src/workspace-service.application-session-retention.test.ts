@@ -1,5 +1,5 @@
-import type { BrowserSessionRuntime } from "@unemployed/browser-runtime";
-import { ApplyJobResultSchema } from "@unemployed/contracts";
+import type { BrowserSessionRuntime } from "@nordri/browser-runtime";
+import { ApplyJobResultSchema } from "@nordri/contracts";
 import { describe, expect, test, vi } from "vitest";
 
 import { hasLiveUnresolvedApplicationPage } from "./workspace-service";

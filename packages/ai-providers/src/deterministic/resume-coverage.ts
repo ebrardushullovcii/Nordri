@@ -5,7 +5,7 @@ import type {
   ResumeCareerFamilyFit,
   ResumeCoverageClassification,
   ResumeCoverageDecision,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 interface WorkHistoryRange {
   startMonth: number | null;

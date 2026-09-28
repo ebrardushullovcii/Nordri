@@ -1,10 +1,10 @@
 import { describe, expect, test } from "vitest";
 
-import { createResumeImportFixtureBundle } from "@unemployed/ai-providers";
+import { createResumeImportFixtureBundle } from "@nordri/ai-providers";
 import {
   PROFILE_SETUP_PLACEHOLDER_HEADLINE,
   PROFILE_SETUP_PLACEHOLDER_SUMMARY,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 import {
   aggregateBenchmarkMetrics,

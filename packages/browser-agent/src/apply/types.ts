@@ -14,7 +14,7 @@ import type {
   CandidateProfile,
   CandidateAssetKind,
   CandidateReusableAnswer,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 
 /**
  * Shapes for the agent that fills in an employer's application form.

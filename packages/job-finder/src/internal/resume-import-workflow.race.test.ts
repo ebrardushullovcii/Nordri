@@ -1,8 +1,8 @@
 import {
   createInMemoryJobFinderRepository,
   type JobFinderRepository,
-} from "@unemployed/db";
-import type { ResumeVisionProvider } from "@unemployed/ai-providers";
+} from "@nordri/db";
+import type { ResumeVisionProvider } from "@nordri/ai-providers";
 import { describe, expect, test, vi } from "vitest";
 
 import { createJobFinderWorkspaceService } from "../index";

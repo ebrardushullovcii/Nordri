@@ -8,11 +8,11 @@ const ts = require("typescript");
 
 const repoRoot = path.resolve(__dirname, "..");
 const packageEntries = new Map([
-  ["@unemployed/ai-providers", "packages/ai-providers/src/index.ts"],
-  ["@unemployed/browser-runtime", "packages/browser-runtime/src/index.ts"],
-  ["@unemployed/contracts", "packages/contracts/src/index.ts"],
-  ["@unemployed/db", "packages/db/src/index.ts"],
-  ["@unemployed/knowledge-base", "packages/knowledge-base/src/index.ts"],
+  ["@nordri/ai-providers", "packages/ai-providers/src/index.ts"],
+  ["@nordri/browser-runtime", "packages/browser-runtime/src/index.ts"],
+  ["@nordri/contracts", "packages/contracts/src/index.ts"],
+  ["@nordri/db", "packages/db/src/index.ts"],
+  ["@nordri/knowledge-base", "packages/knowledge-base/src/index.ts"],
 ]);
 
 function installTypeScriptLoader() {

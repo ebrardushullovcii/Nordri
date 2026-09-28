@@ -3,7 +3,7 @@ import {
   SourceDebugRunRecordSchema,
   SourceInstructionArtifactSchema,
   type EditableSourceInstructionArtifact,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import type { WorkspaceServiceContext } from "./workspace-service-context";
 
 export function createWorkspaceSourceDebugStoreMethods(ctx: WorkspaceServiceContext) {

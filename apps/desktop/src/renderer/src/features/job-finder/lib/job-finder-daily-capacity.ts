@@ -1,4 +1,4 @@
-import type { GlobalDailyApplicationPreparationCapacity } from "@unemployed/contracts";
+import type { GlobalDailyApplicationPreparationCapacity } from "@nordri/contracts";
 
 /**
  * Truthful daily-capacity presentation shared by every surface that can start

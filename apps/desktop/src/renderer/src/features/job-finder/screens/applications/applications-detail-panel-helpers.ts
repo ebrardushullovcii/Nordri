@@ -4,7 +4,7 @@ import type {
   ApplyRunDetails,
   ApplySubmitApproval,
   JobFinderWorkspaceSnapshot,
-} from "@unemployed/contracts";
+} from "@nordri/contracts";
 import {
   CONFIRM_STEP_DONE_ACTION,
   FINISH_IN_JOB_FINDER_BROWSER_INSTRUCTION,
