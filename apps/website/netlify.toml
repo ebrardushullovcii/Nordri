@@ -1,0 +1,5 @@
+[build]
+  publish = "."
+  command = ""
+  # Deploy only when the website changed, not on every app commit.
+  ignore = "git diff --quiet $CACHED_COMMIT_REF $COMMIT_REF -- ."
