@@ -1180,7 +1180,9 @@ async function collectTargetJobs(input: {
     const result = await ctx.browserRuntime.runAgentDiscovery(adapterKind, {
       // Each source searches in its own tab so several can run at once.
       dedicatedPage: true,
-      ...(sourceCatalog ? { sourceCatalog } : {}),
+      ...(sourceCatalog
+        ? { sourceCatalog, sourceCatalogComplete: catalogWarning === null }
+        : {}),
       retainAllFound: input.retainAllFound,
       userProfile: input.profile,
       searchPreferences: {

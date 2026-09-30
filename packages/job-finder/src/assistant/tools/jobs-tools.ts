@@ -49,13 +49,6 @@ function filterJobs(
   const filtered = jobs.filter((job) => {
     if (only && !only.has(job.id)) return false;
     if (input.scope === "found" && job.status !== "discovered") return false;
-    if (
-      input.scope === "shortlisted" &&
-      !["shortlisted", "drafting", "ready_for_review", "approved"].includes(
-        job.status,
-      )
-    )
-      return false;
     if (input.scope === "dismissed" && job.status !== "archived") return false;
     if (
       typeof input.minScore === "number" &&
@@ -111,7 +104,22 @@ export const queryJobsTool = defineTool({
   async execute(input, { service, session }) {
     const snapshot = await service.getWorkspaceSnapshot();
     const caveatsFor = createJobCaveats(snapshot);
-    const all = filterJobs(allJobs(snapshot), input, Date.now());
+    // Shortlisted is the active plan's curated list; company history also
+    // contains jobs belonging only to other plans and jobs removed from it.
+    const activePlan = snapshot.campaigns.find(
+      (campaign) => campaign.id === snapshot.activeCampaignId,
+    );
+    const activePlanIds = new Set(activePlan?.jobIds ?? []);
+    const shortlistIds = new Set(
+      snapshot.reviewQueue
+        .filter((item) => activePlanIds.has(item.jobId))
+        .map((item) => item.jobId),
+    );
+    const candidates =
+      input.scope === "shortlisted"
+        ? allJobs(snapshot).filter((job) => shortlistIds.has(job.id))
+        : allJobs(snapshot);
+    const all = filterJobs(candidates, input, Date.now());
     // Jobs from an employer the person excluded never come back in a pick
     // unless asked for by name.
     const matches = input.includeExcludedEmployers

@@ -407,6 +407,10 @@ describe("agent application preparation seam", () => {
       "https://apply.example.test/apply/one?stage=application";
     const liveWizardUrl =
       "https://apply.example.test/apply/one?stage=review#step-4";
+    facts.instructions = [
+      'Answer to "Street address": 1 Example Road',
+      'Answer to "Postal code": SW1A 1AA',
+    ];
     const seenMessages: string[] = [];
 
     const result = await runAgentApplicationPreparation({
@@ -438,6 +442,8 @@ describe("agent application preparation seam", () => {
     });
 
     expect(seenMessages.join("\n")).toContain(liveWizardUrl);
+    expect(seenMessages.join("\n")).toContain("1 Example Road");
+    expect(seenMessages.join("\n")).toContain("SW1A 1AA");
     expect(seenMessages.join("\n")).toContain(
       "Do not follow the site header or navigate back to its home page or job listing",
     );

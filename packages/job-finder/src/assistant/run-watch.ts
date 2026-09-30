@@ -14,6 +14,10 @@ export interface RunStatus {
   done: boolean;
   summary: string;
   details: unknown;
+  /** The current application leg needs the person; keep following its run. */
+  pendingHandoffKey?: string;
+  /** Changes when the application's saved outcome actually changes. */
+  resultKey?: string;
 }
 
 const APPLY_TERMINAL_STATES = new Set(["completed", "cancelled", "failed"]);
@@ -89,8 +93,9 @@ export function readRunStatus(
         ),
       );
     const done =
-      APPLY_TERMINAL_STATES.has(record.state) ||
-      (!stillWorking && results.length > 0 && record.state !== "running");
+      !stillWorking &&
+      (APPLY_TERMINAL_STATES.has(record.state) ||
+        (results.length > 0 && record.state !== "running"));
     if (!done) {
       return {
         done: false,
@@ -102,9 +107,50 @@ export function readRunStatus(
     for (const result of results) {
       byState.set(result.state, (byState.get(result.state) ?? 0) + 1);
     }
+    const pendingSteps =
+      APPLY_TERMINAL_STATES.has(record.state) && record.state !== "completed"
+        ? []
+        : (snapshot.userActionRequests ?? []).filter((request) => {
+            const scope = request.scope;
+            return (
+              scope.type === "application" &&
+              scope.runId === run.id &&
+              [
+                "pending",
+                "page_opened",
+                "awaiting_user",
+                "still_blocked",
+              ].includes(request.state) &&
+              results.some(
+                (result) =>
+                  result.jobId === scope.jobId &&
+                  ["awaiting_review", "blocked"].includes(result.state),
+              )
+            );
+          });
+    const resultKey = JSON.stringify([
+      record.state,
+      results
+        .map((result) => [
+          result.jobId,
+          result.state,
+          result.blockerSummary,
+          result.privacyReceipt?.submissionOutcome?.outcome ?? null,
+        ])
+        .sort((left, right) => String(left[0]).localeCompare(String(right[0]))),
+    ]);
     return {
       done: true,
-      summary: `The application batch ended (${[...byState.entries()].map(([state, count]) => `${count} ${state.replaceAll("_", " ")}`).join(", ") || record.state}).`,
+      summary: `The application batch ${pendingSteps.length ? "is waiting on the person" : "ended"} (${[...byState.entries()].map(([state, count]) => `${count} ${state.replaceAll("_", " ")}`).join(", ") || record.state}).`,
+      resultKey,
+      ...(pendingSteps.length
+        ? {
+            pendingHandoffKey: pendingSteps
+              .map((request) => request.id)
+              .sort()
+              .join("|"),
+          }
+        : {}),
       details: {
         runId: record.id,
         state: record.state,
@@ -123,13 +169,33 @@ export function readRunStatus(
             blocker: result.blockerSummary ?? null,
           };
         }),
+        pendingSteps: pendingSteps.map((request) => ({
+          id: request.id,
+          kind: request.kind,
+          title: request.title,
+        })),
       },
     };
   }
   if (run.kind === "resume_generation") {
     const batch = readBackgroundBatch(run.id);
     if (batch && !batch.done) {
-      return { done: false, summary: "Writing resumes.", details: null };
+      const settled =
+        batch.completedJobIds.length +
+        batch.failures.length +
+        batch.skipped.length;
+      return {
+        done: false,
+        summary: batch.cancelled
+          ? `No further resume jobs will start; ${batch.activeJobIds.length} active draft(s) finishing.`
+          : `Writing resumes: ${settled} of ${batch.jobIds.length} finished${batch.failures.length ? `; ${batch.failures.length} failed` : ""}.`,
+        details: {
+          completed: batch.completedJobIds,
+          active: batch.activeJobIds,
+          failures: batch.failures,
+          skipped: batch.skipped,
+        },
+      };
     }
     const assets = snapshot.tailoredAssets.filter((asset) =>
       run.jobIds.includes(asset.jobId),
@@ -140,7 +206,9 @@ export function readRunStatus(
     }
     return {
       done: true,
-      summary: `Resume writing ended for ${run.jobIds.length} job(s)${batch?.failures.length ? `; ${batch.failures.length} failed` : ""}.`,
+      summary: batch?.cancelled
+        ? `Resume batch stopped; ${batch.completedJobIds.length} completed, ${batch.failures.length} failed. Queued jobs were not started.`
+        : `Resume writing ended for ${run.jobIds.length} job(s)${batch?.failures.length ? `; ${batch.failures.length} failed` : ""}${batch?.skipped.length ? `; ${batch.skipped.length} skipped` : ""}.`,
       details: {
         resumes: run.jobIds.map((jobId) => {
           const item = snapshot.reviewQueue.find(
@@ -153,6 +221,8 @@ export function readRunStatus(
           };
         }),
         failures: batch?.failures ?? [],
+        skipped: batch?.skipped ?? [],
+        cancelled: batch?.cancelled ?? false,
       },
     };
   }

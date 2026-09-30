@@ -513,9 +513,16 @@ export function openApplicationFor(
     .filter((result) => result.jobId === jobId)
     .filter((result) => {
       const run = runsById.get(result.runId);
+      const answerIsBeingApplied = (snapshot.userActionRequests ?? []).some(
+        (request) =>
+          request.scope.type === "application" &&
+          request.scope.runId === result.runId &&
+          request.scope.jobId === jobId &&
+          request.state === "verifying",
+      );
       return (
         run !== undefined &&
-        OPEN_RUN_STATES.has(run.state) &&
+        (OPEN_RUN_STATES.has(run.state) || answerIsBeingApplied) &&
         !["submitted", "failed", "skipped"].includes(result.state)
       );
     })

@@ -14,6 +14,7 @@ import {
   SetCompanyPreferenceInputSchema,
   SetOutcomeSuggestionEnabledInputSchema,
   CompanyIntelligenceMutationInputSchema,
+  normalizeCompanyName,
   type CompanyIntelligenceMutationInput,
   type JobFinderWorkspaceSnapshot,
   type RapidReviewDecision,
@@ -59,6 +60,12 @@ import {
   resolveCampaignDefaultResumeStrategyId,
 } from "./resume-strategy-application";
 import type { WorkspaceServiceContext } from "./workspace-service-context";
+import { ensureCampaignState } from "./campaign-dashboard";
+import {
+  appendExactEmployerExclusion,
+  removeExactEmployerExclusion,
+  resolveEmployerExclusionPreview,
+} from "./employer-exclusion";
 
 type RapidReviewCallbacks = {
   shortlist(jobId: string): Promise<unknown>;
@@ -142,21 +149,111 @@ export function createWorkspaceIntelligenceMethods(input: {
     ): Promise<JobFinderWorkspaceSnapshot> {
       const command = SetCompanyPreferenceInputSchema.parse(rawInput);
       await input.ctx.withIntelligenceTransition(async () => {
-        const state = await input.ctx.repository.getIntelligenceState();
-        const now = new Date().toISOString();
-        const result = setCompanyPreference({
-          companies: state.companies,
-          input: command,
-          now,
+        await input.ctx.withCampaignTransition(async () => {
+          await ensureCampaignState({
+            repository: input.ctx.repository,
+            searchPreferences:
+              await input.ctx.repository.getSearchPreferences(),
+          });
+          await input.ctx.repository.commitCampaignPreferencesUpdate(
+            (current) => {
+              const state = current.intelligenceState;
+              const now = new Date().toISOString();
+              const result = setCompanyPreference({
+                companies: state.companies,
+                input: command,
+                now,
+              });
+              if (!result.ok) throw new Error(result.failure.message);
+              const previous = state.companies.find(
+                (company) => company.id === command.companyId,
+              )!;
+              const names = [
+                result.company.canonicalName,
+                ...result.company.aliases
+                  .filter(
+                    (alias) =>
+                      alias.identityAuthority === "user_approved_merge",
+                  )
+                  .map((alias) => alias.alias),
+              ];
+              if (command.preference === "exclude") {
+                const whitelist = [
+                  ...current.searchPreferences.companyWhitelist,
+                  ...current.campaignState!.campaigns.flatMap(
+                    (campaign) => campaign.searchPreferences.companyWhitelist,
+                  ),
+                ];
+                for (const name of names) {
+                  const preview = resolveEmployerExclusionPreview({
+                    job: {
+                      id: command.companyId,
+                      company: name,
+                      employerDomain: null,
+                    },
+                    searchPreferences: {
+                      ...current.searchPreferences,
+                      companyWhitelist: whitelist,
+                    },
+                    companies: state.companies,
+                  });
+                  if (preview.status !== "available")
+                    throw new Error(
+                      `Employer exclusion is unavailable: ${preview.reason}.`,
+                    );
+                }
+              }
+              const updateBlacklist = (blacklist: string[]) =>
+                names.reduce(
+                  (values, name) =>
+                    command.preference === "exclude"
+                      ? appendExactEmployerExclusion(
+                          values,
+                          name,
+                          normalizeCompanyName(name),
+                        ).values
+                      : previous.preference === "exclude"
+                        ? removeExactEmployerExclusion(
+                            values,
+                            normalizeCompanyName(name),
+                          )
+                        : values,
+                  blacklist,
+                );
+              return {
+                result: null,
+                campaignState: {
+                  ...current.campaignState!,
+                  campaigns: current.campaignState!.campaigns.map(
+                    (campaign) => ({
+                      ...campaign,
+                      searchPreferences: {
+                        ...campaign.searchPreferences,
+                        companyBlacklist: updateBlacklist(
+                          campaign.searchPreferences.companyBlacklist,
+                        ),
+                      },
+                    }),
+                  ),
+                },
+                searchPreferences: {
+                  ...current.searchPreferences,
+                  companyBlacklist: updateBlacklist(
+                    current.searchPreferences.companyBlacklist,
+                  ),
+                },
+                intelligenceState: JobFinderIntelligenceStateSchema.parse({
+                  ...state,
+                  companies: result.companies,
+                  updatedAt: nextCompanyIntelligenceUpdatedAt(
+                    now,
+                    state.updatedAt,
+                  ),
+                }),
+              };
+            },
+          );
         });
-        if (!result.ok) throw new Error(result.failure.message);
-        await input.ctx.repository.saveIntelligenceState(
-          JobFinderIntelligenceStateSchema.parse({
-            ...state,
-            companies: result.companies,
-            updatedAt: nextCompanyIntelligenceUpdatedAt(now, state.updatedAt),
-          }),
-        );
       });
       return input.getWorkspaceSnapshot();
     },

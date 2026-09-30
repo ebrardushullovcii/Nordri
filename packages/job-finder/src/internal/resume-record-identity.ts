@@ -114,6 +114,36 @@ function fieldsMatch(left: string, right: string): boolean {
   return left.length > 0 && right.length > 0 && left === right;
 }
 
+function companyMatchesWithLocationSuffix(
+  left: Record<string, unknown>,
+  right: Record<string, unknown>,
+  leftLocation: string,
+  rightLocation: string,
+): boolean {
+  if (leftLocation && rightLocation && leftLocation !== rightLocation) {
+    return false;
+  }
+  const locations = [leftLocation, rightLocation].filter(Boolean);
+  if (locations.length === 0) return false;
+
+  const matches = (company: unknown, otherCompany: unknown) => {
+    if (typeof company !== "string") return false;
+    const expected = normalizeRecordText(otherCompany);
+    if (!expected) return false;
+    const parts = company.split(",");
+    for (let index = 1; index < parts.length; index += 1) {
+      const employer = normalizeRecordText(parts.slice(0, index).join(","));
+      const suffix = normalizeRecordText(parts.slice(index).join(","));
+      if (employer === expected && locations.includes(suffix)) return true;
+    }
+    return false;
+  };
+  return (
+    matches(left.companyName, right.companyName) ||
+    matches(right.companyName, left.companyName)
+  );
+}
+
 function fieldsCompatible(
   left: string,
   right: string,
@@ -193,12 +223,22 @@ export function areEquivalentExperienceRecords(
     strongTitle &&
     employerMissingOnOneSide &&
     (strongStart || (strongEnd && startCompatible));
+  // One extraction can keep "Employer, City, Country" in the employer
+  // field while the other separates the location. Only a stated exact
+  // location suffix plus the same title and complete dates identifies
+  // that twin; an arbitrary employer suffix or different office does not.
+  const sameDatedRoleWithLocationSuffix =
+    strongTitle &&
+    strongStart &&
+    strongEnd &&
+    companyMatchesWithLocationSuffix(left, right, leftLocation, rightLocation);
 
   return (
     (strongTitle && strongStart && companyCompatible && (strongCompany || strongLocation)) ||
     (strongCompany && strongStart && titleCompatible && (strongTitle || strongEnd || strongLocation)) ||
     (strongTitle && strongCompany && (strongStart || strongEnd) && startCompatible && endCompatible) ||
-    skeletonOfSameRole
+    skeletonOfSameRole ||
+    sameDatedRoleWithLocationSuffix
   );
 }
 

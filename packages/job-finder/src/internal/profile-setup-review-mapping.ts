@@ -160,6 +160,8 @@ function mapTargetDomain(
       return "identity";
     case "contact":
       return "identity";
+    case "skill":
+      return candidate.target.key === "skills" ? "identity" : null;
     case "search_preferences":
       return "search_preferences";
     case "work_eligibility":
@@ -179,6 +181,8 @@ function mapCandidateToStep(
     case "contact":
     case "location":
       return "essentials";
+    case "skill":
+      return candidate.target.key === "skills" ? "essentials" : null;
     case "experience":
     case "education":
     case "certification":
@@ -217,6 +221,7 @@ function mapCandidateToSeverity(
     candidate.target.section === "identity" ||
     candidate.target.section === "contact" ||
     candidate.target.section === "location" ||
+    candidate.target.section === "skill" ||
     candidate.target.section === "search_preferences" ||
     candidate.target.section === "application_identity" ||
     candidate.target.section === "work_eligibility"
@@ -232,6 +237,7 @@ function buildCandidateReason(candidate: ResumeImportFieldCandidate): string {
     case "identity":
     case "contact":
     case "location":
+    case "skill":
       return "Imported profile details need confirmation before discovery, resumes, and applications rely on them everywhere.";
     case "experience":
       return "Work-history records stay review-first so resume tailoring and fit scoring do not assume the wrong role details.";
@@ -267,6 +273,8 @@ export function shouldIncludeCandidateInSetupReview(
       );
     case "location":
       return candidate.target.key === "currentLocation";
+    case "skill":
+      return candidate.target.key === "skills";
     case "search_preferences":
       return ["targetRoles", "locations"].includes(candidate.target.key);
     case "work_eligibility":

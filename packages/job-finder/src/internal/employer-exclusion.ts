@@ -39,7 +39,7 @@ function hasPendingMerge(
 }
 
 export function resolveEmployerExclusionPreview(input: {
-  job: SavedJob;
+  job: Pick<SavedJob, "id" | "company" | "employerDomain">;
   searchPreferences: JobSearchPreferences;
   companies: readonly CompanyEntity[];
 }): EmployerExclusionPreview {

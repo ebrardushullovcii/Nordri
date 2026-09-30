@@ -772,6 +772,7 @@ def extract_plain_text(file_path: str) -> Optional[str]:
 
 def iter_docx_block_text(document: Any) -> List[str]:
     lines: List[str] = []
+    seen_paragraphs: set[Any] = set()
 
     def append_text(value: str) -> None:
         normalized = normalize_inline_text(value)
@@ -785,6 +786,14 @@ def iter_docx_block_text(document: Any) -> List[str]:
 
     def walk_container(container: Any) -> None:
         for paragraph in getattr(container, "paragraphs", []):
+            # Shared headers and merged cells may expose the same XML paragraph
+            # more than once. Distinct paragraphs may legitimately repeat a job
+            # title, employer, location, or date, so never deduplicate their text.
+            element = getattr(paragraph, "_p", None)
+            if element is not None:
+                if element in seen_paragraphs:
+                    continue
+                seen_paragraphs.add(element)
             append_text(getattr(paragraph, "text", ""))
 
         for table in getattr(container, "tables", []):
@@ -800,17 +809,7 @@ def iter_docx_block_text(document: Any) -> List[str]:
         walk_container(getattr(section, "first_page_footer", None))
         walk_container(getattr(section, "even_page_footer", None))
 
-    deduped_lines: List[str] = []
-    seen: set[str] = set()
-
-    for line in lines:
-        key = line.casefold()
-        if key in seen:
-            continue
-        seen.add(key)
-        deduped_lines.append(line)
-
-    return deduped_lines
+    return lines
 
 
 def extract_docx_text(file_path: str) -> Tuple[Optional[str], str, List[str]]:

@@ -1606,6 +1606,7 @@ export function createWorkspaceSnapshotProfileMethods(
       ]);
 
       return {
+        activeVisionRunIds: [...ctx.activeResumeVisionRunIds],
         resumeImportRuns,
         resumeImportDocumentBundles,
         resumeImportFieldCandidates,

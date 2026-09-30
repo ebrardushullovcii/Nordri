@@ -291,6 +291,21 @@ function locationAnswer(
   control: ApplyFormControl,
   profile: CandidateProfile,
 ): ApplyAnswer | null {
+  const addressField = addressFactField(control);
+  if (addressField) {
+    if (addressField !== "street") return null;
+    // currentLocation normally holds a city, not an address. Only use a
+    // street line actually written there; never turn the city into one.
+    const street = explicitStreetLine(profile.currentLocation);
+    return street
+      ? profileAnswer(
+          street,
+          "location",
+          "profile.currentLocation",
+          "the street address you saved",
+        )
+      : null;
+  }
   const signal = normalizeSignal(
     `${control.label} ${control.groupLabel} ${control.placeholder}`,
   );
@@ -328,13 +343,46 @@ function locationAnswer(
         )
       : null;
   }
-  if (/\b(location|address|based)\b/u.test(signal)) {
+  if (/\b(location|based)\b/u.test(signal)) {
     const value = trimmedOrNull(profile.currentLocation);
     return value
       ? profileAnswer(value, kind, "profile.currentLocation", "where you live")
       : null;
   }
   return null;
+}
+
+function addressFactField(
+  control: ApplyFormControl,
+): "street" | "supplement" | "postal" | null {
+  // Use this field's wording, not its surrounding Address group: a postal
+  // code, city and street in that group are different facts.
+  const signal = normalizeSignal(`${control.label} ${control.placeholder}`);
+  if (/\b(?:email|e mail|website|web|url)\b/u.test(signal)) return null;
+  if (/\b(?:postal code|post code|postcode|zip(?: code)?)\b/u.test(signal))
+    return "postal";
+  if (
+    /\baddress(?: line)? 2\b|^(?:apartment|suite|unit)(?: number| no)?$/u.test(
+      signal,
+    )
+  )
+    return "supplement";
+  return /\b(?:street|mailing|residential|home|permanent|current) address\b|\baddress line\b|^(?:your )?(?:address|street)$/u.test(
+    signal,
+  )
+    ? "street"
+    : null;
+}
+
+function explicitStreetLine(location: string | null): string | null {
+  const line = (location ?? "").split(/[,\r\n]/u)[0]?.trim() ?? "";
+  // This only recognises a supplied numbered street line. Other address
+  // formats remain available through an exact saved answer, without guessing.
+  return /^\d+[\p{L}\p{N}/-]*\s+.+\b(?:street|st|road|rd|avenue|ave|lane|ln|drive|dr|way|place|pl|boulevard|blvd|court|ct|terrace|close)\.?$/iu.test(
+    line,
+  )
+    ? line
+    : null;
 }
 
 function asksForPostingLocation(control: ApplyFormControl): boolean {
@@ -1065,6 +1113,15 @@ export function resolveApplyAnswer(input: {
       status: "needs_you",
       reason:
         "This work-history field has no matching fact in your saved profile.",
+      suggestion: null,
+    };
+  }
+
+  if (addressFactField(control)) {
+    return {
+      status: "needs_you",
+      reason:
+        "This asks for an address detail you have not saved. Your city or country does not answer it.",
       suggestion: null,
     };
   }

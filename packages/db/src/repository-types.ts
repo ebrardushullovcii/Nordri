@@ -146,12 +146,14 @@ export interface DiscoveryFeedbackCommitNext<TResult> {
 export interface CampaignPreferencesCommitCurrent {
   campaignState: JobSearchCampaignCollection | null;
   searchPreferences: JobSearchPreferences;
+  intelligenceState: JobFinderIntelligenceState;
 }
 
 export interface CampaignPreferencesCommitNext<TResult> {
   result: TResult;
   campaignState: JobSearchCampaignCollection;
   searchPreferences: JobSearchPreferences;
+  intelligenceState?: JobFinderIntelligenceState;
 }
 
 export interface CompanyIntelligenceCommitExpected {
@@ -573,8 +575,9 @@ export interface JobFinderRepository
   saveCampaignState(campaignState: JobSearchCampaignCollection): Promise<void>;
   /**
    * Applies a campaign collection and its corresponding global preferences
-   * against transaction-current values. Invalid output or a thrown updater
-   * leaves both singleton values unchanged.
+   * against transaction-current values. A company preference can include its
+   * directory state so the marker and enforced exclusions commit together.
+   * Invalid output or a thrown updater leaves every singleton unchanged.
    */
   commitCampaignPreferencesUpdate<TResult>(
     update: (

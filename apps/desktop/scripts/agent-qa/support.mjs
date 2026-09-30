@@ -1,4 +1,5 @@
 import { execFile, spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import {
   appendFile,
@@ -41,12 +42,25 @@ export function isAlive(pid) {
 }
 
 export async function ownedProcessIds(pid) {
-  if (process.platform === "win32") return [pid];
-  const { stdout } = await exec("ps", ["-axo", "pid=,ppid="]);
-  const rows = stdout
-    .trim()
-    .split("\n")
-    .map((line) => line.trim().split(/\s+/).map(Number));
+  let rows;
+  if (process.platform === "win32") {
+    const { stdout } = await exec("powershell.exe", [
+      "-NoProfile",
+      "-Command",
+      "Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId | ConvertTo-Json -Compress",
+    ]);
+    const processes = JSON.parse(stdout);
+    rows = (Array.isArray(processes) ? processes : [processes]).map((item) => [
+      item.ProcessId,
+      item.ParentProcessId,
+    ]);
+  } else {
+    const { stdout } = await exec("ps", ["-axo", "pid=,ppid="]);
+    rows = stdout
+      .trim()
+      .split("\n")
+      .map((line) => line.trim().split(/\s+/).map(Number));
+  }
   const owned = new Set([pid]);
   let changed = true;
   while (changed) {
@@ -61,13 +75,15 @@ export async function ownedProcessIds(pid) {
   return [...owned];
 }
 
-export async function processConflicts() {
+export async function processConflicts({ allowedAppDirs = [] } = {}) {
   if (process.platform === "win32") return [];
   const { stdout } = await exec("ps", ["-axo", "pid=,command="]);
   return stdout
     .split("\n")
     .filter((line) => {
       const command = line.trim().replace(/^\d+\s+/, "");
+      if (allowedAppDirs.some((directory) => command.includes(directory)))
+        return false;
       return (
         command.includes(repoRoot) &&
         ((/electron(?:\/dist\/Electron.app\/Contents\/MacOS\/Electron|\/dist\/electron)/.test(
@@ -80,37 +96,124 @@ export async function processConflicts() {
     .map((line) => line.trim());
 }
 
-export async function acquireLease(root = repoRoot) {
+export async function acquireLease(
+  root = repoRoot,
+  { parallelGroup, sessionId } = {},
+) {
+  if (sessionId !== undefined && parallelGroup === undefined)
+    throw new Error("sessionId requires an explicit parallelGroup");
+  sessionId ??= randomUUID();
+  if (parallelGroup !== undefined) {
+    artifactName(parallelGroup);
+    artifactName(sessionId);
+  }
   const lock = path.join(
     os.tmpdir(),
     `nordri-agent-qa-${Buffer.from(root).toString("base64url")}.lock`,
   );
-  try {
-    await mkdir(lock);
-  } catch (error) {
-    if (error.code !== "EEXIST") throw error;
-    const owner = await readFile(path.join(lock, "owner.json"), "utf8").catch(
-      () => "Owner record not yet available.",
-    );
-    throw new Error(
-      `Another QA session holds ${lock}\n${owner}\nDo not stop its processes. If abandoned, verify both owner and Electron PIDs have exited before removing this lock directory.`,
-    );
-  }
-  const owner = { pid: process.pid, startedAt: new Date().toISOString() };
-  await writeFile(
-    path.join(lock, "owner.json"),
-    JSON.stringify(owner, null, 2),
-  );
-  return {
-    async update(values) {
-      Object.assign(owner, values);
+  const ownerPath = path.join(lock, "owner.json");
+  const guard = `${lock}.mutation`;
+  async function mutate(action) {
+    const deadline = Date.now() + 10000;
+    while (true) {
+      try {
+        await mkdir(guard);
+        break;
+      } catch (error) {
+        if (error.code !== "EEXIST") throw error;
+        if (Date.now() >= deadline)
+          throw new Error(
+            `QA lease update timed out: ${guard}. Inspect its owner before removing it.`,
+          );
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+    }
+    try {
       await writeFile(
-        path.join(lock, "owner.json"),
-        JSON.stringify(owner, null, 2),
+        path.join(guard, "owner.json"),
+        JSON.stringify({ pid: process.pid }),
       );
+      return await action();
+    } finally {
+      await rm(guard, { recursive: true });
+    }
+  }
+  const owner = {
+    pid: process.pid,
+    startedAt: new Date().toISOString(),
+    token: randomUUID(),
+    ...(parallelGroup === undefined ? {} : { sessionId, parallelGroup }),
+  };
+  const save = (record) =>
+    writeFile(ownerPath, JSON.stringify(record, null, 2));
+  const read = () => readFile(ownerPath, "utf8").then(JSON.parse);
+  await mutate(async () => {
+    try {
+      await mkdir(lock);
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
+      const record = await read().catch(() => null);
+      if (
+        parallelGroup === undefined ||
+        record?.mode !== "parallel" ||
+        record.parallelGroup !== parallelGroup ||
+        Object.hasOwn(record.sessions, sessionId)
+      )
+        throw new Error(
+          `Another QA session holds ${lock}\n${JSON.stringify(record, null, 2)}\nDo not stop its processes. If abandoned, verify every recorded owner and Electron PID has exited before removing this lock directory. Parallel sessions require the same explicit group and distinct session IDs.`,
+        );
+      record.sessions[sessionId] = owner;
+      await save(record);
+      return;
+    }
+    await save(
+      parallelGroup === undefined
+        ? owner
+        : { mode: "parallel", parallelGroup, sessions: { [sessionId]: owner } },
+    );
+  });
+  let released = false;
+  async function current() {
+    if (released) throw new Error("QA lease is released");
+    const record = await read();
+    const entry =
+      parallelGroup === undefined ? record : record.sessions?.[sessionId];
+    if (entry?.token !== owner.token)
+      throw new Error("QA lease owner changed; refusing to modify it");
+    return record;
+  }
+  return {
+    parallelGroup,
+    sessionId: parallelGroup === undefined ? undefined : sessionId,
+    async owners() {
+      return mutate(async () => {
+        const record = await current();
+        return record.mode === "parallel"
+          ? Object.values(record.sessions)
+          : [record];
+      });
+    },
+    async update(values) {
+      await mutate(async () => {
+        const record = await current();
+        const entry =
+          parallelGroup === undefined ? record : record.sessions[sessionId];
+        Object.assign(entry, values);
+        await save(record);
+      });
     },
     async release() {
-      await rm(lock, { recursive: true });
+      if (released) return;
+      await mutate(async () => {
+        if (released) return;
+        const record = await current();
+        if (parallelGroup !== undefined) {
+          delete record.sessions[sessionId];
+          if (Object.keys(record.sessions).length) await save(record);
+          else await rm(lock, { recursive: true });
+        } else await rm(lock, { recursive: true });
+        released = true;
+      });
     },
   };
 }
@@ -201,8 +304,7 @@ export async function sessionEnvironment(provider, overrides = {}) {
   // Test APIs otherwise force deterministic providers despite valid credentials.
   // The selected mode wins over ambient flags from another QA session.
   env.NORDRI_TEST_API_USE_LIVE_AI = provider === "configured" ? "1" : "0";
-  env.NORDRI_INTERVIEW_TEST_USE_LIVE_AI =
-    provider === "configured" ? "1" : "0";
+  env.NORDRI_INTERVIEW_TEST_USE_LIVE_AI = provider === "configured" ? "1" : "0";
   if (provider === "deterministic") {
     for (const key of Object.keys(env)) {
       if (/(?:API_KEY|TOKEN|SECRET|PASSWORD)$/.test(key)) env[key] = "";
@@ -231,7 +333,14 @@ export async function stopChild(child) {
   if (!child.pid || child.exitCode !== null || child.signalCode !== null)
     return;
   const exited = once(child, "exit");
-  child.kill("SIGTERM");
+  if (process.platform === "win32") {
+    // An exact owned root PID and its descendants, never a process-name sweep.
+    await exec("taskkill.exe", ["/PID", String(child.pid), "/T", "/F"]).catch(
+      (error) => {
+        if (isAlive(child.pid)) throw error;
+      },
+    );
+  } else child.kill("SIGTERM");
   const timer = setTimeout(() => child.kill("SIGKILL"), 5000);
   try {
     await exited;

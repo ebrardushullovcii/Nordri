@@ -1762,9 +1762,27 @@ function escapeRegularExpression(value: string): string {
 
 function resolveProviderCompanyLabel(input: {
   targetLabel: string;
+  targetStartingUrl: string;
   providerLabel: string;
   providerIdentifier: string | null;
 }): string {
+  // A source's URL or hostname identifies its host, not the employer. Check
+  // before stripping provider/jobs words, which can leave a plausible-looking
+  // fragment of an ATS domain in the company field.
+  const targetUrl = tryParseUrl(input.targetStartingUrl);
+  const normalizeAddress = (value: string) =>
+    value.trim().replace(/\/+$/u, "").toLocaleLowerCase();
+  const isSourceAddressLabel =
+    targetUrl !== null &&
+    [
+      targetUrl.hostname,
+      targetUrl.host,
+      `${targetUrl.host}${targetUrl.pathname}`,
+      input.targetStartingUrl,
+    ].some(
+      (address) =>
+        normalizeAddress(address) === normalizeAddress(input.targetLabel),
+    );
   const providerPattern = new RegExp(
     `\\b${escapeRegularExpression(input.providerLabel)}\\b`,
     "giu",
@@ -1782,7 +1800,7 @@ function resolveProviderCompanyLabel(input: {
     "job source",
     "careers source",
   ].includes(normalizedTargetLabel);
-  if (cleanedTargetLabel && !isGenericTargetLabel) {
+  if (cleanedTargetLabel && !isGenericTargetLabel && !isSourceAddressLabel) {
     return cleanedTargetLabel;
   }
 
@@ -1986,6 +2004,7 @@ export async function collectPublicProviderJobs(input: {
                 title: job.title,
                 company: resolveProviderCompanyLabel({
                   targetLabel: input.target.label,
+                  targetStartingUrl: input.target.startingUrl,
                   providerLabel: provider.label,
                   providerIdentifier: provider.providerIdentifier,
                 }),

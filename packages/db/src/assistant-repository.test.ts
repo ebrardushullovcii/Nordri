@@ -48,7 +48,7 @@ function message(
 describe("assistant repository", () => {
   const cleanups: (() => Promise<void>)[] = [];
   afterEach(async () => {
-    for (const cleanup of cleanups.splice(0)) await cleanup();
+    for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
   });
 
   it("orders conversations by latest message and messages by time", async () => {

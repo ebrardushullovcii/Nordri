@@ -66,6 +66,8 @@ import {
 } from "./tool-kit";
 import {
   buildAssistantToolCatalog,
+  cancelBackgroundBatch,
+  readBackgroundBatch,
   undoReceipt,
   type AssistantCatalogMode,
 } from "./tools";
@@ -146,10 +148,23 @@ interface RunWatch {
   /** Set for a run that is resuming after a pause (see watchRun). */
   resumedAt?: number;
   seenWorking?: boolean;
+  /** A reported person-owned handoff remains quiet until this run changes. */
+  reportedHandoff?: { key: string; resultKey: string | undefined };
 }
 
 /** How long a resumed run may look ended before its end is believed. */
 const RESUME_GRACE_MS = 30_000;
+
+function runWatchKey(
+  conversationId: string,
+  run: Pick<AssistantRunRef, "kind" | "id">,
+): string {
+  const kind =
+    run.kind === "apply_batch" || run.kind === "apply_run"
+      ? "application"
+      : run.kind;
+  return `${conversationId}:${kind}:${run.id}`;
+}
 
 const OUTAGE_TEXT =
   "The assistant could not reach its AI service just now. Your message is kept; send it again in a moment.";
@@ -185,6 +200,8 @@ export class AssistantSessionHost {
   private readonly options: AssistantSessionHostOptions;
   private readonly live = new Map<string, LiveTurn>();
   private readonly watches = new Map<string, RunWatch>();
+  private watchCheckInFlight: Promise<void> | null = null;
+  private readonly backgroundActivityLabels = new Map<string, string | null>();
   private readonly handles = new Map<string, AssistantHandleStore>();
   private readonly calibrators = new Map<string, TokenCalibrator>();
   private readonly profileReadDone = new Set<string>();
@@ -289,7 +306,9 @@ export class AssistantSessionHost {
       messages: page.messages,
       hasOlderMessages: page.hasOlder,
       activeTurn: live?.turn ?? null,
-      activity: live?.activity ?? null,
+      activity: live
+        ? live.activity
+        : this.resumeBatchActivity(input.conversationId),
       draftText: live?.draftText || null,
       plans: await this.repository.listPlans({
         conversationId: input.conversationId,
@@ -511,13 +530,16 @@ export class AssistantSessionHost {
     startedThisTurn: readonly AssistantRunRef[],
   ): Promise<void> {
     const runs = new Map<string, AssistantRunRef>();
-    for (const run of startedThisTurn) runs.set(`${run.kind}:${run.id}`, run);
+    for (const run of startedThisTurn)
+      runs.set(runWatchKey(conversationId, run), run);
     for (const [key, watch] of this.watches) {
       if (watch.conversationId === conversationId) runs.set(key, watch.run);
     }
     for (const [key, run] of runs) {
       await this.cancelRun(run);
-      this.watches.delete(key);
+      // Resume Stop lets the active drafts finish. Keep observing them so
+      // the sidebar names what is still running, without starting a continuation.
+      if (run.kind !== "resume_generation") this.watches.delete(key);
     }
     for (const operation of await this.repository.listOperations(
       conversationId,
@@ -531,6 +553,7 @@ export class AssistantSessionHost {
         endedAt: this.now(),
       });
     }
+    await this.publishResumeBatchActivity(conversationId, true);
   }
 
   private async cancelRun(run: AssistantRunRef): Promise<void> {
@@ -538,7 +561,8 @@ export class AssistantSessionHost {
       if (run.kind === "discovery") await this.ports.cancelSearch(run.id);
       else if (run.kind === "apply_batch" || run.kind === "apply_run") {
         await this.service.cancelApplyRun(run.id);
-      }
+      } else if (run.kind === "resume_generation")
+        cancelBackgroundBatch(run.id);
     } catch (error) {
       this.log("Could not cancel a run on stop", error);
     }
@@ -1083,6 +1107,7 @@ export class AssistantSessionHost {
     });
     if (this.live.get(conversationId) === live)
       this.live.delete(conversationId);
+    await this.publishResumeBatchActivity(conversationId, true);
     await this.repository.pruneEvents(conversationId, EVENT_KEEP_LAST);
     this.ports.publishWorkspaceUpdate();
     // Messages that arrived after the last tool boundary start the next turn.
@@ -1568,6 +1593,24 @@ export class AssistantSessionHost {
     turnId: string;
     resumed?: boolean;
   }): Promise<void> {
+    const key = runWatchKey(input.conversationId, input.run);
+    const existing = this.watches.get(key);
+    if (
+      existing &&
+      (input.run.kind === "apply_batch" || input.run.kind === "apply_run")
+    ) {
+      // Answering Needs you follows the original application, even when its
+      // tool names the watch differently. Keep its operation and source.
+      existing.run = {
+        ...existing.run,
+        jobIds: [...new Set([...existing.run.jobIds, ...input.run.jobIds])],
+      };
+      if (input.resumed) {
+        existing.resumedAt = Date.now();
+        existing.seenWorking = false;
+      }
+      return;
+    }
     const operationId = this.createId("assistant_run_watch");
     await this.repository.upsertOperation({
       id: operationId,
@@ -1582,7 +1625,7 @@ export class AssistantSessionHost {
       startedAt: this.now(),
       endedAt: null,
     });
-    this.watches.set(`${input.run.kind}:${input.run.id}`, {
+    this.watches.set(key, {
       conversationId: input.conversationId,
       run: input.run,
       note: input.note,
@@ -1598,6 +1641,63 @@ export class AssistantSessionHost {
     this.watchTimer = setInterval(() => {
       void this.checkWatches();
     }, this.options.watchIntervalMs ?? 4_000);
+  }
+
+  /** Uses the existing typed activity event; no model turn is fabricated. */
+  private resumeBatchActivity(
+    conversationId: string,
+  ): AssistantActivity | null {
+    const batches = [...this.watches.values()]
+      .filter(
+        (watch) =>
+          watch.conversationId === conversationId &&
+          watch.run.kind === "resume_generation",
+      )
+      .flatMap((watch) => {
+        const batch = readBackgroundBatch(watch.run.id);
+        return batch && !batch.done ? [batch] : [];
+      });
+    if (batches.length === 0) return null;
+    const total = batches.reduce(
+      (count, batch) => count + batch.jobIds.length,
+      0,
+    );
+    const settled = batches.reduce(
+      (count, batch) =>
+        count +
+        batch.completedJobIds.length +
+        batch.failures.length +
+        batch.skipped.length,
+      0,
+    );
+    const active = batches.reduce(
+      (count, batch) => count + batch.activeJobIds.length,
+      0,
+    );
+    const failed = batches.reduce(
+      (count, batch) => count + batch.failures.length,
+      0,
+    );
+    return {
+      label: batches.every((batch) => batch.cancelled)
+        ? `Finishing ${active} active resume${active === 1 ? "" : "s"}; queued jobs stopped`
+        : `Writing resumes: ${settled} of ${total} finished${failed ? `; ${failed} failed` : ""}`,
+      toolName: "generate_resumes",
+      startedAt: batches.map((batch) => batch.startedAt).sort()[0]!,
+    };
+  }
+
+  private async publishResumeBatchActivity(
+    conversationId: string,
+    force = false,
+  ): Promise<void> {
+    if (this.live.has(conversationId) || this.closed) return;
+    const activity = this.resumeBatchActivity(conversationId);
+    const label = activity?.label ?? null;
+    if (!force && this.backgroundActivityLabels.get(conversationId) === label)
+      return;
+    this.backgroundActivityLabels.set(conversationId, label);
+    await this.emit(conversationId, null, { type: "activity", activity });
   }
 
   /** Called by the host whenever the workspace changed. */
@@ -1679,7 +1779,16 @@ export class AssistantSessionHost {
     }
   }
 
-  async checkWatches(): Promise<void> {
+  checkWatches(): Promise<void> {
+    if (this.watchCheckInFlight) return this.watchCheckInFlight;
+    const check = this.checkWatchesOnce().finally(() => {
+      this.watchCheckInFlight = null;
+    });
+    this.watchCheckInFlight = check;
+    return check;
+  }
+
+  private async checkWatchesOnce(): Promise<void> {
     if (this.watches.size === 0) {
       if (this.watchTimer) clearInterval(this.watchTimer);
       this.watchTimer = null;
@@ -1692,28 +1801,58 @@ export class AssistantSessionHost {
       return;
     }
     for (const [key, watch] of [...this.watches]) {
+      if (this.watches.get(key) !== watch) continue;
       const status = readRunStatus(snapshot, watch.run);
       if (!status.done) {
-        if (watch.resumedAt !== undefined) watch.seenWorking = true;
+        if (watch.resumedAt !== undefined || watch.reportedHandoff)
+          watch.seenWorking = true;
+        await this.publishResumeBatchActivity(watch.conversationId);
+        continue;
+      }
+      if (
+        watch.reportedHandoff &&
+        !watch.seenWorking &&
+        (status.pendingHandoffKey === watch.reportedHandoff.key ||
+          (!status.pendingHandoffKey &&
+            status.resultKey === watch.reportedHandoff.resultKey))
+      ) {
         continue;
       }
       if (
         watch.resumedAt !== undefined &&
         !watch.seenWorking &&
+        !watch.reportedHandoff &&
         Date.now() - watch.resumedAt < RESUME_GRACE_MS
       ) {
         continue;
       }
+      if (status.pendingHandoffKey) {
+        // Report the first handoff, then leave a durable watch on the same
+        // application. Its page can resume outside the assistant's turn.
+        watch.reportedHandoff = {
+          key: status.pendingHandoffKey,
+          resultKey: status.resultKey,
+        };
+        watch.seenWorking = false;
+        delete watch.resumedAt;
+        await this.continueAfterRun(watch, status.summary, status.details);
+        continue;
+      }
       this.watches.delete(key);
       const operation = await this.repository.getOperation(watch.operationId);
+      const cancelled =
+        watch.run.kind === "resume_generation" &&
+        readBackgroundBatch(watch.run.id)?.cancelled;
       if (operation) {
         await this.repository.upsertOperation({
           ...operation,
-          status: "committed",
+          status: cancelled ? "cancelled" : "committed",
           resultSummary: status.summary.slice(0, 2_000),
           endedAt: this.now(),
         });
       }
+      await this.publishResumeBatchActivity(watch.conversationId);
+      if (cancelled) continue;
       await this.continueAfterRun(watch, status.summary, status.details);
     }
   }
@@ -2227,6 +2366,9 @@ export class AssistantSessionHost {
    * yet read start their turn. Nothing uncertain is replayed.
    */
   async recover(): Promise<void> {
+    let applicationSnapshot:
+      | Awaited<ReturnType<JobFinderWorkspaceService["getWorkspaceSnapshot"]>>
+      | undefined;
     for (const turn of await this.repository.listTurnsByStatus([
       "running",
       "queued",
@@ -2246,17 +2388,69 @@ export class AssistantSessionHost {
       );
     }
     for (const conversation of await this.repository.listConversations()) {
-      for (const operation of await this.repository.listOperations(
-        conversation.id,
-        { runOnly: true },
+      const operations = await this.repository.listOperations(conversation.id, {
+        runOnly: true,
+      });
+      for (const operation of [...operations].sort((left, right) =>
+        left.startedAt.localeCompare(right.startedAt),
       )) {
         if (operation.status !== "started" || !operation.run) continue;
-        this.watches.set(`${operation.run.kind}:${operation.run.id}`, {
+        if (operation.run.kind === "resume_generation") {
+          cancelBackgroundBatch(operation.run.id);
+          await this.repository.upsertOperation({
+            ...operation,
+            status: "cancelled",
+            resultSummary:
+              "The app closed while writing resumes. Saved drafts are kept; queued jobs were not restarted.",
+            endedAt: this.now(),
+          });
+          await this.appendNotice(
+            conversation.id,
+            null,
+            "interrupted",
+            "The app closed while writing resumes. Saved drafts are kept; ask again to write the remaining resumes.",
+          );
+          continue;
+        }
+        const run = { ...operation.run, jobIds: [] };
+        const key = runWatchKey(conversation.id, run);
+        if (
+          this.watches.has(key) &&
+          (run.kind === "apply_batch" || run.kind === "apply_run")
+        ) {
+          await this.repository.upsertOperation({
+            ...operation,
+            status: "committed",
+            resultSummary:
+              "The original watch already follows this application in this conversation.",
+            endedAt: this.now(),
+          });
+          continue;
+        }
+        const applicationStatus =
+          operation.run.kind === "apply_batch" ||
+          operation.run.kind === "apply_run"
+            ? readRunStatus(
+                (applicationSnapshot ??=
+                  await this.service.getWorkspaceSnapshot()),
+                run,
+              )
+            : null;
+        this.watches.set(key, {
           conversationId: conversation.id,
-          run: { ...operation.run, jobIds: [] },
+          run,
           note: operation.resultSummary ?? "A background run",
           operationId: operation.id,
           sourceMessageId: operation.receiptId,
+          ...(applicationStatus?.pendingHandoffKey
+            ? {
+                reportedHandoff: {
+                  key: applicationStatus.pendingHandoffKey,
+                  resultKey: applicationStatus.resultKey,
+                },
+                seenWorking: false,
+              }
+            : {}),
         });
       }
       const pending = await this.repository.listPendingMessageIds(
@@ -2327,6 +2521,10 @@ export class AssistantSessionHost {
 
   async shutdown(): Promise<void> {
     this.closed = true;
+    for (const watch of this.watches.values()) {
+      if (watch.run.kind === "resume_generation")
+        cancelBackgroundBatch(watch.run.id);
+    }
     if (this.watchTimer) clearInterval(this.watchTimer);
     this.watchTimer = null;
     for (const [conversationId, live] of this.live) {

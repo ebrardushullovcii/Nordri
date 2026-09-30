@@ -1,11 +1,336 @@
 import { describe, expect, test } from "vitest";
 
-import { ResumeImportFieldCandidateSchema } from "@nordri/contracts";
+import {
+  ResumeImportFieldCandidateSchema,
+  type ResumeImportFieldCandidate,
+} from "@nordri/contracts";
 import { reconcileCandidates } from "./internal/resume-import-reconciliation";
-import { createSeed } from "./workspace-service.test-fixtures";
-import { createStageCandidate } from "./workspace-service.resume-analysis.shared";
+import {
+  createFreshStartSeedProfile,
+  createSeed,
+} from "./workspace-service.test-fixtures";
+import {
+  createStageCandidate,
+  createTestBundle,
+} from "./workspace-service.resume-analysis.shared";
 
 describe("resume import reconciliation", () => {
+  const emptyProfile = () => ({
+    ...createFreshStartSeedProfile(),
+    skills: [],
+    experiences: [],
+    education: [],
+    certifications: [],
+    links: [],
+    projects: [],
+    spokenLanguages: [],
+  });
+  const scannedCandidate = (
+    overrides: Partial<ResumeImportFieldCandidate> = {},
+  ) =>
+    ResumeImportFieldCandidateSchema.parse({
+      ...createStageCandidate({
+        target: { section: "identity", key: "headline", recordId: null },
+        label: "Headline",
+        value: "Senior Product Engineer",
+        confidence: 0.95,
+        overall: 0.56482,
+        recommendation: "needs_review",
+      }),
+      id: "scanned_candidate",
+      runId: "scanned_import",
+      sourceKind: "vision_omni",
+      createdAt: "2026-09-30T10:00:00.000Z",
+      resolvedAt: null,
+      resolution: "needs_review",
+      confidenceBreakdown: {
+        overall: 0.56482,
+        parserQuality: 0.2836,
+        evidenceQuality: 0.42,
+        agreementScore: 0.34,
+        normalizationRisk: 0.2,
+        conflictRisk: 0.18,
+        fieldSensitivity: "medium",
+        recommendation: "needs_review",
+      },
+      visualEvidence: [
+        {
+          branch: "vision",
+          sourceFileKind: "pdf",
+          pageNumber: 1,
+          regionHint: "Title below the name",
+          confidence: 0.95,
+          uncertaintyNotes: [],
+        },
+      ],
+      ...overrides,
+      valuePreview:
+        overrides.valuePreview ??
+        (overrides.value !== undefined
+          ? JSON.stringify(overrides.value)
+          : "Senior Product Engineer"),
+      evidenceText:
+        overrides.evidenceText ??
+        (overrides.value !== undefined
+          ? JSON.stringify(overrides.value)
+          : "Senior Product Engineer"),
+    });
+  const scannedBundle = () =>
+    createTestBundle({ fullText: "", blocks: [], qualityScore: 0.2836 });
+
+  test("fills empty fields and collections from a clear scan despite an empty native text layer", () => {
+    const seed = createSeed();
+    const candidates = [
+      scannedCandidate(),
+      scannedCandidate({
+        id: "scanned_skills",
+        target: { section: "skill", key: "skills", recordId: null },
+        value: ["React", "TypeScript"],
+      }),
+      scannedCandidate({
+        id: "scanned_role",
+        target: { section: "experience", key: "record", recordId: null },
+        value: {
+          companyName: "Northstar Labs",
+          title: "Senior Product Engineer",
+          startDate: "2022-03",
+          isCurrent: true,
+        },
+      }),
+      scannedCandidate({
+        id: "scanned_education",
+        target: { section: "education", key: "record", recordId: null },
+        value: {
+          schoolName: "Delft University of Technology",
+          degree: "BSc Computer Science",
+          startDate: "2015",
+          endDate: "2018",
+        },
+      }),
+    ];
+    const reconciled = reconcileCandidates(
+      emptyProfile(),
+      seed.searchPreferences,
+      candidates,
+      scannedBundle(),
+    );
+    expect(reconciled).toHaveLength(4);
+    for (const candidate of reconciled) {
+      expect(candidate).toMatchObject({
+        resolution: "auto_applied",
+        resolutionReason: "applied_into_empty_profile",
+        confidenceBreakdown: { overall: 0.56482 },
+      });
+    }
+  });
+
+  test.each([
+    ["low extraction confidence", { confidence: 0.7 }],
+    ["alternative readings", { alternatives: ["Staff Product Engineer"] }],
+    ["missing visual evidence", { visualEvidence: [] }],
+    [
+      "unanchored region",
+      {
+        visualEvidence: [
+          {
+            branch: "vision",
+            sourceFileKind: "pdf",
+            pageNumber: 1,
+            regionHint: null,
+            confidence: 0.95,
+            uncertaintyNotes: [],
+          },
+        ],
+      },
+    ],
+    [
+      "unanchored page",
+      {
+        visualEvidence: [
+          {
+            branch: "vision",
+            sourceFileKind: "pdf",
+            pageNumber: null,
+            regionHint: "Title",
+            confidence: 0.95,
+            uncertaintyNotes: [],
+          },
+        ],
+      },
+    ],
+    [
+      "page outside the imported bundle",
+      {
+        visualEvidence: [
+          {
+            branch: "vision",
+            sourceFileKind: "pdf",
+            pageNumber: 9,
+            regionHint: "Title",
+            confidence: 0.95,
+            uncertaintyNotes: [],
+          },
+        ],
+      },
+    ],
+    [
+      "uncertain reading",
+      {
+        visualEvidence: [
+          {
+            branch: "vision",
+            sourceFileKind: "pdf",
+            pageNumber: 1,
+            regionHint: "Title",
+            confidence: 0.95,
+            uncertaintyNotes: ["Partly illegible"],
+          },
+        ],
+      },
+    ],
+    [
+      "low visual confidence",
+      {
+        visualEvidence: [
+          {
+            branch: "vision",
+            sourceFileKind: "pdf",
+            pageNumber: 1,
+            regionHint: "Title",
+            confidence: 0.65,
+            uncertaintyNotes: [],
+          },
+        ],
+      },
+    ],
+    ["inferred field", { notes: ["Inferred from the experience section"] }],
+    [
+      "first-person About me",
+      {
+        target: { section: "identity", key: "summary", recordId: null },
+        value: "I build reliable workflow software.",
+      },
+    ],
+    [
+      "shared memory",
+      {
+        target: {
+          section: "narrative",
+          key: "professionalStory",
+          recordId: null,
+        },
+        value: "Builds reliable workflow software.",
+      },
+    ],
+  ] satisfies [string, Partial<ResumeImportFieldCandidate>][])(
+    "keeps %s in review for a scanned import",
+    (_label, overrides) => {
+      expect(
+        reconcileCandidates(
+          emptyProfile(),
+          createSeed().searchPreferences,
+          [scannedCandidate(overrides)],
+          scannedBundle(),
+        )[0]?.resolution,
+      ).toBe("needs_review");
+    },
+  );
+
+  test("keeps high-risk scans and abstentions out of automatic import", () => {
+    const candidate = scannedCandidate();
+    for (const confidenceBreakdown of [
+      { ...candidate.confidenceBreakdown!, normalizationRisk: 0.8 },
+      { ...candidate.confidenceBreakdown!, conflictRisk: 0.8 },
+      {
+        ...candidate.confidenceBreakdown!,
+        recommendation: "abstain" as const,
+        overall: 0.2,
+      },
+    ]) {
+      expect(
+        reconcileCandidates(
+          emptyProfile(),
+          createSeed().searchPreferences,
+          [scannedCandidate({ confidenceBreakdown })],
+          scannedBundle(),
+        )[0]?.resolution,
+      ).not.toBe("auto_applied");
+    }
+  });
+
+  test("requires the imported document bundle to verify a visual-only promotion", () => {
+    expect(
+      reconcileCandidates(emptyProfile(), createSeed().searchPreferences, [
+        scannedCandidate(),
+      ])[0]?.resolution,
+    ).toBe("needs_review");
+  });
+
+  test("keeps saved facts and a different identity protected from clear scans", () => {
+    const seed = createSeed();
+    const headline = scannedCandidate();
+    expect(
+      reconcileCandidates(
+        { ...emptyProfile(), headline: "My chosen headline" },
+        seed.searchPreferences,
+        [headline],
+        scannedBundle(),
+      )[0],
+    ).toMatchObject({
+      resolution: "needs_review",
+      resolutionReason: "conflicts_with_existing_profile_value",
+    });
+    const name = scannedCandidate({
+      target: { section: "identity", key: "fullName", recordId: null },
+      value: "Morgan Lee",
+    });
+    expect(
+      reconcileCandidates(
+        seed.profile,
+        seed.searchPreferences,
+        [name],
+        scannedBundle(),
+      )[0]?.resolution,
+    ).toBe("needs_review");
+    expect(
+      reconcileCandidates(
+        seed.profile,
+        seed.searchPreferences,
+        [name],
+        scannedBundle(),
+      )[0]?.resolutionReason,
+    ).toMatch(/^identity_mismatch/);
+  });
+
+  test("keeps material text and scan disagreement in review on an empty profile", () => {
+    const vision = scannedCandidate();
+    const text = scannedCandidate({
+      id: "text_headline",
+      sourceKind: "model_identity_summary",
+      value: "Staff Platform Engineer",
+      sourceBlockIds: ["headline_block"],
+      visualEvidence: [],
+      confidenceBreakdown: {
+        ...vision.confidenceBreakdown!,
+        overall: 0.85,
+        recommendation: "auto_apply",
+      },
+    });
+    const reconciled = reconcileCandidates(
+      emptyProfile(),
+      createSeed().searchPreferences,
+      [text, vision],
+      scannedBundle(),
+    );
+    expect(
+      reconciled.some((candidate) => candidate.resolution === "auto_applied"),
+    ).toBe(false);
+    expect(
+      reconciled.find((candidate) => candidate.conflictChoices?.length === 2)
+        ?.resolution,
+    ).toBe("needs_review");
+  });
+
   test("rejects a model date range proposed as a phone number", () => {
     const seed = createSeed();
     const candidate = ResumeImportFieldCandidateSchema.parse({
@@ -749,7 +1074,10 @@ describe("resume import reconciliation", () => {
             key: "record",
             recordId: `experience_${index}`,
           },
-          label: index === 0 ? "Engineer at Senior Product" : "Senior Product Engineer",
+          label:
+            index === 0
+              ? "Engineer at Senior Product"
+              : "Senior Product Engineer",
           value,
           sourceBlockIds: [`block_${index}`],
           confidence: index === 0 ? 0.94 : 0.9,
@@ -942,9 +1270,11 @@ describe("resume import reconciliation", () => {
     );
 
     expect(
-      reconcileCandidates(seed.profile, seed.searchPreferences, candidates).filter(
-        (candidate) => candidate.resolution === "auto_applied",
-      ),
+      reconcileCandidates(
+        seed.profile,
+        seed.searchPreferences,
+        candidates,
+      ).filter((candidate) => candidate.resolution === "auto_applied"),
     ).toHaveLength(2);
   });
 });

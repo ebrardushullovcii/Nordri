@@ -3,7 +3,10 @@ import { describe, expect, test, vi } from "vitest";
 
 import type { LLMClient } from "../agent/contracts";
 import { runApplyAgent } from "./apply-agent";
-import { createApplySystemPrompt } from "./apply-prompts";
+import {
+  createApplySystemPrompt,
+  createApplyUserPrompt,
+} from "./apply-prompts";
 import {
   checkWrittenApplicationAnswer,
   WrittenAnswerCheckUnavailableError,
@@ -211,6 +214,28 @@ test("prose instructions separate candidate evidence from job requirements", () 
     "never turn a job requirement into a claim that the person has done it",
   );
   expect(prompt).toContain("Leave unsupported candidate claims out");
+});
+
+test("a retained form receives current exact answers and only named corrections replace entered values", () => {
+  const input = config(page(), {
+    application: {
+      jobId: "job_test",
+      applicationId: "application_test",
+      startingUrl: "https://apply.example.test/form?step=3",
+      continuation: { sourceUrls: ["https://apply.example.test/form"] },
+      instructions: [
+        'Answer to "Are you legally authorized to work in this country?": Yes',
+        'Correct "Address" to "1 Example Road" before sending.',
+      ],
+    },
+  });
+  const user = createApplyUserPrompt(input);
+  const system = createApplySystemPrompt(input);
+  expect(user).toContain(JSON.stringify(input.application.instructions));
+  expect(system).toContain("even when a field already contains an older value");
+  expect(system).toContain("Preserve unrelated values entered by the person");
+  expect(system).toContain("leave it intact and ask");
+  expect(user).toContain("does not widen application authority");
 });
 
 describe("written answer fact check recovery", () => {

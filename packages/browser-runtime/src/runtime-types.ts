@@ -410,6 +410,8 @@ export interface AgentDiscoveryOptions {
   retainAllFound?: boolean;
   /** Public feed postings available for the model to inspect and select. */
   sourceCatalog?: JobPosting[];
+  /** True only for a complete authoritative inventory of this source. */
+  sourceCatalogComplete?: boolean;
   userProfile: CandidateProfile;
   searchPreferences: {
     targetRoles: string[];

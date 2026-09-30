@@ -944,6 +944,38 @@ describe("buildDeterministicResumeProfileExtraction", () => {
     );
   });
 
+  test.each([
+    "Eligibility",
+    "Target roles",
+    "Preferred location: Remote worldwide or Berlin, Germany",
+  ])("keeps real spoken languages separate from %s", (boundary) => {
+    const extraction = buildDeterministicResumeProfileExtraction(
+      {
+        existingProfile: createProfile(),
+        existingSearchPreferences: createPreferences(),
+        resumeText: [
+          "Jamie Rivers",
+          "Languages",
+          "English - fluent",
+          "German - fluent",
+          boundary,
+          "Authorized to work in Germany and the European Union. No sponsorship required.",
+          "Target roles",
+          "Frontend Engineer, Backend Engineer, Full-stack Engineer, Platform Engineer, Data Engineer",
+          "Preferred location: Remote worldwide or Berlin, Germany",
+        ].join("\n"),
+      },
+      "deterministic",
+      "Test provider",
+      { preserveExistingValues: false },
+    );
+
+    expect(extraction.spokenLanguages).toEqual([
+      expect.objectContaining({ language: "English", proficiency: "fluent" }),
+      expect.objectContaining({ language: "German", proficiency: "fluent" }),
+    ]);
+  });
+
   test("keeps real spoken languages and drops Europass language-section chrome", () => {
     const extraction = buildDeterministicResumeProfileExtraction(
       {

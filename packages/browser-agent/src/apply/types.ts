@@ -453,6 +453,8 @@ export interface ApplyAgentConfig {
     jobId: string;
     applicationId: string;
     startingUrl: string;
+    /** Current application guidance and the person's exact answers on resumption. */
+    instructions?: readonly string[];
     /** The live page belongs to a paused application that is being continued. */
     continuation?: { sourceUrls: readonly string[] };
   };

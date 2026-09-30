@@ -2174,6 +2174,13 @@ export async function createFileJobFinderRepository(
           const next = update({
             campaignState: cloneValue(campaignState),
             searchPreferences: cloneValue(searchPreferences),
+            intelligenceState: cloneValue(
+              getSingletonValue(
+                database,
+                "intelligence_state",
+                JobFinderIntelligenceStateSchema,
+              ) ?? normalizedSeed.intelligence,
+            ),
           });
           const nextCampaignState = JobSearchCampaignCollectionSchema.parse(
             cloneValue(next.campaignState),
@@ -2181,12 +2188,24 @@ export async function createFileJobFinderRepository(
           const nextSearchPreferences = JobSearchPreferencesSchema.parse(
             cloneValue(next.searchPreferences),
           );
+          const nextIntelligenceState =
+            next.intelligenceState === undefined
+              ? null
+              : JobFinderIntelligenceStateSchema.parse(
+                  cloneValue(next.intelligenceState),
+                );
           saveSingletonValue(database, "campaign_state", nextCampaignState);
           saveSingletonValue(
             database,
             "search_preferences",
             nextSearchPreferences,
           );
+          if (nextIntelligenceState)
+            saveSingletonValue(
+              database,
+              "intelligence_state",
+              nextIntelligenceState,
+            );
           // A changed preference advances the shared profile epoch so a
           // copilot commit that captured the older preferences fails closed
           // as stale instead of reverting this campaign preference change.

@@ -39,14 +39,14 @@ function assertAppWindow(event: IpcMainInvokeEvent): void {
   }
 }
 
-function inferAssetKind(fileName: string): CandidateAssetKind {
+export function inferAssetKind(fileName: string): CandidateAssetKind {
   const lower = fileName.toLowerCase();
+  if (/\.(png|jpe?g|gif|webp)$/u.test(lower)) return "image";
   if (/resume|\bcv\b|curriculum/u.test(lower)) return "resume";
   if (/cover|letter/u.test(lower)) return "cover_letter";
   if (/transcript/u.test(lower)) return "transcript";
   if (/certificat/u.test(lower)) return "certificate";
   if (/portfolio/u.test(lower)) return "portfolio";
-  if (/\.(png|jpe?g|gif|webp)$/u.test(lower)) return "image";
   if (/\.(pdf|docx?|txt|rtf|odt)$/u.test(lower)) return "resume";
   return "other";
 }

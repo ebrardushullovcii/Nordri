@@ -45,4 +45,32 @@ describe("following an application while an answer is put on the form", () => {
     expect(status.done).toBe(true);
     expect(status.summary).toContain("1 awaiting review");
   });
+
+  it("keeps a terminal run watched while its answer is still being applied", () => {
+    const verifying = snapshot("verifying");
+    verifying.applyRuns[0]!.state = "completed";
+    expect(readRunStatus(verifying, run).done).toBe(false);
+    verifying.userActionRequests[0]!.state = "resolved";
+    expect(readRunStatus(verifying, run).done).toBe(true);
+  });
+
+  it("names a pending person-owned handoff without treating it as submission", () => {
+    const waiting = snapshot("awaiting_user");
+    waiting.applyRuns[0]!.state = "completed";
+    const status = readRunStatus(waiting, run);
+    expect(status.done).toBe(true);
+    expect(status.pendingHandoffKey).toBe("step_1");
+    expect(status.summary).toContain("waiting on the person");
+    expect(status.summary).toContain("awaiting review");
+  });
+
+  it("does not retain a stale handoff after the same job is submitted", () => {
+    const submitted = snapshot("awaiting_user");
+    submitted.applyRuns[0]!.state = "completed";
+    submitted.applyJobResults[0]!.state = "submitted";
+    const status = readRunStatus(submitted, run);
+    expect(status.done).toBe(true);
+    expect(status.pendingHandoffKey).toBeUndefined();
+    expect(status.summary).toContain("1 submitted");
+  });
 });

@@ -535,6 +535,9 @@ export function createOpenAiCompatibleResumeVisionProvider(
                 "Use the visual layout for columns, scanned content, section grouping, and parser recovery.",
                 "Do not invent values. Keep exact names, dates, emails, URLs, company names, and titles literal when visible.",
                 "Each candidate must include target, label, value, evidenceText, confidence, notes, alternatives, and visualEvidence.",
+                'Use a target object with section, key, and recordId: for example {"section":"identity","key":"fullName","recordId":null}. Never return a bare field name such as "fullName" or a bare section such as "experience" as the target.',
+                'For an experience, education, certification, link, project, or language record, use its section and key "record". Keep separate records as separate candidates.',
+                "visualEvidence must be an array of objects with pageNumber, regionHint, confidence, and uncertaintyNotes. Cite the actual page shown, and use notes and alternatives arrays.",
               ].join(" "),
             },
             {
@@ -550,6 +553,32 @@ export function createOpenAiCompatibleResumeVisionProvider(
                     parserQuality: input.documentBundle.quality ?? null,
                     parserWarnings: input.documentBundle.warnings,
                     targetContract: {
+                      targetShape: {
+                        section: "One of the sections below",
+                        key: "A key allowed for that section below",
+                        recordId: null,
+                      },
+                      candidateExample: {
+                        target: {
+                          section: "identity",
+                          key: "fullName",
+                          recordId: null,
+                        },
+                        label: "Full name",
+                        value: "Alex Sample",
+                        evidenceText: "Alex Sample",
+                        confidence: 0.95,
+                        notes: [],
+                        alternatives: [],
+                        visualEvidence: [
+                          {
+                            pageNumber: pages[0]?.pageNumber ?? 1,
+                            regionHint: "Name at the top of the page",
+                            confidence: 0.95,
+                            uncertaintyNotes: [],
+                          },
+                        ],
+                      },
                       identity: [
                         "fullName",
                         "headline",
@@ -583,11 +612,13 @@ export function createOpenAiCompatibleResumeVisionProvider(
                         "skillGroups.softSkills",
                         "skillGroups.highlightedSkills",
                       ],
-                      recordSections: [
-                        "certification",
-                        "link",
-                        "project",
-                        "language",
+                      recordTargets: [
+                        "experience.record",
+                        "education.record",
+                        "certification.record",
+                        "link.record",
+                        "project.record",
+                        "language.record",
                       ],
                       invalidTargets: [
                         "background",
@@ -662,40 +693,55 @@ export function createOpenAiCompatibleResumeVisionProvider(
             payload && typeof payload === "object" && !Array.isArray(payload)
               ? (payload as Record<string, unknown>)
               : {};
-          const batchCandidates = Array.isArray(record.candidates)
-            ? record.candidates.flatMap((candidate) => {
-                const fallbackPage = batch[0];
-                if (!fallbackPage) {
-                  return [];
-                }
+          if (!Array.isArray(record.candidates)) {
+            throw new Error(
+              "The resume visual scan did not return a candidates array.",
+            );
+          }
+          const batchCandidates = record.candidates.flatMap((candidate) => {
+            const fallbackPage = batch[0];
+            if (!fallbackPage) {
+              return [];
+            }
 
-                const visualEvidence =
-                  candidate &&
-                  typeof candidate === "object" &&
-                  !Array.isArray(candidate)
-                    ? (normalizeVisualEvidence(
-                        fallbackPage,
-                        (candidate as Record<string, unknown>).visualEvidence,
-                      ) ?? [])
-                    : [];
-                const pageNumber = visualEvidence[0]?.pageNumber ?? null;
-                const page =
-                  batch.find((entry) => entry.pageNumber === pageNumber) ??
-                  fallbackPage;
-                return page
-                  ? [
-                      normalizeVisionCandidate(
-                        candidate,
-                        page,
-                        input.documentBundle,
-                      ),
-                    ].filter(
-                      (entry): entry is ResumeImportFieldCandidateDraft =>
-                        entry !== null,
-                    )
-                  : [];
-              })
-            : [];
+            const visualEvidence =
+              candidate &&
+              typeof candidate === "object" &&
+              !Array.isArray(candidate)
+                ? (normalizeVisualEvidence(
+                    fallbackPage,
+                    (candidate as Record<string, unknown>).visualEvidence,
+                  ) ?? [])
+                : [];
+            const pageNumber = visualEvidence[0]?.pageNumber ?? null;
+            const page =
+              batch.find((entry) => entry.pageNumber === pageNumber) ??
+              fallbackPage;
+            return page
+              ? [
+                  normalizeVisionCandidate(
+                    candidate,
+                    page,
+                    input.documentBundle,
+                  ),
+                ].filter(
+                  (entry): entry is ResumeImportFieldCandidateDraft =>
+                    entry !== null,
+                )
+              : [];
+          });
+          const rejectedCount =
+            record.candidates.length - batchCandidates.length;
+          if (rejectedCount > 0) {
+            warnings.push(
+              `${rejectedCount} resume visual candidate(s) were ignored because their targets did not match the required section and key format.`,
+            );
+            if (batchCandidates.length === 0) {
+              throw new Error(
+                "The resume visual scan returned candidates, but none had a valid target with a section and key. No model extraction was accepted.",
+              );
+            }
+          }
           candidates.push(...batchCandidates);
           notes.push(...toStringArray(record.notes));
           warnings.push(...toStringArray(record.warnings));
@@ -766,8 +812,7 @@ export function createResumeVisionProviderFromEnvironment(
       DEFAULT_RESUME_VISION_MODEL,
     apiMode:
       parseModelApiMode(
-        env.NORDRI_RESUME_VISION_API_MODE ??
-          env.NORDRI_AI_VISION_API_MODE,
+        env.NORDRI_RESUME_VISION_API_MODE ?? env.NORDRI_AI_VISION_API_MODE,
       ) ?? DEFAULT_VISION_MODEL_API_MODE,
     reasoningEffort:
       parseModelReasoningEffort(
@@ -786,9 +831,8 @@ export function createResumeVisionProviderFromEnvironment(
       0,
     ),
     contextWindowTokens:
-      parseConfiguredNumber(
-        env.NORDRI_RESUME_VISION_CONTEXT_WINDOW_TOKENS,
-      ) ?? DEFAULT_VISION_CONTEXT_WINDOW_TOKENS,
+      parseConfiguredNumber(env.NORDRI_RESUME_VISION_CONTEXT_WINDOW_TOKENS) ??
+      DEFAULT_VISION_CONTEXT_WINDOW_TOKENS,
     reservedHeadroomTokens:
       parseConfiguredNumber(env.NORDRI_RESUME_VISION_HEADROOM_TOKENS) ??
       DEFAULT_VISION_RESERVED_HEADROOM_TOKENS,

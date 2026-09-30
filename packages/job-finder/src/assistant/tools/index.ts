@@ -17,7 +17,7 @@ import { settingsTools } from "./settings-tools";
 import { workspaceTools } from "./workspace-tools";
 
 export { undoReceipt } from "./profile-tools";
-export { readBackgroundBatch } from "./resume-tools";
+export { cancelBackgroundBatch, readBackgroundBatch } from "./resume-tools";
 
 /**
  * The tool catalog (plan §6). Every group is present in a fixed order so the

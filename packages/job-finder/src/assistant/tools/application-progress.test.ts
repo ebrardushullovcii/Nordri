@@ -95,6 +95,32 @@ describe("one application per job", () => {
     expect(error?.message).toContain("already prepared and waiting");
     expect(startApplications).not.toHaveBeenCalled();
   });
+
+  it("keeps the retained application while its answered step is verifying", async () => {
+    const snapshot = snapshotWith({
+      runs: [run("run_finished", "completed")],
+      results: [
+        result("run_finished", "job_1", "awaiting_review", "2026-09-30T01:00:00.000Z"),
+      ],
+      requests: [{
+        state: "verifying",
+        scope: { type: "application", runId: "run_finished", jobId: "job_1" },
+      }],
+    });
+    expect(openApplicationFor(snapshot, "job_1")?.runId).toBe("run_finished");
+    const startApplications = vi.fn();
+    await expect(applyToJobsTool.execute(
+      { jobIds: ["job_1"], evenIfExcludedOrApplied: true },
+      {
+        service: { getWorkspaceSnapshot: () => Promise.resolve(snapshot) } as never,
+        session: { grants: { list: () => Promise.resolve([]) } } as unknown as AssistantTurnSession,
+        ports: { startApplications } as unknown as AssistantHostPorts,
+      },
+    )).rejects.toThrow("already prepared and waiting");
+    expect(startApplications).not.toHaveBeenCalled();
+    snapshot.userActionRequests[0]!.state = "resolved";
+    expect(openApplicationFor(snapshot, "job_1")).toBeNull();
+  });
 });
 
 describe("answering an application's step", () => {

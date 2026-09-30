@@ -5,6 +5,7 @@ import {
   isFreshStartCandidateProfile,
   type CandidateProfile,
   type JobSearchPreferences,
+  type ResumeDocumentBundle,
   type ResumeImportConflictChoice,
   type ResumeImportFieldCandidate,
 } from "@nordri/contracts";
@@ -1183,6 +1184,40 @@ const SHARED_MEMORY_SECTIONS = new Set([
   "application_identity",
 ]);
 
+function hasTrustworthyVisualEvidence(
+  candidate: ResumeImportFieldCandidate,
+  bundle?: ResumeDocumentBundle,
+): boolean {
+  const evidence = candidate.visualEvidence ?? [];
+  const confidence = candidate.confidenceBreakdown;
+  return (
+    candidate.sourceKind === "vision_omni" &&
+    bundle !== undefined &&
+    candidate.sourceBlockIds.length === 0 &&
+    candidate.confidence >= 0.9 &&
+    candidate.alternatives.length === 0 &&
+    !candidate.notes.some((note) =>
+      /\b(?:inferred|inference|derived|assumed|estimated|uncertain|guessed|ambiguous)\b/i.test(
+        note,
+      ),
+    ) &&
+    confidence?.recommendation !== "abstain" &&
+    (confidence?.normalizationRisk ?? 0) <= 0.2 &&
+    (confidence?.conflictRisk ?? 0) <= 0.2 &&
+    evidence.length > 0 &&
+    evidence.every(
+      (reference) =>
+        reference.branch === "vision" &&
+        reference.sourceFileKind === bundle.sourceFileKind &&
+        bundle.pages.some((page) => page.pageNumber === reference.pageNumber) &&
+        (reference.confidence ?? 0) >= 0.9 &&
+        reference.uncertaintyNotes.length === 0 &&
+        Boolean(reference.regionHint?.trim()) &&
+        (reference.sourceFileKind !== "pdf" || (reference.pageNumber ?? 0) > 0),
+    )
+  );
+}
+
 /**
  * Importing into an empty profile fills it. The review-first policy above
  * exists to protect values the person already typed; on a fresh profile there
@@ -1196,6 +1231,7 @@ function promoteImportCandidatesIntoEmptyProfile(
   profile: CandidateProfile,
   searchPreferences: JobSearchPreferences,
   candidates: readonly ResumeImportFieldCandidate[],
+  bundle?: ResumeDocumentBundle,
 ): ResumeImportFieldCandidate[] {
   const freshStart = isUntouchedFreshStartProfile(profile);
   const emptySections = new Set<string>(
@@ -1215,11 +1251,23 @@ function promoteImportCandidatesIntoEmptyProfile(
   const resolvedAt = new Date().toISOString();
 
   return candidates.map((candidate) => {
+    // The composite score measures native parser/text-block quality, which is
+    // low for a scanned PDF even when the visual pass reads it clearly. Such
+    // evidence may fill missing fields without changing the saved score or
+    // making an uncertain/conflicting scan eligible for automatic import.
+    const trustworthyVisualEvidence = hasTrustworthyVisualEvidence(
+      candidate,
+      bundle,
+    );
     if (
       candidate.resolution !== "needs_review" ||
       SHARED_MEMORY_SECTIONS.has(candidate.target.section) ||
       candidate.resolutionReason?.startsWith("identity_mismatch") ||
-      candidateOverallConfidence(candidate) < 0.6 ||
+      candidate.resolutionReason ===
+        "text_vs_visual_conflict_requires_review" ||
+      (candidate.conflictChoices?.length ?? 0) > 1 ||
+      (candidateOverallConfidence(candidate) < 0.6 &&
+        !trustworthyVisualEvidence) ||
       !hasSufficientEvidence(candidate)
     ) {
       return candidate;
@@ -1251,7 +1299,13 @@ function promoteImportCandidatesIntoEmptyProfile(
     const eligible = isRecord
       ? freshStart || emptySections.has(candidate.target.section)
       : freshStart || isListTarget(candidate) || existingIsEmpty;
-    if (!eligible) {
+    if (
+      !eligible ||
+      (trustworthyVisualEvidence &&
+        !isRecord &&
+        !isListTarget(candidate) &&
+        !existingIsEmpty)
+    ) {
       return candidate;
     }
     return ResumeImportFieldCandidateSchema.parse({
@@ -2527,6 +2581,7 @@ export function reconcileCandidates(
   profile: CandidateProfile,
   searchPreferences: JobSearchPreferences,
   candidates: readonly ResumeImportFieldCandidate[],
+  bundle?: ResumeDocumentBundle,
 ): ResumeImportFieldCandidate[] {
   const resolved: ResumeImportFieldCandidate[] = [];
   const { candidates: foldedCandidates, foldedAway } =
@@ -2776,5 +2831,6 @@ export function reconcileCandidates(
       searchPreferences,
       resolved,
     ),
+    bundle,
   );
 }

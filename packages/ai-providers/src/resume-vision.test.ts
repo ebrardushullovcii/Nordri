@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
+import { z } from "zod";
 
 import { createResumeImportFixtureBundle } from "./resume-import-fixtures";
 import {
@@ -163,6 +164,131 @@ describe("resume vision provider", () => {
         ),
       ).toBe(false);
       expect(fetchMock.getCapturedBody()).toContain("image_url");
+      const request = z
+        .object({
+          messages: z.array(
+            z.object({
+              content: z.union([
+                z.string(),
+                z.array(z.object({ text: z.string().optional() })),
+              ]),
+            }),
+          ),
+        })
+        .parse(JSON.parse(fetchMock.getCapturedBody()) as unknown);
+      const userContent = request.messages[1]?.content;
+      const instruction = z
+        .object({
+          targetContract: z.object({
+            candidateExample: z.unknown(),
+            recordTargets: z.array(z.string()),
+          }),
+        })
+        .parse(
+          JSON.parse(
+            Array.isArray(userContent) ? (userContent[0]?.text ?? "{}") : "{}",
+          ) as unknown,
+        );
+      expect(instruction.targetContract.candidateExample).toMatchObject({
+        target: { section: "identity", key: "fullName", recordId: null },
+        visualEvidence: [{ pageNumber: 1 }],
+      });
+      expect(instruction.targetContract.recordTargets).toContain(
+        "experience.record",
+      );
+      expect(result.warnings).toContain(
+        "1 resume visual candidate(s) were ignored because their targets did not match the required section and key format.",
+      );
+    } finally {
+      fetchMock.restore();
+    }
+  });
+
+  test("reports a malformed scan instead of crediting a model whose bare targets were all discarded", async () => {
+    // Reproduces the live scanned-resume response: visible text was read,
+    // but the model emitted bare keys rather than the canonical target shape.
+    const fetchMock = mockCapturingJsonFetch({
+      choices: [
+        {
+          message: {
+            content: JSON.stringify({
+              candidates: [
+                {
+                  target: "fullName",
+                  value: "Alex Sample",
+                  evidenceText: "Alex Sample",
+                  confidence: 0.99,
+                },
+                {
+                  target: "experience",
+                  value: { companyName: "Sample Labs", title: "Engineer" },
+                  confidence: 0.95,
+                },
+              ],
+              notes: ["All values transcribed literally from the page image."],
+            }),
+          },
+        },
+      ],
+    });
+    const provider = createOpenAiCompatibleResumeVisionProvider({
+      apiKey: "test-key",
+      baseUrl: "https://example.com/v1",
+      model: "test-vision-model",
+    });
+    try {
+      const result = await provider.extractResumeVision({
+        existingProfile: createProfile(),
+        existingSearchPreferences: createPreferences(),
+        documentBundle: createResumeImportFixtureBundle({
+          id: "image_only_bundle",
+          pageTexts: [""],
+          blocks: [],
+        }),
+        visionArtifact: createVisionArtifactFixture(),
+      });
+      expect(result.candidates).toEqual([]);
+      expect(result.analysisProviderKind).toBe("deterministic");
+      expect(result.fallbackUsed).toBe(true);
+      expect(result.primaryErrorMessage).toMatch(
+        /none had a valid target with a section and key/,
+      );
+      expect(result.fallback?.kind).toBe("provider_error");
+    } finally {
+      fetchMock.restore();
+    }
+  });
+
+  test("reports an invalid response envelope instead of treating missing candidates as an empty scan", async () => {
+    const fetchMock = mockCapturingJsonFetch({
+      choices: [
+        {
+          message: {
+            content: JSON.stringify({ notes: ["The page was read."] }),
+          },
+        },
+      ],
+    });
+    const provider = createOpenAiCompatibleResumeVisionProvider({
+      apiKey: "test-key",
+      baseUrl: "https://example.com/v1",
+      model: "test-vision-model",
+    });
+    try {
+      const result = await provider.extractResumeVision({
+        existingProfile: createProfile(),
+        existingSearchPreferences: createPreferences(),
+        documentBundle: createResumeImportFixtureBundle({
+          id: "missing_candidates",
+          pageTexts: [""],
+          blocks: [],
+        }),
+        visionArtifact: createVisionArtifactFixture(),
+      });
+      expect(result.fallbackUsed).toBe(true);
+      expect(result.primaryErrorMessage).toMatch(
+        /did not return a candidates array/,
+      );
     } finally {
       fetchMock.restore();
     }

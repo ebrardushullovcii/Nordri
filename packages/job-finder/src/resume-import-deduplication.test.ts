@@ -23,6 +23,167 @@ import {
 } from "./workspace-service.resume-analysis.shared";
 
 describe("resume import deduplication", () => {
+  test("imports two complete jobs once when the model keeps their city in the employer name", async () => {
+    // Synthetic resume used in the configured sidebar import QA run.
+    const fullText = `Jamie Rivers
+Senior Full-stack and Platform Engineer
+Berlin, Germany
+jamie@example.com
++49 555 0000000
+https://jamie.example.test
+https://www.linkedin.com/in/jamie-rivers-test
+
+Summary
+Senior software engineer with 12 years of experience building React, TypeScript, Node.js and Python applications, APIs, cloud infrastructure and data pipelines. Experienced across frontend, backend, platform engineering and full-stack delivery.
+
+Experience
+Signal Systems, Berlin, Germany
+Senior Full-stack Engineer
+January 2020 - September 2026
+Built React and TypeScript interfaces and Node.js REST APIs for business applications.
+Led design system modernization and reusable component development across shared UI workflows.
+Maintained PostgreSQL databases, Redis caches and asynchronous processing systems.
+Created Python and SQL pipelines for product analytics and reliable data ingestion.
+Deployed applications on AWS with Docker, Kubernetes, Terraform and GitHub Actions.
+Improved release confidence through unit, integration and end-to-end tests.
+
+Northstar Software, Berlin, Germany
+Software Engineer
+January 2014 - December 2019
+Built JavaScript web applications and Python backend services.
+Integrated third-party APIs and improved application accessibility and performance.
+Maintained Linux services and automated production deployments.
+Collaborated with product designers and customers to deliver clear usable workflows.
+
+Education
+Berlin Technical Institute
+Bachelor of Science in Computer Science
+2010 - 2013
+
+Skills
+React, TypeScript, JavaScript, Node.js, Python, SQL, PostgreSQL, Redis, AWS, Docker, Kubernetes, Terraform, GitHub Actions, REST APIs, GraphQL, HTML, CSS, Design Systems, Playwright, Vitest, Linux, Data Pipelines
+
+Languages
+English - fluent
+German - fluent
+
+Eligibility
+Authorized to work in Germany and the European Union. No sponsorship required.
+
+Target roles
+Frontend Engineer, Backend Engineer, Full-stack Engineer, Platform Engineer, Data Engineer
+Preferred location: Remote worldwide or Berlin, Germany`;
+    const seed = createSeed();
+    const fallbackClient = createAiClient();
+    const { workspaceService } = createWorkspaceServiceHarness({
+      seed: {
+        ...seed,
+        profile: { ...createFreshStartSeedProfile(), experiences: [] },
+      },
+      aiClient: {
+        ...fallbackClient,
+        extractResumeImportStage(input) {
+          if (input.stage !== "experience") {
+            return fallbackClient.extractResumeImportStage(input);
+          }
+          return Promise.resolve({
+            stage: input.stage,
+            analysisProviderKind: "deterministic",
+            analysisProviderLabel: "Test AI",
+            candidates:
+              input.stage === "experience"
+                ? [
+                    {
+                      companyName: "Signal Systems, Berlin, Germany",
+                      title: "Senior Full-Stack Engineer",
+                      startDate: "2020-01",
+                      endDate: "2026-09",
+                      achievements: [
+                        "Built React and TypeScript interfaces and Node.js REST APIs for business applications.",
+                      ],
+                    },
+                    {
+                      companyName: "Northstar Software, Berlin, Germany",
+                      title: "Software Engineer",
+                      startDate: "2014-01",
+                      endDate: "2019-12",
+                      achievements: [
+                        "Built JavaScript web applications and Python backend services.",
+                      ],
+                    },
+                  ]
+                    .flatMap((role) => [
+                      {
+                        ...role,
+                        companyName:
+                          role.companyName.split(",")[0] ?? role.companyName,
+                        location: "Berlin, Germany",
+                      },
+                      { ...role, location: null, achievements: [] },
+                    ])
+                    .map((role, index) =>
+                      createStageCandidate({
+                        target: {
+                          section: "experience",
+                          key: "record",
+                          recordId: `model_experience_${index}`,
+                        },
+                        label: `${role.title} at ${role.companyName}`,
+                        value: { ...role, isCurrent: false },
+                        sourceBlockIds: [
+                          `page_1_block_${
+                            fullText
+                              .split(/\n/)
+                              .filter(Boolean)
+                              .indexOf(
+                                `${role.companyName.split(",")[0]}, Berlin, Germany`,
+                              ) + 1
+                          }`,
+                        ],
+                        confidence: 0.92,
+                        recommendation: "auto_apply",
+                      }),
+                    )
+                : [],
+            notes: [],
+          });
+        },
+      },
+    });
+    const snapshot = await workspaceService.runResumeImport({
+      baseResume: {
+        ...seed.profile.baseResume,
+        id: "resume_location_suffix_twins",
+        fileName: "jamie-comprehensive-synthetic.txt",
+        textContent: fullText,
+      },
+      documentBundle: createTestBundle({
+        fullText,
+        primaryParserKind: "plain_text",
+      }),
+    });
+
+    expect(snapshot.profile.experiences).toHaveLength(2);
+    expect(
+      snapshot.profile.experiences.map((role) => role.companyName).sort(),
+    ).toEqual(["Northstar Software", "Signal Systems"]);
+    expect(
+      snapshot.profile.experiences.every(
+        (role) =>
+          role.location === "Berlin, Germany" && role.achievements.length > 0,
+      ),
+    ).toBe(true);
+    expect(snapshot.profile.spokenLanguages).toEqual([
+      expect.objectContaining({ language: "English", proficiency: "fluent" }),
+      expect.objectContaining({ language: "German", proficiency: "fluent" }),
+    ]);
+    expect(
+      snapshot.latestResumeImportReviewCandidates.filter(
+        (candidate) => candidate.target.section === "experience",
+      ),
+    ).toHaveLength(0);
+  });
+
   test("reconciles duplicate experience candidates with different record ids into one review item", async () => {
     const seed = createSeed();
     const { repository, workspaceService } = createWorkspaceServiceHarness({

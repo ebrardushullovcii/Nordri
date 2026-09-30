@@ -98,12 +98,10 @@ import type {
   JobPosting,
   ProfileCopilotPatchOperation,
 } from "@nordri/contracts";
-import type {
-  JobFinderRepository,
-  JobFinderRepositorySeed,
-} from "@nordri/db";
+import type { JobFinderRepository, JobFinderRepositorySeed } from "@nordri/db";
 import type {
   AssistantEditResult,
+  AssistantProfileEditResult,
   AssistantUndoResult,
 } from "./workspace-assistant-edit-methods";
 import type { ResumeSpecialistResult } from "./workspace-assistant-resume-specialist";
@@ -130,6 +128,7 @@ export interface JobFinderWorkspaceService {
    */
   getWorkspaceBootstrap(): Promise<JobFinderWorkspaceSnapshot>;
   getResumeImportState(): Promise<{
+    activeVisionRunIds: readonly string[];
     resumeImportRuns: readonly ResumeImportRun[];
     resumeImportDocumentBundles: readonly ResumeDocumentBundle[];
     resumeImportFieldCandidates: readonly ResumeImportFieldCandidate[];
@@ -599,7 +598,7 @@ export interface JobFinderWorkspaceService {
     operations: readonly ProfileCopilotPatchOperation[];
     summary: string;
     messageId: string | null;
-  }): Promise<AssistantEditResult>;
+  }): Promise<AssistantProfileEditResult>;
   undoAssistantProfileChange(request: {
     profileEntries: readonly AssistantChangeEntry[];
     searchPreferencesEntries: readonly AssistantChangeEntry[];
