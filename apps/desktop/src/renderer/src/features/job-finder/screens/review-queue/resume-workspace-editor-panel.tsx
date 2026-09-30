@@ -242,11 +242,11 @@ export function ResumeWorkspaceEditorPanel(
   return (
     <section className="surface-panel-shell relative flex min-h-0 min-w-0 flex-col overflow-hidden rounded-(--radius-field) border border-(--surface-panel-border) xl:overflow-visible">
       <div
-        className="grid min-h-0 min-w-0 flex-1 content-start gap-2.5 overflow-x-hidden overflow-y-auto p-2.5 pr-2 xl:overflow-visible"
+        className="grid min-h-0 min-w-0 flex-1 grid-cols-1 content-start gap-2.5 overflow-x-hidden overflow-y-auto p-2.5 pr-2 [overflow-wrap:anywhere] xl:overflow-visible"
         data-resume-editor-scroll-region
         tabIndex={-1}
       >
-        <div className="grid gap-1 border-b border-(--surface-panel-border) pb-2">
+        <div className="grid min-w-0 grid-cols-1 gap-1 border-b border-(--surface-panel-border) pb-2">
           {/* No size override: the published scale owns `h2`. Forcing this
               to 14px put it *under* its own 16px `h3` section headings.
               The subtitle that used to sit here said the heading again in

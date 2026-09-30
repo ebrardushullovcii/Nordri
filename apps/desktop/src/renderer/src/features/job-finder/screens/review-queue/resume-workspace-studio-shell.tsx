@@ -583,7 +583,8 @@ export function ResumeWorkspaceStudioShell(
   }
 
   const approvalBlockedByDecisions = Boolean(props.approvalBlockedReason);
-  const isDesktopStudio = useDesktopStudioLayout();
+  const studioPanesRef = useRef<HTMLDivElement | null>(null);
+  const isDesktopStudio = useDesktopStudioLayout(studioPanesRef);
 
   function focusWorkHistoryDecisions() {
     props.onSetMobileStudioTab("editor");
@@ -768,10 +769,10 @@ export function ResumeWorkspaceStudioShell(
         props.originalResume
           ? "No application PDF is built here while the job uses your original file."
           : props.canClearApproval
-          ? `Application PDF ready${describeApprovedPageCount(
-              props.approvedExportPageCount ?? null,
-            )}. Download a copy if you want one.`
-          : "The application PDF is built and checked when you approve."
+            ? `Application PDF ready${describeApprovedPageCount(
+                props.approvedExportPageCount ?? null,
+              )}. Download a copy if you want one.`
+            : "The application PDF is built and checked when you approve."
       }
       {...(props.setAsideProposalNote
         ? { setAsideProposalNote: props.setAsideProposalNote }
@@ -859,56 +860,56 @@ export function ResumeWorkspaceStudioShell(
             </strong>
           </div>
         ) : (
-        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-          <Badge variant="outline">
-            {props.canClearApproval
-              ? "Approved"
-              : approvalBlockedByValidation
-                ? "Needs fixes"
-                : approvalBlockedByDecisions
-                  ? "Needs decisions"
-                  : props.exportBlockedReason
-                    ? "Lines to confirm"
-                    : canApproveResume
-                      ? props.hasUnsavedChanges
-                        ? "Unsaved changes"
-                        : "Ready to approve"
-                      : "Choose template"}
-          </Badge>
-          <strong
-            className="min-w-0 text-(length:--text-body) leading-5 text-(--text-headline)"
-            id="resume-next-step-title"
-          >
-            {props.canClearApproval
-              ? "Resume approved. Continue when you’re ready."
-              : canApproveResume
-                ? props.hasUnsavedChanges
-                  ? "Approve when ready — your edits will be saved first."
-                  : "Approve the resume shown in the preview."
+          <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+            <Badge variant="outline">
+              {props.canClearApproval
+                ? "Approved"
                 : approvalBlockedByValidation
-                  ? "Fix the first validation error before approval."
+                  ? "Needs fixes"
                   : approvalBlockedByDecisions
-                    ? "Choose whether to leave each hidden role off this resume before approving."
+                    ? "Needs decisions"
                     : props.exportBlockedReason
-                      ? "Keep or remove the flagged lines, then approve."
-                      : "Choose an apply-safe template before approval."}
-          </strong>
-          {/* Compact widths used to carry a second, contiguous approval band
+                      ? "Lines to confirm"
+                      : canApproveResume
+                        ? props.hasUnsavedChanges
+                          ? "Unsaved changes"
+                          : "Ready to approve"
+                        : "Choose template"}
+            </Badge>
+            <strong
+              className="min-w-0 text-(length:--text-body) leading-5 text-(--text-headline)"
+              id="resume-next-step-title"
+            >
+              {props.canClearApproval
+                ? "Resume approved. Continue when you’re ready."
+                : canApproveResume
+                  ? props.hasUnsavedChanges
+                    ? "Approve when ready — your edits will be saved first."
+                    : "Approve the resume shown in the preview."
+                  : approvalBlockedByValidation
+                    ? "Fix the first validation error before approval."
+                    : approvalBlockedByDecisions
+                      ? "Choose whether to leave each hidden role off this resume before approving."
+                      : props.exportBlockedReason
+                        ? "Keep or remove the flagged lines, then approve."
+                        : "Choose an apply-safe template before approval."}
+            </strong>
+            {/* Compact widths used to carry a second, contiguous approval band
               directly under this row — 53px of state plus 63px repeating the
               same fact and owning `Clear approval`. This row is the single
               owner there now, so the one thing the second band said that this
               one did not says it here. */}
-          {!isDesktopStudio && props.canClearApproval ? (
-            <span
-              className="min-w-0 text-(length:--text-body) leading-6 text-foreground"
-              data-resume-studio-compact-approval-note
-            >
-              {props.hasUnsavedChanges
-                ? studioStatusText
-                : "Any new edit needs approval again."}
-            </span>
-          ) : null}
-        </div>
+            {!isDesktopStudio && props.canClearApproval ? (
+              <span
+                className="min-w-0 text-(length:--text-body) leading-6 text-foreground"
+                data-resume-studio-compact-approval-note
+              >
+                {props.hasUnsavedChanges
+                  ? studioStatusText
+                  : "Any new edit needs approval again."}
+              </span>
+            ) : null}
+          </div>
         )}
         <div className="flex flex-wrap items-center gap-2">
           {/* The collapsed Assistant launcher lands here, portalled in by
@@ -925,11 +926,13 @@ export function ResumeWorkspaceStudioShell(
           {props.originalResume ? (
             <Button
               disabled={
-                props.isWorkspacePending || Boolean(props.originalResume.writing)
+                props.isWorkspacePending ||
+                Boolean(props.originalResume.writing)
               }
               onClick={props.originalResume.onWriteEditableResume}
               pending={
-                props.isWorkspacePending || Boolean(props.originalResume.writing)
+                props.isWorkspacePending ||
+                Boolean(props.originalResume.writing)
               }
               type="button"
               variant="primary"
@@ -1043,8 +1046,11 @@ export function ResumeWorkspaceStudioShell(
           owns the approved state, its warning and `Clear approval` at compact
           widths, so this band only renders while there is a different status
           to report. */}
-      {props.canClearApproval ? null : (
-        <div className="grid shrink-0 gap-2.5 border-b border-(--surface-panel-border) px-4 py-2 xl:hidden">
+      {props.canClearApproval || isDesktopStudio ? null : (
+        <div
+          className="grid shrink-0 gap-2.5 border-b border-(--surface-panel-border) px-4 py-2"
+          data-resume-studio-compact-status
+        >
           <StudioStatusRow
             approvalStateLabel={props.approvalStateLabel}
             clearApprovalSlot={null}
@@ -1062,20 +1068,27 @@ export function ResumeWorkspaceStudioShell(
           or the approval row above. `ResumeGuidedEditsPopup` portals the
           panel into the dock slot; closed, the slot renders nothing. */}
       <div className="flex min-h-0 min-w-0 flex-1" data-resume-studio-body>
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          {/* Below xl the studio is a bounded tab surface, not a growing page. The
+        <div
+          className="flex min-h-0 min-w-0 flex-1 flex-col"
+          data-resume-studio-panes
+          ref={studioPanesRef}
+        >
+          {/* When the panes lack room the studio is a bounded tab surface. The
           Assistant is not one of these tabs: it is the same floating panel the
           desktop layout uses, so switching tabs never swaps it for a different
           layout and exactly one transcript is mounted at any width.
 
-          The breakpoint is read in JS as well as in CSS, so only one of the two
-          layouts is ever in the React tree. Rendering both mounted every pane
+          The available width is measured before choosing a layout, so only one
+          of the two layouts is ever in the React tree. Rendering both mounted every pane
           twice: two live `<iframe srcDoc>` preview documents parsed on every
           draft revision, two editor trees, and a duplicate
           `id="resume-proof-details"` whose hidden copy came first in document
           order, which is what made "Review blocked claims" inert at >= 1280px. */}
           {isDesktopStudio ? null : (
-            <div className="min-h-0 min-w-0 flex-1 xl:hidden">
+            <div
+              className="min-h-0 min-w-0 flex-1"
+              data-resume-studio-compact-layout
+            >
               <Tabs
                 className="h-full min-h-0"
                 onValueChange={(value) =>
@@ -1108,7 +1121,7 @@ export function ResumeWorkspaceStudioShell(
                     className="min-h-0 h-full overflow-y-auto overflow-x-hidden"
                     value="editor"
                   >
-                    <div className="grid min-h-0 gap-4 xl:hidden">
+                    <div className="grid min-h-0 min-w-0 grid-cols-1 gap-4">
                       <div className="grid gap-2.5">
                         <StudioToolbar
                           canDownloadPdf={canDownloadPdf}
