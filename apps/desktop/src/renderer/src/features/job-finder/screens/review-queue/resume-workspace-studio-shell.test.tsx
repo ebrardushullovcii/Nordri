@@ -452,7 +452,9 @@ describe("ResumeWorkspaceStudioShell", () => {
     expect(statusRows).toHaveLength(1);
     const [compactRow] = statusRows;
     expect(compactRow?.getAttribute("role")).toBe("status");
-    expect(compactRow?.closest(".xl\\:hidden")).toBeTruthy();
+    expect(
+      compactRow?.closest("[data-resume-studio-compact-status]"),
+    ).toBeTruthy();
     expect(
       document.querySelector("[data-resume-studio-desktop-grid]"),
     ).toBeNull();
@@ -1556,9 +1558,7 @@ describe("ResumeWorkspaceStudioShell locked-pane ownership", () => {
     expect(
       screen.queryByRole("button", { name: /Continue to Shortlisted/ }),
     ).toBeNull();
-    expect(
-      screen.getByRole("button", { name: /Apply/ }),
-    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Apply/ })).toBeTruthy();
     approved.unmount();
 
     render(
@@ -1573,17 +1573,21 @@ describe("ResumeWorkspaceStudioShell locked-pane ownership", () => {
   });
 
   function stubCollapsedHeaderMetrics() {
-    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
-      bottom: 200,
-      height: 200,
-      left: 0,
-      right: 100,
-      top: 0,
-      width: 100,
-      x: 0,
-      y: 0,
-      toJSON: () => ({}),
-    } as DOMRect);
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+      function (this: HTMLElement) {
+        return {
+          bottom: 200,
+          height: 200,
+          left: 0,
+          right: 100,
+          top: 0,
+          width: this.hasAttribute("data-resume-studio-panes") ? 1000 : 100,
+          x: 0,
+          y: 0,
+          toJSON: () => ({}),
+        } as DOMRect;
+      },
+    );
   }
 
   beforeEach(() => {
@@ -1882,7 +1886,9 @@ describe("ResumeWorkspaceStudioShell focus ring contrast", () => {
     // One chooser, not two: the desktop copy is no longer mounted alongside
     // the compact one.
     expect(editorChoosers.length).toBe(1);
-    expect(editorChoosers[0]?.closest(".xl\\:hidden")).not.toBeNull();
+    expect(
+      editorChoosers[0]?.closest("[data-resume-studio-compact-layout]"),
+    ).not.toBeNull();
     for (const chooser of Array.from(editorChoosers)) {
       expect((chooser as HTMLElement).className).toContain(
         "focus-visible:ring-ring",
@@ -2357,16 +2363,13 @@ describe("ResumeWorkspaceStudioShell bounded compact tabs", () => {
     ).toEqual([desktopGrid]);
     expect(stickyRow?.className).toContain("shrink-0");
 
-    // Everything between the sticky row and the body belongs to the compact
-    // surface and is hidden from xl up, so the desktop stack is: sticky row,
-    // then panes.
+    // Desktop mounts no duplicate compact status band between the sticky row
+    // and its panes.
     const between = rows.slice(
       rows.indexOf(stickyRow as HTMLElement) + 1,
       rows.indexOf(body as HTMLElement),
     );
-    for (const row of between) {
-      expect(row.className).toContain("xl:hidden");
-    }
+    expect(between).toHaveLength(0);
   });
 
   it("scrolls the Tools tab inside the studio instead of growing it", () => {
@@ -2417,6 +2420,7 @@ describe("ResumeWorkspaceStudioShell mounts one studio layout at a time", () => 
   afterEach(() => {
     cleanup();
     Reflect.deleteProperty(window, "matchMedia");
+    vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
@@ -2517,7 +2521,9 @@ describe("ResumeWorkspaceStudioShell mounts one studio layout at a time", () => 
     renderAtWidth(false, "preview");
     expect(document.querySelectorAll("iframe")).toHaveLength(1);
     expect(
-      document.querySelector("iframe")?.closest(".xl\\:hidden"),
+      document
+        .querySelector("iframe")
+        ?.closest("[data-resume-studio-compact-layout]"),
     ).not.toBeNull();
     expect(
       document.querySelector("[data-resume-studio-desktop-grid]"),
@@ -2527,10 +2533,62 @@ describe("ResumeWorkspaceStudioShell mounts one studio layout at a time", () => 
     renderAtWidth(false, "editor");
     expect(document.querySelectorAll("#resume-proof-details")).toHaveLength(1);
     expect(
-      document.querySelector("#resume-proof-details")?.closest(".xl\\:hidden"),
+      document
+        .querySelector("#resume-proof-details")
+        ?.closest("[data-resume-studio-compact-layout]"),
     ).not.toBeNull();
     expect(
       document.querySelector("[data-resume-studio-desktop-grid]"),
     ).toBeNull();
+  });
+
+  it("keeps the tools accessible when the assistant narrows a wide window", () => {
+    const callbacks: ResizeObserverCallback[] = [];
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(callback: ResizeObserverCallback) {
+          callbacks.push(callback);
+        }
+        observe() {}
+        disconnect() {}
+      },
+    );
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
+      width: 1000,
+    } as DOMRect);
+    renderAtWidth(true, "editor");
+    expect(
+      document.querySelector("[data-resume-studio-desktop-grid]"),
+    ).not.toBeNull();
+
+    act(() =>
+      callbacks[0]!(
+        [{ contentRect: { width: 760 } } as ResizeObserverEntry],
+        {} as ResizeObserver,
+      ),
+    );
+    expect(
+      screen.getByRole("tab", { name: "Tools" }).getAttribute("aria-selected"),
+    ).toBe("true");
+    expect(document.querySelector("[data-test-editor-panel]")).not.toBeNull();
+    expect(
+      document.querySelector("[data-resume-studio-desktop-grid]"),
+    ).toBeNull();
+    expect(document.querySelectorAll("#resume-proof-details")).toHaveLength(1);
+
+    act(() =>
+      callbacks[0]!(
+        [{ contentRect: { width: 1000 } } as ResizeObserverEntry],
+        {} as ResizeObserver,
+      ),
+    );
+    expect(
+      document.querySelector("[data-resume-studio-desktop-grid]"),
+    ).not.toBeNull();
+    expect(document.querySelectorAll("iframe")).toHaveLength(1);
+    expect(document.querySelectorAll("[data-test-editor-panel]")).toHaveLength(
+      1,
+    );
   });
 });
