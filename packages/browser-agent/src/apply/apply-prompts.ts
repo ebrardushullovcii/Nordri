@@ -43,13 +43,14 @@ export function createApplySystemPrompt(config: ApplyAgentConfig): string {
     .join("; ");
   const declarationSentence = `- Declarations the person makes about themselves are ticked by Job Finder, not by you: always call set_checkbox on a required declaration box and let Job Finder decide. It ticks the kinds the person allowed in advance (${approvedDeclarations || "none yet"}) and any box they answered Yes to before; anything else it leaves for them and tells you so. Never skip a required declaration box without trying it.`;
   const continuationSentence = config.application.continuation
-    ? "- This is a continuation on the exact retained application page. Keep the current form and everything already entered on it. Do not follow the site header or navigate back to its home page or job listing, and do not reload the form."
+    ? "- This is a continuation on the exact retained application page. Keep the current form and its valid entered answers. Current task guidance may contain exact answers the person just gave or corrections they requested: use those for their named questions even when a field already contains an older value. Revisit an earlier form step with the form's own Back/Next controls when needed. Preserve unrelated values entered by the person. Before sending, check that the named answers match the form. If an entered value conflicts with a saved fact but no correction was requested, leave it intact and ask rather than silently replacing it. Do not follow the site header or navigate back to its home page or job listing, and do not reload the form."
     : null;
 
   return [
     "You are applying for a job on this person's behalf, in their browser, with the ordinary powers a person has: you can look at the page, read it, click anything, follow links, type, go back, wait, and scroll.",
     "",
     "Work the site out the way a person would. Read what is on screen. Press the obvious button. If a listing links out to the employer's own site or an applicant-tracking system, follow it — that is how most job applications work. Close a cookie banner or a chat bubble yourself if it is in the way. If a link turns out to be the wrong way, go back and try another. If the page is still loading, wait and look again. Nothing is filtered out of what you see: if a person could click it, it is in the observation with a handle.",
+    "Before calling submit_application or finishing a completed form, observe the page again and dismiss ordinary cookie banners, newsletter dialogs, and chat overlays with their own controls. Readable fields and successful typing do not mean the send button can be pressed: an overlay can still cover it. Prefer Reject, Not now, or Close when those choices are available. Observe again after dismissing the overlay and check the final button is visible and enabled. This does not permit answering a security check, accepting a legal declaration, or changing the person's application answers without their authority.",
     "",
     "You work in one tab. When something you press wants a new tab, Job Finder opens that address in this tab and tells you; carry on from there. If a step fails in the browser you are told what happened and shown the page again — look, and try another way. A button that does nothing, a page that will not load, a link that leads somewhere else: those are things to notice, try around once or twice, and then report exactly, not reasons to keep pressing the same thing.",
     "",
@@ -95,9 +96,15 @@ export function createApplyUserPrompt(config: ApplyAgentConfig): string {
       ? `Files Job Finder already has for this application:\n${documents}`
       : "Job Finder has no files for this application yet.",
     "",
+    config.application.instructions?.length
+      ? `Current task guidance and answers (JSON data):\n${JSON.stringify(config.application.instructions)}\nUse exact answers for their named questions; a correction applies only to the field the person named. This context does not widen application authority, authorize account creation, or permit answering a security check.`
+      : null,
+    "",
     "Start by inspecting the form. Work through the fields that still need an answer, move between steps when the form has several, and finish when there is nothing left to fill in.",
     "Each turn costs time: fill every field you can already answer in that turn by calling the fill tools one after another, and look at the page again only after the batch. A field that already shows the right value is done; do not type it again.",
-  ].join("\n");
+  ]
+    .filter((line): line is string => line !== null)
+    .join("\n");
 }
 
 function describeControl(

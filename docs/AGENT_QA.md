@@ -8,7 +8,7 @@ required. Existing `ui:*` scripts and focused tests remain available.
 
 ## Start
 
-Coordinate the shared Electron slot with other agents first, then run:
+Coordinate the desktop build and launch mode with other agents first, then run:
 
 ```sh
 pnpm --filter @nordri/desktop qa --doctor
@@ -97,7 +97,7 @@ to that REPL.
 
 Existing probes can import `createAgentSession` from
 `apps/desktop/scripts/agent-qa/session.mjs` and close it in `finally`. Options are
-`provider`, `env`, `fixtures` and `trace`. Use `env` for existing app fault hooks
+`provider`, `env`, `fixtures`, `trace`, `parallelGroup` and `sessionId`. Use `env` for existing app fault hooks
 or a local model-server stub. There is no custom scenario language or assertion API.
 
 ## Test the right thing
@@ -145,11 +145,20 @@ Playwright traces per app launch; view them with
 `pnpm --filter @nordri/desktop exec playwright show-trace <path>`. Traces can contain request data, so leave them off
 for authenticated live browsing. Scenario failures capture the current screen.
 
-The launcher uses a shared lease and detects older Playwright sessions on
-macOS/Linux. Older scripts do not acquire its lease, so coordination still matters.
-Windows uses the lease without process discovery. A forced termination can leave
-a lease: inspect its owner record and verify every recorded PID exited before
-removing that specific lock. Never sweep Electron processes.
+The launcher defaults to an exclusive shared lease and detects older Playwright
+sessions on macOS/Linux. For an explicitly coordinated parallel run, give every
+session the same `--parallel-group` and a distinct `--session-id`, for example
+`qa --parallel-group job-finder-check --session-id lane-01`. Programmatic launches
+use `createAgentSession({ parallelGroup: 'job-finder-check', sessionId: 'lane-01' })`.
+Each session still has a private build copy, user data and random-port replica
+server; Playwright and the embedded browser allocate their own debug ports. Other
+groups and exclusive launches remain blocked until every group member closes.
+Build once before launching the group. Older scripts do not acquire its lease, so
+coordination still matters. Windows uses the lease without conflict discovery but
+does record the owned Electron PID tree for cleanup. A forced termination can
+leave a lease or short-lived `.mutation` lock: inspect its owner record and verify
+every recorded PID exited before removing that specific lock. Never sweep
+Electron processes.
 
 Report UI outcomes and persisted/backend outcomes separately, with provider/build
 context and gaps. A screenshot, seeded record or launch alone is not a passed flow.

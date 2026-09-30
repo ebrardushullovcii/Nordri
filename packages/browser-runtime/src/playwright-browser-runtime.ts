@@ -1299,10 +1299,9 @@ export function createBrowserAgentRuntime(
       : 2,
   );
   const usesEmbeddedBrowserHost = Boolean(options.browserHost);
-  const hostOpenTabCount = options.browserHost?.openTabCount;
-  const hostTabCount = hostOpenTabCount
-    ? () => hostOpenTabCount.call(options.browserHost)
-    : undefined;
+  const hostTabCount = options.browserHost?.openTabCount?.bind(
+    options.browserHost,
+  );
   // A person can prepare several Ask-before-sending forms or open unrelated
   // tabs. Keep every final action bound to its exact preparation identity.
   const preparedApplicationPages = new Map<string, Page>();
@@ -3053,7 +3052,10 @@ export function createBrowserAgentRuntime(
         const agentConfig: AgentConfig = {
           source,
           ...(agentOptions.sourceCatalog
-            ? { sourceCatalog: agentOptions.sourceCatalog }
+            ? {
+                sourceCatalog: agentOptions.sourceCatalog,
+                sourceCatalogComplete: agentOptions.sourceCatalogComplete === true,
+              }
             : {}),
           ...(agentOptions.retainAllFound ? { retainAllFound: true } : {}),
           maxSteps: agentOptions.maxSteps,

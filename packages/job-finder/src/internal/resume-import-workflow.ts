@@ -869,6 +869,7 @@ async function completeDeferredVisionBranch(input: {
           latestProfile,
           latestSearchPreferences,
           provisionalCandidates,
+          bundle,
         ),
       ),
       currentCandidates,
@@ -918,6 +919,7 @@ async function completeDeferredVisionBranch(input: {
           latestProfile,
           latestSearchPreferences,
           adjudicationResult.candidates,
+          bundle,
         ),
       ),
       currentCandidates,
@@ -1009,6 +1011,7 @@ async function completeDeferredVisionBranch(input: {
               latestProfile,
               latestSearchPreferences,
               adjudicationResult.candidates,
+              bundle,
             ),
           ),
           currentCandidates,
@@ -1865,6 +1868,7 @@ async function runResumeImportWorkflowInProcess(
         input.profile,
         input.searchPreferences,
         provisionalCandidates,
+        bundle,
       ),
     );
     const adjudicationStartedAt = new Date().toISOString();
@@ -1906,6 +1910,7 @@ async function runResumeImportWorkflowInProcess(
         input.profile,
         input.searchPreferences,
         adjudicationResult.candidates,
+        bundle,
       ),
     );
     run = ResumeImportRunSchema.parse({
@@ -2045,6 +2050,7 @@ async function runResumeImportWorkflowInProcess(
           retryProfile,
           retrySearchPreferences,
           reconciledCandidates,
+          bundle,
         ),
       );
       const retryMerged = applyResolvedResumeImportCandidatesToWorkspace({

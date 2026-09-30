@@ -394,6 +394,118 @@ describe("job search agent", () => {
     );
   });
 
+  test.each(["scan_cards", "extract_jobs"])(
+    "%s cannot attribute another same-host board's postings to a complete source feed",
+    async (tool) => {
+      const ownUrl = "https://jobs.example.test/maple/shared-id";
+      const otherUrl = "https://jobs.example.test/willow/shared-id";
+      const catalogJob = JobPostingSchema.parse({
+        ...posting("Platform Engineer", "Maple", "shared-id"),
+        canonicalUrl: ownUrl,
+        source: "target_site",
+        discoveryMethod: "public_api",
+        discoveredAt: "2026-09-20T10:00:00Z",
+      });
+      const otherJob = {
+        ...posting("Account Executive", "Willow", "shared-id"),
+        canonicalUrl: otherUrl,
+      };
+      const pages = {
+        current: rawPage({ url: "https://jobs.example.test/willow" }),
+      };
+      const page = {
+        url: () => pages.current.url,
+        title: () => Promise.resolve("Willow Careers"),
+        locator: () => ({
+          innerText: () => Promise.resolve(pages.current.bodyText),
+        }),
+        evaluate: () =>
+          Promise.resolve({
+            structuredPostings: [
+              {
+                ...otherJob,
+                postedAtText: null,
+                employmentType: null,
+                workModeHints: [],
+              },
+            ],
+            cardContainers: [],
+            elements: [],
+            cardSignatures: [],
+          }),
+      } as unknown as Page;
+      const seen: string[] = [];
+      const model = scripted([
+        { name: tool, args: { pageType: "search_results" } },
+        { name: "read_catalog_job", args: { id: 0 } },
+        { name: "save_catalog_jobs", args: { ids: [0] } },
+        {
+          name: "finish",
+          args: { reason: "The source's engineering posting fits." },
+        },
+      ]);
+      const checkpoint = vi.fn<NonNullable<AgentConfig["onCheckpoint"]>>();
+      const result = await runJobSearchAgent({
+        hands: hands(pages),
+        page,
+        config: config({
+          sourceCatalog: [catalogJob],
+          sourceCatalogComplete: true,
+          onCheckpoint: checkpoint,
+        }),
+        llmClient: {
+          chatWithTools: (messages, tools, options) => {
+            seen.push(messages.map((message) => message.content).join("\n"));
+            return model.chatWithTools(messages, tools, options);
+          },
+        },
+        jobExtractor: {
+          extractJobsFromPage: () => Promise.resolve([otherJob]),
+        },
+      });
+      expect(result.jobs).toEqual([catalogJob]);
+      expect(result.warning).toContain(
+        "Ignored 1 posting outside this source's complete public feed",
+      );
+      expect(seen.join("\n")).toContain(
+        "They were not saved under this source",
+      );
+      expect(checkpoint).toHaveBeenCalledTimes(1);
+      expect(checkpoint.mock.calls[0]?.[0].collectedJobs).toEqual([catalogJob]);
+    },
+  );
+
+  test.each([false, undefined])(
+    "an incomplete or unknown feed (%s) permits ordinary browser discoveries",
+    async (sourceCatalogComplete) => {
+      const catalogJob = JobPostingSchema.parse({
+        ...posting("Platform Engineer", "Maple", "feed-job"),
+        source: "target_site",
+        discoveryMethod: "public_api",
+        discoveredAt: "2026-09-20T10:00:00Z",
+      });
+      const browserJob = posting("Data Engineer", "Maple", "new-job");
+      const result = await runJobSearchAgent({
+        hands: hands({ current: rawPage() }),
+        config: config({ sourceCatalog: [catalogJob], sourceCatalogComplete }),
+        llmClient: scripted([
+          { name: "extract_jobs", args: { pageType: "search_results" } },
+          {
+            name: "finish",
+            args: { reason: "A newly discovered posting fits." },
+          },
+        ]),
+        jobExtractor: {
+          extractJobsFromPage: () => Promise.resolve([browserJob]),
+        },
+      });
+      expect(result.jobs.map((job) => job.canonicalUrl)).toEqual([
+        browserJob.canonicalUrl,
+      ]);
+      expect(result.warning).toBeUndefined();
+    },
+  );
+
   test("a single temporary model failure does not end the search", async () => {
     const pages = { current: rawPage() };
     const llm = scripted([
@@ -436,24 +548,27 @@ describe("job search agent", () => {
     const page = {
       url: () => pages.current.url,
       title: () => Promise.resolve("Careers"),
-      locator: () => ({ innerText: () => Promise.resolve(pages.current.bodyText) }),
-      evaluate: () => Promise.resolve({
-        structuredPostings: jobUrls.map((canonicalUrl) => ({
-          sourceJobId: null,
-          canonicalUrl,
-          title: "Platform Engineer",
-          company: "Northwind",
-          location: "Manchester",
-          description: "Build dependable platforms.",
-          postedAtText: null,
-          salaryText: null,
-          employmentType: null,
-          workModeHints: [],
-        })),
-        cardContainers: [],
-        elements: [],
-        cardSignatures: [],
+      locator: () => ({
+        innerText: () => Promise.resolve(pages.current.bodyText),
       }),
+      evaluate: () =>
+        Promise.resolve({
+          structuredPostings: jobUrls.map((canonicalUrl) => ({
+            sourceJobId: null,
+            canonicalUrl,
+            title: "Platform Engineer",
+            company: "Northwind",
+            location: "Manchester",
+            description: "Build dependable platforms.",
+            postedAtText: null,
+            salaryText: null,
+            employmentType: null,
+            workModeHints: [],
+          })),
+          cardContainers: [],
+          elements: [],
+          cardSignatures: [],
+        }),
     } as unknown as Page;
     const observed = await captureCompactDiscoveryObservation({
       page,
@@ -463,10 +578,15 @@ describe("job search agent", () => {
       observedAt: "2026-09-26T10:00:00.000Z",
     });
     expect(observed.kind).toBe("supported");
-    if (observed.kind !== "supported") throw new Error("Expected job metadata.");
-    expect(observed.postingCandidates.map((job) => job.canonicalUrl)).toEqual(jobUrls);
+    if (observed.kind !== "supported")
+      throw new Error("Expected job metadata.");
+    expect(observed.postingCandidates.map((job) => job.canonicalUrl)).toEqual(
+      jobUrls,
+    );
 
-    const extractJobsFromPage = vi.fn<JobExtractor["extractJobsFromPage"]>(() => Promise.resolve([]));
+    const extractJobsFromPage = vi.fn<JobExtractor["extractJobsFromPage"]>(() =>
+      Promise.resolve([]),
+    );
     const result = await runJobSearchAgent({
       hands: hands(pages),
       page,

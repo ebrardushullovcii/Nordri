@@ -516,6 +516,9 @@ export async function runAgentApplicationPreparation(
       jobId: executionInput.job.id,
       applicationId: executionInput.idempotencyKey ?? executionInput.job.id,
       startingUrl: targetUrl,
+      ...(executionInput.instructions?.length
+        ? { instructions: executionInput.instructions }
+        : {}),
       ...(isContinuation
         ? {
             continuation: {

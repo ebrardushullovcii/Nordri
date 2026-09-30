@@ -131,11 +131,9 @@ export const ACTION_INVENTORY: readonly ActionInventoryEntry[] = [
   {
     id: "profile.setup_state",
     screen: "Setup",
-    action: "Move through guided setup",
+    action: "Finish guided setup",
     channels: ["job-finder:save-profile-setup-state"],
-    coverage: excluded(
-      "Setup step position is navigation of the setup screen; the facts it collects are edit_profile.",
-    ),
+    coverage: tools("read_profile", "finish_profile_setup"),
   },
   {
     id: "profile.files",
@@ -791,7 +789,7 @@ export const SERVICE_METHOD_COVERAGE: Record<
   runResumeImport: "import_resume",
   analyzeProfileFromResume: "import_resume",
   saveSearchPreferences: "update_sources",
-  saveProfileSetupState: "internal",
+  saveProfileSetupState: "finish_profile_setup",
   applyProfileSetupReviewAction: "resolve_import_suggestion",
   applyResumeTimelineRepairAction: "edit_profile",
   sendProfileCopilotMessage: "internal (retired chat)",

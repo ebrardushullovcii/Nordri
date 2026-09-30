@@ -3,6 +3,7 @@
 import {
   ASSISTANT_MESSAGE_MAX_CHARS,
   AssistantConversationSchema,
+  type AssistantActivity,
 } from "@nordri/contracts";
 import {
   act,
@@ -28,7 +29,10 @@ const conversation = AssistantConversationSchema.parse({
   lastMessageAt: "2026-09-27T10:00:00.000Z",
 });
 
-function fakeBridge(sendMessage: () => Promise<never>) {
+function fakeBridge(
+  sendMessage: () => Promise<never>,
+  activity: AssistantActivity | null = null,
+) {
   return {
     getStatus: vi.fn(() =>
       Promise.resolve({
@@ -50,7 +54,7 @@ function fakeBridge(sendMessage: () => Promise<never>) {
         messages: [],
         hasOlderMessages: false,
         activeTurn: null,
-        activity: null,
+        activity,
         draftText: null,
         plans: [],
         lastSequence: 0,
@@ -115,6 +119,19 @@ async function renderSidebar(bridge: ReturnType<typeof fakeBridge>) {
 }
 
 describe("assistant composer keeps what the person wrote", () => {
+  it("shows progress and Stop for a background resume batch after its model turn replied", async () => {
+    const bridge = fakeBridge(() => Promise.reject(new Error("unused")), {
+      label: "Writing resumes: 2 of 5 finished",
+      toolName: "generate_resumes",
+      startedAt: new Date().toISOString(),
+    });
+    await renderSidebar(bridge);
+    expect(screen.getByText("Writing resumes: 2 of 5 finished")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+    await waitFor(() =>
+      expect(bridge.stop).toHaveBeenCalledWith(conversation.id),
+    );
+  });
   it("refuses an over-long message without clearing it and states the limit", async () => {
     const bridge = fakeBridge(() => Promise.reject(new Error("unused")));
     const composer = await renderSidebar(bridge);

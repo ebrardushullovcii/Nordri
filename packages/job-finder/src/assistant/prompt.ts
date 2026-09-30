@@ -2,6 +2,7 @@ import { describeProfileAssistantBehavior } from "@nordri/ai-providers";
 import {
   ASSISTANT_SCREEN_LABELS,
   AiBehaviorPreferenceSchema,
+  isRunnableJobDiscoveryTarget,
   type AssistantContextReference,
   type AssistantInstructionGrant,
   type AssistantResultSet,
@@ -23,6 +24,7 @@ export const ASSISTANT_SYSTEM_PROMPT = [
   "Decide whether the person asked you to do something or asked for advice. When they asked for a change, make it with the tool in mode apply; it is saved at once and they get an Undo. When you only want to propose improvements they did not ask for, use mode suggest so they accept or reject them, and only when the improvement is clearly worth their time: no more than one unasked suggestion per reply, never one that repeats or undoes what you just did, and never a change to what is already so. Advice stays advice.",
   "Never tell the person to do something one of your tools can do. When no tool can do what they asked, call report_missing_capability and say plainly what you could not do. Never claim something happened unless a tool result says it did.",
   "Read before you change: read_profile, read_resume, query_jobs, get_application. Use the ids the tools return. Every change tool returns what it changed; say that in your reply in one or two plain sentences.",
+  "Before saying the person can search or naming the next step, use the saved source and search-readiness facts in context or get_workspace_summary. A search needs at least one enabled, valid public job-source URL; target roles and a resume are not prerequisites for searching. If no source is ready, ask which job page they want searched or enable the source they named with your tools. Do not invent sources or say importing a resume will make a source-less search ready. Work authorization and sponsorship answers are used to answer applications, not to run a search.",
   "Applications and sending: before starting or sending any application, call record_instruction with the person's own words. 'Apply to these and send them' is prepare_and_send; 'prepare these, I'll send them' is prepare and blocks sending; 'apply to these' with nothing about sending is apply_saved_mode. There is no second confirmation: a clear written instruction is the permission. When they correct you ('skip the second one', 'don't send yet'), call update_instruction before anything else. An application counts as sent only when the employer's page confirmed it. If an application stops again on the same question or blocker after you retried it, do not retry it again: answer that step with resolve_needs_you if the person already told you the answer, otherwise ask them.",
   "Searches, application batches and resume batches run in the background. Start them, say what you started, and end your reply; the conversation continues by itself when they finish. For requests with several parts, keep a checklist with update_plan and carry on from it when a run finishes.",
   "The <context> block on the person's message says what they were looking at when they sent it: the screen, the selected or listed records (with result set ids), unsaved edits in an editor, the browser tab. 'This', 'these' and 'the second one' refer to it or to the lists you showed; an explicit name beats the screen. Lists keep their order: position 2 of a result set is always the same record.",
@@ -36,6 +38,56 @@ export const ASSISTANT_SYSTEM_PROMPT = [
     .join(", ")}; never by routes or ids like review_queue or review-queue.`,
 ].join("\n\n");
 
+/** Search requirements, separate from guided setup and application readiness. */
+export function getAssistantSearchReadiness(
+  snapshot: JobFinderWorkspaceSnapshot,
+) {
+  const enabledSources = snapshot.searchPreferences.discovery.targets
+    .filter(isRunnableJobDiscoveryTarget)
+    .map((source) => ({
+      id: source.id,
+      label: source.label,
+      url: source.startingUrl,
+    }));
+  const missingRequirements: string[] = [];
+  const latestRun = [...snapshot.recentDiscoveryRuns].sort(
+    (left, right) => Date.parse(right.startedAt) - Date.parse(left.startedAt),
+  )[0];
+  if (enabledSources.length === 0)
+    missingRequirements.push(
+      "Add or enable at least one valid public job-source URL before searching.",
+    );
+  if (snapshot.activityControl.paused)
+    missingRequirements.push(
+      "Background work is paused; ask whether to resume before starting a search.",
+    );
+  if (snapshot.browserSession.driver === "catalog_seed")
+    missingRequirements.push(
+      "Current-source searching is temporarily unavailable; try again in a moment.",
+    );
+  else if (
+    snapshot.browserSession.status === "blocked" &&
+    snapshot.activeDiscoveryRun?.state !== "running" &&
+    latestRun?.state !== "completed"
+  )
+    missingRequirements.push(
+      "The Job Finder browser needs attention before the next search.",
+    );
+  const runningRunId =
+    snapshot.activeDiscoveryRun?.state === "running"
+      ? snapshot.activeDiscoveryRun.id
+      : null;
+  return {
+    enabledSourceCount: enabledSources.length,
+    enabledSources,
+    missingRequirements,
+    canStartSearch: missingRequirements.length === 0 && runningRunId === null,
+    runningRunId,
+    resumeRequired: false,
+    targetRolesRequired: false,
+  };
+}
+
 export function buildProfileDigest(
   snapshot: JobFinderWorkspaceSnapshot,
 ): string {
@@ -44,6 +96,9 @@ export function buildProfileDigest(
   const settings = snapshot.settings;
   const behavior = AiBehaviorPreferenceSchema.parse(settings.aiBehavior ?? {});
   const eligibility = profile.workEligibility;
+  const enabledSources = preferences.discovery.targets.filter(
+    isRunnableJobDiscoveryTarget,
+  );
   const lines = [
     `Name: ${profile.fullName || "not set"}`,
     `Headline: ${profile.headline || "not set"}`,
@@ -59,6 +114,20 @@ export function buildProfileDigest(
         .join("; ") || "none saved"
     }`,
     `Resume file: ${profile.baseResume.fileName ?? "none"}`,
+    `Enabled valid job sources: ${enabledSources.length}${
+      enabledSources.length
+        ? `; ${enabledSources
+            .slice(0, 10)
+            .map(
+              (source) =>
+                `${source.label} (${source.id}): ${source.startingUrl}`,
+            )
+            .join(
+              "; ",
+            )}${enabledSources.length > 10 ? "; use list_sources for the rest" : ""}`
+        : "; add or enable a valid public job-source URL before searching"
+    }`,
+    "Search needs an enabled valid source; a resume and saved target roles are not required for searching.",
     `Apply mode: ${settings.applicationAutomationMode ?? "prepare_only"}; daily limit ${settings.maxApplicationsPerLocalDay ?? 20}`,
     `Resume level for new jobs: ${settings.resumeApplicationMode === "original_resume" ? "original file" : preferences.tailoringMode}`,
   ];
@@ -233,6 +302,16 @@ export function buildContextBlock(input: {
     }
   }
   const snapshot = input.snapshot;
+  const searchReadiness = getAssistantSearchReadiness(snapshot);
+  lines.push(
+    `Search readiness: ${
+      searchReadiness.runningRunId
+        ? `a search is already running (${searchReadiness.runningRunId})`
+        : searchReadiness.canStartSearch
+          ? `ready to search ${searchReadiness.enabledSourceCount} enabled valid source(s)`
+          : searchReadiness.missingRequirements.join(" ")
+    }. A resume is not required for searching.`,
+  );
   if (snapshot.activeDiscoveryRun?.state === "running") {
     lines.push(`A search is running (run ${snapshot.activeDiscoveryRun.id}).`);
   }

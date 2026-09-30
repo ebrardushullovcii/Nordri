@@ -61,6 +61,10 @@ export interface AssistantEditResult {
   changes: AssistantEditChange[];
 }
 
+export interface AssistantProfileEditResult extends AssistantEditResult {
+  invalidatedApprovedResumeJobIds: string[];
+}
+
 export interface AssistantUndoResult {
   undoneLabels: string[];
   conflictLabels: string[];
@@ -252,7 +256,7 @@ export function createWorkspaceAssistantEditMethods(input: {
     operations: readonly ProfileCopilotPatchOperation[];
     summary: string;
     messageId: string | null;
-  }): Promise<AssistantEditResult> {
+  }): Promise<AssistantProfileEditResult> {
     const patchGroup = ProfileCopilotPatchGroupSchema.parse({
       id: createUniqueId("assistant_patch_group"),
       summary: request.summary,
@@ -260,6 +264,9 @@ export function createWorkspaceAssistantEditMethods(input: {
       operations: request.operations,
       createdAt: new Date().toISOString(),
     });
+    const approvedDraftsBefore = (
+      await ctx.repository.listResumeDrafts()
+    ).filter((draft) => draft.status === "approved");
     const applied = await input.applyAssistantProfilePatchGroup(patchGroup, {
       messageId: request.messageId,
       reason: `Assistant change: ${request.summary}`,
@@ -311,7 +318,25 @@ export function createWorkspaceAssistantEditMethods(input: {
         ],
       });
     }
-    return { changes };
+    let invalidatedApprovedResumeJobIds: string[] = [];
+    if (
+      approvedDraftsBefore.length > 0 &&
+      hasResumeAffectingProfileChange(
+        applied.profileBefore,
+        applied.profileAfter,
+      )
+    ) {
+      const draftsAfter = new Map(
+        (await ctx.repository.listResumeDrafts()).map((draft) => [
+          draft.id,
+          draft,
+        ]),
+      );
+      invalidatedApprovedResumeJobIds = approvedDraftsBefore.flatMap((draft) =>
+        draftsAfter.get(draft.id)?.status === "stale" ? [draft.jobId] : [],
+      );
+    }
+    return { changes, invalidatedApprovedResumeJobIds };
   }
 
   /**

@@ -299,7 +299,7 @@ export function createWorkspaceProfileSetupReviewMethods(input: {
 
           nextProfile = CandidateProfileSchema.parse({
             ...nextProfile,
-            [key]: null,
+            [key]: Array.isArray(nextProfile[key]) ? [] : null,
           });
         }
       } else if (targetItem.target.domain === "search_preferences") {

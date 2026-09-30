@@ -22,17 +22,25 @@ export async function createAgentSession({
   env: overrides = {},
   fixtures = true,
   trace = false,
+  parallelGroup,
+  sessionId,
 } = {}) {
-  const lease = await acquireLease();
+  const lease = await acquireLease(undefined, { parallelGroup, sessionId });
   let qa;
   try {
-    const conflicts = await processConflicts();
+    const conflicts = await processConflicts({
+      allowedAppDirs:
+        parallelGroup === undefined
+          ? []
+          : (await lease.owners()).map((owner) => owner.appDir).filter(Boolean),
+    });
     if (conflicts.length)
       throw new Error(
         `Another isolated app or build is active. Coordinate before launching:\n${conflicts.join("\n")}`,
       );
     const runDir = await newRunDirectory();
     const build = await snapshotBuild(runDir);
+    await lease.update({ runDir, appDir: build.appDir });
     const env = await sessionEnvironment(provider, overrides);
     const events = journal(runDir, env);
     let generation = 0;
@@ -43,6 +51,8 @@ export async function createAgentSession({
       runDir,
       build,
       provider,
+      parallelGroup: lease.parallelGroup,
+      sessionId: lease.sessionId,
       browserHost: env.NORDRI_BROWSER_HOST,
       userDataDir: path.join(runDir, "user-data"),
       sites: null,
@@ -53,15 +63,23 @@ export async function createAgentSession({
       },
       async capture(name) {
         const base = path.join(runDir, artifactName(name));
-        await qa.page.screenshot({
-          path: `${base}.png`,
-          animations: "disabled",
-        });
+        // Playwright's CSS viewport can crop a zoomed Electron page. Capture
+        // the native surface belonging to this exact Page, never another app.
+        const window = await qa.app.browserWindow(qa.page);
+        const png = await window.evaluate(async (win) =>
+          (await win.webContents.capturePage()).toPNG().toString("base64"),
+        );
+        await writeFile(`${base}.png`, Buffer.from(png, "base64"));
         await writeFile(
           `${base}.aria.txt`,
           await qa.page.locator("body").ariaSnapshot(),
         );
-        events.record("capture", { name, generation, url: qa.page.url() });
+        events.record("capture", {
+          name,
+          generation,
+          url: qa.page.url(),
+          source: "owned-window-webContents.capturePage",
+        });
         await events.flush();
         return `${base}.png`;
       },
@@ -76,7 +94,11 @@ export async function createAgentSession({
           await stop().catch((error) => errors.push(error));
           await qa.sites?.close().catch((error) => errors.push(error));
           await events.flush().catch((error) => errors.push(error));
-          if (!survivors.some(isAlive) && (!child || !isAlive(child.pid)))
+          if (
+            !survivors.some(isAlive) &&
+            (!child || !isAlive(child.pid)) &&
+            (!qa.sites || !isAlive(qa.sites.pid))
+          )
             await lease.release();
           if (errors.length)
             throw new AggregateError(
@@ -173,6 +195,8 @@ export async function createAgentSession({
             pid: child.pid,
             provider,
             browserHost: qa.browserHost,
+            parallelGroup: qa.parallelGroup,
+            sessionId: qa.sessionId,
             build,
             sites: qa.sites && { url: qa.sites.url, log: qa.sites.log },
           },
@@ -217,7 +241,10 @@ export async function createAgentSession({
       qa.page = null;
       events.record("stopped", { generation });
     }
-    if (fixtures) qa.sites = await startFixtureSites(runDir);
+    if (fixtures) {
+      qa.sites = await startFixtureSites(runDir);
+      await lease.update({ fixturePid: qa.sites.pid });
+    }
     await start();
     return qa;
   } catch (error) {

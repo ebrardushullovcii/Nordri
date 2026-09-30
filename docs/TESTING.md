@@ -26,7 +26,7 @@ Other entry points: `pnpm test:correctness`, `pnpm test:performance` (serial, no
 
 - Build first: `pnpm --filter @nordri/desktop build`. Scripts that launch `out/main/index.cjs` run whatever was last built.
 - Use a temporary user-data directory and synthetic data (`apps/desktop/test-fixtures/job-finder/resume-import-sample.txt`), never the user's real workspace. `docs/resume-tests/` includes personal resumes; it is not a synthetic fixture source.
-- Serialize isolated Electron launches; audit for leftover processes you own before launching another.
+- Serialize isolated Electron launches unless a coordinated parallel run explicitly uses the QA launcher's shared `--parallel-group` with distinct `--session-id` values (see [Agent development QA](AGENT_QA.md)). Build once before starting the group and audit only the processes you own.
 - Harness commands live in `apps/desktop/package.json` (`ui:*`, `test:job-finder-*`, `test:live-assistant-*`). `:built` variants use the existing build; the others rebuild.
 - For an isolated production import without a native picker: `node apps/desktop/scripts/seed-product-quality-audit.mjs --user-data-dir <dir> --resume <synthetic-resume>`.
 

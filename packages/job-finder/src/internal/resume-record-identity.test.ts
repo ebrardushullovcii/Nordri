@@ -7,6 +7,61 @@ import {
 } from "./resume-record-identity";
 
 describe("resume record identity", () => {
+  const locatedRole = {
+    companyName: "Signal Systems",
+    title: "Senior Full-stack Engineer",
+    location: "Berlin, Germany",
+    startDate: "2020-01",
+    endDate: "2026-09",
+    isCurrent: false,
+  };
+  const roleWithLocationInEmployer = {
+    ...locatedRole,
+    companyName: "Signal Systems, Berlin, Germany",
+    title: "Senior Full-Stack Engineer",
+    location: null,
+  };
+
+  test("merges the same dated role when one employer includes the other record's exact location", () => {
+    expect(
+      areEquivalentExperienceRecords(locatedRole, roleWithLocationInEmployer),
+    ).toBe(true);
+    expect(
+      areEquivalentExperienceRecords(roleWithLocationInEmployer, locatedRole),
+    ).toBe(true);
+  });
+
+  test.each([
+    [
+      "an unknown employer suffix",
+      { companyName: "Signal Systems, Consulting" },
+    ],
+    [
+      "a different employer",
+      { companyName: "Signal Holdings, Berlin, Germany" },
+    ],
+    ["a different office", { location: "Munich, Germany" }],
+    ["a different title", { title: "Staff Platform Engineer" }],
+    ["a different start month", { startDate: "2021-01" }],
+    ["a different end month", { endDate: "2025-09" }],
+  ])("keeps a location-suffixed role separate with %s", (_label, change) => {
+    expect(
+      areEquivalentExperienceRecords(locatedRole, {
+        ...roleWithLocationInEmployer,
+        ...change,
+      }),
+    ).toBe(false);
+  });
+
+  test("does not guess that an employer suffix is a location when neither record states one", () => {
+    expect(
+      areEquivalentExperienceRecords(
+        { ...locatedRole, location: null },
+        roleWithLocationInEmployer,
+      ),
+    ).toBe(false);
+  });
+
   test("treats a skeleton with no employer as the same role when title and start month match", () => {
     expect(
       areEquivalentExperienceRecords(

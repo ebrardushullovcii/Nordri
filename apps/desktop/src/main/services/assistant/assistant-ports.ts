@@ -25,6 +25,7 @@ import { isDesktopTestApiEnabled } from "../job-finder/test-api";
 import { publishJobFinderWorkspaceUpdate } from "../job-finder/workspace-updates";
 import { getJobFinderWorkspaceService } from "../job-finder/workspace-service";
 import { createAssistantBrowserPort } from "./assistant-browser-port";
+import { waitForAssistantResumeImport } from "./resume-import-completion";
 import { writeExportFile } from "./tracker-export-file";
 
 /**
@@ -256,16 +257,23 @@ export function createAssistantHostPorts(input: {
         bytes: await resolved.loadVerifiedBytes(),
       };
     },
-    async importResumeDocument(documentId) {
+    async importResumeDocument(documentId, options) {
+      options?.signal?.throwIfAborted();
+      const service = await getJobFinderWorkspaceService();
       const resolved = await library.resolveForApplication(documentId);
       const bytes = await resolved.loadVerifiedBytes();
-      await withTempCopy(resolved.asset, bytes, (filePath) =>
+      options?.signal?.throwIfAborted();
+      const imported = await withTempCopy(resolved.asset, bytes, (filePath) =>
         importResumeFromSourcePath(filePath, {
           fileName: resolved.asset.originalName,
           useVision: !isDesktopTestApiEnabled(),
         }),
       );
-      publishJobFinderWorkspaceUpdate();
+      try {
+        await waitForAssistantResumeImport(service, imported, options);
+      } finally {
+        publishJobFinderWorkspaceUpdate();
+      }
     },
     async exportTracker(format) {
       const service = await getJobFinderWorkspaceService();

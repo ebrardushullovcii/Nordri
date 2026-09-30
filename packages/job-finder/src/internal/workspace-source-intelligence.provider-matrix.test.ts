@@ -139,6 +139,100 @@ afterEach(() => {
 });
 
 describe("public provider ATS acceptance matrix", () => {
+  test.each(providerCases.slice(0, 3))(
+    "$name uses the employer board identity for hostname and URL source labels",
+    async ({ target: originalTarget, payload }) => {
+      vi.spyOn(globalThis, "fetch").mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve(payload),
+      } as Response);
+      const url = new URL(originalTarget.startingUrl);
+      for (const label of [
+        url.hostname,
+        originalTarget.startingUrl,
+        `${url.host}${url.pathname}`,
+      ]) {
+        const target = { ...originalTarget, label };
+        const intelligence = inferSourceIntelligenceFromTarget({
+          target,
+          currentArtifact: null,
+        });
+        const result = await collectPublicProviderJobs({
+          target,
+          artifact: { intelligence },
+          source: "target_site",
+        });
+        expect(result.warning).toBeNull();
+        expect(result.jobs).toHaveLength(1);
+        expect(result.jobs[0]?.company).toBe("Acme");
+      }
+
+      const target = {
+        ...originalTarget,
+        label: "Moss Lantern Systems Careers",
+      };
+      const intelligence = inferSourceIntelligenceFromTarget({
+        target,
+        currentArtifact: null,
+      });
+      const result = await collectPublicProviderJobs({
+        target,
+        artifact: { intelligence },
+        source: "target_site",
+      });
+      expect(result.jobs[0]?.company).toBe("Moss Lantern Systems");
+    },
+  );
+
+  test("keeps employers separate when two Ashby boards have the same hostname label", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url;
+      const board = new URL(url).pathname.split("/").at(-1);
+      return Promise.resolve({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            jobs: [
+              {
+                id: `${board}-engineer`,
+                title: "Software Engineer",
+                jobUrl: `https://jobs.ashbyhq.com/${board}/engineer`,
+                location: "Remote - Europe",
+                descriptionPlain: "Build reliable software.",
+              },
+            ],
+          }),
+      } as Response);
+    });
+    const companies = [];
+    for (const board of ["linear", "supabase"]) {
+      const target = createTarget(
+        board,
+        "jobs.ashbyhq.com",
+        `https://jobs.ashbyhq.com/${board}`,
+      );
+      const intelligence = inferSourceIntelligenceFromTarget({
+        target,
+        currentArtifact: null,
+      });
+      const result = await collectPublicProviderJobs({
+        target,
+        artifact: { intelligence },
+        source: "target_site",
+      });
+      expect(result.jobs[0]?.canonicalUrl).toBe(
+        `https://jobs.ashbyhq.com/${board}/engineer`,
+      );
+      companies.push(result.jobs[0]?.company);
+    }
+    expect(companies).toEqual(["Linear", "Supabase"]);
+  });
+
   test.each(providerCases)(
     "$name uses the bounded public-provider path and produces reusable no-submit proof",
     async ({ providerKey, target, expectedApiUrl, payload }) => {

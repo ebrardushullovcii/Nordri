@@ -4,6 +4,23 @@ import { ACTION_INVENTORY } from "./action-inventory";
 import { buildAssistantToolCatalog, listAllAssistantToolNames } from "./tools";
 
 describe("assistant action inventory", () => {
+  it("exposes guided setup Finish through the profile tool in the setup catalog", () => {
+    expect(
+      ACTION_INVENTORY.find((entry) => entry.id === "profile.setup_state"),
+    ).toMatchObject({
+      coverage: {
+        kind: "tools",
+        tools: ["read_profile", "finish_profile_setup"],
+      },
+    });
+    expect(
+      buildAssistantToolCatalog({
+        mode: "grouped",
+        browserAvailable: false,
+        screen: "setup",
+      }).map((tool) => tool.name),
+    ).toContain("finish_profile_setup");
+  });
   it("names only tools that exist", () => {
     const known = new Set(listAllAssistantToolNames());
     const missing = ACTION_INVENTORY.flatMap((entry) =>

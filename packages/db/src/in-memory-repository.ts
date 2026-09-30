@@ -2129,6 +2129,7 @@ export function createInMemoryJobFinderRepository(
         const next = update({
           campaignState: cloneValue(campaignState),
           searchPreferences: cloneValue(state.searchPreferences),
+          intelligenceState: cloneValue(state.intelligence),
         });
         const nextCampaignState = JobSearchCampaignCollectionSchema.parse(
           cloneValue(next.campaignState),
@@ -2136,6 +2137,12 @@ export function createInMemoryJobFinderRepository(
         const nextSearchPreferences = JobSearchPreferencesSchema.parse(
           cloneValue(next.searchPreferences),
         );
+        const nextIntelligenceState =
+          next.intelligenceState === undefined
+            ? null
+            : JobFinderIntelligenceStateSchema.parse(
+                cloneValue(next.intelligenceState),
+              );
         state.campaigns = nextCampaignState.campaigns;
         state.activeCampaignId = nextCampaignState.activeCampaignId;
         state.campaignNotifications = nextCampaignState.notifications;
@@ -2151,6 +2158,7 @@ export function createInMemoryJobFinderRepository(
           profileRevision += 1;
         }
         state.searchPreferences = nextSearchPreferences;
+        if (nextIntelligenceState) state.intelligence = nextIntelligenceState;
         return Promise.resolve(next.result);
       } catch (error) {
         return Promise.reject(

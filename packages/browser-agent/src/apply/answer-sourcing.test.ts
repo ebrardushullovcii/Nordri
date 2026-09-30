@@ -342,6 +342,91 @@ describe("fitting an answer to the choices a form offers", () => {
     });
   });
 
+  test("never puts a city in a street-address field or writes an address from prose", () => {
+    for (const location of [
+      null,
+      "Manchester",
+      "London, UK",
+      "District 1, London",
+    ]) {
+      const input = sources([]);
+      input.profile.currentLocation = location;
+      expect(
+        resolveApplyAnswer({
+          control: control({
+            kind: "text",
+            label: "Address *",
+            groupLabel: "My Information",
+            questionKind: "location",
+            options: [],
+          }),
+          sources: input,
+          salaryDisclosure: "pause_for_user",
+        }),
+      ).toMatchObject({ status: "needs_you", suggestion: null });
+    }
+  });
+
+  test("uses the explicit street line the person supplied in their full location", () => {
+    const input = sources([]);
+    input.profile.currentLocation =
+      "1 Example Road, London, SW1A 1AA, United Kingdom";
+    expect(
+      resolveApplyAnswer({
+        control: control({
+          kind: "text",
+          label: "Address",
+          questionKind: "location",
+          options: [],
+        }),
+        sources: input,
+        salaryDisclosure: "pause_for_user",
+      }),
+    ).toMatchObject({
+      status: "answered",
+      answer: { value: "1 Example Road", sourceId: "profile.currentLocation" },
+    });
+  });
+
+  test("an exact saved address works without assuming any particular address format", () => {
+    const input = sources([savedAnswer("Street address", "Rua das Flores")]);
+    expect(
+      resolveApplyAnswer({
+        control: control({
+          kind: "text",
+          label: "Street address",
+          questionKind: "location",
+          options: [],
+        }),
+        sources: input,
+        salaryDisclosure: "pause_for_user",
+      }),
+    ).toMatchObject({
+      status: "answered",
+      answer: { value: "Rua das Flores", sourceKind: "answer_library" },
+    });
+  });
+
+  test("postal codes and address line 2 are separate facts from a saved street", () => {
+    const input = sources([]);
+    input.profile.currentLocation = "1 Example Road, London";
+    for (const label of ["Postal code", "ZIP code", "Address line 2"]) {
+      expect(
+        resolveApplyAnswer({
+          control: control({
+            kind: "text",
+            label,
+            groupLabel: "Address",
+            questionKind: "location",
+            options: [],
+          }),
+          sources: input,
+          salaryDisclosure: "pause_for_user",
+        }),
+      ).toMatchObject({ status: "needs_you", suggestion: null });
+    }
+  });
+
   test("does not use a home location when the posting location is missing", () => {
     const result = resolveApplyAnswer({
       control: control({

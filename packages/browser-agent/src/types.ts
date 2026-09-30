@@ -121,6 +121,8 @@ export interface AgentConfig {
   retainAllFound?: boolean;
   /** Public feed postings available for the model to inspect and select. */
   sourceCatalog?: JobPosting[];
+  /** True only for a complete authoritative inventory of this source. */
+  sourceCatalogComplete?: boolean;
   source: JobSource;
   maxSteps: number;
   /** Legacy-compatible emergency ceiling. Normal completion is progress based. */

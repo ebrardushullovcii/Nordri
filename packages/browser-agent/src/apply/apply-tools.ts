@@ -107,7 +107,10 @@ export function getApplyToolDefinitions(): ApplyToolDefinition[] {
         parameters: {
           type: "object",
           properties: {
-            ref: { type: "string", description: "The link handle, such as l4." },
+            ref: {
+              type: "string",
+              description: "The link handle, such as l4.",
+            },
             reason: {
               type: "string",
               description:
@@ -172,7 +175,10 @@ export function getApplyToolDefinitions(): ApplyToolDefinition[] {
           type: "object",
           properties: {
             ref: { type: "string" },
-            option: { type: "string", description: "The option's exact label." },
+            option: {
+              type: "string",
+              description: "The option's exact label.",
+            },
           },
           required: ["ref", "option"],
         },
@@ -240,7 +246,11 @@ export function getApplyToolDefinitions(): ApplyToolDefinition[] {
         parameters: {
           type: "object",
           properties: {
-            milliseconds: { type: "number", description: "Up to 30000. A page checking the browser by itself can take a minute or two: wait 20000 to 30000 at a time." },
+            milliseconds: {
+              type: "number",
+              description:
+                "Up to 30000. A page checking the browser by itself can take a minute or two: wait 20000 to 30000 at a time.",
+            },
           },
           required: ["milliseconds"],
         },
@@ -272,7 +282,7 @@ export function getApplyToolDefinitions(): ApplyToolDefinition[] {
       function: {
         name: "submit_application",
         description:
-          "Say the form is complete and this is the button that sends it. Job Finder checks everything again and presses it only if the person allowed that; otherwise the application stops here, filled in and ready for them.",
+          "Say the form is complete and this is the button that sends it. First observe again and dismiss ordinary cookie banners, newsletter dialogs, and chat overlays using their own controls; readable fields can still have a covered send button. Job Finder checks everything again and presses it only if the person allowed that; otherwise the application stops here, filled in and ready for them.",
         parameters: {
           type: "object",
           properties: { ref: { type: "string" } },
@@ -285,7 +295,7 @@ export function getApplyToolDefinitions(): ApplyToolDefinition[] {
       function: {
         name: "finish",
         description:
-          "Finish. Call it when the form is complete, when only the person can go further (they have to sign in, pass a security check, pay, or make an account), or when you are genuinely stuck. The reason is your report to the person: which site and page you were on, what you tried, what the page did, and what they need to do. Pass stuck: true when you could not get there.",
+          "Finish. Before reporting a completed form, observe again and dismiss ordinary cookie banners, newsletter dialogs, and chat overlays using their own controls, then observe the final button. Call finish when the form is complete, when only the person can go further (they have to sign in, pass a security check, pay, or make an account), or when you are genuinely stuck. The reason is your report to the person: which site and page you were on, what you tried, what the page did, and what they need to do. Pass stuck: true when you could not get there.",
         parameters: {
           type: "object",
           properties: {
@@ -352,8 +362,9 @@ export function parseApplyProposal(
   const args = asRecord(parsedArguments);
   const ref = asString(args.ref);
   const reason = asString(args.reason);
-  const withReason = <T extends object>(proposal: T): T & { reason?: string } =>
-    reason ? { ...proposal, reason } : proposal;
+  const withReason = <T extends object>(
+    proposal: T,
+  ): T & { reason?: string } => (reason ? { ...proposal, reason } : proposal);
   const needsRef = (): ApplyProposalParse => ({
     ok: false,
     error: `${toolName} needs the handle of what to act on, in ref.`,
@@ -375,7 +386,10 @@ export function parseApplyProposal(
     }
     case "follow_link":
       return ref
-        ? { ok: true, proposal: withReason({ tool: "follow_link" as const, ref }) }
+        ? {
+            ok: true,
+            proposal: withReason({ tool: "follow_link" as const, ref }),
+          }
         : needsRef();
     case "click":
       return ref

@@ -76,6 +76,10 @@ async function expectCampaignPreferencesCommitAtomicity(
         })),
       },
       searchPreferences: preferences,
+      intelligenceState: {
+        ...current.intelligenceState,
+        updatedAt: "2026-08-15T10:01:00.000Z",
+      },
     };
   });
 
@@ -86,6 +90,27 @@ async function expectCampaignPreferencesCommitAtomicity(
     (await repository.getCampaignState())?.campaigns[0]?.searchPreferences
       .companyBlacklist,
   ).toEqual(["Atomic Employer"]);
+  expect((await repository.getIntelligenceState()).updatedAt).toBe(
+    "2026-08-15T10:01:00.000Z",
+  );
+
+  await expect(
+    repository.commitCampaignPreferencesUpdate((current) => ({
+      result: null,
+      campaignState: current.campaignState!,
+      searchPreferences: {
+        ...current.searchPreferences,
+        companyBlacklist: ["Invalid intelligence must roll back preferences"],
+      },
+      intelligenceState: { ...current.intelligenceState, updatedAt: "invalid" },
+    })),
+  ).rejects.toThrow();
+  expect((await repository.getSearchPreferences()).companyBlacklist).toEqual([
+    "Atomic Employer",
+  ]);
+  expect((await repository.getIntelligenceState()).updatedAt).toBe(
+    "2026-08-15T10:01:00.000Z",
+  );
 
   await expect(
     repository.commitCampaignPreferencesUpdate((current) => ({
@@ -126,6 +151,9 @@ describe("campaign and activity persistence", () => {
       await expectCampaignPreferencesCommitAtomicity(repository);
       await repository.close();
       repository = await temp.createRepository();
+      expect((await repository.getIntelligenceState()).updatedAt).toBe(
+        "2026-08-15T10:01:00.000Z",
+      );
       expect(
         (await repository.getSearchPreferences()).companyBlacklist,
       ).toEqual(["Atomic Employer"]);
@@ -318,9 +346,7 @@ describe("campaign and activity persistence", () => {
   });
 
   test("bootstrap rejects a seed with campaigns and a null active pointer before writing", async () => {
-    const temp = await createTempRepository(
-      "nordri-db-campaign-seed-null-",
-    );
+    const temp = await createTempRepository("nordri-db-campaign-seed-null-");
     try {
       const seed = createSeed();
       const campaign = createPersistedCampaign(
@@ -342,9 +368,7 @@ describe("campaign and activity persistence", () => {
   });
 
   test("bootstrap rejects a seed whose active pointer is missing from the campaigns", async () => {
-    const temp = await createTempRepository(
-      "nordri-db-campaign-seed-unknown-",
-    );
+    const temp = await createTempRepository("nordri-db-campaign-seed-unknown-");
     try {
       const seed = createSeed();
       const campaign = createPersistedCampaign(
@@ -370,9 +394,7 @@ describe("campaign and activity persistence", () => {
   });
 
   test("reset with a malformed campaign pointer fails before deleting persisted campaigns", async () => {
-    const temp = await createTempRepository(
-      "nordri-db-campaign-reset-guard-",
-    );
+    const temp = await createTempRepository("nordri-db-campaign-reset-guard-");
     const repository = await temp.createRepository();
     try {
       const seed = createSeed();

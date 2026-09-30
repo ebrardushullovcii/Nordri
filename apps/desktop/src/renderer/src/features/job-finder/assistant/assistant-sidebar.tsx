@@ -329,7 +329,9 @@ function AssistantSidebarPanel() {
   const width = assistant?.width ?? 400;
   const narrow = contentWidth - width < NARROW_CONTENT_MIN_WIDTH;
   const showPanel = open && (!narrow || assistant?.narrowView === "chat");
-  const running = state.activeTurn !== null;
+  const running =
+    state.activeTurn !== null ||
+    state.activity?.toolName === "generate_resumes";
 
   // Reserve the sidebar's width so the page (and the browser beside it)
   // shrinks instead of being covered.
@@ -979,9 +981,9 @@ function AssistantSidebarPanel() {
             <span className="min-w-0 flex-1 truncate">
               {state.stall ?? state.activity?.label ?? "Working"}
             </span>
-            {state.activeTurn ? (
+            {state.activeTurn || state.activity ? (
               <Elapsed
-                since={state.activity?.startedAt ?? state.activeTurn.startedAt}
+                since={state.activity?.startedAt ?? state.activeTurn!.startedAt}
               />
             ) : null}
           </div>

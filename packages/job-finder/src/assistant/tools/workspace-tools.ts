@@ -7,6 +7,7 @@ import {
 import { z } from "zod";
 
 import { AssistantToolError, argText, defineTool, json } from "../tool-kit";
+import { getAssistantSearchReadiness } from "../prompt";
 import {
   allJobs,
   compactApplication,
@@ -28,7 +29,7 @@ export const getWorkspaceSummaryTool = defineTool({
   name: "get_workspace_summary",
   group: "workspace",
   description:
-    "Where the job search stands: profile readiness, jobs found and shortlisted, applications and their states, running work, Needs you count, the active search plan and the saved apply mode.",
+    "Where the job search stands: enabled job-source IDs and URLs, whether a search can start and its missing requirements, profile readiness, jobs found and shortlisted, applications and their states, running work, Needs you count, the active search plan and the saved apply mode. A resume is not required for searching.",
   parameters: json.object({}),
   input: z.object({}).passthrough(),
   label: () => "Reading your workspace",
@@ -49,8 +50,15 @@ export const getWorkspaceSummaryTool = defineTool({
     const campaign = snapshot.campaigns.find(
       (entry) => entry.id === snapshot.activeCampaignId,
     );
+    const searchReadiness = getAssistantSearchReadiness(snapshot);
     return {
-      summary: `${plural(snapshot.discoveryJobs.length, "job")} found, ${snapshot.reviewQueue.length} shortlisted, ${plural(applications.length, "application")}, ${needsYou.length} waiting on the person.`,
+      summary: `${plural(snapshot.discoveryJobs.length, "job")} found, ${snapshot.reviewQueue.length} shortlisted, ${plural(applications.length, "application")}, ${needsYou.length} waiting on the person. ${
+        searchReadiness.runningRunId
+          ? "A search is already running."
+          : searchReadiness.canStartSearch
+            ? `Ready to search ${plural(searchReadiness.enabledSourceCount, "enabled source")}.`
+            : searchReadiness.missingRequirements.join(" ")
+      }`,
       data: {
         profile: {
           setup: snapshot.profileSetupState.status,
@@ -72,6 +80,8 @@ export const getWorkspaceSummaryTool = defineTool({
         search: {
           state: snapshot.discoveryRunState,
           activeRunId: snapshot.activeDiscoveryRun?.id ?? null,
+          ...searchReadiness,
+          enabledSources: searchReadiness.enabledSources.slice(0, 40),
         },
         needsYou: needsYou.length,
         activeSearchPlan: campaign

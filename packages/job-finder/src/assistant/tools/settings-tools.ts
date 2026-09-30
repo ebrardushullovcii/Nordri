@@ -1,10 +1,17 @@
 import {
+  AiBehaviorPreferenceSchema,
+  ApplicationAttestationKindSchema,
   ApplicationAutomationModeSchema,
   CompanyPreferenceSchema,
+  CoverLetterPolicySchema,
+  JobSearchSelectivitySchema,
   NonEmptyStringSchema,
+  ProfileAssistantInitiativeSchema,
+  ProfileAssistantReplyStyleSchema,
   UpdateAiBehaviorInputSchema,
   UpdateApplicationDefaultsInputSchema,
   UpdateWorkspaceBehaviorInputSchema,
+  WrittenAnswerLengthSchema,
   collapsesSideMenuWithAssistant,
   type AssistantMessagePart,
   type JobFinderWorkspaceSnapshot,
@@ -110,7 +117,9 @@ export const readSettingsTool = defineTool({
         resumeTemplateId: snapshot.settings.resumeTemplateId,
         fontPreset: snapshot.settings.fontPreset,
         coverLetter: snapshot.settings.coverLetter,
-        aiBehavior: snapshot.settings.aiBehavior,
+        aiBehavior: AiBehaviorPreferenceSchema.parse(
+          snapshot.settings.aiBehavior ?? {},
+        ),
         keepSessionAlive: snapshot.settings.keepSessionAlive,
         discoveryOnly: snapshot.settings.discoveryOnly,
         collapseSideMenuWithAssistant: collapsesSideMenuWithAssistant(
@@ -176,9 +185,27 @@ export const updateAiBehaviorTool = defineTool({
   name: "update_ai_behavior",
   group: "settings",
   description:
-    "Changes Settings › AI behavior: how much the assistant volunteers and how long it talks (aiBehavior.profileAssistant), search selectivity (aiBehavior.jobSearch), how applications are written (aiBehavior.applying), cover letters, and the resume approach (original_resume, conservative, balanced, aggressive). Send the whole aiBehavior object as read_settings returned it, with your change.",
+    "Changes Settings › AI behavior: how much the assistant volunteers and how long it talks (aiBehavior.profileAssistant), How picky a search is (aiBehavior.jobSearch.selectivity: best_matches, balanced, wide_net), Count remote jobs as any location (aiBehavior.jobSearch.remoteCountsAsAnyLocation: true or false), how applications are written (aiBehavior.applying), cover letters, and the resume approach (original_resume, conservative, balanced, aggressive). Cast a wide net is selectivity wide_net. Send the whole aiBehavior object as read_settings returned it, with your change.",
   parameters: json.object({
-    aiBehavior: json.looseObject(),
+    aiBehavior: json.object({
+      profileAssistant: json.object({
+        initiative: json.enumOf(ProfileAssistantInitiativeSchema.options),
+        replyStyle: json.enumOf(ProfileAssistantReplyStyleSchema.options),
+      }),
+      jobSearch: json.object({
+        selectivity: json.enumOf(JobSearchSelectivitySchema.options),
+        remoteCountsAsAnyLocation: json.boolean(
+          "Count remote jobs as any location. false requires a listing to match a saved place even when it is remote.",
+        ),
+      }),
+      applying: json.object({
+        coverLetterPolicy: json.enumOf(CoverLetterPolicySchema.options),
+        writtenAnswerLength: json.enumOf(WrittenAnswerLengthSchema.options),
+        preApprovedDeclarations: json.array(
+          json.enumOf(ApplicationAttestationKindSchema.options),
+        ),
+      }),
+    }),
     coverLetter: json.looseObject(),
     resumeApproach: json.enumOf([
       "original_resume",
@@ -203,7 +230,12 @@ export const updateAiBehaviorTool = defineTool({
     context.ports.publishWorkspaceUpdate();
     return {
       summary: recorded.receiptId ? "Saved AI behavior." : "Nothing changed.",
-      data: { receiptId: recorded.receiptId },
+      data: {
+        receiptId: recorded.receiptId,
+        aiBehavior: AiBehaviorPreferenceSchema.parse(
+          after.settings.aiBehavior ?? {},
+        ),
+      },
       parts: recorded.parts,
     };
   },

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -8,9 +9,11 @@ import {
   artifactName,
   isAlive,
   journal,
+  ownedProcessIds,
   redact,
   sessionEnvironment,
   startFixtureSites,
+  stopChild,
 } from "./support.mjs";
 
 test("one owner holds the lease; releasing it permits a later session", async () => {
@@ -29,6 +32,118 @@ test("one owner holds the lease; releasing it permits a later session", async ()
     await rm(root, { recursive: true });
   }
 });
+
+test("ten explicit parallel owners coexist without losing updates or releasing a sibling's lease", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "qa-parallel-lease-test-"));
+  let leases = [];
+  try {
+    leases = await Promise.all(
+      Array.from({ length: 10 }, (_, index) =>
+        acquireLease(root, {
+          parallelGroup: "job-finder-check",
+          sessionId: `lane-${index}`,
+        }),
+      ),
+    );
+    await Promise.all(
+      leases.map((lease, index) =>
+        lease.update({ electronPid: 12000 + index }),
+      ),
+    );
+    const owners = await leases[0].owners();
+    assert.equal(owners.length, 10);
+    assert.deepEqual(
+      owners.map((owner) => owner.electronPid).sort(),
+      Array.from({ length: 10 }, (_, index) => 12000 + index),
+    );
+    await assert.rejects(acquireLease(root), /Another QA session/);
+    await assert.rejects(
+      acquireLease(root, {
+        parallelGroup: "different-check",
+        sessionId: "lane-0",
+      }),
+      /Another QA session/,
+    );
+    await assert.rejects(
+      acquireLease(root, {
+        parallelGroup: "job-finder-check",
+        sessionId: "lane-0",
+      }),
+      /Another QA session/,
+    );
+    await Promise.all(leases.slice(1).map((lease) => lease.release()));
+    assert.equal((await leases[0].owners()).length, 1);
+    await assert.rejects(acquireLease(root), /Another QA session/);
+    await leases[0].release();
+    const exclusive = await acquireLease(root);
+    await exclusive.release();
+  } finally {
+    await Promise.all(leases.map((lease) => lease.release()));
+    await rm(root, { recursive: true });
+  }
+});
+
+test("parallel opt-in cannot bypass an exclusive owner or use unsafe session names", async () => {
+  const root = await mkdtemp(
+    path.join(os.tmpdir(), "qa-exclusive-lease-test-"),
+  );
+  const lease = await acquireLease(root);
+  try {
+    await assert.rejects(
+      acquireLease(root, { parallelGroup: "group" }),
+      /Another QA session/,
+    );
+    await assert.rejects(
+      acquireLease(root, { sessionId: "lane" }),
+      /requires an explicit parallelGroup/,
+    );
+    await assert.rejects(
+      acquireLease(root, { parallelGroup: "../group" }),
+      /artifact name/,
+    );
+    await assert.rejects(
+      acquireLease(root, { parallelGroup: "group", sessionId: "../lane" }),
+      /artifact name/,
+    );
+  } finally {
+    await lease.release();
+    await rm(root, { recursive: true });
+  }
+});
+
+test(
+  "Windows discovers and stops only an owned child tree",
+  { skip: process.platform !== "win32" },
+  async () => {
+    const child = spawn(
+      process.execPath,
+      [
+        "-e",
+        "const child = require('node:child_process').spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)']); console.log(child.pid); setInterval(() => {}, 1000);",
+      ],
+      { stdio: ["ignore", "pipe", "pipe"] },
+    );
+    let descendant;
+    try {
+      descendant = await new Promise((resolve, reject) => {
+        child.stdout.once("data", (data) =>
+          resolve(Number(data.toString().trim())),
+        );
+        child.once("error", reject);
+      });
+      const owned = await ownedProcessIds(child.pid);
+      assert.ok(owned.includes(child.pid));
+      assert.ok(owned.includes(descendant));
+      assert.ok(!owned.includes(process.pid));
+      await stopChild(child);
+      assert.equal(isAlive(child.pid), false);
+      assert.equal(isAlive(descendant), false);
+      assert.equal(isAlive(process.pid), true);
+    } finally {
+      await stopChild(child);
+    }
+  },
+);
 
 test("deterministic mode strips credentials and conflicting Electron launch variables", async () => {
   const env = await sessionEnvironment("deterministic", {

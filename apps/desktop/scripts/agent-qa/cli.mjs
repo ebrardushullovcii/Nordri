@@ -14,6 +14,8 @@ const { values } = parseArgs({
     provider: { type: "string", default: "deterministic" },
     trace: { type: "boolean", default: false },
     "no-fixtures": { type: "boolean", default: false },
+    "parallel-group": { type: "string" },
+    "session-id": { type: "string" },
   },
 });
 
@@ -24,12 +26,16 @@ if (values.help) {
   pnpm --filter @nordri/desktop qa --script /absolute/path/scenario.mjs
   pnpm --filter @nordri/desktop qa --provider configured
   pnpm --filter @nordri/desktop qa --doctor
+  pnpm --filter @nordri/desktop qa --parallel-group job-finder-check --session-id lane-01
 
 Default: fresh synthetic workspace, deterministic AI, embedded browser, private
 copy of existing build, local fixture sites on a free port. No build or release
 checks are run. Explicit NORDRI_BROWSER_HOST overrides are preserved.
 --trace records Playwright traces (may include request data).
 --no-fixtures skips the local sites.
+--parallel-group explicitly permits isolated sessions in the same named group.
+--session-id labels a parallel session; each active label must be distinct.
+The default remains exclusive. Coordinate the build before starting any group.
 
 REPL: qa.page, qa.context, qa.app are unrestricted Playwright objects.
 Use await qa.capture('name') and qa.restart(). All other actions use Playwright
@@ -79,11 +85,17 @@ See docs/AGENT_QA.md for examples, fault injection and evidence limits.`);
       provider: values.provider,
       trace: values.trace,
       fixtures: !values["no-fixtures"],
+      parallelGroup: values["parallel-group"],
+      sessionId: values["session-id"],
     });
     if (interrupted) throw new Error("QA startup interrupted");
     console.log(
       `QA ready: ${qa.runDir}\nProvider: ${qa.provider}\nBrowser host (requested): ${qa.browserHost}\nFixtures: ${qa.sites?.url ?? "disabled"}`,
     );
+    if (qa.parallelGroup)
+      console.log(
+        `Parallel group: ${qa.parallelGroup}; session: ${qa.sessionId}`,
+      );
     console.log(qa.build.note);
     if (values.script) {
       const scenario = await import(
