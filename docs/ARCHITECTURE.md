@@ -3,6 +3,7 @@
 ## Workspaces
 
 - `apps/desktop`: Electron main, preload, renderer
+- `apps/website`: the public landing page, static and outside the pnpm workspace; Netlify deploys it from `main`
 - `packages/contracts`: schemas, DTOs, typed IPC
 - `packages/core`: small shared helpers and result types
 - `packages/db`: persistence and repository boundaries
