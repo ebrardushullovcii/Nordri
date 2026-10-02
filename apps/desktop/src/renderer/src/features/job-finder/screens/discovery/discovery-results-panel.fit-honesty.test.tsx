@@ -105,6 +105,12 @@ function checkedJob(): SavedJob {
     discoveryMethod: "browser_agent",
     matchAssessment: {
       score: 78,
+      judgment: {
+        source: "batch",
+        judgedAt: "2026-10-02T10:00:00.000Z",
+        score: 78,
+        recommendation: "review_before_applying",
+      },
       ...boundFingerprints,
       dimensions: {
         roleSuitability: { state: "exact" },
@@ -183,12 +189,12 @@ describe("Find jobs fit honesty", () => {
     const srOnly = screen.getByTestId(`discovery-result-fit-sr-${job.id}`);
     expect(srOnly.className).toContain("sr-only");
     expect(srOnly.textContent).toBe(
-      "Overall fit: title-only estimate. Fit is based on the title alone. Review the listing details before applying.",
+      "Overall fit: not judged yet. The AI judges each job against your profile and goals after a search. Choose Read and assess listing to judge this one now.",
     );
     // …and it is the row's only carrier of that reason.
-    expect(screen.getAllByText(/Fit is based on the title alone/)).toEqual([
-      srOnly,
-    ]);
+    expect(
+      screen.getAllByText(/The AI judges each job against your profile/),
+    ).toEqual([srOnly]);
   });
 
   it("prints 'Fit not assessed' with no number for an unbound assessment", () => {

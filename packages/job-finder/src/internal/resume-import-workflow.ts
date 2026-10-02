@@ -1,3 +1,4 @@
+import { ResumeImportStageUnreadError } from "@nordri/ai-providers";
 import {
   CandidateProfileSchema,
   ResumeDocumentBundleSchema,
@@ -56,6 +57,26 @@ import {
   cloneCachedResumeAnalysisArtifacts,
   findCompatibleResumeAnalysisCacheEntry,
 } from "./resume-analysis-cache";
+
+/**
+ * With a model, the model reads every section and nothing else reads the
+ * resume (ADR 0041). Without one (tests, or a build with no AI at all) the
+ * rule reader stands in: regex literals beside the built-in stage reader.
+ */
+function readsWithoutModel(ctx: Pick<WorkspaceServiceContext, "aiClient">) {
+  return ctx.aiClient.getStatus().kind === "deterministic";
+}
+
+/** The rule reader's fill-ins for experience records, only without a model. */
+function withRuleReaderMarkers(
+  ctx: Pick<WorkspaceServiceContext, "aiClient">,
+  bundle: Parameters<typeof enrichExperienceCandidatesFromNearbyMarkers>[0],
+  candidates: ResumeImportFieldCandidate[],
+): ResumeImportFieldCandidate[] {
+  return readsWithoutModel(ctx)
+    ? enrichExperienceCandidatesFromNearbyMarkers(bundle, candidates)
+    : candidates;
+}
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -563,7 +584,12 @@ function resumeImportStageFailureOutcome(
     ok: false,
     stage,
     message,
-    diagnostic: `Resume import ${stage} stage failed; other text stages continued. ${message}`,
+    // A section the model could not read says so in its own words, for the
+    // person; anything else keeps the technical note.
+    diagnostic:
+      error instanceof ResumeImportStageUnreadError
+        ? message
+        : `Resume import ${stage} stage failed; other text stages continued. ${message}`,
   };
 }
 
@@ -867,7 +893,7 @@ async function completeDeferredVisionBranch(input: {
       : [];
     const provisionalCandidates = promoteEducationScalarCandidates(
       normalizeSharedMemoryCandidates(
-        enrichExperienceCandidatesFromNearbyMarkers(bundle, [
+        withRuleReaderMarkers(ctx, bundle, [
           ...preservedTextCandidates,
           ...visionCandidates,
         ]),
@@ -1354,7 +1380,7 @@ async function runResumeImportWorkflowInProcess(
     ctx,
     expectedProfileRevision,
   );
-  let literalExtractionMs = 0;
+  const literalExtractionMs = 0;
   let textBranchMs = 0;
   let textStageTimings: ResumeImportTextStageTiming[] = [];
   const now = new Date().toISOString();
@@ -1588,12 +1614,9 @@ async function runResumeImportWorkflowInProcess(
 
     const textBranchPromise: Promise<ResumeImportBranchResult> =
       (async (): Promise<ResumeImportBranchResult> => {
-        const literalStartedAtMs = performance.now();
-        const literalCandidates = extractLiteralCandidates(runId, bundle, now);
-        literalExtractionMs = Math.max(
-          0,
-          Math.round(performance.now() - literalStartedAtMs),
-        );
+        const literalCandidates = readsWithoutModel(ctx)
+          ? extractLiteralCandidates(runId, bundle, now)
+          : [];
         const stageDurations = new Map<
           (typeof RESUME_IMPORT_STAGES)[number],
           number
@@ -1910,7 +1933,7 @@ async function runResumeImportWorkflowInProcess(
 
     const provisionalCandidates = promoteEducationScalarCandidates(
       normalizeSharedMemoryCandidates(
-        enrichExperienceCandidatesFromNearbyMarkers(bundle, [
+        withRuleReaderMarkers(ctx, bundle, [
           ...(textBranch.ok ? textBranch.literalCandidates : []),
           ...(textBranch.ok ? textBranch.stageCandidates : []),
           ...visionCandidates,
@@ -1936,7 +1959,9 @@ async function runResumeImportWorkflowInProcess(
     );
     const usableResumeDetails = [
       ...reconciledCandidates,
-      ...extractLiteralCandidates(runId, bundle, now),
+      ...(readsWithoutModel(ctx)
+        ? extractLiteralCandidates(runId, bundle, now)
+        : []),
     ].some((candidate) => {
       if (
         ["invalid_source_structure", "empty_record_candidate"].includes(

@@ -2,7 +2,7 @@ import { MatchAssessmentSchema, type SavedJob } from "@nordri/contracts";
 import { describe, expect, it } from "vitest";
 
 import {
-  FIT_TITLE_ONLY_REASON,
+  FIT_NOT_JUDGED_REASON,
   FIT_UNASSESSED_REASON,
   FIT_UPPER_BOUND_REASON,
   getFitEvidenceDepth,
@@ -74,6 +74,12 @@ function checkedJob(): PresentationInput {
     matchAssessment: MatchAssessmentSchema.parse({
       score: 78,
       ...boundFingerprints,
+      judgment: {
+        source: "batch",
+        judgedAt: "2026-10-02T10:00:00.000Z",
+        score: 78,
+        recommendation: "review_before_applying",
+      },
       dimensions: {
         roleSuitability: {
           state: "exact",
@@ -105,10 +111,10 @@ function unboundJob(): PresentationInput {
 }
 
 describe("getFitEvidenceDepth", () => {
-  it("reports title-only when nothing beyond the title was checkable", () => {
+  it("reports a job without a model verdict as not judged", () => {
     expect(getFitEvidenceDepth(titleOnlyJob().matchAssessment)).toEqual({
-      isTitleOnly: true,
-      reason: FIT_TITLE_ONLY_REASON,
+      isNotJudged: true,
+      reason: FIT_NOT_JUDGED_REASON,
       verifiedDimensionCount: 0,
     });
   });
@@ -117,31 +123,36 @@ describe("getFitEvidenceDepth", () => {
     expect(
       getFitEvidenceDepth(realEngineTitleOnlyJob().matchAssessment),
     ).toEqual({
-      isTitleOnly: true,
-      reason: FIT_TITLE_ONLY_REASON,
+      isNotJudged: true,
+      reason: FIT_NOT_JUDGED_REASON,
       verifiedDimensionCount: 0,
     });
   });
 
-  it("counts a decided role requirement as real evidence", () => {
+  it("needs the model's verdict, not only decided requirements, to earn a number", () => {
     const job = realEngineTitleOnlyJob();
+    const withRequirement = {
+      ...job.matchAssessment,
+      requirements: [
+        ...job.matchAssessment.requirements,
+        {
+          id: "skill_typescript",
+          category: "skill" as const,
+          label: "TypeScript",
+          importance: "required" as const,
+          status: "conflict" as const,
+          jobEvidence: "TypeScript is required.",
+          resumeEvidence: [],
+          explanation: "The resume shows no TypeScript evidence.",
+        },
+      ],
+    };
+    expect(getFitEvidenceDepth(withRequirement).isNotJudged).toBe(true);
     expect(
       getFitEvidenceDepth({
-        ...job.matchAssessment,
-        requirements: [
-          ...job.matchAssessment.requirements,
-          {
-            id: "skill_typescript",
-            category: "skill",
-            label: "TypeScript",
-            importance: "required",
-            status: "conflict",
-            jobEvidence: "TypeScript is required.",
-            resumeEvidence: [],
-            explanation: "The resume shows no TypeScript evidence.",
-          },
-        ],
-      }).isTitleOnly,
+        ...withRequirement,
+        judgment: checkedJob().matchAssessment.judgment,
+      }).isNotJudged,
     ).toBe(false);
   });
 
@@ -149,38 +160,32 @@ describe("getFitEvidenceDepth", () => {
     expect(
       getFitEvidenceDepth({
         score: 40,
-      } as unknown as PresentationInput["matchAssessment"]).isTitleOnly,
+      } as unknown as PresentationInput["matchAssessment"]).isNotJudged,
     ).toBe(true);
   });
 });
 
 describe("getMatchAssessmentPresentation", () => {
-  it("withholds the percentage when only the listing title was checkable", () => {
+  it("withholds the percentage until the model has judged the job", () => {
     const presentation = getMatchAssessmentPresentation(titleOnlyJob());
 
-    expect(presentation.isTitleOnly).toBe(true);
+    expect(presentation.isNotJudged).toBe(true);
     expect(presentation.isScoreWithheld).toBe(true);
-    expect(presentation.headlineScoreLabel).toBe("Title-only estimate");
+    expect(presentation.headlineScoreLabel).toBe("Not judged yet");
     expect(presentation.headlineScoreLabel).not.toContain("54");
     expect(presentation.headlineScoreAriaLabel).toBe(
-      "Overall fit: title-only estimate",
+      "Overall fit: not judged yet",
     );
-    // The number is not destroyed: it stays inside the scoring breakdown,
-    // beside the evidence it was derived from, with its own qualifier.
-    expect(presentation.breakdownScoreLabel).toBe("Title-only estimate: 54%");
-    expect(presentation.withheldReason).toBe(FIT_TITLE_ONLY_REASON);
+    // No number appears anywhere until the model has judged the job.
+    expect(presentation.breakdownScoreLabel).toBeNull();
+    expect(presentation.withheldReason).toBe(FIT_NOT_JUDGED_REASON);
   });
 
-  it("names the row line and the inspector number as the same estimate", () => {
-    // The panel found "Overall fit: title match only, not scored" on the row
-    // above "Title-only estimate: 64%" in the inspector: one screen denying
-    // the score the other screen printed.
+  it("never prints a number in the inspector that the row withholds", () => {
     const presentation = getMatchAssessmentPresentation(titleOnlyJob());
 
     expect(presentation.headlineScoreAriaLabel).not.toContain("not scored");
-    expect(presentation.breakdownScoreLabel).toContain(
-      presentation.headlineScoreLabel,
-    );
+    expect(presentation.breakdownScoreLabel).toBeNull();
   });
 
   it("withholds the percentage for the real card-only engine output", () => {
@@ -188,9 +193,9 @@ describe("getMatchAssessmentPresentation", () => {
       realEngineTitleOnlyJob(),
     );
 
-    expect(presentation.headlineScoreLabel).toBe("Title-only estimate");
+    expect(presentation.headlineScoreLabel).toBe("Not judged yet");
     expect(presentation.headlineScoreLabel).not.toContain("54");
-    expect(presentation.breakdownScoreLabel).toBe("Title-only estimate: 54%");
+    expect(presentation.breakdownScoreLabel).toBeNull();
   });
 
   it("qualifies a score that stopped at a gap's ceiling", () => {
@@ -223,7 +228,7 @@ describe("getMatchAssessmentPresentation", () => {
     expect(presentation.withheldReason).toBe(FIT_UNASSESSED_REASON);
   });
 
-  it("prints the percentage once the evidence behind it was checked", () => {
+  it("prints the percentage once the model has judged the job", () => {
     const presentation = getMatchAssessmentPresentation(checkedJob());
 
     expect(presentation.isScoreWithheld).toBe(false);

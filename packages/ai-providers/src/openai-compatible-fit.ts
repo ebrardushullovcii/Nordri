@@ -27,7 +27,7 @@ export function buildJobFitJudgingPrompt(): string {
     'Return JSON {"judgments": [...]} with one entry per job, each with the jobId exactly as given.',
     'role: "exact" when the job is the kind of work the person is looking for, in any wording or language; "adjacent" when it is related work they could credibly do; "conflict" when it is a different occupation, or a level far from theirs; "unknown" when the listing says too little.',
     'preferences: compare the job\'s place, work mode, level, employment type and pay with the person\'s goals: "aligned", "mixed", "conflict" when it contradicts a goal the person set, "unknown" when the listing is silent, "not_configured" when the person set no goals.',
-    'locationReach: "in_area" when the job is in or near one of the person\'s places, "remote_preferred" when it is remote and the person accepts remote work from where they are, "outside_area" when it needs presence outside their places or is remote only for other countries, "unknown" otherwise. Read place names and country codes in context: "Berlin, DE" is Germany.',
+    'locationReach: "in_area" when the job is in or near one of the person\'s places, "remote_preferred" when it is remote and the person accepts remote work from where they are (when goals.remoteCountsAsAnyLocation is false, a remote job counts only when it is open to people in one of their places), "outside_area" when it needs presence outside their places or is remote only for other countries, "unknown" otherwise. Read place names and country codes in context: "Berlin, DE" is Germany.',
     "score: 0 to 100, how worthwhile applying is for this person. recommendation: strong_fit, apply_with_original, review_before_applying, or skip.",
     "roleExplanation and preferencesExplanation: one plain sentence each, addressed to the person. reasons: up to 3 short reasons it fits. gaps: up to 3 short gaps, such as a required language, licence, level or skill the person does not show.",
     "A general application or talent pool, a listing that says it is closed or no longer accepting applications, and a sign-in or account page are not current vacancies: recommendation skip, and say so in gaps.",
@@ -73,6 +73,8 @@ function compactGoals(preferences: JobSearchPreferences) {
     workModes: preferences.workModes,
     employmentTypes: preferences.employmentTypes,
     compensation: preferences.compensation,
+    remoteCountsAsAnyLocation:
+      preferences.discovery.remoteCountsAsAnyLocation !== false,
   };
 }
 

@@ -79,7 +79,6 @@ import {
   extractOpenAiCompatibleResumeImportStage,
 } from "./openai-compatible-resume-import";
 import type { ResumeImportExtractionStage } from "./resume-import";
-import { supplementExperienceStageCandidates } from "./resume-import-stage-supplement";
 import { createBrowserVisualAnalysisProviderFromEnvironment } from "./browser-visual-analysis";
 import {
   runProfileCopilotAgentTask,
@@ -966,6 +965,34 @@ function isProfileCopilotNonAnswer(reply: ProfileCopilotReply): boolean {
   );
 }
 
+const RESUME_IMPORT_STAGE_ATTEMPTS = 3;
+const RESUME_IMPORT_RETRY_DELAYS_MS = [0, 3_000, 8_000] as const;
+
+const RESUME_IMPORT_STAGE_SUBJECTS: Record<string, string> = {
+  identity_summary: "your name, contact details and summary",
+  experience: "your work history",
+  background: "your education, skills, languages and certifications",
+  shared_memory: "the shared resume context",
+};
+
+/**
+ * A resume section the model could not read even after asking again. The
+ * message is what the person reads beside the import.
+ */
+export class ResumeImportStageUnreadError extends Error {
+  constructor(stage: string, cause: string) {
+    super(
+      `Job Finder could not read ${RESUME_IMPORT_STAGE_SUBJECTS[stage] ?? "part of your resume"} because the AI model was not available (${cause}). Nothing was guessed for that part; import the file again to fill it in.`,
+    );
+    this.name = "ResumeImportStageUnreadError";
+  }
+}
+
+function waitBeforeResumeImportRetry(attempt: number): Promise<void> {
+  const delayMs = RESUME_IMPORT_RETRY_DELAYS_MS[attempt] ?? 8_000;
+  return new Promise((resolve) => setTimeout(resolve, delayMs));
+}
+
 export function createJobFinderAiClientFromEnvironment(
   env: StringMap = process.env,
 ): JobFinderAiClient {
@@ -1159,86 +1186,54 @@ export function createJobFinderAiClientFromEnvironment(
         };
       }
 
-      const primaryStartedAtMs = performance.now();
-      const fallbackPromise = fallbackClient.extractResumeImportStage(input);
-
-      try {
-        const primary = await runResumeImportStageAgentTask({
-          client: primaryClient,
-          request: input,
-        });
-        const primaryProviderMs =
-          primary.timing?.primaryProviderMs ??
-          Math.max(0, Math.round(performance.now() - primaryStartedAtMs));
-        const fallback = await fallbackPromise;
-        const durationMs = Math.max(
-          0,
-          Math.round(performance.now() - startedAtMs),
-        );
-
-        return {
-          ...primary,
-          candidates: [
-            ...supplementExperienceStageCandidates(
-              primary.candidates,
-              fallback.candidates,
-            ),
-            ...fallback.candidates.map((candidate) => ({
-              ...candidate,
-              notes: [...candidate.notes, "deterministic_stage_fallback"],
-            })),
-          ],
-          notes: uniqueStrings([...primary.notes, ...fallback.notes]),
-          timing: {
-            durationMs,
-            primaryProviderMs,
-            deterministicFallbackMs:
-              fallback.timing?.deterministicFallbackMs ??
-              fallback.timing?.durationMs ??
-              null,
-          },
-        };
-      } catch (error) {
-        const primaryProviderMs = Math.max(
-          0,
-          Math.round(performance.now() - primaryStartedAtMs),
-        );
-        const primaryErrorSummary = summarizeError(error);
-        const primaryTimedOut = /timed out after \d+s/i.test(
-          primaryErrorSummary,
-        );
-        logFallbackError("extractResumeImportStage", error);
-        const fallback = await fallbackPromise;
-        // A timed-out model call used to return here with no note at all, so a
-        // stage that never reached the model was indistinguishable from one
-        // that did. A timeout is the most common way this degrades, so it is
-        // the case that most needs to be recorded, not the one to suppress.
-        return {
-          ...fallback,
-          fallback: {
-            kind: primaryTimedOut
-              ? ("timeout" as const)
-              : ("provider_error" as const),
-            reason: primaryErrorSummary,
-          },
-          notes: uniqueStrings([
-            ...fallback.notes,
-            "Fell back to the deterministic staged resume importer after the model call failed.",
-            `Primary AI import stage failed: ${primaryErrorSummary}`,
-          ]),
-          timing: {
-            durationMs: Math.max(
-              0,
-              Math.round(performance.now() - startedAtMs),
-            ),
-            primaryProviderMs,
-            deterministicFallbackMs:
-              fallback.timing?.deterministicFallbackMs ??
-              fallback.timing?.durationMs ??
-              null,
-          },
-        };
+      // The model reads the resume (ADR 0041). Its candidates are the
+      // import; no rule-read candidates are mixed in beside them. A call that
+      // fails for a passing reason (an overloaded provider, a dropped
+      // connection) is asked again. A section it still cannot read fails
+      // with a sentence for the person, instead of being filled from rule
+      // guesses that would land in the profile unseen.
+      let lastError: unknown = null;
+      for (
+        let attempt = 0;
+        attempt < RESUME_IMPORT_STAGE_ATTEMPTS;
+        attempt += 1
+      ) {
+        if (attempt > 0) {
+          await waitBeforeResumeImportRetry(attempt);
+        }
+        const primaryStartedAtMs = performance.now();
+        try {
+          const primary = await runResumeImportStageAgentTask({
+            client: primaryClient,
+            request: input,
+          });
+          return {
+            ...primary,
+            timing: {
+              durationMs: Math.max(
+                0,
+                Math.round(performance.now() - startedAtMs),
+              ),
+              primaryProviderMs:
+                primary.timing?.primaryProviderMs ??
+                Math.max(0, Math.round(performance.now() - primaryStartedAtMs)),
+              deterministicFallbackMs: null,
+            },
+          };
+        } catch (error) {
+          lastError = error;
+          logFallbackError("extractResumeImportStage", error);
+          if (/timed out after \d+s/i.test(summarizeError(error))) {
+            // A timeout already spent the whole budget once; asking again
+            // would double the wait for the same answer.
+            break;
+          }
+        }
       }
+      throw new ResumeImportStageUnreadError(
+        input.stage,
+        summarizeError(lastError),
+      );
     },
     async adjudicateResumeImportCandidates(input) {
       if (!primaryClient.adjudicateResumeImportCandidates) {

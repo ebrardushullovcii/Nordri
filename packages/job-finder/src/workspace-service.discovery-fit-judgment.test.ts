@@ -114,7 +114,7 @@ test("a search has the model judge the jobs it found, and its verdict stands", a
   ).toBe(86);
 }, 30_000);
 
-test("jobs the model could not judge keep a score and are asked about next time", async () => {
+test("jobs the model could not judge say so and are asked about next time", async () => {
   const judgeJobFits = vi
     .fn<(input: JudgeJobFitsInput) => Promise<never[]>>()
     .mockRejectedValueOnce(new Error("model unavailable"))
@@ -128,7 +128,11 @@ test("jobs the model could not judge keep a score and are asked about next time"
   const jobs = await repository.listSavedJobs();
   expect(jobs).toHaveLength(2);
   expect(jobs.every((job) => !job.matchAssessment.judgment)).toBe(true);
-  expect(jobs.every((job) => job.matchAssessment.score > 0)).toBe(true);
+  expect(
+    jobs.every((job) =>
+      job.matchAssessment.recommendationRationale.startsWith("Not judged yet"),
+    ),
+  ).toBe(true);
 
   await workspaceService.runAgentDiscovery();
   expect(judgeJobFits).toHaveBeenCalledTimes(2);

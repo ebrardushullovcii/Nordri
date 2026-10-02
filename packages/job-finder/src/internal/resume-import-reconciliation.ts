@@ -54,22 +54,23 @@ function recordFieldText(value: unknown, key: string): string {
   return typeof field === "string" ? normalizeText(field) : "";
 }
 
+/**
+ * Read from the resume's own text: by the model (ADR 0041), or by the regex
+ * pass in runs recorded before the model read every section.
+ */
+function isDocumentTextCandidate(
+  candidate: ResumeImportFieldCandidate,
+): boolean {
+  return (
+    candidate.sourceKind === "parser_literal" ||
+    candidate.sourceKind === "model_identity_summary" ||
+    candidate.sourceKind === "model_experience" ||
+    candidate.sourceKind === "model_background"
+  );
+}
+
 export function candidateScore(candidate: ResumeImportFieldCandidate): number {
-  const sourceBonus = (() => {
-    switch (candidate.sourceKind) {
-      case "parser_literal":
-        return 0.04;
-      case "vision_omni":
-        return 0.015;
-      default:
-        return 0;
-    }
-  })();
-  const deterministicFallbackBonus = candidate.notes.includes(
-    "deterministic_stage_fallback",
-  )
-    ? 0.03
-    : 0;
+  const sourceBonus = candidate.sourceKind === "vision_omni" ? 0.015 : 0;
   const evidenceBonus = candidate.sourceBlockIds.length > 0 ? 0.01 : 0;
   const recommendationBonus =
     candidate.confidenceBreakdown?.recommendation === "auto_apply"
@@ -80,7 +81,6 @@ export function candidateScore(candidate: ResumeImportFieldCandidate): number {
   return (
     candidate.confidence +
     sourceBonus +
-    deterministicFallbackBonus +
     evidenceBonus +
     recommendationBonus
   );
@@ -352,10 +352,7 @@ export function shouldPreferCandidateOverExistingValue(
     return true;
   }
 
-  if (
-    candidate.sourceKind === "parser_literal" &&
-    hasSufficientEvidence(candidate)
-  ) {
+  if (isDocumentTextCandidate(candidate) && hasSufficientEvidence(candidate)) {
     if (
       typeof currentValue === "string" &&
       typeof candidate.value === "string"
@@ -1570,8 +1567,7 @@ function isAutoApplyLiteralField(
 function hasSufficientEvidence(candidate: ResumeImportFieldCandidate): boolean {
   return (
     candidate.sourceBlockIds.length > 0 ||
-    (candidate.visualEvidence?.length ?? 0) > 0 ||
-    candidate.sourceKind === "parser_literal"
+    (candidate.visualEvidence?.length ?? 0) > 0
   );
 }
 
@@ -1698,7 +1694,7 @@ function canAutoApplyDespiteWorkspaceConflict(
   // changed; now the difference waits for review, as the import promises.
   return (
     isUntouchedFreshStartProfile(profile) &&
-    candidate.sourceKind === "parser_literal" &&
+    isDocumentTextCandidate(candidate) &&
     isAutoApplyLiteralField(candidate) &&
     hasSufficientEvidence(candidate)
   );
@@ -1712,7 +1708,7 @@ function isStrongLiteralIdentityCandidate(
   candidate: ResumeImportFieldCandidate,
 ): boolean {
   return (
-    candidate.sourceKind === "parser_literal" &&
+    isDocumentTextCandidate(candidate) &&
     candidate.target.section === "identity" &&
     candidate.target.key === "fullName" &&
     typeof candidate.value === "string" &&
@@ -1965,7 +1961,7 @@ function shouldAutoApply(
   // It never replaces one the person saved; that difference waits for review.
   if (candidate.target.section === "work_eligibility") {
     return (
-      candidate.sourceKind === "parser_literal" &&
+      isDocumentTextCandidate(candidate) &&
       hasSufficientEvidence(candidate) &&
       isEmptyWorkEligibilityValue(
         existingScalarValueForCandidate(profile, searchPreferences, candidate),

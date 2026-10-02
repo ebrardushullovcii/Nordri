@@ -33,7 +33,7 @@ const browserSession = {
  * Builds a row whose score is *earned* by default: banding by score is only
  * meaningful once at least one dimension was actually verified, so the
  * fixture states that premise instead of leaving it to schema defaults. Pass
- * `titleOnly` for a listing whose only checkable evidence was its title.
+ * `titleOnly` for a listing the model has not judged yet (ADR 0041).
  */
 function job(input: {
   id: string;
@@ -68,7 +68,15 @@ function job(input: {
       recommendation: input.recommendation ?? "review_before_applying",
       ...(input.titleOnly
         ? {}
-        : { dimensions: { roleSuitability: { state: "exact" } } }),
+        : {
+            dimensions: { roleSuitability: { state: "exact" } },
+            judgment: {
+              source: "batch",
+              judgedAt: "2026-08-23T10:00:00.000Z",
+              score: input.score,
+              recommendation: input.recommendation ?? "review_before_applying",
+            },
+          }),
       ...(input.provisional
         ? {}
         : {
@@ -164,7 +172,7 @@ describe("discovery result bands", () => {
   });
 
   it("never promotes or demotes a title-only row by a score it refuses to print", () => {
-    // The row itself says "Title-only estimate — no pay, location, or
+    // The row itself says "Not judged yet — no pay, location, or
     // requirements were captured". Filing it under "Clear mismatches — they
     // conflict with your saved requirements" hides it for a reason the app
     // has just said it cannot assess; filing it under "Matches" claims the
@@ -673,7 +681,7 @@ describe("discovery three-band result counts", () => {
     // restatement goes: each row still carries the verdict for assistive
     // technology, because a row button is reachable without reading the
     // divider.
-    expect(screen.queryAllByText("Title-only estimate")).toHaveLength(0);
+    expect(screen.queryAllByText("Not judged yet")).toHaveLength(0);
     expect(
       screen.queryAllByTestId(/^discovery-result-fit-reason-/u),
     ).toHaveLength(0);
@@ -687,7 +695,7 @@ describe("discovery three-band result counts", () => {
         srOnly: true,
         // The divider is a plain div outside the arrow-key traversal, so the
         // reason the visible rows gave up survives on the row itself.
-        text: "Overall fit: title-only estimate. Fit is based on the title alone. Review the listing details before applying.",
+        text: "Overall fit: not judged yet. The AI judges each job against your profile and goals after a search. Choose Read and assess listing to judge this one now.",
       })),
     );
   });
@@ -759,7 +767,7 @@ describe("discovery three-band result counts", () => {
 
     expect(
       screen.getByTestId("discovery-result-fit-conflicted").textContent,
-    ).toBe("Title-only estimate");
+    ).toBe("Not judged yet");
     expect(
       screen.getByTestId("discovery-result-fit-reason-conflicted").textContent,
     ).toContain("Review the listing and resume evidence before applying.");
@@ -789,10 +797,10 @@ describe("discovery three-band result counts", () => {
     expect(screen.queryAllByTestId(/^discovery-results-group-/u)).toEqual([]);
     expect(
       screen.getByTestId("discovery-result-fit-title_only").textContent,
-    ).toBe("Title-only estimate");
+    ).toBe("Not judged yet");
     expect(
       screen.getByTestId("discovery-result-fit-reason-title_only").textContent,
-    ).toContain("Fit is based on the title alone");
+    ).toContain("The AI judges each job against your profile");
   });
 
   it("names the unchecked band and says what would fill it in", () => {

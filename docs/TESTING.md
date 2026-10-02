@@ -38,10 +38,9 @@ Other entry points: `pnpm test:correctness`, `pnpm test:performance` (serial, no
 - Never add personal resumes, live workspaces, credentials, or authenticated browser state to benchmark corpora.
 - Fixtures must not seed approved resume exports through `upsertResumeExportArtifact({ isApproved: true })`; both repositories reject it. Use the repository seed or `approveResumeExport()`. The guard is the invariant under test.
 
-## Fit calibration gate
+## Fit judging
 
-- `pnpm job-finder:fit-calibration` (also in `pnpm verify`) compares against the single baseline `packages/job-finder/test-fixtures/fit-calibration-baseline-v13.json`. It fails on the quality gates and on any `schemaVersion`, `corpusVersion`, or `scorerVersion` drift between run and baseline.
-- Bumping `MATCH_ASSESSMENT_SCORER_VERSION` is expected to fail the gate until the baseline is regenerated. Read the case diff first, then run `node scripts/run-fit-calibration-benchmark.cjs --output <new-baseline>` and rename the baseline file plus both `package.json` references together so exactly one baseline exists. `--report-only` never fails and is not a gate.
+- The model judges fit (ADR 0041); there is no rule scorer to calibrate. Tests fake `judgeJobFits` or `assessJobFit` and check that the verdict stands. Bumping `MATCH_ASSESSMENT_SCORER_VERSION` retires stored assessments; stored model verdicts are kept and judged again when the profile, goals or listing change.
 
 ## Benchmarks
 

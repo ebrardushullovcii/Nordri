@@ -153,6 +153,12 @@ function withJobs(
       discoveryMethod: "browser_agent",
       matchAssessment: {
         score: index < count ? 70 : 10,
+        judgment: {
+          source: "batch",
+          judgedAt: "2026-10-02T10:00:00.000Z",
+          score: index < count ? 70 : 10,
+          recommendation: "review_before_applying",
+        },
         recommendation: index < count ? "apply" : "consider",
         dimensions: {
           roleSuitability: { state: "exact" },

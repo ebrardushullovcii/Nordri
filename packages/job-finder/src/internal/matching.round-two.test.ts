@@ -7,7 +7,6 @@ import {
 } from "../workspace-service.test-support";
 import {
   assessLocationCompatibility,
-  createMatchAssessment,
   createMatchAssessmentAsync,
 } from "./matching";
 
@@ -56,59 +55,6 @@ describe("Round two fit findings", () => {
       assessLocationCompatibility("Frankfurt, Germany", ["Berlin, Germany"]),
     ).toBe("incompatible");
   });
-
-  test.each([
-    ["Backend Engineer", "Instructional Designer"],
-    ["Junior Instructional Designer", "Senior Product Designer"],
-    ["Lead Mechanical Engineer", "Senior Backend Engineer"],
-    ["Junior Quality Engineer", "Staff Platform Engineer"],
-  ])("%s has an occupational gap against %s", (title, target) => {
-    const seed = createSeed();
-    const assessment = createMatchAssessment(
-      seed.profile,
-      { ...seed.searchPreferences, targetRoles: [target] },
-      { ...seed.savedJobs[0]!, title },
-    );
-    expect(assessment.dimensions.roleSuitability.state).toBe("conflict");
-    expect(assessment.recommendation).toBe("skip");
-    expect(assessment.reasons[0]).toBe(
-      "The listing belongs to a different occupational role.",
-    );
-  });
-
-  test("a generic Engineer title does not establish the saved discipline", () => {
-    const seed = createSeed();
-    const assessment = createMatchAssessment(
-      seed.profile,
-      { ...seed.searchPreferences, targetRoles: ["Senior Backend Engineer"] },
-      { ...seed.savedJobs[0]!, title: "Engineer" },
-    );
-    expect(assessment.dimensions.roleSuitability.state).toBe("unknown");
-    expect(assessment.reasons).not.toContain(
-      "Role title aligns closely with the current target roles.",
-    );
-  });
-
-  test.each(["Junior", "Senior", "Lead", "Intern"])(
-    "uses %s from the title as seniority evidence",
-    (level) => {
-      const seed = createSeed();
-      const assessment = createMatchAssessment(
-        seed.profile,
-        { ...seed.searchPreferences, seniorityLevels: [level] },
-        {
-          ...seed.savedJobs[0]!,
-          title: `${level} Datenanalyst`,
-          seniority: null,
-        },
-      );
-      expect(
-        assessment.dimensions.preferenceAlignment.evidence.find(
-          (row) => row.label === "Seniority comparison",
-        )?.detail,
-      ).toContain(`${level} compared with ${level}: aligned`);
-    },
-  );
 
   test("the full assessment's verdict stands, with the requirements it found", async () => {
     const seed = createSeed();

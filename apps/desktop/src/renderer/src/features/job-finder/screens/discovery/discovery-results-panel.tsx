@@ -1783,7 +1783,7 @@ export function DiscoveryResultsPanel({
                 // title-only row banded as a mismatch keeps it too: no divider
                 // above it says the title was all that was read.
                 const isCoveredByUncheckedBand =
-                  assessment.isTitleOnly &&
+                  assessment.isNotJudged &&
                   // An unbound assessment is title-only by evidence depth but
                   // presents as "Fit not assessed", which is a different claim
                   // from the one the divider makes; it keeps its own verdict.

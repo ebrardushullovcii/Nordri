@@ -51,13 +51,13 @@ export const DISCOVERY_CLEAR_MISMATCH_SCORE_FLOOR = 35;
  */
 export const DISCOVERY_WEAKER_MATCH_SCORE_FLOOR = 50;
 
-export const FIT_TITLE_ONLY_REASON =
-  "Fit is based on the title alone. Review the listing details before applying.";
+export const FIT_NOT_JUDGED_REASON =
+  "The AI judges each job against your profile and goals after a search. Choose Read and assess listing to judge this one now.";
 
 export interface FitEvidenceDepth {
-  /** Nothing beyond the listing title/card was checkable. */
-  isTitleOnly: boolean;
-  /** One-line explanation for a title-only score. */
+  /** The model has not judged this job yet (ADR 0041). */
+  isNotJudged: boolean;
+  /** One-line explanation for a job without a verdict. */
   reason: string;
   verifiedDimensionCount: number;
 }
@@ -109,10 +109,10 @@ export function getFitEvidenceDepth(
   const verifiedDimensionCount = verifiedChecks.filter(Boolean).length;
 
   return {
-    // A model verdict is the model's reading of whatever the listing showed,
-    // not a guess from title words (ADR 0041), so its number is shown.
-    isTitleOnly: verifiedDimensionCount === 0 && !assessment.judgment,
-    reason: FIT_TITLE_ONLY_REASON,
+    // Only the model's verdict earns a number (ADR 0041); a job it has not
+    // judged yet shows none, whatever else was read.
+    isNotJudged: !assessment.judgment,
+    reason: FIT_NOT_JUDGED_REASON,
     verifiedDimensionCount,
   };
 }
@@ -136,7 +136,7 @@ export function isMatchScoreWithheld(
   );
   const isProvisional =
     isProvisionalMatchAssessment(job) || !hasAssessmentBinding;
-  return isProvisional || getFitEvidenceDepth(job.matchAssessment).isTitleOnly;
+  return isProvisional || getFitEvidenceDepth(job.matchAssessment).isNotJudged;
 }
 
 export type DiscoveryResultGroupId =

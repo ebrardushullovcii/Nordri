@@ -64,17 +64,14 @@ describe("createJobFinderWorkspaceService", () => {
     const refreshed = snapshot.discoveryJobs.find(
       (job) => job.id === existingJob.id,
     );
-    const workMode = refreshed?.matchAssessment.requirements.find(
-      (requirement) => requirement.category === "work_mode",
-    );
-
     expect(refreshed?.matchAssessment.reasons).not.toContain(
       "stale assessment sentinel",
     );
-    expect(workMode).toMatchObject({
-      status: "unknown",
-      jobEvidence: "Remote",
-    });
+    // No model has judged it under the new goals yet, so it says so rather
+    // than carrying a rule verdict (ADR 0041).
+    expect(refreshed?.matchAssessment.recommendationRationale).toMatch(
+      /^Not judged yet/u,
+    );
   });
 
   test("starts independent public provider inventories concurrently", async () => {
@@ -179,9 +176,9 @@ describe("createJobFinderWorkspaceService", () => {
         job.canonicalUrl.includes("linkedin_signal_ready"),
       ),
     ).toBe(true);
-    expect(
-      snapshot.discoveryJobs[0]?.matchAssessment.reasons.length,
-    ).toBeGreaterThan(0);
+    expect(snapshot.discoveryJobs[0]?.matchAssessment.judgment ?? null).toBe(
+      null,
+    );
   });
 
   test("runDiscovery uses the non-agent browser runtime path even when agent discovery is available", async () => {
@@ -1144,7 +1141,7 @@ describe("createJobFinderWorkspaceService", () => {
     ]);
   });
 
-  test("agent discovery merge uses deterministic fit scoring without model fit calls", async () => {
+  test("agent discovery makes no single-listing fit calls", async () => {
     const browserRuntime = createAgentBrowserRuntime([
       {
         source: "target_site",
@@ -1199,8 +1196,8 @@ describe("createJobFinderWorkspaceService", () => {
     );
 
     expect(assessJobFitCalls).toBe(0);
-    expect(snapshot.discoveryJobs[0]?.matchAssessment.score).toBeGreaterThan(
-      12,
+    expect(snapshot.discoveryJobs[0]?.matchAssessment.reasons).not.toContain(
+      "Should not be used",
     );
   });
 

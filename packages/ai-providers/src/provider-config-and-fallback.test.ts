@@ -441,7 +441,7 @@ describe("ai provider config and fallback behavior", () => {
     }
   });
 
-  test("bounds default remote core-stage latency and returns grounded local extraction", async () => {
+  test("bounds default remote core-stage latency and reports the section unread instead of guessing", async () => {
     vi.useFakeTimers();
     const originalFetch = globalThis.fetch;
     const errorSpy = vi
@@ -478,37 +478,25 @@ describe("ai provider config and fallback behavior", () => {
         .finally(() => {
           settled = true;
         });
+      const outcome = resultPromise.then(
+        () => null,
+        (error: unknown) => error,
+      );
 
       await vi.advanceTimersByTimeAsync(299_999);
       expect(settled).toBe(false);
       await vi.advanceTimersByTimeAsync(1);
 
-      const result = await resultPromise;
-      // Silent attempts are retried inside the 300s budget (idle clock 120s).
+      // Silent attempts are retried inside the 300s budget (idle clock 120s);
+      // a timeout is not asked again after that, and nothing is guessed.
+      const error = await outcome;
       expect(fetchSpy).toHaveBeenCalledTimes(3);
-      expect(result.analysisProviderKind).toBe("deterministic");
-      // A timed-out stage used to return with no note and no reason, which made
-      // it indistinguishable from a stage the model actually answered.
-      expect(result.fallback).toEqual({
-        kind: "timeout",
-        reason: "Model request timed out after 300s",
-      });
-      expect(result.notes).toContain(
-        "Fell back to the deterministic staged resume importer after the model call failed.",
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toContain(
+        "could not read your name, contact details and summary",
       );
-      expect(result.notes).toContain(
-        "Primary AI import stage failed: Model request timed out after 300s",
-      );
+      expect((error as Error).message).toContain("Nothing was guessed");
       expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("300s"));
-      expect(
-        result.candidates.some(
-          (candidate) =>
-            candidate.target.section === "identity" &&
-            candidate.target.key === "fullName" &&
-            candidate.value === "Casey Rowan" &&
-            candidate.sourceBlockIds.length > 0,
-        ),
-      ).toBe(true);
     } finally {
       globalThis.fetch = originalFetch;
       errorSpy.mockRestore();
@@ -516,7 +504,8 @@ describe("ai provider config and fallback behavior", () => {
     }
   });
 
-  test("records a provider-error fallback reason when a core stage call fails", async () => {
+  test("asks the model again after a provider error, then reports the section unread", async () => {
+    vi.useFakeTimers();
     const errorSpy = vi
       .spyOn(console, "error")
       .mockImplementation(() => undefined);
@@ -525,24 +514,34 @@ describe("ai provider config and fallback behavior", () => {
     try {
       const client =
         createJobFinderAiClientFromEnvironment(createEnvironment());
-      const result = await client.extractResumeImportStage({
-        stage: "experience",
-        existingProfile: createProfile(),
-        existingSearchPreferences: createPreferences(),
-        documentBundle: createFastPathResumeBundle(),
-      });
+      const outcome = client
+        .extractResumeImportStage({
+          stage: "experience",
+          existingProfile: createProfile(),
+          existingSearchPreferences: createPreferences(),
+          documentBundle: createFastPathResumeBundle(),
+        })
+        .then(
+          () => null,
+          (error: unknown) => error,
+        );
+      await vi.advanceTimersByTimeAsync(30_000);
+      const error = await outcome;
 
-      expect(result.analysisProviderKind).toBe("deterministic");
-      expect(result.fallback).toEqual({
-        kind: "provider_error",
-        reason: "upstream stage failure",
-      });
-      expect(result.notes).toContain(
-        "Primary AI import stage failed: upstream stage failure",
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toContain(
+        "could not read your work history",
       );
+      expect((error as Error).message).toContain("upstream stage failure");
+      expect(
+        errorSpy.mock.calls.filter((call) =>
+          String(call[0]).includes("extractResumeImportStage"),
+        ).length,
+      ).toBe(3);
     } finally {
       restoreFetch();
       errorSpy.mockRestore();
+      vi.useRealTimers();
     }
   });
 
@@ -1175,7 +1174,7 @@ describe("ai provider config and fallback behavior", () => {
     }
   });
 
-  test("supplements sparse model experience records with grounded deterministic work modes and role skills", async () => {
+  test("returns the model's experience records as it read them, with no rule-read records beside them", async () => {
     const resumeLines = [
       "CASEY ROWAN",
       "Senior Frontend Engineer",
@@ -1324,42 +1323,22 @@ describe("ai provider config and fallback behavior", () => {
       });
       expect(result.timing?.durationMs).toBeGreaterThanOrEqual(0);
       expect(result.timing?.primaryProviderMs).toBeGreaterThanOrEqual(0);
-      expect(result.timing?.deterministicFallbackMs).toBeGreaterThanOrEqual(0);
-      const primaryCandidates = result.candidates.filter(
-        (candidate) =>
-          !candidate.notes.includes("deterministic_stage_fallback"),
-      );
-      const northstar = primaryCandidates.find(
-        (candidate) => candidate.target.recordId === "experience_1",
-      );
-      const cedar = primaryCandidates.find(
+      expect(result.timing?.deterministicFallbackMs).toBeNull();
+      expect(
+        result.candidates.map((candidate) => candidate.target.recordId),
+      ).toEqual(["experience_1", "experience_2"]);
+      expect(
+        result.candidates.some((candidate) =>
+          candidate.notes.includes("deterministic_stage_fallback"),
+        ),
+      ).toBe(false);
+      const cedar = result.candidates.find(
         (candidate) => candidate.target.recordId === "experience_2",
       );
-
-      expect(northstar?.value).toMatchObject({ workMode: [] });
-      expect(
-        northstar?.value &&
-          typeof northstar.value === "object" &&
-          !Array.isArray(northstar.value)
-          ? northstar.value.skills
-          : null,
-      ).toEqual([
-        "React",
-        "TypeScript",
-        "Vitest",
-        "Storybook",
-        "axe",
-        "Performance Optimization",
-        "Accessibility",
-      ]);
-      expect(cedar?.value).toMatchObject({ workMode: ["remote"] });
-      expect(
-        cedar?.value &&
-          typeof cedar.value === "object" &&
-          !Array.isArray(cedar.value)
-          ? cedar.value.skills
-          : null,
-      ).toEqual(["React", "GraphQL", "Node.js"]);
+      expect(cedar?.value).toMatchObject({
+        workMode: [],
+        skills: ["React", "GraphQL", "Node.js"],
+      });
     } finally {
       restoreFetch();
     }

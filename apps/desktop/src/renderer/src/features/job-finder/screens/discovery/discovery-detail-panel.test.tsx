@@ -124,7 +124,7 @@ describe("DiscoveryDetailPanel listing capture copy", () => {
     });
   });
 
-  it("explains a refused detail read as a title-only estimate", () => {
+  it("explains a refused detail read as a not judged yet", () => {
     const blockedJob = {
       ...baseSelectedJob,
       description: "Headway Featured Full-Time United States of America",
@@ -1611,7 +1611,7 @@ describe("job inspector fit honesty", () => {
     );
 
     expect(screen.getByTestId("discovery-detail-fit-score").textContent).toBe(
-      "Title-only estimate",
+      "Not judged yet",
     );
     expect(screen.queryByText(/^54% fit$/)).toBeNull();
   });

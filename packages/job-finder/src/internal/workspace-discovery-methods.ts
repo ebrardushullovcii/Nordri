@@ -126,10 +126,7 @@ import {
   countDiscoveryListingCapture,
   describeDiscoveryListingCapture,
 } from "./discovery-listing-capture";
-import {
-  correctRemoteOnlyLocationAlignment,
-  describeRemoteOnlySourceMismatch,
-} from "./discovery-location-alignment";
+import { describeRemoteOnlySourceMismatch } from "./discovery-location-alignment";
 import {
   findSiteFurnitureSalaryTexts,
   isSalaryTextStatedInBody,
@@ -1454,11 +1451,7 @@ export function createWorkspaceDiscoveryMethods(
       calculate: createMatchAssessment,
     });
     const assessDiscoveryPosting = (posting: JobPosting) =>
-      correctRemoteOnlyLocationAlignment(
-        posting,
-        assessmentSession.assess(posting),
-        enrichedPreferences,
-      );
+      assessmentSession.assess(posting);
     const selectedTargets = selectTargets(enrichedPreferences, options);
 
     if (selectedTargets.length === 0) {
@@ -1512,10 +1505,9 @@ export function createWorkspaceDiscoveryMethods(
     // persisted assessment; any relevant change misses safely and recomputes.
     let workingSavedJobs = startingSavedJobs.map((job) => ({
       ...job,
-      matchAssessment: correctRemoteOnlyLocationAlignment(
+      matchAssessment: assessmentSession.assessPersisted(
         job,
-        assessmentSession.assessPersisted(job, job.matchAssessment),
-        enrichedPreferences,
+        job.matchAssessment,
       ),
     }));
     const savedJobsAtLastCommitById = new Map(
@@ -1524,10 +1516,9 @@ export function createWorkspaceDiscoveryMethods(
     let workingPendingJobs = startingDiscovery.pendingDiscoveryJobs.map(
       (job) => ({
         ...job,
-        matchAssessment: correctRemoteOnlyLocationAlignment(
+        matchAssessment: assessmentSession.assessPersisted(
           job,
-          assessmentSession.assessPersisted(job, job.matchAssessment),
-          enrichedPreferences,
+          job.matchAssessment,
         ),
       }),
     );

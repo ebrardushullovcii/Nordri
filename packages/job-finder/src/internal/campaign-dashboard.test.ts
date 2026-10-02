@@ -63,7 +63,16 @@ function savedJob(id: string, score: number) {
     minimumQualifications: [],
     preferredQualifications: [],
     status: "discovered",
-    matchAssessment: { score },
+    // A model verdict, so the plan's minimum fit applies to it (ADR 0041).
+    matchAssessment: {
+      score,
+      judgment: {
+        source: "batch",
+        judgedAt: "2026-08-15T10:00:00.000Z",
+        score,
+        recommendation: "review_before_applying",
+      },
+    },
   });
 }
 

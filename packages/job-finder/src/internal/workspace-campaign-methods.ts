@@ -449,7 +449,10 @@ export async function commitCampaignRunTerminal(input: {
       .filter(
         (job) =>
           allowedByRules.has(job.id) &&
+          // A job the model has not judged yet was not measured, so the
+          // plan's minimum fit does not drop it (ADR 0041).
           (campaign.minimumFitScore === null ||
+            !job.matchAssessment.judgment ||
             job.matchAssessment.score >= campaign.minimumFitScore),
       )
       .sort(compareRetentionPriority)

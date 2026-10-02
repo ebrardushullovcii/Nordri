@@ -287,7 +287,7 @@ function RequirementRow({
  * import it from the matrix.
  */
 export {
-  FIT_TITLE_ONLY_REASON,
+  FIT_NOT_JUDGED_REASON,
   getFitEvidenceDepth,
   type FitEvidenceDepth,
 } from "../lib/match-assessment-presentation";
@@ -339,8 +339,8 @@ export function MatchEvidenceMatrix({
   const evidenceDepth = getFitEvidenceDepth(assessment);
   const resolvedScoreLabel =
     scoreLabel === undefined
-      ? evidenceDepth.isTitleOnly
-        ? `Title-only estimate: ${assessment.score}%`
+      ? evidenceDepth.isNotJudged
+        ? "Not judged yet"
         : `${assessment.score}% fit`
       : scoreLabel;
   const hasDetailedFitEvidence =
@@ -473,7 +473,7 @@ export function MatchEvidenceMatrix({
       </div>
 
       <div className="grid gap-1.5">
-        {evidenceDepth.isTitleOnly ? (
+        {evidenceDepth.isNotJudged ? (
           <p
             className="rounded-(--radius-small) border border-(--warning-border) bg-(--warning-surface) px-3 py-2 text-(length:--text-small) leading-6 text-(--warning-text)"
             data-testid="fit-title-only-note"
@@ -603,7 +603,7 @@ export function MatchEvidenceMatrix({
             </div>
           ) : null}
         </div>
-      ) : evidenceDepth.isTitleOnly ? null : (
+      ) : evidenceDepth.isNotJudged ? null : (
         <p className="text-(length:--text-small) leading-6 text-foreground-muted">
           Requirement-by-requirement evidence is unavailable for this listing.
         </p>

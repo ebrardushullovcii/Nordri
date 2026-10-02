@@ -10,9 +10,8 @@ import {
 
 /**
  * Settings' "How picky a search is" and "Count remote jobs as any location"
- * must change what a search keeps and how it scores it, not only the words
- * the search agent reads. A search that met the same five cards under every
- * setting kept the same five jobs with the same scores.
+ * must change what a search keeps, not only the words the search agent reads.
+ * How the kept jobs fit is the model's judgment (ADR 0041).
  */
 function card(token: string, title: string, location: string) {
   return JobPostingSchema.parse({
@@ -153,7 +152,7 @@ describe("saved search behavior changes what a search keeps", () => {
   }, 60_000);
 
   test.each(["balanced", "wide_net"] as const)(
-    "%s keeps adjacent jobs, and remote off lowers remote-region scores",
+    "%s keeps adjacent jobs whatever the remote setting; the model judges their fit",
     async (selectivity) => {
       const on = await search({
         selectivity,
@@ -172,9 +171,6 @@ describe("saved search behavior changes what a search keeps", () => {
         "worldwide",
       ]);
       expect(Object.keys(off).sort()).toEqual(Object.keys(on).sort());
-      expect(off.europe).toBeLessThan(on.europe ?? 0);
-      expect(off.worldwide).toBeLessThan(on.worldwide ?? 0);
-      expect(off.berlin).toBe(on.berlin);
     },
     60_000,
   );

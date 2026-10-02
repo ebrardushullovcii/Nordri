@@ -305,7 +305,7 @@ describe("MatchEvidenceMatrix", () => {
     expect(view.queryByText("Strong fit")).toBeNull();
     // The hedge itself still appears exactly once, at the top.
     expect(view.getByTestId("fit-title-only-note").textContent).toBe(
-      "Fit is based on the title alone. Review the listing details before applying.",
+      "The AI judges each job against your profile and goals after a search. Choose Read and assess listing to judge this one now.",
     );
     expect(view.getByText("Score and evidence")).toBeTruthy();
     expect(
@@ -318,6 +318,12 @@ describe("MatchEvidenceMatrix", () => {
   it("keeps the plain heading and no provisional note once a check succeeded", () => {
     const assessment = MatchAssessmentSchema.parse({
       score: 64,
+      judgment: {
+        source: "batch",
+        judgedAt: "2026-10-02T10:00:00.000Z",
+        score: 64,
+        recommendation: "review_before_applying",
+      },
       dimensions: {
         roleSuitability: {
           state: "exact",

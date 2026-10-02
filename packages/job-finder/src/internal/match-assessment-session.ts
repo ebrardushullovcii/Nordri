@@ -45,8 +45,10 @@ import {
  */
 // Revision 13: country codes, discipline and title-level evidence, and model
 // requirement comparisons replace scores written by the previous logic.
-export const MATCH_ASSESSMENT_SCORER_VERSION = 14;
-const MATCH_ASSESSMENT_LOGIC_REVISION = 13;
+// Revision 14 (scorer version 15): the model decides fit (ADR 0041). Rule
+// scores written before are retired; a stored model verdict is kept.
+export const MATCH_ASSESSMENT_SCORER_VERSION = 15;
+const MATCH_ASSESSMENT_LOGIC_REVISION = 14;
 
 function stableSerialize(value: unknown): string {
   if (value === null || typeof value !== "object") {
