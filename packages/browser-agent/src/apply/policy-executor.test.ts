@@ -550,7 +550,7 @@ describe("apply policy executor", () => {
     expect(fillText).not.toHaveBeenCalled();
   });
 
-  test("fills a known field from the person's own profile, not from the model", async () => {
+  test("a value the person stored goes in as that fact; anything else waits for the fact check", async () => {
     const page = rawPage({
       controls: [rawControl({ index: 0, label: "Email", inputType: "email" })],
     });
@@ -558,46 +558,52 @@ describe("apply policy executor", () => {
     const fillText = vi.spyOn(hands, "fillText");
     const observation = observationOf(page);
 
-    const outcome = await executeApplyProposal(
+    const stored = await executeApplyProposal(
+      { tool: "type", ref: "c0", text: "robin.ashford@example.test" },
+      observation.signature,
+      { config, now, guardState: createApplyGuardState() },
+    );
+    expect(stored).toMatchObject({
+      kind: "filled",
+      filled: {
+        answer: { sourceId: "profile.email", sourceKind: "profile" },
+      },
+    });
+
+    // Without a fact check, a value that is not one of the person's facts
+    // is never typed; it is left for them.
+    const other = await executeApplyProposal(
       { tool: "type", ref: "c0", text: "someone.else@example.test" },
       observation.signature,
       { config, now, guardState: createApplyGuardState() },
     );
-
-    expect(outcome.kind).toBe("filled");
+    expect(other.kind).toBe("suggestion");
+    expect(fillText).toHaveBeenCalledTimes(1);
     expect(fillText).toHaveBeenCalledWith("c0", "robin.ashford@example.test");
   });
 
-  // A value about the person goes into the form exactly as stored, whatever
-  // the model typed and however the record id was shortened.
+  // A value about the person goes into the form exactly as stored, however
+  // the record id was shortened, without asking the fact check.
   test.each([
-    {
-      label: "Phone",
-      inputType: "tel",
-      typed: "+49 555 0000000",
-      expected: "+49 555 1234567-88",
-    },
+    { label: "Phone", inputType: "tel", typed: "+49 555 1234567-88" },
     {
       label: "LinkedIn URL",
       inputType: "url",
-      typed: "https://www.linkedin.com/in/robin-ashford",
-      expected: "https://www.linkedin.com/in/robin-ashford-test-profile-2026",
+      typed: "https://www.linkedin.com/in/robin-ashford-test-profile-2026",
     },
     {
       label: "GitHub",
       inputType: "url",
-      typed: "https://github.com/robin",
-      expected: "https://github.com/robin-ashford-builds",
+      typed: "https://github.com/robin-ashford-builds",
     },
     {
       label: "Portfolio website",
       inputType: "url",
-      typed: "https://robin.example.test",
-      expected: "https://portfolio.example.test/robin-ashford/work",
+      typed: "https://portfolio.example.test/robin-ashford/work",
     },
   ])(
     "writes the stored $label exactly",
-    async ({ label, inputType, typed, expected }) => {
+    async ({ label, inputType, typed }) => {
       const page = rawPage({
         controls: [rawControl({ index: 0, label, inputType })],
       });
@@ -608,35 +614,24 @@ describe("apply policy executor", () => {
         "https://www.linkedin.com/in/robin-ashford-test-profile-2026";
       stored.githubUrl = "https://github.com/robin-ashford-builds";
       stored.portfolioUrl = "https://portfolio.example.test/robin-ashford/work";
-      stored.links = [
-        {
-          // Record ids are built from a shortened URL; the value is the url.
-          id: "link_linkedin_https_www_linkedin_com_in_robin_ashford_",
-          label: "LinkedIn",
-          url: "https://www.linkedin.com/in/robin-ashford-test-profile-2026",
-          kind: "linkedin",
-          isDraft: false,
-        },
-        {
-          id: "link_github_https_github_com_robin_",
-          label: "GitHub",
-          url: "https://github.com/robin-ashford-builds",
-          kind: "github",
-          isDraft: false,
-        },
-      ];
       const fillText = vi.spyOn(hands, "fillText");
+      const checkWrittenAnswer = vi.fn();
       const observation = observationOf(page);
 
       const outcome = await executeApplyProposal(
         { tool: "type", ref: "c0", text: typed },
         observation.signature,
-        { config, now, guardState: createApplyGuardState() },
+        {
+          config,
+          now,
+          guardState: createApplyGuardState(),
+          checkWrittenAnswer,
+        },
       );
 
       expect(outcome.kind).toBe("filled");
-      expect(fillText).toHaveBeenCalledTimes(1);
-      expect(fillText.mock.calls[0]?.[1]).toBe(expected);
+      expect(checkWrittenAnswer).not.toHaveBeenCalled();
+      expect(fillText).toHaveBeenCalledWith("c0", typed);
     },
   );
 
@@ -662,14 +657,23 @@ describe("apply policy executor", () => {
         text: "I improve CI/CD and support distributed teams.",
       },
       observation.signature,
-      { config, now, guardState: createApplyGuardState() },
+      {
+        config,
+        now,
+        guardState: createApplyGuardState(),
+        checkWrittenAnswer: () =>
+          Promise.resolve({
+            supported: false,
+            reason: "Nothing on file shows CI/CD work.",
+          }),
+      },
     );
 
-    expect(outcome.kind).toBe("filled");
-    expect(fillText).toHaveBeenCalledWith(
-      "c0",
-      "React, TypeScript, Design Systems",
-    );
+    expect(outcome.kind).toBe("suggestion");
+    if (outcome.kind === "suggestion") {
+      expect(outcome.note).toContain("Nothing on file shows CI/CD work.");
+    }
+    expect(fillText).not.toHaveBeenCalled();
   });
 
   test.each([
@@ -792,7 +796,7 @@ describe("apply policy executor", () => {
   });
 
   test.each(["set_checkbox", "click"] as const)(
-    "rejects a contradictory radio answer through %s",
+    "a radio choice the facts do not support is not made, through %s",
     async (tool) => {
       const page = rawPage({
         controls: [
@@ -817,27 +821,39 @@ describe("apply policy executor", () => {
         ],
       });
       const { config, hands } = configFor(page);
-      config.sources.profile = CandidateProfileSchema.parse({
-        ...config.sources.profile,
-        answerBank: {
-          ...config.sources.profile.answerBank,
-          workAuthorization: "Yes",
-        },
-      });
       const setToggle = vi.spyOn(hands, "setToggle");
+      const checkWrittenAnswer = vi.fn((_question: string, answer: string) =>
+        Promise.resolve(
+          answer === "Yes"
+            ? {
+                supported: true,
+                reason: "The profile says they may work here.",
+              }
+            : {
+                supported: false,
+                reason: "The profile says they may work here.",
+              },
+        ),
+      );
       const observation = observationOf(page);
+      const deps = {
+        config,
+        now,
+        guardState: createApplyGuardState(),
+        checkWrittenAnswer,
+      };
 
       const outcome = await executeApplyProposal(
         tool === "click"
           ? { tool: "click", ref: "c1" }
           : { tool: "set_checkbox", ref: "c1", checked: true },
         observation.signature,
-        { config, now, guardState: createApplyGuardState() },
+        deps,
       );
 
-      expect(outcome.kind).toBe("refused");
-      if (outcome.kind !== "refused") throw new Error("Expected refusal.");
-      expect(outcome.reason).toMatch(/grounded answer is "Yes"/iu);
+      expect(outcome.kind).toBe("suggestion");
+      if (outcome.kind !== "suggestion") throw new Error("Expected a note.");
+      expect(outcome.note).toContain("do not support it");
       expect(setToggle).not.toHaveBeenCalled();
 
       const groundedOutcome = await executeApplyProposal(
@@ -845,99 +861,16 @@ describe("apply policy executor", () => {
           ? { tool: "click", ref: "c0" }
           : { tool: "set_checkbox", ref: "c0", checked: true },
         observation.signature,
-        { config, now, guardState: createApplyGuardState() },
+        deps,
       );
 
       expect(groundedOutcome).toMatchObject({
         kind: "filled",
-        filled: {
-          answer: {
-            value: "Yes",
-            sourceKind: "profile",
-          },
-        },
+        filled: { answer: { value: "Yes", sourceKind: "generated" } },
       });
       expect(setToggle).toHaveBeenCalledOnce();
     },
   );
-
-  test("a saved prose answer that cannot choose a radio becomes a person question", async () => {
-    const source = rawPage({
-      controls: ["Yes", "No"].map((label, index) =>
-        rawControl({
-          index,
-          inputType: "radio",
-          name: "authorized",
-          label,
-          value: label,
-          groupLabel: "Are you legally authorized to work in this country?",
-          required: true,
-        }),
-      ),
-    });
-    const { config, hands } = configFor(source);
-    config.sources.profile.answerBank.workAuthorization =
-      "Authorized to work in the United Kingdom and open to remote roles across Europe.";
-    const setToggle = vi.spyOn(hands, "setToggle");
-    const outcome = await executeApplyProposal(
-      { tool: "set_checkbox", ref: "c0", checked: true },
-      observationOf(source).signature,
-      { config, now, guardState: createApplyGuardState() },
-    );
-    expect(outcome.kind).toBe("suggestion");
-    if (outcome.kind !== "suggestion")
-      throw new Error("Expected a person question");
-    expect(outcome.question?.prompt).toContain("legally authorized");
-    expect(outcome.note).toContain("names the country");
-    expect(setToggle).not.toHaveBeenCalled();
-  });
-
-  test("overrides a proposed target-job title with the matching saved work-history fact", async () => {
-    const page = rawPage({
-      controls: [
-        rawControl({
-          index: 0,
-          label: "Job title",
-          groupLabel: "Work experience 1",
-          required: true,
-        }),
-      ],
-    });
-    const { config, hands } = configFor(page);
-    config.sources.profile = CandidateProfileSchema.parse({
-      ...config.sources.profile,
-      experiences: [
-        {
-          id: "experience_signal",
-          companyName: "Signal Systems",
-          title: "Staff Frontend Engineer",
-          startDate: "2014-01",
-          isCurrent: true,
-          summary: "Led design system modernization.",
-        },
-      ],
-    });
-    const fillText = vi.spyOn(hands, "fillText");
-    const observation = observationOf(page);
-
-    const outcome = await executeApplyProposal(
-      {
-        tool: "type",
-        ref: "c0",
-        text: config.sources.posting.title,
-      },
-      observation.signature,
-      { config, now, guardState: createApplyGuardState() },
-    );
-
-    expect(outcome.kind).toBe("filled");
-    expect(fillText).toHaveBeenCalledWith("c0", "Staff Frontend Engineer");
-    if (outcome.kind === "filled") {
-      expect(outcome.filled.answer.sourceId).toBe(
-        "profile.experiences.experience_signal.title",
-      );
-    }
-  });
 
   test("pay is left to the person unless they said otherwise", async () => {
     const page = rawPage({
@@ -949,9 +882,15 @@ describe("apply policy executor", () => {
     const observation = observationOf(page);
 
     const outcome = await executeApplyProposal(
-      { tool: "suggest_answer", ref: "c0" },
+      { tool: "type", ref: "c0", text: "90000" },
       observation.signature,
-      { config, now, guardState: createApplyGuardState() },
+      {
+        config,
+        now,
+        guardState: createApplyGuardState(),
+        checkWrittenAnswer: () =>
+          Promise.resolve({ supported: true, reason: "Saved pay answer." }),
+      },
     );
 
     expect(outcome.kind).toBe("suggestion");
@@ -1102,7 +1041,7 @@ describe("apply policy executor", () => {
     const observation = observationOf(page);
 
     const outcome = await executeApplyProposal(
-      { tool: "suggest_answer", ref: "c0" },
+      { tool: "select", ref: "c0", option: "Leeds" },
       observation.signature,
       { config, now, guardState: createApplyGuardState() },
     );
@@ -1145,7 +1084,7 @@ describe("apply policy executor", () => {
     const observation = observationOf(page);
 
     const outcome = await executeApplyProposal(
-      { tool: "type", ref: "c0", text: "robin@example.test" },
+      { tool: "type", ref: "c0", text: "robin.ashford@example.test" },
       observation.signature,
       { config, now, guardState: createApplyGuardState() },
     );
@@ -2023,7 +1962,7 @@ describe("a site that saves as you go", () => {
     const guardState = createApplyGuardState();
 
     const outcome = await executeApplyProposal(
-      { tool: "type", ref: "c0", text: "" },
+      { tool: "type", ref: "c0", text: "Robin" },
       observationOf(page).signature,
       {
         config: { ...config, safety: safetyThatBlocksOneSave() },
@@ -2079,7 +2018,7 @@ describe("a site that saves as you go", () => {
     const { config } = configFor(page);
 
     const outcome = await executeApplyProposal(
-      { tool: "type", ref: "c0", text: "" },
+      { tool: "type", ref: "c0", text: "Robin" },
       observationOf(page).signature,
       {
         config: {
@@ -2164,38 +2103,29 @@ describe("questions keep to their own control", () => {
     expect(choiceQuestion.answerControlType).toBe("single_choice");
   });
 
-  test("the phone country is still answered from the profile", async () => {
+  test("the phone country the model picks is checked like any other answer", async () => {
     const page = rawPage({ controls: [phoneCountry, phoneNumber] });
     const { config, hands } = configFor(page);
     const chooseOption = vi.spyOn(hands, "chooseOption");
-    const withPhone: ApplyAgentConfig = {
-      ...config,
-      sources: {
-        ...config.sources,
-        profile: {
-          ...config.sources.profile,
-          phone: "+44 7700 900000",
-          currentCountry: "United Kingdom",
-        },
-      },
-    };
+    const checkWrittenAnswer = vi.fn(() =>
+      Promise.resolve({
+        supported: true,
+        reason: "The phone number on file is a UK number.",
+      }),
+    );
 
     const outcome = await executeApplyProposal(
       { tool: "select", ref: "c0", option: "United Kingdom +44" },
       observationOf(page).signature,
-      { config: withPhone, now, guardState: createApplyGuardState() },
+      { config, now, guardState: createApplyGuardState(), checkWrittenAnswer },
     );
 
     expect(outcome.kind).toBe("filled");
-    if (outcome.kind === "filled") {
-      expect(outcome.filled.answer.provenanceLabel).toContain(
-        "the country your phone number belongs to",
-      );
-    }
-    expect(chooseOption).toHaveBeenCalled();
+    expect(checkWrittenAnswer).toHaveBeenCalledOnce();
+    expect(chooseOption).toHaveBeenCalledWith("c0", "United Kingdom +44");
   });
 
-  test("a saved choice overrides a different option proposed by the model", async () => {
+  test("the person's saved choice goes in as their own answer", async () => {
     const sourceQuestion =
       "How did you hear about this job? Select an option Job board Company website Referral Other";
     const page = rawPage({
@@ -2230,13 +2160,22 @@ describe("questions keep to their own control", () => {
     ];
     const chooseOption = vi.spyOn(hands, "chooseOption");
 
-    const outcome = await executeApplyProposal(
+    const other = await executeApplyProposal(
       { tool: "select", ref: "c0", option: "Other" },
+      observationOf(page).signature,
+      { config, now, guardState: createApplyGuardState() },
+    );
+    // Without a fact check, a choice that is not the saved one is not made.
+    expect(other.kind).toBe("suggestion");
+
+    const outcome = await executeApplyProposal(
+      { tool: "select", ref: "c0", option: "Job board" },
       observationOf(page).signature,
       { config, now, guardState: createApplyGuardState() },
     );
 
     expect(outcome.kind).toBe("filled");
+    expect(chooseOption).toHaveBeenCalledTimes(1);
     expect(chooseOption).toHaveBeenCalledWith("c0", "Job board");
     if (outcome.kind === "filled") {
       expect(outcome.filled.answer).toMatchObject({
@@ -2717,7 +2656,7 @@ describe("the model's answers stand when the person's facts support them (ADR 00
     expect(outcome.filled.answer.value).toBe("referee@example.test");
   });
 
-  test("an unsupported answer is not written, and the saved one is named", async () => {
+  test("an unsupported answer is not written, and the reason is given", async () => {
     const page = rawPage({
       controls: [rawControl({ index: 0, label: "Email", inputType: "email" })],
     });
@@ -2735,9 +2674,7 @@ describe("the model's answers stand when the person's facts support them (ADR 00
     );
     expect(fillText).not.toHaveBeenCalled();
     if (outcome.kind !== "suggestion") throw new Error("Expected a note");
-    expect(outcome.note).toContain(
-      'Their saved answer is "robin.ashford@example.test"',
-    );
+    expect(outcome.note).toContain("That is not the applicant's email.");
   });
 
   test("the model chooses an option nothing stored answers once the check supports it", async () => {

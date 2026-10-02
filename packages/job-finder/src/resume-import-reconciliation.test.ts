@@ -455,7 +455,7 @@ describe("resume import reconciliation", () => {
       ...createStageCandidate({
         target: baseCandidate.target,
         label: baseCandidate.label,
-        value: "Aaron Murphy",
+        value: "Owen Mercer",
         sourceBlockIds: ["block_name"],
         confidence: 0.99,
         overall: 0.97,
@@ -506,7 +506,7 @@ describe("resume import reconciliation", () => {
     expect(reviewCandidate).toMatchObject({
       id: "candidate_text_full_name",
       sourceKind: "parser_literal",
-      value: "Aaron Murphy",
+      value: "Owen Mercer",
       resolution: "needs_review",
     });
     expect(
@@ -518,7 +518,7 @@ describe("resume import reconciliation", () => {
     ).toEqual([
       {
         sourceLabel: "Document text",
-        value: "Aaron Murphy",
+        value: "Owen Mercer",
         recommended: true,
       },
       {

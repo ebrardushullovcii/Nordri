@@ -647,9 +647,7 @@ export async function runAgentApplicationPreparation(
   const attemptState: ApplyExecutionResult["state"] =
     result.outcome === "stuck" || blocker?.code === "application_closed"
       ? "failed"
-      : blocker === null &&
-          questions.length === 0 &&
-          !result.structuredExperienceGap
+      : blocker === null && questions.length === 0
         ? "ready"
         : "paused";
 
@@ -979,12 +977,8 @@ export function buildApplyReviewCard(input: {
             groundedIn: clampGrounding(attachedLetter.groundedIn),
           }
         : null,
-    waitingOnYou: [
-      ...input.result.pauses.map((pause) => pause.summary),
-      ...(input.result.structuredExperienceGap
-        ? [input.result.structuredExperienceGap]
-        : []),
-    ]
+    waitingOnYou: input.result.pauses
+      .map((pause) => pause.summary)
       .slice(0, 20)
       .map((summary) => clamp(summary, 2_000)),
     preparedAt: input.preparedAt,

@@ -576,10 +576,7 @@ describe("ai provider config and fallback behavior", () => {
     });
   });
 
-  test("falls back from profile extraction with logged error details and merged notes", async () => {
-    const errorSpy = vi
-      .spyOn(console, "error")
-      .mockImplementation(() => undefined);
+  test("reports a failed profile extraction instead of parsing the resume by rules", async () => {
     const restoreFetch = mockRejectedFetch(
       new Error("upstream extraction failure"),
     );
@@ -588,25 +585,15 @@ describe("ai provider config and fallback behavior", () => {
       const client =
         createJobFinderAiClientFromEnvironment(createEnvironment());
 
-      const result = await client.extractProfileFromResume({
-        existingProfile: createProfile(),
-        existingSearchPreferences: createPreferences(),
-        resumeText: "Alex Vanguard\nLondon, UK\nReact engineer",
-      });
-
-      expect(result.analysisProviderKind).toBe("deterministic");
-      expect(result.notes).toContain(
-        "Fell back to the deterministic resume parser after the model call failed.",
-      );
-      expect(result.notes).toContain(
-        "Primary AI extraction failed: upstream extraction failure",
-      );
-      expect(errorSpy).toHaveBeenCalledWith(
-        "[AI Provider] extractProfileFromResume failed; falling back to deterministic client. upstream extraction failure",
-      );
+      await expect(
+        client.extractProfileFromResume({
+          existingProfile: createProfile(),
+          existingSearchPreferences: createPreferences(),
+          resumeText: "Alex Vanguard\nLondon, UK\nReact engineer",
+        }),
+      ).rejects.toThrow("upstream extraction failure");
     } finally {
       restoreFetch();
-      errorSpy.mockRestore();
     }
   });
 
@@ -676,9 +663,6 @@ describe("ai provider config and fallback behavior", () => {
   });
 
   test("uses the configured resume extraction timeout when normalizing abort-like provider failures", async () => {
-    const errorSpy = vi
-      .spyOn(console, "error")
-      .mockImplementation(() => undefined);
     const restoreFetch = mockRejectedFetch(
       new DOMException("This operation was aborted", "AbortError"),
     );
@@ -690,22 +674,15 @@ describe("ai provider config and fallback behavior", () => {
         }),
       );
 
-      const result = await client.extractProfileFromResume({
-        existingProfile: createProfile(),
-        existingSearchPreferences: createPreferences(),
-        resumeText: "Alex Vanguard\nLondon, UK\nReact engineer",
-      });
-
-      expect(result.analysisProviderKind).toBe("deterministic");
-      expect(result.notes).toContain(
-        "Primary AI extraction failed: Model request timed out after 90s",
-      );
-      expect(errorSpy).toHaveBeenCalledWith(
-        "[AI Provider] extractProfileFromResume failed; falling back to deterministic client. Model request timed out after 90s",
-      );
+      await expect(
+        client.extractProfileFromResume({
+          existingProfile: createProfile(),
+          existingSearchPreferences: createPreferences(),
+          resumeText: "Alex Vanguard\nLondon, UK\nReact engineer",
+        }),
+      ).rejects.toThrow("Model request timed out after 90s");
     } finally {
       restoreFetch();
-      errorSpy.mockRestore();
     }
   });
 
@@ -958,7 +935,7 @@ describe("ai provider config and fallback behavior", () => {
         detail: "upstream tailoring failure",
       });
       expect(errorSpy).toHaveBeenCalledWith(
-        "[AI Provider] tailorResume failed; falling back to deterministic client. upstream tailoring failure",
+        "[AI Provider] tailorResume failed. upstream tailoring failure",
       );
     } finally {
       restoreFetch();
@@ -966,14 +943,14 @@ describe("ai provider config and fallback behavior", () => {
     }
   });
 
-  test("uses deterministic profile copilot reply when the model returns guidance-only but deterministic can structure the edit", async () => {
+  test("a run that prepares no edit and never finishes keeps the question for Ask again", async () => {
     const restoreFetch = mockJsonFetch({
       choices: [
         {
           message: {
             content: JSON.stringify({
               content:
-                "I reviewed the setup essentials context, but I could not turn that request into a safe structured profile edit.",
+                "Which number should it be? Your resume shows six years of work.",
               patchGroups: [],
             }),
           },
@@ -985,161 +962,25 @@ describe("ai provider config and fallback behavior", () => {
       const client =
         createJobFinderAiClientFromEnvironment(createEnvironment());
 
-      const reply = await client.reviseCandidateProfile({
-        profile: {
-          ...createProfile(),
-          yearsExperience: 6,
-        },
-        searchPreferences: createPreferences(),
-        context: { surface: "setup", step: "essentials" },
-        relevantReviewItems: [],
-        request: "change my experience to only 5 years",
-      });
-
-      expect(reply.patchGroups).toHaveLength(1);
-      expect(reply.patchGroups[0]?.operations[0]).toEqual({
-        operation: "replace_identity_fields",
-        value: {
-          yearsExperience: 5,
-        },
-      });
+      // No rule-made edit stands in for the model's answer (ADR 0041).
+      await expect(
+        client.reviseCandidateProfile({
+          profile: {
+            ...createProfile(),
+            yearsExperience: 6,
+          },
+          searchPreferences: createPreferences(),
+          context: { surface: "setup", step: "essentials" },
+          relevantReviewItems: [],
+          request: "change my experience",
+        }),
+      ).rejects.toThrow("nothing was changed");
     } finally {
       restoreFetch();
     }
   });
 
-  test("uses deterministic profile copilot reply when the model gives generic no-op guidance for an existing job source request", async () => {
-    const restoreFetch = mockJsonFetch({
-      choices: [
-        {
-          message: {
-            content: JSON.stringify({
-              content:
-                "I reviewed that request in the profile context, but I could not turn it into a safe structured profile edit yet.",
-              patchGroups: [],
-            }),
-          },
-        },
-      ],
-    });
-
-    try {
-      const client =
-        createJobFinderAiClientFromEnvironment(createEnvironment());
-
-      const reply = await client.reviseCandidateProfile({
-        profile: createProfile(),
-        searchPreferences: {
-          ...createPreferences(),
-          discovery: {
-            historyLimit: 5,
-            targets: [
-              {
-                id: "target_linkedin_jobs",
-                label: "LinkedIn Jobs",
-                startingUrl: "https://www.linkedin.com/jobs/search/",
-                enabled: true,
-                adapterKind: "auto",
-                customInstructions: null,
-                instructionStatus: "missing",
-                validatedInstructionId: null,
-                draftInstructionId: null,
-                lastDebugRunId: null,
-                lastVerifiedAt: null,
-                staleReason: null,
-              },
-            ],
-          },
-        },
-        context: { surface: "profile", section: "preferences" },
-        relevantReviewItems: [],
-        request: "please add linkedin jobs again",
-      });
-
-      expect(reply.patchGroups).toEqual([]);
-      expect(reply.content).toContain("already saved");
-    } finally {
-      restoreFetch();
-    }
-  });
-
-  test("uses deterministic profile copilot reply when the model gives generic no-op guidance for a direct github url", async () => {
-    const restoreFetch = mockJsonFetch({
-      choices: [
-        {
-          message: {
-            content: JSON.stringify({
-              content:
-                "I reviewed that request in the profile context, but I could not turn it into a safe structured profile edit yet.",
-              patchGroups: [],
-            }),
-          },
-        },
-      ],
-    });
-
-    try {
-      const client =
-        createJobFinderAiClientFromEnvironment(createEnvironment());
-
-      const reply = await client.reviseCandidateProfile({
-        profile: {
-          ...createProfile(),
-          githubUrl: null,
-        },
-        searchPreferences: createPreferences(),
-        context: { surface: "profile", section: "preferences" },
-        relevantReviewItems: [],
-        request: "https://github.com/ebrardushullovcii",
-      });
-
-      expect(reply.patchGroups).toHaveLength(1);
-      expect(reply.patchGroups[0]?.operations[0]).toEqual({
-        operation: "replace_identity_fields",
-        value: {
-          githubUrl: "https://github.com/ebrardushullovcii",
-        },
-      });
-    } finally {
-      restoreFetch();
-    }
-  });
-
-  test("uses deterministic profile copilot clarification when the model gives generic no-op guidance for visa sponsorship", async () => {
-    const restoreFetch = mockJsonFetch({
-      choices: [
-        {
-          message: {
-            content: JSON.stringify({
-              content:
-                "I reviewed that request in the profile context, but I could not turn it into a safe structured profile edit yet.",
-              patchGroups: [],
-            }),
-          },
-        },
-      ],
-    });
-
-    try {
-      const client =
-        createJobFinderAiClientFromEnvironment(createEnvironment());
-
-      const reply = await client.reviseCandidateProfile({
-        profile: createProfile(),
-        searchPreferences: createPreferences(),
-        context: { surface: "profile", section: "preferences" },
-        relevantReviewItems: [],
-        request: "update visa sponsorship",
-      });
-
-      expect(reply.patchGroups).toEqual([]);
-      expect(reply.content).toContain("I need visa sponsorship");
-    } finally {
-      restoreFetch();
-    }
-  });
-
-  test("falls back cleanly for very large profile copilot requests when the primary model call fails", async () => {
+  test("reports the outage for very large profile copilot requests when the primary model call fails", async () => {
     const errorSpy = vi
       .spyOn(console, "error")
       .mockImplementation(() => undefined);
@@ -1164,9 +1005,10 @@ describe("ai provider config and fallback behavior", () => {
       });
 
       expect(reply.content.trim().length).toBeGreaterThan(0);
-      expect(Array.isArray(reply.patchGroups)).toBe(true);
+      expect(reply.patchGroups).toHaveLength(0);
+      expect(reply.executionReceipt?.stopReason).toBe("permanent_failure");
       expect(errorSpy).toHaveBeenCalledWith(
-        "[AI Provider] reviseCandidateProfile failed; falling back to deterministic client. upstream profile failure",
+        "[AI Provider] reviseCandidateProfile failed. upstream profile failure",
       );
     } finally {
       restoreFetch();

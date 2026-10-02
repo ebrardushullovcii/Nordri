@@ -303,8 +303,9 @@ function createFixtureHands(site: FixtureSite): {
  * A stand-in for the model that uses the harness the way the prompt asks.
  *
  * It reads the page, gets whatever is in the way out of the way, follows the
- * apply route when there is no form yet, asks what answers each field, and
- * says when the form is complete. It knows nothing about any of these sites.
+ * apply route when there is no form yet, fills the page from the person's
+ * facts in one step, and says when the form is complete. It knows nothing
+ * about any of these sites.
  */
 function createHarnessModel(
   state: FixtureState,
@@ -312,7 +313,33 @@ function createHarnessModel(
 ): LLMClient {
   let callId = 0;
   const done = new Set<string>();
-  const suggested = new Map<string, string | null>();
+  let facts: {
+    name: { full: string; first: string; last: string };
+    email: string;
+    phone: string;
+    location: { city: string };
+    yearsExperience: number;
+    workEligibility: { noticePeriodDays: number; availableStartDate: string };
+  } | null = null;
+  const answerFor = (
+    control: ApplyFormObservation["controls"][number],
+  ): string => {
+    const label = `${control.groupLabel} ${control.label}`.toLowerCase();
+    if (control.options.length > 0) return control.options[0] ?? "";
+    if (control.kind === "checkbox") return "yes";
+    if (!facts) return "";
+    if (/first name/u.test(label)) return facts.name.first;
+    if (/last name/u.test(label)) return facts.name.last;
+    if (/name/u.test(label)) return facts.name.full;
+    if (/email/u.test(label)) return facts.email;
+    if (/phone/u.test(label)) return facts.phone;
+    if (/city/u.test(label)) return facts.location.city;
+    if (/years/u.test(label)) return String(facts.yearsExperience);
+    if (/notice/u.test(label))
+      return `${facts.workEligibility.noticePeriodDays} days`;
+    if (/start/u.test(label)) return facts.workEligibility.availableStartDate;
+    return "I want to build dependable platforms for the teams who use them.";
+  };
 
   const call = (name: string, args: Record<string, unknown>): ToolCall => {
     callId += 1;
@@ -369,52 +396,30 @@ function createHarnessModel(
       }
     }
 
-    // A field that has not been dealt with: ask, then answer.
-    const pending = seen.controls.find(
+    // Every field that has not been dealt with, in one step: files with
+    // upload, everything else with fill_fields.
+    const pending = seen.controls.filter(
       (control) =>
         control.visible &&
         !control.disabled &&
         !control.answered &&
         !done.has(`${here}:${control.ref}`),
     );
-    if (pending) {
-      const key = `${here}:${pending.ref}`;
-      if (pending.kind === "file") {
-        done.add(key);
-        return {
-          toolCalls: [
-            call("upload", { ref: pending.ref, documentId: resumeDocumentId }),
-          ],
-        };
+    if (pending.length > 0) {
+      const calls: ToolCall[] = [];
+      const fields: Array<{ ref: string; value: string }> = [];
+      for (const control of pending) {
+        done.add(`${here}:${control.ref}`);
+        if (control.kind === "file") {
+          calls.push(
+            call("upload", { ref: control.ref, documentId: resumeDocumentId }),
+          );
+        } else {
+          fields.push({ ref: control.ref, value: answerFor(control) });
+        }
       }
-      if (!suggested.has(key)) {
-        suggested.set(key, null);
-        return { toolCalls: [call("suggest_answer", { ref: pending.ref })] };
-      }
-      done.add(key);
-      if (pending.kind === "checkbox" || pending.kind === "radio") {
-        return {
-          toolCalls: [
-            call("set_checkbox", { ref: pending.ref, checked: true }),
-          ],
-        };
-      }
-      if (pending.options.length > 0) {
-        return {
-          toolCalls: [
-            call("select", { ref: pending.ref, option: pending.options[0] }),
-          ],
-        };
-      }
-      return {
-        toolCalls: [
-          call("type", {
-            ref: pending.ref,
-            text: "I have spent eight years building reliable platforms.",
-            groundedIn: ["the resume sent with this application"],
-          }),
-        ],
-      };
+      if (fields.length > 0) calls.push(call("fill_fields", { fields }));
+      return { toolCalls: calls };
     }
 
     // Everything is filled in: move on, or say it is complete.
@@ -442,16 +447,32 @@ function createHarnessModel(
 
   return {
     chatWithTools: (_messages, _tools, options) => {
-      if (_tools[0]?.function.name === "report_answer_check") {
+      if (_tools[0]?.function.name === "report_answer_checks") {
+        const asked = JSON.parse(String(_messages[1]?.content ?? "{}")) as {
+          answers?: unknown[];
+        };
         return Promise.resolve({
           toolCalls: [
-            call("report_answer_check", {
-              supported: true,
-              reason:
-                "The fixture answer expresses motivation without adding personal history.",
+            call("report_answer_checks", {
+              checks: (asked.answers ?? []).map((_, index) => ({
+                index,
+                supported: true,
+                reason:
+                  "The fixture answer expresses motivation without adding personal history.",
+              })),
             }),
           ],
         });
+      }
+      const factsMessage = _messages.find(
+        (message) =>
+          message.role === "user" &&
+          String(message.content).startsWith("The person's facts"),
+      );
+      if (factsMessage && !facts) {
+        const text = String(factsMessage.content);
+        const json = text.slice(text.indexOf("\n") + 1).split("\n\n")[0];
+        facts = JSON.parse(json ?? "{}") as typeof facts;
       }
       // Record what the model was told, the way a real client would consume it.
       void options;

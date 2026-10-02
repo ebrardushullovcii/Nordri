@@ -815,7 +815,7 @@ describe("createJobFinderWorkspaceService", () => {
           headline: "Senior Full-STACK Software Engineer",
           currentLocation:
             "recently decided to return to hands-on development, where my career initially began and where my true passion lies. I",
-          email: "ebrar.dushullovci@gmail.com",
+          email: "elian.morava@example.test",
           phone: "(+383) 44283970",
         }),
       ),
@@ -827,7 +827,7 @@ describe("createJobFinderWorkspaceService", () => {
         ...seed.profile.baseResume,
         id: "resume_cv_pdf",
         fileName: "CV.pdf",
-        textContent: "Ebrar Dushullovci\nAddress: Prishtina, Kosovo (Home)",
+        textContent: "Elian Morava\nAddress: Prishtina, Kosovo (Home)",
       },
       documentBundle: {
         id: "bundle_cv_pdf",
@@ -843,9 +843,9 @@ describe("createJobFinderWorkspaceService", () => {
           {
             pageNumber: 1,
             text: [
-              "Ebrar Dushullovci",
+              "Elian Morava",
               "Date of birth: 04/07/1998 Nationality: Kosovar Phone number: (+383) 44283970 (Mobile) Email address:",
-              "ebrar.dushullovci@gmail.com Website: https://www.linkedin.com/in/ebrar-dushullovci-5b98b420b/",
+              "elian.morava@example.test Website: https://www.linkedin.com/in/elian-morava-example/",
               "Address: Prishtina, Kosovo (Home)",
               "ABOUT ME",
               "A passionate software developer with 6+ years of full-stack experience building impactful solutions using React, Next.js,",
@@ -860,7 +860,7 @@ describe("createJobFinderWorkspaceService", () => {
             id: "page_1_block_1",
             pageNumber: 1,
             readingOrder: 0,
-            text: "Ebrar Dushullovci",
+            text: "Elian Morava",
             kind: "paragraph",
             sectionHint: "identity",
             bbox: null,
@@ -882,7 +882,7 @@ describe("createJobFinderWorkspaceService", () => {
             id: "page_1_block_3",
             pageNumber: 1,
             readingOrder: 2,
-            text: "ebrar.dushullovci@gmail.com Website: https://www.linkedin.com/in/ebrar-dushullovci-5b98b420b/",
+            text: "elian.morava@example.test Website: https://www.linkedin.com/in/elian-morava-example/",
             kind: "contact",
             sectionHint: "contact",
             bbox: null,
@@ -924,9 +924,9 @@ describe("createJobFinderWorkspaceService", () => {
           },
         ],
         fullText: [
-          "Ebrar Dushullovci",
+          "Elian Morava",
           "Date of birth: 04/07/1998 Nationality: Kosovar Phone number: (+383) 44283970 (Mobile) Email address:",
-          "ebrar.dushullovci@gmail.com Website: https://www.linkedin.com/in/ebrar-dushullovci-5b98b420b/",
+          "elian.morava@example.test Website: https://www.linkedin.com/in/elian-morava-example/",
           "Address: Prishtina, Kosovo (Home)",
           "ABOUT ME",
           "A passionate software developer with 6+ years of full-stack experience building impactful solutions using React, Next.js,",
@@ -934,7 +934,7 @@ describe("createJobFinderWorkspaceService", () => {
       },
     });
 
-    expect(snapshot.profile.fullName).toBe("Ebrar Dushullovci");
+    expect(snapshot.profile.fullName).toBe("Elian Morava");
     expect(snapshot.profile.currentLocation).toBe("Prishtina, Kosovo");
 
     const run = await repository.getLatestResumeImportRun();
@@ -961,22 +961,22 @@ describe("createJobFinderWorkspaceService", () => {
       baseResume: {
         ...seed.profile.baseResume,
         id: "resume_bad_name_fallback",
-        fileName: "Ryan Holstien Resume.pdf",
+        fileName: "Noah Brenner Resume.pdf",
         textContent: [
-          "+1 650-353-7911",
-          "Ryan Holstien Cedar Park, TX 78613",
-          "linkedin.com/in/ryan-holstien-7954b665",
-          "Senior Software Engineer ryanholstien993@outlook.com",
+          "+1 555-010-7911",
+          "Noah Brenner Cedar Park, TX 78613",
+          "linkedin.com/in/noah-brenner-example",
+          "Senior Software Engineer noah.brenner@example.test",
           "Senior Software Engineer with 10+ years of experience building secure, scalable healthcare and SaaS platforms.",
           "Technical Mentorship",
         ].join("\n"),
       },
       documentBundle: createTestBundle({
         fullText: [
-          "+1 650-353-7911",
-          "Ryan Holstien Cedar Park, TX 78613",
-          "linkedin.com/in/ryan-holstien-7954b665",
-          "Senior Software Engineer ryanholstien993@outlook.com",
+          "+1 555-010-7911",
+          "Noah Brenner Cedar Park, TX 78613",
+          "linkedin.com/in/noah-brenner-example",
+          "Senior Software Engineer noah.brenner@example.test",
           "Senior Software Engineer with 10+ years of experience building secure, scalable healthcare and SaaS platforms.",
           "Technical Mentorship",
         ].join("\n"),
@@ -984,9 +984,9 @@ describe("createJobFinderWorkspaceService", () => {
       }),
     });
 
-    expect(snapshot.profile.fullName).toBe("Ryan Holstien");
-    expect(snapshot.profile.firstName).toBe("Ryan");
-    expect(snapshot.profile.lastName).toBe("Holstien");
+    expect(snapshot.profile.fullName).toBe("Noah Brenner");
+    expect(snapshot.profile.firstName).toBe("Noah");
+    expect(snapshot.profile.lastName).toBe("Brenner");
     expect(snapshot.profile.currentLocation).toBe("Cedar Park, TX 78613");
     expect(
       snapshot.latestResumeImportReviewCandidates.map(

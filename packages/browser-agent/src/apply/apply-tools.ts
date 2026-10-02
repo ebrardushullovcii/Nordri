@@ -28,7 +28,6 @@ export const APPLY_TOOL_NAMES = [
   "scroll",
   "wait",
   "go_back",
-  "suggest_answer",
   "submit_application",
   "finish",
 ] as const;
@@ -149,7 +148,7 @@ export function getApplyToolDefinitions(): ApplyToolDefinition[] {
       function: {
         name: "type",
         description:
-          "Type into a field. For a question about the person, call suggest_answer first and use what it gives you; only write your own words when it has nothing and the question genuinely needs prose.",
+          "Type into one field. To fill several fields at once, use fill_fields. An answer about the person must come from their facts; Job Finder checks it before it is typed.",
         parameters: {
           type: "object",
           properties: {
@@ -262,19 +261,6 @@ export function getApplyToolDefinitions(): ApplyToolDefinition[] {
         name: "go_back",
         description: "Go back, when a link turned out to be the wrong way.",
         parameters: { type: "object", properties: {} },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "suggest_answer",
-        description:
-          "Ask what the person's own profile, the resume going out with this application, and their saved answers say about one field. Returns the answer and where it came from, or says there is nothing — in which case either write the answer yourself if it is a prose question, or finish and say this question needs them.",
-        parameters: {
-          type: "object",
-          properties: { ref: { type: "string" } },
-          required: ["ref"],
-        },
       },
     },
     {
@@ -456,10 +442,6 @@ export function parseApplyProposal(
     }
     case "go_back":
       return { ok: true, proposal: { tool: "go_back" } };
-    case "suggest_answer":
-      return ref
-        ? { ok: true, proposal: { tool: "suggest_answer", ref } }
-        : needsRef();
     case "submit_application":
       return ref
         ? { ok: true, proposal: { tool: "submit_application", ref } }
@@ -479,4 +461,88 @@ export function parseApplyProposal(
     default:
       return { ok: false, error: `There is no tool called ${toolName}.` };
   }
+}
+
+/**
+ * Fills many fields in one step. Each entry goes in exactly as a single
+ * type, select or radio choice would, through the same checks; answers about
+ * the person are fact-checked together in one pass.
+ */
+export const FILL_FIELDS_TOOL_DEFINITION: ApplyToolDefinition = {
+  type: "function",
+  function: {
+    name: "fill_fields",
+    description:
+      "Fill several fields in one step: text fields, dropdowns and radio choices. For a dropdown or radio question give the option's label as the value. Every answer about the person must come from their facts; Job Finder checks the answers before entering them and tells you which went in. Use set_checkbox for checkboxes and upload for files.",
+    parameters: {
+      type: "object",
+      properties: {
+        fields: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              ref: { type: "string" },
+              value: { type: "string" },
+              groundedIn: {
+                type: "array",
+                items: { type: "string" },
+                description:
+                  "For text you wrote yourself: what you based it on, in plain words.",
+              },
+            },
+            required: ["ref", "value"],
+          },
+        },
+      },
+      required: ["fields"],
+    },
+  },
+};
+
+export interface FillFieldsEntry {
+  ref: string;
+  value: string;
+  groundedIn?: string[];
+}
+
+export function parseFillFields(
+  rawArguments: string,
+): { ok: true; fields: FillFieldsEntry[] } | { ok: false; error: string } {
+  let parsed: unknown;
+  try {
+    parsed = rawArguments.trim() ? JSON.parse(rawArguments) : {};
+  } catch {
+    return {
+      ok: false,
+      error: "The arguments for fill_fields were not valid JSON.",
+    };
+  }
+  const entries = asRecord(parsed).fields;
+  if (!Array.isArray(entries) || entries.length === 0) {
+    return {
+      ok: false,
+      error: "fill_fields needs a list of fields, each with ref and value.",
+    };
+  }
+  const fields: FillFieldsEntry[] = [];
+  for (const entry of entries) {
+    const record = asRecord(entry);
+    const ref = asString(record.ref);
+    const value =
+      typeof record.value === "string"
+        ? record.value.trim()
+        : typeof record.value === "number" || typeof record.value === "boolean"
+          ? String(record.value)
+          : null;
+    if (!ref || !value) {
+      return {
+        ok: false,
+        error: "Every fill_fields entry needs a ref and a value.",
+      };
+    }
+    const groundedIn = asStringArray(record.groundedIn);
+    fields.push({ ref, value, ...(groundedIn ? { groundedIn } : {}) });
+  }
+  return { ok: true, fields };
 }

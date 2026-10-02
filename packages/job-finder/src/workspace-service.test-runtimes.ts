@@ -169,7 +169,29 @@ export function createAgentAiClient() {
 
   return {
     ...fallbackClient,
-    chatWithTools: () => Promise.resolve({ content: "ok", toolCalls: [] }),
+    // The source check's final review (ADR 0041) keeps the check's notes as
+    // filed, the way a model with nothing to reconcile would, and calls them
+    // ready when nothing in them warns otherwise.
+    chatWithTools: (messages) => {
+      const prompt = extractLatestUserPrompt(messages);
+      const payloadAt = prompt.indexOf("Evidence payload:\n");
+      if (
+        prompt.startsWith("Review the full source-debug evidence") &&
+        payloadAt >= 0
+      ) {
+        const payload = JSON.parse(
+          prompt.slice(payloadAt + "Evidence payload:\n".length),
+        ) as { checkNotes: { warnings?: unknown[] } };
+        return Promise.resolve({
+          content: JSON.stringify({
+            ...payload.checkNotes,
+            ready: (payload.checkNotes.warnings ?? []).length === 0,
+          }),
+          toolCalls: [],
+        });
+      }
+      return Promise.resolve({ content: "ok", toolCalls: [] });
+    },
   } satisfies JobFinderAiClient;
 }
 
@@ -351,7 +373,9 @@ const LEARNING_PHASES: readonly SourceDebugPhase[] = [
   "apply_path_validation",
 ];
 
-function learningPhaseKeys(phaseId: SourceDebugPhase): readonly SourceDebugPhase[] {
+function learningPhaseKeys(
+  phaseId: SourceDebugPhase,
+): readonly SourceDebugPhase[] {
   return phaseId === "site_structure_mapping" ? LEARNING_PHASES : [phaseId];
 }
 

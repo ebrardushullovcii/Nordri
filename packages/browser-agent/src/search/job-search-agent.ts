@@ -19,14 +19,15 @@ import type { APIResponse, Page } from "playwright";
 
 import { isAllowedUrl } from "../allowlist";
 import type { JobExtractor, LLMClient } from "../agent/contracts";
-import { sanitizeUrl } from "../agent/evidence";
-import { normalizeExtractedJobSourceId } from "../agent/job-extraction";
 import type { ApplyFormObservation, ApplyPageHands } from "../apply/types";
-import { captureCompactDiscoveryObservation } from "../compact-discovery-observer";
 import { describeObservation } from "../apply/apply-prompts";
 import { createPageTools } from "../page-tools";
 import type { AgentConfig, AgentProgress, AgentResult } from "../types";
 import { createSearchCatalogTools } from "./job-search-catalog-tools";
+import {
+  normalizeExtractedJobSourceId,
+  sanitizeUrl,
+} from "./job-identity";
 import { createJobSearchPrompts } from "./job-search-prompts";
 import { createMoveReviewer, describeSearchGoal } from "./move-reviewer";
 import {
@@ -93,6 +94,8 @@ export function describeNonPosting(
 }
 
 // Runaway protection only: productive searches routinely need hundreds of turns.
+/** How long one search turn may wait for the model before it is asked again. */
+const SEARCH_MODEL_TURN_TIMEOUT_MS = 90_000;
 const DEFAULT_MAX_STEPS = 10_000;
 const DEFAULT_TIME_BUDGET_MS = 60 * 60_000;
 const DEFAULT_NO_PROGRESS_STEP_LIMIT = 24;
@@ -428,26 +431,6 @@ export async function runJobSearchAgent(
         evidenceChars += size;
         urlEvidence.push(entry);
       };
-      if (input.page) {
-        const compact = await captureCompactDiscoveryObservation({
-          page: input.page,
-          targetId: sanitizeUrl(config.startingUrls[0] ?? "") ?? siteLabel,
-          observationId: `extract_${now().getTime()}`,
-          revision: 1,
-          observedAt: now().toISOString(),
-        });
-        if (compact.kind === "supported") {
-          // Links only: the model reads company, place and every other
-          // detail from the page itself.
-          for (const candidate of compact.postingCandidates) {
-            addUrlEvidence({
-              kind: "job_link",
-              title: candidate.title,
-              canonicalUrl: candidate.canonicalUrl,
-            });
-          }
-        }
-      }
       for (const link of observation.links) {
         if (link.visible && /^https?:\/\//iu.test(link.href)) {
           addUrlEvidence({
@@ -844,10 +827,13 @@ export async function runJobSearchAgent(
     ceilings: {
       maxSteps: Math.max(config.maxSteps, DEFAULT_MAX_STEPS),
       timeBudgetMs: config.runControl?.timeBudgetMs ?? DEFAULT_TIME_BUDGET_MS,
-      // Same as the apply agent: a turn that timed out or hit a temporary
-      // service failure ran no tools, so asking once more repeats nothing,
-      // and one provider hiccup no longer ends the search on this source.
-      modelTurnTimeoutRetries: 1,
+      // A turn that timed out or hit a temporary service failure ran no
+      // tools, so asking again repeats nothing. Search turns usually answer
+      // in seconds; one still silent after 90s is a stalled request, and a
+      // fresh one is faster than waiting out the old one (live turns stalled
+      // for over three minutes).
+      modelTurnTimeoutMs: SEARCH_MODEL_TURN_TIMEOUT_MS,
+      modelTurnTimeoutRetries: 2,
       noProgressStepLimit:
         config.runControl?.noProgressStepLimit ??
         DEFAULT_NO_PROGRESS_STEP_LIMIT,

@@ -6,7 +6,7 @@ import {
   createSettings,
 } from "../test-fixtures";
 import { buildDeterministicResumeProfileExtraction } from "./resume-parser";
-import { EBRAR_IMPORTED_TEXT } from "../resume-import-fixtures";
+import { ELIAN_IMPORTED_TEXT } from "../resume-import-fixtures";
 import { buildDeterministicTailoredResume } from "./tailoring";
 
 describe("buildDeterministicResumeProfileExtraction", () => {
@@ -48,7 +48,7 @@ describe("buildDeterministicResumeProfileExtraction", () => {
         existingProfile: createProfile(),
         existingSearchPreferences: createPreferences(),
         resumeText: [
-          "Ebrar Dushullovci",
+          "Elian Morava",
           "Address: Prishtina, Kosovo (Home)",
           "ABOUT ME",
           "A passionate software developer with 6+ years of full-stack experience building impactful solutions using React, Next.js,",
@@ -75,12 +75,12 @@ describe("buildDeterministicResumeProfileExtraction", () => {
         existingProfile: createProfile(),
         existingSearchPreferences: createPreferences(),
         resumeText: [
-          "Ryan Holstien",
-          "+1 650-353-7911",
+          "Noah Brenner",
+          "+1 555-010-7911",
           "Cedar Park, TX 78613",
-          "linkedin.com/in/ryan-holstien-7954b665",
+          "linkedin.com/in/noah-brenner-example",
           "Senior Software Engineer",
-          "ryanholstien993@outlook.com",
+          "noah.brenner@example.test",
           "Senior Software Engineer with 10+ years of experience building secure, scalable healthcare and SaaS platforms with C#,.NET, ASP.NET Core, REST APIs, MongoDB, SQL Server, and cloud-native services on Azure and AWS. Proven record",
           "delivering microservices, third-party integrations, CI/CD automation, observability, and production support in Agile teams.",
         ].join("\n"),
@@ -102,7 +102,7 @@ describe("buildDeterministicResumeProfileExtraction", () => {
         existingProfile: createProfile(),
         existingSearchPreferences: createPreferences(),
         resumeText: [
-          "Aaron Murphy",
+          "Owen Mercer",
           "Tampa, FL",
           "Senior Software Engineer",
           "PROFESSIONAL SUMMARY",
@@ -359,7 +359,7 @@ describe("buildDeterministicResumeProfileExtraction", () => {
         existingProfile: createProfile(),
         existingSearchPreferences: createPreferences(),
         resumeText: [
-          "Ebrar Dushullovci",
+          "Elian Morava",
           "Address: Prishtina, Kosovo (Home)",
           "ABOUT MYSELF",
           "A full-stack developer focused on production automation systems.",
@@ -512,13 +512,13 @@ describe("buildDeterministicResumeProfileExtraction", () => {
       {
         existingProfile: createProfile(),
         existingSearchPreferences: createPreferences(),
-        resumeText: EBRAR_IMPORTED_TEXT,
+        resumeText: ELIAN_IMPORTED_TEXT,
       },
       "deterministic",
       "Test provider",
     );
 
-    expect(extraction.fullName).toBe("Ebrar Dushullovci");
+    expect(extraction.fullName).toBe("Elian Morava");
     expect(extraction.currentLocation).toBe("Prishtina, Kosovo");
     expect(extraction.summary).toContain("6+ years of full-stack experience");
     expect(
@@ -534,7 +534,7 @@ describe("buildDeterministicResumeProfileExtraction", () => {
         existingProfile: createProfile(),
         existingSearchPreferences: createPreferences(),
         resumeText: [
-          "Ryan Holstien",
+          "Noah Brenner",
           "PROFESSIONAL EXPERIENCE",
           "Senior Software Engineer — DataHub, Remote, CA (Dec 2021–Feb 2026)",
           "Designed C# and .NET services for a behavioral-health platform.",
@@ -583,7 +583,7 @@ describe("buildDeterministicResumeProfileExtraction", () => {
         existingProfile: createProfile(),
         existingSearchPreferences: createPreferences(),
         resumeText: [
-          "Aaron Murphy",
+          "Owen Mercer",
           "EDUCATION",
           "Florida State University — Bachelor’s Degree in Computer Science and Physics",
           "May 2011 - Sept 2015",
@@ -708,7 +708,7 @@ describe("buildDeterministicResumeProfileExtraction", () => {
     });
   });
 
-  test("repairs run-on Ebrar extraction lines before parsing later experience headers", () => {
+  test("repairs run-on Elian extraction lines before parsing later experience headers", () => {
     const extraction = buildDeterministicResumeProfileExtraction(
       {
         existingProfile: createProfile(),
@@ -789,7 +789,7 @@ describe("buildDeterministicResumeProfileExtraction", () => {
     );
   });
 
-  test("repairs the real extracted Ebrar PDF text around INFOTECH and CREA-KO", () => {
+  test("repairs the real extracted Elian PDF text around INFOTECH and CREA-KO", () => {
     const extraction = buildDeterministicResumeProfileExtraction(
       {
         existingProfile: createProfile(),
@@ -1067,9 +1067,9 @@ describe("buildDeterministicResumeProfileExtraction", () => {
         existingProfile: createProfile(),
         existingSearchPreferences: createPreferences(),
         resumeText: [
-          "Ryan Holstien",
+          "Noah Brenner",
           "Senior Software Engineer",
-          "ryanholstien993@outlook.com",
+          "noah.brenner@example.test",
           "EXPERIENCE",
           "Senior Software Engineer — DataHub, Remote, CA (Dec 2021–Feb 2026)",
           "● Designed C# and .NET services for a behavioral-health platform, using GitHub Copilot and ChatGPT to speed",
@@ -1103,7 +1103,7 @@ describe("buildDeterministicResumeProfileExtraction", () => {
         existingProfile: createProfile(),
         existingSearchPreferences: createPreferences(),
         resumeText: [
-          "Ryan Holstien",
+          "Noah Brenner",
           "Senior Software Engineer",
           "EXPERIENCE",
           "Senior Software Engineer — DataHub, Remote, CA (Dec 2021–Feb 2026)",
@@ -1128,7 +1128,7 @@ describe("buildDeterministicResumeProfileExtraction", () => {
         existingProfile: createProfile(),
         existingSearchPreferences: createPreferences(),
         resumeText: [
-          "Ryan Holstien",
+          "Noah Brenner",
           "Senior Software Engineer",
           "EXPERIENCE",
           "Staff Backend Engineer — DataHub, Remote, CA (Dec 2021–Feb 2026)",

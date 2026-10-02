@@ -33,7 +33,7 @@ describe("application preparation progress", () => {
       jobId: "job_progress",
       progress: {
         step: 7,
-        note: 'fill_text → filled "Phone" with "+383 44 123 456"',
+        note: 'type → Filled in "Phone" with "+383 44 123 456"',
         progressSteps: 4,
         elapsedMs: 12_000,
       },
@@ -92,8 +92,8 @@ describe("application preparation progress", () => {
   test("uses only fixed safe labels", () => {
     expect(
       describeApplicationPreparationProgress(
-        'suggest_answer → "Jamie Rivers, jamie@example.test"',
+        'fill_fields → Filled in "Name". "Jamie Rivers, jamie@example.test"',
       ),
-    ).toBe("Checking a form answer");
+    ).toBe("Filling in form fields");
   });
 });

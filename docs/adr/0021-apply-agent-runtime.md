@@ -16,7 +16,7 @@ The run starts wherever the job link points — a listing, a board, an aggregato
 
 Deterministic code is kept only where it is about safety, and it is deliberately small:
 
-- an answer about the person comes from their own profile, resume and saved answers, never from the model's memory of them; `suggest_answer` is how the agent asks
+- an answer about the person comes from their own profile, resume and saved answers, never from the model's memory of them; the agent is given those facts and every answer is checked against them before it is entered (ADR 0041)
 - a declaration the person makes about themselves is only made when they approved that exact kind in advance
 - a write proposed against a page that has moved on is retried against the page as it is, rather than landing in the wrong field
 - the person never has an account created, credentials entered, or a security challenge worked around

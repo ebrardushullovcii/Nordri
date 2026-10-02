@@ -63,7 +63,7 @@ import {
   compareMatchScores,
 } from "./match-assessment-ranking";
 import {
-  buildDiscoveryInstructionGuidance,
+  buildInstructionGuidance,
   enrichSearchPreferencesFromProfile,
   getActiveDiscoveryTargets,
   resolveActiveSourceInstructionArtifact,
@@ -1180,7 +1180,7 @@ async function collectTargetJobs(input: {
     }
   })();
   const adapter = discoveryAdapters[adapterKind];
-  const instructionLines = buildDiscoveryInstructionGuidance(activeInstruction);
+  const instructionLines = buildInstructionGuidance(activeInstruction);
 
   if (input.useAgentRuntime && ctx.browserRuntime.runAgentDiscovery) {
     const resumeCheckpoint = input.activeRun.targetExecutions.find(
@@ -1218,18 +1218,11 @@ async function collectTargetJobs(input: {
         input.onAgentCheckpoint(target.id, checkpoint),
       startingUrls,
       protectedPages: [...input.protectedPages.values()],
-      agentHints: {
-        widenReviewBudget: adapter.kind === "target_site",
-      },
       siteLabel: target.label,
       navigationHostnames: targetUrl ? [targetUrl.hostname] : [],
       siteInstructions: [...adapter.siteInstructions, ...instructionLines],
       toolUsageNotes: adapter.toolUsageNotes,
-      compactionHints: {
-        workflowKey: "browser_agent_live_discovery",
-      },
       relevantUrlSubstrings: adapter.relevantUrlSubstrings,
-      experimental: adapter.experimental,
       aiClient: ctx.aiClient,
       ...(input.signal ? { signal: input.signal } : {}),
       onWaitingForBrowserTab: () => {

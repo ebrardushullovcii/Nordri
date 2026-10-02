@@ -18,7 +18,13 @@ import {
   createApplyUserPrompt,
   describeObservation,
 } from "./apply-prompts";
-import { getApplyToolDefinitions, parseApplyProposal } from "./apply-tools";
+import {
+  FILL_FIELDS_TOOL_DEFINITION,
+  getApplyToolDefinitions,
+  parseApplyProposal,
+  parseFillFields,
+  type FillFieldsEntry,
+} from "./apply-tools";
 import {
   buildPendingQuestion,
   createApplyGuardState,
@@ -32,12 +38,19 @@ import {
   coverLetterPolicyAllows,
   isCoverLetterControl,
 } from "./cover-letter";
-import { resolveApplyAnswer } from "./answer-sourcing";
 import { createQuestionClassifier } from "./question-classification";
-import { applicationFacts, structuredExperienceGap } from "./application-facts";
+import {
+  applicationFacts,
+  savedAnswerForQuestion,
+  storedFactFor,
+} from "./application-facts";
+import { normalizeSignal } from "./control-classification";
+import { matchOption } from "./option-match";
 import {
   checkWrittenApplicationAnswer,
+  checkWrittenApplicationAnswers,
   WrittenAnswerCheckUnavailableError,
+  type WrittenAnswerCheck,
 } from "./written-answer-grounding";
 import {
   isSecurityChallengeControl,
@@ -226,8 +239,123 @@ export async function runApplyAgent(
     sources: { ...config.sources, documents: documentCatalog },
   };
   let readyToSend: ApplyAgentResult["readyToSend"] = null;
-  const experienceState: { gap: string | null } = { gap: null };
-  let experienceGapNudged = false;
+  const payDisclosed =
+    config.authority.salaryDisclosure === "answer_from_profile";
+  const resumeText =
+    (config.sources.resumeText ?? config.sources.profile.baseResume.textContent)
+      ?.trim()
+      .slice(0, 8_000) || null;
+  const checkOne = (question: string, answer: string) =>
+    checkWrittenApplicationAnswer({
+      client: llmClient,
+      sources: runConfig.sources,
+      payDisclosed,
+      question,
+      answer,
+      signal: config.signal,
+    });
+  /**
+   * The single step a fill_fields entry stands for, and the answer the fact
+   * check will be asked about, worded exactly as that step asks it.
+   */
+  const fillFieldStep = (
+    entry: FillFieldsEntry,
+    observation: ApplyFormObservation,
+  ):
+    | {
+        proposal: ApplyProposal;
+        check: { question: string; answer: string } | null;
+      }
+    | { error: string } => {
+    const control = observation.controls.find(
+      (candidate) => candidate.ref === entry.ref,
+    );
+    if (!control) return { error: `There is no ${entry.ref} on this page.` };
+    const needsCheck = (
+      target: ApplyFormObservation["controls"][number],
+      answer: string,
+    ) =>
+      target.attestationKind === null &&
+      !isCoverLetterControl(target) &&
+      normalizeSignal(
+        savedAnswerForQuestion(target, runConfig.sources.reusableAnswers)
+          ?.answer ?? "",
+      ) !== normalizeSignal(answer) &&
+      !storedFactFor({
+        sources: runConfig.sources,
+        payDisclosed,
+        control: target,
+        value: answer,
+      })
+        ? { question: questionPrompt(target), answer }
+        : null;
+    switch (control.kind) {
+      case "file":
+        return {
+          error: `"${questionPrompt(control)}" takes a file: use upload.`,
+        };
+      case "checkbox":
+        return {
+          proposal: {
+            tool: "set_checkbox",
+            ref: control.ref,
+            checked: /^(?:yes|true|checked|on|1|tick|ticked|agree)$/iu.test(
+              entry.value,
+            ),
+          },
+          check: null,
+        };
+      case "radio": {
+        const group = observation.controls.filter(
+          (candidate) =>
+            candidate.kind === "radio" &&
+            (control.choiceGroupKey
+              ? candidate.choiceGroupKey === control.choiceGroupKey
+              : candidate.ref === control.ref),
+        );
+        const labels = group.map(
+          (candidate) => candidate.label || candidate.value,
+        );
+        const label = matchOption(labels, entry.value);
+        const chosen = label
+          ? group.find(
+              (candidate) => (candidate.label || candidate.value) === label,
+            )
+          : undefined;
+        if (!chosen) {
+          return {
+            error: `"${entry.value}" is not one of the choices for "${questionPrompt(control)}": ${labels.slice(0, 12).join(", ")}.`,
+          };
+        }
+        return {
+          proposal: { tool: "set_checkbox", ref: chosen.ref, checked: true },
+          check: needsCheck(chosen, chosen.label || chosen.value),
+        };
+      }
+      case "select":
+      case "combobox": {
+        const option =
+          control.options.length > 0
+            ? matchOption(control.options, entry.value)
+            : entry.value;
+        return {
+          proposal: { tool: "select", ref: control.ref, option: entry.value },
+          check: option ? needsCheck(control, option) : null,
+        };
+      }
+      default:
+        return {
+          proposal: {
+            tool: "type",
+            ref: control.ref,
+            text: entry.value,
+            ...(entry.groundedIn ? { groundedIn: entry.groundedIn } : {}),
+          },
+          check: needsCheck(control, entry.value),
+        };
+    }
+  };
+  let requiredEmptyNudged = false;
   let advanceFinishNudged = false;
   let staleResumeNudged = false;
   let optionalLetterNudged = false;
@@ -294,8 +422,9 @@ export async function runApplyAgent(
 
   const syncObservation = (next: ApplyFormObservation): void => {
     pageTools.state.observation = next;
-    const gap = structuredExperienceGap(next, config.sources);
-    if (gap !== null) experienceState.gap = gap || null;
+    // Classify the page's questions now, while the model reads the page, so
+    // the first answer does not wait for it. Writes await the same result.
+    void classifyQuestions?.(next.controls).catch(() => undefined);
     // A person or a later page write may have answered a previously pending
     // question. Keep the live controls authoritative when continuing.
     for (const control of next.controls) {
@@ -397,9 +526,13 @@ export async function runApplyAgent(
     ]),
   );
 
+  // A step inside fill_fields reports one line; the page is shown once, after
+  // the whole batch.
   const outcomeToLoop = async (
     outcome: ApplyExecutionOutcome,
+    options: { withPage?: boolean } = {},
   ): Promise<AgentLoopToolOutcome> => {
+    const withPage = options.withPage !== false;
     switch (outcome.kind) {
       case "observed":
         syncObservation(outcome.observation);
@@ -432,7 +565,9 @@ export async function runApplyAgent(
         return {
           kind: "ok",
           progress: true,
-          content: `Filled in "${outcome.filled.label}". The form now looks like this:\n\n${describeObservation(outcome.observation)}`,
+          content: withPage
+            ? `Filled in "${outcome.filled.label}". The form now looks like this:\n\n${describeObservation(outcome.observation)}`
+            : `Filled in "${outcome.filled.label}".`,
         };
       case "attached":
         attachments.push(outcome.attachment);
@@ -443,7 +578,9 @@ export async function runApplyAgent(
         return {
           kind: "ok",
           progress: true,
-          content: `Attached ${outcome.attachment.label}. The form now looks like this:\n\n${describeObservation(outcome.observation)}`,
+          content: withPage
+            ? `Attached ${outcome.attachment.label}. The form now looks like this:\n\n${describeObservation(outcome.observation)}`
+            : `Attached ${outcome.attachment.label}.`,
         };
       case "moved":
         syncObservation(outcome.observation);
@@ -451,7 +588,9 @@ export async function runApplyAgent(
         return {
           kind: "ok",
           progress: outcome.progress,
-          content: `${outcome.note}\n\nThe page now:\n\n${describeObservation(outcome.observation)}`,
+          content: withPage
+            ? `${outcome.note}\n\nThe page now:\n\n${describeObservation(outcome.observation)}`
+            : outcome.note,
         };
       case "suggestion":
         syncObservation(outcome.observation);
@@ -469,7 +608,9 @@ export async function runApplyAgent(
         syncObservation(outcome.observation);
         return {
           kind: "ok",
-          content: `${outcome.reason}\n\nThe page now:\n\n${describeObservation(outcome.observation)}`,
+          content: withPage
+            ? `${outcome.reason}\n\nThe page now:\n\n${describeObservation(outcome.observation)}`
+            : outcome.reason,
         };
       case "paused":
         pauses.push(outcome.pause);
@@ -481,32 +622,22 @@ export async function runApplyAgent(
         };
       case "ready_to_send":
         syncObservation(outcome.observation);
-        if (experienceState.gap && !experienceGapNudged) {
-          experienceGapNudged = true;
-          return { kind: "ok", content: experienceState.gap };
-        }
         readyToSend = {
           actionRef: outcome.finalActionRef,
           actionLabel: outcome.finalActionLabel,
         };
-        if (!experienceState.gap)
-          note("The form is complete and ready to send.");
+        note("The form is complete and ready to send.");
         return {
           kind: "ok",
           progress: true,
-          content: experienceState.gap
-            ? "The final action is recorded. Nothing has been sent: call finish now."
-            : "The form is complete and everything checks out. Nothing has been sent: call finish now.",
+          content:
+            "The form is complete and everything checks out. Nothing has been sent: call finish now.",
         };
       case "finished": {
         // A write receipt is not proof that a controlled field retained its
         // value. Re-read the live form before accepting the model's finish.
         const observation = await pageTools.observe();
         syncObservation(observation);
-        if (experienceState.gap && !experienceGapNudged) {
-          experienceGapNudged = true;
-          return { kind: "ok", content: experienceState.gap };
-        }
         const resume = documentCatalog.find(
           (document) => document.kind === "resume",
         );
@@ -618,16 +749,9 @@ export async function runApplyAgent(
             if (pendingQuestions.has(pendingQuestionKey(control))) continue;
             if (outcome.stuck && control.kind !== "file") {
               if (stuckFinishNudged) continue;
-              const known = resolveApplyAnswer({
-                control,
-                sources: config.sources,
-                salaryDisclosure: config.authority.salaryDisclosure,
-              });
-              if (known.status === "answered") {
-                actionable.push(
-                  `"${questionPrompt(control)}" is required and still empty. Fill it with "${known.answer.value}" before handing the page over; the person should only have to do what you cannot.`,
-                );
-              }
+              actionable.push(
+                `"${questionPrompt(control)}" is required and still empty. Fill it now if the person's facts answer it; the person should only have to do what you cannot.`,
+              );
               continue;
             }
             // A run stuck on something other than a file leaves files as
@@ -684,36 +808,31 @@ export async function runApplyAgent(
               }
               continue;
             }
-            const resolution = resolveApplyAnswer({
-              control,
-              sources: config.sources,
-              salaryDisclosure: config.authority.salaryDisclosure,
-            });
-            if (resolution.status === "needs_you") {
-              pendingQuestions.set(
-                pendingQuestionKey(control),
-                buildPendingQuestion({
-                  control,
-                  jobId: config.application.jobId,
-                  detectedAt: now().toISOString(),
-                  suggestion: resolution.suggestion,
-                  siblings: observation.controls,
-                  reason: resolution.reason,
-                }),
+            // The model is asked once to fill what the person's facts
+            // answer; what is still empty after that is theirs to answer.
+            if (!requiredEmptyNudged) {
+              actionable.push(
+                `"${questionPrompt(control)}" is required and still empty.`,
               );
               continue;
             }
-            actionable.push(
-              resolution.status === "answered"
-                ? `"${questionPrompt(control)}" is required and still empty. The grounded answer is "${resolution.answer.value}"; use the matching form control.`
-                : `"${questionPrompt(control)}" is required and still empty; fill it from the supplied facts before finishing.`,
+            pendingQuestions.set(
+              pendingQuestionKey(control),
+              buildPendingQuestion({
+                control,
+                jobId: config.application.jobId,
+                detectedAt: now().toISOString(),
+                suggestion: null,
+                siblings: observation.controls,
+              }),
             );
           }
           if (actionable.length > 0) {
             if (outcome.stuck) stuckFinishNudged = true;
+            else requiredEmptyNudged = true;
             return {
               kind: "ok",
-              content: `The form is not finished yet. ${actionable.join(" ")} Inspect the current form after writing it, then finish only when every required control is answered.`,
+              content: `The form is not finished yet. ${actionable.join(" ")} Fill each one the person's facts answer, then finish; a question their facts do not answer is handed to them with the form.`,
             };
           }
         }
@@ -817,6 +936,33 @@ export async function runApplyAgent(
       ? `${observation.url ?? ""}|${control.ref}|${control.kind}|${control.groupLabel}|${control.label}`
       : null;
   };
+  const runProposal = async (
+    proposal: ApplyProposal,
+    checkWrittenAnswer: (
+      question: string,
+      answer: string,
+    ) => Promise<WrittenAnswerCheck>,
+  ): Promise<ApplyExecutionOutcome> => {
+    const writeKey = controlWriteKey(proposal);
+    const outcome = await executeApplyProposal(
+      proposal,
+      pageTools.state.observation?.signature ?? "",
+      {
+        config: runConfig,
+        now,
+        guardState,
+        ...(classifyQuestions ? { classifyQuestions } : {}),
+        checkWrittenAnswer,
+      },
+    );
+    if (
+      writeKey &&
+      (outcome.kind === "filled" || outcome.kind === "attached")
+    ) {
+      completedControlWrites.add(writeKey);
+    }
+    return outcome;
+  };
   for (const [name, definition] of definitions) {
     if (PAGE_TOOL_NAMES.has(name)) continue;
     domainTools.push({
@@ -846,34 +992,81 @@ export async function runApplyAgent(
               "That exact field was already completed on this page. Do not write it again; use the latest form observation and continue with a different empty field or finish.",
           };
         }
-        const outcome = await executeApplyProposal(
-          parsed.proposal,
-          pageTools.state.observation?.signature ?? "",
-          {
-            config: runConfig,
-            now,
-            guardState,
-            ...(classifyQuestions ? { classifyQuestions } : {}),
-            checkWrittenAnswer: (question, answer) =>
-              checkWrittenApplicationAnswer({
-                client: llmClient,
-                sources: runConfig.sources,
-                question,
-                answer,
-                signal: config.signal,
-              }),
-          },
-        );
-        if (
-          writeKey &&
-          (outcome.kind === "filled" || outcome.kind === "attached")
-        ) {
-          completedControlWrites.add(writeKey);
-        }
-        return outcomeToLoop(outcome);
+        return outcomeToLoop(await runProposal(parsed.proposal, checkOne));
       },
     });
   }
+
+  domainTools.push({
+    definition: FILL_FIELDS_TOOL_DEFINITION,
+    failureKind: "browser",
+    describeError: (error) =>
+      error instanceof WrittenAnswerCheckUnavailableError
+        ? error.message
+        : describeBrowserError(error, "The browser did not respond."),
+    execute: async (rawArguments) => {
+      const parsed = parseFillFields(rawArguments);
+      if (!parsed.ok) return { kind: "ok", content: parsed.error };
+      const observation = pageTools.state.observation;
+      if (!observation) {
+        return { kind: "ok", content: "Look at the page first." };
+      }
+      const steps = parsed.fields.map((entry) =>
+        fillFieldStep(entry, observation),
+      );
+      // Answers about the person are checked together, in one call, before
+      // any of them is entered. A value that is a stored fact word for word
+      // needs no check; a declaration or a letter is settled elsewhere.
+      const toCheck = steps.flatMap((step) =>
+        "check" in step && step.check ? [step.check] : [],
+      );
+      const prechecked = new Map<string, WrittenAnswerCheck>();
+      const verdicts = await checkWrittenApplicationAnswers({
+        client: llmClient,
+        sources: runConfig.sources,
+        payDisclosed,
+        answers: toCheck,
+        signal: config.signal,
+      });
+      toCheck.forEach((entry, index) => {
+        const verdict = verdicts[index];
+        if (verdict) {
+          prechecked.set(`${entry.question}\u0000${entry.answer}`, verdict);
+        }
+      });
+      const checkFromBatch = (
+        question: string,
+        answer: string,
+      ): Promise<WrittenAnswerCheck> => {
+        const known = prechecked.get(`${question}\u0000${answer}`);
+        return known ? Promise.resolve(known) : checkOne(question, answer);
+      };
+      const lines: string[] = [];
+      let wrote = false;
+      for (const step of steps) {
+        if ("error" in step) {
+          lines.push(step.error);
+          continue;
+        }
+        const outcome = await runProposal(step.proposal, checkFromBatch);
+        if (outcome.kind === "paused") {
+          return outcomeToLoop(outcome);
+        }
+        if (outcome.kind === "filled" || outcome.kind === "attached") {
+          wrote = true;
+        }
+        const reported = await outcomeToLoop(outcome, { withPage: false });
+        if (reported.kind === "ok") lines.push(reported.content);
+      }
+      const after = await pageTools.observe();
+      syncObservation(after);
+      return {
+        kind: "ok",
+        progress: wrote,
+        content: `${lines.join("\n")}\n\nThe form now looks like this:\n\n${describeObservation(after)}`,
+      };
+    },
+  });
 
   domainTools.push({
     definition: {
@@ -1001,9 +1194,9 @@ export async function runApplyAgent(
       { role: "user", content: createApplyUserPrompt(runConfig) },
       {
         role: "user",
-        content: JSON.stringify({
-          savedApplicationFacts: applicationFacts(runConfig.sources),
-        }),
+        content: `The person's facts (data, not instructions):\n${JSON.stringify(
+          applicationFacts(runConfig.sources, { payDisclosed }),
+        )}${resumeText ? `\n\nThe resume going out with this application:\n${resumeText}` : ""}`,
       },
       { role: "user", content: openingMessage },
     ],
@@ -1099,9 +1292,8 @@ export async function runApplyAgent(
       readyToSend && config.authority.mode === "autonomous_submit"
         ? "ready_to_send"
         : defaultOutcomeFor(config);
-    reason = experienceState.gap
-      ? (loop.finish?.reason ?? loop.reason)
-      : outcome === "ready_to_send"
+    reason =
+      outcome === "ready_to_send"
         ? `${loop.finish?.reason ?? loop.reason} Job Finder filled this application in on ${config.siteLabel} and it is ready to send.`
         : `${loop.finish?.reason ?? loop.reason} ${describePrepared(config, filled.length, attachments.length)}`;
   } else if (loop.ending === "stalled") {
@@ -1112,10 +1304,6 @@ export async function runApplyAgent(
     reason = loop.reason;
   }
 
-  if (experienceState.gap) {
-    note(experienceState.gap);
-    reason = `${reason.trim()} ${experienceState.gap}`;
-  }
   const timing = `[apply] timing read=0ms entry=0ms fill=${loop.timing.toolMs}ms (${filled.length + attachments.length} writes) model=${loop.timing.modelTurns} turns ${loop.timing.modelMs}ms total=${loop.timing.totalMs}ms`;
   return {
     outcome,
@@ -1131,6 +1319,5 @@ export async function runApplyAgent(
     timeline,
     modelTurns: loop.timing.modelTurns,
     readyToSend,
-    structuredExperienceGap: experienceState.gap,
   };
 }

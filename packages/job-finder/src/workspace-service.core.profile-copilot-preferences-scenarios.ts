@@ -241,14 +241,14 @@ describe("createJobFinderWorkspaceService – profile copilot preferences and ex
     });
 
     const githubSnapshot = await workspaceService.sendProfileCopilotMessage(
-      "https://github.com/ebrardushullovcii",
+      "https://github.com/elian-morava-example",
       {
         surface: "profile",
         section: "preferences",
       },
     );
 
-    expect(githubSnapshot.profile.githubUrl).toBe("https://github.com/ebrardushullovcii");
+    expect(githubSnapshot.profile.githubUrl).toBe("https://github.com/elian-morava-example");
 
     const eligibilitySnapshot = await workspaceService.sendProfileCopilotMessage(
       "no i dont want a visa im fine working remote",

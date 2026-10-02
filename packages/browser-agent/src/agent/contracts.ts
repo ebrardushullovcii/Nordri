@@ -49,6 +49,7 @@ export interface JobExtractor {
     > & Partial<
       Pick<
         JobPosting,
+        | 'applicationUrl'
         | 'postedAtText'
         | 'providerUpdatedAt'
         | 'responsibilities'

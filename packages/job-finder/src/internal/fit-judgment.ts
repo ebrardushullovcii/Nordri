@@ -71,10 +71,16 @@ export function jobNeedsFitJudgment(
   );
 }
 
+/** Batches sent to the model at once; the work happens on its servers. */
+const JUDGING_CONCURRENCY = 5;
+/** One pause before asking a failed batch again (an overloaded provider). */
+const JUDGING_RETRY_DELAY_MS = 3_000;
+
 /**
- * Asks the model to judge jobs, a batch per call. Returns the verdicts it
- * gave; a job missing from the result stays as it was and is asked about on
- * the next pass. A failed batch does not stop the others.
+ * Asks the model to judge jobs, a batch per call, several batches at once.
+ * A batch that fails is asked once more after a short pause. Returns the
+ * verdicts it gave; a job missing from the result stays as it was and is
+ * asked about on the next pass. A failed batch does not stop the others.
  */
 export async function judgeJobFitsInBatches<
   TJob extends JobPosting & { id: string },
@@ -87,6 +93,8 @@ export async function judgeJobFitsInBatches<
   now?: () => string;
   signal?: AbortSignal;
   batchSize?: number;
+  concurrency?: number;
+  retryDelayMs?: number;
 }): Promise<Map<string, FitJudgment>> {
   const judgments = new Map<string, FitJudgment>();
   const judgeJobFits = input.aiClient.judgeJobFits?.bind(input.aiClient);
@@ -95,23 +103,34 @@ export async function judgeJobFitsInBatches<
   }
   const now = input.now ?? (() => new Date().toISOString());
   const batchSize = Math.max(1, input.batchSize ?? JOB_FIT_JUDGING_BATCH_SIZE);
+  const retryDelayMs = input.retryDelayMs ?? JUDGING_RETRY_DELAY_MS;
+  const batches: TJob[][] = [];
   for (let start = 0; start < input.jobs.length; start += batchSize) {
-    input.signal?.throwIfAborted();
-    const batch = input.jobs.slice(start, start + batchSize);
-    let results: JobFitJudgmentResult[];
-    try {
-      results = await judgeJobFits({
+    batches.push(input.jobs.slice(start, start + batchSize));
+  }
+
+  const judgeBatch = async (batch: readonly TJob[]): Promise<void> => {
+    const ask = () =>
+      judgeJobFits({
         ...(input.signal ? { signal: input.signal } : {}),
         assessmentDate: now().slice(0, 10),
         profile: input.profile,
         searchPreferences: input.searchPreferences,
         jobs: batch.map((job) => ({ jobId: job.id, posting: job })),
       });
+    let results: JobFitJudgmentResult[];
+    try {
+      results = await ask();
     } catch (error) {
-      if (input.signal?.aborted) {
-        throw error;
+      if (input.signal?.aborted) throw error;
+      await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+      input.signal?.throwIfAborted();
+      try {
+        results = await ask();
+      } catch (retryError) {
+        if (input.signal?.aborted) throw retryError;
+        return;
       }
-      continue;
     }
     const byId = new Map(batch.map((job) => [job.id, job]));
     const judgedAt = now();
@@ -130,6 +149,27 @@ export async function judgeJobFitsInBatches<
         }),
       );
     }
-  }
+  };
+
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (next < batches.length) {
+      input.signal?.throwIfAborted();
+      const batch = batches[next];
+      next += 1;
+      if (batch) await judgeBatch(batch);
+    }
+  };
+  await Promise.all(
+    Array.from(
+      {
+        length: Math.min(
+          Math.max(1, input.concurrency ?? JUDGING_CONCURRENCY),
+          batches.length,
+        ),
+      },
+      () => worker(),
+    ),
+  );
   return judgments;
 }

@@ -361,7 +361,12 @@ describe("deriveSourceDebugStartingUrls", () => {
         "search_filter_probe",
         searchPreferences,
       ),
-    ).toEqual(["https://kosovajob.com/?q=software", "https://kosovajob.com/"]);
+    ).toEqual([
+      "https://kosovajob.com/?q=software",
+      // The learned line names /jobs; the agent reads that it returns 404.
+      "https://kosovajob.com/jobs",
+      "https://kosovajob.com/",
+    ]);
   });
 });
 

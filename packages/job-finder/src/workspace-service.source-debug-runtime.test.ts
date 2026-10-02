@@ -653,7 +653,7 @@ describe("createJobFinderWorkspaceService", () => {
       "replay_verification",
     ]);
     expect(snapshot.recentSourceDebugRuns[0]?.state).toBe("completed");
-    expect(latestArtifact?.status).toBe("draft");
+    expect(latestArtifact?.status).toBe("validated");
     expect(latestRunId).toBeTruthy();
 
     const latestRun = await workspaceService.getSourceDebugRunDetails(
@@ -772,7 +772,7 @@ describe("createJobFinderWorkspaceService", () => {
       "replay_verification",
     ]);
     expect(snapshot.recentSourceDebugRuns[0]?.state).toBe("completed");
-    expect(latestArtifact?.status).toBe("draft");
+    expect(latestArtifact?.status).toBe("validated");
     expect(latestRunId).toBeTruthy();
 
     const latestRun = await workspaceService.getSourceDebugRunDetails(
@@ -1071,164 +1071,4 @@ describe("createJobFinderWorkspaceService", () => {
     expect(snapshot.recentSourceDebugRuns[0]?.state).toBe("completed");
   });
 
-  test("filters noisy step-budget and direct-url hack lines out of learned source guidance", async () => {
-    const baseRuntime = createCatalogBrowserSessionRuntime({
-      sessions: [
-        {
-          source: "target_site",
-          status: "ready",
-          driver: "catalog_seed",
-          label: "Browser session ready",
-          detail: "Validated recently.",
-          lastCheckedAt: "2026-03-20T10:04:00.000Z",
-        },
-      ],
-      catalog: [
-        JobPostingSchema.parse({
-          source: "target_site",
-          sourceJobId: "linkedin_noise_case",
-          discoveryMethod: "catalog_seed",
-          canonicalUrl:
-            "https://www.linkedin.com/jobs/view/linkedin_noise_case",
-          title: "Frontend Developer",
-          company: "Signal Systems",
-          location: "Remote",
-          workMode: ["remote"],
-          applyPath: "easy_apply",
-          easyApplyEligible: true,
-          postedAt: "2026-03-20T09:00:00.000Z",
-          postedAtText: null,
-          discoveredAt: "2026-03-20T10:04:00.000Z",
-          salaryText: null,
-          summary: "Noise filter case.",
-          description: "Noise filter case.",
-          keySkills: ["React"],
-          responsibilities: [],
-          minimumQualifications: [],
-          preferredQualifications: [],
-          seniority: null,
-          employmentType: null,
-          department: null,
-          team: null,
-          employerWebsiteUrl: null,
-          employerDomain: null,
-          benefits: [],
-        }),
-      ],
-    });
-    const browserRuntime: BrowserSessionRuntime = {
-      ...baseRuntime,
-      runAgentDiscovery(source) {
-        return Promise.resolve(
-          createDiscoveryRunResult({
-            source,
-            startedAt: "2026-03-20T10:00:00.000Z",
-            completedAt: "2026-03-20T10:01:00.000Z",
-            querySummary: "Agent discovery test run",
-            warning: "Agent discovery stopped after 12 steps. Found 0 jobs.",
-            jobs: [
-              JobPostingSchema.parse({
-                source: "target_site",
-                sourceJobId: "linkedin_noise_case",
-                discoveryMethod: "catalog_seed",
-                canonicalUrl:
-                  "https://www.linkedin.com/jobs/view/linkedin_noise_case",
-                title: "Frontend Developer",
-                company: "Signal Systems",
-                location: "Remote",
-                workMode: ["remote"],
-                applyPath: "easy_apply",
-                easyApplyEligible: true,
-                postedAt: "2026-03-20T09:00:00.000Z",
-                postedAtText: null,
-                discoveredAt: "2026-03-20T10:04:00.000Z",
-                salaryText: null,
-                summary: "Noise filter case.",
-                description: "Noise filter case.",
-                keySkills: ["React"],
-                responsibilities: [],
-                minimumQualifications: [],
-                preferredQualifications: [],
-                seniority: null,
-                employmentType: null,
-                department: null,
-                team: null,
-                employerWebsiteUrl: null,
-                employerDomain: null,
-                benefits: [],
-              }),
-            ],
-            agentMetadata: {
-              steps: 12,
-              incomplete: true,
-              transcriptMessageCount: 7,
-              reviewTranscript: [],
-              compactionState: null,
-              compactionUsedFallbackTrigger: false,
-              phaseCompletionMode: "timed_out_with_partial_evidence",
-              phaseCompletionReason:
-                "The phase timed out before the worker returned a structured finish call.",
-              phaseEvidence: null,
-              debugFindings: {
-                summary:
-                  "Use the jobs route and reusable show-all collection path.",
-                reliableControls: [
-                  "Recommendation rows expose show-all links that open reusable prefiltered job lists.",
-                  "Location encoding: Use %2C for comma and %20 for spaces.",
-                  "Jobs landing URL: https://www.linkedin.com/jobs/search/?location=Prishtina%2C%20Kosovo&geoId=103175575",
-                ],
-                trickyFilters: [
-                  "Job availability may change frequently - verify current postings before applying.",
-                  "Direct URL navigation with query parameters bypasses the need to use the search box manually.",
-                  "CurrentJobId appears in the URL after viewing a listing.",
-                ],
-                navigationTips: [
-                  "Start from the jobs hub and recommendation collections rather than the homepage.",
-                ],
-                applyTips: [
-                  "Use the on-site apply entry when the detail page exposes it.",
-                ],
-                warnings: [
-                  "Agent discovery stopped after 12 steps. Found 0 jobs.",
-                ],
-              },
-            },
-          }),
-        );
-      },
-    };
-    const { repository, workspaceService } = createWorkspaceServiceHarness({
-      seed: {
-        ...createSeed(),
-        savedJobs: [],
-        tailoredAssets: [],
-      },
-      browserRuntime,
-      aiClient: createAgentAiClient(),
-    });
-
-    await workspaceService.runSourceDebug("target_linkedin_default");
-    const latestArtifact = (
-      await repository.listSourceInstructionArtifacts()
-    ).at(-1);
-    const learnedLines = [
-      ...(latestArtifact?.navigationGuidance ?? []),
-      ...(latestArtifact?.searchGuidance ?? []),
-      ...(latestArtifact?.detailGuidance ?? []),
-      ...(latestArtifact?.applyGuidance ?? []),
-      ...(latestArtifact?.warnings ?? []),
-    ]
-      .join("\n")
-      .toLowerCase();
-
-    expect(learnedLines).not.toContain("agent discovery stopped after");
-    expect(learnedLines).not.toContain("location encoding");
-    expect(learnedLines).not.toContain("%2c");
-    expect(learnedLines).not.toContain("query parameters");
-    expect(learnedLines).not.toContain("geoid");
-    expect(learnedLines).not.toContain("currentjobid");
-    expect(learnedLines).not.toContain(
-      "job availability may change frequently",
-    );
-  });
 });

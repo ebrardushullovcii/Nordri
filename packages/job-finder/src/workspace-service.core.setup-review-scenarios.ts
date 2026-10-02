@@ -341,8 +341,8 @@ describe("createJobFinderWorkspaceService", () => {
               reason: "Choose which imported full name to use.",
               severity: "recommended",
               status: "pending",
-              proposedValue: "Aaron Murphy",
-              sourceSnippet: "Aaron Murphy",
+              proposedValue: "Owen Mercer",
+              sourceSnippet: "Owen Mercer",
               sourceCandidateId: reviewCandidateId,
               sourceRunId: latestRunId,
               createdAt: "2026-04-12T09:00:00.000Z",
@@ -388,10 +388,10 @@ describe("createJobFinderWorkspaceService", () => {
             },
             label: "Full name",
             sourceKind: "parser_literal",
-            value: "Aaron Murphy",
+            value: "Owen Mercer",
             normalizedValue: null,
-            valuePreview: "Aaron Murphy",
-            evidenceText: "Aaron Murphy",
+            valuePreview: "Owen Mercer",
+            evidenceText: "Owen Mercer",
             sourceBlockIds: ["block_name"],
             confidence: 0.99,
             confidenceBreakdown: {
@@ -413,9 +413,9 @@ describe("createJobFinderWorkspaceService", () => {
                 id: "choice_document_text",
                 label: "Full name",
                 sourceLabel: "Document text",
-                value: "Aaron Murphy",
-                valuePreview: "Aaron Murphy",
-                evidenceText: "Aaron Murphy",
+                value: "Owen Mercer",
+                valuePreview: "Owen Mercer",
+                evidenceText: "Owen Mercer",
                 confidence: 0.97,
                 recommended: true,
                 notes: [],
@@ -467,9 +467,9 @@ describe("createJobFinderWorkspaceService", () => {
       repository.listResumeImportFieldCandidates({ runId: latestRunId }),
     ]);
 
-    expect(profile.fullName).toBe("Aaron Murphy");
-    expect(profile.firstName).toBe("Aaron");
-    expect(profile.lastName).toBe("Murphy");
+    expect(profile.fullName).toBe("Owen Mercer");
+    expect(profile.firstName).toBe("Owen");
+    expect(profile.lastName).toBe("Mercer");
     expect(latestRun?.status).toBe("applied");
     expect(latestRun?.candidateCounts).toMatchObject({
       autoApplied: 1,
@@ -477,7 +477,7 @@ describe("createJobFinderWorkspaceService", () => {
     });
     expect(latestCandidates[0]).toEqual(
       expect.objectContaining({
-        value: "Aaron Murphy",
+        value: "Owen Mercer",
         resolution: "auto_applied",
         resolutionReason: "review_confirmed",
       }),

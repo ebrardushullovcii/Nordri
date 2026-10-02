@@ -116,7 +116,8 @@ export async function classifyApplicationQuestions(input: {
 /**
  * The page's questions, classified once each and remembered by their wording
  * for the rest of the run, so a page costs one call however many fields it
- * has.
+ * has. Calls run one after another, so a page classified ahead of time (while
+ * the model is still deciding what to type) is not classified twice.
  */
 export function createQuestionClassifier(input: {
   client: LLMClient;
@@ -125,7 +126,8 @@ export function createQuestionClassifier(input: {
   controls: readonly ApplyFormControl[],
 ) => Promise<ReadonlyMap<string, ApplyQuestionClassification>> {
   const known = new Map<string, ApplyQuestionClassification>();
-  return async (controls) => {
+  let queue: Promise<unknown> = Promise.resolve();
+  const classify = async (controls: readonly ApplyFormControl[]) => {
     const unseen = new Map<
       string,
       { prompt: string; kind: string; options: string[] }
@@ -151,5 +153,10 @@ export function createQuestionClassifier(input: {
       }
     }
     return known;
+  };
+  return (controls) => {
+    const next = queue.then(() => classify(controls));
+    queue = next.catch(() => undefined);
+    return next;
   };
 }

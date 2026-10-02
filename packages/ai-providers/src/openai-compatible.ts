@@ -914,6 +914,10 @@ export function countDistinguishingListingTerms(job: {
 export const MINIMUM_DISTINGUISHING_LISTING_TERMS = 12;
 
 /** The agent's opening placeholder before it has worked; never an answer. */
+/** What the Resume Assistant says when the AI could not answer at all. */
+const RESUME_ASSISTANT_UNAVAILABLE_REPLY =
+  "The AI could not answer this time, so nothing was changed. Send the request again.";
+
 const RESUME_EDIT_PLACEHOLDER_CONTENT =
   /^I am reviewing the requested résumé change against the saved evidence\.?$/u;
 
@@ -934,7 +938,7 @@ export const NO_AI_PROVIDER_REASON = "No AI model is available right now.";
 export const PROFILE_ASSISTANT_UNFINISHED_MESSAGE =
   "The Assistant stopped before it could finish this request, so nothing was changed. Your question is kept; ask it again or say it another way.";
 
-/** The Assistant ran twice without finishing and the built-in editor had nothing either. */
+/** The Assistant ran twice without finishing and prepared nothing. */
 export class ProfileCopilotUnfinishedError extends Error {
   constructor() {
     super(PROFILE_ASSISTANT_UNFINISHED_MESSAGE);
@@ -954,14 +958,6 @@ function shouldRetryUnfinishedProfileRun(reply: ProfileCopilotReply): boolean {
     stopReason === "no_progress" ||
     stopReason === "emergency_ceiling" ||
     stopReason === "cost_budget"
-  );
-}
-
-/** The built-in editor's reply when it could not make a change either. */
-function isProfileCopilotNonAnswer(reply: ProfileCopilotReply): boolean {
-  return (
-    reply.patchGroups.length === 0 &&
-    /could not turn it into a safe structured profile edit/i.test(reply.content)
   );
 }
 
@@ -1148,21 +1144,10 @@ export function createJobFinderAiClientFromEnvironment(
     getStatus() {
       return primaryClient.getStatus();
     },
-    async extractProfileFromResume(input) {
-      try {
-        return await primaryClient.extractProfileFromResume(input);
-      } catch (error) {
-        logFallbackError("extractProfileFromResume", error);
-        const fallback = await fallbackClient.extractProfileFromResume(input);
-        return {
-          ...fallback,
-          notes: uniqueStrings([
-            ...fallback.notes,
-            "Fell back to the deterministic resume parser after the model call failed.",
-            `Primary AI extraction failed: ${summarizeError(error)}`,
-          ]),
-        };
-      }
+    // No rule-made stand-in when a model call fails (ADR 0041): the failure
+    // is reported and what the person had stays as it was.
+    extractProfileFromResume(input) {
+      return primaryClient.extractProfileFromResume(input);
     },
     async extractResumeImportStage(input) {
       const startedAtMs = performance.now();
@@ -1236,33 +1221,28 @@ export function createJobFinderAiClientFromEnvironment(
       );
     },
     async adjudicateResumeImportCandidates(input) {
+      // Without the model's ruling every conflict stays in setup review for
+      // the person; nothing is decided for them.
       if (!primaryClient.adjudicateResumeImportCandidates) {
-        const fallback =
-          await fallbackClient.adjudicateResumeImportCandidates?.(input);
         return {
-          candidates: fallback?.candidates ?? [],
-          notes: uniqueStrings([
-            ...(fallback?.notes ?? []),
-            "Primary AI import adjudication is unavailable; material conflicts stayed in setup review.",
-          ]),
-          warnings: fallback?.warnings ?? [],
+          candidates: [],
+          notes: [
+            "The AI could not review the conflicting resume details, so they stayed in setup review.",
+          ],
+          warnings: [],
         };
       }
-
       try {
         return await primaryClient.adjudicateResumeImportCandidates(input);
       } catch (error) {
         logFallbackError("adjudicateResumeImportCandidates", error);
-        const fallback =
-          await fallbackClient.adjudicateResumeImportCandidates?.(input);
         return {
-          candidates: fallback?.candidates ?? [],
-          notes: uniqueStrings([
-            ...(fallback?.notes ?? []),
-            "Fell back to deterministic review-first resume import adjudication after the model call failed.",
-            `Primary AI import adjudication failed: ${summarizeError(error)}`,
-          ]),
-          warnings: fallback?.warnings ?? [],
+          candidates: [],
+          notes: [
+            "The AI could not review the conflicting resume details, so they stayed in setup review.",
+            `AI import review failed: ${summarizeError(error)}`,
+          ],
+          warnings: [],
         };
       }
     },
@@ -1387,20 +1367,12 @@ export function createJobFinderAiClientFromEnvironment(
         ) {
           return reply;
         }
-        const fallback = await fallbackClient.reviseResumeDraft(input);
         const timedOut = reply.executionReceipt?.stopReason === "time_budget";
         return {
-          ...fallback,
-          // The built-in reply "could not safely turn that request into a
-          // grounded patch" blamed the request when the AI had only been too
-          // slow to answer ("the second one", two model calls of 61 s and
-          // 110 s).
-          ...(timedOut && fallback.patches.length === 0
-            ? {
-                content:
-                  "The AI took too long to answer this time, so nothing was changed. Send the request again.",
-              }
-            : {}),
+          content: timedOut
+            ? "The AI took too long to answer this time, so nothing was changed. Send the request again."
+            : RESUME_ASSISTANT_UNAVAILABLE_REPLY,
+          patches: [],
           executionReceipt: createFallbackExecutionReceipt(
             "resume_guided_edit",
             timedOut ? "time_budget" : "no_progress",
@@ -1408,9 +1380,9 @@ export function createJobFinderAiClientFromEnvironment(
         };
       } catch (error) {
         logFallbackError("reviseResumeDraft", error);
-        const fallback = await fallbackClient.reviseResumeDraft(input);
         return {
-          ...fallback,
+          content: RESUME_ASSISTANT_UNAVAILABLE_REPLY,
+          patches: [],
           executionReceipt: createFallbackExecutionReceipt(
             "resume_guided_edit",
             "permanent_failure",
@@ -1419,27 +1391,6 @@ export function createJobFinderAiClientFromEnvironment(
       }
     },
     async reviseCandidateProfile(input) {
-      function shouldUseDeterministicProfileReply(
-        primaryReply: ProfileCopilotReply,
-        fallbackReply: ProfileCopilotReply,
-      ): boolean {
-        if (
-          fallbackReply.patchGroups.length > primaryReply.patchGroups.length
-        ) {
-          return true;
-        }
-
-        if (primaryReply.patchGroups.length > 0) {
-          return false;
-        }
-
-        return (
-          /could not turn|guidance only|no profile edits were proposed/i.test(
-            primaryReply.content,
-          ) && fallbackReply.content.trim() !== primaryReply.content.trim()
-        );
-      }
-
       try {
         let primaryReply = await runProfileCopilotAgentTask({
           client: primaryClient,
@@ -1447,11 +1398,10 @@ export function createJobFinderAiClientFromEnvironment(
         });
 
         // A run that stops short of finish_task used to be thrown away whole,
-        // proposals included, and the built-in editor answered "I could not
-        // turn it into a safe structured profile edit" with no card (a live
-        // "add a target role" run). A run that stopped with nothing prepared
-        // gets one fresh attempt; one that prepared cards keeps them, and its
-        // receipt tells the service it stopped early.
+        // proposals included (a live "add a target role" run). A run that
+        // stopped with nothing prepared gets one fresh attempt; one that
+        // prepared cards keeps them, and its receipt tells the service it
+        // stopped early.
         if (
           shouldRetryUnfinishedProfileRun(primaryReply) &&
           primaryReply.patchGroups.length === 0
@@ -1462,51 +1412,24 @@ export function createJobFinderAiClientFromEnvironment(
           });
         }
 
-        if (primaryReply.executionReceipt?.stopReason !== "completed") {
-          if (primaryReply.patchGroups.length > 0) {
-            return primaryReply;
-          }
-          const fallback = await fallbackClient.reviseCandidateProfile(input);
-          if (isProfileCopilotNonAnswer(fallback)) {
-            // Neither the model nor the built-in editor has anything to show.
-            // Recording the editor's "could not turn it into a safe edit" as
-            // the answer left a dead end; failing keeps the question on
-            // screen with Ask again under it.
-            throw new ProfileCopilotUnfinishedError();
-          }
-          return {
-            ...fallback,
-            executionReceipt: createFallbackExecutionReceipt(
-              "profile_copilot",
-              "no_progress",
-            ),
-          };
+        // Nothing prepared and not finished: the question stays on screen
+        // with Ask again under it. No rule-made edit stands in (ADR 0041).
+        if (
+          primaryReply.executionReceipt?.stopReason !== "completed" &&
+          primaryReply.patchGroups.length === 0
+        ) {
+          throw new ProfileCopilotUnfinishedError();
         }
-
-        if (primaryReply.patchGroups.length === 0) {
-          const fallbackReply =
-            await fallbackClient.reviseCandidateProfile(input);
-
-          if (shouldUseDeterministicProfileReply(primaryReply, fallbackReply)) {
-            return {
-              ...fallbackReply,
-              executionReceipt: createFallbackExecutionReceipt(
-                "profile_copilot",
-                "no_progress",
-              ),
-            };
-          }
-        }
-
         return primaryReply;
       } catch (error) {
         if (error instanceof ProfileCopilotUnfinishedError) {
           throw error;
         }
         logFallbackError("reviseCandidateProfile", error);
-        const fallback = await fallbackClient.reviseCandidateProfile(input);
+        // The service turns this into the outage message on screen.
         return {
-          ...fallback,
+          content: PROFILE_ASSISTANT_UNFINISHED_MESSAGE,
+          patchGroups: [],
           executionReceipt: createFallbackExecutionReceipt(
             "profile_copilot",
             "permanent_failure",
@@ -1539,8 +1462,9 @@ export function createJobFinderAiClientFromEnvironment(
         return await primaryClient.assessJobFit(input);
       } catch (error) {
         if (input.signal?.aborted) throw error;
+        // No verdict stands in: the job stays as it was and says so.
         logFallbackError("assessJobFit", error);
-        return fallbackClient.assessJobFit(input);
+        return null;
       }
     },
     async judgeJobFits(input) {
@@ -1566,8 +1490,10 @@ export function createJobFinderAiClientFromEnvironment(
         if (input.signal?.aborted) {
           throw error;
         }
+        // A failed read is reported to whoever asked, never passed off as a
+        // page with no jobs on it.
         logFallbackError("extractJobsFromPage", error);
-        return fallbackClient.extractJobsFromPage(input);
+        throw error;
       }
     },
     async analyzeBrowserVisualSnapshot(input) {
@@ -1575,7 +1501,7 @@ export function createJobFinderAiClientFromEnvironment(
         return await browserVisualProvider.analyzeBrowserVisualSnapshot(input);
       } catch (error) {
         logFallbackError("analyzeBrowserVisualSnapshot", error);
-        return fallbackClient.analyzeBrowserVisualSnapshot!(input);
+        throw error;
       }
     },
     async chatWithTools(messages, tools, options?: ChatWithToolsOptions) {

@@ -12,7 +12,6 @@ import type { AgentConfig } from "../types";
 import type { Page } from "playwright";
 import { describeNonPosting, runJobSearchAgent } from "./job-search-agent";
 import { createJobSearchPrompts } from "./job-search-prompts";
-import { captureCompactDiscoveryObservation } from "../compact-discovery-observer";
 
 function rawPage(overrides: Partial<RawApplyPage> = {}): RawApplyPage {
   return {
@@ -674,60 +673,31 @@ describe("job search agent", () => {
     expect(result.error).toBeUndefined();
   });
 
-  test("gives extraction observed posting URLs without saving scanner candidates automatically", async () => {
-    const pages = { current: rawPage() };
+  test("gives extraction the page's posting links without saving them automatically", async () => {
     const jobUrls = [
       "https://jobs.example.test/jobs/one",
       "https://jobs.example.test/jobs/two",
     ];
-    const page = {
-      url: () => pages.current.url,
-      title: () => Promise.resolve("Careers"),
-      locator: () => ({
-        innerText: () => Promise.resolve(pages.current.bodyText),
+    const pages = {
+      current: rawPage({
+        links: jobUrls.map((href, index) => ({
+          index,
+          label: "Platform Engineer",
+          href,
+          target: "",
+          visible: true,
+          topOffset: 100 + index * 40,
+        })),
       }),
-      evaluate: () =>
-        Promise.resolve({
-          structuredPostings: jobUrls.map((canonicalUrl) => ({
-            sourceJobId: null,
-            canonicalUrl,
-            title: "Platform Engineer",
-            company: "Northwind",
-            location: "Manchester",
-            description: "Build dependable platforms.",
-            postedAtText: null,
-            salaryText: null,
-            employmentType: null,
-            workModeHints: [],
-          })),
-          cardContainers: [],
-          elements: [],
-          cardSignatures: [],
-        }),
-    } as unknown as Page;
-    const observed = await captureCompactDiscoveryObservation({
-      page,
-      targetId: "careers",
-      observationId: "test_identity",
-      revision: 1,
-      observedAt: "2026-09-26T10:00:00.000Z",
-    });
-    expect(observed.kind).toBe("supported");
-    if (observed.kind !== "supported")
-      throw new Error("Expected job metadata.");
-    expect(observed.postingCandidates.map((job) => job.canonicalUrl)).toEqual(
-      jobUrls,
-    );
-
+    };
     const extractJobsFromPage = vi.fn<JobExtractor["extractJobsFromPage"]>(() =>
       Promise.resolve([]),
     );
     const result = await runJobSearchAgent({
       hands: hands(pages),
-      page,
       config: config(),
       llmClient: scripted([
-        { name: "extract_jobs", args: { pageType: "job_detail" } },
+        { name: "extract_jobs", args: { pageType: "search_results" } },
         { name: "finish", args: { reason: "Read the page." } },
       ]),
       jobExtractor: { extractJobsFromPage },

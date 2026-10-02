@@ -17,7 +17,7 @@ import {
 } from "@nordri/db";
 
 import { createJobFinderWorkspaceService } from "./index";
-import { buildDiscoveryInstructionGuidance } from "./internal/workspace-helpers";
+import { buildInstructionGuidance } from "./internal/workspace-helpers";
 import {
   createSavedJob,
   createSeed,
@@ -1262,7 +1262,7 @@ describe("workspace source-target metadata mirror integrity", () => {
     // Discovery projects the bound instruction into prefixed agent guidance
     // lines; the campaign run must carry them.
     const expectedGuidanceLines =
-      buildDiscoveryInstructionGuidance(validatedArtifact);
+      buildInstructionGuidance(validatedArtifact);
     expect(expectedGuidanceLines.length).toBeGreaterThan(0);
     const callsBeforeRun = captured.length;
     await service.runCampaignNow();

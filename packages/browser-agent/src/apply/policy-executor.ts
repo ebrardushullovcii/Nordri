@@ -1,13 +1,8 @@
 import type { ApplicationAttemptQuestion } from "@nordri/contracts";
 
-import {
-  matchOption,
-  personFacingNeedsYouReason,
-  resolveApplyAnswer,
-  resolveReusableAnswer,
-  type ApplyAnswerResolution,
-} from "./answer-sourcing";
+import { savedAnswerForQuestion, storedFactFor } from "./application-facts";
 import { normalizeSignal } from "./control-classification";
+import { matchOption } from "./option-match";
 import type { ApplyQuestionClassification } from "./question-classification";
 import {
   buildCoverLetterRequest,
@@ -252,7 +247,7 @@ export function buildPendingQuestion(input: {
   reason?: string | null;
 }): ApplicationAttemptQuestion {
   const { control, suggestion } = input;
-  const note = input.reason ? personFacingNeedsYouReason(input.reason) : null;
+  const note = input.reason?.trim() || null;
   const radioSiblings =
     control.kind === "radio" && control.choiceGroupKey
       ? (input.siblings ?? []).filter(
@@ -332,106 +327,122 @@ async function withModelQuestionKinds(
   };
 }
 
-type ChoiceDecision =
-  | { kind: "use"; option: string; answer: ApplyAnswer | null }
-  | { kind: "leave"; reason: string; suggestion: ApplyAnswer | null }
-  | { kind: "refused"; reason: string };
+const PAY_KEPT_PRIVATE_REASON =
+  "This asks what pay you expect, and you asked Job Finder to leave that to you.";
+
+type AnswerDecision =
+  | { kind: "use"; answer: ApplyAnswer }
+  /**
+   * Left for the person. `permission` marks their own choice to answer this
+   * themselves (pay they keep private), which no model answer overrides.
+   */
+  | {
+      kind: "leave";
+      reason: string;
+      suggestion: ApplyAnswer | null;
+      permission: boolean;
+    };
+
+function savedSuggestion(
+  control: ApplyFormControl,
+  config: ApplyAgentConfig,
+): ApplyAnswer | null {
+  const saved = savedAnswerForQuestion(control, config.sources.reusableAnswers);
+  return saved
+    ? {
+        value: saved.answer,
+        kind: control.questionKind,
+        sourceKind: "answer_library",
+        sourceId: `answerLibrary.${saved.id}`,
+        provenanceLabel: "your answer to this question",
+        groundedIn: ["your answer to this question"],
+      }
+    : null;
+}
 
 /**
- * Which option goes in for a choice the model made (ADR 0041). The model's
- * choice stands when it matches the person's stored answer or the fact check
- * finds it supported by their profile, resume and saved answers (ADR 0021).
- * Pay the person keeps to themselves is left for them. Without a fact check
- * (an offline run) the stored answer decides, as it did before.
+ * Whether the model's answer about the person goes in (ADR 0041, ADR 0021).
+ *
+ * The model read the question and the person's facts and chose the answer.
+ * The person's saved answer to this exact question, or a value that is one of
+ * their stored facts word for word, goes in as that; anything else is read by
+ * the fact check against their profile,
+ * resume and saved answers before it is written. Pay the person keeps to
+ * themselves is left for them, whatever the model proposed. Without a fact
+ * check (an offline run) only stored facts go in.
  */
-async function decideChoice(input: {
+async function decideAnswer(input: {
   deps: ApplyExecutorDeps;
   control: ApplyFormControl;
-  resolution: ApplyAnswerResolution;
-  offered: readonly string[];
-  proposed: string;
-}): Promise<ChoiceDecision> {
-  const { deps, control, resolution, offered } = input;
-  const proposed =
-    offered.length > 0
-      ? (matchOption(offered, input.proposed) ?? input.proposed)
-      : input.proposed;
-  const stored =
-    resolution.status === "answered"
-      ? offered.length > 0
-        ? matchOption(offered, resolution.answer.value)
-        : resolution.answer.value
-      : null;
-  const storedAnswer =
-    resolution.status === "answered"
-      ? resolution.answer
-      : resolution.status === "map_choice"
-        ? resolution.context
-        : resolution.status === "needs_you"
-          ? resolution.suggestion
-          : null;
-  if (resolution.status === "needs_you" && resolution.permission === true) {
+  value: string;
+  groundedIn?: readonly string[] | undefined;
+}): Promise<AnswerDecision> {
+  const { deps, control, value } = input;
+  const config = deps.config;
+  const payDisclosed =
+    config.authority.salaryDisclosure === "answer_from_profile";
+  if (control.questionKind === "salary_expectation" && !payDisclosed) {
+    const savedPay = config.sources.profile.answerBank.salaryExpectations;
     return {
       kind: "leave",
-      reason: resolution.reason,
-      suggestion: resolution.suggestion,
+      reason: PAY_KEPT_PRIVATE_REASON,
+      suggestion: savedPay
+        ? {
+            value: savedPay,
+            kind: "salary_expectation",
+            sourceKind: "profile",
+            sourceId: "profile.answerBank.salaryExpectations",
+            provenanceLabel: "your saved pay answer",
+            groundedIn: ["your saved pay answer"],
+          }
+        : null,
+      permission: true,
     };
   }
-  if (
-    stored !== null &&
-    normalizeSignal(stored) === normalizeSignal(proposed)
-  ) {
-    return {
-      kind: "use",
-      option: stored,
-      answer:
-        resolution.status === "answered"
-          ? { ...resolution.answer, value: stored }
-          : null,
-    };
+  // The person's own answer to this exact question, even a bare Yes or No.
+  const saved = savedSuggestion(control, config);
+  if (saved && normalizeSignal(saved.value) === normalizeSignal(value)) {
+    return { kind: "use", answer: { ...saved, value } };
+  }
+  const stored = storedFactFor({
+    sources: config.sources,
+    payDisclosed,
+    control,
+    value,
+  });
+  if (stored) {
+    return { kind: "use", answer: stored };
   }
   if (!deps.checkWrittenAnswer) {
-    if (
-      resolution.status === "needs_you" ||
-      resolution.status === "map_choice"
-    ) {
-      return {
-        kind: "leave",
-        reason:
-          resolution.status === "needs_you"
-            ? resolution.reason
-            : "Your saved answer does not settle which choice to use.",
-        suggestion: storedAnswer,
-      };
-    }
-    if (resolution.status === "answered") {
-      return stored !== null
-        ? {
-            kind: "use",
-            option: stored,
-            answer: { ...resolution.answer, value: stored },
-          }
-        : {
-            kind: "refused",
-            reason: `The saved answer for ${questionPrompt(control)} does not match an option on the form.`,
-          };
-    }
-    return { kind: "use", option: proposed, answer: null };
+    return {
+      kind: "leave",
+      reason: "Job Finder could not check this answer against your facts.",
+      suggestion: savedSuggestion(control, config),
+      permission: false,
+    };
   }
-  const check = await deps.checkWrittenAnswer(
-    questionPrompt(control),
-    proposed,
-  );
+  const check = await deps.checkWrittenAnswer(questionPrompt(control), value);
   if (!check.supported) {
-    return { kind: "leave", reason: check.reason, suggestion: storedAnswer };
+    return {
+      kind: "leave",
+      reason: check.reason,
+      suggestion: savedSuggestion(control, config),
+      permission: false,
+    };
   }
   return {
     kind: "use",
-    option: proposed,
-    answer:
-      resolution.status === "map_choice"
-        ? { ...resolution.context, value: proposed }
-        : null,
+    answer: {
+      value,
+      kind: control.questionKind,
+      sourceKind: "generated",
+      sourceId: `written.${control.ref}`,
+      provenanceLabel: "written for this application",
+      groundedIn:
+        input.groundedIn && input.groundedIn.length > 0
+          ? [...input.groundedIn]
+          : ["your profile"],
+    },
   };
 }
 
@@ -461,6 +472,59 @@ function leaveUnansweredForPerson(input: {
     controlRef: control.ref,
     observation,
   };
+}
+
+/**
+ * An answer the fact check did not support. The model is told why and may
+ * answer again from the facts; a required question is kept for the person in
+ * case no supported answer comes.
+ */
+function unsupportedAnswer(input: {
+  control: ApplyFormControl;
+  observation: ApplyFormObservation;
+  config: ApplyAgentConfig;
+  at: string;
+  reason: string;
+  suggestion: ApplyAnswer | null;
+}): ApplyExecutionOutcome {
+  const { control, observation, config, at } = input;
+  return {
+    kind: "suggestion",
+    answer: null,
+    note: `That answer was not entered because the person's facts do not support it: ${input.reason} Use only supported facts, or leave this field blank and continue with the other fields. ${control.required ? "The required question has been kept for the person if no supported answer is available." : "This field is optional; do not ask the person to fill it."}`,
+    question: control.required
+      ? buildPendingQuestion({
+          control,
+          jobId: config.application.jobId,
+          detectedAt: at,
+          suggestion: input.suggestion,
+          siblings: observation.controls,
+        })
+      : null,
+    controlRef: control.ref,
+    observation,
+  };
+}
+
+/** Where an answer the model proposed was not entered. */
+function notEntered(input: {
+  deps: ApplyExecutorDeps;
+  control: ApplyFormControl;
+  observation: ApplyFormObservation;
+  at: string;
+  decision: Extract<AnswerDecision, { kind: "leave" }>;
+}): ApplyExecutionOutcome {
+  const args = {
+    control: input.control,
+    observation: input.observation,
+    config: input.deps.config,
+    at: input.at,
+    reason: input.decision.reason,
+    suggestion: input.decision.suggestion,
+  };
+  return input.decision.permission || !input.deps.checkWrittenAnswer
+    ? leaveUnansweredForPerson(args)
+    : unsupportedAnswer(args);
 }
 
 function bareOrigin(value: string): string | null {
@@ -954,75 +1018,6 @@ export async function executeApplyProposal(
   const observation = await config.hands.observe();
   deps.guardState.lastOnSiteUrl = observation.url;
 
-  if (proposal.tool === "suggest_answer") {
-    const control = findControl(observation, proposal.ref);
-    if (!control) {
-      return {
-        kind: "refused",
-        reason: `There is no ${proposal.ref} on this page.`,
-        observation,
-      };
-    }
-    const resolution = resolveApplyAnswer({
-      control,
-      sources: config.sources,
-      salaryDisclosure: config.authority.salaryDisclosure,
-    });
-    if (resolution.status === "answered") {
-      return {
-        kind: "suggestion",
-        answer: resolution.answer,
-        note: `"${questionPrompt(control)}": ${resolution.answer.value} — from ${resolution.answer.provenanceLabel}.`,
-        question: null,
-        controlRef: control.ref,
-        observation,
-      };
-    }
-    if (resolution.status === "map_choice") {
-      return {
-        kind: "suggestion",
-        answer: resolution.context,
-        note: `Saved context for "${questionPrompt(control)}": ${resolution.context.value}. Choices: ${control.options.join(", ")}.`,
-        question: null,
-        controlRef: control.ref,
-        observation,
-      };
-    }
-    if (resolution.status === "write_free_text") {
-      return {
-        kind: "suggestion",
-        answer: null,
-        note: `Nothing stored answers "${questionPrompt(control)}". It takes prose, so write it yourself from ${resolution.grounding.join(", ")}.`,
-        question: null,
-        controlRef: control.ref,
-        observation,
-      };
-    }
-    return {
-      kind: "suggestion",
-      answer: resolution.suggestion,
-      note: `Nothing can answer "${questionPrompt(control)}" honestly. ${resolution.reason}${
-        resolution.suggestion
-          ? ` The closest is "${resolution.suggestion.value}", which does not fit.`
-          : ""
-      } If it is required, finish and say this one needs the person.`,
-      // Recorded now so the person gets the exact question if the run ends
-      // without it being answered.
-      question: control.required
-        ? buildPendingQuestion({
-            control,
-            jobId: config.application.jobId,
-            detectedAt: at,
-            suggestion: resolution.suggestion,
-            siblings: observation.controls,
-            reason: resolution.reason,
-          })
-        : null,
-      controlRef: control.ref,
-      observation,
-    };
-  }
-
   // A page that moved on since the model looked is retried, not stopped: the
   // model gets what is there now and decides again.
   if (observation.signature !== seenSignature) {
@@ -1348,79 +1343,17 @@ export async function executeApplyProposal(
       }
 
       // The model read the question and the person's facts and chose what to
-      // type (ADR 0041). An answer about the person still comes only from
-      // them (ADR 0021): text that matches a stored fact goes in as that
-      // fact, and anything else is read by the fact check against their
-      // profile, resume and saved answers before it is written. Pay the
-      // person keeps to themselves is never typed for them.
-      const resolution = resolveApplyAnswer({
+      // type (ADR 0041); decideAnswer keeps it to the person's own facts.
+      const decision = await decideAnswer({
+        deps,
         control,
-        sources: config.sources,
-        salaryDisclosure: config.authority.salaryDisclosure,
+        value: proposal.text,
+        groundedIn: proposal.groundedIn,
       });
-      if (
-        resolution.status === "needs_you" &&
-        (resolution.permission === true || !deps.checkWrittenAnswer)
-      ) {
-        return leaveUnansweredForPerson({
-          control,
-          observation,
-          config,
-          at,
-          reason: resolution.reason,
-          suggestion: resolution.suggestion,
-        });
+      if (decision.kind === "leave") {
+        return notEntered({ deps, control, observation, at, decision });
       }
-      const matchesStoredFact =
-        resolution.status === "answered" &&
-        normalizeSignal(resolution.answer.value) ===
-          normalizeSignal(proposal.text);
-      if (!matchesStoredFact && deps.checkWrittenAnswer) {
-        const check = await deps.checkWrittenAnswer(
-          questionPrompt(control),
-          proposal.text,
-        );
-        if (!check.supported) {
-          return {
-            kind: "suggestion",
-            answer: null,
-            note: `That answer was not written because it contains an unsupported applicant claim: ${check.reason} ${resolution.status === "answered" ? `Their saved answer is "${resolution.answer.value}". ` : ""}Use only supported facts, or leave this field blank and continue with the other fields. ${control.required ? "The required question has been kept for the person if no supported answer is available." : "This field is optional; do not ask the person to fill it."}`,
-            question: control.required
-              ? buildPendingQuestion({
-                  control,
-                  jobId: config.application.jobId,
-                  detectedAt: at,
-                  suggestion:
-                    resolution.status === "needs_you"
-                      ? resolution.suggestion
-                      : null,
-                  siblings: observation.controls,
-                })
-              : null,
-            controlRef: control.ref,
-            observation,
-          };
-        }
-      }
-      // Without a fact check (an offline run), a stored fact still wins over
-      // the model's text.
-      const answer: ApplyAnswer =
-        resolution.status === "answered" &&
-        (matchesStoredFact || !deps.checkWrittenAnswer)
-          ? resolution.answer
-          : {
-              value: proposal.text,
-              kind: control.questionKind,
-              sourceKind: "generated",
-              sourceId: `written.${control.ref}`,
-              provenanceLabel: "written for this application",
-              groundedIn:
-                proposal.groundedIn && proposal.groundedIn.length > 0
-                  ? proposal.groundedIn
-                  : resolution.status === "write_free_text"
-                    ? resolution.grounding
-                    : ["your profile"],
-            };
+      const answer = decision.answer;
 
       const write = await writeUnderGuard(deps, {
         declaredValue: answer.value,
@@ -1457,32 +1390,21 @@ export async function executeApplyProposal(
         };
       }
       const control = await withModelQuestionKinds(deps, observation, found);
-      const resolution = resolveApplyAnswer({
-        control,
-        sources: config.sources,
-        salaryDisclosure: config.authority.salaryDisclosure,
-      });
-      const choice = await decideChoice({
-        deps,
-        control,
-        resolution,
-        offered: control.options,
-        proposed: proposal.option,
-      });
-      if (choice.kind === "leave") {
-        return leaveUnansweredForPerson({
-          control,
+      const option =
+        control.options.length > 0
+          ? matchOption(control.options, proposal.option)
+          : proposal.option;
+      if (!option) {
+        return {
+          kind: "refused",
+          reason: `"${proposal.option}" is not one of the choices for "${questionPrompt(control)}": ${control.options.slice(0, 12).join(", ")}.`,
           observation,
-          config,
-          at,
-          reason: choice.reason,
-          suggestion: choice.suggestion,
-        });
+        };
       }
-      if (choice.kind === "refused") {
-        return { kind: "refused", reason: choice.reason, observation };
+      const choice = await decideAnswer({ deps, control, value: option });
+      if (choice.kind === "leave") {
+        return notEntered({ deps, control, observation, at, decision: choice });
       }
-      const option = choice.option;
       const write = await writeUnderGuard(deps, {
         declaredValue: option,
         write: () => config.hands.chooseOption(control.ref, option),
@@ -1501,14 +1423,15 @@ export async function executeApplyProposal(
           ref: control.ref,
           label: questionPrompt(control),
           questionKind: control.questionKind,
-          answer: choice.answer ?? {
-            value: option,
-            kind: control.questionKind,
-            sourceKind: "generated",
-            sourceId: `chosen.${control.ref}`,
-            provenanceLabel: "chosen from the options on the form",
-            groundedIn: ["the options this form offered"],
-          },
+          answer:
+            choice.answer.sourceKind === "generated"
+              ? {
+                  ...choice.answer,
+                  value: option,
+                  sourceId: `chosen.${control.ref}`,
+                  provenanceLabel: "chosen from the options on the form",
+                }
+              : { ...choice.answer, value: option },
           at,
         },
         observation: await config.hands.observe(),
@@ -1526,55 +1449,38 @@ export async function executeApplyProposal(
       }
       const control = await withModelQuestionKinds(deps, observation, found);
       // A radio button is a choice like a select's option: the model's pick
-      // stands when the person's facts support it (ADR 0041).
+      // stands when the person's facts support it (ADR 0041). A declaration
+      // is settled by the person's approvals below instead.
       let radioAnswer: ApplyAnswer | null = null;
-      if (control.kind === "radio" && proposal.checked) {
-        const groupControls = observation.controls.filter(
-          (candidate) =>
-            candidate.kind === "radio" &&
-            (control.choiceGroupKey
-              ? candidate.choiceGroupKey === control.choiceGroupKey
-              : candidate.ref === control.ref),
-        );
+      if (
+        control.kind === "radio" &&
+        proposal.checked &&
+        control.attestationKind === null
+      ) {
         const proposedOption = control.label || control.value;
-        const resolution = resolveApplyAnswer({
-          control,
-          sources: config.sources,
-          salaryDisclosure: config.authority.salaryDisclosure,
-        });
-        const choice = await decideChoice({
+        const choice = await decideAnswer({
           deps,
           control,
-          resolution,
-          offered: groupControls.map(
-            (candidate) => candidate.label || candidate.value,
-          ),
-          proposed: proposedOption,
+          value: proposedOption,
         });
         if (choice.kind === "leave") {
-          return leaveUnansweredForPerson({
+          return notEntered({
+            deps,
             control,
             observation,
-            config,
             at,
-            reason: choice.reason,
-            suggestion: choice.suggestion,
+            decision: choice,
           });
         }
-        if (
-          choice.kind === "refused" ||
-          normalizeSignal(choice.option) !== normalizeSignal(proposedOption)
-        ) {
-          return {
-            kind: "refused",
-            reason:
-              choice.kind === "refused"
-                ? choice.reason
-                : `That choice contradicts ${resolution.status === "answered" ? resolution.answer.provenanceLabel : "the person's saved answer"}. The grounded answer is "${choice.option}"; select its matching option instead.`,
-            observation,
-          };
-        }
-        radioAnswer = choice.answer;
+        radioAnswer =
+          choice.answer.sourceKind === "generated"
+            ? {
+                ...choice.answer,
+                value: proposedOption,
+                sourceId: `chosen.${control.ref}`,
+                provenanceLabel: "chosen on the form",
+              }
+            : choice.answer;
       }
       // A declaration the person makes about themselves is theirs. This is the
       // one place the model is overruled rather than advised. It is not,
@@ -1588,7 +1494,7 @@ export async function executeApplyProposal(
       // their approval: they answered it once and asked to keep it.
       const savedDeclaration =
         control.attestationKind !== null && proposal.checked
-          ? resolveReusableAnswer(control, config.sources.reusableAnswers)
+          ? savedSuggestion(control, config)
           : null;
       const savedDeclarationSaysYes =
         savedDeclaration !== null &&

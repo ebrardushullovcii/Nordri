@@ -521,7 +521,7 @@ describe("job extraction with openai-compatible client", () => {
     }
   });
 
-  test("falls back when extracted jobs payload omits the top-level jobs array", async () => {
+  test("reports a failed read when the extracted jobs payload omits the top-level jobs array", async () => {
     const errorSpy = vi
       .spyOn(console, "error")
       .mockImplementation(() => undefined);
@@ -539,19 +539,17 @@ describe("job extraction with openai-compatible client", () => {
       const client =
         createJobFinderAiClientFromEnvironment(createEnvironment());
 
-      const jobs = await client.extractJobsFromPage({
-        pageText: "Frontend Engineer role at Acme",
-        pageUrl: "https://jobs.example.com/search",
-        pageType: "search_results",
-        maxJobs: 5,
-      });
-
-      expect(jobs).toEqual([]);
-      expect(errorSpy).toHaveBeenCalled();
+      // A failed read is reported, never passed off as a page with no jobs.
+      await expect(
+        client.extractJobsFromPage({
+          pageText: "Frontend Engineer role at Acme",
+          pageUrl: "https://jobs.example.com/search",
+          pageType: "search_results",
+          maxJobs: 5,
+        }),
+      ).rejects.toThrow("Expected a top-level jobs array");
       expect(errorSpy).toHaveBeenCalledWith(
-        expect.stringContaining(
-          "[AI Provider] extractJobsFromPage failed; falling back to deterministic client",
-        ),
+        expect.stringContaining("[AI Provider] extractJobsFromPage failed."),
       );
       expect(errorSpy).toHaveBeenCalledWith(
         expect.stringContaining("Expected a top-level jobs array"),
@@ -676,7 +674,7 @@ describe("job extraction with openai-compatible client", () => {
     }
   });
 
-  test("reports search-results extraction timeouts clearly before falling back", async () => {
+  test("reports search-results extraction timeouts clearly", async () => {
     vi.useFakeTimers();
     const errorSpy = vi
       .spyOn(console, "error")
@@ -713,16 +711,16 @@ describe("job extraction with openai-compatible client", () => {
         maxJobs: 5,
       });
 
+      const rejected = expect(extractionPromise).rejects.toThrow(
+        "Model request timed out",
+      );
       // 240s is the total budget for search-results extraction; the idle
       // clock retries once inside it before the total deadline ends the run.
       await vi.advanceTimersByTimeAsync(240_001);
 
-      await expect(extractionPromise).resolves.toEqual([]);
-      expect(errorSpy).toHaveBeenCalled();
+      await rejected;
       expect(errorSpy).toHaveBeenCalledWith(
-        expect.stringContaining(
-          "[AI Provider] extractJobsFromPage failed; falling back",
-        ),
+        expect.stringContaining("[AI Provider] extractJobsFromPage failed."),
       );
       expect(errorSpy).toHaveBeenCalledWith(
         expect.stringContaining("Model request timed out"),

@@ -21,7 +21,7 @@ describe("createJobFinderWorkspaceService", () => {
         id: "resume_inferred_company",
         fileName: "CV.pdf",
         textContent: [
-          "Ebrar Dushullovci",
+          "Elian Morava",
           "Address: Prishtina, Kosovo (Home)",
           "ABOUT ME",
           "A passionate software developer with 6+ years of full-stack experience building impactful solutions using React, Next.js, Node.js, .NET Core, SQL Server and AWS/Azure.",
@@ -47,7 +47,7 @@ describe("createJobFinderWorkspaceService", () => {
           {
             pageNumber: 1,
             text: [
-              "Ebrar Dushullovci",
+              "Elian Morava",
               "Address: Prishtina, Kosovo (Home)",
               "ABOUT ME",
               "A passionate software developer with 6+ years of full-stack experience building impactful solutions using React, Next.js, Node.js, .NET Core, SQL Server and AWS/Azure.",
@@ -62,7 +62,7 @@ describe("createJobFinderWorkspaceService", () => {
           },
         ],
         blocks: [
-          { id: "page_1_block_1", pageNumber: 1, readingOrder: 0, text: "Ebrar Dushullovci", kind: "paragraph", sectionHint: "identity", bbox: null, sourceParserKinds: ["pdfjs_text"], sourceConfidence: 0.72 },
+          { id: "page_1_block_1", pageNumber: 1, readingOrder: 0, text: "Elian Morava", kind: "paragraph", sectionHint: "identity", bbox: null, sourceParserKinds: ["pdfjs_text"], sourceConfidence: 0.72 },
           { id: "page_1_block_2", pageNumber: 1, readingOrder: 1, text: "Address: Prishtina, Kosovo (Home)", kind: "paragraph", sectionHint: "contact", bbox: null, sourceParserKinds: ["pdfjs_text"], sourceConfidence: 0.72 },
           { id: "page_1_block_3", pageNumber: 1, readingOrder: 2, text: "ABOUT ME", kind: "heading", sectionHint: "identity", bbox: null, sourceParserKinds: ["pdfjs_text"], sourceConfidence: 0.72 },
           { id: "page_1_block_4", pageNumber: 1, readingOrder: 3, text: "A passionate software developer with 6+ years of full-stack experience building impactful solutions using React, Next.js, Node.js, .NET Core, SQL Server and AWS/Azure.", kind: "paragraph", sectionHint: "summary", bbox: null, sourceParserKinds: ["pdfjs_text"], sourceConfidence: 0.72 },
@@ -74,7 +74,7 @@ describe("createJobFinderWorkspaceService", () => {
           { id: "page_1_block_10", pageNumber: 1, readingOrder: 9, text: "• Supported and enhanced a comprehensive .NET desktop application for business management covering inventory, sales, tax documentation, POS, restaurant orders, car repair, and fuel-pump control.", kind: "list_item", sectionHint: "experience", bbox: null, sourceParserKinds: ["pdfjs_text"], sourceConfidence: 0.72 },
         ],
         fullText: [
-          "Ebrar Dushullovci",
+          "Elian Morava",
           "Address: Prishtina, Kosovo (Home)",
           "ABOUT ME",
           "A passionate software developer with 6+ years of full-stack experience building impactful solutions using React, Next.js, Node.js, .NET Core, SQL Server and AWS/Azure.",
@@ -431,10 +431,10 @@ describe("createJobFinderWorkspaceService", () => {
                 {
                   target: { section: "identity", key: "fullName", recordId: null },
                   label: "Full name",
-                  value: "Ebrar Dushullovci",
-                  normalizedValue: "Ebrar Dushullovci",
-                  valuePreview: "Ebrar Dushullovci",
-                  evidenceText: "Ebrar Dushullovci",
+                  value: "Elian Morava",
+                  normalizedValue: "Elian Morava",
+                  valuePreview: "Elian Morava",
+                  evidenceText: "Elian Morava",
                   sourceBlockIds: ["page_1_block_1"],
                   confidence: 0.98,
                   notes: [],
@@ -492,7 +492,7 @@ describe("createJobFinderWorkspaceService", () => {
         id: "resume_malformed_arrays",
         fileName: "CV.pdf",
         textContent: [
-          "Ebrar Dushullovci",
+          "Elian Morava",
           "WORK EXPERIENCE",
           "INFOTECH L.L.C – PRISHTINA, KOSOVO",
           ".NET DEVELOPER – 08/2019 – 01/2022",
@@ -510,12 +510,12 @@ describe("createJobFinderWorkspaceService", () => {
         languageHints: [],
         pages: [],
         blocks: [
-          { id: "page_1_block_1", pageNumber: 1, readingOrder: 0, text: "Ebrar Dushullovci", kind: "paragraph", sectionHint: "identity", bbox: null, sourceParserKinds: ["pdfjs_text"], sourceConfidence: 0.72 },
+          { id: "page_1_block_1", pageNumber: 1, readingOrder: 0, text: "Elian Morava", kind: "paragraph", sectionHint: "identity", bbox: null, sourceParserKinds: ["pdfjs_text"], sourceConfidence: 0.72 },
           { id: "page_1_block_2", pageNumber: 1, readingOrder: 1, text: "INFOTECH L.L.C – PRISHTINA, KOSOVO", kind: "heading", sectionHint: "identity", bbox: null, sourceParserKinds: ["pdfjs_text"], sourceConfidence: 0.72 },
           { id: "page_1_block_3", pageNumber: 1, readingOrder: 2, text: ".NET DEVELOPER – 08/2019 – 01/2022", kind: "paragraph", sectionHint: "experience", bbox: null, sourceParserKinds: ["pdfjs_text"], sourceConfidence: 0.72 },
         ],
         fullText: [
-          "Ebrar Dushullovci",
+          "Elian Morava",
           "WORK EXPERIENCE",
           "INFOTECH L.L.C – PRISHTINA, KOSOVO",
           ".NET DEVELOPER – 08/2019 – 01/2022",

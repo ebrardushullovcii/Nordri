@@ -264,13 +264,13 @@ describe('deterministic ai client profile copilot core', () => {
       searchPreferences: createPreferences(),
       context: { surface: 'profile', section: 'basics' },
       relevantReviewItems: [],
-      request: 'set my preferred display name to Ebrar',
+      request: 'set my preferred display name to Elian',
     })
 
     expect(reply.patchGroups[0]).toEqual(expect.objectContaining({ summary: 'Update preferred display name', applyMode: 'applied' }))
     expect(reply.patchGroups[0]?.operations[0]).toEqual({
       operation: 'replace_identity_fields',
-      value: { preferredDisplayName: 'Ebrar' },
+      value: { preferredDisplayName: 'Elian' },
     })
   })
 

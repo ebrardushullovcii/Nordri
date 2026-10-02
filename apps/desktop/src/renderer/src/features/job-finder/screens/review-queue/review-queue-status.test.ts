@@ -546,8 +546,8 @@ describe("safe application presentation labels", () => {
         resumeReview: {
           status: "original_resume",
           sourceDocumentId: "resume_original",
-          fileName: "Ebrar.pdf",
-          filePath: "/tmp/Ebrar.pdf",
+          fileName: "Elian.pdf",
+          filePath: "/tmp/Elian.pdf",
         },
       }),
     );

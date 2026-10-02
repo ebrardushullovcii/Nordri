@@ -806,11 +806,11 @@ export function summarizeError(error: unknown): string {
 export function logFallbackError(operation: string, error: unknown): void {
   try {
     console.error(
-      `[AI Provider] ${operation} failed; falling back to deterministic client. ${summarizeError(error)}`,
+      `[AI Provider] ${operation} failed. ${summarizeError(error)}`,
     );
   } catch {
-    // Logging must never interrupt the deterministic fallback path. This can
-    // happen when a detached desktop process outlives its original stdio pipe.
+    // Logging must never interrupt the caller. This can happen when a
+    // detached desktop process outlives its original stdio pipe.
   }
 }
 

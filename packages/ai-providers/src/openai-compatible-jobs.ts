@@ -78,7 +78,8 @@ export function buildJobsExtractionPrompt(input: {
         'Jobs may appear in any language. Preserve the original language of titles, companies, locations, and descriptions. In location, write the country\'s name instead of a two-letter code when the page or its site makes the country clear ("Berlin, Germany", not "Berlin, DE"); a code can name both a country and a US state.',
         "When a listing names its own company, use that name, even when the site's header or title shows a different brand. When the page belongs to one employer (a company careers site rather than a job board) and the listings name no company, company is that employer's name for every job; a city, region or team name is never a company. Put places in location; when a listing states no place, write \"Location not stated\".",
         "Only real job postings count: an entry needs a role title a person could apply for. Skip industry pages, product pages, categories, departments, navigation links and anything whose title is not a job, as well as general applications and talent-pool invitations, listings that say they are closed or no longer accepting applications, and sign-in or account pages.",
-        "Each job should include: sourceJobId when explicit, canonicalUrl when stable, title, company, location, salaryText (or null), description, summary when confidently available, workMode, keySkills when visible, postedAt or postedAtText when visible, employerWebsiteUrl when proven, applyPath, and easyApplyEligible.",
+        "canonicalUrl is the link to the posting's own page (where its details are read); applicationUrl is its apply or application-form link when the card shows one separately, otherwise null. Never use an apply, sign-in or share link as canonicalUrl.",
+        "Each job should include: sourceJobId when explicit, canonicalUrl when stable, applicationUrl, title, company, location, salaryText (or null), description, summary when confidently available, workMode, keySkills when visible, postedAt or postedAtText when visible, employerWebsiteUrl when proven, applyPath, and easyApplyEligible.",
         'Use only these applyPath values: "easy_apply", "external_redirect", or "unknown". Use "unknown" when the page does not prove the path.',
         "Set easyApplyEligible to true only when the page clearly shows an inline easy-apply path; otherwise return false.",
         'Use any "Relevant in-scope URLs found on page" entries and observed job records or links to recover stable canonical job URLs whenever possible.',
@@ -94,7 +95,8 @@ export function buildJobsExtractionPrompt(input: {
         `You extract one structured job posting from a job-detail page on ${input.pageHostLabel}.`,
         'Return JSON with a "jobs" array containing one job object.',
         'Jobs may appear in any language. Preserve the original language of titles, companies, locations, and descriptions. In location, write the country\'s name instead of a two-letter code when the page or its site makes the country clear ("Berlin, Germany", not "Berlin, DE"); a code can name both a country and a US state.',
-        "Each job should include canonicalUrl, title, company, location, salaryText (or null), description, summary when confidently available, workMode, keySkills, responsibilities, minimumQualifications, preferredQualifications, seniority, employmentType, department, team, postedAt or postedAtText when visible, employerWebsiteUrl when proven, applyPath, and easyApplyEligible.",
+        "canonicalUrl is the address of this posting page: the current page URL, unless the page names a different permanent link for this same posting. applicationUrl is the page's apply or application-form link when it has one, otherwise null. Never use an apply, sign-in or share link as canonicalUrl.",
+        "Each job should include canonicalUrl, applicationUrl, title, company, location, salaryText (or null), description, summary when confidently available, workMode, keySkills, responsibilities, minimumQualifications, preferredQualifications, seniority, employmentType, department, team, postedAt or postedAtText when visible, employerWebsiteUrl when proven, applyPath, and easyApplyEligible.",
         "description is the posting's own text as the page words it (the role, responsibilities, requirements, benefits), with paragraphs on separate lines; leave out site menus, cookie notices, sign-in prompts and other jobs. Put places in location; when the posting states no place, write \"Location not stated\". When the page belongs to one employer and the posting names no company, company is that employer's name.",
         'Use only these applyPath values: "easy_apply", "external_redirect", or "unknown". Use "unknown" when the page does not prove the path.',
         "Set easyApplyEligible to true only when the page clearly shows an inline easy-apply path; otherwise return false.",
@@ -214,6 +216,11 @@ export function normalizeExtractedJobs(input: {
     );
     const rawDescription = trimToNull(toStr(raw.description));
     const employerWebsiteUrl = toUrlOrNull(raw.employerWebsiteUrl);
+    const applicationUrl =
+      buildGenericCanonicalUrl(
+        toStr(raw.applicationUrl) || toStr(raw.applyUrl),
+        input.pageUrl,
+      ) || null;
     const summary = trimToNull(raw.summary);
     const description = rawDescription ?? summary ?? "";
     const candidate = {
@@ -221,6 +228,10 @@ export function normalizeExtractedJobs(input: {
       sourceJobId: derivedSourceJobId,
       discoveryMethod: "browser_agent" as const,
       canonicalUrl: derivedCanonicalUrl,
+      applicationUrl:
+        applicationUrl && applicationUrl !== derivedCanonicalUrl
+          ? applicationUrl
+          : null,
       title: originalRawTitle ?? "",
       company: rawCompany ?? "",
       location: trimToNull(raw.location) ?? "Location not stated",

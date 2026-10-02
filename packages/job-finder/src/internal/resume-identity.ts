@@ -110,7 +110,7 @@ export function isLikelyPersonName(value: string): boolean {
  * Two rules that the plain line test lacked: every word must look like a name
  * part (capitalised, so a sentence tail such as "at scale." is never a name),
  * and a two-column header that the text extractor flattened into one line
- * ("Aaron Murphy Tampa, FL") still yields the leading name rather than being
+ * ("Owen Mercer Tampa, FL") still yields the leading name rather than being
  * rejected for the trailing location.
  */
 export function extractIdentityNameFromLine(line: string): string | null {

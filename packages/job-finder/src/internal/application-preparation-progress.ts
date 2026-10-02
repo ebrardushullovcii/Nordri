@@ -12,11 +12,11 @@ export function describeApplicationPreparationProgress(note: string): string {
   if (note === "asking the assistant what to do next") {
     return "Thinking about the next form step";
   }
-  if (note.startsWith("suggest_answer")) return "Checking a form answer";
+  if (note.startsWith("fill_fields")) return "Filling in form fields";
   if (note.startsWith("observe")) return "Reading the application form";
-  if (note.startsWith("fill_text")) return "Filling a text field";
-  if (note.startsWith("choose_option")) return "Choosing a form option";
-  if (note.startsWith("set_toggle")) return "Setting a form choice";
+  if (note.startsWith("type ")) return "Filling a text field";
+  if (note.startsWith("select ")) return "Choosing a form option";
+  if (note.startsWith("set_checkbox")) return "Setting a form choice";
   if (note.startsWith("upload")) return "Attaching an approved document";
   if (note.startsWith("finished")) return "Finishing the review checkpoint";
   if (note.includes("time limit")) return "The assistant response timed out";
