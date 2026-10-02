@@ -329,6 +329,7 @@ function extractLocationFromHeaderLine(
     .reverse();
 
   for (const segment of delimitedSegments) {
+    if (isLikelyHeaderLocation(segment)) return normalizeLocationLabel(segment);
     const segmentMatch = segment.match(
       /([A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]+)*,\s*(?:[A-Z]{2}(?:\s+\d{5}(?:-\d{4})?)?|[A-Za-z][A-Za-z\s.'-]+))$/,
     );
@@ -342,6 +343,8 @@ function extractLocationFromHeaderLine(
   }
 
   candidate = trimTrailingContactFragments(candidate);
+  if (isLikelyHeaderLocation(candidate))
+    return normalizeLocationLabel(candidate);
   const match = candidate.match(
     /([A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]+)*,\s*(?:[A-Z]{2}(?:\s+\d{5}(?:-\d{4})?)?|[A-Za-z][A-Za-z\s.'-]+))$/,
   );
@@ -394,6 +397,9 @@ function isLikelyHeaderLocation(value: string | null): boolean {
   }
 
   return (
+    /^[A-Za-z][A-Za-z\s.'-]+,\s*[A-Za-z][A-Za-z\s.'-]+,\s*[A-Za-z][A-Za-z\s.'-]+$/.test(
+      cleaned,
+    ) ||
     /^[A-Za-z][A-Za-z\s.'-]+,\s*[A-Za-z][A-Za-z\s.'-]+$/.test(cleaned) ||
     /^[A-Za-z][A-Za-z\s.'-]+,\s*[A-Z]{2}(?:\s+\d{5}(?:-\d{4})?)?$/.test(
       cleaned,
@@ -834,10 +840,23 @@ export function buildDeterministicResumeProfileExtraction(
       );
       return title && title.length <= 80 ? [title] : [];
     });
-  const extractedTargetRoles = uniqueStrings([
-    ...(headline ? [headline] : []),
-    ...recentExperienceTitles,
-  ]).slice(0, 3);
+  const objectiveRoles = findSectionBodyLinesByAliases(lines, [
+    "OBJECTIVE",
+    "CAREER OBJECTIVE",
+  ]).flatMap((line) => {
+    const match = line.match(
+      /(?:seeking|looking for|objective:)\s+(?:an?\s+)?(.+?)(?:\s+(?:role|position|job|with|where|at)\b|[.!]|$)/i,
+    );
+    const role = cleanLine(match?.[1] ?? line);
+    return role.length <= 80 && headlineKeywordPattern.test(role) ? [role] : [];
+  });
+  const extractedTargetRoles =
+    objectiveRoles.length > 0
+      ? uniqueStrings(objectiveRoles)
+      : uniqueStrings([
+          ...(headline ? [headline] : []),
+          ...recentExperienceTitles,
+        ]).slice(0, 3);
   const targetRoles =
     extractedTargetRoles.length > 0
       ? extractedTargetRoles

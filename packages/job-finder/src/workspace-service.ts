@@ -2,6 +2,7 @@ import type {
   BrowserSessionRuntime,
   OpenBrowserSessionOptions,
 } from "@nordri/browser-runtime";
+import { writeApplicationDocumentText } from "./internal/application-document-writer";
 import { randomUUID } from "node:crypto";
 import { recordApplicationsSentByPerson } from "./internal/application-sent-by-person";
 import { refreshAutomaticApplicationFailurePauses } from "./internal/automatic-safeguards";
@@ -77,7 +78,10 @@ import {
   createWorkspaceCampaignMethods,
   recordCampaignDiscoveryResult,
 } from "./internal/workspace-campaign-methods";
-import { assertCampaignCanRun } from "./internal/campaign-dashboard";
+import {
+  assertCampaignCanRun,
+  searchPreferencesForCampaignRun,
+} from "./internal/campaign-dashboard";
 import { ensureCampaignState } from "./internal/campaign-dashboard";
 import {
   deriveGlobalDailyApplicationPreparationCapacity,
@@ -900,7 +904,7 @@ export function createJobFinderWorkspaceService(
     await executor({
       campaignId: campaign.id,
       mode: campaign.mode,
-      searchPreferences: campaign.searchPreferences,
+      searchPreferences: searchPreferencesForCampaignRun(campaign),
       runJobBudget: campaign.limits.discoveryRunJobBudget ?? null,
     });
     await recordCampaignDiscoveryResult({
@@ -1494,6 +1498,8 @@ export function createJobFinderWorkspaceService(
 
   return {
     shutdown,
+    writeApplicationDocumentText: (input) =>
+      writeApplicationDocumentText(context, input),
     ...snapshotProfileMethods,
     resetWorkspace,
     runResumeImport: (input) =>

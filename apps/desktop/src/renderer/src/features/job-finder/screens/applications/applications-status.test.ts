@@ -14,6 +14,7 @@ import {
   getApplicationSubmissionAnswer,
   applicationRecordAwaitsUser,
 } from "./applications-status";
+import { applicationRecordNeedsUser } from "./applications-screen-helpers";
 
 function createRecord(
   overrides: Partial<ReturnType<typeof ApplicationRecordSchema.parse>> = {},
@@ -770,4 +771,19 @@ it("reads View application on a sent application with no saved next step", () =>
   });
   expect(getApplicationNextStepLabel(record)).toBe("View application");
 });
+});
+
+describe("an application the person cancelled", () => {
+  it("is not waiting on them", () => {
+    const cancelled = createRecord({
+      status: "drafting",
+      lastAttemptState: "cancelled",
+      lastActionLabel: "Cancelled by you",
+      nextActionLabel: "Try again, or finish it yourself on the job site.",
+    });
+    expect(applicationRecordNeedsUser(cancelled)).toBe(false);
+    expect(
+      applicationRecordNeedsUser({ ...cancelled, lastAttemptState: "failed" }),
+    ).toBe(true);
+  });
 });

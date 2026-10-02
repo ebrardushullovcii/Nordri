@@ -133,9 +133,12 @@ describe("Live Assistant product-switcher return target", () => {
 
     const { jobFinderItem } = await openModuleMenu(rendered);
 
-    expect(rendered.getByText("NORDRI").getAttribute("href")).toBe(
-      "#/job-finder",
-    );
+    expect(
+      rendered
+        .getByRole("img", { name: "Nordri" })
+        .closest("a")
+        ?.getAttribute("href"),
+    ).toBe("#/job-finder");
 
     fireEvent.click(jobFinderItem);
 
@@ -153,7 +156,9 @@ describe("Live Assistant product-switcher return target", () => {
     const outboundVisit = renderInterviewShell();
 
     expect(
-      (await outboundVisit.findByText("NORDRI")).getAttribute("href"),
+      (await outboundVisit.findByRole("img", { name: "Nordri" }))
+        .closest("a")
+        ?.getAttribute("href"),
     ).toBe("#/job-finder/applications");
 
     fireEvent.click(

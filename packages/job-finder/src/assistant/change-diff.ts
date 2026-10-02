@@ -1,4 +1,7 @@
-import type { AssistantChangeEntry } from "@nordri/contracts";
+import type {
+  AssistantChangeEntry,
+  AssistantMessagePart,
+} from "@nordri/contracts";
 
 /**
  * "Undo this change" for assistant edits (ADR 0037).
@@ -442,4 +445,102 @@ export function previewValue(value: unknown): string | null {
     return typeof name === "string" ? name.slice(0, 600) : "a record";
   }
   return null;
+}
+
+const CHANGE_PREVIEW_FIELD_EDIT_LIMIT = 12;
+const CHANGE_PREVIEW_RECORD_LIMIT = 12;
+const REMOVED_RECORD_TEXT_LIMIT = 2000;
+
+/**
+ * "Show what changed" rows. A removed or added record lists all of its
+ * fields, one per line, instead of just its name (N-047); an added record
+ * used to show nothing at all.
+ */
+export function buildChangePreview(
+  entries: readonly ChangeEntry[],
+): Extract<AssistantMessagePart, { type: "change" }>["preview"] {
+  const bookkeeping = new Set([
+    "id",
+    "origin",
+    "sourceRefs",
+    "lastGeneratedContentHash",
+    "createdAt",
+    "updatedAt",
+    "isDraft",
+  ]);
+  // Sentence case, as the rest of the app labels fields ("Field of study").
+  const fieldName = (key: string): string => {
+    const words = humanize(key);
+    return words.charAt(0) + words.slice(1).toLowerCase();
+  };
+  const valueText = (value: unknown): string | null => {
+    if (value === undefined || value === null) return null;
+    if (Array.isArray(value)) {
+      return value.map(valueText).filter(Boolean).join(", ") || null;
+    }
+    if (isPlainObject(value)) {
+      return (
+        Object.entries(value)
+          .filter(([key]) => !bookkeeping.has(key))
+          .map(([key, field]) => {
+            const text = valueText(field);
+            return text === null ? null : `${fieldName(key)}: ${text}`;
+          })
+          .filter(Boolean)
+          .join("; ") || null
+      );
+    }
+    if (typeof value === "string") return value.trim() || null;
+    return typeof value === "number" || typeof value === "boolean"
+      ? String(value)
+      : null;
+  };
+  // One line per top-level field of the removed record.
+  const recordLines = (value: unknown): string | null => {
+    if (!isPlainObject(value)) return valueText(value);
+    const lines = Object.entries(value)
+      .filter(([key]) => !bookkeeping.has(key))
+      .map(([key, field]) => {
+        const text = valueText(field);
+        return text === null ? null : `${fieldName(key)}: ${text}`;
+      })
+      .filter((line): line is string => line !== null);
+    return lines.length > 0 ? lines.join("\n") : null;
+  };
+  const fieldEdits = entries
+    .filter(
+      (entry) =>
+        entry.kind === "set" && !bookkeeping.has(entry.path.at(-1) ?? ""),
+    )
+    .slice(0, CHANGE_PREVIEW_FIELD_EDIT_LIMIT);
+  const records = entries
+    .filter((entry) => entry.kind === "remove" || entry.kind === "insert")
+    .slice(0, CHANGE_PREVIEW_RECORD_LIMIT);
+  const clip = (text: string) =>
+    text.length > REMOVED_RECORD_TEXT_LIMIT
+      ? `${text.slice(0, REMOVED_RECORD_TEXT_LIMIT - 1)}…`
+      : text;
+  return [...fieldEdits, ...records].map((entry) => {
+    const label = (entry.label ?? entry.path.join(".")).slice(0, 190);
+    const lowerLabel = `${label.charAt(0).toLowerCase()}${label.slice(1)}`;
+    if (entry.kind === "remove") {
+      return {
+        label: `Removed ${lowerLabel}`,
+        before: clip(recordLines(entry.before) ?? "A record"),
+        after: null,
+      };
+    }
+    if (entry.kind === "insert") {
+      return {
+        label: `Added ${lowerLabel}`,
+        before: null,
+        after: clip(recordLines(entry.after) ?? "A record"),
+      };
+    }
+    return {
+      label,
+      before: previewValue(entry.before),
+      after: previewValue(entry.after),
+    };
+  });
 }

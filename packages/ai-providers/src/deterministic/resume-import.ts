@@ -12,10 +12,8 @@ import {
   type ResumeImportStageExtractionResult,
 } from "../resume-import";
 import { buildCandidateConfidenceBreakdown } from "../resume-import-helpers";
-import {
-  experienceSectionHeadingPattern,
-  nonExperienceSectionHeadingPattern,
-} from "./constants";
+import { experienceSectionHeadingPattern } from "./constants";
+import { isResumeSectionHeading } from "./utils";
 import { buildDeterministicResumeProfileExtraction } from "./resume-parser";
 
 function normalizeText(value: string): string {
@@ -55,7 +53,7 @@ function getExperienceSectionText(resumeText: string): string {
       continue;
     }
 
-    if (collecting && nonExperienceSectionHeadingPattern.test(trimmedLine)) {
+    if (collecting && isResumeSectionHeading(trimmedLine)) {
       if (sectionLines.length > 0) {
         sections.push(sectionLines);
       }

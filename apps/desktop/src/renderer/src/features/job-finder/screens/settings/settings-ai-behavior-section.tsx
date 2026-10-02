@@ -1,4 +1,5 @@
 import { useEffect, useId, useState } from "react";
+import { SETTINGS_AI_JOB_SEARCH_ANCHOR_ID } from "../../lib/job-finder-route-hrefs";
 import {
   AiBehaviorPreferenceSchema,
   CoverLetterPreferenceSchema,
@@ -288,6 +289,7 @@ interface SettingsAiBehaviorSectionProps {
   settings: JobFinderSettings;
 }
 
+
 export function SettingsAiBehaviorSection({
   onSettingsDraftEdited,
   onUpdateAiBehavior,
@@ -424,8 +426,10 @@ export function SettingsAiBehaviorSection({
       </article>
 
       <article
-        className="grid min-w-0 gap-3 rounded-(--radius-panel) border border-(--surface-panel-border) bg-(--surface-overlay-subtle) p-3.5"
+        className="scroll-mt-(--settings-subnav-offset) grid min-w-0 gap-3 rounded-(--radius-panel) border border-(--surface-panel-border) bg-(--surface-overlay-subtle) p-3.5 outline-none"
         data-testid="settings-ai-job-search"
+        id={SETTINGS_AI_JOB_SEARCH_ANCHOR_ID}
+        tabIndex={-1}
       >
         <GroupHeading
           eyebrow="Find jobs"

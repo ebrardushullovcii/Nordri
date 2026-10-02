@@ -178,3 +178,88 @@ describe("areEquivalentEducationRecords stubs", () => {
     ).toBe(true);
   });
 });
+
+describe("complementary education readings", () => {
+  const qualification = {
+    schoolName: "Synthetic College",
+    degree: "Associate of Applied Science",
+    fieldOfStudy: "Supply Chain Management",
+    endDate: null,
+  };
+  test("keeps complementary readings separate without shared source evidence", () => {
+    const yearOnly = { schoolName: "Synthetic College", endDate: "2018" };
+    expect(areEquivalentEducationRecords(yearOnly, qualification)).toBe(false);
+    expect(areEquivalentEducationRecords(qualification, yearOnly)).toBe(false);
+  });
+  test.each([{ startDate: "2016" }, { endDate: "2018" }])(
+    "matches a dated stub to the same entry by its dates: %j",
+    (date) => {
+      // A re-import that read only the school and dates must still find the
+      // saved full record; the stub adds no qualification to invent.
+      const dateOnly = { schoolName: "Synthetic College", ...date };
+      const datedQualification = { ...qualification, ...date };
+      expect(areEquivalentEducationRecords(dateOnly, datedQualification)).toBe(
+        true,
+      );
+      expect(areEquivalentEducationRecords(datedQualification, dateOnly)).toBe(
+        true,
+      );
+    },
+  );
+  test("does not join a degree-only and a field-only reading by a shared year", () => {
+    const degreeOnly = {
+      schoolName: "Synthetic University",
+      degree: "Bachelor of Science",
+      endDate: "2018",
+    };
+    const fieldOnly = {
+      schoolName: "Synthetic University",
+      fieldOfStudy: "Business Administration",
+      endDate: "2018",
+    };
+    expect(areEquivalentEducationRecords(degreeOnly, fieldOnly)).toBe(false);
+    expect(areEquivalentEducationRecords(fieldOnly, degreeOnly)).toBe(false);
+  });
+  test.each([
+    { degree: "Bachelor of Science" },
+    { fieldOfStudy: "Computer Science" },
+    { endDate: "2020" },
+  ])("keeps conflicting entries separate: %j", (change) => {
+    const dated = { ...qualification, endDate: "2018" };
+    expect(areEquivalentEducationRecords(dated, { ...dated, ...change })).toBe(
+      false,
+    );
+  });
+});
+
+describe("comma specialties in role identity", () => {
+  test("keeps Platform and Security manager roles distinct at the same employer", () => {
+    const record = {
+      companyName: "Acme Corp",
+      title: "Engineering Manager, Platform",
+      startDate: "2021-01",
+      endDate: "2025-12",
+    };
+    expect(
+      areEquivalentExperienceRecords(record, {
+        ...record,
+        title: "Engineering Manager, Security",
+      }),
+    ).toBe(false);
+  });
+  test("matches a combined comma employer when companyName is absent", () => {
+    const record = {
+      companyName: "Acme Corp",
+      title: "Senior Engineer",
+      startDate: "2021-01",
+      endDate: "2025-12",
+    };
+    expect(
+      areEquivalentExperienceRecords(record, {
+        ...record,
+        title: "Senior Engineer, Acme Corp",
+        companyName: null,
+      }),
+    ).toBe(true);
+  });
+});

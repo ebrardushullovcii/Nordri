@@ -219,6 +219,12 @@ export function ProfileSetupSummaryCards(props: {
               </span>
             </button>
           </div>
+          {/* Right under the button that started it: below the setup list it
+              fell under the fold at a normal window height (N-006). */}
+          <ResumeImportProgress
+            isPending={props.isImportResumePending}
+            progress={props.resumeImportProgress}
+          />
           {props.importDisabledReason ? (
             <p
               className="text-sm leading-6 text-foreground-soft"
@@ -260,10 +266,6 @@ export function ProfileSetupSummaryCards(props: {
               {props.actionMessage}
             </div>
           ) : null}
-          <ResumeImportProgress
-            isPending={props.isImportResumePending}
-            progress={props.resumeImportProgress}
-          />
         </CardContent>
       </Card>
     );

@@ -24,6 +24,8 @@ import type {
   CandidateAssetImportResult,
   CandidateAssetListInput,
   CandidateAssetListResult,
+  CandidateAssetOpenInput,
+  CandidateAssetOpenResult,
   CandidateAssetRestoreInput,
   CandidateAssetRestoreResult,
   CampaignRuleFunnelProjection,
@@ -281,6 +283,9 @@ declare global {
         deleteCandidateAsset: (
           input: CandidateAssetDeleteInput,
         ) => Promise<CandidateAssetDeleteResult>;
+        openCandidateAsset: (
+          input: CandidateAssetOpenInput,
+        ) => Promise<CandidateAssetOpenResult>;
         restoreCandidateAsset: (
           input: CandidateAssetRestoreInput,
         ) => Promise<CandidateAssetRestoreResult>;

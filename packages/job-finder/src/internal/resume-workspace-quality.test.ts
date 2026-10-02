@@ -12,6 +12,9 @@ import {
   buildResumeCoverageComparison,
   buildResumeDraftContentHash,
   buildResumeDraftFromTailoredDraft,
+  buildResumeRenderDocument,
+  buildPreviewSectionsFromResumeDraft,
+  buildTailoredResumeTextFromResumeDraft,
   hasBlockingResumeClaimAssessment,
   sanitizeResumeDraft,
   seedResumeDraft,
@@ -422,6 +425,100 @@ ${ownSentence}`,
     );
 
     expect(visibleSkills).toEqual(["Figma"]);
+  });
+
+  test("sanitization keeps a place-like skill the person locked", () => {
+    const { profile, job } = getSeedContext();
+    const listingJob = {
+      ...job,
+      location: "United States",
+      minimumQualifications: [
+        "Must be authorized to work in the United States.",
+      ],
+    };
+    const draft = updateSection(
+      createBaseDraft(),
+      "section_skills",
+      (section) => ({
+        ...section,
+        bullets: createBullets("skill_bullet", ["States", "United"]).map(
+          (bullet) =>
+            bullet.text === "States" ? { ...bullet, locked: true } : bullet,
+        ),
+      }),
+    );
+    const sanitized = sanitizeResumeDraft({ draft, job: listingJob, profile });
+    expect(
+      getSection(sanitized, "section_skills").bullets.map(
+        (bullet) => bullet.text,
+      ),
+    ).toEqual(["States"]);
+  });
+
+  test("sanitization removes generated country and authorization entries, and keeps hidden skills out of exports", () => {
+    const { profile, job } = getSeedContext();
+    const listingJob = {
+      ...job,
+      location: "United States",
+      keySkills: [...job.keySkills, "Terraform", "United", "States"],
+      minimumQualifications: [
+        "Must be authorized to work in the United States.",
+        "Experience with Terraform required.",
+      ],
+    };
+    const draft = updateSection(
+      createBaseDraft(),
+      "section_skills",
+      (section) => ({
+        ...section,
+        bullets: createBullets("skill_bullet", [
+          "United",
+          "States",
+          "United States",
+          "authorized to work in the United States",
+          "Figma",
+          "Terraform",
+        ]).map((bullet) =>
+          bullet.text === "Figma" || bullet.text === "United"
+            ? { ...bullet, included: false }
+            : bullet,
+        ),
+      }),
+    );
+    const sanitized = sanitizeResumeDraft({ draft, job: listingJob, profile });
+    const bullets = getSection(sanitized, "section_skills").bullets;
+    expect(bullets.map((bullet) => bullet.text)).toEqual([
+      "Figma",
+      "Terraform",
+    ]);
+    expect(bullets[0]).toMatchObject({ included: false });
+    const skillsRender = buildResumeRenderDocument(
+      profile,
+      sanitized,
+    ).sections.find((section) => section.kind === "skills");
+    expect(skillsRender?.bullets.map((bullet) => bullet.text)).toEqual([
+      "Terraform",
+    ]);
+    const preview = buildPreviewSectionsFromResumeDraft(sanitized).find(
+      (section) => section.heading === "Core Skills",
+    );
+    expect(preview?.lines).toEqual(["Terraform"]);
+    const exportedText = buildTailoredResumeTextFromResumeDraft(
+      profile,
+      listingJob,
+      sanitized,
+    );
+    expect(exportedText).not.toMatch(/United|States|Figma/);
+    const validation = validateResumeDraft({
+      draft: sanitized,
+      job: listingJob,
+      profile,
+    });
+    expect(
+      validation.claimAssessments.find(
+        (claim) => claim.bulletId === bullets[1]?.id,
+      ),
+    ).toMatchObject({ status: "confirm_needed" });
   });
 
   test("sanitizeResumeDraft keeps job-listing technologies in the skills section", () => {

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { buildResumeSkillContextFilter } from "./resume-skill-context";
 
 import {
   canonicalSkillPhrase,
@@ -1658,6 +1659,7 @@ export const MAX_AGGRESSIVE_LISTING_CORE_SKILLS = 6;
  * extraction left those fields as sentences instead of a skill list.
  */
 export interface ListingRequestedSkillJob {
+  location?: string | null;
   keySkills?: readonly string[] | null;
   keywordSignals?: readonly { kind: string; label: string }[] | null;
   minimumQualifications?: readonly string[] | null;
@@ -2135,10 +2137,9 @@ export function collectListingRequestedSkills(
       listingTextMentions(textWithoutNames, skill),
   );
 
-  return uniqueListingSkillNames([...structured, ...inferred]).slice(
-    0,
-    MAX_LISTING_REQUESTED_SKILLS,
-  );
+  return uniqueListingSkillNames([...structured, ...inferred])
+    .filter(buildResumeSkillContextFilter(job))
+    .slice(0, MAX_LISTING_REQUESTED_SKILLS);
 }
 
 export function mergeAggressiveVisibleSkills(input: {

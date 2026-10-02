@@ -319,6 +319,12 @@ export function createWorkspaceApplicationAnswerMethods(
           : "That asset type does not match the employer's requested document.",
       );
     }
+    if (
+      resolvedAsset?.asset.forJob &&
+      resolvedAsset.asset.forJob.jobId !== command.jobId
+    ) {
+      throw new Error("That file was written for another job.");
+    }
     const text = resolvedAsset
       ? resolvedAsset.asset.originalName
       : formatApplicationAnswerValue(value);

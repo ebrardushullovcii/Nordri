@@ -1302,11 +1302,20 @@ export function collectApplicationOriginServiceWorkerStateInPage(): Promise<Page
 async function ensureFramePrepareOnlyMutationGuard(
   frame: Frame,
   intermediateMutationsAuthorized: boolean,
+  finalActionWindowOpen: boolean,
 ): Promise<PrepareOnlyGuardSnapshot> {
   await frame.evaluate(
     installPrepareOnlyMutationGuardInPage,
     intermediateMutationsAuthorized,
   );
+  // A page handed to the person had its guard opened for them; a run that
+  // takes the page back shuts it again unless its own send window is open.
+  await frame.evaluate((open) => {
+    const state = (window as unknown as Record<string, unknown>)[
+      "__nordriPrepareOnlyMutationGuardV1"
+    ] as { finalActionAllowed?: boolean } | undefined;
+    if (state) state.finalActionAllowed = open;
+  }, finalActionWindowOpen);
   const snapshot = await frame.evaluate(readPrepareOnlyMutationGuardInPage);
   if (!snapshot.installed) {
     throw new Error(
@@ -1502,6 +1511,7 @@ export async function ensurePrepareOnlyMutationGuard(
       snapshot = await ensureFramePrepareOnlyMutationGuard(
         frame,
         intermediateMutationsAuthorized,
+        Date.now() < networkGuardState.finalActionAllowedUntilMs,
       );
     } catch (error) {
       throw new Error(
@@ -1579,6 +1589,7 @@ export async function openPrepareOnlyIntermediateMutationWindow(
       await ensureFramePrepareOnlyMutationGuard(
         frame,
         networkGuardState.intermediateMutationsAuthorized,
+        Date.now() < networkGuardState.finalActionAllowedUntilMs,
       );
     } catch {
       // A frame mid-navigation gets the window on the next write.

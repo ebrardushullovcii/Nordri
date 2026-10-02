@@ -78,6 +78,7 @@ describe("job picks tell the truth and respect exclusions", () => {
         sort: "score",
         limit: 10,
         includeExcludedEmployers: false,
+        show: true,
       },
       context,
     );

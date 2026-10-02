@@ -34,39 +34,11 @@ export function inferSkills(
     splitLines(resumeText),
     skillSectionAliases,
   );
-  const sectionText = sectionLines.join("\n");
-  const matchedKnownSkills = uniqueStrings(
-    knownSkillPhrases.filter((skill) => containsPhrase(sectionText, skill)),
+  const sectionSkills = uniqueStrings(
+    sectionLines
+      .filter((line) => !skillCategoryHeadingPattern.test(line))
+      .flatMap(splitSkillLine),
   );
-  const nonNestedMatchedSkills = matchedKnownSkills.filter(
-    (skill) =>
-      !matchedKnownSkills.some(
-        (other) =>
-          other !== skill && other.toLowerCase().includes(skill.toLowerCase()),
-      ),
-  );
-  const rawSectionSkills = sectionLines
-    .filter((line) => !skillCategoryHeadingPattern.test(line))
-    .map(stripInlineSkillCategory)
-    .flatMap((line) => line.split(/[,;]|\||[\u2022\u25cf\u25aa\u25e6\u2023]/))
-    .map(cleanLine)
-    .filter((entry) => entry.length >= 2 && entry.length <= 28)
-    .filter((entry) => !looksLikeSpokenLanguageSkillEntry(entry))
-    .filter((entry) => {
-      const overlappingKnownSkills = knownSkillPhrases.filter((skill) =>
-        containsPhrase(entry, skill),
-      );
-      if (overlappingKnownSkills.length > 1) {
-        return false;
-      }
-      return !nonNestedMatchedSkills.some(
-        (skill) => skill.toLowerCase() === entry.toLowerCase(),
-      );
-    });
-  const sectionSkills = uniqueStrings([
-    ...nonNestedMatchedSkills,
-    ...rawSectionSkills,
-  ]);
 
   if (sectionSkills.length > 0) {
     return sectionSkills;
@@ -99,39 +71,37 @@ function splitSkillLine(line: string): string[] {
   const rawEntries = line
     .split(/[,;]|\||[\u2022\u25cf\u25aa\u25e6\u2023]| {2,}/)
     .map(cleanLine)
-    .filter((entry) => entry.length >= 2 && entry.length <= 40)
+    .filter((entry) => entry.length >= 2)
     .filter((entry) => !looksLikeSpokenLanguageSkillEntry(entry));
 
-  if (rawEntries.length === 0) {
-    const matchedKnownSkills = inferKnownPhrases(line, knownSkillPhrases);
-    const nonNested = matchedKnownSkills.filter(
-      (skill) =>
-        !matchedKnownSkills.some(
-          (other) =>
-            other !== skill &&
-            other.toLowerCase().includes(skill.toLowerCase()),
-        ),
-    );
-    return nonNested.length > 0 ? nonNested : [];
-  }
-
-  const entryMatches = rawEntries.map((entry) => {
-    const matches = inferKnownPhrases(entry, knownSkillPhrases);
-    return matches.filter(
-      (skill) =>
-        !matches.some(
-          (other) =>
-            other !== skill &&
-            other.toLowerCase().includes(skill.toLowerCase()),
-        ),
-    );
-  });
-
-  const rawUnmatched = rawEntries.filter(
-    (entry) => inferKnownPhrases(entry, knownSkillPhrases).length === 0,
+  return uniqueStrings(
+    rawEntries.flatMap((entry) => {
+      const isListItem =
+        entry.split(/\s+/).length <= 4 &&
+        !/\b(?:and|or|with|in|using|including)\b/i.test(entry) &&
+        !/^(?:proficient in|experience with|familiar with)\b/i.test(entry);
+      if (isListItem) return [entry];
+      const matches = inferKnownPhrases(entry, knownSkillPhrases).sort(
+        (left, right) =>
+          entry.toLowerCase().indexOf(left.toLowerCase()) -
+          entry.toLowerCase().indexOf(right.toLowerCase()),
+      );
+      const known = matches.filter(
+        (skill) =>
+          !matches.some(
+            (other) =>
+              other !== skill &&
+              other.toLowerCase().includes(skill.toLowerCase()),
+          ),
+      );
+      // "Health and Safety" names one skill; with no known skill inside,
+      // a short entry stays whole instead of disappearing.
+      if (known.length === 0 && entry.split(/\s+/).length <= 6) {
+        return [entry];
+      }
+      return known;
+    }),
   );
-
-  return uniqueStrings([...entryMatches.flat(), ...rawUnmatched]);
 }
 
 export function inferSkillGroups(

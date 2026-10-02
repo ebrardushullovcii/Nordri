@@ -199,10 +199,14 @@ describe("workspace manual-answer persistence races", () => {
         text: "5 years",
       }),
     );
-    // Prepare-only: the question stays detected and unsubmitted.
+    // Locally answered and selected, without any employer submission.
     const questions = await harness.repository.listApplicationQuestionRecords();
     expect(questions[0]).toEqual(
-      expect.objectContaining({ status: "detected", submittedAnswer: null }),
+      expect.objectContaining({
+        status: "answered",
+        selectedAnswerId: answers[0]!.id,
+        submittedAnswer: "5 years",
+      }),
     );
   });
 
@@ -430,21 +434,27 @@ describe("workspace manual-answer persistence races", () => {
     ];
     seed.applicationQuestionRecords = [createQuestion()];
     const harness = createWorkspaceServiceHarness({ seed });
-    const originalUpsert =
-      harness.repository.upsertApplicationAnswerRecord.bind(harness.repository);
+    const originalCommit =
+      harness.repository.commitApplicationAnswerMutation.bind(
+        harness.repository,
+      );
     let failNext = true;
-    harness.repository.upsertApplicationAnswerRecord = async (record) => {
+    harness.repository.commitApplicationAnswerMutation = async (mutation) => {
       if (failNext) {
         failNext = false;
         throw new Error("disk full");
       }
-      return originalUpsert(record);
+      return originalCommit(mutation);
     };
 
     await expect(
       harness.workspaceService.performUserAction(submitManualAnswerCommand()),
     ).rejects.toThrow("disk full");
-    // The step committed, the answer did not.
+    // The step committed, but neither the answer nor its question changed.
+    expect(await harness.repository.listApplicationAnswerRecords()).toEqual([]);
+    expect(
+      (await harness.repository.listApplicationQuestionRecords())[0],
+    ).toEqual(createQuestion());
     expect(await harness.repository.getUserActionRequest("request_a")).toEqual(
       expect.objectContaining({ state: "verifying", revision: 2 }),
     );
@@ -477,8 +487,10 @@ describe("workspace manual-answer persistence races", () => {
     ];
     seed.applicationQuestionRecords = [createQuestion()];
     const harness = createWorkspaceServiceHarness({ seed });
-    const originalUpsert =
-      harness.repository.upsertApplicationAnswerRecord.bind(harness.repository);
+    const originalCommit =
+      harness.repository.commitApplicationAnswerMutation.bind(
+        harness.repository,
+      );
     let releaseStore!: () => void;
     const storeGate = new Promise<void>((resolve) => {
       releaseStore = resolve;
@@ -487,10 +499,10 @@ describe("workspace manual-answer persistence races", () => {
     const storing = new Promise<void>((resolve) => {
       storeStarted = resolve;
     });
-    harness.repository.upsertApplicationAnswerRecord = async (record) => {
+    harness.repository.commitApplicationAnswerMutation = async (mutation) => {
       storeStarted();
       await storeGate;
-      return originalUpsert(record);
+      return originalCommit(mutation);
     };
 
     const answering = harness.workspaceService
@@ -622,5 +634,74 @@ describe("workspace manual-answer persistence races", () => {
 
     expect(await harness.repository.listApplicationAnswerRecords()).toEqual([]);
     expect(await harness.repository.getProfile()).toEqual(profileBefore);
+  });
+  test("a concurrent question edit aborts both the manual answer and selection", async () => {
+    const seed = createSeed();
+    seed.userActionRequests = [createManualAnswerRequest()];
+    seed.applicationQuestionRecords = [createQuestion()];
+    const harness = createWorkspaceServiceHarness({ seed });
+    const commit = harness.repository.commitApplicationAnswerMutation.bind(
+      harness.repository,
+    );
+    harness.repository.commitApplicationAnswerMutation = async (mutation) => {
+      await harness.repository.upsertApplicationQuestionRecord({
+        ...mutation.expectedQuestion,
+        note: "Changed in another view",
+      });
+      return commit(mutation);
+    };
+    await expect(
+      harness.workspaceService.performUserAction(submitManualAnswerCommand()),
+    ).rejects.toThrow("changed in another view");
+    expect(await harness.repository.listApplicationAnswerRecords()).toEqual([]);
+    expect(
+      (await harness.repository.listApplicationQuestionRecords())[0],
+    ).toMatchObject({
+      status: "detected",
+      selectedAnswerId: null,
+      note: "Changed in another view",
+    });
+  });
+
+  test("retrying a multi-question command preserves all atomic selections", async () => {
+    const seed = createSeed();
+    seed.userActionRequests = [createManualAnswerRequest()];
+    seed.applicationQuestionRecords = [
+      createQuestion(),
+      {
+        ...createQuestion(),
+        id: "question_notice",
+        prompt: "Notice period",
+        kind: "notice_period",
+      },
+    ];
+    const harness = createWorkspaceServiceHarness({ seed });
+    const command = {
+      ...submitManualAnswerCommand("command_retry_multiple"),
+      answers: [
+        { questionId: "question_a", answer: "5 years" },
+        { questionId: "question_notice", answer: "Two weeks" },
+      ],
+    };
+    await harness.workspaceService.performUserAction(command);
+    const firstAnswers =
+      await harness.repository.listApplicationAnswerRecords();
+    const firstQuestions =
+      await harness.repository.listApplicationQuestionRecords();
+    await harness.workspaceService.performUserAction(command);
+    expect(await harness.repository.listApplicationAnswerRecords()).toEqual(
+      firstAnswers,
+    );
+    expect(await harness.repository.listApplicationQuestionRecords()).toEqual(
+      firstQuestions,
+    );
+    for (const question of firstQuestions) {
+      const answer = firstAnswers.find(
+        (answer) => answer.id === question.selectedAnswerId,
+      )!;
+      expect(question.status).toBe("answered");
+      expect(question.submittedAnswer).toBe(answer.text);
+      expect(answer.submittedAt).toBeNull();
+    }
   });
 });

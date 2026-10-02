@@ -1,7 +1,4 @@
-import {
-  parseToolArguments,
-  type AgentLoopTool,
-} from "@nordri/agent-runtime";
+import { parseToolArguments, type AgentLoopTool } from "@nordri/agent-runtime";
 import type { JobPosting } from "@nordri/contracts";
 
 /** The model selects existing records; it cannot invent or rewrite feed jobs. */
@@ -11,6 +8,7 @@ export function createSearchCatalogTools(input: {
   checkpoint: () => Promise<void>;
 }): AgentLoopTool[] {
   const readIds = new Set<number>();
+  const readDetails = new Set<string>();
   const offsetOf = (value: unknown) =>
     typeof value === "number" && Number.isSafeInteger(value) && value >= 0
       ? value
@@ -48,6 +46,7 @@ export function createSearchCatalogTools(input: {
               })
             : indexed;
         const page = rows.slice(offset, offset + 25);
+        const hasUnreadJobs = page.some(({ id }) => !readIds.has(id));
         page.forEach(({ id }) => readIds.add(id));
         return Promise.resolve({
           kind: "ok",
@@ -67,7 +66,7 @@ export function createSearchCatalogTools(input: {
               summary: (job.summary ?? job.description).slice(0, 400),
             })),
           }),
-          progress: page.length > 0,
+          progress: hasUnreadJobs,
         });
       },
     },
@@ -103,6 +102,10 @@ export function createSearchCatalogTools(input: {
           });
         readIds.add(id as number);
         const offset = offsetOf(args.offset);
+        const detailKey = `${String(id)}:${offset}`;
+        const hasUnreadDetail =
+          offset < job.description.length && !readDetails.has(detailKey);
+        readDetails.add(detailKey);
         return Promise.resolve({
           kind: "ok",
           content: JSON.stringify({
@@ -120,7 +123,7 @@ export function createSearchCatalogTools(input: {
             nextOffset:
               offset + 12_000 < job.description.length ? offset + 12_000 : null,
           }),
-          progress: true,
+          progress: hasUnreadDetail,
         });
       },
     },

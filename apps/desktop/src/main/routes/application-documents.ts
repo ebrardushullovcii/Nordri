@@ -35,6 +35,13 @@ interface ApplicationDocumentRouteDependencies {
     event: IpcMainInvokeEvent,
     defaultFileName: string,
   ) => Promise<string | null>;
+  /** Model-written draft text; null keeps the evidence-built draft. */
+  writeDocumentText?: (input: {
+    jobId: string;
+    kind: "cover_letter" | "short_response";
+    questionPrompt: string | null;
+    priorText: string | null;
+  }) => Promise<string | null>;
 }
 
 async function selectExportPath(
@@ -73,6 +80,10 @@ export function registerApplicationDocumentRouteHandlers(
       return workspace.getApplyRunDetails(runId, jobId, applicationRecordId);
     },
     selectExportPath,
+    writeDocumentText: async (input) => {
+      const workspace = await getJobFinderWorkspaceService();
+      return workspace.writeApplicationDocumentText(input);
+    },
   },
 ) {
   ipcMain.handle(
@@ -136,8 +147,28 @@ export function registerApplicationDocumentRouteHandlers(
             );
           }
         }
+        const priorText = input.documentId
+          ? ((
+              await dependencies.library.list({
+                jobId: job.id,
+                applicationRecordId: applicationRecord.id,
+              })
+            ).documents.find((entry) => entry.id === input.documentId)
+              ?.content ?? null)
+          : null;
+        const writtenContent = dependencies.writeDocumentText
+          ? await dependencies
+              .writeDocumentText({
+                jobId: job.id,
+                kind: input.kind,
+                questionPrompt: question?.prompt ?? null,
+                priorText,
+              })
+              .catch(() => null)
+          : null;
         return ApplicationDocumentRevisionSchema.parse(
           await dependencies.library.propose({
+            writtenContent,
             kind: input.kind,
             ...(input.documentId ? { documentId: input.documentId } : {}),
             ...(input.expectedRevision

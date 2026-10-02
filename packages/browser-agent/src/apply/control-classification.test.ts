@@ -2,9 +2,26 @@ import { describe, expect, test } from "vitest";
 
 import type { ApplyFormControl } from "./types";
 import {
+  inferAttestationKind,
   inferQuestionKind,
   isControlAnswered,
 } from "./control-classification";
+
+describe("application declarations", () => {
+  test.each(["I agree to the terms", "I have read and agree to the terms"])(
+    "recognizes the terms checkbox: %s",
+    (label) => {
+      expect(
+        inferAttestationKind({
+          kind: "checkbox",
+          label,
+          groupLabel: "Review",
+          placeholder: "",
+        }),
+      ).toBe("terms_acceptance");
+    },
+  );
+});
 
 function selectControl(
   input: Partial<ApplyFormControl> = {},

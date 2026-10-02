@@ -383,43 +383,21 @@ describe("workspace service high-volume safeguards", () => {
     expect(outcome).not.toMatch(/Open Safeguards to resolve/u);
   });
 
-  test("batch sample reviews block application preparation but leave discovery available", async () => {
-    const harness = createWorkspaceServiceHarness({
+  test("pending automatic sample reviews are retired and do not block preparation", async () => {
+    const { workspaceService, repository } = createWorkspaceServiceHarness({
       seed: seedWithCompanies(),
     });
-    const { workspaceService } = harness;
-
     await workspaceService.mutateSafeguards({
       type: "prepare_batch_sample_review",
-      reviewId: "review_1",
+      reviewId: "automatic_batch_sample_review:batch_prepared",
       batchId: "batch_prepared",
       prepared: Array.from({ length: 10 }, (_, index) => ({
         id: `item_${index}`,
       })),
       requiredSampleRatio: 0.2,
-      explanation: "Deterministic quality-review sample before proceeding.",
-      recoveryGuidance: "Review the required sample in Safeguards.",
+      explanation: "Review a prepared sample.",
+      recoveryGuidance: "Review the sample.",
     });
-
-    expect(
-      (await workspaceService.getSafeguardsOverview()).counts.pendingReviews,
-    ).toBe(1);
-    expect(
-      await workspaceService.evaluateApplicationSafeguardBlockers([
-        "job_ready",
-      ]),
-    ).toHaveLength(1);
-    expect(await workspaceService.evaluateDiscoverySafeguardBlockers()).toEqual(
-      [],
-    );
-
-    await workspaceService.mutateSafeguards({
-      type: "update_batch_sample_review",
-      reviewId: "review_1",
-      reviewedCount: 2,
-      reviewCompleted: true,
-    });
-
     expect(
       (await workspaceService.getSafeguardsOverview()).counts.pendingReviews,
     ).toBe(0);
@@ -427,6 +405,13 @@ describe("workspace service high-volume safeguards", () => {
       await workspaceService.evaluateApplicationSafeguardBlockers([
         "job_ready",
       ]),
+    ).toEqual([]);
+    expect(await workspaceService.evaluateDiscoverySafeguardBlockers()).toEqual(
+      [],
+    );
+    expect(
+      (await repository.getIntelligenceState()).safeguards
+        .preparedBatchSampleReviews,
     ).toEqual([]);
   });
 
@@ -800,7 +785,7 @@ describe("workspace service high-volume safeguards", () => {
     });
     await firstService.mutateSafeguards({
       type: "prepare_batch_sample_review",
-      reviewId: "review_persist",
+      reviewId: "automatic_batch_sample_review:batch_persist",
       batchId: "batch_persist",
       prepared: [{ id: "item_a" }, { id: "item_b" }],
       requiredSampleRatio: 0.5,
@@ -813,10 +798,10 @@ describe("workspace service high-volume safeguards", () => {
     const reopenedOverview = await reopenedService.getSafeguardsOverview();
     expect(reopenedOverview.counts.signals).toBe(1);
     expect(reopenedOverview.counts.activeSignals).toBe(1);
-    expect(reopenedOverview.counts.pendingReviews).toBe(1);
+    expect(reopenedOverview.counts.pendingReviews).toBe(0);
     expect(
       await reopenedService.evaluateApplicationSafeguardBlockers(["job_ready"]),
-    ).toHaveLength(2);
+    ).toHaveLength(1);
   });
 
   test("safeguard mutations never grant final-submit or credential authority", async () => {

@@ -2,9 +2,12 @@ import type {
   ApplicationCrmCalendarEntry,
   ApplicationCrmData,
   ApplicationCrmStage,
+  ApplicationCrmStageDefinition,
   ApplicationRecord,
 } from "@nordri/contracts";
 import {
+  isApplicationTrackedAsSentByPerson,
+  isApplicationWithdrawnByPerson,
   resolveApplicationCrmStageSource,
   resolveApplicationCrmTrackedStage,
 } from "@nordri/contracts";
@@ -104,16 +107,101 @@ function inferActivityStage(record: ApplicationRecord): ApplicationCrmStage {
   }
 }
 
+/**
+ * Once the person records where the hiring stands (an interview, an offer),
+ * that is the application's headline instead of "Applied", in the list and
+ * the detail alike (N-017). A stage they named themselves keeps its name.
+ * The send's own receipt stays in the details.
+ */
+export function trackedHiringStageBadge(
+  record: ApplicationRecord,
+  customStages: readonly ApplicationCrmStageDefinition[] = [],
+): { label: string; tone: "positive" | "critical" | "active" } | null {
+  const crm = record.crm;
+  if (
+    !crm ||
+    crm.stage === "applied" ||
+    !(
+      isApplicationTrackedAsSentByPerson(crm) ||
+      isApplicationWithdrawnByPerson(crm)
+    )
+  ) {
+    return null;
+  }
+  const custom = crm.customStageId
+    ? customStages.find((entry) => entry.id === crm.customStageId)
+    : undefined;
+  return {
+    label: custom?.label ?? APPLICATION_CRM_STAGE_LABELS[crm.stage],
+    tone:
+      crm.stage === "rejected" || crm.stage === "withdrawn"
+        ? "critical"
+        : crm.stage === "offer" || crm.stage === "interview"
+          ? "positive"
+          : "active",
+  };
+}
+
+/**
+ * The next thing on an application's tracker: an overdue follow-up first,
+ * then the soonest reminder or interview. Null when nothing is scheduled.
+ */
+export function nextTrackerStepLabel(
+  record: ApplicationRecord,
+  now: number = Date.now(),
+): string | null {
+  const crm = record.crm;
+  if (!crm) return null;
+  const items = [
+    ...crm.reminders
+      .filter((reminder) => reminder.status === "pending")
+      .map((reminder) => ({
+        title: reminder.title,
+        at: Date.parse(reminder.dueAt),
+        overdueAllowed: true,
+      })),
+    ...crm.interviews
+      .filter((interview) => interview.status === "scheduled")
+      .map((interview) => ({
+        title: interview.title,
+        at: Date.parse(interview.startsAt),
+        overdueAllowed: false,
+      })),
+  ]
+    .filter(
+      (item) =>
+        Number.isFinite(item.at) && (item.overdueAllowed || item.at >= now),
+    )
+    .sort((left, right) => left.at - right.at);
+  const next = items[0];
+  if (!next) return null;
+  if (next.at < now) return `${next.title} (overdue)`;
+  const when = new Date(next.at).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+  });
+  return `${next.title}, ${when}`;
+}
+
 export function applicationCrmStageLabelForView(
   record: ApplicationRecord,
+  customStages: readonly ApplicationCrmStageDefinition[] = [],
 ): string {
   const stage = inferApplicationCrmStageForView(record);
   // "(local historical inference)" is implementation vocabulary inside a
   // table cell. The provenance stays visible as its own badge and tooltip;
   // the cell just names the stage.
-  return record.crm
+  const baseLabel = record.crm
     ? APPLICATION_CRM_STAGE_LABELS[stage]
     : APPLICATION_CRM_STAGE_NAMES[stage];
+  // A stage the person named themselves keeps its name everywhere, beside
+  // the standard step it counts as.
+  const custom = record.crm?.customStageId
+    ? customStages.find((entry) => entry.id === record.crm?.customStageId)
+    : undefined;
+  return custom && custom.label !== baseLabel
+    ? `${custom.label} (${baseLabel})`
+    : baseLabel;
 }
 
 export function applicationCrmStageProvenanceForView(
@@ -194,6 +282,7 @@ export function buildApplicationCrmCalendarForView(
   records: readonly ApplicationRecord[],
   relatedJobsById?: ReadonlyMap<string, { canonicalUrl?: string | null }>,
 ): ApplicationCrmCalendarEntry[] {
+  // Sorted by instant, not by text: saved times can carry different offsets.
   return records
     .flatMap((record) => {
       const crm = applicationCrmDataForView(record);
@@ -228,7 +317,13 @@ export function buildApplicationCrmCalendarForView(
             status: interview.status,
           })),
       ];
-      if (crm.compensation.offerDeadlineAt) {
+      // An offer already accepted, declined or expired has no deadline left
+      // to meet; it would sit under Overdue for good.
+      if (
+        crm.compensation.offerDeadlineAt &&
+        (crm.compensation.offerStatus === "active" ||
+          crm.compensation.offerStatus === "none")
+      ) {
         entries.push({
           id: `offer_${record.id}`,
           applicationRecordId: record.id,
@@ -241,5 +336,7 @@ export function buildApplicationCrmCalendarForView(
       }
       return entries;
     })
-    .sort((left, right) => left.startsAt.localeCompare(right.startsAt));
+    .sort(
+      (left, right) => Date.parse(left.startsAt) - Date.parse(right.startsAt),
+    );
 }

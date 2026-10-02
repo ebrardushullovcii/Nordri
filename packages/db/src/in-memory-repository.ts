@@ -1937,6 +1937,16 @@ export function createInMemoryJobFinderRepository(
         ApplicationRecordSchema.parse({
           ...currentById.get(proposedRecord.id)!,
           crm: proposedRecord.crm,
+          // A bulk stage change is tracker activity: the row's Updated date
+          // and last action move with it, like a single change, unless
+          // another writer touched the row more recently.
+          ...(proposedRecord.lastUpdatedAt >
+          currentById.get(proposedRecord.id)!.lastUpdatedAt
+            ? {
+                lastUpdatedAt: proposedRecord.lastUpdatedAt,
+                lastActionLabel: proposedRecord.lastActionLabel,
+              }
+            : {}),
         }),
       );
       const committedById = new Map(

@@ -15,6 +15,7 @@ describe("candidate asset contracts", () => {
       sensitivity: "sensitive",
       consentScope: "private_storage_only",
       retention: "until_deleted",
+      forJob: null,
     });
   });
 

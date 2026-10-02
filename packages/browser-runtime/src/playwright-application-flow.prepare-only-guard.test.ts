@@ -282,6 +282,42 @@ describe("Prepare-only guard real-Chromium fixtures", () => {
     },
   );
   test(
+    "a run that takes back a page the person had shuts the in-page guard again",
+    { timeout: 60_000 },
+    async () => {
+      const app = await startTrackedServer();
+      app.registerHtml("/handed-back", `<form><input id="name"></form>`);
+      const { page } = await newGuardedPage();
+      await page.goto(`${app.baseUrl}/handed-back`);
+      const readFinalActionAllowed = () =>
+        page.evaluate(
+          () =>
+            (
+              (window as unknown as Record<string, unknown>)[
+                "__nordriPrepareOnlyMutationGuardV1"
+              ] as { finalActionAllowed?: boolean }
+            ).finalActionAllowed,
+        );
+      // What the embedded browser does when it hands the tab to the person.
+      await page.evaluate(() => {
+        const state = (window as unknown as Record<string, unknown>)[
+          "__nordriPrepareOnlyMutationGuardV1"
+        ] as { finalActionAllowed?: boolean };
+        state.finalActionAllowed = true;
+      });
+      expect(await readFinalActionAllowed()).toBe(true);
+
+      await ensurePrepareOnlyMutationGuard(page, false);
+      expect(await readFinalActionAllowed()).toBe(false);
+
+      // A send the run itself opened stays open through the same check.
+      await openPrepareOnlyFinalActionWindow(page);
+      await ensurePrepareOnlyMutationGuard(page, false);
+      expect(await readFinalActionAllowed()).toBe(true);
+      await closePrepareOnlyFinalActionWindow(page);
+    },
+  );
+  test(
     "a page handed to the person stays theirs after it moves to another page, until it is locked again",
     { timeout: 60_000 },
     async () => {

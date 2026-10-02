@@ -130,6 +130,7 @@ describe("SettingsAiBehaviorSection", () => {
               "truthfulness_certification",
               "privacy_notice_acknowledgement",
               "terms_acceptance",
+              "background_check_consent",
             ],
           },
         },

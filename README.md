@@ -1,3 +1,5 @@
+<p><img src="assets/brand/in-app/wordmark.svg" alt="Nordri" width="240"></p>
+
 # Nordri
 
 Agent-first desktop monorepo for:

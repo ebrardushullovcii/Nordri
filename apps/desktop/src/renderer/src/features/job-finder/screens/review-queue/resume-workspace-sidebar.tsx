@@ -239,6 +239,7 @@ export function ResumeWorkspaceSidebar({
         </div>
 
         <ResumeClaimTrustPanel
+          draft={workspace.draft}
           hasUnsavedChanges={hasUnsavedChanges}
           validation={validation}
         />

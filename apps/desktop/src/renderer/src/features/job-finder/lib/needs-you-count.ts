@@ -100,6 +100,7 @@ export function listApplicationsAwaitingUser({
     if (!result) return applicationRecordAwaitsUser(record);
     return (
       resolveApplyStatePresentation({
+        recordCrm: record.crm,
         mode:
           record.automationMode === "autonomous_submit"
             ? "apply_for_me"

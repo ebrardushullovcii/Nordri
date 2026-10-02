@@ -20,6 +20,7 @@ import {
   type DesktopBrowserViewport,
 } from "@nordri/contracts";
 import path from "node:path";
+import { routeMainWindowZoomShortcut } from "../../setup/window-zoom";
 import { createAgentInputLedger } from "./agent-input-ledger";
 import { BrowserCdpBridge, type BrowserCdpPage } from "./browser-cdp-bridge";
 import { getEmbeddedBrowserFocusAction } from "./embedded-browser-focus-policy";
@@ -75,6 +76,15 @@ export type ClaimAutomationPage = (page: {
 
 /** The tabs a run has claimed so far, once every pending claim has landed. */
 export type ClaimedAutomationTabs = () => Promise<string[]>;
+
+/**
+ * Opens a prepare-only guard a run left in a page. Runs in the page's own
+ * world; a page without the guard is untouched.
+ */
+const OPEN_PREPARE_ONLY_GUARD_FOR_PERSON = `(() => {
+  const state = window.__nordriPrepareOnlyMutationGuardV1;
+  if (state) state.finalActionAllowed = true;
+})();`;
 
 export class EmbeddedBrowser {
   private window: BrowserWindow | null = null;
@@ -440,6 +450,7 @@ export class EmbeddedBrowser {
     }
     this.parkedTabs.set(tabId, clampAttention(attention));
     this.bridge?.releasePage(tabId);
+    this.openTabForPerson(tabId);
     this.emit();
   }
 
@@ -684,6 +695,15 @@ export class EmbeddedBrowser {
     });
     page.contents.on("before-input-event", (event, input) => {
       if (input.type !== "keyDown") return;
+      const mainContents = this.window?.webContents;
+      if (
+        mainContents &&
+        !mainContents.isDestroyed() &&
+        routeMainWindowZoomShortcut(event, input, mainContents)
+      ) {
+        this.layout();
+        return;
+      }
       // Native input-event reports rawKeyDown; before-input-event supplies
       // the same key code that was recorded before an automation dispatch.
       handleUserInput("key", { code: input.code, key: input.key });
@@ -923,6 +943,22 @@ export class EmbeddedBrowser {
    * the tab stays open and is taken away from automation until it is handed
    * back, and every other run keeps its tabs and its connection.
    */
+  /**
+   * A tab handed to the person is theirs to finish: the prepare-only guard a
+   * run left in the page must not cancel their own "Save and continue" or
+   * send (ADR 0024, ADR 0033). The run is detached from the tab, so the guard
+   * is opened here, in every frame (an embedded ATS form has its own).
+   */
+  private openTabForPerson(tabId: string): void {
+    const page = this.pageMap.get(tabId);
+    if (!page || page.contents.isDestroyed()) return;
+    for (const frame of page.contents.mainFrame.framesInSubtree) {
+      void frame
+        .executeJavaScript(OPEN_PREPARE_ONLY_GUARD_FOR_PERSON)
+        .catch(() => undefined);
+    }
+  }
+
   private takeTab(tabId: string, operationIds: readonly string[]): void {
     const stopping = [...this.operationClaims.entries()].filter(([, claim]) =>
       operationIds.includes(claim.id),
@@ -934,6 +970,7 @@ export class EmbeddedBrowser {
     // Release before aborting: a stopped run closes its page on the way out,
     // and that close must find the page already gone from automation.
     this.bridge?.releasePage(tabId);
+    this.openTabForPerson(tabId);
     for (const [controller] of stopping)
       controller.abort(
         new DOMException(STEPPED_IN_ABORT_MESSAGE, "AbortError"),

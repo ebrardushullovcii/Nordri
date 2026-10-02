@@ -7,7 +7,17 @@ import {
   useState,
   type KeyboardEvent,
 } from "react";
-import type { ApplicationRecord, ApplyJobResult } from "@nordri/contracts";
+import {
+  isApplicationTrackedAsSentByPerson,
+  isApplicationWithdrawnByPerson,
+  type ApplicationCrmStageDefinition,
+  type ApplicationRecord,
+  type ApplyJobResult,
+} from "@nordri/contracts";
+import {
+  nextTrackerStepLabel,
+  trackedHiringStageBadge,
+} from "./applications-crm-model";
 import type { ApplyMode } from "../../lib/apply-mode-contracts-stub";
 import { resolveApplyStatePresentation } from "./apply-state";
 import type { ApplyRunContext } from "./applications-recovery-state";
@@ -60,6 +70,8 @@ import {
 interface ApplicationsRecordsPanelProps {
   activeFilter: ApplicationsViewFilter;
   applicationRecords: readonly ApplicationRecord[];
+  /** Stages the person named in the tracker, shown by those names. */
+  customStages?: readonly ApplicationCrmStageDefinition[];
   discoveryJobs?: ReadonlyArray<{
     id: string;
     canonicalUrl: string;
@@ -92,6 +104,7 @@ interface ApplicationsRecordsPanelProps {
 export function ApplicationsRecordsPanel({
   activeFilter,
   applicationRecords,
+  customStages,
   discoveryJobs = [],
   filterCounts,
   hasAnyApplications,
@@ -291,6 +304,7 @@ export function ApplicationsRecordsPanel({
               latestApplyResultByRecordId?.get(record.id) ?? null;
             const applyState = latestResult
               ? resolveApplyStatePresentation({
+                  recordCrm: record.crm,
                   mode:
                     record.automationMode === "autonomous_submit"
                       ? "apply_for_me"
@@ -310,19 +324,24 @@ export function ApplicationsRecordsPanel({
                       : null,
                 })
               : null;
-            const stage = applyState
-              ? {
-                  label: applyState.title,
-                  tone:
-                    applyState.kind === "applied"
-                      ? ("positive" as const)
-                      : applyState.kind === "could_not_apply"
-                        ? ("critical" as const)
-                        : applyState.kind === "needs_you"
-                          ? ("warning" as const)
-                          : ("active" as const),
-                }
-              : getApplicationStagePresentation(record);
+            const hiringStage = trackedHiringStageBadge(record, customStages);
+            const stage = hiringStage
+              ? hiringStage
+              : applyState
+                ? {
+                    label: applyState.title,
+                    tone:
+                      applyState.kind === "applied"
+                        ? ("positive" as const)
+                        : applyState.cancelledByPerson
+                          ? ("muted" as const)
+                          : applyState.kind === "could_not_apply"
+                            ? ("critical" as const)
+                            : applyState.kind === "needs_you"
+                              ? ("warning" as const)
+                              : ("active" as const),
+                  }
+                : getApplicationStagePresentation(record);
             // One status word per row. The stage badge is it; a second badge
             // restating the same state a different way ("Needs follow-up"
             // beside "Needs you") is the duplicate pill that made every row
@@ -333,7 +352,7 @@ export function ApplicationsRecordsPanel({
             const liveLine = liveRunLinesByJobId?.get(record.jobId) ?? null;
             // A job its batch never reached has one next step; the record's
             // own label still named the approval that batch started from.
-            const nextStepLabel =
+            const preparationNextStep =
               (applyState?.plannedStanding === "not_started"
                 ? applyState.actionLabel
                 : null) ??
@@ -342,6 +361,13 @@ export function ApplicationsRecordsPanel({
                 getApplicationNextStepLabel(record),
               ) ??
               getApplicationNextStepLabel(record);
+            // Sent or withdrawn, by the person's own record: what comes next
+            // is on the tracker, not the preparation step the run left behind.
+            const nextStepLabel =
+              isApplicationTrackedAsSentByPerson(record.crm) ||
+              isApplicationWithdrawnByPerson(record.crm)
+                ? nextTrackerStepLabel(record)
+                : preparationNextStep;
             const recordStateDescriptionId = `applications-record-${record.id}-state-description`;
             const relatedJob = relatedJobsById.get(record.jobId);
             const employerLine = formatApplicationEmployerLine({

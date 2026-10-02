@@ -29,7 +29,7 @@ export const SCALED_DISCOVERY_MAX_STEPS = 240;
  * configured step count. Cancellation and progress checks stay active inside
  * this window.
  */
-export const MAX_DISCOVERY_TARGET_TIME_BUDGET_MS = 30 * 60_000;
+export const MAX_DISCOVERY_TARGET_TIME_BUDGET_MS = 60 * 60_000;
 /** Bounded no-progress allowance so scaled runs cannot drift indefinitely. */
 export const MAX_DISCOVERY_AGENT_NO_PROGRESS_STEPS = 24;
 export const DEFAULT_DISCOVERY_HISTORY_LIMIT = 5;

@@ -1,29 +1,22 @@
 import { useState } from "react";
 import type {
   ResumeClaimAssessment,
+  ResumeDraft,
   ResumeDraftOrigin,
   ResumeValidationResult,
 } from "@nordri/contracts";
+import { isBlockingResumeClaimAssessment } from "@nordri/contracts";
 import { Button } from "@renderer/components/ui/button";
 import { StatusBadge } from "../../components/status-badge";
 
 const INITIAL_VISIBLE_CLAIMS = 6;
 const CLAIM_PAGE_SIZE = 6;
-const generatedOrigins = new Set<ResumeDraftOrigin>([
-  "ai_generated",
-  "assistant_edited",
-  "deterministic_fallback",
-]);
+type ClaimDraft = Pick<ResumeDraft, "id" | "claimConfirmations">;
 
-function isGeneratedClaim(claim: ResumeClaimAssessment) {
-  return generatedOrigins.has(claim.claimOrigin);
-}
-
-function isBlockingClaim(claim: ResumeClaimAssessment) {
-  return (
-    claim.status === "unsupported" ||
-    (claim.status === "review" && isGeneratedClaim(claim))
-  );
+// The export gate's own rule, so a line the person approved stops counting
+// and their own edits are counted as theirs, not as "generated" blockers.
+function isBlockingClaim(claim: ResumeClaimAssessment, draft: ClaimDraft) {
+  return isBlockingResumeClaimAssessment({ assessment: claim, draft });
 }
 
 /**
@@ -71,7 +64,26 @@ function formatEvidenceKind(
   }
 }
 
-function getStatusPresentation(claim: ResumeClaimAssessment) {
+function getStatusPresentation(
+  claim: ResumeClaimAssessment,
+  draft: ClaimDraft,
+) {
+  const approved = draft.claimConfirmations.some(
+    (confirmation) =>
+      confirmation.draftId === draft.id &&
+      confirmation.field === claim.field &&
+      confirmation.sectionId === claim.sectionId &&
+      confirmation.entryId === claim.entryId &&
+      confirmation.bulletId === claim.bulletId &&
+      confirmation.confirmedClaimContentHash === claim.contentHash,
+  );
+  if (approved && claim.status !== "exact" && claim.status !== "paraphrase") {
+    return {
+      label: "Approved by you",
+      tone: "positive" as const,
+      explanation: "You approved this exact wording as accurate.",
+    };
+  }
   if (claim.status === "exact") {
     return {
       label: "Exact evidence",
@@ -96,27 +108,28 @@ function getStatusPresentation(claim: ResumeClaimAssessment) {
   }
   if (claim.status === "review") {
     return {
-      label: "Generated claim blocked",
+      label: "Needs your decision",
       tone: "critical" as const,
       explanation:
-        "This generated wording needs candidate evidence before export or approval.",
+        "Your saved evidence does not show this generated wording. Edit it, or approve it as accurate in Tools.",
     };
   }
   return {
-    label: "Unsupported claim blocked",
+    label: "Needs your decision",
     tone: "critical" as const,
     explanation:
-      "No sufficient candidate evidence was found. Remove or rewrite this claim before export or approval.",
+      "Your saved evidence does not show this. Edit it, or approve it as accurate in Tools if you can stand behind it.",
   };
 }
 
-function claimPriority(claim: ResumeClaimAssessment) {
-  if (isBlockingClaim(claim)) return 0;
+function claimPriority(claim: ResumeClaimAssessment, draft: ClaimDraft) {
+  if (isBlockingClaim(claim, draft)) return 0;
   if (claim.status === "review") return 1;
   return 2;
 }
 
 export function ResumeClaimTrustPanel(props: {
+  draft: ClaimDraft;
   hasUnsavedChanges: boolean;
   validation: ResumeValidationResult | null;
 }) {
@@ -149,13 +162,16 @@ export function ResumeClaimTrustPanel(props: {
     .map((claim, index) => ({ claim, index }))
     .sort(
       (left, right) =>
-        claimPriority(left.claim) - claimPriority(right.claim) ||
-        left.index - right.index,
+        claimPriority(left.claim, props.draft) -
+          claimPriority(right.claim, props.draft) || left.index - right.index,
     )
     .map(({ claim }) => claim);
-  const blockingCount = assessments.filter(isBlockingClaim).length;
-  const userReviewCount = assessments.filter(
-    (claim) => claim.status === "review" && claim.claimOrigin === "user_edited",
+  const blocking = assessments.filter((claim) =>
+    isBlockingClaim(claim, props.draft),
+  );
+  const blockingCount = blocking.length;
+  const userBlockingCount = blocking.filter(
+    (claim) => claim.claimOrigin === "user_edited",
   ).length;
   const supportedCount = assessments.filter(
     (claim) => claim.status === "exact" || claim.status === "paraphrase",
@@ -179,17 +195,15 @@ export function ResumeClaimTrustPanel(props: {
           </p>
         </div>
         <StatusBadge tone={blockingCount > 0 ? "critical" : "positive"}>
-          {blockingCount > 0
-            ? `${blockingCount} blocking`
-            : "No generated blockers"}
+          {blockingCount > 0 ? `${blockingCount} blocking` : "Nothing blocking"}
         </StatusBadge>
       </div>
 
       <dl className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-3">
         {[
           ["Supported", supportedCount],
-          ["Generated blockers", blockingCount],
-          ["Your edits to review", userReviewCount],
+          ["Generated lines to decide", blockingCount - userBlockingCount],
+          ["Your edits to decide", userBlockingCount],
         ].map(([label, value]) => (
           <div
             className="rounded-(--radius-field) border border-(--surface-panel-border) bg-(--surface-panel) p-3"
@@ -215,7 +229,7 @@ export function ResumeClaimTrustPanel(props: {
 
       <div className="grid gap-2">
         {visibleAssessments.map((claim) => {
-          const presentation = getStatusPresentation(claim);
+          const presentation = getStatusPresentation(claim, props.draft);
           return (
             <details
               className="group min-w-0 rounded-(--radius-field) border border-(--surface-panel-border) bg-(--surface-panel) p-3 [&_summary::-webkit-details-marker]:hidden"

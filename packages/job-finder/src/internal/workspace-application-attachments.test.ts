@@ -84,6 +84,7 @@ describe("application attachment execution", () => {
     });
 
     const result = await resolveApplicationAttachmentsForExecution({
+      jobId: "job-1",
       resolver: {
         list: () =>
           Promise.resolve({
@@ -137,6 +138,7 @@ describe("application attachment execution", () => {
     });
 
     const result = await resolveApplicationAttachmentsForExecution({
+      jobId: "job-1",
       resolver: {
         list: () =>
           Promise.resolve({
@@ -153,6 +155,48 @@ describe("application attachment execution", () => {
     expect(result.map((entry) => entry.assetId)).toEqual([asset.id]);
   });
 
+  it("never offers a letter written for another job", async () => {
+    const otherJobLetter = CandidateAssetSchema.parse({
+      ...asset,
+      id: "asset-letter-other-job",
+      kind: "cover_letter",
+      originalName: "cover-letter-cedar-operations-coordinator-v3.txt",
+      forJob: {
+        jobId: "job-other",
+        title: "Operations Coordinator",
+        company: "Cedar",
+      },
+    });
+    const thisJobLetter = CandidateAssetSchema.parse({
+      ...otherJobLetter,
+      id: "asset-letter-this-job",
+      forJob: { ...otherJobLetter.forJob!, jobId: "job-1" },
+    });
+    const loadVerifiedBytes = vi.fn(() =>
+      Promise.resolve(new Uint8Array([1, 2, 3])),
+    );
+    const resolveForApplication = vi.fn((assetId: string) =>
+      Promise.resolve({
+        asset: assetId === thisJobLetter.id ? thisJobLetter : otherJobLetter,
+        loadVerifiedBytes,
+      }),
+    );
+
+    const result = await resolveApplicationAttachmentsForExecution({
+      jobId: "job-1",
+      resolver: {
+        list: () =>
+          Promise.resolve({ assets: [otherJobLetter, thisJobLetter] }),
+        resolveForApplication,
+      },
+      questionRecords: [],
+      answerRecords: [],
+    });
+
+    expect(resolveForApplication).not.toHaveBeenCalledWith(otherJobLetter.id);
+    expect(result.map((entry) => entry.assetId)).toEqual([thisJobLetter.id]);
+  });
+
   it("resolves only the exact selected asset into a main-process artifact", async () => {
     const loadVerifiedBytes = vi.fn(() =>
       Promise.resolve(new Uint8Array([1, 2, 3])),
@@ -162,6 +206,7 @@ describe("application attachment execution", () => {
     );
 
     const result = await resolveApplicationAttachmentsForExecution({
+      jobId: "job-1",
       resolver: {
         list: () => Promise.resolve({ assets: [asset] }),
         resolveForApplication,
@@ -188,6 +233,26 @@ describe("application attachment execution", () => {
     expect(loadVerifiedBytes).not.toHaveBeenCalled();
   });
 
+  it("rejects an explicitly selected attachment scoped to another job", async () => {
+    const scoped = {
+      ...asset,
+      forJob: { jobId: "job-other", title: "Engineer", company: "Cedar" },
+    };
+    const loadVerifiedBytes = vi.fn();
+    await expect(
+      resolveApplicationAttachmentsForExecution({
+        jobId: "job-1",
+        resolver: {
+          resolveForApplication: () =>
+            Promise.resolve({ asset: scoped, loadVerifiedBytes }),
+        },
+        questionRecords: [question],
+        answerRecords: [answer],
+      }),
+    ).rejects.toThrow("That file was written for another job.");
+    expect(loadVerifiedBytes).not.toHaveBeenCalled();
+  });
+
   it("does not resurrect an asset after its latest answer revision was cleared", async () => {
     const cleared = ApplicationAnswerRecordSchema.parse({
       ...answer,
@@ -199,6 +264,7 @@ describe("application attachment execution", () => {
       supersedesAnswerId: answer.id,
     });
     const result = await resolveApplicationAttachmentsForExecution({
+      jobId: "job-1",
       resolver: undefined,
       questionRecords: [
         { ...question, selectedAnswerId: null, status: "detected" },
@@ -212,6 +278,7 @@ describe("application attachment execution", () => {
   it("fails safely when an active asset answer cannot be resolved", async () => {
     await expect(
       resolveApplicationAttachmentsForExecution({
+        jobId: "job-1",
         resolver: undefined,
         questionRecords: [question],
         answerRecords: [answer],

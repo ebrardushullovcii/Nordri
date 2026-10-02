@@ -1,4 +1,5 @@
 import {
+  JobSearchCampaignCollectionSchema,
   DISCOVERY_NO_JOB_SITES_MESSAGE,
   DISCOVERY_RUN_ALREADY_ACTIVE_MESSAGE,
   DiscoveryRunRecordSchema,
@@ -71,6 +72,7 @@ import { collectResumeAffectingChangedJobIds } from "./resume-workspace-stalenes
 import {
   DEFAULT_ROLE,
   MAX_DISCOVERY_TARGET_TIME_BUDGET_MS,
+  MAX_DISCOVERY_AGENT_NO_PROGRESS_STEPS,
   discoveryAdapters,
 } from "./workspace-defaults";
 import {
@@ -209,7 +211,6 @@ export function resolveListingLocation(
 
 const DISCOVERY_ACTIVITY_SAMPLE_LIMIT = 3;
 const PUBLIC_API_PREFETCH_CONCURRENCY = 8;
-const MIN_DISCOVERY_TARGET_TIME_BUDGET_MS = 120_000;
 /**
  * How many sources one search works on at the same time. Each gets its own
  * browser tab; the number stays small so a laptop and a site's patience both
@@ -224,7 +225,7 @@ const DISCOVERY_SOURCE_CONCURRENCY = (() => {
     ? Math.min(configured, 8)
     : 3;
 })();
-const DISCOVERY_STALL_STEP_WINDOW = 8;
+const DISCOVERY_STALL_STEP_WINDOW = MAX_DISCOVERY_AGENT_NO_PROGRESS_STEPS;
 
 /**
  * Bounded heartbeat for duplicate-only agent checkpoint sequences.
@@ -1199,15 +1200,7 @@ async function collectTargetJobs(input: {
       targetJobCount: input.targetJobCount,
       maxSteps: input.maxSteps,
       runControl: {
-        // Scale the wall-clock budget with the step budget, but keep a hard
-        // ceiling so a scaled run can never hold one target open forever.
-        timeBudgetMs: Math.min(
-          MAX_DISCOVERY_TARGET_TIME_BUDGET_MS,
-          Math.max(
-            MIN_DISCOVERY_TARGET_TIME_BUDGET_MS,
-            input.maxSteps * 20_000,
-          ),
-        ),
+        timeBudgetMs: MAX_DISCOVERY_TARGET_TIME_BUDGET_MS,
         // Steps without a new job before the agent is told it is stalling;
         // the same window again with nothing new ends the source.
         noProgressStepLimit: DISCOVERY_STALL_STEP_WINDOW,
@@ -2186,6 +2179,49 @@ export function createWorkspaceDiscoveryMethods(
           return { budgetedPostings, mergeResult, jobsPersisted, jobsStaged };
         };
 
+        // Jobs a running search keeps join its plan as they are saved, so
+        // Find jobs shows them while the search goes on, and a run that fails
+        // or times out still leaves what it kept reviewable. The end of the
+        // run applies the plan's rules and counts as before.
+        const addKeptJobsToRunningPlan = async (
+          candidateJobIds: readonly string[],
+        ): Promise<void> => {
+          const campaignId = activeRun.campaignId;
+          if (!campaignId) return;
+          const keptIds = new Set([
+            ...workingSavedJobs.map((job) => job.id),
+            ...workingPendingJobs.map((job) => job.id),
+          ]);
+          const jobIds = uniqueStrings(
+            candidateJobIds.filter((jobId) => keptIds.has(jobId)),
+          );
+          if (jobIds.length === 0) return;
+          await ctx.withCampaignTransition(async () => {
+            const state = await ctx.repository.getCampaignState();
+            const campaign = state?.campaigns.find(
+              (candidate) => candidate.id === campaignId,
+            );
+            if (!state || !campaign) return;
+            const missing = jobIds.filter(
+              (jobId) => !campaign.jobIds.includes(jobId),
+            );
+            if (missing.length === 0) return;
+            await ctx.repository.saveCampaignState(
+              JobSearchCampaignCollectionSchema.parse({
+                ...state,
+                campaigns: state.campaigns.map((candidate) =>
+                  candidate.id === campaignId
+                    ? {
+                        ...candidate,
+                        jobIds: [...candidate.jobIds, ...missing],
+                      }
+                    : candidate,
+                ),
+              }),
+            );
+          });
+        };
+
         const persistTargetWorkingState = async (): Promise<void> => {
           await persistWorkingSavedJobs((current) =>
             finalizeDiscoveryState(
@@ -2421,6 +2457,9 @@ export function createWorkspaceDiscoveryMethods(
             recordActivity(checkpointEvent);
             await persistTargetWorkingState();
             checkpointState.persistedCheckpointRevision = checkpoint.revision;
+            await addKeptJobsToRunningPlan(
+              checkpointJobs.map((posting) => toSavedJobId(posting)),
+            );
             publishActivity(checkpointEvent);
           } catch (error) {
             const interrupted =
@@ -2772,7 +2811,8 @@ export function createWorkspaceDiscoveryMethods(
 
         const targetCompletedAt = new Date().toISOString();
         const targetFailed = Boolean(
-          collected.result.warning && collectedJobs.length === 0,
+          collected.result.agentMetadata?.accessBlockerReason ||
+          (collected.result.warning && collectedJobs.length === 0),
         );
         activeRun = completeTargetExecution(
           activeRun,
@@ -2924,6 +2964,33 @@ export function createWorkspaceDiscoveryMethods(
       );
       await Promise.all(workers);
 
+      // A browser handoff also ends this run's later HTTP reads on that host.
+      const blockedSourceHosts = new Set(
+        activeRun.targetExecutions
+          .filter(
+            (execution) => execution.accessBlockerReason === "site_protection",
+          )
+          .flatMap((execution) => [
+            execution.parkedTab?.url,
+            targets.find((target) => target.id === execution.targetId)
+              ?.startingUrl,
+          ])
+          .flatMap((url) => {
+            try {
+              return url ? [new URL(url).host] : [];
+            } catch {
+              return [];
+            }
+          }),
+      );
+      const canReadListingUrl = (url: string) => {
+        try {
+          return !blockedSourceHosts.has(new URL(url).host);
+        } catch {
+          return false;
+        }
+      };
+
       // Read the listing bodies the compact scan did not. Current-run jobs go
       // first, followed by older uncaptured jobs, so the per-run count cap is
       // a retry queue rather than permanent starvation. Discovery-only jobs
@@ -2938,7 +3005,10 @@ export function createWorkspaceDiscoveryMethods(
         workingSavedJobs,
         workingPendingJobs,
       )
-        .filter((job) => jobNeedsListingDetail(job))
+        .filter(
+          (job) =>
+            jobNeedsListingDetail(job) && canReadListingUrl(job.canonicalUrl),
+        )
         .sort(
           (left, right) =>
             Number(runRetainedJobIds.has(right.id)) -
@@ -3094,6 +3164,7 @@ export function createWorkspaceDiscoveryMethods(
             const routeRead = await readSightingApplyRoutes({
               jobs: multiSourceJobs,
               fetchHtml: ctx.fetchListingHtml,
+              canReadUrl: canReadListingUrl,
               signal: executionSignal,
             });
             routedJobs = routeRead.jobs;

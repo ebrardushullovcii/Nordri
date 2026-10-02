@@ -83,3 +83,6 @@ export { PERSON_TOOK_OVER_SUMMARY } from "./internal/workspace-application-user-
 
 // The app assistant (ADR 0037, 0038, 0039).
 export * from "./assistant";
+
+export { savedResumeDigestMatches } from "./internal/resume-file-integrity";
+export { resolveApprovedResumeExportForApply } from "./internal/matching-review-queue";

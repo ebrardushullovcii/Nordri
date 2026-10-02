@@ -13,6 +13,7 @@ import {
   toAnswerControlType,
 } from "./control-classification";
 import { detectApplyBlocker } from "./blockers";
+import { workHistoryField } from "./answer-sourcing";
 import {
   explicitCallingCode,
   isPhoneCountryControl,
@@ -145,9 +146,15 @@ export function buildApplyFormObservation(
             )
           ? ("identifier" as const)
           : null;
-    const base = {
+    const base: Omit<
+      ApplyFormControl,
+      "questionKind" | "answerControlType" | "attestationKind" | "answered"
+    > = {
       ref: rawControl.ref ?? `c${rawControl.index}`,
       kind,
+      ...(inputType === "month" || inputType === "date"
+        ? { dateInputType: inputType }
+        : {}),
       label: rawControl.label.trim(),
       groupLabel: rawControl.groupLabel.trim(),
       ...(kind === "radio"
@@ -187,6 +194,35 @@ export function buildApplyFormObservation(
           : isControlAnswered(control),
     };
   });
+
+  // Removed rows can leave legends numbered 2, 4, ... . Rows still in the
+  // DOM keep their slots when collapsed; hidden templates do not, even when
+  // their controls carry defaults.
+  const workRows = new Map<
+    string,
+    { control: ApplyFormControl; rawControl: RawApplyControl }[]
+  >();
+  raw.controls.forEach((rawControl, index) => {
+    const control = controls[index];
+    if (!control || !workHistoryField(control)) return;
+    const group = normalizeSignal(control.groupLabel);
+    const row = workRows.get(group) ?? [];
+    row.push({ control, rawControl });
+    workRows.set(group, row);
+  });
+  let rowIndex = 0;
+  for (const row of workRows.values()) {
+    const hidden = row.every(({ control }) => !control.visible);
+    const isTemplate =
+      hidden &&
+      (row.every(({ control }) => control.disabled) ||
+        row.some(({ rawControl }) =>
+          /template/iu.test(`${rawControl.id} ${rawControl.name}`),
+        ));
+    if (isTemplate) continue;
+    for (const { control } of row) control.workHistoryIndex = rowIndex;
+    rowIndex += 1;
+  }
 
   // A radio group is one question. Once one option is selected, every option
   // in that group belongs to an answered question; `checked` still identifies

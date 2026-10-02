@@ -844,17 +844,18 @@ export type AiJobSearchBehavior = z.infer<typeof AiJobSearchBehaviorSchema>;
 
 /**
  * The declarations Job Finder may tick for the person without asking each
- * time. The routine three (the answers are true, the privacy notice, the
- * site's terms) are on by default: every applicant must accept them to apply
- * at all, and the answers they certify come from the person's own profile.
- * Background-check consent, self-identification and marketing contact stay
- * off until the person turns them on, because those say something about the
- * person rather than about the form (ADR 0027).
+ * time. The routine ones (the answers are true, the privacy notice, the
+ * site's terms, consent to the employer's background check) are on by
+ * default: an applicant has to accept them to be considered at all, and
+ * leaving them for the person only turns every application into a stop.
+ * Self-identification and marketing contact stay off until the person turns
+ * them on: neither is needed to apply (ADR 0027).
  */
 export const defaultPreApprovedDeclarations = [
   "truthfulness_certification",
   "privacy_notice_acknowledgement",
   "terms_acceptance",
+  "background_check_consent",
 ] as const satisfies readonly ApplicationAttestationKind[];
 
 export const AiApplyingBehaviorSchema = z

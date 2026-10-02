@@ -109,4 +109,26 @@ describe("application answers in prepare-only execution", () => {
 
     expect(merged).toBe(profile);
   });
+  it("honors an explicit selection of an older answer despite a newer revision", () => {
+    const merged = mergeApplicationAnswersIntoExecutionProfile({
+      profile: createSeed().profile,
+      questionRecords: [question("question-1", "answer-old")],
+      answerRecords: [
+        answer({
+          id: "answer-old",
+          questionId: "question-1",
+          text: "Old",
+          revision: 1,
+        }),
+        answer({
+          id: "answer-new",
+          questionId: "question-1",
+          text: "Two weeks",
+          revision: 2,
+        }),
+      ],
+      idPrefix: "application-run-1",
+    });
+    expect(merged.answerBank.customAnswers[0]?.answer).toBe("Old");
+  });
 });

@@ -1,6 +1,7 @@
-import { Menu, Tray, dialog, globalShortcut, nativeImage } from 'electron'
+import { app, Menu, Tray, dialog, globalShortcut, nativeImage } from 'electron'
 import type { InterviewHotkeyAction } from '@nordri/contracts'
 import { getLiveAssistantService } from '../services/live-assistant'
+import { resolveBrandIconPaths } from './brand-icons'
 import { syncInterviewOverlayWindows } from './interview-overlay-windows'
 
 const hotkeyBindings: ReadonlyArray<{
@@ -41,13 +42,16 @@ async function endSessionWithConfirmation() {
 }
 
 function createTrayImage() {
-  const svg = `
-    <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
-      <rect width="32" height="32" rx="7" fill="#111827"/>
-      <path d="M9 11h14v3H9zM9 16h10v3H9zM9 21h7v3H9z" fill="#f6d365"/>
-    </svg>
-  `.trim()
-  return nativeImage.createFromDataURL(`data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`)
+  const icons = resolveBrandIconPaths(app.getAppPath())
+  if (!icons) return nativeImage.createEmpty()
+  const isMac = process.platform === 'darwin'
+  const image = nativeImage.createFromPath(
+    isMac ? icons.trayTemplate : icons.trayWhite,
+  )
+  if (isMac) {
+    image.setTemplateImage(true)
+  }
+  return image
 }
 
 function buildInterviewTrayMenu() {

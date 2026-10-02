@@ -575,9 +575,10 @@ describe("ApplicationsRecordsPanel", () => {
     expect(
       matchesApplicationsFilter(ready, "in_progress", "ready_to_send"),
     ).toBe(false);
+    // A form left for the person to send waits on them.
     expect(
       matchesApplicationsFilter(ready, "needs_action", "ready_to_send"),
-    ).toBe(false);
+    ).toBe(true);
     expect(
       matchesApplicationsFilter(needsYou, "needs_action", "needs_you"),
     ).toBe(true);

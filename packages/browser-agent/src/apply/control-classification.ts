@@ -269,7 +269,7 @@ const ATTESTATION_SIGNALS: ReadonlyArray<
       "terms and conditions",
       "terms of service",
       "terms of use",
-      "i agree to the terms",
+      "agree to the terms",
       "applicant agreement",
     ],
   ],

@@ -181,6 +181,43 @@ export function inferLinks(resumeText: string) {
 }
 
 export function inferEducationEntries(resumeText: string) {
+  const allLines = splitLines(resumeText);
+  const section = findSectionBodyLinesByAliases(allLines, [
+    "EDUCATION AND TRAINING",
+    "EDUCATION",
+  ]);
+  // Several entries are read only inside an Education section. Without one,
+  // school names elsewhere (a job at a university) are not education, so the
+  // single best match over the whole text is kept, as before.
+  if (section.length === 0) return inferEducationEntry(resumeText);
+  const lines = section;
+  const schoolPattern = /\b(?:college|university|school|institute|kolegji)\b/i;
+  const degreePattern =
+    /\b(?:degree|associate|bachelor|master|ph\.?d|b\.?sc|m\.?sc|diploma|bootcamp)\b/i;
+  const anchors = lines.flatMap((line, index) =>
+    schoolPattern.test(line) && !isResumeSectionHeading(line) ? [index] : [],
+  );
+  const starts = anchors.map((index, position) => {
+    const previous = lines[index - 1] ?? "";
+    const previousAnchor = anchors[position - 1] ?? -10;
+    return index - previousAnchor > 2 &&
+      degreePattern.test(previous) &&
+      !schoolPattern.test(previous)
+      ? index - 1
+      : index;
+  });
+  if (starts.length === 0) return inferEducationEntry(resumeText);
+  return starts.flatMap((start, index) => {
+    const end = starts[index + 1] ?? lines.length;
+    // A location before the first qualification belongs to it, not to the header.
+    const blockStart = index === 0 ? 0 : start;
+    return inferEducationEntry(
+      ["EDUCATION", ...lines.slice(blockStart, end)].join("\n"),
+    );
+  });
+}
+
+function inferEducationEntry(resumeText: string) {
   const lines = splitLines(resumeText);
   const educationLines = findSectionBodyLinesByAliases(lines, [
     "EDUCATION AND TRAINING",
@@ -231,14 +268,20 @@ export function inferEducationEntries(resumeText: string) {
 
   const educationLine = candidatePool[educationLineIndex] ?? "";
   const educationLineForParsing = cleanLine(
-    educationLine.replace(/\s*\(([^)]*)\)/g, (match, content: string) =>
-      dateRangePattern.test(content) ? "" : match,
-    ),
+    educationLine
+      .replace(dateRangePattern, "")
+      .replace(/[,\s–—-]+(?:19|20)\d{2}\s*$/, "")
+      .replace(/\s*\(([^)]*)\)/g, (match, content: string) =>
+        dateRangePattern.test(content) ? "" : match,
+      ),
   );
+  const parsedEducationLine = educationLineForParsing
+    .replace(/\(\s*\)/g, "")
+    .trim();
   const nearbyEducationLines = [
     candidatePool[educationLineIndex - 2],
     candidatePool[educationLineIndex - 1],
-    educationLineForParsing || educationLine,
+    parsedEducationLine || educationLine,
     candidatePool[educationLineIndex + 1],
     candidatePool[educationLineIndex + 2],
   ]
@@ -246,7 +289,7 @@ export function inferEducationEntries(resumeText: string) {
     .filter(Boolean);
   const combinedEducationLine = cleanLine(nearbyEducationLines.join(" "));
   const schoolMatch =
-    (educationLineForParsing || educationLine).match(
+    (parsedEducationLine || educationLine).match(
       /((?:[A-Z][A-Za-z'().&-]*\s+){0,6}(?:College|University|School|Institute|Kolegji)(?:\s+(?:[A-Z][A-Za-z'().&-]*|of|the|and)){0,8}(?:\s*\([^)]*\))?)/i,
     ) ??
     combinedEducationLine.match(
@@ -257,7 +300,7 @@ export function inferEducationEntries(resumeText: string) {
   let degree: string | null = null;
   let fieldOfStudy: string | null = null;
 
-  const splitParts = (educationLineForParsing || educationLine)
+  const splitParts = (parsedEducationLine || educationLine)
     .split(/\s+[–—-]\s+/)
     .map((part) => cleanLine(part))
     .filter(Boolean);
@@ -288,7 +331,7 @@ export function inferEducationEntries(resumeText: string) {
     degree = degreeLine ?? null;
   }
 
-  const schoolKeywordIndex = (educationLineForParsing || educationLine).search(
+  const schoolKeywordIndex = (parsedEducationLine || educationLine).search(
     /\b(?:College|University|School|Institute|Kolegji)\b/i,
   );
 
@@ -296,14 +339,14 @@ export function inferEducationEntries(resumeText: string) {
     !schoolName &&
     schoolKeywordIndex !== -1 &&
     educationDegreePattern.test(
-      (educationLineForParsing || educationLine).slice(0, schoolKeywordIndex),
+      (parsedEducationLine || educationLine).slice(0, schoolKeywordIndex),
     )
   ) {
     schoolName = cleanLine(
-      (educationLineForParsing || educationLine).slice(schoolKeywordIndex),
+      (parsedEducationLine || educationLine).slice(schoolKeywordIndex),
     );
     const detailParts = cleanLine(
-      (educationLineForParsing || educationLine).slice(0, schoolKeywordIndex),
+      (parsedEducationLine || educationLine).slice(0, schoolKeywordIndex),
     ).replace(/^[,\s–—-]+|[,\s–—-]+$/g, "");
 
     if (detailParts) {
@@ -319,7 +362,7 @@ export function inferEducationEntries(resumeText: string) {
   if (!schoolName && schoolMatch?.[1]) {
     schoolName = cleanLine(schoolMatch[1]);
     const detailParts = cleanLine(
-      (educationLineForParsing || educationLine).replace(schoolMatch[1], ""),
+      (parsedEducationLine || educationLine).replace(schoolMatch[1], ""),
     ).replace(/^[,\s–—-]+|[,\s–—-]+$/g, "");
 
     if (detailParts) {
@@ -365,7 +408,10 @@ export function inferEducationEntries(resumeText: string) {
   const dateMatch = dateLine?.match(dateRangePattern) ?? null;
   const graduationYearMatch = dateMatch
     ? null
-    : educationLine.match(/(?:,\s*|\b)((?:19|20)\d{2})\s*$/);
+    : (educationLine.match(/(?:,\s*|\b)((?:19|20)\d{2})\s*$/) ??
+      nearbyEducationLines
+        .map((line) => line.match(/(?:,\s*|\b)((?:19|20)\d{2})\s*$/))
+        .find((match) => match !== null));
   const locationLine =
     [
       candidatePool[educationLineIndex - 1],
@@ -376,6 +422,8 @@ export function inferEducationEntries(resumeText: string) {
         (line) =>
           line.length > 0 &&
           line !== dateLine &&
+          !educationDegreePattern.test(line) &&
+          !/(college|university|school|institute|kolegji)/i.test(line) &&
           /^[A-Za-z][A-Za-z\s.'-]+,\s*(?:[A-Z]{2}|[A-Za-z][A-Za-z\s.'-]+)$/.test(
             line,
           ),
@@ -384,8 +432,9 @@ export function inferEducationEntries(resumeText: string) {
   return [
     {
       schoolName: schoolName || null,
-      degree: degree || null,
-      fieldOfStudy: fieldOfStudy || null,
+      degree: degree?.replace(/[,\s]+(?:19|20)\d{2}\s*$/, "").trim() || null,
+      fieldOfStudy:
+        fieldOfStudy?.replace(/[,\s]+(?:19|20)\d{2}\s*$/, "").trim() || null,
       location: normalizeLocationLabel(locationLine ?? null),
       startDate: dateMatch?.[1] ? cleanLine(dateMatch[1]) : null,
       endDate: dateMatch?.[2]
@@ -426,6 +475,9 @@ function isLikelyProjectHeadingLine(value: string): boolean {
   if (
     !cleaned ||
     cleaned.length > 72 ||
+    /^(?:technologies|technology|tools|skills|url|repository)\s*:/i.test(
+      cleaned,
+    ) ||
     /^https?:\/\//i.test(cleaned) ||
     /[.!?;:]$/.test(cleaned)
   ) {
@@ -459,7 +511,8 @@ function isProjectHeadingStart(
   return (
     isProjectBulletLine(nextLine) ||
     isProjectRoleLine(nextLine) ||
-    /^https?:\/\//i.test(cleanLine(nextLine))
+    /^https?:\/\//i.test(cleanLine(nextLine)) ||
+    /^(?:technologies|technology|tools|skills)\s*:/i.test(cleanLine(nextLine))
   );
 }
 
@@ -500,10 +553,13 @@ export function inferProjects(resumeText: string) {
       if (/^https?:\/\//i.test(line)) {
         projectUrl = extractFirstUrl(line, /https?:\/\/[^\s]+/i);
         cursor += 1;
-        break;
+        continue;
       }
 
-      if (detailLines.length > 0 && isProjectHeadingStart(lines, cursor)) {
+      if (
+        (detailLines.length > 0 || projectUrl) &&
+        isProjectHeadingStart(lines, cursor)
+      ) {
         break;
       }
 
@@ -523,7 +579,19 @@ export function inferProjects(resumeText: string) {
       projectType: null,
       summary: cleanLine(detailLines.join(" ")) || null,
       role,
-      skills: inferSkills(combinedText, []),
+      skills: uniqueStrings([
+        ...inferSkills(combinedText, []),
+        ...detailLines
+          .filter((line) =>
+            /^(?:technologies|technology|tools|skills)\s*:/i.test(line),
+          )
+          .flatMap((line) =>
+            line
+              .replace(/^[^:]+:\s*/, "")
+              .split(/[,;|]/)
+              .map(cleanLine),
+          ),
+      ]),
       outcome:
         detailLines.find((line) => /\b\d+(?:\.\d+)?\s*%|\b\d+\+/i.test(line)) ??
         null,
@@ -552,7 +620,22 @@ export function inferCertifications(resumeText: string) {
   let index = 0;
 
   while (index < lines.length) {
-    const name = stripBulletPrefix(cleanLine(lines[index] ?? ""));
+    const rawName = stripBulletPrefix(cleanLine(lines[index] ?? ""));
+    const yearMatch = rawName.match(
+      /^(.*?)\s*(?:\(((?:19|20)\d{2})\)|[,–—-]\s*((?:19|20)\d{2}))\s*$/,
+    );
+    const datedName = yearMatch?.[1]?.trim() ?? rawName;
+    const inlineParts = datedName.split(/\s+[–—]\s+|\s+-\s+/);
+    // "Data Analytics - Coursera" names an issuer; "PMP - Project Management
+    // Professional" or "... - Associate" spells out the credential itself.
+    const inlineIssuer =
+      inlineParts.length === 2 &&
+      !/\b(?:associate|professional|foundation|advanced|certified|certificate|certification|specialist|practitioner|expert)\b/i.test(
+        inlineParts[1] ?? "",
+      )
+        ? (inlineParts[1] ?? null)
+        : null;
+    const name = inlineIssuer ? (inlineParts[0] ?? datedName) : datedName;
     if (!name || /^(?:issued|expires?|credential)\b/i.test(name)) {
       index += 1;
       continue;
@@ -560,13 +643,21 @@ export function inferCertifications(resumeText: string) {
 
     const possibleIssuer = cleanLine(lines[index + 1] ?? "");
     const issuer =
-      possibleIssuer &&
+      inlineIssuer ??
+      (possibleIssuer &&
+      !isBulletLine(lines[index + 1] ?? "") &&
+      !/\b(?:19|20)\d{2}\b/.test(possibleIssuer) &&
+      !yearMatch &&
+      (/^(?:issued|awarded|expires?|expiration|credential|https?:\/\/)\b/i.test(
+        lines[index + 2] ?? "",
+      ) ||
+        /^issuer\s*:/i.test(possibleIssuer)) &&
       !/^(?:issued|expires?|credential)\b/i.test(possibleIssuer) &&
       !/^https?:\/\//i.test(possibleIssuer)
         ? possibleIssuer
-        : null;
-    let cursor = index + (issuer ? 2 : 1);
-    let issueDate: string | null = null;
+        : null);
+    let cursor = index + (issuer && !inlineIssuer ? 2 : 1);
+    let issueDate: string | null = yearMatch?.[2] ?? yearMatch?.[3] ?? null;
     let expiryDate: string | null = null;
     let credentialUrl: string | null = null;
 
@@ -659,7 +750,10 @@ export function inferSpokenLanguages(resumeText: string) {
       continue;
     }
 
-    if (/mother\s*tongue/i.test(language) && /^[A-Za-z][A-Za-z .'-]*$/.test(proficiency)) {
+    if (
+      /mother\s*tongue/i.test(language) &&
+      /^[A-Za-z][A-Za-z .'-]*$/.test(proficiency)
+    ) {
       entries.push({
         language: titleCaseWords(proficiency),
         proficiency: "Native",
@@ -669,9 +763,19 @@ export function inferSpokenLanguages(resumeText: string) {
       continue;
     }
 
-    if (isSpokenLanguageResumeChrome(language) || isSpokenLanguageResumeChrome(line)) {
+    if (
+      isSpokenLanguageResumeChrome(language) ||
+      isSpokenLanguageResumeChrome(line)
+    ) {
       continue;
     }
+
+    if (
+      language.split(/\s+/).length > 4 ||
+      language.length > 40 ||
+      /^(?:page\b|disclaimer\b|copyright\b)/i.test(language)
+    )
+      continue;
 
     entries.push({
       language: titleCaseWords(language),

@@ -1,9 +1,18 @@
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { app } from "electron";
-import type { CandidateAsset } from "@nordri/contracts";
-import type { AssistantHostPorts } from "@nordri/job-finder";
+import {
+  CandidateAssetSchema,
+  type CandidateAsset,
+  type ResumeExportArtifactSummary,
+} from "@nordri/contracts";
+import {
+  resolveApprovedResumeExportForApply,
+  savedResumeDigestMatches,
+  type AssistantHostPorts,
+} from "@nordri/job-finder";
 
 import { extractResumeDocument } from "../../adapters/resume-document";
 import {
@@ -71,6 +80,129 @@ async function withTempCopy<T>(
   } finally {
     await rm(filePath, { force: true });
   }
+}
+
+/** The imported resume, as the assistant's file list shows it. */
+const ORIGINAL_RESUME_DOCUMENT_ID = "original_resume";
+/** One approved, job-specific resume PDF per job: `approved_resume_<jobId>`. */
+const APPROVED_RESUME_DOCUMENT_PREFIX = "approved_resume_";
+
+function resumeMime(fileName: string): string {
+  const extension = path.extname(fileName).toLowerCase();
+  if (extension === ".pdf") return "application/pdf";
+  if (extension === ".docx")
+    return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  if (extension === ".md") return "text/markdown";
+  return "text/plain";
+}
+
+interface ResumeDocument {
+  asset: CandidateAsset;
+  filePath: string;
+}
+
+/**
+ * The resumes an application can send, as documents the assistant can list
+ * and upload: the imported Original, and each job's approved resume. They
+ * live in the profile and the resume workspace, not the file library, so the
+ * assistant used to see only the extra files and could not attach either.
+ */
+async function listResumeDocuments(
+  documentId?: string,
+): Promise<ResumeDocument[]> {
+  const service = await getJobFinderWorkspaceService();
+  const snapshot = await service.getWorkspaceSnapshot();
+  const documents: ResumeDocument[] = [];
+  const base = snapshot.profile.baseResume;
+  if (
+    (!documentId || documentId === ORIGINAL_RESUME_DOCUMENT_ID) &&
+    base.storagePath &&
+    base.sha256
+  ) {
+    const metadata = await stat(base.storagePath).catch(() => null);
+    if (metadata?.isFile() && metadata.size > 0) {
+      documents.push({
+        filePath: base.storagePath,
+        asset: CandidateAssetSchema.parse({
+          id: ORIGINAL_RESUME_DOCUMENT_ID,
+          kind: "resume",
+          originalName: base.fileName.slice(0, 255),
+          mime: resumeMime(base.fileName),
+          byteSize: metadata.size,
+          sha256: base.sha256,
+          createdAt: base.uploadedAt,
+          sensitivity: "sensitive",
+          consentScope: "job_application_attachment",
+          retention: "until_deleted",
+        }),
+      });
+    }
+  }
+  if (documentId === ORIGINAL_RESUME_DOCUMENT_ID) return documents;
+  const draftsByJob = new Map(
+    snapshot.resumeDrafts.map((draft) => [draft.jobId, draft]),
+  );
+  const exportsByJob = new Map<string, ResumeExportArtifactSummary[]>();
+  for (const artifact of snapshot.resumeExportArtifacts) {
+    const exports = exportsByJob.get(artifact.jobId) ?? [];
+    exports.push(artifact);
+    exportsByJob.set(artifact.jobId, exports);
+  }
+  for (const item of snapshot.reviewQueue) {
+    if (
+      documentId &&
+      documentId !== `${APPROVED_RESUME_DOCUMENT_PREFIX}${item.jobId}`
+    )
+      continue;
+    if (item.resumeReview.status !== "approved") continue;
+    const draft = draftsByJob.get(item.jobId);
+    if (!draft?.approvedAt) continue;
+    const approvedExport = resolveApprovedResumeExportForApply({
+      draft,
+      exports: exportsByJob.get(item.jobId) ?? [],
+    });
+    if (!approvedExport?.sha256) continue;
+    const filePath = approvedExport.filePath;
+    const metadata = await stat(filePath).catch(() => null);
+    if (!metadata?.isFile() || metadata.size === 0) continue;
+    documents.push({
+      filePath,
+      asset: CandidateAssetSchema.parse({
+        id: `${APPROVED_RESUME_DOCUMENT_PREFIX}${item.jobId}`,
+        kind: "resume",
+        originalName: path.basename(filePath).slice(0, 255),
+        mime: resumeMime(filePath),
+        byteSize: metadata.size,
+        sha256: approvedExport.sha256,
+        createdAt: draft.approvedAt,
+        sensitivity: "sensitive",
+        consentScope: "job_application_attachment",
+        retention: "until_deleted",
+        forJob: {
+          jobId: item.jobId,
+          title: item.title.slice(0, 300),
+          company: item.company.slice(0, 300),
+        },
+      }),
+    });
+  }
+  return documents;
+}
+
+async function findResumeDocument(
+  documentId: string,
+): Promise<ResumeDocument | null> {
+  if (
+    documentId !== ORIGINAL_RESUME_DOCUMENT_ID &&
+    !documentId.startsWith(APPROVED_RESUME_DOCUMENT_PREFIX)
+  ) {
+    return null;
+  }
+  return (
+    (await listResumeDocuments(documentId)).find(
+      (document) => document.asset.id === documentId,
+    ) ?? null
+  );
 }
 
 export function createAssistantHostPorts(input: {
@@ -232,9 +364,27 @@ export function createAssistantHostPorts(input: {
       publishJobFinderWorkspaceUpdate();
     },
     async listDocuments() {
-      return (await library.list({ includeDeleted: false })).assets;
+      const resumes = await listResumeDocuments().catch(() => []);
+      return [
+        ...resumes.map((document) => document.asset),
+        ...(await library.list({ includeDeleted: false })).assets,
+      ];
     },
     async readDocumentText(documentId) {
+      if (documentId === ORIGINAL_RESUME_DOCUMENT_ID) {
+        const service = await getJobFinderWorkspaceService();
+        const snapshot = await service.getWorkspaceSnapshot();
+        return snapshot.profile.baseResume.textContent ?? null;
+      }
+      const resumeDocument = await findResumeDocument(documentId);
+      if (resumeDocument) {
+        const extracted = await extractResumeDocument(resumeDocument.filePath, {
+          bundleId: `assistant_read_${Date.now()}`,
+          runId: `assistant_read_${Date.now()}`,
+          sourceResumeId: documentId,
+        });
+        return extracted.textContent;
+      }
       const resolved = await library.resolveForApplication(documentId);
       const bytes = await resolved.loadVerifiedBytes();
       if (resolved.asset.mime.startsWith("text/")) {
@@ -250,6 +400,21 @@ export function createAssistantHostPorts(input: {
       });
     },
     async loadDocumentFile(documentId) {
+      const resumeDocument = await findResumeDocument(documentId);
+      if (resumeDocument) {
+        const bytes = await readFile(resumeDocument.filePath);
+        const sha256 = createHash("sha256").update(bytes).digest("hex");
+        if (!savedResumeDigestMatches(resumeDocument.asset.sha256, sha256)) {
+          throw new Error(
+            "That resume changed on disk since it was saved. Import or approve it again.",
+          );
+        }
+        return {
+          name: resumeDocument.asset.originalName,
+          mimeType: resumeDocument.asset.mime,
+          bytes: Uint8Array.from(bytes),
+        };
+      }
       const resolved = await library.resolveForApplication(documentId);
       return {
         name: resolved.asset.originalName,

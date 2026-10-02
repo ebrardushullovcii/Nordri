@@ -329,6 +329,29 @@ export async function ensureCampaignState(input: {
   return reconciled;
 }
 
+/**
+ * The search preferences a plan runs with: its own source selection decides
+ * which sources are searched, not each source's Profile "Include in search"
+ * switch. A scheduled run used to search sources the plan had left out. A
+ * plan that has never chosen sources follows Profile, as its editor says.
+ */
+export function searchPreferencesForCampaignRun(
+  campaign: Pick<JobSearchCampaign, "searchPreferences" | "sourceTargetIds">,
+): JobSearchCampaign["searchPreferences"] {
+  if (campaign.sourceTargetIds.length === 0) return campaign.searchPreferences;
+  const selected = new Set(campaign.sourceTargetIds);
+  return {
+    ...campaign.searchPreferences,
+    discovery: {
+      ...campaign.searchPreferences.discovery,
+      targets: campaign.searchPreferences.discovery.targets.map((target) => ({
+        ...target,
+        enabled: selected.has(target.id),
+      })),
+    },
+  };
+}
+
 export function createCampaign(input: {
   id: string;
   name: string;

@@ -387,7 +387,7 @@ describe("application CRM service", () => {
         records: repo.read(),
         request: { format: "csv", applicationRecordIds: [] },
       }).content,
-    ).toContain(",interview,local_historical_inference,");
+    ).toContain(",interview,,local_historical_inference,");
   });
 
   test("explicitly choosing the inferred stage prevents future automatic stage changes", async () => {
@@ -1004,13 +1004,13 @@ describe("application CRM service", () => {
     expect(csv.content.match(/\r\n/gu)).toHaveLength(4);
     const csvRows = new Map(lines.map((line) => [line.split(",", 1)[0], line]));
     expect(csvRows.get("application_persisted")).toBe(
-      "application_persisted,job_persisted,Software Engineer,Example Inc,applied,user_recorded_local,,2026-08-10T09:30:00.000Z,user_recorded_local,not_verified_with_employer_or_ats,,,2026-08-01T10:00:00.000Z",
+      "application_persisted,job_persisted,Software Engineer,Example Inc,applied,,user_recorded_local,,2026-08-10T09:30:00.000Z,user_recorded_local,not_verified_with_employer_or_ats,,,2026-08-01T10:00:00.000Z",
     );
     expect(csvRows.get("application_inferred")).toBe(
-      "application_inferred,job_inferred,Software Engineer,Example Inc,applied,local_historical_inference,,2026-08-01T10:00:00.000Z,local_historical_inference,not_verified_with_employer_or_ats,,,2026-08-01T10:00:00.000Z",
+      "application_inferred,job_inferred,Software Engineer,Example Inc,applied,,local_historical_inference,,2026-08-01T10:00:00.000Z,local_historical_inference,not_verified_with_employer_or_ats,,,2026-08-01T10:00:00.000Z",
     );
     expect(csvRows.get("application_inferred_unapplied")).toBe(
-      "application_inferred_unapplied,job_inferred_unapplied,Software Engineer,Example Inc,shortlisted,local_historical_inference,,,,not_verified_with_employer_or_ats,,,2026-08-01T10:00:00.000Z",
+      "application_inferred_unapplied,job_inferred_unapplied,Software Engineer,Example Inc,shortlisted,,local_historical_inference,,,,not_verified_with_employer_or_ats,,,2026-08-01T10:00:00.000Z",
     );
   });
 

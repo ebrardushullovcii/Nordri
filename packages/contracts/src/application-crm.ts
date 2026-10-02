@@ -225,6 +225,49 @@ export function resolveApplicationCrmStageSource(
     : "user";
 }
 
+/** Stages an application only reaches after it was sent. */
+export const APPLICATION_CRM_STAGES_AFTER_SENDING: ReadonlySet<ApplicationCrmStage> =
+  new Set<ApplicationCrmStage>([
+    "applied",
+    "employer_viewed",
+    "recruiter_contact",
+    "assessment",
+    "interview",
+    "offer",
+    "rejected",
+    "no_response",
+  ]);
+
+/**
+ * The person (not activity) recorded a stage that comes after sending: they
+ * sent it themselves, outside Job Finder. This is their word, not the site's
+ * confirmation, so it is never shown as a verified submission (N-033), but
+ * nothing offers to fill the application in again.
+ */
+export function isApplicationTrackedAsSentByPerson(
+  crm: ApplicationCrmData | null | undefined,
+): boolean {
+  return (
+    crm != null &&
+    resolveApplicationCrmStageSource(crm) === "user" &&
+    APPLICATION_CRM_STAGES_AFTER_SENDING.has(crm.stage)
+  );
+}
+
+/**
+ * The person marked the application withdrawn. That can come before or after
+ * sending, so it says nothing about a send; it only means they stopped.
+ */
+export function isApplicationWithdrawnByPerson(
+  crm: ApplicationCrmData | null | undefined,
+): boolean {
+  return (
+    crm != null &&
+    resolveApplicationCrmStageSource(crm) === "user" &&
+    crm.stage === "withdrawn"
+  );
+}
+
 export function resolveApplicationCrmTrackedStage(
   crm: ApplicationCrmData | null | undefined,
   activityStage: ApplicationCrmStage,

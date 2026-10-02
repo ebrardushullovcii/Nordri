@@ -10,7 +10,7 @@ import { buildApplyFormObservation } from "../apply/page-hands";
 import type { ApplyPageHands } from "../apply/types";
 import type { AgentConfig } from "../types";
 import type { Page } from "playwright";
-import { runJobSearchAgent } from "./job-search-agent";
+import { describeNonPosting, runJobSearchAgent } from "./job-search-agent";
 import { createJobSearchPrompts } from "./job-search-prompts";
 import { captureCompactDiscoveryObservation } from "../compact-discovery-observer";
 
@@ -172,6 +172,141 @@ const extractor: JobExtractor = {
 };
 
 describe("job search agent", () => {
+  test("reports repeated bot checks to the model, lets it continue, and keeps jobs when it finishes blocked", async () => {
+    const pages = { current: rawPage() };
+    const pageHands = hands(pages);
+    const navigate = vi.fn((url: string) => {
+      pages.current = rawPage({
+        url,
+        title: "Just a moment...",
+        bodyText: "Verifying your browser. Ray id changes on each request.",
+        actions: [],
+      });
+      return Promise.resolve({ ok: true as const, url });
+    });
+    pageHands.navigate = navigate;
+    const onCheckpoint = vi.fn();
+    const modelReason =
+      "The detail pages still ask for a bot check. Open jobs.example.test in the app's browser, get past the check, and search again. The jobs saved so far are kept.";
+    const seen: string[] = [];
+    const model = scripted([
+      { name: "extract_jobs" },
+      { name: "navigate", args: { url: "https://jobs.example.test/jobs/j1" } },
+      { name: "navigate", args: { url: "https://jobs.example.test/jobs/j2" } },
+      { name: "navigate", args: { url: "https://jobs.example.test/jobs/j3" } },
+      {
+        name: "finish",
+        args: {
+          blockedBy: "security_check",
+          needsPerson: true,
+          reason: modelReason,
+        },
+      },
+    ]);
+    const result = await runJobSearchAgent({
+      hands: pageHands,
+      config: config({ onCheckpoint }),
+      llmClient: {
+        chatWithTools: (messages, tools, options) => {
+          seen.push(messages.map((message) => message.content).join("\n"));
+          return model.chatWithTools(messages, tools, options);
+        },
+      },
+      jobExtractor: extractor,
+    });
+    const fact =
+      "This page is a bot check, seen twice in a row on jobs.example.test. Only the person can get past it. If it is still showing, finish this source with blockedBy: security_check and needsPerson: true, and tell the person to open jobs.example.test in the app's browser, get past the check, and search again. Jobs saved so far are kept.";
+    expect(seen[2]).not.toContain(fact);
+    expect(seen[3]).toContain(fact);
+    expect(seen).toHaveLength(5);
+    expect(navigate).toHaveBeenCalledTimes(3);
+    expect(result.jobs.map((job) => job.sourceJobId)).toEqual(["j1", "j2"]);
+    expect(onCheckpoint).toHaveBeenCalledWith(
+      expect.objectContaining({
+        collectedJobs: result.jobs,
+      }),
+    );
+    expect(result).toMatchObject({
+      incomplete: true,
+      accessBlockerReason: "site_protection",
+      parkedPageUrl: "https://jobs.example.test/jobs/j3",
+      error: modelReason,
+      phaseCompletionReason: modelReason,
+    });
+  });
+
+  test("allows a transient challenge to clear after waiting", async () => {
+    const pages = {
+      current: rawPage({
+        title: "Just a moment...",
+        bodyText: "Checking your browser",
+      }),
+    };
+    const pageHands = hands(pages);
+    pageHands.wait = () => {
+      pages.current = rawPage();
+      return Promise.resolve();
+    };
+    const result = await runJobSearchAgent({
+      hands: pageHands,
+      config: config(),
+      llmClient: scripted([
+        { name: "wait" },
+        { name: "extract_jobs" },
+        { name: "finish", args: { reason: "Read the jobs." } },
+      ]),
+      jobExtractor: extractor,
+    });
+    expect(result.jobs).toHaveLength(2);
+    expect(result.incomplete).toBe(false);
+    expect(result.accessBlockerReason).toBeUndefined();
+  });
+
+  test("refuses read-off items without their own title or link, so the agent can retry", () => {
+    const page = "https://jobs.example.test/search?q=engineer";
+    const posting = {
+      title: "Platform Engineer",
+      company: "Northwind",
+      canonicalUrl: "https://jobs.example.test/jobs/123",
+    };
+    expect(describeNonPosting(posting, page, "search_results")).toBeNull();
+    expect(
+      describeNonPosting(
+        { ...posting, title: "124,564" },
+        page,
+        "search_results",
+      ),
+    ).toBe("it has no job title");
+    expect(
+      describeNonPosting(
+        { ...posting, title: "Northwind" },
+        page,
+        "search_results",
+      ),
+    ).toBe("its title is just the company name");
+    expect(
+      describeNonPosting(
+        { ...posting, canonicalUrl: "https://jobs.example.test/" },
+        page,
+        "search_results",
+      ),
+    ).toBe("it has no link of its own");
+    expect(
+      describeNonPosting(
+        { ...posting, canonicalUrl: page },
+        page,
+        "search_results",
+      ),
+    ).toBe("it has no link of its own");
+    expect(
+      describeNonPosting(
+        { ...posting, canonicalUrl: "https://jobs.example.test/jobs/123" },
+        "https://jobs.example.test/jobs/123",
+        "job_detail",
+      ),
+    ).toBeNull();
+  });
+
   test("turns precision and scale modes into distinct search instructions", () => {
     const precision = createJobSearchPrompts(
       config({
@@ -1082,6 +1217,130 @@ describe("job search agent", () => {
 });
 
 describe("what the person sees while it runs", () => {
+  test("reads all 60 unread catalog pages before saving the matching job", async () => {
+    const catalog = Array.from({ length: 1_500 }, (_, id) =>
+      JobPostingSchema.parse({
+        ...posting(
+          id === 1_499 ? "Platform Engineer" : "Other Role",
+          "Cedar",
+          String(id),
+        ),
+        source: "target_site",
+        discoveredAt: "2026-10-01T10:00:00.000Z",
+      }),
+    );
+    const turns = [
+      ...Array.from({ length: 60 }, (_, page) => ({
+        name: "list_catalog_jobs",
+        args: { offset: page * 25 },
+      })),
+      { name: "save_catalog_jobs", args: { ids: [1_499] } },
+      {
+        name: "finish",
+        args: {
+          reason:
+            "Found the matching role after reviewing the complete catalog.",
+        },
+      },
+    ];
+    const result = await runJobSearchAgent({
+      hands: hands({ current: rawPage() }),
+      config: config({ sourceCatalog: catalog }),
+      llmClient: scripted(turns),
+      jobExtractor: extractor,
+    });
+    expect(result.jobs).toEqual([catalog[1_499]]);
+    expect(result.steps).toBe(62);
+    expect(result.incomplete).toBe(false);
+    expect(result.error).toBeUndefined();
+  });
+
+  test("duplicate-only pagination still stalls despite new URLs", async () => {
+    const pages = { current: rawPage() };
+    const turns = Array.from({ length: 10 }, (_, page) => [
+      {
+        name: "navigate",
+        args: { url: `https://jobs.example.test/search?page=${page}` },
+      },
+      { name: "extract_jobs", args: { pageType: "search_results" } },
+    ]).flat();
+    const result = await runJobSearchAgent({
+      hands: hands(pages),
+      config: config({ runControl: { noProgressStepLimit: 3 } }),
+      llmClient: scripted(turns),
+      jobExtractor: extractor,
+    });
+    expect(result.jobs).toHaveLength(2);
+    expect(result.steps).toBe(8);
+    expect(result.error).toBe("Stopped: no new jobs on the last 3 page reads.");
+  });
+
+  test("counts only repeated catalog pages in the stall warning window", async () => {
+    const catalog = Array.from({ length: 150 }, (_, id) =>
+      JobPostingSchema.parse({
+        ...posting("Other Role", "Cedar", String(id)),
+        source: "target_site",
+        discoveredAt: "2026-10-01T10:00:00.000Z",
+      }),
+    );
+    const result = await runJobSearchAgent({
+      hands: hands({ current: rawPage() }),
+      config: config({
+        sourceCatalog: catalog,
+        runControl: { noProgressStepLimit: 3 },
+      }),
+      llmClient: scripted([
+        ...Array.from({ length: 6 }, (_, page) => ({
+          name: "list_catalog_jobs",
+          args: { offset: page * 25 },
+        })),
+        { name: "list_catalog_jobs", args: { offset: 0 } },
+      ]),
+      jobExtractor: extractor,
+    });
+    expect(result.steps).toBe(12);
+    expect(result.jobs).toEqual([]);
+    expect(result.error).toBe("Stopped: no new jobs on the last 6 page reads.");
+  });
+
+  test("unread catalog details keep progressing, but repeated details stall", async () => {
+    const catalog = Array.from({ length: 6 }, (_, id) =>
+      JobPostingSchema.parse({
+        ...posting("Other Role", "Cedar", String(id)),
+        source: "target_site",
+        discoveredAt: "2026-10-01T10:00:00.000Z",
+      }),
+    );
+    const result = await runJobSearchAgent({
+      hands: hands({ current: rawPage() }),
+      config: config({
+        sourceCatalog: catalog,
+        runControl: { noProgressStepLimit: 3 },
+      }),
+      llmClient: scripted([
+        ...catalog.map((_job, id) => ({
+          name: "read_catalog_job",
+          args: { id },
+        })),
+        { name: "read_catalog_job", args: { id: 0 } },
+      ]),
+      jobExtractor: extractor,
+    });
+    expect(result.steps).toBe(12);
+    expect(result.error).toBe("Stopped: no new jobs in the last 6 steps.");
+  });
+
+  test("identical observations still stall", async () => {
+    const result = await runJobSearchAgent({
+      hands: hands({ current: rawPage() }),
+      config: config({ runControl: { noProgressStepLimit: 3 } }),
+      llmClient: scripted([{ name: "observe" }]),
+      jobExtractor: extractor,
+    });
+    expect(result.steps).toBe(6);
+    expect(result.error).toBe("Stopped: no new jobs in the last 6 steps.");
+  });
+
   test("turn notes are rewritten without tool names or handles", async () => {
     const { describeStepForPerson } = await import("./job-search-agent");
     expect(describeStepForPerson("observe → Page: https://x.test")).toBe(
@@ -1105,5 +1364,113 @@ describe("what the person sees while it runs", () => {
     expect(
       describeStepForPerson("navigate → Opened https://jobs.example.test/p2."),
     ).toBe("Opening https://jobs.example.test/p2.");
+  });
+  test("collects thousands of jobs across more than 300 productive turns", async () => {
+    const pages = { current: rawPage() };
+    const turns: Array<{ name: string; args?: Record<string, unknown> }> = [];
+    for (let page = 0; page < 350; page += 1) {
+      turns.push(
+        {
+          name: "navigate",
+          args: { url: `https://jobs.example.test/search?page=${page}` },
+        },
+        { name: "extract_jobs", args: { pageType: "search_results" } },
+      );
+    }
+    turns.push({ name: "finish", args: { reason: "All 350 pages read." } });
+    const result = await runJobSearchAgent({
+      hands: hands(pages),
+      config: config({ maxSteps: 240, retainAllFound: true }),
+      llmClient: scripted(turns),
+      jobExtractor: {
+        extractJobsFromPage: ({ pageUrl }) => {
+          const page = new URL(pageUrl).searchParams.get("page");
+          return Promise.resolve(
+            Array.from({ length: 10 }, (_, id) =>
+              posting("Platform Engineer", "Northwind", `${page}_${id}`),
+            ),
+          );
+        },
+      },
+    });
+    expect(result.jobs).toHaveLength(3_500);
+    expect(result.steps).toBe(701);
+    expect(result.incomplete).toBe(false);
+    expect(result.phaseCompletionReason).toBe("All 350 pages read.");
+  });
+
+  test("new jobs after a stall warning let the search continue", async () => {
+    const pages = { current: rawPage() };
+    const result = await runJobSearchAgent({
+      hands: hands(pages),
+      config: config({ runControl: { noProgressStepLimit: 3 } }),
+      llmClient: scripted([
+        { name: "observe" },
+        { name: "observe" },
+        { name: "observe" },
+        { name: "extract_jobs", args: { pageType: "search_results" } },
+        { name: "finish", args: { reason: "No more pages." } },
+      ]),
+      jobExtractor: extractor,
+    });
+    expect(result.jobs).toHaveLength(2);
+    expect(result.incomplete).toBe(false);
+  });
+
+  test("repeated catalog reads cannot keep discovery alive without saves", async () => {
+    const jobs = [
+      JobPostingSchema.parse({
+        ...posting("Platform Engineer", "Northwind", "catalog_1"),
+        source: "target_site",
+        discoveryMethod: "public_api",
+        discoveredAt: "2026-09-14T10:00:00Z",
+      }),
+    ];
+    const result = await runJobSearchAgent({
+      hands: hands({ current: rawPage() }),
+      config: config({
+        sourceCatalog: jobs,
+        runControl: { noProgressStepLimit: 3 },
+      }),
+      llmClient: scripted([{ name: "list_catalog_jobs" }]),
+      jobExtractor: extractor,
+    });
+    // The first read is new content; the next six repeated reads still stall.
+    expect(result.steps).toBe(7);
+    expect(result.jobs).toEqual([]);
+    expect(result.error).toBe("Stopped: no new jobs on the last 6 page reads.");
+  });
+
+  test("stops scrolling without saved jobs and reports the step window", async () => {
+    const result = await runJobSearchAgent({
+      hands: hands({ current: rawPage() }),
+      config: config({ runControl: { noProgressStepLimit: 3 } }),
+      llmClient: scripted([{ name: "scroll", args: { direction: "down" } }]),
+      jobExtractor: extractor,
+    });
+    expect(result.steps).toBe(6);
+    expect(result.error).toBe("Stopped: no new jobs in the last 6 steps.");
+  });
+
+  test("the wall-clock safety ceiling still stops a productive search", async () => {
+    let elapsed = 0;
+    const result = await runJobSearchAgent({
+      hands: hands({ current: rawPage() }),
+      config: config(),
+      now: () => new Date(Date.parse("2026-09-14T10:00:00Z") + elapsed),
+      llmClient: scripted([
+        { name: "extract_jobs", args: { pageType: "search_results" } },
+        { name: "finish", args: { reason: "No more pages." } },
+      ]),
+      jobExtractor: {
+        extractJobsFromPage: async (input) => {
+          elapsed = 60 * 60_000;
+          return extractor.extractJobsFromPage(input);
+        },
+      },
+    });
+    expect(result.jobs).toHaveLength(2);
+    expect(result.incomplete).toBe(true);
+    expect(result.error).toContain("ran out of time");
   });
 });

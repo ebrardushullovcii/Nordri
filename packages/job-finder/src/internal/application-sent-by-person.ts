@@ -105,7 +105,10 @@ export async function recordApplicationsSentByPerson(
 
   let recorded = 0;
   for (const result of newestByRecord.values()) {
-    if (result.state !== "awaiting_review" || result.blockerReason !== null) {
+    // A form the person was handed, with or without a question left for
+    // them, counts once its page shows the site's confirmation: they may have
+    // answered the last question and sent it themselves.
+    if (result.state !== "awaiting_review" && result.state !== "blocked") {
       continue;
     }
     const job = jobs.find((entry) => entry.id === result.jobId);
@@ -126,7 +129,7 @@ export async function recordApplicationsSentByPerson(
     const current = runResults.find((entry) => entry.id === result.id);
     if (
       !current ||
-      current.state !== "awaiting_review" ||
+      current.state !== result.state ||
       current.updatedAt !== result.updatedAt
     ) {
       continue;
@@ -136,6 +139,8 @@ export async function recordApplicationsSentByPerson(
     const sentResult = ApplyJobResultSchema.parse({
       ...current,
       state: "submitted",
+      blockerReason: null,
+      blockerSummary: null,
       summary: SENT_BY_PERSON_SUMMARY,
       detail: SENT_BY_PERSON_DETAIL,
       updatedAt: at,

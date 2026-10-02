@@ -427,7 +427,7 @@ type WorkHistoryField =
   | "endDate"
   | "summary";
 
-function workHistoryField(
+export function workHistoryField(
   control: ApplyFormControl,
 ): { index: number; field: WorkHistoryField } | null {
   const group = normalizeSignal(control.groupLabel);
@@ -437,9 +437,15 @@ function workHistoryField(
     /\b(?:work |employment |professional )?(?:experience|history)\s+(\d+)\b/u.exec(
       group || combined,
     );
-  const parsedIndex = indexedGroup?.[1]
-    ? Number.parseInt(indexedGroup[1], 10) - 1
-    : -1;
+  const parsedIndex =
+    control.workHistoryIndex ??
+    (indexedGroup?.[1]
+      ? Number.parseInt(indexedGroup[1], 10) - 1
+      : /^(?:my |work |employment |professional )?(?:experience|history)$/u.test(
+            group,
+          )
+        ? 0
+        : -1);
   if (parsedIndex < 0) {
     return null;
   }
@@ -467,6 +473,44 @@ function workHistoryField(
   return null;
 }
 
+// Profile dates may be saved in the person's words. Preserve their precision:
+// a known month can fill a month input, but must not invent a day for a date input.
+function workHistoryDate(
+  value: string | null,
+  inputType: ApplyFormControl["dateInputType"],
+): string | null {
+  const saved = trimmedOrNull(value);
+  if (!saved || !inputType) return saved;
+  const iso = /^(\d{4})-(\d{2})(?:-(\d{2}))?$/u.exec(saved);
+  const named =
+    /^(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{4})$/iu.exec(
+      saved,
+    );
+  const months = [
+    "january",
+    "february",
+    "march",
+    "april",
+    "may",
+    "june",
+    "july",
+    "august",
+    "september",
+    "october",
+    "november",
+    "december",
+  ];
+  const year = iso?.[1] ?? named?.[2];
+  const month =
+    iso?.[2] ??
+    (named?.[1]
+      ? String(months.indexOf(named[1].toLowerCase()) + 1).padStart(2, "0")
+      : null);
+  if (!year || !month || Number(month) < 1 || Number(month) > 12) return null;
+  if (inputType === "month") return `${year}-${month}`;
+  return iso?.[3] ? saved : null;
+}
+
 function workHistoryAnswer(
   control: ApplyFormControl,
   profile: CandidateProfile,
@@ -488,7 +532,9 @@ function workHistoryAnswer(
             .filter((entry): entry is string => Boolean(entry?.trim()))
             .join("\n"),
         )
-      : trimmedOrNull(experience[requested.field]);
+      : requested.field === "startDate" || requested.field === "endDate"
+        ? workHistoryDate(experience[requested.field], control.dateInputType)
+        : trimmedOrNull(experience[requested.field]);
   return value
     ? profileAnswer(
         value,
@@ -837,8 +883,17 @@ function answerLibraryScore(
   // The saved question can be the prompt as it was shown, group and label
   // together; the field on the retry may show only one of them. Both readings
   // count, so the same question keeps finding the same answer.
-  const label = normalizeSignal(`${control.groupLabel} ${control.label}`);
+  const group = normalizeSignal(control.groupLabel);
   const labelAlone = normalizeSignal(control.label);
+  const label =
+    control.kind === "radio" && group
+      ? group
+      : group &&
+          labelAlone &&
+          !group.includes(labelAlone) &&
+          !labelAlone.includes(group)
+        ? `${group} ${labelAlone}`
+        : labelAlone || group || normalizeSignal(control.placeholder);
   if (!question || !label) {
     return 0;
   }

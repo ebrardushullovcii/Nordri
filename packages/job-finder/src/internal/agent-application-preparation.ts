@@ -644,7 +644,9 @@ export async function runAgentApplicationPreparation(
   const attemptState: ApplyExecutionResult["state"] =
     result.outcome === "stuck"
       ? "failed"
-      : blocker === null && questions.length === 0
+      : blocker === null &&
+          questions.length === 0 &&
+          !result.structuredExperienceGap
         ? "ready"
         : "paused";
 
@@ -952,9 +954,14 @@ export function buildApplyReviewCard(input: {
           groundedIn: clampGrounding(letterEntry.answer.groundedIn),
         }
       : null,
-    waitingOnYou: input.result.pauses
+    waitingOnYou: [
+      ...input.result.pauses.map((pause) => pause.summary),
+      ...(input.result.structuredExperienceGap
+        ? [input.result.structuredExperienceGap]
+        : []),
+    ]
       .slice(0, 20)
-      .map((pause) => clamp(pause.summary, 2_000)),
+      .map((summary) => clamp(summary, 2_000)),
     preparedAt: input.preparedAt,
   });
 }

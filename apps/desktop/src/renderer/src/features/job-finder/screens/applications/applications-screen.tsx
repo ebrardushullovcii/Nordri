@@ -20,7 +20,11 @@ import type {
   JobFinderExactApplicationTarget,
   UserActionCommandInput,
 } from "@nordri/contracts";
-import { isListableCompanyName } from "@nordri/contracts";
+import {
+  isListableCompanyName,
+  isApplicationTrackedAsSentByPerson,
+  PREPARED_PAGE_CLOSED_SUMMARY,
+} from "@nordri/contracts";
 import { ArrowLeft } from "lucide-react";
 import { Button } from "@renderer/components/ui/button";
 import { LockedScreenLayout } from "../../components/locked-screen-layout";
@@ -154,6 +158,13 @@ export function ApplicationsScreen(props: {
   isRecordOutcomePending?: (jobId: string) => boolean;
   outcomeCampaignId?: string | null;
   getOutcomeResumeStrategyId?: (jobId: string) => string | null;
+  /** Outcomes the person recorded for one application. */
+  getRecordedOutcomes?: (applicationRecordId: string) => readonly {
+    id: string;
+    outcome: string;
+    occurredAt: string;
+    note: string | null;
+  }[];
   safeguardsBlockerCount?: number;
   onOpenSafeguards?: () => void;
   /** Opens Outcomes, which has no navigation entry of its own. */
@@ -338,7 +349,12 @@ export function ApplicationsScreen(props: {
       if (running.has(record.jobId)) continue;
       const result = latestApplyResultByRecordId.get(record.id);
       if (!result) continue;
+      // A form whose page closed while it waited on the person may have been
+      // sent by them; only they can say, one application at a time.
+      if (result.blockerSummary === PREPARED_PAGE_CLOSED_SUMMARY) continue;
+      if (isApplicationTrackedAsSentByPerson(record.crm)) continue;
       const presentation = resolveApplyStatePresentation({
+        recordCrm: record.crm,
         mode:
           record.automationMode === "autonomous_submit"
             ? "apply_for_me"
@@ -355,6 +371,7 @@ export function ApplicationsScreen(props: {
             : null,
       });
       if (
+        !presentation.cancelledByPerson &&
         presentation.kind === "could_not_apply" &&
         presentation.action === "try_again" &&
         !jobIds.includes(record.jobId)
@@ -380,6 +397,7 @@ export function ApplicationsScreen(props: {
               filter,
               latestApplyResultByRecordId.has(record.id)
                 ? resolveApplyStatePresentation({
+                    recordCrm: record.crm,
                     mode:
                       record.automationMode === "autonomous_submit"
                         ? "apply_for_me"
@@ -466,6 +484,7 @@ export function ApplicationsScreen(props: {
           activeFilter,
           latestApplyResultByRecordId.has(record.id)
             ? resolveApplyStatePresentation({
+                recordCrm: record.crm,
                 mode:
                   record.automationMode === "autonomous_submit"
                     ? "apply_for_me"
@@ -961,6 +980,40 @@ export function ApplicationsScreen(props: {
                   },
                 }
               : {})}
+            {...(props.crmSettings
+              ? { customStages: props.crmSettings.customStages }
+              : {})}
+            {...(props.onMutateApplicationCrm
+              ? {
+                  onCompleteReminder: async (recordId, reminderId) => {
+                    const record = applicationRecords.find(
+                      (entry) => entry.id === recordId,
+                    );
+                    const reminder = record?.crm?.reminders.find(
+                      (entry) => entry.id === reminderId,
+                    );
+                    if (!record?.crm || !reminder) {
+                      throw new Error(
+                        "That reminder is no longer saved. Refresh and try again.",
+                      );
+                    }
+                    const now = new Date().toISOString();
+                    await props.onMutateApplicationCrm?.({
+                      applicationRecordId: record.id,
+                      expectedRevision: record.crm.revision,
+                      mutation: {
+                        type: "upsert_reminder",
+                        reminder: {
+                          ...reminder,
+                          status: "completed",
+                          updatedAt: now,
+                          completedAt: now,
+                        },
+                      },
+                    });
+                  },
+                }
+              : {})}
             onSelectRecord={onSelectRecord}
             onViewChange={setCrmView}
             onVisibleRecordIdsChange={handleCrmVisibleRecordIdsChange}
@@ -971,6 +1024,9 @@ export function ApplicationsScreen(props: {
           />
         ) : (
           <ApplicationsRecordsPanel
+            {...(props.crmSettings
+              ? { customStages: props.crmSettings.customStages }
+              : {})}
             activeFilter={activeFilter}
             applicationRecords={filteredApplicationRecords}
             filterCounts={filterCounts}
@@ -1012,6 +1068,9 @@ export function ApplicationsScreen(props: {
                     effectiveSelectedRecord.jobId,
                   ) ?? null
                 }
+                recordedOutcomes={
+                  props.getRecordedOutcomes?.(effectiveSelectedRecord.id) ?? []
+                }
                 outcomeCampaignId={props.outcomeCampaignId ?? null}
                 record={effectiveSelectedRecord}
                 relatedJobCanonicalUrl={
@@ -1050,6 +1109,9 @@ export function ApplicationsScreen(props: {
           </section>
         ) : (
           <ApplicationsDetailPanel
+            {...(props.crmSettings
+              ? { customStages: props.crmSettings.customStages }
+              : {})}
             activeFilter={activeFilter}
             readApplyRunContext={readApplyRunContext}
             applyRunDetails={applyRunDetails}

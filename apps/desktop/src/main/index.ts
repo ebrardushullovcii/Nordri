@@ -12,6 +12,7 @@ import {
   configureDesktopUserDataDirectory,
   getDesktopStartupDiagnosticsPath,
 } from "./setup/user-data-directory";
+import { resolveBrandIconPaths } from "./setup/brand-icons";
 import { createMainWindow } from "./setup/window-shell";
 import { runShutdownWithTimeout } from "./setup/shutdown-with-timeout";
 import { createDeferredBackgroundInitController } from "./setup/deferred-background-init";
@@ -268,6 +269,10 @@ void app
       return;
     }
     recordStartupDiagnostic("app ready");
+    if (process.platform === "darwin" && !app.isPackaged) {
+      const brandIcons = resolveBrandIconPaths(app.getAppPath());
+      if (brandIcons) app.dock?.setIcon(brandIcons.appIcon);
+    }
     Menu.setApplicationMenu(null);
     recordStartupDiagnostic("creating main window");
     const mainWindow = createMainWindowSafely();

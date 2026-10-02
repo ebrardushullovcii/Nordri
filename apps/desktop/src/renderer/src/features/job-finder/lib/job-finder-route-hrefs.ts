@@ -81,3 +81,7 @@ export function inferFileKindForQuestion(question: {
   if (/photo|image|headshot|picture/u.test(prompt)) return "image";
   return "other";
 }
+
+/** The Settings group that owns how picky a search is (ADR 0025). */
+export const SETTINGS_AI_JOB_SEARCH_ANCHOR_ID = "settings-ai-job-search";
+export const JOB_FINDER_SETTINGS_JOB_SEARCH_HREF = `${JOB_FINDER_ROUTE_PATHS.settings}#${SETTINGS_AI_JOB_SEARCH_ANCHOR_ID}`;

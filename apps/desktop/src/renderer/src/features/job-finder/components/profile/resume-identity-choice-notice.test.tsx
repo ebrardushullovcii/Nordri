@@ -42,12 +42,10 @@ describe("ResumeIdentityChoiceNotice", () => {
       />,
     );
 
-    expect(screen.getByRole("alert").textContent).toContain(
-      "email is “morgan.lee@example.test” while your profile uses “morgan@lee-mail.test”",
+    expect(screen.getByRole("status").textContent).toContain(
+      "email is “morgan.lee@example.test” and your profile uses “morgan@lee-mail.test”",
     );
-    expect(
-      screen.queryByRole("button", { name: "Keep the resume's name" }),
-    ).toBeNull();
+    expect(screen.queryByRole("button", { name: /instead/ })).toBeNull();
     fireEvent.click(
       screen.getByRole("button", { name: "This resume is mine" }),
     );
@@ -63,6 +61,6 @@ describe("ResumeIdentityChoiceNotice", () => {
       />,
     );
 
-    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByRole("status")).toBeNull();
   });
 });

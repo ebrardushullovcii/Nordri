@@ -388,6 +388,9 @@ function buildGroupedCommit(
       resultId: question.resultId,
       overrides: {
         answerOptions: index === 0 ? ["Option A", "Option B"] : [],
+        selectedAnswerId: answers[index]!.id,
+        submittedAnswer: answers[index]!.text,
+        status: "answered",
       },
     }),
   );
@@ -475,9 +478,7 @@ async function runOnBoth(
   await run(inMemory);
   await inMemory.close();
 
-  const fixture = await createTempRepository(
-    "nordri-grouped-manual-answer-",
-  );
+  const fixture = await createTempRepository("nordri-grouped-manual-answer-");
   temporaryDirectories.push(fixture.tempDirectory);
   const fileRepository = await fixture.createRepository();
   await run(fileRepository);
@@ -578,8 +579,9 @@ describe("commitGroupedManualAnswer", () => {
       expect(questionById.get("question_a")).toEqual(
         expect.objectContaining({
           answerOptions: ["Option A", "Option B"],
-          status: "detected",
-          submittedAnswer: null,
+          status: "answered",
+          selectedAnswerId: "answer_question_a_v1",
+          submittedAnswer: "5 years",
         }),
       );
 
@@ -938,11 +940,31 @@ describe("commitGroupedManualAnswer", () => {
       }),
     },
     {
-      name: "an answered question",
+      name: "a question without its answer selection",
       mutate: (fixture: GroupedCommitFixture) => ({
         ...fixture.input,
         questions: fixture.input.questions.map((question, index) =>
-          index === 0 ? { ...question, status: "answered" as const } : question,
+          index === 0 ? { ...question, selectedAnswerId: null } : question,
+        ),
+      }),
+    },
+    {
+      name: "a question with mismatched answer text",
+      mutate: (fixture: GroupedCommitFixture) => ({
+        ...fixture.input,
+        questions: fixture.input.questions.map((question, index) =>
+          index === 0
+            ? { ...question, submittedAnswer: "Another answer" }
+            : question,
+        ),
+      }),
+    },
+    {
+      name: "a question that is still detected",
+      mutate: (fixture: GroupedCommitFixture) => ({
+        ...fixture.input,
+        questions: fixture.input.questions.map((question, index) =>
+          index === 0 ? { ...question, status: "detected" as const } : question,
         ),
       }),
     },

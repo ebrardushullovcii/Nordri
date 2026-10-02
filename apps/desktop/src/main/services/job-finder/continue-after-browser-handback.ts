@@ -53,6 +53,7 @@ export async function continueApplicationsAfterHandback(input: {
         ![
           "failed",
           "skipped",
+          "cancelled",
           "submitted",
           "awaiting_review",
           "blocked",

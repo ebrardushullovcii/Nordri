@@ -91,56 +91,126 @@ describe("obsolete automatic batch sample recovery", () => {
     },
   );
 
+  test("keeps a person-created review and its progress on every read", async () => {
+    const seed = createReviewSeed();
+    const review = seed.intelligence.safeguards.preparedBatchSampleReviews[0]!;
+    review.id = "person_requested_review";
+    review.reviewedCount = 1;
+    review.sampleCount = 2;
+    review.sampledItemIds = ["sample_result_0", "sample_result_1"];
+    const { workspaceService, repository } = createWorkspaceServiceHarness({
+      seed,
+    });
+    await workspaceService.getWorkspaceSnapshot();
+    await workspaceService.getSafeguardsOverview();
+    expect(
+      (await repository.getIntelligenceState()).safeguards
+        .preparedBatchSampleReviews,
+    ).toEqual([review]);
+  });
+
+  test("keeps progress from prepare_batch_sample_review alongside retired automatic reviews", async () => {
+    const { workspaceService, repository } = createWorkspaceServiceHarness({
+      seed: createReviewSeed(),
+    });
+    await workspaceService.mutateSafeguards({
+      type: "prepare_batch_sample_review",
+      reviewId: "person_requested",
+      batchId: "person_batch",
+      prepared: Array.from({ length: 10 }, (_, index) => ({
+        id: `person_item_${index}`,
+      })),
+      requiredSampleRatio: 0.2,
+      explanation: "Review this sample.",
+      recoveryGuidance: "Finish the sample.",
+    });
+    await workspaceService.mutateSafeguards({
+      type: "update_batch_sample_review",
+      reviewId: "person_requested",
+      reviewedCount: 1,
+      reviewCompleted: false,
+    });
+    await workspaceService.getWorkspaceSnapshot();
+    await workspaceService.getSafeguardsOverview();
+    expect(
+      (await repository.getIntelligenceState()).safeguards
+        .preparedBatchSampleReviews,
+    ).toEqual([
+      expect.objectContaining({
+        id: "person_requested",
+        reviewedCount: 1,
+        reviewCompleted: false,
+      }),
+    ]);
+  });
+
+  test.each(["snapshot", "overview", "apply", "search"] as const)(
+    "%s keeps a completed automatic review and its history",
+    async (entry) => {
+      const seed = createReviewSeed();
+      const review =
+        seed.intelligence.safeguards.preparedBatchSampleReviews[0]!;
+      review.reviewCompleted = true;
+      review.reviewedCount = 1;
+      seed.intelligence.safeguards.preparedBatchSampleReviews.push({
+        ...review,
+        id: `${reviewId}:pending`,
+        reviewCompleted: false,
+        reviewedCount: 0,
+      });
+      const { workspaceService, repository } = createWorkspaceServiceHarness({
+        seed,
+      });
+      if (entry === "snapshot") await workspaceService.getWorkspaceSnapshot();
+      if (entry === "overview") await workspaceService.getSafeguardsOverview();
+      if (entry === "apply")
+        expect(
+          await workspaceService.evaluateApplicationSafeguardBlockers([
+            "job_ready",
+          ]),
+        ).toEqual([]);
+      if (entry === "search")
+        expect(
+          await workspaceService.evaluateDiscoverySafeguardBlockers(),
+        ).toEqual([]);
+      expect(
+        (await repository.getIntelligenceState()).safeguards
+          .preparedBatchSampleReviews,
+      ).toEqual([review]);
+    },
+  );
+
   test.each([
-    "manual",
-    "completed",
+    "pending",
     "dismissed",
     "missing-result",
     "prepared",
     "running",
-  ] as const)(
-    "preserves a %s review instead of assuming it is obsolete",
-    async (condition) => {
-      const seed = createReviewSeed();
-      const review =
-        seed.intelligence.safeguards.preparedBatchSampleReviews[0]!;
-      if (condition === "manual") review.id = "person_requested_review";
-      if (condition === "completed") {
-        review.reviewCompleted = true;
-        review.reviewedCount = 1;
-      }
-      if (condition === "dismissed") {
-        seed.intelligence.safeguards.safeguardDismissals.push({
-          id: "person_dismissal",
-          kind: "batch_sample_review_pending",
-          referenceId: review.id,
-          reason: "not_applicable",
-          note: null,
-          dismissedAt: at,
-        });
-      }
-      if (condition === "missing-result") seed.applyJobResults.pop();
-      if (condition === "prepared") {
-        seed.applyJobResults[0]!.state = "awaiting_review";
-        seed.applyJobResults[0]!.reviewCard = {
-          siteLabel: "Replica form",
-          pageUrl: "http://127.0.0.1/apply",
-          answers: [],
-          attachments: [],
-          letter: null,
-          waitingOnYou: [],
-          preparedAt: at,
-        };
-      }
-      if (condition === "running") seed.applyRuns[0]!.state = "running";
-      const { workspaceService, repository } = createWorkspaceServiceHarness({
-        seed,
+  ] as const)("retires a %s automatic review", async (condition) => {
+    const seed = createReviewSeed();
+    const review = seed.intelligence.safeguards.preparedBatchSampleReviews[0]!;
+    if (condition === "dismissed")
+      seed.intelligence.safeguards.safeguardDismissals.push({
+        id: "person_dismissal",
+        kind: "batch_sample_review_pending",
+        referenceId: review.id,
+        reason: "not_applicable",
+        note: null,
+        dismissedAt: at,
       });
-      await workspaceService.getSafeguardsOverview();
-      const { safeguards } = await repository.getIntelligenceState();
-      expect(safeguards.preparedBatchSampleReviews).toEqual([review]);
-    },
-  );
+    if (condition === "missing-result") seed.applyJobResults.pop();
+    if (condition === "prepared")
+      seed.applyJobResults[0]!.state = "awaiting_review";
+    if (condition === "running") seed.applyRuns[0]!.state = "running";
+    const { workspaceService, repository } = createWorkspaceServiceHarness({
+      seed,
+    });
+    await workspaceService.getSafeguardsOverview();
+    expect(
+      (await repository.getIntelligenceState()).safeguards
+        .preparedBatchSampleReviews,
+    ).toEqual([]);
+  });
 
   test("retires an automatic sample that only names a question handoff", async () => {
     const seed = createReviewSeed();

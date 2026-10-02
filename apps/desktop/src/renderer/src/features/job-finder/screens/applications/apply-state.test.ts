@@ -1,4 +1,7 @@
-import { APPLICATION_SKIPPED_BY_PERSON_LABEL } from "@nordri/contracts";
+import {
+  APPLICATION_SKIPPED_BY_PERSON_LABEL,
+  ApplicationCrmDataSchema,
+} from "@nordri/contracts";
 import { describe, expect, it } from "vitest";
 import type { JobFinderWorkspaceSnapshot } from "@nordri/contracts";
 import {
@@ -457,5 +460,71 @@ describe("a planned job is never Filling in", () => {
         run: { state: "running", activityPaused: true, started: true },
       }),
     ).toMatchObject({ kind: "filling_in", title: "Filling in (3 min)" });
+  });
+});
+
+it("shows cancellation by the person instead of the former security check", () => {
+  expect(
+    resolveApplyStatePresentation({
+      mode: "fill_only",
+      result: buildResult({
+        state: "cancelled",
+        summary: "Cancelled by you",
+        detail: "Nothing was sent.",
+        blockerReason: "site_protection",
+        blockerSummary: "Complete the security check.",
+      }),
+    }),
+  ).toMatchObject({
+    title: "Cancelled by you",
+    action: "try_again",
+    questionsLeftLabel: null,
+    // A neutral state: the badge must not read as an error.
+    cancelledByPerson: true,
+  });
+});
+
+describe("an application the person recorded as sent in the tracker", () => {
+  const trackedCrm = (stage: "applied" | "interview" | "preparing") =>
+    ApplicationCrmDataSchema.parse({
+      stage,
+      stageSource: "user",
+      stageChangedAt: "2026-09-14T11:00:00.000Z",
+    });
+
+  it("reads as their record, with nothing to finish or retry", () => {
+    const presentation = resolveApplyStatePresentation({
+      mode: "fill_only",
+      result: buildResult({
+        state: "failed",
+        summary: "The prepared application page is no longer open.",
+      }),
+      recordCrm: trackedCrm("interview"),
+    });
+    expect(presentation).toMatchObject({
+      kind: "applied",
+      title: "Marked applied",
+      action: "none",
+    });
+  });
+
+  it("leaves a stage before sending to the run's own state", () => {
+    expect(
+      resolveApplyStatePresentation({
+        mode: "fill_only",
+        result: buildResult({ state: "failed" }),
+        recordCrm: trackedCrm("preparing"),
+      }).kind,
+    ).toBe("could_not_apply");
+  });
+
+  it("keeps a verified send as Applied", () => {
+    expect(
+      resolveApplyStatePresentation({
+        mode: "fill_only",
+        result: buildResult({ state: "submitted" }),
+        recordCrm: trackedCrm("applied"),
+      }).title,
+    ).toBe("Applied");
   });
 });

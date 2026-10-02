@@ -35,6 +35,7 @@ import {
 import {
   createDiscoveryRunCancelledFeedback,
   createDiscoveryRunInterruptedFeedback,
+  isDiscoveryFailureSuperseded,
   createDiscoveryRunSafeguardPausedFeedback,
   createDiscoveryRunStartedFeedback,
   createDiscoveryRunSucceededFeedback,
@@ -338,7 +339,6 @@ export function DiscoveryScreen(props: {
   /** Search plans the page can switch between; Search now runs the current one. */
   campaigns?: readonly JobSearchCampaign[];
   safeguardPauses?: readonly PlanSafeguardPause[];
-  pendingApplicationReviewCount?: number;
   activeCampaignId?: string | null;
   isPlanSwitchPending?: boolean;
   onSelectCampaign?: (campaignId: string) => void;
@@ -402,7 +402,6 @@ export function DiscoveryScreen(props: {
     reviewQueue = [],
     campaigns,
     safeguardPauses = [],
-    pendingApplicationReviewCount = 0,
     activeCampaignId = null,
     isPlanSwitchPending = false,
     onSelectCampaign,
@@ -565,13 +564,21 @@ export function DiscoveryScreen(props: {
     selectedPlanRunReportLabel,
     selectedPlanSafeguardRoute,
   ]);
-  const failureSupersededByCompletedRun =
-    discoveryRunFeedback?.status === "failed" &&
-    discoveryRunFeedback.recordedAtMs !== undefined &&
-    selectedPlanLatestRun?.state === "completed" &&
-    selectedPlanLatestRun.completedAt !== null &&
-    Date.parse(selectedPlanLatestRun.completedAt) >
-      discoveryRunFeedback.recordedAtMs;
+  const failureSupersededByCompletedRun = isDiscoveryFailureSuperseded({
+    feedback: discoveryRunFeedback,
+    targetId:
+      discoveryRunFeedback?.targetId ??
+      searchPreferences.discovery.targets.find(
+        (target) => target.label === discoveryRunFeedback?.targetLabel,
+      )?.id ??
+      null,
+    runs:
+      discoveryRunFeedback?.targetLabel || discoveryRunFeedback?.targetId
+        ? recentRuns
+        : selectedPlanLatestRun
+          ? [selectedPlanLatestRun]
+          : [],
+  });
   const currentDiscoveryRunFeedback =
     discoveryRunFeedback &&
     ((discoveryRunFeedback.status === "failed" &&
@@ -1030,23 +1037,7 @@ export function DiscoveryScreen(props: {
         ) : null}
       </span>
     );
-  const headerStatusWithReview =
-    discoveryHeaderStatus ??
-    (pendingApplicationReviewCount > 0 ? (
-      <span
-        className="flex w-full min-w-0 flex-wrap items-center gap-2 text-(length:--text-description) leading-5 text-foreground-soft"
-        role="status"
-      >
-        {pendingApplicationReviewCount === 1
-          ? "A prepared application sample needs review before more applications can be prepared. Searching is available."
-          : `${pendingApplicationReviewCount} prepared application samples need review before more applications can be prepared. Searching is available.`}
-        <Button asChild size="sm" type="button" variant="outline">
-          <Link to="/job-finder/safeguards?tab=reviews">
-            Review prepared sample
-          </Link>
-        </Button>
-      </span>
-    ) : null);
+  const headerStatusWithReview = discoveryHeaderStatus;
 
   const filtersPanel = (
     <DiscoveryFiltersPanel

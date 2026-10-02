@@ -1336,7 +1336,7 @@ describe("buildJobFinderTaskCenterModel", () => {
     ["running", "active", "Working through application"],
     ["paused_for_user_review", "paused", "Paused by a safety limit"],
     ["paused_for_consent", "paused", "Waiting for your consent"],
-    ["completed", "completed", "Ready for final review"],
+    ["completed", "completed", "Finished"],
     ["cancelled", "cancelled", "Application stopped"],
     ["failed", "failed", "Application needs attention"],
   ] as const)(
@@ -1617,3 +1617,91 @@ describe("describeTaskCenterCounts", () => {
     );
   });
 });
+
+test("counts cancellation separately while the other application still needs the person", () => {
+  const run = createApplyRun({
+    state: "paused_for_user_review",
+    totalJobs: 2,
+    pendingJobs: 1,
+    jobIds: ["job_1", "job_2"],
+  });
+  const workspace = createWorkspace({
+    applyRuns: [run],
+    applyJobResults: [
+      {
+        id: "cancelled_result",
+        runId: run.id,
+        jobId: "job_1",
+        state: "cancelled",
+        updatedAt: "2026-10-01T10:00:00.000Z",
+      },
+      {
+        id: "paused_result",
+        runId: run.id,
+        jobId: "job_2",
+        state: "awaiting_review",
+        updatedAt: "2026-10-01T10:00:00.000Z",
+      },
+    ] as JobFinderWorkspaceSnapshot["applyJobResults"],
+    userActionRequests: [
+      {
+        id: "other_step",
+        state: "pending",
+        scope: { type: "application", runId: run.id, jobId: "job_2" },
+      },
+    ] as JobFinderWorkspaceSnapshot["userActionRequests"],
+  });
+  const task = buildJobFinderTaskCenterModel({
+    workspace,
+    isDiscoveryPending: false,
+    isResumeImportPending: false,
+  }).items.find((item) => item.kind === "apply");
+  expect(task).toMatchObject({
+    status: "paused",
+    stageLabel: "Waiting on you",
+  });
+  expect(task?.countLabel).toContain("1 cancelled");
+  expect(task?.countLabel).not.toMatch(/failed|need attention/i);
+});
+
+test.each([
+  ["submitted", "cancelled", "Finished"],
+  ["submitted", "skipped", "Finished"],
+  ["skipped", "cancelled", "Finished"],
+  ["submitted", "submitted", "Applied"],
+  ["cancelled", "cancelled", "Cancelled by you"],
+  ["failed", "cancelled", "Some applications need attention"],
+  ["blocked", "cancelled", "Some applications need attention"],
+  ["awaiting_review", "cancelled", "Ready for final review"],
+] as const)(
+  "labels a completed %s + %s batch as %s",
+  (first, second, label) => {
+    const states = [first, second];
+    const run = createApplyRun({
+      state: "completed",
+      jobIds: ["job_1", "job_2"],
+      totalJobs: 2,
+      pendingJobs: 0,
+      submittedJobs: states.filter((state) => state === "submitted").length,
+      failedJobs: states.filter((state) => state === "failed").length,
+      blockedJobs: states.filter((state) => state === "blocked").length,
+    });
+    const model = buildJobFinderTaskCenterModel({
+      workspace: createWorkspace({
+        applyRuns: [run],
+        applyJobResults: states.map((state, index) => ({
+          id: `result_${index}`,
+          runId: run.id,
+          jobId: run.jobIds[index],
+          applicationRecordId: `application_${index}`,
+          state,
+          startedAt: "2026-10-01T10:00:00.000Z",
+          updatedAt: "2026-10-01T10:01:00.000Z",
+        })) as JobFinderWorkspaceSnapshot["applyJobResults"],
+      }),
+      isDiscoveryPending: false,
+      isResumeImportPending: false,
+    });
+    expect(findTask(model, "apply").stageLabel).toBe(label);
+  },
+);

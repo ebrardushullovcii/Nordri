@@ -26,6 +26,7 @@ export const knownSkillPhrases = [
   "Accessibility",
   "Performance Optimization",
   "Python",
+  "Tableau",
   "AWS",
   "Azure",
   "SQL Server",
@@ -128,6 +129,18 @@ export const resumeSectionHeadings = new Set<string>([
   "VISA SPONSORSHIP",
   "ELIGIBILITY",
   "TARGET ROLES",
+  "OBJECTIVE",
+  "CAREER OBJECTIVE",
+  "WORK PREFERENCES",
+  "EMPLOYMENT PREFERENCES",
+  "ACTIVITIES",
+  "EXTRACURRICULAR",
+  "EXTRACURRICULAR ACTIVITIES",
+  "VOLUNTEER",
+  "VOLUNTEER EXPERIENCE",
+  "VOLUNTEERING",
+  "DISCLAIMER",
+  "REFERENCES",
 ]);
 
 export const contactOrMetaPattern =
@@ -140,7 +153,7 @@ export const experienceSectionHeadingPattern =
   /^(?:(?:(?:relevant|professional|full[- ]?time|work|employment|career|industry)(?:\s+(?:work|professional))?\s+(?:experience|history|background))|(?:internships?|intern)\s+experience|(?:relevant\s+)?experience|employment|background|internships?)\s*[:\-–—]?\s*$/i;
 
 export const nonExperienceSectionHeadingPattern =
-  /^(?:about(?:\s+myself|\s+me)?|summary|profile|professional\s+profile|(?:technical|core|key|additional)?\s*skills?|projects?|project\s+experience|education(?:\s+(?:and|&)\s+training)?|language(?:\s+skills?)?|languages?|certifications?|certificates?|publications?|awards?|honors?)\s*[:\-–—]?\s*$|^preferred\s+locations?\s*:\s*.+$/i;
+  /^(?:about(?:\s+myself|\s+me)?|summary|profile|professional\s+profile|(?:technical|core|key|additional)?\s*skills?|projects?|project\s+experience|education(?:\s+(?:and|&)\s+training)?|language(?:\s+skills?)?|languages?|certifications?|certificates?|publications?|awards?|honors?|(?:extracurricular\s+)?activities|extracurricular|volunteer(?:ing|\s+experience)?|(?:work|employment)\s+preferences|(?:career\s+)?objective|disclaimer|references)\s*[:\-–—]?\s*$|^preferred\s+locations?\s*:\s*.+$/i;
 
 export const skillCategoryHeadingPattern =
   /^(frameworks|programming languages|languages|databases|tools|security(?:\s*&\s*authentication)?|soft skills)$/i;

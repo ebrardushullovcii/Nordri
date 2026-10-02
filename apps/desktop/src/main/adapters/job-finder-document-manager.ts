@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { BrowserWindow } from "electron";
 import type { JobFinderDocumentManager } from "@nordri/job-finder";
@@ -134,7 +135,9 @@ async function renderPdfFromHtml(
   html: string,
   htmlPath: string,
   targetPath: string,
+  signal?: AbortSignal,
 ): Promise<void> {
+  throwIfPreviewAborted(signal);
   const exportWindow = new BrowserWindow({
     show: false,
     webPreferences: {
@@ -146,8 +149,9 @@ async function renderPdfFromHtml(
 
   // A hidden print window that never finishes must fail loudly, not leave
   // "Exporting PDF" on screen for good.
+  let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<never>((_, reject) => {
-    setTimeout(
+    deadlineTimer = setTimeout(
       () =>
         reject(
           new Error(
@@ -157,18 +161,28 @@ async function renderPdfFromHtml(
       120_000,
     ).unref?.();
   });
+  let onAbort: (() => void) | undefined;
+  const aborted = new Promise<never>((_, reject) => {
+    onAbort = () =>
+      reject(new DOMException("Resume preview was superseded.", "AbortError"));
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+  // Cancellation can arrive while the HTML file write is still pending.
+  void aborted.catch(() => {});
+  const waitFor = <T>(operation: Promise<T>) =>
+    Promise.race([operation, deadline, aborted]);
   try {
     await writeFile(htmlPath, html, "utf8");
-    await Promise.race([exportWindow.loadFile(htmlPath), deadline]);
-    await Promise.race([
+    throwIfPreviewAborted(signal);
+    await waitFor(exportWindow.loadFile(htmlPath));
+    await waitFor(
       exportWindow.webContents.executeJavaScript(
         "new Promise((resolve) => { if (document.fonts?.ready) { document.fonts.ready.finally(resolve); } else { resolve(); } })",
         true,
       ),
-      deadline,
-    ]);
+    );
 
-    const pdfBuffer = await Promise.race([
+    const pdfBuffer = await waitFor(
       exportWindow.webContents.printToPDF({
         margins: {
           top: 0,
@@ -180,27 +194,109 @@ async function renderPdfFromHtml(
         pageSize: "Letter",
         preferCSSPageSize: true,
       }),
-      deadline,
-    ]);
+    );
 
+    throwIfPreviewAborted(signal);
     await writeFile(targetPath, pdfBuffer);
   } finally {
+    clearTimeout(deadlineTimer);
+    if (onAbort) signal?.removeEventListener("abort", onAbort);
     if (!exportWindow.isDestroyed()) {
       exportWindow.destroy();
     }
   }
 }
 
+/** Best-effort measurements never hold the live preview for a slow print. */
+function createPreviewPageCounter() {
+  const counts = new Map<string, number>();
+  let queue: Promise<unknown> = Promise.resolve();
+
+  return async (html: string, signal?: AbortSignal): Promise<number | null> => {
+    throwIfPreviewAborted(signal);
+    const hash = createHash("sha256").update(html).digest("hex");
+    const cached = counts.get(hash);
+    if (cached !== undefined) return cached;
+
+    const controller = new AbortController();
+    const onAbort = () => controller.abort();
+    signal?.addEventListener("abort", onAbort, { once: true });
+    let onMeasurementAbort: (() => void) | undefined;
+    const aborted = new Promise<never>((_, reject) => {
+      onMeasurementAbort = () =>
+        reject(
+          new DOMException("Page count measurement stopped.", "AbortError"),
+        );
+      controller.signal.addEventListener("abort", onMeasurementAbort, {
+        once: true,
+      });
+    });
+    // Includes time in the queue and PDF parsing; a slow measurement leaves
+    // the count unknown instead of delaying the HTML by seconds.
+    const timer = setTimeout(() => controller.abort(), 750);
+    const measurement = queue.then(async () => {
+      throwIfPreviewAborted(controller.signal);
+      // A preceding preview may have measured the same HTML while we waited.
+      const queuedCount = counts.get(hash);
+      if (queuedCount !== undefined) return queuedCount;
+      const directory = await mkdtemp(
+        path.join(tmpdir(), "nordri-preview-pages-"),
+      );
+      try {
+        throwIfPreviewAborted(controller.signal);
+        const pdfPath = path.join(directory, "resume.pdf");
+        await renderPdfFromHtml(
+          html,
+          path.join(directory, "resume.html"),
+          pdfPath,
+          controller.signal,
+        );
+        const pageCount = await getPdfPageCount(pdfPath);
+        throwIfPreviewAborted(controller.signal);
+        counts.set(hash, pageCount);
+        // Bound the in-memory cache while someone edits many drafts.
+        if (counts.size > 64) counts.delete(counts.keys().next().value!);
+        return pageCount;
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
+    });
+    // Keep all preview windows serial, including cleanup after cancellation.
+    queue = measurement.catch(() => {});
+    try {
+      return await Promise.race([measurement, aborted]);
+    } catch {
+      throwIfPreviewAborted(signal);
+      return null;
+    } finally {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      if (onMeasurementAbort)
+        controller.signal.removeEventListener("abort", onMeasurementAbort);
+    }
+  };
+}
+
+/** "Jane Doe" + "resume" -> "jane-doe-resume"; never a storage id. */
+function employerFacingFileBaseName(
+  fullName: string | null | undefined,
+  documentKind: "resume" | "cover-letter",
+): string {
+  const name = sanitizeSegment(fullName ?? "");
+  return name ? `${name}-${documentKind}` : documentKind;
+}
+
 export function createLocalJobFinderDocumentManager(
   options: CreateLocalJobFinderDocumentManagerOptions,
 ): JobFinderDocumentManager {
   let shouldFailNextPreview = options.previewTestMode === "fail_once";
+  const countPreviewPages = createPreviewPageCounter();
 
   return {
     listResumeTemplates() {
       return listLocalResumeTemplates();
     },
-    renderResumePreview(input, signal) {
+    async renderResumePreview(input, signal) {
       throwIfPreviewAborted(signal);
       if (shouldFailNextPreview) {
         shouldFailNextPreview = false;
@@ -208,12 +304,18 @@ export function createLocalJobFinderDocumentManager(
       }
 
       const html = renderResumeTemplateHtml(input, { mode: "preview" });
+      let pageCount: number | null = null;
+      try {
+        pageCount = await countPreviewPages(
+          renderResumeTemplateHtml(input),
+          signal,
+        );
+      } catch {
+        throwIfPreviewAborted(signal);
+      }
       throwIfPreviewAborted(signal);
 
-      return Promise.resolve({
-        html,
-        warnings: [],
-      });
+      return { html, warnings: [], pageCount };
     },
     /**
      * Renders the letter through the same window-and-print path the resume
@@ -224,10 +326,20 @@ export function createLocalJobFinderDocumentManager(
      * Open XML package, not renamed PDF bytes.
      */
     async renderLetterArtifact(input) {
-      await mkdir(options.outputDirectory, { recursive: true });
-      const baseName = `${Date.now()}_${sanitizeSegment(input.profile.fullName ?? "")}_${sanitizeSegment(input.job.company)}_letter`;
+      // Each document gets its own folder so the file itself can carry the
+      // name an employer sees ("jane-doe-cover-letter.pdf") with no storage
+      // ids, while two letters for the same person never collide.
+      const documentDirectory = path.join(
+        options.outputDirectory,
+        `${Date.now()}_${randomUUID()}`,
+      );
+      await mkdir(documentDirectory, { recursive: true });
+      const baseName = employerFacingFileBaseName(
+        input.profile.fullName,
+        "cover-letter",
+      );
       if (input.fileType === "txt") {
-        const txtPath = path.join(options.outputDirectory, `${baseName}.txt`);
+        const txtPath = path.join(documentDirectory, `${baseName}.txt`);
         await writeFile(txtPath, `${input.text.trim()}\n`, "utf8");
         const sha256 = createHash("sha256")
           .update(await readFile(txtPath))
@@ -241,7 +353,7 @@ export function createLocalJobFinderDocumentManager(
         };
       }
       if (input.fileType === "docx") {
-        const docxPath = path.join(options.outputDirectory, `${baseName}.docx`);
+        const docxPath = path.join(documentDirectory, `${baseName}.docx`);
         await writeFile(docxPath, await renderLetterDocx(input.text));
         const sha256 = createHash("sha256")
           .update(await readFile(docxPath))
@@ -255,8 +367,8 @@ export function createLocalJobFinderDocumentManager(
           sha256,
         };
       }
-      const htmlPath = path.join(options.outputDirectory, `${baseName}.html`);
-      const pdfPath = path.join(options.outputDirectory, `${baseName}.pdf`);
+      const htmlPath = path.join(documentDirectory, `${baseName}.html`);
+      const pdfPath = path.join(documentDirectory, `${baseName}.pdf`);
 
       await renderPdfFromHtml(
         renderLetterHtml(input.text, input.profile.fullName ?? ""),
@@ -276,12 +388,20 @@ export function createLocalJobFinderDocumentManager(
       };
     },
     async renderResumeArtifact(input) {
-      await mkdir(options.outputDirectory, { recursive: true });
-
-      // Parallel drafts for the same employer can render in the same millisecond.
-      const artifactBaseName = `${Date.now()}_${randomUUID()}_${sanitizeSegment(input.profile.fullName ?? "")}_${sanitizeSegment(input.job.company)}_${sanitizeSegment(input.templateId)}`;
+      // Parallel drafts for the same employer can render in the same
+      // millisecond, so uniqueness lives in the folder name and the file keeps
+      // the name an employer sees ("jane-doe-resume.pdf").
+      const artifactDirectory = path.join(
+        options.outputDirectory,
+        `${Date.now()}_${randomUUID()}`,
+      );
+      await mkdir(artifactDirectory, { recursive: true });
+      const artifactBaseName = employerFacingFileBaseName(
+        input.profile.fullName,
+        "resume",
+      );
       const htmlFileName = `${artifactBaseName}.html`;
-      const htmlPath = path.join(options.outputDirectory, htmlFileName);
+      const htmlPath = path.join(artifactDirectory, htmlFileName);
       const html = renderResumeTemplateHtml(input);
 
       const requestedFormat =
@@ -309,7 +429,7 @@ export function createLocalJobFinderDocumentManager(
 
       const pdfFileName = `${artifactBaseName}.pdf`;
       const pdfPath =
-        input.targetPath ?? path.join(options.outputDirectory, pdfFileName);
+        input.targetPath ?? path.join(artifactDirectory, pdfFileName);
       const outputFileName = path.basename(pdfPath);
       await renderPdfFromHtml(html, htmlPath, pdfPath);
       const pageCount = await getPdfPageCount(pdfPath);

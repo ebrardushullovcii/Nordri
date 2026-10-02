@@ -460,10 +460,15 @@ const assetStatusPriority: Record<AssetStatus, number> = {
   not_started: 4,
 };
 
-function getLatestApprovedExport(
-  current: ResumeExportArtifact | null,
-  candidate: ResumeExportArtifact,
-): ResumeExportArtifact {
+type ApplyResumeExportReference = Pick<
+  ResumeExportArtifact,
+  "id" | "jobId" | "isApproved" | "filePath" | "exportedAt"
+>;
+
+function getLatestApprovedExport<TExport extends ApplyResumeExportReference>(
+  current: TExport | null,
+  candidate: TExport,
+): TExport {
   if (!current) {
     return candidate;
   }
@@ -474,11 +479,10 @@ function getLatestApprovedExport(
     : current;
 }
 
-export function resolveLatestApprovedExportForJob(
-  jobId: string,
-  exports: readonly ResumeExportArtifact[],
-): ResumeExportArtifact | null {
-  let latest: ResumeExportArtifact | null = null;
+export function resolveLatestApprovedExportForJob<
+  TExport extends ApplyResumeExportReference,
+>(jobId: string, exports: readonly TExport[]): TExport | null {
+  let latest: TExport | null = null;
 
   for (const artifact of exports) {
     if (artifact.jobId !== jobId || !artifact.isApproved) {
@@ -492,11 +496,16 @@ export function resolveLatestApprovedExportForJob(
 }
 
 /** Align apply gates with Shortlisted readiness: prefer draft.approvedExportId when still valid, else latest isApproved export. */
-export function resolveApprovedResumeExportForApply(input: {
-  draft: ResumeDraft | null;
-  exports: readonly ResumeExportArtifact[];
-  asset?: TailoredAsset | null;
-}): ResumeExportArtifact | null {
+export function resolveApprovedResumeExportForApply<
+  TExport extends ApplyResumeExportReference,
+>(input: {
+  draft: Pick<
+    ResumeDraft,
+    "jobId" | "status" | "approvedAt" | "approvedExportId"
+  > | null;
+  exports: readonly TExport[];
+  asset?: Pick<TailoredAsset, "storagePath"> | null;
+}): TExport | null {
   if (
     !input.draft ||
     input.draft.status !== "approved" ||

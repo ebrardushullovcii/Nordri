@@ -45,12 +45,15 @@ function RunHistoryEntry(props: {
               ? "positive"
               : result.state === "blocked" ||
                   result.state === "failed" ||
-                  result.state === "skipped"
+                  result.state === "skipped" ||
+                  result.state === "cancelled"
                 ? "critical"
                 : "active"
           }
         >
-          {formatStatusLabel(result.state)}
+          {result.state === "cancelled"
+            ? "Cancelled by you"
+            : formatStatusLabel(result.state)}
         </StatusBadge>
       </span>
       {/* The same title the status block gives this run. A run that paused

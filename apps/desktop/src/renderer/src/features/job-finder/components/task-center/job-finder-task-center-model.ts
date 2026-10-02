@@ -670,11 +670,20 @@ function buildApplyRunTask(
   const currentJobEnded = resultsForRun.some(
     (result) =>
       result.jobId === run.currentJobId &&
-      ["failed", "submitted", "awaiting_review", "blocked", "skipped"].includes(
-        result.state,
-      ),
+      [
+        "failed",
+        "submitted",
+        "awaiting_review",
+        "blocked",
+        "skipped",
+        "cancelled",
+      ].includes(result.state),
   );
   const failedJobs = Math.max(0, run.failedJobs - supersededCount("failed"));
+  const cancelledJobs = resultsForRun.filter(
+    (result) =>
+      result.state === "cancelled" && !supersededResultIds.has(result.id),
+  ).length;
   const blockedJobs = Math.max(0, run.blockedJobs - supersededCount("blocked"));
   const parked =
     input.workspace.activityControl?.paused &&
@@ -690,6 +699,7 @@ function buildApplyRunTask(
           "blocked",
           "failed",
           "skipped",
+          "cancelled",
         ].includes(result.state) &&
         (result.state !== "planned" ||
           (result.applicationPreparationStartedAt === null &&
@@ -811,36 +821,45 @@ function buildApplyRunTask(
       ? "Paused before the next application"
       : waitingForTabResult
         ? WAITING_FOR_BROWSER_TAB_SUMMARY
-      : run.state === "draft"
-        ? "Ready to start"
-        : run.state === "awaiting_submit_approval"
-          ? "Waiting for your approval"
-          : run.state === "running"
-            ? "Working through application"
-            : run.state === "paused_for_user_review"
-              ? hasOpenApplicationHandoff
-                ? "Waiting on you"
-                : readyForFinalReview
-                  ? "Ready for final review"
-                  : finishedPause
-                    ? resultsForRun.length > 0 &&
-                      resultsForRun.every(
-                        (result) => result.state === "submitted",
-                      )
-                      ? "Applied"
-                      : "Finished"
-                    : "Paused by a safety limit"
-              : run.state === "paused_for_consent"
-                ? "Waiting for your consent"
-                : run.state === "completed"
-                  ? failedJobs > 0 || blockedJobs > 0
-                    ? "Some applications need attention"
-                    : run.totalJobs > 0 && run.submittedJobs === run.totalJobs
-                      ? "Applied"
-                      : "Ready for final review"
-                  : run.state === "cancelled"
-                    ? "Application stopped"
-                    : "Application needs attention",
+        : run.state === "draft"
+          ? "Ready to start"
+          : run.state === "awaiting_submit_approval"
+            ? "Waiting for your approval"
+            : run.state === "running"
+              ? "Working through application"
+              : run.state === "paused_for_user_review"
+                ? hasOpenApplicationHandoff
+                  ? "Waiting on you"
+                  : readyForFinalReview
+                    ? "Ready for final review"
+                    : finishedPause
+                      ? resultsForRun.length > 0 &&
+                        resultsForRun.every(
+                          (result) => result.state === "submitted",
+                        )
+                        ? "Applied"
+                        : "Finished"
+                      : "Paused by a safety limit"
+                : run.state === "paused_for_consent"
+                  ? "Waiting for your consent"
+                  : run.state === "completed"
+                    ? failedJobs > 0 || blockedJobs > 0
+                      ? "Some applications need attention"
+                      : cancelledJobs > 0 && cancelledJobs === run.totalJobs
+                        ? "Cancelled by you"
+                        : run.totalJobs > 0 &&
+                            run.submittedJobs === run.totalJobs
+                          ? "Applied"
+                          : resultsForRun.some(
+                                (result) =>
+                                  result.state === "awaiting_review" &&
+                                  !supersededResultIds.has(result.id),
+                              )
+                            ? "Ready for final review"
+                            : "Finished"
+                    : run.state === "cancelled"
+                      ? "Application stopped"
+                      : "Application needs attention",
     sourceLabel: applySourceLabel(
       input.workspace,
       (parked
@@ -865,6 +884,7 @@ function buildApplyRunTask(
       `${finishedJobs} of ${run.totalJobs} application tasks finished`,
       blockedJobs > 0 ? `${blockedJobs} blocked` : null,
       failedJobs > 0 ? `${failedJobs} need attention` : null,
+      cancelledJobs > 0 ? `${cancelledJobs} cancelled` : null,
       awaitingDecision
         ? "Waiting on you"
         : stoppedBySafeguard

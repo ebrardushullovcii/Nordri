@@ -24,6 +24,8 @@ import type {
   CandidateAssetImportResult,
   CandidateAssetListInput,
   CandidateAssetListResult,
+  CandidateAssetOpenInput,
+  CandidateAssetOpenResult,
   CandidateAssetRestoreInput,
   CandidateAssetRestoreResult,
   CampaignRuleFunnelProjection,
@@ -644,6 +646,11 @@ const desktopApi = {
         "job-finder:candidate-assets:delete",
         input,
       ) as Promise<CandidateAssetDeleteResult>,
+    openCandidateAsset: (input: CandidateAssetOpenInput) =>
+      ipcRenderer.invoke(
+        "job-finder:candidate-assets:open",
+        input,
+      ) as Promise<CandidateAssetOpenResult>,
     restoreCandidateAsset: (input: CandidateAssetRestoreInput) =>
       ipcRenderer.invoke(
         "job-finder:candidate-assets:restore",

@@ -444,7 +444,9 @@ describe("resetJobFinderWorkspace", () => {
     expect(trashCleanupIndex).toBeGreaterThan(
       parentFlushAfterMarkerRemovalIndex,
     );
-  });
+    // The first full reset loads the workspace service, which alone came
+    // close to the 5-second default on a busy machine.
+  }, 20_000);
 
   test("syncs the marker file before the atomic rename and best-effort flushes the parent directory", async () => {
     await beginJobFinderWorkspaceResetFileMoves();

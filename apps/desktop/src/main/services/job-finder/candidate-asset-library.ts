@@ -20,6 +20,7 @@ import {
   type CandidateAsset,
   type CandidateAssetDeleteResult,
   type CandidateAssetImportInput,
+  type ParsedCandidateAssetImportInput,
   type CandidateAssetImportResult,
   type CandidateAssetKind,
   type CandidateAssetListInput,
@@ -320,6 +321,34 @@ export class CandidateAssetLibrary {
     });
   }
 
+  /**
+   * Writes a read-only copy of a saved file, under the name the person knows
+   * it by, into `directory` and returns its path. The stored copy is never
+   * handed out, so viewing can not change what an application attaches.
+   */
+  writeViewingCopy(assetId: string, directory: string): Promise<string> {
+    return this.runExclusive(async () => {
+      const index = await this.enforceLifecycleUnsafe(this.now());
+      const record = index.assets.find(
+        (candidate) => candidate.asset.id === assetId,
+      );
+      if (!record || record.asset.deletedAt !== null) {
+        throw new CandidateAssetLibraryError(
+          "This file is no longer saved in Job Finder.",
+        );
+      }
+      const bytes = await this.readVerifiedBytes(record);
+      const viewingDirectory = path.join(directory, randomUUID());
+      await mkdir(viewingDirectory, { recursive: true, mode: 0o700 });
+      const viewingPath = path.join(
+        viewingDirectory,
+        path.basename(record.asset.originalName),
+      );
+      await writeFile(viewingPath, bytes, { mode: 0o400 });
+      return viewingPath;
+    });
+  }
+
   importFromSourcePath(
     sourcePath: string,
     rawInput: CandidateAssetImportInput,
@@ -401,7 +430,7 @@ export class CandidateAssetLibrary {
 
   private async importUnsafe(
     sourcePath: string,
-    input: CandidateAssetImportInput,
+    input: ParsedCandidateAssetImportInput,
   ): Promise<CandidateAssetImportResult> {
     const sourceStats = await stat(sourcePath).catch(() => null);
     if (!sourceStats?.isFile()) {
@@ -471,6 +500,7 @@ export class CandidateAssetLibrary {
         deletedAt: null,
         lifecycle: createActiveLifecycle(input.retention, createdAt),
         extractedText: createExtractedTextMetadata(bytes, mime, createdAt),
+        forJob: input.forJob,
       });
       const index = await this.readIndex();
       index.assets.push({ asset, storageName });

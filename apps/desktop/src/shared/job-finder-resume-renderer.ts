@@ -1223,7 +1223,7 @@ function renderTechnicalSkillsMatrixSection(
   className?: string,
 ): string {
   return renderSkillMatrixSection({
-    title: "Technical Skills",
+    title: "Skills",
     mode: context.mode,
     groups: context.skillGroups,
     ...(className ? { className } : {}),

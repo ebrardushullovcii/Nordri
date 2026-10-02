@@ -62,14 +62,5 @@ export function countActiveSafeguardBlockers(
     }
   }
 
-  for (const review of safeguards.preparedBatchSampleReviews) {
-    if (
-      !review.reviewCompleted &&
-      !dismissed("batch_sample_review_pending", review.id)
-    ) {
-      count += 1;
-    }
-  }
-
   return count;
 }

@@ -106,7 +106,8 @@ export function classifyPausedApplyRun(
       newestByRecord.get(result.applicationRecordId)?.id !== result.id
     )
       continue;
-    if (["submitted", "failed", "skipped"].includes(result.state)) continue;
+    if (["submitted", "failed", "skipped", "cancelled"].includes(result.state))
+      continue;
     if (
       result.applicationRecordId &&
       manualOnlyRecordIds.has(result.applicationRecordId)
@@ -124,6 +125,7 @@ export function classifyPausedApplyRun(
         ? recordsById.get(result.applicationRecordId)
         : undefined;
       const kind = resolveApplyStatePresentation({
+        recordCrm: record?.crm,
         mode:
           record?.automationMode === "autonomous_submit"
             ? "apply_for_me"

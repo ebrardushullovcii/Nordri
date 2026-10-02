@@ -3,7 +3,7 @@ import { useWatch, type UseFormReturn } from "react-hook-form";
 import { Field, FieldLabel } from "@renderer/components/ui/field";
 import type { ProfileEditorValues } from "../../lib/profile-editor";
 import { joinListInput, parseListInput } from "../../lib/job-finder-utils";
-import { ProfileBasicsFields } from "./profile-basics-fields";
+import { ProfileBasicsFields, ProfileLinkField } from "./profile-basics-fields";
 import { ProfileOptionalSection } from "./profile-optional-section";
 import {
   ProfileFieldHint,
@@ -86,15 +86,14 @@ export function ProfileCoreTab({ profileForm }: ProfileCoreTabProps) {
                 {...register("identity.timeZone")}
               />
             </Field>
-            <Field className="md:col-span-2">
-              <FieldLabel htmlFor={buildProfileCoreFieldId("extra-website")}>
-                Extra website
-              </FieldLabel>
-              <ProfileInput
+            <div className="md:col-span-2">
+              <ProfileLinkField
+                field="personalWebsiteUrl"
                 id={buildProfileCoreFieldId("extra-website")}
-                {...register("identity.personalWebsiteUrl")}
+                label="Extra website"
+                profileForm={profileForm}
               />
-            </Field>
+            </div>
           </div>
         </ProfileOptionalSection>
       </section>

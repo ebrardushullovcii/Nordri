@@ -71,6 +71,7 @@ const shortlistQuery = {
   sort: "score",
   limit: 25,
   includeExcludedEmployers: false,
+  show: true,
 } as const;
 
 describe("assistant queries use the active plan's shortlist", () => {

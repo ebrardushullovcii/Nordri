@@ -127,7 +127,7 @@ export function ApplicationsApplicationDocuments(props: {
       await refresh();
       setSelectedDocumentId(document.id);
       setMessage(
-        `Revision ${document.revision} is ready to review. No facts were added beyond the listed profile evidence.`,
+        `Revision ${document.revision} is ready to read. It is written from your profile and resume; check it before you approve it.`,
       );
     } catch (error) {
       setStatus("error");
@@ -139,14 +139,34 @@ export function ApplicationsApplicationDocuments(props: {
 
   async function approve() {
     if (!selectedDocument) return;
+    const content = draftContent.trim();
+    if (!content) return;
+    // Approving means approving what is on screen: unsaved typing is saved as
+    // a new revision first, and that exact revision is the one approved.
+    const hasUnsavedEdit =
+      selectedDocument.status === "proposed" &&
+      content !== selectedDocument.content.trim();
+    if (hasUnsavedEdit && content.length > 12_000) {
+      setStatus("error");
+      setMessage("Document content cannot exceed 12,000 characters.");
+      return;
+    }
     setStatus("working");
     setMessage(null);
     try {
+      const revisionToApprove = hasUnsavedEdit
+        ? await window.nordri.jobFinder.editApplicationDocument({
+            documentId: selectedDocument.id,
+            expectedRevision: selectedDocument.revision,
+            content,
+          })
+        : selectedDocument;
       const approved =
         await window.nordri.jobFinder.approveApplicationDocument({
-          documentId: selectedDocument.id,
-          expectedRevision: selectedDocument.revision,
+          documentId: revisionToApprove.id,
+          expectedRevision: revisionToApprove.revision,
         });
+      setDraftContent(approved.content);
       await refresh();
       setSelectedDocumentId(approved.id);
       window.dispatchEvent(new Event(CANDIDATE_ASSETS_CHANGED_EVENT));
@@ -420,11 +440,14 @@ export function ApplicationsApplicationDocuments(props: {
           <div className="flex flex-wrap gap-2">
             {selectedDocument.status === "proposed" ? (
               <Button
-                disabled={isWorking}
+                disabled={isWorking || !draftContent.trim()}
                 onClick={() => void approve()}
                 size="compact"
               >
-                Approve exact revision
+                {draftContent.trim() &&
+                draftContent.trim() !== selectedDocument.content.trim()
+                  ? "Save and approve"
+                  : "Approve"}
               </Button>
             ) : (
               <Button

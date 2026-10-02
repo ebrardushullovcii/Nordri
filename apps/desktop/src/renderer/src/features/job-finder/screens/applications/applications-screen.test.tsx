@@ -137,83 +137,110 @@ describe("ApplicationsScreen", () => {
     };
   }
 
-  it("retries failed applications with the exact saved Send mode", () => {
-    vi.stubGlobal(
-      "ResizeObserver",
-      class {
-        observe() {}
-        disconnect() {}
-      },
-    );
-    const first = createTrackedApplication({
-      id: "application_retry_a",
-      jobId: "job_retry_a",
-      lastAttemptState: "failed",
-      lastActionLabel: "Could not apply",
-    });
-    const second = createTrackedApplication({
-      id: "application_retry_b",
-      jobId: "job_retry_b",
-      lastAttemptState: "failed",
-      lastActionLabel: "Could not apply",
-    });
-    const failedResult = (
-      record: ApplicationRecord,
-      index: number,
-    ): ApplyJobResultSummary => ({
-      id: `result_retry_${index}`,
-      runId: "run_retry_failed",
-      jobId: record.jobId,
-      applicationRecordId: record.id,
-      queuePosition: index,
-      state: "failed",
-      summary: "Could not apply",
-      detail: "The application could not be prepared.",
-      startedAt: "2026-09-22T16:00:00.000Z",
-      updatedAt: `2026-09-22T16:0${index + 1}:00.000Z`,
-      completedAt: `2026-09-22T16:0${index + 1}:00.000Z`,
-      blockerReason: "application_page_unreachable",
-      blockerSummary: "The application could not be prepared.",
-      listingSignalEvidence: null,
-      visualObservationSets: [],
-      visualCheckpoints: [],
-      latestQuestionCount: 0,
-      latestAnswerCount: 0,
-      pendingConsentRequestCount: 0,
-      artifactCount: 0,
-      latestCheckpointId: null,
-      privacyReceipt: null,
-      reviewCard: null,
-    });
-    const onStartAutoApplyQueue = vi.fn();
+  it.each([false, true])(
+    "retries only failures with the saved Send mode (cancelled sibling: %s)",
+    (includeCancelled) => {
+      vi.stubGlobal(
+        "ResizeObserver",
+        class {
+          observe() {}
+          disconnect() {}
+        },
+      );
+      const first = createTrackedApplication({
+        id: "application_retry_a",
+        jobId: "job_retry_a",
+        lastAttemptState: "failed",
+        lastActionLabel: "Could not apply",
+      });
+      const second = createTrackedApplication({
+        id: "application_retry_b",
+        jobId: "job_retry_b",
+        lastAttemptState: "failed",
+        lastActionLabel: "Could not apply",
+      });
+      const failedResult = (
+        record: ApplicationRecord,
+        index: number,
+      ): ApplyJobResultSummary => ({
+        id: `result_retry_${index}`,
+        runId: "run_retry_failed",
+        jobId: record.jobId,
+        applicationRecordId: record.id,
+        queuePosition: index,
+        state: "failed",
+        summary: "Could not apply",
+        detail: "The application could not be prepared.",
+        startedAt: "2026-09-22T16:00:00.000Z",
+        updatedAt: `2026-09-22T16:0${index + 1}:00.000Z`,
+        completedAt: `2026-09-22T16:0${index + 1}:00.000Z`,
+        blockerReason: "application_page_unreachable",
+        blockerSummary: "The application could not be prepared.",
+        listingSignalEvidence: null,
+        visualObservationSets: [],
+        visualCheckpoints: [],
+        latestQuestionCount: 0,
+        latestAnswerCount: 0,
+        pendingConsentRequestCount: 0,
+        artifactCount: 0,
+        latestCheckpointId: null,
+        privacyReceipt: null,
+        reviewCard: null,
+      });
+      const onStartAutoApplyQueue = vi.fn();
+      const cancelled = createTrackedApplication({
+        id: "application_cancelled",
+        jobId: "job_cancelled",
+        lastAttemptState: "cancelled",
+        lastActionLabel: "Cancelled by you",
+      });
+      const cancelledResult: ApplyJobResultSummary = {
+        ...failedResult(cancelled, 2),
+        state: "cancelled",
+        summary: "Cancelled by you",
+        blockerReason: null,
+        blockerSummary: null,
+      };
 
-    render(
-      <MemoryRouter>
-        <ApplicationsScreen
-          {...buildCrmScreenProps({
-            applicationRecords: [first, second],
-            onSelectRecord: vi.fn(),
-            selectedRecord: first,
-          })}
-          applicationAutomationMode="autonomous_submit"
-          applyJobResults={[failedResult(first, 0), failedResult(second, 1)]}
-          dailyPreparationCapacity={null}
-          onGetApplyRunDetails={vi.fn(
-            () => new Promise<ApplyRunDetails>(() => {}),
-          )}
-          onStartAutoApplyQueue={onStartAutoApplyQueue}
-        />
-      </MemoryRouter>,
-    );
+      render(
+        <MemoryRouter>
+          <ApplicationsScreen
+            {...buildCrmScreenProps({
+              applicationRecords: [
+                first,
+                second,
+                ...(includeCancelled ? [cancelled] : []),
+              ],
+              onSelectRecord: vi.fn(),
+              selectedRecord: first,
+            })}
+            applicationAutomationMode="autonomous_submit"
+            applyJobResults={[
+              failedResult(first, 0),
+              failedResult(second, 1),
+              ...(includeCancelled ? [cancelledResult] : []),
+            ]}
+            dailyPreparationCapacity={null}
+            onGetApplyRunDetails={vi.fn(
+              () => new Promise<ApplyRunDetails>(() => {}),
+            )}
+            onStartAutoApplyQueue={onStartAutoApplyQueue}
+          />
+        </MemoryRouter>,
+      );
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "Try again for all 2" }),
-    );
-    expect(onStartAutoApplyQueue).toHaveBeenCalledWith(
-      ["job_retry_a", "job_retry_b"],
-      "autonomous_submit",
-    );
-  });
+      expect(
+        screen.getByTestId("applications-bulk-retry").textContent,
+      ).toContain("2 applications could not be applied");
+      fireEvent.click(
+        screen.getByRole("button", { name: "Try again for all 2" }),
+      );
+      expect(onStartAutoApplyQueue).toHaveBeenCalledWith(
+        ["job_retry_a", "job_retry_b"],
+        "autonomous_submit",
+      );
+    },
+  );
 
   it("shows action-led first-run CTAs when there are no applications yet", () => {
     class ResizeObserverMock {
@@ -1623,8 +1650,8 @@ describe("ApplicationsScreen", () => {
       await screen.findByText("No application selected in this view"),
     ).toBeTruthy();
     expect(screen.queryByRole("combobox", { name: "Stage" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Export CSV" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Export JSON" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Export this application (CSV)" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Export this application (JSON)" })).toBeNull();
     expect(onSelectRecord).not.toHaveBeenCalled();
 
     fireEvent.change(
@@ -1633,8 +1660,8 @@ describe("ApplicationsScreen", () => {
     );
     expect(await screen.findByRole("combobox", { name: "Stage" })).toBeTruthy();
     expect(screen.getByText("Backend Engineer · Beta")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Export CSV" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Export JSON" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Export this application (CSV)" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Export this application (JSON)" })).toBeTruthy();
     expect(onSelectRecord).not.toHaveBeenCalled();
   });
 
@@ -1667,7 +1694,7 @@ describe("ApplicationsScreen", () => {
       await screen.findByText("No application selected in this view"),
     ).toBeTruthy();
     expect(screen.queryByRole("combobox", { name: "Stage" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Export CSV" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Export this application (CSV)" })).toBeNull();
     expect(onSelectRecord).not.toHaveBeenCalled();
 
     fireEvent.click(
@@ -1750,8 +1777,8 @@ describe("ApplicationsScreen", () => {
     ]) {
       expect(screen.queryByRole("button", { name })).toBeNull();
     }
-    expect(screen.queryByRole("button", { name: "Export CSV" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Export JSON" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Export this application (CSV)" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Export this application (JSON)" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Saved views" })).toBeNull();
 
     // The tracker is a named destination reached explicitly, and the route

@@ -13,6 +13,7 @@ import {
   compactApplication,
   compactJob,
   plural,
+  trackerAgenda,
   unresolvedUserActions,
 } from "./format";
 
@@ -84,6 +85,13 @@ export const getWorkspaceSummaryTool = defineTool({
           enabledSources: searchReadiness.enabledSources.slice(0, 40),
         },
         needsYou: needsYou.length,
+        tracker: (() => {
+          const agenda = trackerAgenda(snapshot, Date.now());
+          return {
+            overdueReminders: agenda.filter((item) => item.overdue).length,
+            dueSoon: agenda.filter((item) => !item.overdue).length,
+          };
+        })(),
         activeSearchPlan: campaign
           ? { id: campaign.id, name: campaign.name }
           : null,
@@ -92,6 +100,34 @@ export const getWorkspaceSummaryTool = defineTool({
         dailyLimit: snapshot.settings.maxApplicationsPerLocalDay ?? 20,
         activityPaused: snapshot.activityControl.paused ?? false,
       },
+    };
+  },
+});
+
+export const listTrackerAgendaTool = defineTool({
+  name: "list_tracker_agenda",
+  group: "workspace",
+  description:
+    "What the application tracker says is due: overdue and upcoming reminders and scheduled interviews in the next days, with dates, time zones and the application each belongs to. Use it for 'what do I need to do today', 'what's coming up' and 'any interviews'. It is separate from Needs you, which lists browser steps.",
+  parameters: json.object({
+    days: json.number("How far ahead to look, 1 to 60. Default 14."),
+  }),
+  input: z.object({ days: z.number().int().min(1).max(60).default(14) }),
+  label: () => "Checking your tracker",
+  effect: "read",
+  async execute(input, { service }) {
+    const snapshot = await service.getWorkspaceSnapshot();
+    const agenda = trackerAgenda(snapshot, Date.now(), input.days);
+    const overdue = agenda.filter((item) => item.overdue).length;
+    const interviews = agenda.filter(
+      (item) => item.kind === "interview",
+    ).length;
+    return {
+      summary:
+        agenda.length === 0
+          ? `Nothing is due in the tracker in the next ${plural(input.days, "day")}.`
+          : `${plural(overdue, "overdue reminder")}, ${plural(interviews, "upcoming interview")}, ${plural(agenda.length - overdue - interviews, "other reminder")} due soon.`,
+      data: agenda.slice(0, 40),
     };
   },
 });
@@ -673,6 +709,7 @@ export const openInAppTool = defineTool({
 
 export const workspaceTools = [
   getWorkspaceSummaryTool,
+  listTrackerAgendaTool,
   listNeedsYouTool,
   resolveNeedsYouTool,
   searchWorkspaceTool,

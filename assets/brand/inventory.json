@@ -1,0 +1,674 @@
+[
+  {
+    "path": "web/favicon-16.png",
+    "width": 16,
+    "height": 16,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "web/favicon-32.png",
+    "width": 32,
+    "height": 32,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "web/favicon-48.png",
+    "width": 48,
+    "height": 48,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "web/favicon-64.png",
+    "width": 64,
+    "height": 64,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "web/favicon-128.png",
+    "width": 128,
+    "height": 128,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "web/favicon-dark-16.png",
+    "width": 16,
+    "height": 16,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "web/favicon-dark-32.png",
+    "width": 32,
+    "height": 32,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "web/apple-touch-icon.png",
+    "width": 180,
+    "height": 180,
+    "transparent": false,
+    "format": "png"
+  },
+  {
+    "path": "web/icon-192.png",
+    "width": 192,
+    "height": 192,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "web/icon-maskable-192.png",
+    "width": 192,
+    "height": 192,
+    "transparent": false,
+    "format": "png"
+  },
+  {
+    "path": "web/icon-512.png",
+    "width": 512,
+    "height": 512,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "web/icon-maskable-512.png",
+    "width": 512,
+    "height": 512,
+    "transparent": false,
+    "format": "png"
+  },
+  {
+    "path": "desktop/windows/icon-16.png",
+    "width": 16,
+    "height": 16,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "desktop/windows/icon-20.png",
+    "width": 20,
+    "height": 20,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "desktop/windows/icon-24.png",
+    "width": 24,
+    "height": 24,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "desktop/windows/icon-32.png",
+    "width": 32,
+    "height": 32,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "desktop/windows/icon-40.png",
+    "width": 40,
+    "height": 40,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "desktop/windows/icon-48.png",
+    "width": 48,
+    "height": 48,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "desktop/windows/icon-64.png",
+    "width": 64,
+    "height": 64,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "desktop/windows/icon-96.png",
+    "width": 96,
+    "height": 96,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "desktop/windows/icon-128.png",
+    "width": 128,
+    "height": 128,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "desktop/windows/icon-256.png",
+    "width": 256,
+    "height": 256,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "desktop/windows/icon-512.png",
+    "width": 512,
+    "height": 512,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "desktop/windows/icon-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "desktop/macos/Nordri.iconset/icon_16x16.png",
+    "width": 16,
+    "height": 16,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "desktop/macos/Nordri.iconset/icon_16x16@2x.png",
+    "width": 32,
+    "height": 32,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "desktop/macos/Nordri.iconset/icon_32x32.png",
+    "width": 32,
+    "height": 32,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "desktop/macos/Nordri.iconset/icon_32x32@2x.png",
+    "width": 64,
+    "height": 64,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "desktop/macos/Nordri.iconset/icon_128x128.png",
+    "width": 128,
+    "height": 128,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "desktop/macos/Nordri.iconset/icon_128x128@2x.png",
+    "width": 256,
+    "height": 256,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "desktop/macos/Nordri.iconset/icon_256x256.png",
+    "width": 256,
+    "height": 256,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "desktop/macos/Nordri.iconset/icon_256x256@2x.png",
+    "width": 512,
+    "height": 512,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "desktop/macos/Nordri.iconset/icon_512x512.png",
+    "width": 512,
+    "height": 512,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "desktop/macos/Nordri.iconset/icon_512x512@2x.png",
+    "width": 1024,
+    "height": 1024,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "desktop/linux/16x16.png",
+    "width": 16,
+    "height": 16,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "desktop/linux/24x24.png",
+    "width": 24,
+    "height": 24,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "desktop/linux/32x32.png",
+    "width": 32,
+    "height": 32,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "desktop/linux/48x48.png",
+    "width": 48,
+    "height": 48,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "desktop/linux/64x64.png",
+    "width": 64,
+    "height": 64,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "desktop/linux/96x96.png",
+    "width": 96,
+    "height": 96,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "desktop/linux/128x128.png",
+    "width": 128,
+    "height": 128,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "desktop/linux/256x256.png",
+    "width": 256,
+    "height": 256,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "desktop/linux/512x512.png",
+    "width": 512,
+    "height": 512,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "desktop/linux/1024x1024.png",
+    "width": 1024,
+    "height": 1024,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "desktop/macos/apple-app-store-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "transparent": false,
+    "format": "png"
+  },
+  {
+    "path": "desktop/macos/icon-composer-foreground.png",
+    "width": 1024,
+    "height": 1024,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "desktop/macos/icon-composer-background.png",
+    "width": 1024,
+    "height": 1024,
+    "transparent": false,
+    "format": "png"
+  },
+  {
+    "path": "in-app/mark-16.png",
+    "width": 16,
+    "height": 16,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "in-app/mark-on-dark-16.png",
+    "width": 16,
+    "height": 16,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "in-app/mark-20.png",
+    "width": 20,
+    "height": 20,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "in-app/mark-on-dark-20.png",
+    "width": 20,
+    "height": 20,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "in-app/mark-24.png",
+    "width": 24,
+    "height": 24,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "in-app/mark-on-dark-24.png",
+    "width": 24,
+    "height": 24,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "in-app/mark-32.png",
+    "width": 32,
+    "height": 32,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "in-app/mark-on-dark-32.png",
+    "width": 32,
+    "height": 32,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "in-app/mark-48.png",
+    "width": 48,
+    "height": 48,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "in-app/mark-on-dark-48.png",
+    "width": 48,
+    "height": 48,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "in-app/mark-64.png",
+    "width": 64,
+    "height": 64,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "in-app/mark-on-dark-64.png",
+    "width": 64,
+    "height": 64,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "in-app/mark-128.png",
+    "width": 128,
+    "height": 128,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "in-app/mark-on-dark-128.png",
+    "width": 128,
+    "height": 128,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "in-app/mark-256.png",
+    "width": 256,
+    "height": 256,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "in-app/mark-on-dark-256.png",
+    "width": 256,
+    "height": 256,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "in-app/mark-512.png",
+    "width": 512,
+    "height": 512,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "in-app/mark-on-dark-512.png",
+    "width": 512,
+    "height": 512,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "in-app/mark-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "in-app/mark-on-dark-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "in-app/wordmark-320.png",
+    "width": 320,
+    "height": 65,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "in-app/wordmark-640.png",
+    "width": 640,
+    "height": 130,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "in-app/wordmark-1280.png",
+    "width": 1280,
+    "height": 259,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "in-app/wordmark-2560.png",
+    "width": 2560,
+    "height": 518,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "in-app/wordmark-on-dark-320.png",
+    "width": 320,
+    "height": 65,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "in-app/wordmark-on-dark-640.png",
+    "width": 640,
+    "height": 130,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "in-app/wordmark-on-dark-1280.png",
+    "width": 1280,
+    "height": 259,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "in-app/wordmark-on-dark-2560.png",
+    "width": 2560,
+    "height": 518,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "in-app/wordmark-monochrome-320.png",
+    "width": 320,
+    "height": 65,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "in-app/wordmark-monochrome-640.png",
+    "width": 640,
+    "height": 130,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "in-app/wordmark-monochrome-1280.png",
+    "width": 1280,
+    "height": 259,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "in-app/wordmark-monochrome-2560.png",
+    "width": 2560,
+    "height": 518,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "in-app/wordmark-monochrome-white-320.png",
+    "width": 320,
+    "height": 65,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "in-app/wordmark-monochrome-white-640.png",
+    "width": 640,
+    "height": 130,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "in-app/wordmark-monochrome-white-1280.png",
+    "width": 1280,
+    "height": 259,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "in-app/wordmark-monochrome-white-2560.png",
+    "width": 2560,
+    "height": 518,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "in-app/tray-template.png",
+    "width": 22,
+    "height": 22,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "in-app/tray-template@2x.png",
+    "width": 44,
+    "height": 44,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "in-app/tray-template-16.png",
+    "width": 16,
+    "height": 16,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "in-app/tray-template-32.png",
+    "width": 32,
+    "height": 32,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "in-app/tray-white.png",
+    "width": 22,
+    "height": 22,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "in-app/tray-white@2x.png",
+    "width": 44,
+    "height": 44,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "in-app/tray-white-16.png",
+    "width": 16,
+    "height": 16,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "in-app/tray-white-32.png",
+    "width": 32,
+    "height": 32,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "social/og-image.png",
+    "width": 1200,
+    "height": 630,
+    "transparent": false,
+    "format": "png"
+  },
+  {
+    "path": "social/square.png",
+    "width": 1080,
+    "height": 1080,
+    "transparent": false,
+    "format": "png"
+  },
+  {
+    "path": "preview/mark.png",
+    "width": 512,
+    "height": 512,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "preview/app-icon.png",
+    "width": 512,
+    "height": 512,
+    "transparent": true,
+    "format": "png"
+  },
+  {
+    "path": "preview/wordmark.png",
+    "width": 1280,
+    "height": 259,
+    "transparent": true,
+    "format": "png"
+  }
+]

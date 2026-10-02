@@ -1,0 +1,211 @@
+import path from "node:path";
+import type { PrintToPDFOptions } from "electron";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import type { JobFinderDocumentManager } from "@nordri/job-finder";
+import { createLocalJobFinderDocumentManager } from "./job-finder-document-manager";
+import { createApplyQueueDemoState } from "./job-finder-demo-state";
+import { renderResumeTemplateHtml } from "../../shared/job-finder-resume-renderer";
+
+const mocks = vi.hoisted(() => ({
+  files: new Map<string, string | Buffer>(),
+  mkdtemp: vi.fn(),
+  rm: vi.fn(),
+  print: vi.fn<(options: PrintToPDFOptions) => Promise<Buffer>>(),
+  load: vi.fn<(file: string) => Promise<void>>(),
+  count: vi.fn(),
+  windows: [] as { destroyed: boolean }[],
+}));
+
+vi.mock("node:fs/promises", () => ({
+  mkdir: vi.fn(),
+  mkdtemp: mocks.mkdtemp,
+  rm: mocks.rm,
+  writeFile: vi.fn((file: string, contents: string | Buffer) => {
+    mocks.files.set(file, contents);
+    return Promise.resolve();
+  }),
+  readFile: vi.fn((file: string) => Promise.resolve(mocks.files.get(file))),
+}));
+vi.mock("./resume-document", () => ({ getPdfPageCount: mocks.count }));
+vi.mock("electron", () => ({
+  BrowserWindow: class {
+    destroyed = false;
+    webContents = {
+      executeJavaScript: vi.fn().mockResolvedValue(undefined),
+      printToPDF: mocks.print,
+    };
+    constructor() {
+      mocks.windows.push(this);
+    }
+    loadFile = mocks.load;
+    isDestroyed() {
+      return this.destroyed;
+    }
+    destroy() {
+      this.destroyed = true;
+    }
+  },
+}));
+
+let input: Parameters<JobFinderDocumentManager["renderResumePreview"]>[0];
+let manager: JobFinderDocumentManager;
+beforeEach(() => {
+  vi.resetAllMocks();
+  mocks.files.clear();
+  mocks.windows.length = 0;
+  let directoryId = 0;
+  mocks.mkdtemp.mockImplementation((prefix: string) =>
+    Promise.resolve(`${prefix}${++directoryId}`),
+  );
+  mocks.load.mockResolvedValue(undefined);
+  mocks.print.mockResolvedValue(Buffer.from("synthetic PDF"));
+  mocks.count.mockResolvedValue(2);
+  const seed = createApplyQueueDemoState();
+  input = {
+    job: seed.savedJobs[0]!,
+    profile: seed.profile,
+    templateId: "classic_ats",
+    settings: seed.settings,
+    renderDocument: {
+      fullName: "Alex Example",
+      headline: "Platform engineer",
+      location: "Remote",
+      contactItems: [],
+      sections: [],
+    },
+  };
+  manager = createLocalJobFinderDocumentManager({
+    outputDirectory: "/synthetic-output",
+  });
+});
+afterEach(() => vi.useRealTimers());
+
+async function flush() {
+  for (let i = 0; i < 30; i++) await Promise.resolve();
+}
+
+test("prints export-mode HTML with the export options, counts the PDF, and cleans up", async () => {
+  const preview = await manager.renderResumePreview(input);
+  expect(preview.pageCount).toBe(2);
+  expect(preview.html).toBe(
+    renderResumeTemplateHtml(input, { mode: "preview" }),
+  );
+  const htmlPath = mocks.load.mock.calls[0]![0];
+  expect(mocks.files.get(htmlPath)).toBe(renderResumeTemplateHtml(input));
+  expect(mocks.count).toHaveBeenCalledWith(
+    path.join(path.dirname(htmlPath), "resume.pdf"),
+  );
+  expect(mocks.rm).toHaveBeenCalledWith(path.dirname(htmlPath), {
+    recursive: true,
+    force: true,
+  });
+  expect(mocks.windows.every((window) => window.destroyed)).toBe(true);
+  const previewPrintOptions = mocks.print.mock.calls[0]![0];
+  await manager.renderResumeArtifact({
+    ...input,
+    settings: { ...input.settings, resumeFormat: "pdf" },
+  });
+  expect(mocks.print.mock.calls[1]![0]).toEqual(previewPrintOptions);
+  expect(previewPrintOptions).toEqual({
+    margins: { top: 0, bottom: 0, left: 0, right: 0 },
+    printBackground: true,
+    pageSize: "Letter",
+    preferCSSPageSize: true,
+  });
+});
+
+test("caches unchanged export HTML, including simultaneous requests, and reprints edits", async () => {
+  const previews = await Promise.all([
+    manager.renderResumePreview(input),
+    manager.renderResumePreview(input),
+  ]);
+  expect(previews.map((preview) => preview.pageCount)).toEqual([2, 2]);
+  await manager.renderResumePreview(input);
+  expect(mocks.print).toHaveBeenCalledTimes(1);
+  mocks.count.mockResolvedValue(1);
+  const edited = await manager.renderResumePreview({
+    ...input,
+    renderDocument: { ...input.renderDocument, headline: "Research engineer" },
+  });
+  expect(edited.pageCount).toBe(1);
+  expect(mocks.print).toHaveBeenCalledTimes(2);
+});
+
+test("serializes different previews so only one print window is active", async () => {
+  let release!: (buffer: Buffer) => void;
+  mocks.print.mockImplementationOnce(
+    () =>
+      new Promise<Buffer>((resolve) => {
+        release = resolve;
+      }),
+  );
+  const first = manager.renderResumePreview(input);
+  const second = manager.renderResumePreview({
+    ...input,
+    templateId: "modern_split",
+  });
+  await flush();
+  expect(mocks.windows).toHaveLength(1);
+  release(Buffer.from("synthetic PDF"));
+  await Promise.all([first, second]);
+  expect(mocks.windows).toHaveLength(2);
+  expect(mocks.windows.every((window) => window.destroyed)).toBe(true);
+});
+
+test.each(["load", "print", "count"] as const)(
+  "keeps the HTML preview when %s fails and retries measurement",
+  async (step) => {
+    mocks[step].mockRejectedValueOnce(new Error("Measurement failed"));
+    const preview = await manager.renderResumePreview(input);
+    expect(preview.html).toContain("Alex Example");
+    expect(preview.pageCount).toBeNull();
+    expect(mocks.rm).toHaveBeenCalledTimes(1);
+    expect(mocks.windows.every((window) => window.destroyed)).toBe(true);
+    expect((await manager.renderResumePreview(input)).pageCount).toBe(2);
+  },
+);
+
+test("aborts active and queued previews without printing a superseded draft", async () => {
+  mocks.print.mockImplementationOnce(() => new Promise<Buffer>(() => {}));
+  const activeController = new AbortController();
+  const queuedController = new AbortController();
+  const first = manager.renderResumePreview(input, activeController.signal);
+  const second = manager.renderResumePreview(input, queuedController.signal);
+  const firstCheck = expect(first).rejects.toMatchObject({
+    name: "AbortError",
+  });
+  const secondCheck = expect(second).rejects.toMatchObject({
+    name: "AbortError",
+  });
+  await flush();
+  queuedController.abort();
+  activeController.abort();
+  await Promise.all([firstCheck, secondCheck]);
+  await flush();
+  expect(mocks.print).toHaveBeenCalledTimes(1);
+  expect(mocks.rm).toHaveBeenCalledTimes(1);
+  expect(mocks.windows.every((window) => window.destroyed)).toBe(true);
+  expect((await manager.renderResumePreview(input)).pageCount).toBe(2);
+});
+
+test("a pre-aborted preview never opens a window", async () => {
+  const controller = new AbortController();
+  controller.abort();
+  await expect(
+    manager.renderResumePreview(input, controller.signal),
+  ).rejects.toMatchObject({ name: "AbortError" });
+  expect(mocks.windows).toHaveLength(0);
+});
+
+test("slow measurements return an unknown count within the preview budget and release the queue", async () => {
+  vi.useFakeTimers();
+  mocks.print.mockImplementationOnce(() => new Promise<Buffer>(() => {}));
+  const preview = manager.renderResumePreview(input);
+  await flush();
+  await vi.advanceTimersByTimeAsync(750);
+  expect((await preview).pageCount).toBeNull();
+  await flush();
+  expect(mocks.rm).toHaveBeenCalledTimes(1);
+  expect(mocks.windows.every((window) => window.destroyed)).toBe(true);
+  expect((await manager.renderResumePreview(input)).pageCount).toBe(2);
+});

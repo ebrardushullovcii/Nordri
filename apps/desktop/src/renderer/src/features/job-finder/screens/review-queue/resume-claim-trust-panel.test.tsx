@@ -3,7 +3,11 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it } from "vitest";
-import { ResumeValidationResultSchema } from "@nordri/contracts";
+import {
+  ResumeValidationResultSchema,
+  resumeClaimOwnershipStatement,
+  type ResumeClaimConfirmation,
+} from "@nordri/contracts";
 import { ResumeClaimTrustPanel } from "./resume-claim-trust-panel";
 
 const assessedAt = "2026-07-30T12:00:00.000Z";
@@ -60,13 +64,18 @@ describe("ResumeClaimTrustPanel", () => {
     root = null;
   });
 
-  function renderPanel(claimAssessments: unknown[], hasUnsavedChanges = false) {
+  function renderPanel(
+    claimAssessments: unknown[],
+    hasUnsavedChanges = false,
+    claimConfirmations: ResumeClaimConfirmation[] = [],
+  ) {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
     act(() => {
       root?.render(
         <ResumeClaimTrustPanel
+          draft={{ id: "draft_1", claimConfirmations }}
           hasUnsavedChanges={hasUnsavedChanges}
           validation={buildValidation(claimAssessments)}
         />,
@@ -94,12 +103,43 @@ describe("ResumeClaimTrustPanel", () => {
 
     expect(container?.textContent).toContain("Candidate evidence only");
     expect(container?.textContent).toContain("1 blocking");
-    expect(container?.textContent).toContain("Generated claim blocked");
+    expect(container?.textContent).toContain("Needs your decision");
     expect(container?.textContent).toContain("Review your edit");
     expect(container?.textContent).toContain(
       "Save your edits to refresh claim evidence",
     );
     expect(container?.querySelectorAll("details")).toHaveLength(3);
+  });
+
+  it("counts the person's own unsupported edit as theirs and drops it once approved", () => {
+    const edit = buildClaim(1, {
+      claimOrigin: "user_edited",
+      status: "unsupported",
+      evidenceRefs: [],
+      verifier: "deterministic_candidate_evidence_v2",
+    });
+    renderPanel([edit]);
+    expect(container?.textContent).toContain("1 blocking");
+    expect(container?.textContent).toContain("Your edits to decide1");
+    expect(container?.textContent).toContain("Generated lines to decide0");
+
+    act(() => root?.unmount());
+    container?.remove();
+    renderPanel([edit], false, [
+      {
+        id: "claim_confirmation_1",
+        draftId: "draft_1",
+        field: "section_bullet",
+        sectionId: "section_experience",
+        entryId: "entry_1",
+        bulletId: "bullet_1",
+        confirmedClaimContentHash: edit.contentHash,
+        ownershipStatement: resumeClaimOwnershipStatement,
+        confirmedAt: assessedAt,
+      },
+    ]);
+    expect(container?.textContent).toContain("Nothing blocking");
+    expect(container?.textContent).toContain("Approved by you");
   });
 
   it("credits a verbatim line to the person, not to the generator", () => {

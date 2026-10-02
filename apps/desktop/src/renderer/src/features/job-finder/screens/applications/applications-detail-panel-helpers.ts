@@ -481,13 +481,19 @@ export function applicationNeedsPrimaryRecovery(input: {
   if (
     lastAttemptState === "paused" ||
     lastAttemptState === "failed" ||
+    lastAttemptState === "cancelled" ||
     lastAttemptState === "unsupported"
   ) {
     return true;
   }
 
   const state = visibleApplyResult?.state;
-  return state === "blocked" || state === "failed" || state === "skipped";
+  return (
+    state === "blocked" ||
+    state === "failed" ||
+    state === "skipped" ||
+    state === "cancelled"
+  );
 }
 
 /**
@@ -503,6 +509,7 @@ export function applyRunJobNeedsPreparation(
     | null
     | undefined,
 ): boolean {
+  if (runResult?.state === "cancelled") return false;
   return (
     !runResult ||
     runResult.applicationRecordId === null ||
@@ -591,7 +598,12 @@ export function getQueueRecoveryTone(
     return "positive" as const;
   }
 
-  if (state === "blocked" || state === "failed" || state === "skipped") {
+  if (
+    state === "blocked" ||
+    state === "failed" ||
+    state === "skipped" ||
+    state === "cancelled"
+  ) {
     return "critical" as const;
   }
 

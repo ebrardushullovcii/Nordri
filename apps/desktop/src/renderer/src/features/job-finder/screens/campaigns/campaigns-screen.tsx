@@ -54,6 +54,34 @@ const splitList = (value: string) =>
     .map((item) => item.trim())
     .filter(Boolean);
 
+// A comma-separated list field that keeps the person's raw text while they
+// type, so the space between two words and a trailing comma survive until the
+// next entry is typed. The parsed list is what the plan stores.
+function ListTextInput(props: {
+  onChange: (values: string[]) => void;
+  placeholder: string;
+  values: readonly string[];
+}) {
+  const joined = props.values.join(", ");
+  const [text, setText] = useState(joined);
+  useEffect(() => {
+    setText((current) =>
+      splitList(current).join(", ") === joined ? current : joined,
+    );
+  }, [joined]);
+  return (
+    <Input
+      onBlur={() => setText(joined)}
+      onChange={(event) => {
+        setText(event.target.value);
+        props.onChange(splitList(event.target.value));
+      }}
+      placeholder={props.placeholder}
+      value={text}
+    />
+  );
+}
+
 const runOutcomeLabels: Record<
   NonNullable<JobSearchCampaignSchedule["runFacts"]["lastRunOutcome"]>,
   string
@@ -448,6 +476,16 @@ function CampaignEditor(props: {
   runPending?: boolean;
 }) {
   const [draft, setDraft] = useState(props.campaign);
+  // The same rule the run uses: the plan's own selection, or Profile's
+  // Include in search when the plan has not chosen any.
+  const plannedSourceCount =
+    draft.sourceTargetIds.length > 0
+      ? draft.searchPreferences.discovery.targets.filter((target) =>
+          draft.sourceTargetIds.includes(target.id),
+        ).length
+      : draft.searchPreferences.discovery.targets.filter(
+          (target) => target.enabled,
+        ).length;
   // The baseline a dirty check compares against moves forward on every
   // successful save, so a saved plan is never treated as an unsaved draft.
   const [baselineCampaign, setBaselineCampaign] = useState(props.campaign);
@@ -456,7 +494,14 @@ function CampaignEditor(props: {
   const [pauseWindowReason, setPauseWindowReason] = useState("");
   const [saveOutcome, setSaveOutcome] = useState<"saved" | null>(null);
   const [discardConfirmationOpen, setDiscardConfirmationOpen] = useState(false);
-  const dirty = draft !== baselineCampaign;
+  // By content, not identity: typing a change and then undoing it is not an
+  // unsaved edit, so leaving should not ask to discard it.
+  const dirty = useMemo(
+    () =>
+      draft !== baselineCampaign &&
+      JSON.stringify(draft) !== JSON.stringify(baselineCampaign),
+    [draft, baselineCampaign],
+  );
   const cannotArchiveCurrentPlan =
     props.isCurrentPlan && draft.status === "archived";
   useEffect(() => {
@@ -711,66 +756,66 @@ function CampaignEditor(props: {
           <div className="mt-4 grid gap-4 sm:grid-cols-2">
             <label className="grid gap-1 text-sm">
               <span>Target roles</span>
-              <Input
-                onChange={(event) =>
+              <ListTextInput
+                onChange={(values) =>
                   setDraft({
                     ...draft,
                     searchPreferences: {
                       ...draft.searchPreferences,
-                      targetRoles: splitList(event.target.value),
+                      targetRoles: values,
                     },
                   })
                 }
                 placeholder="Software engineer, Frontend engineer"
-                value={draft.searchPreferences.targetRoles.join(", ")}
+                values={draft.searchPreferences.targetRoles}
               />
             </label>
             <label className="grid gap-1 text-sm">
               <span>Preferred locations</span>
-              <Input
-                onChange={(event) =>
+              <ListTextInput
+                onChange={(values) =>
                   setDraft({
                     ...draft,
                     searchPreferences: {
                       ...draft.searchPreferences,
-                      locations: splitList(event.target.value),
+                      locations: values,
                     },
                   })
                 }
                 placeholder="Worldwide remote, Prishtina"
-                value={draft.searchPreferences.locations.join(", ")}
+                values={draft.searchPreferences.locations}
               />
             </label>
             <label className="grid gap-1 text-sm">
               <span>Excluded locations</span>
-              <Input
-                onChange={(event) =>
+              <ListTextInput
+                onChange={(values) =>
                   setDraft({
                     ...draft,
                     searchPreferences: {
                       ...draft.searchPreferences,
-                      excludedLocations: splitList(event.target.value),
+                      excludedLocations: values,
                     },
                   })
                 }
                 placeholder="Locations that cannot work"
-                value={draft.searchPreferences.excludedLocations.join(", ")}
+                values={draft.searchPreferences.excludedLocations}
               />
             </label>
             <label className="grid gap-1 text-sm">
               <span>Excluded companies</span>
-              <Input
-                onChange={(event) =>
+              <ListTextInput
+                onChange={(values) =>
                   setDraft({
                     ...draft,
                     searchPreferences: {
                       ...draft.searchPreferences,
-                      companyBlacklist: splitList(event.target.value),
+                      companyBlacklist: values,
                     },
                   })
                 }
                 placeholder="Companies to skip"
-                value={draft.searchPreferences.companyBlacklist.join(", ")}
+                values={draft.searchPreferences.companyBlacklist}
               />
             </label>
             <fieldset className="grid gap-2 sm:col-span-2">
@@ -1390,19 +1435,9 @@ function CampaignEditor(props: {
         </details>
 
         <p className="text-xs text-foreground-muted">
-          Searches{" "}
-          {
-            draft.searchPreferences.discovery.targets.filter(
-              (target) => target.enabled,
-            ).length
-          }{" "}
-          job{" "}
-          {draft.searchPreferences.discovery.targets.filter(
-            (target) => target.enabled,
-          ).length === 1
-            ? "site"
-            : "sites"}{" "}
-          for {draft.searchPreferences.targetRoles.length}{" "}
+          Searches {plannedSourceCount} job{" "}
+          {plannedSourceCount === 1 ? "site" : "sites"} for{" "}
+          {draft.searchPreferences.targetRoles.length}{" "}
           {draft.searchPreferences.targetRoles.length === 1 ? "role" : "roles"}{" "}
           you saved in this plan.
         </p>

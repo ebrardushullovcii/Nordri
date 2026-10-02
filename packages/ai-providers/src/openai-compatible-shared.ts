@@ -1,3 +1,4 @@
+import { buildResumeSkillContextFilter } from "./resume-skill-context";
 import {
   TailoredResumeDraftSchema,
   type TailoredResumeDraft,
@@ -879,6 +880,10 @@ export function completeTailoredResumeDraft(
     acceptedRewriteCharacters: 0,
     acceptedInferredRewriteCount: 0,
   };
+  const isCompetency = buildResumeSkillContextFilter(
+    fallbackInput.job,
+    fallbackInput.profile,
+  );
   const listingRequestedSkills = collectListingRequestedSkills(
     fallbackInput.job,
   );
@@ -974,6 +979,7 @@ export function completeTailoredResumeDraft(
           ...listingRequestedSkills,
           ...coreSkills.filter(
             (skill) =>
+              isCompetency(skill) &&
               listingTextContainsTerm(rewriteContext.jobListingText, skill) &&
               isInjectableListingSkillName(skill),
           ),
@@ -983,7 +989,9 @@ export function completeTailoredResumeDraft(
       })
     : null;
   const addedListingSkills = aggressiveSkills?.addedListingSkills ?? [];
-  const finalCoreSkills = aggressiveSkills?.coreSkills ?? groundedCoreSkills;
+  const finalCoreSkills = (
+    aggressiveSkills?.coreSkills ?? groundedCoreSkills
+  ).filter(isCompetency);
   const targetedKeywords = fallbackInput.strategy
     ? selectCanonicalStringList(
         sanitizedTargetedKeywords.filter((keyword) =>
@@ -1006,7 +1014,9 @@ export function completeTailoredResumeDraft(
           (coreSkill) => coreSkill.toLowerCase() === skill.toLowerCase(),
         ),
     )
-  ).slice(0, VISIBLE_ADDITIONAL_SKILL_LIMIT);
+  )
+    .filter(isCompetency)
+    .slice(0, VISIBLE_ADDITIONAL_SKILL_LIMIT);
   const notes = [...fallback.notes];
   if (addedListingSkills.length > 0) {
     notes.push(

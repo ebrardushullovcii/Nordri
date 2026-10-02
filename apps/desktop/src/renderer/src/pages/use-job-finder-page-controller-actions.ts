@@ -559,7 +559,10 @@ function getActiveCampaignReviewQueue(
  * the new batch took and names any it left out.
  */
 export function describeAutoApplyQueueStart(
-  snapshot: Pick<JobFinderWorkspaceSnapshot, "applyRuns" | "reviewQueue"> | null | undefined,
+  snapshot:
+    | Pick<JobFinderWorkspaceSnapshot, "applyRuns" | "reviewQueue">
+    | null
+    | undefined,
   jobIds: readonly string[],
   options?: { onlyWhenHeldBack?: boolean },
 ): string | null {
@@ -1013,6 +1016,7 @@ export function createPrimaryPageActions(
           ? "This job source is missing, disabled, or does not have a valid public URL."
           : "Add or enable at least one valid public job-source URL before searching.",
         targetLabel,
+        targetId: targetId ?? null,
       });
       setDiscoveryRunFeedback(feedback);
       return;
@@ -1169,8 +1173,16 @@ export function createPrimaryPageActions(
         // Progress events prove the run started; only a rejection with no
         // observed progress may claim the search could not start.
         const feedback = sawDiscoveryProgress
-          ? createDiscoveryRunInterruptedFeedback({ detail, targetLabel })
-          : createDiscoveryRunFailedFeedback({ detail, targetLabel });
+          ? createDiscoveryRunInterruptedFeedback({
+              detail,
+              targetLabel,
+              targetId: targetId ?? null,
+            })
+          : createDiscoveryRunFailedFeedback({
+              detail,
+              targetLabel,
+              targetId: targetId ?? null,
+            });
         setDiscoveryRunFeedback(feedback);
         // The success path ends with an authoritative refresh; a failed run
         // is recorded too (Search history, Home, source health) and must not
@@ -2568,14 +2580,21 @@ export function createPrimaryPageActions(
         scope: jobFinderPendingActions.profileMutation(),
         surface: "answers",
       }),
-    onSaveResumeDraft: (draft: ResumeDraft) =>
+    onSaveResumeDraft: (
+      draft: ResumeDraft,
+      onSaved?: (updatedAt: string) => void,
+    ) =>
       void runSaveAction({
         action: () => actions.saveResumeDraft(draft),
         dedupeKey: createSaveDedupeKey("resume", draft),
         failedFallback:
           "Resume draft was not saved. Retry before leaving Resume Studio.",
         label: "Resume draft",
-        onSuccess: async () => {
+        onSuccess: async (snapshot) => {
+          const savedDraft = snapshot.resumeDrafts.find(
+            (entry) => entry.id === draft.id,
+          );
+          if (savedDraft) onSaved?.(savedDraft.updatedAt);
           await refreshResumeWorkspace(draft.jobId);
         },
         savedMessage: "Draft saved.",
@@ -2586,6 +2605,7 @@ export function createPrimaryPageActions(
       draft: ResumeDraft,
       next: () => void | Promise<void>,
       successMessage?: string | null,
+      onSaved?: (updatedAt: string) => void,
     ) =>
       void (async () => {
         const ownerStartRoute = jobFinderStatusRoute;
@@ -2598,7 +2618,11 @@ export function createPrimaryPageActions(
           failedFallback:
             "Resume draft was not saved. Retry before continuing.",
           label: "Resume draft",
-          onSuccess: async () => {
+          onSuccess: async (snapshot) => {
+            const savedDraft = snapshot.resumeDrafts.find(
+              (entry) => entry.id === draft.id,
+            );
+            if (savedDraft) onSaved?.(savedDraft.updatedAt);
             saveSucceeded = await refreshResumeWorkspace(jobId);
           },
           savedMessage: successMessage ?? "Changes saved.",

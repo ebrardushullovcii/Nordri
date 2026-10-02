@@ -7,6 +7,13 @@ export const MAIN_WINDOW_ZOOM_FACTOR_STEP = 0.1;
 
 export type MainWindowZoomCommand = "in" | "out" | "reset";
 
+type ZoomTarget = Pick<WebContents, "getZoomFactor" | "setZoomFactor">;
+// Embedded views use the same session-owned factor as the shell's shortcuts.
+const zoomControllers = new WeakMap<
+  ZoomTarget,
+  (command: MainWindowZoomCommand) => void
+>();
+
 export type MainWindowZoomShortcutInput = Pick<
   Input,
   "alt" | "code" | "control" | "isComposing" | "key" | "meta" | "type"
@@ -78,6 +85,35 @@ export function getNextMainWindowZoomFactor(
   );
 }
 
+function routeZoomCommand(
+  event: Pick<Event, "preventDefault">,
+  command: MainWindowZoomCommand | null,
+  target: ZoomTarget,
+): boolean {
+  if (!command) return false;
+  event.preventDefault();
+  const controller = zoomControllers.get(target);
+  if (controller) controller(command);
+  else
+    target.setZoomFactor(
+      getNextMainWindowZoomFactor(target.getZoomFactor(), command),
+    );
+  return true;
+}
+
+export function routeMainWindowZoomShortcut(
+  event: Pick<Event, "preventDefault">,
+  input: MainWindowZoomShortcutInput,
+  target: ZoomTarget,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  return routeZoomCommand(
+    event,
+    getMainWindowZoomCommand(input, platform),
+    target,
+  );
+}
+
 export function bindMainWindowZoomShortcuts(
   webContents: Pick<WebContents, "getZoomFactor" | "on" | "setZoomFactor">,
   platform: NodeJS.Platform = process.platform,
@@ -131,15 +167,7 @@ export function bindMainWindowZoomShortcuts(
     applyOwnedZoomFactor();
   });
 
-  webContents.on("before-input-event", (event: Event, input: Input) => {
-    const command = getMainWindowZoomCommand(input, platform);
-
-    if (!command) {
-      return;
-    }
-
-    event.preventDefault();
-
+  zoomControllers.set(webContents, (command) => {
     const currentFactor = webContents.getZoomFactor();
     const nextFactor = getNextMainWindowZoomFactor(currentFactor, command);
 
@@ -147,5 +175,8 @@ export function bindMainWindowZoomShortcuts(
       desiredZoomFactor = nextFactor;
       webContents.setZoomFactor(nextFactor);
     }
+  });
+  webContents.on("before-input-event", (event: Event, input: Input) => {
+    routeMainWindowZoomShortcut(event, input, webContents, platform);
   });
 }

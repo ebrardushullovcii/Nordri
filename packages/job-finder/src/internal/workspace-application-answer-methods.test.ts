@@ -592,6 +592,43 @@ describe("workspace application answer methods", () => {
     expect(retry.answerRecords[0]?.revision).toBe(1);
   });
 
+  it("rejects a saved file answer scoped to another job before writing", async () => {
+    const asset = CandidateAssetSchema.parse({
+      id: "letter-other",
+      kind: "cover_letter",
+      originalName: "letter.txt",
+      mime: "text/plain",
+      byteSize: 100,
+      sha256: "a".repeat(64),
+      createdAt: "2026-08-10T10:00:00.000Z",
+      sensitivity: "sensitive",
+      consentScope: "job_application_attachment",
+      retention: "until_deleted",
+      forJob: { jobId: "job-other", title: "Engineer", company: "Cedar" },
+    });
+    const { job, methods, repository } = createHarness({
+      answerControlType: "file",
+      answerOptions: [],
+      questionKind: "cover_letter",
+      candidateAssetResolver: {
+        resolveForApplication: () =>
+          Promise.resolve({ asset, loadVerifiedBytes: vi.fn() }),
+      },
+    });
+    await expect(
+      methods.saveApplicationAnswer({
+        ...saveCommand("wrong-job-file", 0),
+        jobId: job.id,
+        value: { type: "asset_ref", assetId: asset.id },
+      }),
+    ).rejects.toThrow("That file was written for another job.");
+    expect(
+      await repository.listApplicationAnswerRecords({
+        questionId: "question-sponsorship",
+      }),
+    ).toEqual([]);
+  });
+
   it("stores only metadata for an exact consented file answer", async () => {
     const asset = CandidateAssetSchema.parse({
       id: "asset-portfolio",

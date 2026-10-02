@@ -49,7 +49,11 @@ import {
 
 import { countDiscoveryStrongMatches } from "../discovery-result-bands";
 import { deriveDiscoverySourceOutcome } from "../source-health";
-import { createCampaign, ensureCampaignState } from "./campaign-dashboard";
+import {
+  createCampaign,
+  ensureCampaignState,
+  searchPreferencesForCampaignRun,
+} from "./campaign-dashboard";
 import {
   estimateCampaignFunnel,
   evaluateCampaignRules,
@@ -925,7 +929,7 @@ async function executeCampaignRun(input: {
       {
         campaignId: input.campaign.id,
         mode: input.campaign.mode,
-        searchPreferences: input.campaign.searchPreferences,
+        searchPreferences: searchPreferencesForCampaignRun(input.campaign),
         runJobBudget: input.campaign.limits.discoveryRunJobBudget ?? null,
       },
       input.onActivity,

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   ApplyJobStateSchema,
+  ApplicationAttemptStateSchema,
   ApplyRunModeSchema,
   ApplyRunStateSchema,
   ApplySubmitApprovalStatusSchema,
@@ -356,4 +357,9 @@ describe("contracts base schemas", () => {
       }),
     ).toBeNull();
   });
+});
+
+test("keeps a person's cancellation distinct from an application failure", () => {
+  expect(ApplyJobStateSchema.parse("cancelled")).toBe("cancelled");
+  expect(ApplicationAttemptStateSchema.parse("cancelled")).toBe("cancelled");
 });

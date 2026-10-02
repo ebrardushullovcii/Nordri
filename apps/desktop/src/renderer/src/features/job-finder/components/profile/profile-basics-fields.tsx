@@ -2,6 +2,7 @@ import { useFormState, useWatch, type UseFormReturn } from "react-hook-form";
 import { Field, FieldLabel } from "@renderer/components/ui/field";
 import {
   getProfileEmailValidationMessage,
+  getProfileLinkValidationMessage,
   type ProfileEditorValues,
 } from "../../lib/profile-editor";
 import {
@@ -42,6 +43,39 @@ function BasicsGroup(props: { children: React.ReactNode; title: string }) {
       </p>
       {props.children}
     </article>
+  );
+}
+
+export function ProfileLinkField(props: {
+  field: "linkedinUrl" | "portfolioUrl" | "githubUrl" | "personalWebsiteUrl";
+  id: string;
+  label: string;
+  profileForm: UseFormReturn<ProfileEditorValues>;
+}) {
+  const { control, register } = props.profileForm;
+  const value = useWatch({ control, name: `identity.${props.field}` });
+  const message = getProfileLinkValidationMessage(value, props.label);
+  const errorId = `${props.id}-error`;
+  return (
+    <Field>
+      <FieldLabel htmlFor={props.id}>{props.label}</FieldLabel>
+      <ProfileInput
+        aria-describedby={message ? errorId : undefined}
+        aria-invalid={message ? true : undefined}
+        id={props.id}
+        inputMode="url"
+        {...register(`identity.${props.field}`)}
+      />
+      {message ? (
+        <p
+          className="text-xs leading-5 text-destructive"
+          id={errorId}
+          role="alert"
+        >
+          {message}
+        </p>
+      ) : null}
+    </Field>
   );
 }
 
@@ -209,29 +243,24 @@ export function ProfileBasicsFields(props: {
 
       <BasicsGroup title="Links">
         <div className="grid gap-(--gap-content) md:grid-cols-3">
-          <Field>
-            <FieldLabel htmlFor={fieldId("linkedin-url")}>
-              LinkedIn URL
-            </FieldLabel>
-            <ProfileInput
-              id={fieldId("linkedin-url")}
-              {...register("identity.linkedinUrl")}
-            />
-          </Field>
-          <Field>
-            <FieldLabel htmlFor={fieldId("website")}>Website</FieldLabel>
-            <ProfileInput
-              id={fieldId("website")}
-              {...register("identity.portfolioUrl")}
-            />
-          </Field>
-          <Field>
-            <FieldLabel htmlFor={fieldId("github-url")}>GitHub URL</FieldLabel>
-            <ProfileInput
-              id={fieldId("github-url")}
-              {...register("identity.githubUrl")}
-            />
-          </Field>
+          <ProfileLinkField
+            field="linkedinUrl"
+            id={fieldId("linkedin-url")}
+            label="LinkedIn URL"
+            profileForm={props.profileForm}
+          />
+          <ProfileLinkField
+            field="portfolioUrl"
+            id={fieldId("website")}
+            label="Website"
+            profileForm={props.profileForm}
+          />
+          <ProfileLinkField
+            field="githubUrl"
+            id={fieldId("github-url")}
+            label="GitHub URL"
+            profileForm={props.profileForm}
+          />
         </div>
       </BasicsGroup>
 

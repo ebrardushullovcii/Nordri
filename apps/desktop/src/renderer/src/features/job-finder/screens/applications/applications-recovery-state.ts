@@ -556,6 +556,11 @@ export function resolveApplicationRecoveryPresentation(input: {
   recordLatestBlockerCode?: string | null;
   /** The record's last action; a person's skip is not a failure. */
   recordLastActionLabel?: string | null;
+  /**
+   * The person set the tracker to Applied or later themselves: they sent it
+   * outside Job Finder, so it is never filled in again.
+   */
+  recordTrackedAsApplied?: boolean;
   /** What the result's run is doing; a planned job means nothing without it. */
   run?: ApplyRunContext | null;
   visibleApplyResult: ApplyResult;
@@ -619,6 +624,20 @@ export function resolveApplicationRecoveryPresentation(input: {
     };
   }
 
+  if (
+    input.recordTrackedAsApplied &&
+    visibleApplyResult?.state !== "submitted"
+  ) {
+    return {
+      state: "submitted",
+      statusLine: "You recorded this as applied",
+      reasonSentence:
+        "Your tracker says this application was sent, so Job Finder will not fill it in again.",
+      primaryAction: "none",
+      primaryActionLabel: null,
+    };
+  }
+
   if (requiresSubmissionOutcomeVerification) {
     return {
       state: "verify_outcome",
@@ -628,6 +647,16 @@ export function resolveApplicationRecoveryPresentation(input: {
         "The last action finished without the employer site confirming one way or the other.",
       primaryAction: "none",
       primaryActionLabel: null,
+    };
+  }
+
+  if (visibleApplyResult?.state === "cancelled") {
+    return {
+      state: "retry",
+      statusLine: "Cancelled by you",
+      reasonSentence: visibleApplyResult.detail,
+      primaryAction: "try_again",
+      primaryActionLabel: TRY_AGAIN_ACTION,
     };
   }
 

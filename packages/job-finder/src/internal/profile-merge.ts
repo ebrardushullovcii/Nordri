@@ -458,19 +458,30 @@ export function mergeEducationRecords(
     scoreEducationRecordCompleteness,
   );
 
+  // The identity rules need a school. A record without one (a degree read
+  // without its school) still matches the very same reading on re-import.
+  const sameReading = (
+    left: CandidateProfile["education"][number],
+    right: ResumeProfileExtraction["education"][number],
+  ) => {
+    const key = (record: typeof left | typeof right) =>
+      [
+        record.schoolName,
+        record.degree,
+        record.fieldOfStudy,
+        record.startDate,
+        record.endDate,
+      ]
+        .map((part) => normalizeText(part ?? ""))
+        .join("|");
+    return Boolean(left.degree || left.fieldOfStudy) && key(left) === key(right);
+  };
+
   extracted.forEach((entry, index) => {
-    const key = normalizeRecordKey([
-      entry.schoolName,
-      entry.degree,
-      entry.startDate,
-    ]);
     const matchIndex = merged.findIndex(
       (existingEntry) =>
-        normalizeRecordKey([
-          existingEntry.schoolName,
-          existingEntry.degree,
-          existingEntry.startDate,
-        ]) === key || areEquivalentEducationRecords(existingEntry, entry),
+        areEquivalentEducationRecords(existingEntry, entry) ||
+        sameReading(existingEntry, entry),
     );
     const match = matchIndex === -1 ? null : (merged[matchIndex] ?? null);
     const nextEntry = {

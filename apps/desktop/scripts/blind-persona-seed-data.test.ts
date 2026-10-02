@@ -964,14 +964,13 @@ describe("blind persona deterministic seed data", () => {
     // accidental change to the seed data moves them too, which is the point.
     // Regenerate both together, never one, and only alongside the schema
     // change that explains it.
-    // Moved together by the new persisted resume `issueApprovals` list and
-    // the application record's `automationMode`, which every seeded draft
-    // and application record now carries with their defaults.
+    // Updated together for the 10,000-job retention default, uncapped scale
+    // run budget, and background-check consent being enabled by default.
     expect(calculateBlindPersonaStateDigest(first.P13)).toBe(
-      "83f31829adf5f22b0864d364caaeeb87f3c2542093c827e55a54a6d1c72f7196",
+      "09f5e712ac5a3901551f2531e81f7973938fdfb99483fe459d34576544c09586",
     );
     expect(calculateBlindPersonaStateDigest(first.P14)).toBe(
-      "73922ce9cf712de849484be33b4e32df37b511292ca1c226fff555406de341ef",
+      "362df95b7c2f8173dafc9f8f6c399d86bc818ef712368b650d5b371ea44f62fb",
     );
     expect(calculateBlindPersonaStateDigest(first.P13)).toBe(
       calculateBlindPersonaStateDigest(second.P13),

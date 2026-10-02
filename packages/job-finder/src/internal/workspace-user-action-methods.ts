@@ -237,14 +237,36 @@ async function persistManualAnswer(input: {
       "This manual answer is missing its exact application result scope.",
     );
   }
-  const questions = (
+  const allQuestions =
     await input.ctx.repository.listApplicationQuestionRecords({
       runId: scope.runId,
       jobId: scope.jobId,
       resultId: scope.resultId,
       applicationRecordId: scope.applicationRecordId,
-    })
-  ).filter((question) => question.status === "detected");
+    });
+  const records = await input.ctx.repository.listApplicationAnswerRecords({
+    runId: scope.runId,
+    jobId: scope.jobId,
+    resultId: scope.resultId,
+    applicationRecordId: scope.applicationRecordId,
+  });
+  const recordPrefix = `manual_answer_${input.request.id}_${input.resultingRevision}`;
+  const retryQuestionIds = new Set(
+    records
+      .filter(
+        (record) =>
+          record.id === recordPrefix ||
+          (record.id.startsWith(`${recordPrefix}_`) &&
+            /^\d+$/u.test(record.id.slice(recordPrefix.length + 1))),
+      )
+      .map((record) => record.questionId),
+  );
+  // A partially saved command can be retried after earlier questions already
+  // became answered. Only this exact command's records admit those questions.
+  const questions = allQuestions.filter(
+    (question) =>
+      question.status === "detected" || retryQuestionIds.has(question.id),
+  );
 
   // A multi-question step arrives as one command with every answer tied to
   // its question; a single-question step still arrives as one bare answer.
@@ -265,9 +287,8 @@ async function persistManualAnswer(input: {
       pairs.push({ question, answer: entry.answer.trim() });
     }
   } else {
-    // Questions the person already answered on this application stay on
-    // record as detected; only the ones still waiting decide whether a bare
-    // answer is unambiguous.
+    // Include the exact saved question on a retry. Legacy detected questions
+    // with a user answer do not make a new bare answer ambiguous.
     const answeredQuestionIds = new Set(
       (questions.length === 1
         ? []
@@ -284,7 +305,11 @@ async function persistManualAnswer(input: {
     const waiting =
       questions.length === 1
         ? questions
-        : questions.filter((question) => !answeredQuestionIds.has(question.id));
+        : questions.filter(
+            (question) =>
+              retryQuestionIds.has(question.id) ||
+              !answeredQuestionIds.has(question.id),
+          );
     if (waiting.length !== 1) {
       throw new Error(
         "This step has several questions; answer them together from Needs you.",
@@ -476,10 +501,7 @@ async function persistOneManualAnswer(input: {
   // The exact retry reuses the already-persisted record as the basis of the
   // revision chain, so the deterministic id stays idempotent: the retry never
   // creates another revision and never rewrites createdAt.
-  const baseRecords = existingById
-    ? records.filter((record) => record.id !== recordId)
-    : records;
-  const latest = latestAnswerForQuestion(baseRecords, question.id);
+  const latest = latestAnswerForQuestion(records, question.id);
 
   const record = ApplicationAnswerRecordSchema.parse({
     id: recordId,
@@ -490,6 +512,10 @@ async function persistOneManualAnswer(input: {
     questionId: question.id,
     status: "suggested",
     text: answer,
+    value: { type: "text", value: answer },
+    saveScope: input.command.saveForFuture
+      ? "reusable_profile"
+      : "application_once",
     sourceKind: "user",
     sourceId: input.request.id,
     confidenceLabel: "User-provided for this exact question",
@@ -507,8 +533,10 @@ async function persistOneManualAnswer(input: {
     // Monotonically increasing revision based on the actual latest persisted
     // record for the question, never a fixed revision-1 write that could
     // clobber a newer answer (for example one created by a grouped apply).
-    revision: (latest?.revision ?? 0) + 1,
-    supersedesAnswerId: latest?.id ?? null,
+    revision: existingById?.revision ?? (latest?.revision ?? 0) + 1,
+    supersedesAnswerId: existingById
+      ? existingById.supersedesAnswerId
+      : (latest?.id ?? null),
     createdAt: existingById?.createdAt ?? now,
     submittedAt: null,
   });
@@ -523,7 +551,38 @@ async function persistOneManualAnswer(input: {
     );
   }
 
-  await input.ctx.repository.upsertApplicationAnswerRecord(record);
+  const committed = await input.ctx.repository.commitApplicationAnswerMutation({
+    expectedAnswer: latest,
+    expectedQuestion: question,
+    answer: record,
+    question: {
+      ...question,
+      selectedAnswerId: record.id,
+      submittedAnswer: record.text,
+      status: "answered",
+    },
+  });
+  if (committed === "stale") {
+    throw new Error(
+      "This answer changed in another view. Reload Needs you and try again.",
+    );
+  }
+  if (committed === "duplicate") {
+    const stored = (
+      await input.ctx.repository.listApplicationAnswerRecords({
+        questionId: question.id,
+      })
+    ).find((answer) => answer.id === record.id);
+    if (
+      !stored ||
+      JSON.stringify(stored) !==
+        JSON.stringify({ ...record, createdAt: stored.createdAt })
+    ) {
+      throw new Error(
+        `Answer record '${recordId}' already exists with different data.`,
+      );
+    }
+  }
 }
 /**
  * A hand-off made when the browser refused a new tab. Before that error was

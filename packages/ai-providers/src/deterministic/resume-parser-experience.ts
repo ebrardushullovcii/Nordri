@@ -19,7 +19,7 @@ import { inferSkills } from "./resume-parser-skills";
 const MAX_EXPERIENCE_ACHIEVEMENTS = 10;
 
 const roleTitlePattern =
-  /\b(engineer|developer|designer|manager|director|analyst|consultant|specialist|architect|officer|lead|support|administrator|scientist|qa|agent|intern|internship)\b/i;
+  /\b(engineer|developer|designer|manager|director|analyst|consultant|specialist|architect|officer|lead|support|administrator|scientist|qa|agent|intern|internship|co-op|coordinator|assistant|clerk|representative)\b/i;
 
 type ResumeExperienceWorkMode = "remote" | "hybrid" | "onsite" | "flexible";
 
@@ -83,7 +83,10 @@ function looksLikeRoleTitle(value: string): boolean {
     value.replace(/^[-|,]+\s*/, "").replace(/\([^)]*\)\s*$/g, ""),
   );
 
-  return cleaned.length > 0 && roleTitlePattern.test(cleaned);
+  return (
+    cleaned.length > 0 &&
+    (roleTitlePattern.test(cleaned) || /^.+?\s+at\s+.+$/i.test(cleaned))
+  );
 }
 
 function parseCompanyAndLocation(segment: string): {
@@ -166,6 +169,7 @@ function isStandaloneTitle(value: string): boolean {
 
 function looksLikeCompanyHeader(value: string): boolean {
   const cleaned = cleanLine(value);
+  if (isLocationOnlyLine(cleaned)) return false;
   const normalized = cleaned
     .replace(/[(),]/g, " ")
     .replace(/\b(inc|llc|ltd|corp|co|company|gmbh|plc)\b\.?/gi, "")
@@ -561,6 +565,29 @@ function parseExperienceHeader(
     };
   }
 
+  const combinedRole = beforeDate.match(
+    /^(.+?)\s+at\s+(.+)$|^([^,]+),\s*(.+)$/i,
+  );
+  if (
+    combinedRole &&
+    (combinedRole[1] !== undefined ||
+      (looksLikeRoleTitle(combinedRole[3] ?? "") &&
+        (!companyContext ||
+          /\b(?:Inc|LLC|Ltd|GmbH|Corp|Co|University|College|Company|Corporation)\b/i.test(
+            combinedRole[4] ?? "",
+          ))))
+  ) {
+    const employer = parseCompanyAndLocation(
+      combinedRole[2] ?? combinedRole[4] ?? "",
+    );
+    return {
+      dateRange,
+      workMode,
+      companyName: employer.companyName,
+      location: employer.location ?? inferredLocation,
+      title: normalizeHeadlineText(combinedRole[1] ?? combinedRole[3] ?? ""),
+    };
+  }
   if (companyContext) {
     const repairedTitle = extractTrailingRoleTitle(beforeDate);
 
@@ -748,7 +775,8 @@ export function isLocationOnlyLine(line: string): boolean {
   const trimmed = stripBulletPrefix(cleanLine(line));
   return (
     trimmed.length > 0 &&
-    trimmed.length <= 60 &&
+    trimmed.length <= 80 &&
+    !roleTitlePattern.test(trimmed) &&
     trimmed.split(/\s+/u).length <= 6 &&
     LOCATION_ONLY_LINE_PATTERN.test(trimmed)
   );
@@ -785,6 +813,7 @@ function inferUndatedExperienceEntries(
     }
 
     if (
+      isLocationOnlyLine(companyLine) ||
       isBulletLine(companyLine) ||
       isBulletLine(titleLine) ||
       looksLikeRoleTitle(companyLine) ||
@@ -958,7 +987,11 @@ export function inferExperienceEntries(resumeText: string) {
         ownershipScope: null,
       };
     })
-    .filter((entry) => entry.title || entry.companyName || entry.summary);
+    .filter(
+      (entry) =>
+        (entry.title || entry.companyName || entry.summary) &&
+        !isLocationOnlyLine(entry.title ?? ""),
+    );
 
   if (datedEntries.length > 0) {
     return datedEntries;

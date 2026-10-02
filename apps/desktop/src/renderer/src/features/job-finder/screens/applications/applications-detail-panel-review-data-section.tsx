@@ -548,6 +548,11 @@ function ApplicationQuestionAnswerEditor(props: {
   const [selectedValues, setSelectedValues] = useState<string[]>([
     ...initialSelectedValues,
   ]);
+  // Free-text choices keep the raw text so a space or comma typed between two
+  // choices is not swallowed before the next one is typed.
+  const [choicesText, setChoicesText] = useState(
+    initialSelectedValues.join(", "),
+  );
   const [selectedAssetId, setSelectedAssetId] = useState(
     activeAnswer?.value?.type === "asset_ref" ? activeAnswer.value.assetId : "",
   );
@@ -604,7 +609,9 @@ function ApplicationQuestionAnswerEditor(props: {
             result.assets.filter(
               (asset) =>
                 asset.consentScope === "job_application_attachment" &&
-                asset.deletedAt === null,
+                asset.deletedAt === null &&
+                (asset.forJob === null ||
+                  asset.forJob.jobId === question.jobId),
             ),
           );
           setCandidateAssetStatus("ready");
@@ -625,7 +632,7 @@ function ApplicationQuestionAnswerEditor(props: {
         loadCandidateAssets,
       );
     };
-  }, [question.answerControlType]);
+  }, [question.answerControlType, question.jobId]);
 
   async function handleSave() {
     const trimmedValue = value.trim();
@@ -823,16 +830,17 @@ function ApplicationQuestionAnswerEditor(props: {
             aria-label={`Answer for ${question.prompt}`}
             className="min-h-20 w-full resize-y rounded-(--radius-field) border border-(--field-border) bg-(--field) px-3 py-2 text-(length:--text-small) leading-6 text-foreground outline-none focus-visible:border-(--field-focus-border) focus-visible:bg-(--field-strong) focus-visible:shadow-[var(--field-focus-shadow)]"
             disabled={isPending}
-            onChange={(event) =>
+            onChange={(event) => {
+              setChoicesText(event.target.value);
               setSelectedValues(
                 event.target.value
                   .split(",")
                   .map((entry) => entry.trim())
                   .filter(Boolean),
-              )
-            }
+              );
+            }}
             placeholder="Enter comma-separated choices exactly as shown"
-            value={selectedValues.join(", ")}
+            value={choicesText}
           />
         )
       ) : question.answerControlType === "boolean" ? (

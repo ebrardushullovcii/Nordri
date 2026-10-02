@@ -33,7 +33,7 @@ const inlinePatternDefinitions = [
     render: (match: RegExpMatchArray, key: string) => (
       <code
         key={key}
-        className="rounded-(--radius-small) border border-border/35 bg-background/80 px-1.5 py-0.5 font-mono text-[0.78rem] text-foreground"
+        className="rounded-(--radius-small) border border-border/35 bg-background/80 px-1.5 py-0.5 font-mono text-[0.78rem] break-all text-foreground"
       >
         {match[1]}
       </code>
@@ -344,7 +344,12 @@ export function AssistantMarkdown(props: { content: string }) {
   const blocks = parseMarkdownBlocks(props.content);
 
   return (
-    <div className="grid gap-2 break-words" data-assistant-markdown="true">
+    // A long id or address must wrap inside the panel, never widen it: grid
+    // items do not shrink below their longest word unless told to.
+    <div
+      className="grid min-w-0 gap-2 break-words [overflow-wrap:anywhere] [&>*]:min-w-0"
+      data-assistant-markdown="true"
+    >
       {blocks.map((block, index) =>
         renderMarkdownBlock(block, `block_${index}`),
       )}

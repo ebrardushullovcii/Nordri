@@ -10,10 +10,7 @@ import {
 import { describe, expect, test } from "vitest";
 
 import { createJobFinderWorkspaceService } from "./index";
-import {
-  buildResumeExportArtifact,
-  validateResumeDraft,
-} from "./internal/resume-workspace-helpers";
+import { validateResumeDraft } from "./internal/resume-workspace-helpers";
 import { buildResumeDraftIdentity } from "./internal/resume-workspace-structure";
 import {
   describeResumeIdentityOwnershipChoice,
@@ -389,6 +386,8 @@ describe("resume import identity and revision safety", () => {
     expect(extractIdentityNameFromLine("at scale.")).toBeNull();
     expect(extractIdentityNameFromLine("and reliability")).toBeNull();
     expect(extractIdentityNameFromLine("PROFESSIONAL SUMMARY")).toBeNull();
+    expect(extractIdentityNameFromLine("Online Resume Sample")).toBeNull();
+    expect(extractIdentityNameFromLine("Curriculum Vitae")).toBeNull();
     expect(extractIdentityNameFromLine("Mary-Jane O’Neil")).toBe(
       "Mary-Jane O’Neil",
     );
@@ -596,7 +595,7 @@ describe("resume import identity and revision safety", () => {
     ).toMatch(/Élodie Brûlé/);
   });
 
-  test("blocks a mixed canonical/preferred identity through refresh, preview, export, and approval", async () => {
+  test("warns about a mixed canonical/preferred identity without blocking preview or export", async () => {
     const seed = createSeed();
     const hybridProfile = createHybridProfile();
     const identityResolution = resolveResumeIdentity(hybridProfile);
@@ -618,30 +617,19 @@ describe("resume import identity and revision safety", () => {
       job,
       profile: hybridProfile,
     });
-    expect(
-      validation.issues.some((issue) => issue.category === "identity_mismatch"),
-    ).toBe(true);
-
-    await expect(workspaceService.analyzeProfileFromResume()).rejects.toThrow(
-      /identity mismatch/i,
+    const identityIssue = validation.issues.find(
+      (issue) => issue.category === "identity_mismatch",
     );
+    expect(identityIssue?.severity).toBe("warning");
+
     await expect(
       workspaceService.previewResumeDraft(workspace.draft),
-    ).rejects.toThrow(/identity mismatch/i);
-    await expect(workspaceService.exportResumePdf(job.id)).rejects.toThrow(
-      /identity mismatch/i,
-    );
-
-    const exportArtifact = buildResumeExportArtifact({
-      draft: workspace.draft,
-      job,
-      filePath: "/tmp/hybrid-identity.pdf",
-      exportedAt: "2026-08-31T10:00:00.000Z",
-    });
-    await base.upsertResumeExportArtifact(exportArtifact);
-    await expect(
-      workspaceService.approveResume(job.id, exportArtifact.id),
-    ).rejects.toThrow(/identity mismatch/i);
+    ).resolves.toBeTruthy();
+    const exportError = await workspaceService
+      .exportResumePdf(job.id)
+      .then(() => null)
+      .catch((error: unknown) => String(error));
+    expect(exportError ?? "").not.toMatch(/identity/i);
   });
 
   test("allows an aligned identity through import and draft identity resolution", async () => {

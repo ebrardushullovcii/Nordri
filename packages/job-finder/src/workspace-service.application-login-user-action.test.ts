@@ -2979,6 +2979,20 @@ describe("application login UserActionRequest adoption", () => {
       throw new Error("Expected a manual application action.");
     }
 
+    // The approved date edit happens while the application is paused. The
+    // continuation must read the current profile, rather than its old snapshot.
+    await harness.repository.commitProfileUpdate((profile) => ({
+      ...profile,
+      experiences: [
+        {
+          ...profile.experiences[0]!,
+          companyName: "Signal Systems",
+          startDate: "January 2014",
+          endDate: null,
+          isCurrent: true,
+        },
+      ],
+    }));
     const resumed = await harness.workspaceService.performUserAction({
       commandId: "submit_manual_answer_complete",
       requestId: request.id,
@@ -2991,6 +3005,27 @@ describe("application login UserActionRequest adoption", () => {
       accountCreationAuthorized: false,
     });
 
+    expect(
+      executeApplicationFlow.mock.calls[1]?.[1].profile.experiences,
+    ).toEqual([
+      expect.objectContaining({
+        companyName: "Signal Systems",
+        startDate: "January 2014",
+        isCurrent: true,
+      }),
+    ]);
+    const savedAnswers = await harness.repository.listApplicationAnswerRecords({
+      applicationRecordId: request.scope.applicationRecordId,
+    });
+    const savedQuestions =
+      await harness.repository.listApplicationQuestionRecords({
+        applicationRecordId: request.scope.applicationRecordId,
+      });
+    expect(savedQuestions[0]).toMatchObject({
+      selectedAnswerId: savedAnswers[0]!.id,
+      submittedAnswer: "Yes, I am authorized to work in this location.",
+      status: "answered",
+    });
     expect(request.kind).toBe("manual_answer");
     expect(request.verification.type).toBe("page_blocker_absent");
     expect(executeApplicationFlow).toHaveBeenCalledTimes(2);
@@ -3639,7 +3674,7 @@ describe("cancelling a browser step releases the application waiting on it", () 
     const released = after.applicationRecords.find(
       (record) => record.id === applicationRecordId,
     );
-    expect(released?.lastAttemptState).toBe("failed");
+    expect(released?.lastAttemptState).toBe("cancelled");
     expect(released?.nextActionLabel).toBe(
       "Try again, or finish it yourself on the job site.",
     );
@@ -3649,12 +3684,20 @@ describe("cancelling a browser step releases the application waiting on it", () 
         (result) => result.id === "apply_result_cancel",
       ),
     ).toMatchObject({
-      state: "failed",
+      state: "cancelled",
+      summary: "Cancelled by you",
+      blockerReason: null,
+      blockerSummary: null,
       latestQuestionCount: 0,
     });
     expect(
       after.applyRuns.find((run) => run.id === "apply_run_cancel"),
-    ).toMatchObject({ state: "completed", pendingJobs: 0, failedJobs: 1 });
+    ).toMatchObject({
+      state: "completed",
+      summary: "1 cancelled",
+      pendingJobs: 0,
+      failedJobs: 0,
+    });
     // Nothing is left claiming the person still owes this application a step.
     expect(
       (await harness.repository.listUserActionRequests()).filter(

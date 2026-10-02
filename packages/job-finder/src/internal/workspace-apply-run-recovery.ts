@@ -42,6 +42,7 @@ export function isSafelyParkedApplyQueue(input: {
         result.state === "submitted" ||
         result.state === "blocked" ||
         result.state === "failed" ||
+        result.state === "cancelled" ||
         result.state === "skipped") &&
       result.privacyReceipt?.submissionOutcome?.outcome !== "outcome_uncertain",
   );

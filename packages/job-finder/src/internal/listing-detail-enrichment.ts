@@ -447,6 +447,8 @@ export interface SightingRouteReadSummary {
 export async function readSightingApplyRoutes(input: {
   jobs: readonly SavedJob[];
   fetchHtml: ListingHtmlFetcher;
+  /** A source handed to the person is not retried elsewhere in the same run. */
+  canReadUrl?: (url: string) => boolean;
   now?: () => string;
   signal?: AbortSignal;
   perRequestTimeoutMs?: number;
@@ -470,6 +472,7 @@ export async function readSightingApplyRoutes(input: {
       if (budget <= 0 || summary.rateLimited || input.signal?.aborted) break;
       const listingUrl = sighting.listingUrl;
       if (!listingUrl || !isHttpUrl(listingUrl)) continue;
+      if (input.canReadUrl && !input.canReadUrl(listingUrl)) continue;
       budget -= 1;
       let response: ListingHtmlFetchResult;
       try {

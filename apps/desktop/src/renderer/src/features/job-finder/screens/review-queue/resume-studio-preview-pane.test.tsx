@@ -43,6 +43,50 @@ describe("ResumeStudioPreviewPane", () => {
     vi.clearAllMocks();
   });
 
+  it.each([
+    { pageCount: 1, label: "1 page", isDirty: false },
+    { pageCount: 2, label: "2 pages", isDirty: true },
+    { pageCount: null, label: null, isDirty: false },
+  ])(
+    "shows only the measured page count: $pageCount",
+    ({ pageCount, label, isDirty }) => {
+      const { container } = render(
+        <ResumeStudioPreviewPane
+          isDirty={isDirty}
+          isPending={false}
+          onRetry={vi.fn()}
+          onSelectTarget={vi.fn()}
+          preview={{ ...preview, metadata: { ...preview.metadata, pageCount } }}
+          previewError={null}
+          previewStatus="ready"
+          selectedEntryId={null}
+          selectedSectionId={null}
+          selectedTargetId={null}
+        />,
+      );
+      const count = screen.queryByTitle("Page count of the exported PDF");
+      if (!label) {
+        expect(count).toBeNull();
+        expect(
+          container.querySelector("[data-resume-preview-page-count]"),
+        ).toBeNull();
+        return;
+      }
+      expect(count?.textContent).toBe(label);
+      expect(count?.hasAttribute("data-resume-preview-page-count")).toBe(
+        pageCount >= 2,
+      );
+      const status = screen.getByText(
+        isDirty ? "Unsaved edits rendered" : "Saved draft rendered",
+      );
+      expect(count?.className).toBe(status.className);
+      expect(status.nextElementSibling).toBe(count);
+      expect(count?.nextElementSibling).toBe(
+        screen.getByRole("button", { name: /1 suggestion/i }),
+      );
+    },
+  );
+
   it("opens, scrolls to, and focuses the suggestions disclosure from the count chip", () => {
     const scrollIntoView = vi.fn();
     Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {

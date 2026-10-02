@@ -15,3 +15,5 @@ export { completeTailoredResumeDraft } from "./openai-compatible-shared";
 export const aiProvidersPackageReady = true;
 export * from "./assistant-model";
 export type { ModelStreamEvent } from "./model-request-transport";
+
+export { buildResumeSkillContextFilter } from "./resume-skill-context";

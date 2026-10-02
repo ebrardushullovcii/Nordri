@@ -1311,17 +1311,6 @@ export function JobFinderDiscoveryRoute() {
           context.workspace.intelligence?.safeguards,
           context.workspace.campaigns,
         )}
-        pendingApplicationReviewCount={
-          context.workspace.intelligence.safeguards.preparedBatchSampleReviews.filter(
-            (review) =>
-              !review.reviewCompleted &&
-              !context.workspace.intelligence.safeguards.safeguardDismissals.some(
-                (dismissal) =>
-                  dismissal.kind === "batch_sample_review_pending" &&
-                  dismissal.referenceId === review.id,
-              ),
-          ).length
-        }
         activeCampaignId={context.workspace.activeCampaignId}
         isPlanSwitchPending={planSwitchPending}
         onSelectCampaign={(campaignId) => {
@@ -2314,6 +2303,20 @@ export function JobFinderApplicationsRoute() {
           context.workspace.intelligence.resumeStrategySelections.find(
             (selection) => selection.jobId === jobId,
           )?.strategyId ?? null
+        }
+        getRecordedOutcomes={(applicationRecordId) =>
+          context.workspace.intelligence.outcomeEvents
+            .filter((event) => event.applicationRecordId === applicationRecordId)
+            .map((event) => ({
+              id: event.id,
+              outcome: event.outcome,
+              occurredAt: event.occurredAt,
+              note: event.note ?? null,
+            }))
+            .sort(
+              (left, right) =>
+                Date.parse(left.occurredAt) - Date.parse(right.occurredAt),
+            )
         }
         onResolveApplyConsentRequest={context.onResolveApplyConsentRequest}
         onRevokeApplyRunApproval={context.onRevokeApplyRunApproval}

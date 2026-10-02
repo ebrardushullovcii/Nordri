@@ -106,8 +106,13 @@ describe("createInMemoryJobFinderRepository", () => {
         },
       }),
     );
+    // The stage change and its newer Updated date land together.
     const committed = current.map((record, index) =>
-      ApplicationRecordSchema.parse({ ...record, crm: next[index]?.crm }),
+      ApplicationRecordSchema.parse({
+        ...record,
+        crm: next[index]?.crm,
+        lastUpdatedAt: next[index]?.lastUpdatedAt,
+      }),
     );
 
     await expect(

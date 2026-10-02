@@ -871,6 +871,8 @@ export const SERVICE_METHOD_COVERAGE: Record<
   resolveResumeAssistantProposal:
     "internal (retired chat proposals, via resolve proposal)",
   getApplyRunDetails: "get_application",
+  writeApplicationDocumentText:
+    "internal (drafts for Applications › Documents; the apply agent writes the letter it sends)",
   buildApplicationPacket: "internal",
   startApplyCopilotRun: "apply_to_jobs",
   startAutoApplyRun: "apply_to_jobs",

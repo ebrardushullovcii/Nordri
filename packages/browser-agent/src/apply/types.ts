@@ -44,8 +44,12 @@ export interface ApplyFormControl {
   /** Stable handle for this control within one observation. */
   ref: string;
   kind: ApplyControlKind;
+  /** Native date precision, retained so month inputs receive YYYY-MM. */
+  dateInputType?: "date" | "month";
   label: string;
   groupLabel: string;
+  /** Row order on the live form; visible numbering can have gaps after removal. */
+  workHistoryIndex?: number;
   /** Stable identity shared by controls that belong to one choice group. */
   choiceGroupKey?: string;
   placeholder: string;
@@ -402,6 +406,8 @@ export interface ApplyAgentResult {
    * checks passed. Null whenever the application is not ready to go.
    */
   readyToSend: { actionRef: string; actionLabel: string } | null;
+  /** An observed omission to show in readiness, without vetoing an optional form row. */
+  structuredExperienceGap?: string | null;
 }
 
 /**

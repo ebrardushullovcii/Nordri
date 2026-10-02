@@ -1,5 +1,12 @@
 /* eslint-env node */
 
+if (process.env.JOB_FINDER_LOCAL_REPLICA === "1") {
+  const { runReplicaHarness } =
+    await import("./test-job-finder-replica-apply.mjs");
+  await runReplicaHarness("complete-flow");
+  process.exit(0);
+}
+
 const boardToken =
   process.env.JOB_FINDER_COMPLETE_FLOW_BOARD_TOKEN ?? "gleanwork";
 const preferredTitle =
@@ -12,9 +19,8 @@ const preferredTitle =
 // skipped by the gate below so unbound developer diagnostics keep their
 // existing behavior.
 process.env.JOB_FINDER_PREPARE_ONLY_SKIP_SMOKE_RUN = "1";
-const smokePreflight = await import(
-  "./test-job-finder-prepare-only.mjs?preflight"
-);
+const smokePreflight =
+  await import("./test-job-finder-prepare-only.mjs?preflight");
 delete process.env.JOB_FINDER_PREPARE_ONLY_SKIP_SMOKE_RUN;
 
 // Local binding gate: a strictly bound run must prove the whole sealed

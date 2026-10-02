@@ -1,3 +1,4 @@
+import { splitRoleTitleAndEmployer } from "./resume-role-title";
 import { normalizeText } from "./shared";
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
@@ -13,7 +14,11 @@ function normalizeRecordDate(value: unknown): string {
     return "";
   }
 
-  const trimmed = value.trim().toLowerCase().replace(/\s+/g, " ").replace(/\./g, "");
+  const trimmed = value
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .replace(/\./g, "");
   if (!trimmed) {
     return "";
   }
@@ -98,10 +103,7 @@ function normalizeRecordDate(value: unknown): string {
   return trimmed;
 }
 
-function normalizeRecordEndDate(
-  value: unknown,
-  isCurrent: unknown,
-): string {
+function normalizeRecordEndDate(value: unknown, isCurrent: unknown): string {
   if (isCurrent === true) {
     return "present";
   }
@@ -156,7 +158,13 @@ function fieldsCompatible(
 
   // Degree / fieldOfStudy: substring matching is appropriate for long structured phrases
   if (kind === "substring") {
-    return !left || !right || left === right || left.includes(right) || right.includes(left);
+    return (
+      !left ||
+      !right ||
+      left === right ||
+      left.includes(right) ||
+      right.includes(left)
+    );
   }
 
   // Company / title ("text"): equality or meaningful token overlap — prevents false positives
@@ -193,10 +201,25 @@ export function areEquivalentExperienceRecords(
     return false;
   }
 
-  const leftCompany = normalizeRecordText(left.companyName);
-  const rightCompany = normalizeRecordText(right.companyName);
-  const leftTitle = normalizeRecordText(left.title);
-  const rightTitle = normalizeRecordText(right.title);
+  const roleParts = (record: Record<string, unknown>) => {
+    const rawTitle = typeof record.title === "string" ? record.title : "";
+    const companyName =
+      typeof record.companyName === "string" ? record.companyName.trim() : "";
+    const split = companyName
+      ? { title: rawTitle, companyName }
+      : splitRoleTitleAndEmployer(rawTitle);
+    return {
+      company: normalizeRecordText(split.companyName),
+      title: normalizeRecordText(split.title),
+      hasSpecialty: split.title.includes(","),
+    };
+  };
+  const leftRole = roleParts(left);
+  const rightRole = roleParts(right);
+  const leftCompany = leftRole.company;
+  const rightCompany = rightRole.company;
+  const leftTitle = leftRole.title;
+  const rightTitle = rightRole.title;
   const leftLocation = normalizeRecordText(left.location);
   const rightLocation = normalizeRecordText(right.location);
   const leftStart = normalizeRecordDate(left.startDate);
@@ -206,6 +229,8 @@ export function areEquivalentExperienceRecords(
 
   const strongCompany = fieldsMatch(leftCompany, rightCompany);
   const strongTitle = fieldsMatch(leftTitle, rightTitle);
+  if ((leftRole.hasSpecialty || rightRole.hasSpecialty) && !strongTitle)
+    return false;
   const strongStart = fieldsMatch(leftStart, rightStart);
   const strongEnd = fieldsMatch(leftEnd, rightEnd);
   const strongLocation = fieldsMatch(leftLocation, rightLocation);
@@ -234,9 +259,19 @@ export function areEquivalentExperienceRecords(
     companyMatchesWithLocationSuffix(left, right, leftLocation, rightLocation);
 
   return (
-    (strongTitle && strongStart && companyCompatible && (strongCompany || strongLocation)) ||
-    (strongCompany && strongStart && titleCompatible && (strongTitle || strongEnd || strongLocation)) ||
-    (strongTitle && strongCompany && (strongStart || strongEnd) && startCompatible && endCompatible) ||
+    (strongTitle &&
+      strongStart &&
+      companyCompatible &&
+      (strongCompany || strongLocation)) ||
+    (strongCompany &&
+      strongStart &&
+      titleCompatible &&
+      (strongTitle || strongEnd || strongLocation)) ||
+    (strongTitle &&
+      strongCompany &&
+      (strongStart || strongEnd) &&
+      startCompatible &&
+      endCompatible) ||
     skeletonOfSameRole ||
     sameDatedRoleWithLocationSuffix
   );
@@ -261,6 +296,7 @@ export function canonicalizeRecordDateText(value: unknown): string | null {
 export function areEquivalentEducationRecords(
   left: unknown,
   right: unknown,
+  sharedSourceEntry = false,
 ): boolean {
   if (!isObjectRecord(left) || !isObjectRecord(right)) {
     return false;
@@ -282,16 +318,70 @@ export function areEquivalentEducationRecords(
   const strongField = fieldsMatch(leftField, rightField);
   const strongStart = fieldsMatch(leftStart, rightStart);
   const strongEnd = fieldsMatch(leftEnd, rightEnd);
-  const degreeCompatible = fieldsCompatible(leftDegree, rightDegree, "substring");
+  const qualification = (degree: string, field: string) =>
+    `${degree} ${field}`
+      .replace(/\b(?:in|of|degree|s)\b/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+  const sameQualification = fieldsMatch(
+    qualification(leftDegree, leftField),
+    qualification(rightDegree, rightField),
+  );
+  const degreeCompatible = fieldsCompatible(
+    leftDegree,
+    rightDegree,
+    "substring",
+  );
   const fieldCompatible = fieldsCompatible(leftField, rightField, "substring");
 
+  if (
+    (!sameQualification && (!degreeCompatible || !fieldCompatible)) ||
+    !fieldsCompatible(leftStart, rightStart, "date") ||
+    !fieldsCompatible(leftEnd, rightEnd, "date")
+  )
+    return false;
+
+  // Complementary readings can share only the school: one has a graduation
+  // year, the other the qualification. They also need shared source-entry
+  // evidence; a school name and missing fields alone remain ambiguous.
+  // A reading with the school and dates but no degree or field cannot invent
+  // a qualification when it is matched by its dates: a dated stub against a
+  // saved full record is the same entry read twice. A degree-only reading and
+  // a field-only reading still need shared source evidence (see below).
+  const datedStub =
+    (!leftDegree && !leftField) || (!rightDegree && !rightField);
+  const complementaryReadings =
+    sharedSourceEntry &&
+    strongSchool &&
+    degreeCompatible &&
+    fieldCompatible &&
+    fieldsCompatible(leftStart, rightStart, "date") &&
+    fieldsCompatible(leftEnd, rightEnd, "date") &&
+    (!left.location ||
+      !right.location ||
+      normalizeRecordText(left.location) ===
+        normalizeRecordText(right.location)) &&
+    Boolean(leftDegree || leftField || leftStart || leftEnd) &&
+    Boolean(rightDegree || rightField || rightStart || rightEnd);
+
   return (
-    (strongSchool && strongDegree && (strongStart || strongEnd || fieldCompatible)) ||
-    (strongSchool && strongStart && degreeCompatible && fieldCompatible) ||
+    complementaryReadings ||
+    (strongSchool &&
+      sameQualification &&
+      fieldsCompatible(leftStart, rightStart, "date") &&
+      fieldsCompatible(leftEnd, rightEnd, "date")) ||
+    (strongSchool &&
+      strongDegree &&
+      (strongStart || strongEnd || fieldCompatible)) ||
+    (strongSchool &&
+      strongStart &&
+      (strongDegree || strongField || datedStub) &&
+      degreeCompatible &&
+      fieldCompatible) ||
     (strongSchool &&
       degreeCompatible &&
       fieldCompatible &&
-      (strongDegree || strongField || strongStart || strongEnd)) ||
+      (strongDegree || strongField || (datedStub && strongEnd))) ||
     // A stub of the same degree at the same school (no dates, no field) is
     // the same degree read twice, not a second qualification: both ended up
     // printed on an approved PDF.

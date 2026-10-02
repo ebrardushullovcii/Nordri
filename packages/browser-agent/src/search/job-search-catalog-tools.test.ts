@@ -37,6 +37,25 @@ function harness() {
 }
 
 describe("public feed catalog tools", () => {
+  test("only new catalog rows and description chunks count as progress", async () => {
+    const { call } = harness();
+    const expectProgress = async (
+      name: string,
+      args: unknown,
+      progress: boolean,
+    ) => {
+      expect(await call(name, args)).toMatchObject({ kind: "ok", progress });
+    };
+    await expectProgress("list_catalog_jobs", {}, true);
+    await expectProgress("list_catalog_jobs", {}, false);
+    await expectProgress("list_catalog_jobs", { offset: 25 }, true);
+    await expectProgress("list_catalog_jobs", { offset: 100 }, false);
+    await expectProgress("read_catalog_job", { id: 0 }, true);
+    await expectProgress("read_catalog_job", { id: 0 }, false);
+    await expectProgress("read_catalog_job", { id: 0, offset: 12_000 }, true);
+    await expectProgress("read_catalog_job", { id: 0, offset: 12_000 }, false);
+    await expectProgress("read_catalog_job", { id: 0, offset: 30_000 }, false);
+  });
   test("pages large catalogs, exposes dates honestly and reads bounded details", async () => {
     const { call } = harness();
     const first = await call("list_catalog_jobs", { sort: "recent" });

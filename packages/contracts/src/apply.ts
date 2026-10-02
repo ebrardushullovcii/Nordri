@@ -78,6 +78,14 @@ export const applyRunStateValues = [
 export const ApplyRunStateSchema = z.enum(applyRunStateValues);
 export type ApplyRunState = z.infer<typeof ApplyRunStateSchema>;
 
+/**
+ * The summary of an application whose prepared page was gone (usually after a
+ * restart). A form that was waiting on the person may have been sent by them,
+ * so such an application is never retried in bulk; the person decides.
+ */
+export const PREPARED_PAGE_CLOSED_SUMMARY =
+  "The prepared application page is no longer open.";
+
 export const applyJobStateValues = [
   "planned",
   "question_capture",
@@ -88,6 +96,7 @@ export const applyJobStateValues = [
   "skipped",
   "blocked",
   "failed",
+  "cancelled",
 ] as const;
 export const ApplyJobStateSchema = z.enum(applyJobStateValues);
 export type ApplyJobState = z.infer<typeof ApplyJobStateSchema>;

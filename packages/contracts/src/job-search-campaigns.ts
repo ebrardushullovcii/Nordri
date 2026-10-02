@@ -17,9 +17,8 @@ export const JobSearchCampaignModeSchema = z.enum(["precision", "scale"]);
 export type JobSearchCampaignMode = z.infer<typeof JobSearchCampaignModeSchema>;
 
 /**
- * Default explicit discovery run budget for scale campaigns. Scale campaigns
- * request high-volume runs; precision campaigns keep `null` so interactive
- * runs preserve the default precision budget.
+ * Legacy scale-campaign budget, kept for callers with an explicit numeric
+ * choice. New campaigns have no per-run count cap in either mode.
  */
 export const DEFAULT_SCALE_CAMPAIGN_DISCOVERY_RUN_JOB_BUDGET = 1_000;
 
@@ -41,9 +40,8 @@ export const JobSearchCampaignLimitsSchema = z.object({
   /** @deprecated Parsed and round-tripped for persisted campaigns; runtime uses a fixed global safeguard. */
   dailyPreparationLimit: z.number().int().min(1).max(5_000).nullable(),
   /**
-   * Explicit per-run discovery budget for campaign runs. `null` keeps the
-   * interactive precision default; scale campaigns default to
-   * `DEFAULT_SCALE_CAMPAIGN_DISCOVERY_RUN_JOB_BUDGET`. Hard-capped by
+   * Explicit per-run discovery budget for campaign runs. `null` means no
+   * count cap in either mode. A person's numeric choice is hard-capped by
    * `DISCOVERY_RUN_JOB_BUDGET_MAX`.
    */
   discoveryRunJobBudget: z
@@ -304,7 +302,7 @@ export function getDefaultCampaignConfiguration(mode: JobSearchCampaignMode) {
         limits: {
           // A search keeps what it finds. The old fifteen-job cap made a
           // three-source search show ten results out of sixty-nine.
-          retainedJobTarget: 1_000,
+          retainedJobTarget: 10_000,
           analysisConcurrency: 2,
           preparationBatchSize: 5,
           dailyPreparationLimit: 20,
@@ -328,12 +326,11 @@ export function getDefaultCampaignConfiguration(mode: JobSearchCampaignMode) {
       }
     : {
         limits: {
-          retainedJobTarget: 1_000,
+          retainedJobTarget: 10_000,
           analysisConcurrency: 6,
           preparationBatchSize: 25,
           dailyPreparationLimit: 100,
-          discoveryRunJobBudget:
-            DEFAULT_SCALE_CAMPAIGN_DISCOVERY_RUN_JOB_BUDGET,
+          discoveryRunJobBudget: null,
         },
         stopRules: {
           pauseOnLoginRequired: false,

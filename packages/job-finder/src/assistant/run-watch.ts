@@ -165,6 +165,7 @@ export function readRunStatus(
             // names the real site.
             appliedOn: job?.applicationUrl ?? job?.canonicalUrl ?? null,
             state: result.state,
+            summary: result.summary,
             outcome: result.privacyReceipt?.submissionOutcome?.outcome ?? null,
             blocker: result.blockerSummary ?? null,
           };

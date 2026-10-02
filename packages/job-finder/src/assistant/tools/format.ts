@@ -1,4 +1,6 @@
 import { APPLICATION_SKIPPED_BY_PERSON_LABEL } from "@nordri/contracts";
+import { isProvisionalMatchAssessment } from "../../discovery-ordering";
+import { getFitEvidenceDepth } from "../../discovery-result-bands";
 import type {
   ApplicationRecord,
   AssistantMessagePart,
@@ -23,6 +25,24 @@ export const RESUME_ROUTE = (jobId: string) =>
 export const APPLICATION_ROUTE = (recordId: string) =>
   `/job-finder/applications?applicationRecordId=${encodeURIComponent(recordId)}`;
 
+/**
+ * The fit a job may claim, worded the way the Find jobs list words it: a
+ * number only when it was assessed against the current profile and listing,
+ * "Up to" when a gap caps it, and no number at all when it was not assessed.
+ */
+export function fitLabel(job: SavedJob | DiscoveryJobView): string {
+  const bound = [
+    job.matchAssessment.contextFingerprint,
+    job.matchAssessment.postingFingerprint,
+  ].every((value) => typeof value === "string" && value.trim().length > 0);
+  if (isProvisionalMatchAssessment(job) || !bound) return "Fit not assessed";
+  if (getFitEvidenceDepth(job.matchAssessment).isTitleOnly)
+    return "Title-only estimate";
+  return job.matchAssessment.scoreIsUpperBound
+    ? `Up to ${job.matchAssessment.score}% fit`
+    : `${job.matchAssessment.score}% fit`;
+}
+
 export function compactJob(job: SavedJob | DiscoveryJobView) {
   return {
     id: job.id,
@@ -31,7 +51,7 @@ export function compactJob(job: SavedJob | DiscoveryJobView) {
     location: job.location,
     workMode: job.workMode,
     status: job.status,
-    score: job.matchAssessment.score,
+    fit: fitLabel(job),
     recommendation: job.matchAssessment.recommendation,
     postedAt: job.postedAt,
     salary: job.salaryText,
@@ -140,7 +160,7 @@ export function jobRowsPart(input: {
       id: job.id,
       title: job.title.slice(0, 300),
       subtitle: `${job.company} · ${job.location}`.slice(0, 300),
-      status: `${job.matchAssessment.score}% match`,
+      status: fitLabel(job),
       route:
         job.status === "discovered"
           ? JOB_ROUTE(job.id)
@@ -278,4 +298,64 @@ export function pausedByPersonMessage(
     ? ` (reason: ${activityControl.reason})`
     : "";
   return `Nothing started: the person paused background work${since}${reason}, so ${what} cannot run. Do not resume it yourself. Tell them it is paused and ask whether to resume it and go ahead. Resume with pause_activity only if their message already says to go ahead even though it is paused, and say that you resumed it.`;
+}
+
+/**
+ * What the tracker says is due: pending reminders and scheduled interviews,
+ * overdue first, with the time zone each was saved in. One reading for the
+ * workspace summary, the agenda tool and Home's wording, so "nothing needs
+ * you" can never sit beside an overdue follow-up or tomorrow's interview.
+ */
+export function trackerAgenda(
+  snapshot: Pick<JobFinderWorkspaceSnapshot, "applicationRecords">,
+  now: number,
+  horizonDays = 14,
+) {
+  const horizon = now + horizonDays * 86_400_000;
+  const items: {
+    kind: "reminder" | "interview";
+    applicationRecordId: string;
+    job: string;
+    title: string;
+    at: string;
+    timeZone: string | null;
+    overdue: boolean;
+  }[] = [];
+  for (const record of snapshot.applicationRecords) {
+    const job = `${record.title} at ${record.company}`;
+    for (const reminder of record.crm?.reminders ?? []) {
+      if (reminder.status !== "pending") continue;
+      const due = Date.parse(reminder.dueAt);
+      if (!Number.isFinite(due) || due > horizon) continue;
+      items.push({
+        kind: "reminder",
+        applicationRecordId: record.id,
+        job,
+        title: reminder.title,
+        at: reminder.dueAt,
+        timeZone: null,
+        overdue: due < now,
+      });
+    }
+    for (const interview of record.crm?.interviews ?? []) {
+      if (interview.status !== "scheduled") continue;
+      const starts = Date.parse(interview.startsAt);
+      if (!Number.isFinite(starts) || starts < now || starts > horizon) {
+        continue;
+      }
+      items.push({
+        kind: "interview",
+        applicationRecordId: record.id,
+        job,
+        title: interview.title,
+        at: interview.startsAt,
+        timeZone: interview.timeZone,
+        overdue: false,
+      });
+    }
+  }
+  // By instant, not by text: saved times can carry different UTC offsets.
+  return items.sort(
+    (left, right) => Date.parse(left.at) - Date.parse(right.at),
+  );
 }

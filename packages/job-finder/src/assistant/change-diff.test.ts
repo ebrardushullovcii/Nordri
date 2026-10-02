@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { diffValues, readPath, undoChangeEntries } from "./change-diff";
+import {
+  buildChangePreview,
+  diffValues,
+  readPath,
+  undoChangeEntries,
+} from "./change-diff";
 
 const profile = () => ({
   headline: "Engineer",
@@ -13,6 +18,87 @@ const profile = () => ({
 });
 
 describe("change diff and per-change undo", () => {
+  it("includes every removed education field alongside skill changes without changing Undo", () => {
+    const removed = {
+      id: "college",
+      schoolName: "Example College",
+      degree: "BSc",
+      fieldOfStudy: "Computer Science",
+      startDate: "2016",
+      endDate: "2020",
+      location: "Example City",
+      summary: "Synthetic coursework. ".repeat(400),
+    };
+    const retained = { id: "university", schoolName: "Example University" };
+    const before = { education: [removed, retained], skills: ["React"] };
+    const after = { education: [retained], skills: ["React", "TypeScript"] };
+    const entries = diffValues(before, after);
+    const preview = buildChangePreview(entries);
+    const removedRows = preview.filter(
+      (entry) => entry.label === "Removed education",
+    );
+    expect(removedRows).toHaveLength(1);
+    const lines = removedRows[0]?.before?.split("\n") ?? [];
+    expect(lines.slice(0, 6)).toEqual([
+      "School name: Example College",
+      "Degree: BSc",
+      "Field of study: Computer Science",
+      "Start date: 2016",
+      "End date: 2020",
+      "Location: Example City",
+    ]);
+    expect(lines[6]).toMatch(/^Summary: Synthetic coursework\./);
+    expect(removedRows[0]?.before?.length).toBeLessThanOrEqual(2000);
+    expect(removedRows[0]?.before?.endsWith("…")).toBe(true);
+    expect(removedRows[0]?.after).toBeNull();
+    expect(preview.find((entry) => entry.label === "Skills")).toMatchObject({
+      before: "React",
+      after: "React, TypeScript",
+    });
+    expect(undoChangeEntries(after, entries).next).toEqual(before);
+  });
+
+  it("shows an added record with all its fields, one per line", () => {
+    const added = {
+      id: "college",
+      schoolName: "Example College",
+      degree: "BSc",
+      isDraft: false,
+    };
+    const preview = buildChangePreview(
+      diffValues({ education: [] }, { education: [added] }),
+    );
+    expect(preview).toEqual([
+      {
+        label: "Added education",
+        before: null,
+        after: "School name: Example College\nDegree: BSc",
+      },
+    ]);
+  });
+
+  it.each(["experiences", "projects", "certifications"])(
+    "includes removed %s records in the same preview path",
+    (kind) => {
+      const record = {
+        id: "synthetic",
+        name: "Example record",
+        summary: "All notes",
+        startDate: "2020",
+        skills: ["TypeScript", "React"],
+      };
+      const preview = buildChangePreview(
+        diffValues({ [kind]: [record] }, { [kind]: [] }),
+      );
+      expect(preview[0]?.label).toMatch(/^Removed [a-z]/);
+      expect(preview[0]?.before).toContain("Example record");
+      expect(preview[0]?.before).toContain("All notes");
+      expect(preview[0]?.before).toContain("2020");
+      expect(preview[0]?.before).toContain("TypeScript, React");
+      expect(preview[0]?.after).toBeNull();
+    },
+  );
+
   it("records only the values an edit touched", () => {
     const before = profile();
     const after = { ...before, headline: "Senior Engineer" };

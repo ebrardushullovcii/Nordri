@@ -1885,9 +1885,20 @@ export async function createFileJobFinderRepository(
 
             const committedRecords = normalizedRecords.map((proposedRecord) => {
               const currentRecord = currentById.get(proposedRecord.id)!;
+              // A bulk stage change is tracker activity: the row's Updated
+              // date and last action move with it, like a single change,
+              // unless another writer touched the row more recently.
+              const proposedIsNewer =
+                proposedRecord.lastUpdatedAt > currentRecord.lastUpdatedAt;
               const committedRecord = ApplicationRecordSchema.parse({
                 ...currentRecord,
                 crm: proposedRecord.crm,
+                ...(proposedIsNewer
+                  ? {
+                      lastUpdatedAt: proposedRecord.lastUpdatedAt,
+                      lastActionLabel: proposedRecord.lastActionLabel,
+                    }
+                  : {}),
               });
               context.writePersistedValue(
                 "application_records",

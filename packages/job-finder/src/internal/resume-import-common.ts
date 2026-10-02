@@ -4,6 +4,7 @@ import {
   areEquivalentEducationRecords,
   areEquivalentExperienceRecords,
 } from "./resume-record-identity";
+import { normalizeText } from "./shared";
 
 export function isObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -49,8 +50,11 @@ export function areEquivalentRecordCandidates(
       );
     case "education":
       return (
-        areEquivalentEducationRecords(left.value, right.value) ||
-        areEquivalentEducationStubs(left.value, right.value)
+        areEquivalentEducationRecords(
+          left.value,
+          right.value,
+          educationReadingsShareSource(left, right),
+        ) || areEquivalentEducationStubs(left.value, right.value)
       );
     case "language":
       return sameRecordField(left.value, right.value, "language");
@@ -62,6 +66,42 @@ export function areEquivalentRecordCandidates(
     default:
       return false;
   }
+}
+
+function educationReadingsShareSource(
+  left: ResumeImportFieldCandidate,
+  right: ResumeImportFieldCandidate,
+): boolean {
+  if (left.sourceBlockIds.some((id) => right.sourceBlockIds.includes(id)))
+    return true;
+
+  const schools = [left.value, right.value].flatMap((value) =>
+    isObject(value) && typeof value.schoolName === "string"
+      ? [normalizeText(value.schoolName)]
+      : [],
+  );
+  const evidenceParts = (candidate: ResumeImportFieldCandidate) =>
+    [
+      candidate.evidenceText ?? "",
+      ...(candidate.evidenceText?.split(/\r?\n/) ?? []),
+    ]
+      .map(normalizeText)
+      .filter((text) => {
+        const beyondSchool = schools.reduce(
+          (remaining, school) =>
+            school ? remaining.replaceAll(school, "").trim() : remaining,
+          text,
+        );
+        return /[a-z]/.test(beyondSchool);
+      });
+  const leftEvidence = evidenceParts(left);
+  return evidenceParts(right).some((rightText) =>
+    leftEvidence.some(
+      (leftText) =>
+        ` ${leftText} `.includes(` ${rightText} `) ||
+        ` ${rightText} `.includes(` ${leftText} `),
+    ),
+  );
 }
 
 function recordFieldText(value: unknown, key: string): string {

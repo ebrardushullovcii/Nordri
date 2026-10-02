@@ -1,7 +1,9 @@
 import { describe, expect, test } from "vitest";
+import { CandidateEducationSchema } from "@nordri/contracts";
 
 import {
   mergeCertificationRecords,
+  mergeEducationRecords,
   mergeProjectRecords,
 } from "./profile-merge";
 
@@ -129,6 +131,49 @@ describe("mergeCertificationRecords", () => {
     expect(
       mergeCertificationRecords([], imported).map((entry) => entry.issueDate),
     ).toEqual(["2019", "2022"]);
+  });
+});
+
+describe("mergeEducationRecords", () => {
+  test("does not bypass education identity with a school-only key", () => {
+    const yearOnly = CandidateEducationSchema.parse({
+      id: "year-only",
+      schoolName: "Synthetic University",
+      endDate: "2018",
+    });
+    const fieldOnly = CandidateEducationSchema.parse({
+      id: "field-only",
+      schoolName: "Synthetic University",
+      fieldOfStudy: "Business Administration",
+    });
+    const merged = mergeEducationRecords([yearOnly], [fieldOnly]);
+    expect(merged).toHaveLength(2);
+    expect(merged[0]).toEqual(yearOnly);
+  });
+
+  test("re-importing a degree read without its school does not add a copy", () => {
+    const saved = CandidateEducationSchema.parse({
+      id: "no-school",
+      degree: "BSc Computer Science",
+      endDate: "2018",
+      isDraft: true,
+    });
+    const merged = mergeEducationRecords(
+      [saved],
+      [
+        {
+          schoolName: null,
+          degree: "BSc Computer Science",
+          fieldOfStudy: null,
+          location: null,
+          startDate: null,
+          endDate: "2018",
+          summary: null,
+        },
+      ],
+    );
+    expect(merged).toHaveLength(1);
+    expect(merged[0]?.id).toBe("no-school");
   });
 });
 
