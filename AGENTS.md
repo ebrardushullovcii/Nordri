@@ -27,3 +27,8 @@ Local-first Electron monorepo (pnpm + turbo) with two modules: `Job Finder` and 
 ## Testing the app
 
 The user usually has `pnpm desktop:dev` running. For "use it like a user" checks: build with `pnpm --filter @nordri/desktop build`, launch an isolated instance with a temporary user-data directory and synthetic profile data, drive it, keep screenshots, and batch the fixes. Rebuild when needed and verify that the inspected app contains the final changes. Details and safety rules: `docs/TESTING.md`.
+
+## Website and marketing
+
+- `apps/website/` is the public landing page (https://nordri.netlify.app): static HTML, CSS and JS outside the pnpm workspace. Netlify deploys it from GitHub whenever a merge to `main` changes that folder; never deploy it from local files. Its `README.md` covers the forms and assets.
+- Product videos, the other landing-page designs and the app captures behind them live in the private repo `ebrardushullovcii/nordri-marketing`, normally checked out next to this one at `../nordri-marketing`: `motion/` renders the videos with Remotion, `landing/` holds the designs and finished videos. Its `AGENTS.md` explains how they are made. Edit the live site here, not there.
