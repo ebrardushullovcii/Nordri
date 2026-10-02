@@ -25,6 +25,6 @@ The agent already sees the whole page. It can tell a logo from a company, a tag 
 
 Searching a results page now costs one model call where the card scan cost none, and a search adds one judging call per twenty jobs (at most five per run). Jobs saved before this change keep whatever the scan recorded until they are seen again. When the model is unavailable, jobs keep their rule score and are judged on the next search; nothing pretends a rule score is the model's.
 
-Jobs scored before the scorer was removed show "Not judged yet" until the next search judges them (at most a hundred per search). With a result limit set on a search plan, the jobs it keeps before judging are the newest rather than the closest title matches.
+Jobs scored before the scorer was removed show "Not judged yet" until the next search judges them (at most a hundred per search). With a result limit set on a search plan, the model judges the new jobs before the limit picks, so the limit keeps the best fits; the verdicts are reused after the search. A resume that names someone other than the profile's owner adds nothing, jobs and schools included, until the person reviews it.
 
 Still interpreted by rules, and next to move: resume import source validation (it checks the model's values against the resume text), the "only collect jobs that match" search setting's title and place filters, closure phrases and shared pay bands on saved listings, the keyword classification that finds a pay question for the person's pay switch, and result grouping by title words.

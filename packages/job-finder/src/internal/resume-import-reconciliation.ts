@@ -2846,6 +2846,13 @@ export function reconcileCandidates(
     profile,
     normalizedCandidates,
   );
+  // A resume that names someone other than the person whose profile this is
+  // is not theirs to merge: nothing from it, jobs and schools included, is
+  // added until they review it.
+  const differentPersonConflict = normalizedCandidates
+    .filter((candidate) => candidate.target.key === "fullName")
+    .map((candidate) => identityConflicts.get(candidate.id))
+    .find((conflict): conflict is string => Boolean(conflict));
   const candidatesForGrouping: ResumeImportFieldCandidate[] = [];
 
   for (const candidate of normalizedCandidates) {
@@ -3055,7 +3062,7 @@ export function reconcileCandidates(
     appendResolvedConflictGroup(resolved, groupResolved);
   }
 
-  return promoteImportCandidatesIntoEmptyProfile(
+  const reconciled = promoteImportCandidatesIntoEmptyProfile(
     profile,
     searchPreferences,
     resolveRedundantFreshStartNamePartCandidates(
@@ -3064,5 +3071,19 @@ export function reconcileCandidates(
       resolved,
     ),
     bundle,
+  );
+  if (!differentPersonConflict) {
+    return reconciled;
+  }
+  return reconciled.map((candidate) =>
+    candidate.resolution === "auto_applied"
+      ? applyCandidateResolution(
+          profile,
+          searchPreferences,
+          candidate,
+          "needs_review",
+          `identity_mismatch_requires_review: ${differentPersonConflict}`,
+        )
+      : candidate,
   );
 }

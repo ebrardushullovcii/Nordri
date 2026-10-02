@@ -137,3 +137,83 @@ test("jobs the model could not judge say so and are asked about next time", asyn
   await workspaceService.runAgentDiscovery();
   expect(judgeJobFits).toHaveBeenCalledTimes(2);
 }, 30_000);
+
+test("with a result limit, the model's best fits are kept rather than the newest jobs", async () => {
+  const seed = createSeed();
+  seed.savedJobs = [];
+  seed.discovery.pendingDiscoveryJobs = [];
+  seed.discovery.discoveryLedger = [];
+  seed.settings.discoveryOnly = false;
+  seed.searchPreferences.targetRoles = ["Product Designer"];
+  seed.searchPreferences.locations = ["Berlin, Germany"];
+  seed.searchPreferences.discovery.collectOnlyHardCriteriaMatches = false;
+  seed.searchPreferences.discovery.runJobBudget = 2;
+  seed.searchPreferences.discovery.targets = [
+    JobDiscoveryTargetSchema.parse({
+      id: "limited",
+      label: "Limited fixture",
+      startingUrl: "https://job-boards.greenhouse.io/limited-fixture",
+    }),
+  ];
+  // The two engineering roles are the newest; the design roles fit.
+  const rows = [
+    {
+      id: 1,
+      title: "Backend Engineer",
+      updated_at: "2026-09-29T09:00:00.000Z",
+    },
+    {
+      id: 2,
+      title: "Platform Engineer",
+      updated_at: "2026-09-28T09:00:00.000Z",
+    },
+    {
+      id: 3,
+      title: "Product Designer",
+      updated_at: "2026-09-20T09:00:00.000Z",
+    },
+    {
+      id: 4,
+      title: "Senior Product Designer",
+      updated_at: "2026-09-19T09:00:00.000Z",
+    },
+  ].map((row) => ({
+    ...row,
+    location: { name: "Berlin, Germany" },
+    absolute_url: `https://job-boards.greenhouse.io/limited-fixture/jobs/${row.id}`,
+    content: "Work with a product team on a collaborative planning product.",
+  }));
+  vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+    Promise.resolve(Response.json({ jobs: rows })),
+  );
+  const judgeJobFits = vi.fn((input: JudgeJobFitsInput) =>
+    Promise.resolve(
+      input.jobs.map(({ jobId, posting }) => {
+        const fits = posting.title.includes("Designer");
+        return {
+          jobId,
+          score: fits ? 85 : 10,
+          recommendation: fits ? ("strong_fit" as const) : ("skip" as const),
+          role: fits ? ("exact" as const) : ("conflict" as const),
+          roleExplanation: null,
+          preferences: "aligned" as const,
+          preferencesExplanation: null,
+          locationReach: "in_area" as const,
+          reasons: [],
+          gaps: [],
+        };
+      }),
+    ),
+  );
+  const { workspaceService, repository } = createWorkspaceServiceHarness({
+    seed,
+    aiClient: { ...createAiClient(), judgeJobFits },
+  });
+
+  await workspaceService.runAgentDiscovery();
+
+  const kept = (await repository.listSavedJobs()).map((job) => job.title);
+  expect(kept.sort()).toEqual(["Product Designer", "Senior Product Designer"]);
+  // The verdicts that chose them are kept; they are not asked for again.
+  expect(judgeJobFits).toHaveBeenCalledTimes(1);
+}, 30_000);

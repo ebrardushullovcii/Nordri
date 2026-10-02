@@ -1074,7 +1074,11 @@ describe("createJobFinderWorkspaceService", () => {
 
     const retrySnapshot =
       await workspaceService.startApplyCopilotRun("job_ready");
-    const latestRun = retrySnapshot.applyRuns[0];
+    // Runs are listed by when they last changed, and retrying also touches
+    // the first run, so the retry is found by id rather than by position.
+    const latestRun = retrySnapshot.applyRuns.find(
+      (run) => run.id !== initialRunId && run.jobIds.includes("job_ready"),
+    );
     const details = await workspaceService.getApplyRunDetails(
       latestRun!.id,
       "job_ready",

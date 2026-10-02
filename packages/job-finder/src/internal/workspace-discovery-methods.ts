@@ -10,6 +10,7 @@ import {
   type DiscoveryLedgerEntry,
   type DiscoveryRunRecord,
   type DiscoveryRunResult,
+  type FitJudgment,
   type DiscoveryRunScope,
   type DiscoveryTargetExecution,
   type JobDiscoveryTarget,
@@ -113,7 +114,11 @@ import {
 import { createUniqueId, normalizeText, uniqueStrings } from "./shared";
 import { createJobIdentityIndex } from "./job-identity";
 import { assessJobPostingDetailQuality } from "./job-posting-detail-quality";
-import { jobNeedsFitJudgment, judgeJobFitsInBatches } from "./fit-judgment";
+import {
+  jobNeedsFitJudgment,
+  judgeJobFitsInBatches,
+  readCarriedJudgment,
+} from "./fit-judgment";
 import {
   LISTING_DETAIL_READS_PER_RUN,
   describeListingDetailEnrichment,
@@ -1450,8 +1455,14 @@ export function createWorkspaceDiscoveryMethods(
       searchPreferences: enrichedPreferences,
       calculate: createMatchAssessment,
     });
+    // Verdicts the model gave during this run, so a job judged to choose
+    // which ones a result limit keeps is not judged again (ADR 0041).
+    const runJudgments = new Map<string, FitJudgment>();
     const assessDiscoveryPosting = (posting: JobPosting) =>
-      assessmentSession.assess(posting);
+      assessmentSession.assess(
+        posting,
+        runJudgments.get(toSavedJobId(posting)) ?? readCarriedJudgment(posting),
+      );
     const selectedTargets = selectTargets(enrichedPreferences, options);
 
     if (selectedTargets.length === 0) {
@@ -2193,6 +2204,47 @@ export function createWorkspaceDiscoveryMethods(
           return { budgetedPostings, mergeResult, jobsPersisted, jobsStaged };
         };
 
+        // A result limit keeps only some of the new jobs. The model judges
+        // them first, so the limit keeps the best fits rather than the newest
+        // (ADR 0041); the verdicts are reused, not asked for again.
+        const judgeBeforeBudget = async (
+          postings: readonly JobPosting[],
+        ): Promise<void> => {
+          const remainingBudget = Math.max(
+            0,
+            discoveryBudget.retentionJobCount - checkpointState.budgetedCount,
+          );
+          if (
+            runJobBudget == null ||
+            postings.length <= remainingBudget ||
+            !ctx.aiClient.judgeJobFits ||
+            executionSignal.aborted
+          ) {
+            return;
+          }
+          const unjudged = postings
+            .map((posting) => ({ ...posting, id: toSavedJobId(posting) }))
+            .filter((posting) => !runJudgments.has(posting.id))
+            .slice(0, FIT_JUDGMENTS_PER_RUN);
+          try {
+            const judgments = await judgeJobFitsInBatches({
+              aiClient: ctx.aiClient,
+              profile,
+              searchPreferences: enrichedPreferences,
+              jobs: unjudged,
+              contextFingerprint: assessmentSession.contextFingerprint,
+              signal: executionSignal,
+            });
+            for (const [jobId, judgment] of judgments) {
+              runJudgments.set(jobId, judgment);
+            }
+          } catch (error) {
+            if (executionSignal.aborted) throw error;
+            // Unjudged jobs fall back to the newest first, and are judged
+            // after the search.
+          }
+        };
+
         // Jobs a running search keeps join its plan as they are saved, so
         // Find jobs shows them while the search goes on, and a run that fails
         // or times out still leaves what it kept reviewable. The end of the
@@ -2351,6 +2403,8 @@ export function createWorkspaceDiscoveryMethods(
             checkpointState.persistedCheckpointRevision = checkpoint.revision;
             return;
           }
+
+          await judgeBeforeBudget(newRawPostings);
 
           // Rollback snapshot for the speculative incremental attempt. The
           // working containers are replaced immutably by merges, so restoring
@@ -2715,8 +2769,9 @@ export function createWorkspaceDiscoveryMethods(
 
         // No low-yield rescue: a job the triage skipped stays skipped. Under
         // Best matches only the person asked for exactly that drop, and in the
-        // other two modes the triage skips only closed listings, talent pools,
-        // sign-in pages and excluded places.
+        // other two modes the triage skips only blocked companies and excluded
+        // places.
+        await judgeBeforeBudget(triagedPostings);
         const { budgetedPostings, mergeResult, jobsPersisted, jobsStaged } =
           mergeAndAccountPostings(
             triagedPostings,

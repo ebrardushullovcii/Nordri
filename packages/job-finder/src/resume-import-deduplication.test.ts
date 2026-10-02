@@ -189,8 +189,12 @@ Preferred location: Remote worldwide or Berlin, Germany`;
     const { repository, workspaceService } = createWorkspaceServiceHarness({
       seed: {
         ...seed,
+        // The resume below is this person's own (Jamie Rivers).
         profile: {
           ...seed.profile,
+          fullName: "Jamie Rivers",
+          firstName: "Jamie",
+          lastName: "Rivers",
           experiences: [],
         },
       },

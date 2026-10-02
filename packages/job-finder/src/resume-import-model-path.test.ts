@@ -96,15 +96,19 @@ function freshSeed() {
   return seed;
 }
 
-function importInput(seed: ReturnType<typeof createSeed>) {
+function importInput(
+  seed: ReturnType<typeof createSeed>,
+  text = TEXT,
+  id = "resume_model_path",
+) {
   return {
     baseResume: {
       ...seed.profile.baseResume,
-      id: "resume_model_path",
-      fileName: "robin.txt",
-      textContent: TEXT,
+      id,
+      fileName: `${id}.txt`,
+      textContent: text,
     },
-    documentBundle: createTestBundle({ fullText: TEXT }),
+    documentBundle: createTestBundle({ fullText: text }),
   };
 }
 
@@ -212,5 +216,77 @@ describe("resume import with a model (ADR 0041)", () => {
     expect(snapshot.profile.fullName).toBe("Robin Example");
     expect(snapshot.profile.experiences).toEqual([]);
     expect(snapshot.latestResumeImportRun?.warnings).toContain(unread.message);
+  });
+
+  test("a resume naming someone else adds nothing until the person reviews it", async () => {
+    const seed = freshSeed();
+    let reads: Parameters<typeof modelClient>[0] = {
+      identity_summary: IDENTITY,
+      experience: [ROLE],
+    };
+    const base = modelClient({});
+    const client = {
+      ...base,
+      extractResumeImportStage(
+        input: Parameters<typeof base.extractResumeImportStage>[0],
+      ) {
+        return modelClient(reads).extractResumeImportStage(input);
+      },
+    };
+    const { workspaceService } = createWorkspaceServiceHarness({
+      seed,
+      aiClient: client,
+    });
+    await workspaceService.runResumeImport(importInput(seed));
+
+    reads = {
+      identity_summary: [
+        {
+          section: "identity",
+          key: "fullName",
+          value: "Dev Other",
+          line: "Dev Other",
+        },
+        {
+          section: "contact",
+          key: "email",
+          value: "dev@example.test",
+          line: "dev@example.test",
+        },
+      ],
+      experience: [
+        {
+          ...ROLE,
+          line: "Engineer — Other Corp",
+          value: {
+            ...ROLE.value,
+            companyName: "Other Corp",
+            title: "Engineer",
+          },
+        },
+      ],
+    };
+    const snapshot = await workspaceService.runResumeImport(
+      importInput(
+        seed,
+        "Dev Other\ndev@example.test\nExperience\nEngineer — Other Corp\n2020 - Present\n- Built a fictional service.",
+        "resume_other_person",
+      ),
+    );
+
+    // Robin's profile keeps Robin's name and only Robin's job.
+    expect(snapshot.profile.fullName).toBe("Robin Example");
+    expect(
+      snapshot.profile.experiences.map((entry) => entry.companyName),
+    ).toEqual(["Example Labs"]);
+    const held = snapshot.latestResumeImportReviewCandidates.filter(
+      (candidate) =>
+        (candidate.resolutionReason ?? "").startsWith(
+          "identity_mismatch_requires_review",
+        ),
+    );
+    expect(held.map((candidate) => candidate.target.section)).toEqual(
+      expect.arrayContaining(["identity", "experience"]),
+    );
   });
 });
