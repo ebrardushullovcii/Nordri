@@ -1,3 +1,4 @@
+import type { JudgeJobFitsInput } from "@nordri/ai-providers";
 import type { BrowserSessionRuntime } from "@nordri/browser-runtime";
 import { JobPostingSchema } from "@nordri/contracts";
 import { describe, expect, test } from "vitest";
@@ -72,6 +73,45 @@ function runtimeReturning(): BrowserSessionRuntime {
   };
 }
 
+/**
+ * Stands in for the model judging the cards (ADR 0041): a frontend role is
+ * the work asked for; Berlin is in the person's area; a remote role reaches
+ * them only while remote counts as any location, and never from the
+ * Americas.
+ */
+function judgeLikeTheModel(input: JudgeJobFitsInput) {
+  const remoteCounts =
+    input.searchPreferences.discovery.remoteCountsAsAnyLocation !== false;
+  return Promise.resolve(
+    input.jobs.map(({ jobId, posting }) => {
+      const role = posting.title.startsWith("Frontend")
+        ? ("exact" as const)
+        : ("conflict" as const);
+      const locationReach =
+        posting.location === "Berlin, Germany"
+          ? ("in_area" as const)
+          : remoteCounts && !posting.location.includes("Americas")
+            ? ("remote_preferred" as const)
+            : ("outside_area" as const);
+      return {
+        jobId,
+        score: role === "exact" ? 80 : 20,
+        recommendation:
+          role === "exact" ? ("strong_fit" as const) : ("skip" as const),
+        role,
+        roleExplanation: null,
+        preferences: "aligned" as const,
+        preferencesExplanation: null,
+        locationReach,
+        reasons: [],
+        gaps: [],
+        listingClosed: false,
+        listingClosedEvidence: null,
+      };
+    }),
+  );
+}
+
 async function search(input: {
   selectivity: "best_matches" | "balanced" | "wide_net";
   remoteCountsAsAnyLocation: boolean;
@@ -110,7 +150,7 @@ async function search(input: {
   const { workspaceService } = createWorkspaceServiceHarness({
     seed,
     browserRuntime: runtimeReturning(),
-    aiClient: createAgentAiClient(),
+    aiClient: { ...createAgentAiClient(), judgeJobFits: judgeLikeTheModel },
   });
   const snapshot = await workspaceService.runDiscoveryForTarget(
     "target_behavior",
@@ -135,7 +175,7 @@ describe("saved search behavior changes what a search keeps", () => {
     expect(Object.keys(kept)).toHaveLength(CARDS.length);
   }, 60_000);
 
-  test("Best matches only drops the cards that miss the title or place, with no rescue", async () => {
+  test("Best matches only drops the cards the model judged outside the role or place", async () => {
     const kept = await search({
       selectivity: "best_matches",
       remoteCountsAsAnyLocation: true,

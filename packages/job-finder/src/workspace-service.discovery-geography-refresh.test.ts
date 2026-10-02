@@ -37,6 +37,8 @@ function placeJudge() {
           locationReach: reach,
           reasons: [],
           gaps: [],
+          listingClosed: false,
+          listingClosedEvidence: null,
         };
       }),
     );

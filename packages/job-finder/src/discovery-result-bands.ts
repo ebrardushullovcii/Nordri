@@ -5,7 +5,6 @@ import type {
 } from "@nordri/contracts";
 
 import {
-  assessmentTitleMissesTargetRoles,
   isProvisionalMatchAssessment,
 } from "./discovery-ordering";
 import { isTargetTitleFamily } from "./internal/discovery-title-family";
@@ -209,23 +208,8 @@ export function getDiscoveryResultGroup(
   }
 
   if (isMatchScoreWithheld(job)) {
-    // "Title matches · not yet checked" has to mean the title matched. A
-    // card-only listing whose title never matched a target role ("Full-Stack
-    // Designer" for a software-engineer search) has been checked as far as it
-    // can be, and what was checked did not fit: it belongs with the weaker
-    // matches, still one click away, not in the leading unchecked band.
-    //
-    // The test is the title FAMILY, not the absence of an exact hit. A role
-    // in the same occupational family as a saved target — "Executive
-    // Assistant I" against a saved "Executive Assistant" — is a result the
-    // person asked for, and burying it under "Also found · Weaker matches"
-    // for the single reason that its listing text was never captured hid
-    // exactly the jobs the search was run to find. Only a title the scorer
-    // positively placed outside the saved families is demoted here.
-    return isTargetTitleFamily(job.matchAssessment) ||
-      !assessmentTitleMissesTargetRoles(job.matchAssessment)
-      ? "unchecked"
-      : "weaker";
+    // No verdict yet, so no judgement for or against it (ADR 0041).
+    return "unchecked";
   }
 
   return job.matchAssessment.score < DISCOVERY_WEAKER_MATCH_SCORE_FLOOR

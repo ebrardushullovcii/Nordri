@@ -886,6 +886,7 @@ function createPostingWithTriage(
   posting: JobPosting,
   searchPreferences: JobSearchPreferences,
   profile: CandidateProfile,
+  judgment: FitJudgment | null,
 ): {
   posting: JobPosting;
   triageReason: string | null;
@@ -894,6 +895,7 @@ function createPostingWithTriage(
     posting,
     searchPreferences,
     profile,
+    judgment,
   });
 
   return {
@@ -1978,7 +1980,12 @@ export function createWorkspaceDiscoveryMethods(
 
             const posting = JobPostingSchema.parse(rawPosting);
             const { posting: triagedPosting, triageReason } =
-              createPostingWithTriage(posting, enrichedPreferences, profile);
+              createPostingWithTriage(
+                posting,
+                enrichedPreferences,
+                profile,
+                runJudgments.get(toSavedJobId(posting)) ?? null,
+              );
 
             if (triagedPosting.titleTriageOutcome !== "pass") {
               phaseSkippedByTitleTriage += 1;
@@ -2204,19 +2211,26 @@ export function createWorkspaceDiscoveryMethods(
           return { budgetedPostings, mergeResult, jobsPersisted, jobsStaged };
         };
 
-        // A result limit keeps only some of the new jobs. The model judges
-        // them first, so the limit keeps the best fits rather than the newest
-        // (ADR 0041); the verdicts are reused, not asked for again.
-        const judgeBeforeBudget = async (
+        // Two settings decide which new jobs are kept: a result limit keeps
+        // only some, and "Best matches only" keeps only what fits. The model
+        // judges the jobs first so both rest on its verdict rather than on
+        // recency or title words (ADR 0041); the verdicts are reused after
+        // the search, not asked for again.
+        const judgeBeforeKeeping = async (
           postings: readonly JobPosting[],
         ): Promise<void> => {
           const remainingBudget = Math.max(
             0,
             discoveryBudget.retentionJobCount - checkpointState.budgetedCount,
           );
+          const limitMustChoose =
+            runJobBudget != null && postings.length > remainingBudget;
+          const keepsOnlyFits =
+            enrichedPreferences.discovery.collectOnlyHardCriteriaMatches ===
+            true;
           if (
-            runJobBudget == null ||
-            postings.length <= remainingBudget ||
+            (!limitMustChoose && !keepsOnlyFits) ||
+            postings.length === 0 ||
             !ctx.aiClient.judgeJobFits ||
             executionSignal.aborted
           ) {
@@ -2404,7 +2418,7 @@ export function createWorkspaceDiscoveryMethods(
             return;
           }
 
-          await judgeBeforeBudget(newRawPostings);
+          await judgeBeforeKeeping(newRawPostings);
 
           // Rollback snapshot for the speculative incremental attempt. The
           // working containers are replaced immutably by merges, so restoring
@@ -2762,6 +2776,7 @@ export function createWorkspaceDiscoveryMethods(
         const remainingRawPostings = collectedJobs.filter(
           isUnprocessedOrMateriallyChangedPosting,
         );
+        await judgeBeforeKeeping(remainingRawPostings);
         const triageOutcome =
           runTriageAndLedgerForPostings(remainingRawPostings);
         const knownJobIndex = triageOutcome.knownJobIndex;
@@ -2771,7 +2786,6 @@ export function createWorkspaceDiscoveryMethods(
         // Best matches only the person asked for exactly that drop, and in the
         // other two modes the triage skips only blocked companies and excluded
         // places.
-        await judgeBeforeBudget(triagedPostings);
         const { budgetedPostings, mergeResult, jobsPersisted, jobsStaged } =
           mergeAndAccountPostings(
             triagedPostings,

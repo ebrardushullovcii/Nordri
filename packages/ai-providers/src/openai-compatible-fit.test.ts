@@ -35,6 +35,29 @@ describe("batch fit judging", () => {
       locationReach: "in_area",
       reasons: ["Berlin, Germany is one of your places"],
       gaps: ["German C1 is required"],
+      listingClosed: false,
+      listingClosedEvidence: null,
+    });
+  });
+
+  test("reads a closed listing with the words that say so", () => {
+    const [judgment] = normalizeJobFitJudgments(
+      {
+        judgments: [
+          {
+            jobId: "job_1",
+            score: 5,
+            recommendation: "skip",
+            listingClosed: true,
+            listingClosedEvidence: "This position has been filled.",
+          },
+        ],
+      },
+      new Set(["job_1"]),
+    );
+    expect(judgment).toMatchObject({
+      listingClosed: true,
+      listingClosedEvidence: "This position has been filled.",
     });
   });
 

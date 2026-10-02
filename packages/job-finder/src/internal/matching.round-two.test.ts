@@ -6,7 +6,6 @@ import {
   createWorkspaceServiceHarness,
 } from "../workspace-service.test-support";
 import {
-  assessLocationCompatibility,
   createMatchAssessmentAsync,
 } from "./matching";
 
@@ -36,26 +35,6 @@ const requirement = (
 });
 
 describe("Round two fit findings", () => {
-  test.each([
-    ["Frankfurt am Main, HESSEN, DE", "Germany"],
-    ["Zurich, ZH, CH", "Switzerland"],
-    ["Sydney, NSW, AU", "Australia"],
-    ["Tokyo, JP", "Japan"],
-    ["DE", "Germany"],
-  ])("compares %s within %s", (location, country) => {
-    expect(
-      assessLocationCompatibility(location, [country], {
-        remoteCountsAsAnyLocation: false,
-      }),
-    ).toBe("compatible");
-  });
-
-  test("a country match does not merge different cities", () => {
-    expect(
-      assessLocationCompatibility("Frankfurt, Germany", ["Berlin, Germany"]),
-    ).toBe("incompatible");
-  });
-
   test("the full assessment's verdict stands, with the requirements it found", async () => {
     const seed = createSeed();
     const requirements = [

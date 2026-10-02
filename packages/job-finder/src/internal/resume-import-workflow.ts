@@ -935,6 +935,7 @@ async function completeDeferredVisionBranch(input: {
           latestSearchPreferences,
           provisionalCandidates,
           bundle,
+          { readByModel: !readsWithoutModel(ctx) },
         ),
       ),
       currentCandidates,
@@ -985,6 +986,7 @@ async function completeDeferredVisionBranch(input: {
           latestSearchPreferences,
           adjudicationResult.candidates,
           bundle,
+          { readByModel: !readsWithoutModel(ctx) },
         ),
       ),
       currentCandidates,
@@ -1089,6 +1091,7 @@ async function completeDeferredVisionBranch(input: {
               latestSearchPreferences,
               adjudicationResult.candidates,
               bundle,
+              { readByModel: !readsWithoutModel(ctx) },
             ),
           ),
           currentCandidates,
@@ -1952,6 +1955,7 @@ async function runResumeImportWorkflowInProcess(
         input.searchPreferences,
         provisionalCandidates,
         bundle,
+        { readByModel: !readsWithoutModel(ctx) },
       ),
     );
     const sourceText = normalizeText(
@@ -2040,6 +2044,7 @@ async function runResumeImportWorkflowInProcess(
         input.searchPreferences,
         adjudicationResult.candidates,
         bundle,
+        { readByModel: !readsWithoutModel(ctx) },
       ),
     );
     run = ResumeImportRunSchema.parse({
@@ -2190,6 +2195,7 @@ async function runResumeImportWorkflowInProcess(
           retrySearchPreferences,
           reconciledCandidates,
           bundle,
+          { readByModel: !readsWithoutModel(ctx) },
         ),
       );
       reconciledCandidates = holdChangedImportPreferences(

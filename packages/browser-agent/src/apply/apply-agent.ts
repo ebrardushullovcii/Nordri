@@ -33,6 +33,7 @@ import {
   isCoverLetterControl,
 } from "./cover-letter";
 import { resolveApplyAnswer } from "./answer-sourcing";
+import { createQuestionClassifier } from "./question-classification";
 import { applicationFacts, structuredExperienceGap } from "./application-facts";
 import {
   checkWrittenApplicationAnswer,
@@ -216,6 +217,9 @@ export async function runApplyAgent(
   // only the part the agent could not do.
   let stuckFinishNudged = false;
   const guardState = createApplyGuardState();
+  const classifyQuestions = config.modelQuestionClassification
+    ? createQuestionClassifier({ client: llmClient, signal: config.signal })
+    : undefined;
   const documentCatalog: ApplyDocument[] = [...config.sources.documents];
   const runConfig: ApplyAgentConfig = {
     ...config,
@@ -849,6 +853,7 @@ export async function runApplyAgent(
             config: runConfig,
             now,
             guardState,
+            ...(classifyQuestions ? { classifyQuestions } : {}),
             checkWrittenAnswer: (question, answer) =>
               checkWrittenApplicationAnswer({
                 client: llmClient,

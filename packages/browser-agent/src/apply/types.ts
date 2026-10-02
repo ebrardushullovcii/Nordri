@@ -447,6 +447,12 @@ export type ApplyProposal =
 
 export interface ApplyAgentConfig {
   hands: ApplyPageHands;
+  /**
+   * The model classifies each page's questions (ADR 0041): which ask about
+   * pay and which are declarations. Off in scripted tests, where the keyword
+   * classification on the observation stands.
+   */
+  modelQuestionClassification?: boolean;
   /** The guard and worker checks for this page. Absent only in tests. */
   safety?: ApplySafetyHooks;
   /** Writes and renders the letter this application sends, when it needs one. */

@@ -497,6 +497,7 @@ export async function runAgentApplicationPreparation(
   const outcome = await runApplyAgentSafely(input, {
     hands: createApplyPageHands(input.session, now),
     safety: input.session,
+    modelQuestionClassification: true,
     intermediateWritesAuthorized:
       executionInput.intermediateMutationsAuthorized === true,
     accountCreationAuthorized:

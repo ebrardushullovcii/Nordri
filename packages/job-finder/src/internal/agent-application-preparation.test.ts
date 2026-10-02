@@ -919,7 +919,29 @@ describe("each mode, end to end through the seam", () => {
   function completingModel(): LLMClient {
     let calls = 0;
     return {
-      chatWithTools: () => {
+      chatWithTools: (_messages, tools) => {
+        // The page's questions are classified in their own call (ADR 0041);
+        // the email field is neither a pay question nor a declaration.
+        if (
+          tools?.some((tool) => tool.function.name === "report_question_kinds")
+        ) {
+          return Promise.resolve({
+            toolCalls: [
+              {
+                id: "call_kinds",
+                type: "function" as const,
+                function: {
+                  name: "report_question_kinds",
+                  arguments: JSON.stringify({
+                    questions: [
+                      { index: 0, asksAboutPay: false, declarationKind: null },
+                    ],
+                  }),
+                },
+              },
+            ],
+          });
+        }
         calls += 1;
         // Answer the one field, say the form is complete, then finish.
         const name =

@@ -51,41 +51,58 @@ function remoteJob() {
   });
 }
 
+function judged(
+  job: ReturnType<typeof remoteJob>,
+  locationReach: "in_area" | "remote_preferred" | "outside_area",
+) {
+  return SavedJobSchema.parse({
+    ...job,
+    matchAssessment: {
+      ...job.matchAssessment,
+      judgment: {
+        source: "batch",
+        judgedAt: "2026-10-02T10:00:00.000Z",
+        score: 50,
+        recommendation: "review_before_applying",
+        locationReach,
+      },
+    },
+  });
+}
+
 describe("remote-only source warning", () => {
-  it("warns when every retained result is remote and none is in area", () => {
-    expect(describeRemoteOnlySourceMismatch([remoteJob()], preferences)).toBe(
+  it("warns when the model judged every remote result outside the saved places", () => {
+    expect(
+      describeRemoteOnlySourceMismatch(
+        [judged(remoteJob(), "outside_area")],
+        preferences,
+      ),
+    ).toBe(
       "This search returned only remote jobs; try another search for jobs in Chicago, IL.",
     );
   });
 
-  it("does not call a named local office remote-only because the body mentions remote work", () => {
-    const madridPreferences = JobSearchPreferencesSchema.parse({
-      ...preferences,
-      locations: ["Madrid, Spain"],
-    });
-    const madridOffice = SavedJobSchema.parse({
-      ...remoteJob(),
-      location: "Madrid Office",
-      workMode: [],
-      description:
-        "Frontend engineer in our Madrid office. Remote collaboration benefits.",
-    });
-
+  it("does not warn when the model judged a result in the saved places", () => {
     expect(
-      describeRemoteOnlySourceMismatch([madridOffice], madridPreferences),
+      describeRemoteOnlySourceMismatch(
+        [judged(remoteJob(), "outside_area"), judged(remoteJob(), "in_area")],
+        preferences,
+      ),
     ).toBeNull();
   });
 
-  it("does not infer a remote-only result from generic remote wording in an office listing", () => {
-    const office = SavedJobSchema.parse({
-      ...remoteJob(),
-      location: "Berlin Office",
-      workMode: ["onsite"],
-      canonicalUrl: "https://example.test/jobs/office-role",
-      applicationUrl: null,
-      description: "This office role collaborates with remote teams.",
-    });
+  it("does not warn about a job that is not remote", () => {
+    const office = judged(
+      SavedJobSchema.parse({ ...remoteJob(), workMode: ["onsite"] }),
+      "outside_area",
+    );
     expect(describeRemoteOnlySourceMismatch([office], preferences)).toBeNull();
+  });
+
+  it("does not warn on a guess when the model has not judged a job", () => {
+    expect(
+      describeRemoteOnlySourceMismatch([remoteJob()], preferences),
+    ).toBeNull();
   });
 
   it("does not warn when a saved location explicitly accepts remote work", () => {
@@ -95,49 +112,10 @@ describe("remote-only source warning", () => {
     });
 
     expect(
-      describeRemoteOnlySourceMismatch([remoteJob()], remotePreferences),
+      describeRemoteOnlySourceMismatch(
+        [judged(remoteJob(), "outside_area")],
+        remotePreferences,
+      ),
     ).toBeNull();
   });
-
-  it("keeps remote geography specific when the saved place is not global", () => {
-    const regionalRemotePreferences = JobSearchPreferencesSchema.parse({
-      ...preferences,
-      locations: ["Remote, Europe"],
-    });
-
-    expect(
-      describeRemoteOnlySourceMismatch(
-        [remoteJob()],
-        regionalRemotePreferences,
-      ),
-    ).toBe(
-      "This search returned only remote jobs; try another search for jobs in Remote, Europe.",
-    );
-  });
-
-  it.each(["Chicago, IL", "Philadelphia, PA", "Akron, OH"])(
-    "warns deterministically for %s when remote is clear from the listing URL",
-    (location) => {
-      const localPreferences = JobSearchPreferencesSchema.parse({
-        ...preferences,
-        locations: [location],
-        workModes: ["hybrid"],
-      });
-      const urlOnlyRemote = SavedJobSchema.parse({
-        ...remoteJob(),
-        location: "Location not stated",
-        workMode: [],
-        canonicalUrl: "https://jobs.example.test/remote-jobs/recruiter",
-        applicationUrl: null,
-        description: "Recruiter role at Example",
-        summary: null,
-      });
-
-      expect(
-        describeRemoteOnlySourceMismatch([urlOnlyRemote], localPreferences),
-      ).toBe(
-        `This search returned only remote jobs; try another search for jobs in ${location}.`,
-      );
-    },
-  );
 });

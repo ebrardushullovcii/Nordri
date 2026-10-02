@@ -247,19 +247,42 @@ describe("listing activity projection", () => {
   });
 });
 
-describe("closure phrases in the listing's own text", () => {
-  test.each([
-    "This position has been filled.",
-    "We are no longer accepting applications for this role.",
-    "This job has expired.",
-    "This job is closed.",
-  ])("closes a listing whose description says %j", (sentence) => {
-    const closed = job({
-      id: "job-closed-text",
-      description: `About the team. ${sentence} Thanks for your interest.`,
+describe("a listing the model read as closed", () => {
+  // The model reads the listing when it judges the job and says whether the
+  // listing itself is closed, quoting it (ADR 0041); no phrase list decides.
+  function judgedJob(listingClosed: boolean, evidence: string | null) {
+    const base = job({
+      id: "job-judged",
+      description: "About the team. This position has been filled.",
       lastSeenAt: hour(11),
     });
+    return {
+      ...base,
+      matchAssessment: {
+        ...base.matchAssessment,
+        judgment: {
+          source: "batch" as const,
+          judgedAt: hour(11),
+          contextFingerprint: null,
+          postingFingerprint: null,
+          score: 5,
+          recommendation: "skip" as const,
+          role: "unknown" as const,
+          roleExplanation: null,
+          preferences: "unknown" as const,
+          preferencesExplanation: null,
+          locationReach: "unknown" as const,
+          reasons: [],
+          gaps: [],
+          listingClosed,
+          listingClosedEvidence: evidence,
+        },
+      },
+    };
+  }
 
+  test("closes a listing the model read as closed, quoting it", () => {
+    const closed = judgedJob(true, "This position has been filled.");
     const [view] = projectDiscoveryJobViews({
       jobs: [closed],
       discoveryLedger: [],
@@ -267,10 +290,24 @@ describe("closure phrases in the listing's own text", () => {
     });
 
     expect(view?.listingActivity.status).toBe("closed");
-    expect(findClosedListingPhrase(closed)).toBeTruthy();
+    expect(findClosedListingPhrase(closed)).toBe(
+      "This position has been filled.",
+    );
   });
 
-  test("leaves an open listing active", () => {
+  test("leaves a listing the model read as open active, whatever its words", () => {
+    const open = judgedJob(false, null);
+    const [view] = projectDiscoveryJobViews({
+      jobs: [open],
+      discoveryLedger: [],
+      listingSignals: [],
+    });
+
+    expect(findClosedListingPhrase(open)).toBeNull();
+    expect(view?.listingActivity.status).toBe("active");
+  });
+
+  test("leaves an unjudged listing active", () => {
     const open = job({
       id: "job-open",
       description: "We are hiring a backend engineer. Apply today.",
@@ -283,27 +320,6 @@ describe("closure phrases in the listing's own text", () => {
       listingSignals: [],
     });
 
-    expect(view?.listingActivity.status).toBe("active");
-  });
-
-  test.each([
-    "Applications will be reviewed until the position is filled.",
-    "This position will remain open until the position is filled.",
-    "Once the position is filled, applicants will be notified.",
-  ])("does not treat conditional or future wording as closure: %j", (sentence) => {
-    const open = job({
-      id: "job-open-conditional",
-      description: sentence,
-      lastSeenAt: hour(11),
-    });
-
-    const [view] = projectDiscoveryJobViews({
-      jobs: [open],
-      discoveryLedger: [],
-      listingSignals: [],
-    });
-
-    expect(findClosedListingPhrase(open)).toBeNull();
     expect(view?.listingActivity.status).toBe("active");
   });
 });

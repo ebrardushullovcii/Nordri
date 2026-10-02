@@ -502,6 +502,7 @@ export function splitCertificationNameYear(name: string | null): {
 function normalizeRecordCandidateValue(
   candidate: ResumeImportFieldCandidate,
   bundle?: ResumeDocumentBundle,
+  readByModel = false,
 ): ResumeImportFieldCandidate["value"] {
   const parsedValue = (() => {
     if (typeof candidate.value !== "string") {
@@ -544,7 +545,11 @@ function normalizeRecordCandidateValue(
         "organization",
         "organisation",
       ]);
-      const splitRole = splitImportedRole(rawTitle ?? "", savedCompany, bundle);
+      // The model splits title from employer itself (ADR 0041); the rule
+      // split only stands in when no model read the resume.
+      const splitRole = readByModel
+        ? { title: rawTitle ?? "", companyName: null }
+        : splitImportedRole(rawTitle ?? "", savedCompany, bundle);
       return {
         companyName:
           readAliasString(value, [
@@ -771,6 +776,7 @@ function normalizeRecordCandidateValue(
 function normalizeRecordCandidateForReconciliation(
   candidate: ResumeImportFieldCandidate,
   bundle?: ResumeDocumentBundle,
+  readByModel = false,
 ): ResumeImportFieldCandidate {
   // Some providers emit one named skill object per candidate. Normalize it
   // to the supported single-skill record before ranking and applying it;
@@ -798,7 +804,7 @@ function normalizeRecordCandidateForReconciliation(
     return candidate;
   }
 
-  const value = normalizeRecordCandidateValue(candidate, bundle);
+  const value = normalizeRecordCandidateValue(candidate, bundle, readByModel);
   // The model sometimes keys a structured record by a slug ("experiences",
   // "albanian") instead of "record". Same section, same object shape, same
   // person's job: it must group with the deterministic twin instead of
@@ -2757,6 +2763,14 @@ export function reconcileCandidates(
   searchPreferences: JobSearchPreferences,
   candidates: readonly ResumeImportFieldCandidate[],
   bundle?: ResumeDocumentBundle,
+  options: {
+    /**
+     * The model read every section (ADR 0041): its values stand, and the
+     * rule checks against the resume text (skill fragments, role splitting,
+     * location-shaped titles, activity sections) are not run over them.
+     */
+    readByModel?: boolean;
+  } = {},
 ): ResumeImportFieldCandidate[] {
   const resolved: ResumeImportFieldCandidate[] = [];
   const { candidates: foldedCandidates, foldedAway } =
@@ -2782,7 +2796,11 @@ export function reconcileCandidates(
   const normalizedCandidates: ResumeImportFieldCandidate[] = [];
   const recordCandidates = normalizeCertificationNamesFromSiblings(
     foldedCandidates.map((candidate) =>
-      normalizeRecordCandidateForReconciliation(candidate, bundle),
+      normalizeRecordCandidateForReconciliation(
+        candidate,
+        bundle,
+        options.readByModel === true,
+      ),
     ),
   );
   for (const normalized of recordCandidates) {
@@ -2823,11 +2841,13 @@ export function reconcileCandidates(
       );
       continue;
     }
-    const checked = validateResumeImportSourceCandidate(
-      normalized,
-      bundle,
-      recordCandidates,
-    );
+    const checked = options.readByModel
+      ? { candidate: normalized, reject: false, review: false }
+      : validateResumeImportSourceCandidate(
+          normalized,
+          bundle,
+          recordCandidates,
+        );
     if (checked.reject || checked.review) {
       resolved.push(
         applyCandidateResolution(

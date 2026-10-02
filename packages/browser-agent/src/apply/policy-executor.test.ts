@@ -2784,3 +2784,114 @@ describe("the model's answers stand when the person's facts support them (ADR 00
     expect(outcome.kind).not.toBe("filled");
   });
 });
+
+describe("the model reads which questions ask about pay or are declarations (ADR 0041)", () => {
+  const classified = (
+    entries: Record<
+      string,
+      { asksAboutPay: boolean; declarationKind: string | null }
+    >,
+  ) =>
+    vi.fn(() =>
+      Promise.resolve(
+        new Map(
+          Object.entries(entries).map(([prompt, value]) => [
+            prompt,
+            value as {
+              asksAboutPay: boolean;
+              declarationKind: null | "truthfulness_certification";
+            },
+          ]),
+        ),
+      ),
+    );
+
+  test("holds a pay question no keyword list would catch while pay stays private", async () => {
+    const page = rawPage({
+      controls: [
+        rawControl({
+          index: 0,
+          label: "What package would make this move worth it for you?",
+          required: true,
+        }),
+      ],
+    });
+    const fillText = vi.fn();
+    const { config } = configFor(page, { hands: { fillText } });
+    const outcome = await executeApplyProposal(
+      { tool: "type", ref: "c0", text: "70,000 EUR" },
+      observationOf(page).signature,
+      {
+        config,
+        now,
+        guardState: createApplyGuardState(),
+        classifyQuestions: classified({
+          "What package would make this move worth it for you?": {
+            asksAboutPay: true,
+            declarationKind: null,
+          },
+        }),
+        checkWrittenAnswer: () =>
+          Promise.resolve({ supported: true, reason: "ok" }),
+      },
+    );
+    expect(fillText).not.toHaveBeenCalled();
+    expect(outcome.kind).not.toBe("filled");
+  });
+
+  test("leaves a declaration the model recognised unticked until the person approves it", async () => {
+    const page = rawPage({
+      controls: [
+        rawControl({
+          index: 0,
+          inputType: "checkbox",
+          label: "Everything above is accurate to the best of my knowledge",
+          required: true,
+        }),
+      ],
+    });
+    const setToggle = vi.fn();
+    const { config } = configFor(page, { hands: { setToggle } });
+    const outcome = await executeApplyProposal(
+      { tool: "set_checkbox", ref: "c0", checked: true },
+      observationOf(page).signature,
+      {
+        config,
+        now,
+        guardState: createApplyGuardState(),
+        classifyQuestions: classified({
+          "Everything above is accurate to the best of my knowledge": {
+            asksAboutPay: false,
+            declarationKind: "truthfulness_certification",
+          },
+        }),
+      },
+    );
+    expect(setToggle).not.toHaveBeenCalled();
+    expect(outcome.kind).toBe("suggestion");
+  });
+
+  test("keeps the keyword check when the model cannot be asked", async () => {
+    const page = rawPage({
+      controls: [
+        rawControl({ index: 0, label: "Expected salary", required: true }),
+      ],
+    });
+    const fillText = vi.fn();
+    const { config } = configFor(page, { hands: { fillText } });
+    const outcome = await executeApplyProposal(
+      { tool: "type", ref: "c0", text: "60000" },
+      observationOf(page).signature,
+      {
+        config,
+        now,
+        guardState: createApplyGuardState(),
+        classifyQuestions: () => Promise.reject(new Error("model unavailable")),
+        checkWrittenAnswer: () =>
+          Promise.resolve({ supported: true, reason: "ok" }),
+      },
+    );
+    expect(fillText).not.toHaveBeenCalled();
+    expect(outcome.kind).not.toBe("filled");
+  });
+});

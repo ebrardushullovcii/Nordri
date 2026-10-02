@@ -58,6 +58,8 @@ test("a search has the model judge the jobs it found, and its verdict stands", a
               locationReach: "in_area" as const,
               reasons: ["Berlin, Germany is one of your places"],
               gaps: [],
+              listingClosed: false,
+              listingClosedEvidence: null,
             }
           : {
               jobId,
@@ -70,6 +72,8 @@ test("a search has the model judge the jobs it found, and its verdict stands", a
               locationReach: "in_area" as const,
               reasons: [],
               gaps: ["A different occupation"],
+              listingClosed: false,
+              listingClosedEvidence: null,
             },
       ),
     ),
@@ -201,6 +205,8 @@ test("with a result limit, the model's best fits are kept rather than the newest
           locationReach: "in_area" as const,
           reasons: [],
           gaps: [],
+          listingClosed: false,
+          listingClosedEvidence: null,
         };
       }),
     ),

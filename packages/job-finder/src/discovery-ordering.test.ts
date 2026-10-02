@@ -329,20 +329,16 @@ describe("equal displayed fit ordering", () => {
     } as unknown as SavedJob;
   }
 
-  it("breaks a five-way 54 percent tie by family, seniority, stack, then recency", () => {
+  it("breaks a 54 percent tie by the model's role verdict, then recency", () => {
     const jobs = [
       tiedCandidate({ id: "adjacent", titleFamilyMatch: "adjacent", postedAt: "2026-09-13" }),
-      tiedCandidate({ id: "seniority-conflict", titleFamilyMatch: "same_family", seniorityConflict: true, stackOverlap: "React, TypeScript", postedAt: "2026-09-13" }),
-      tiedCandidate({ id: "older-stack", titleFamilyMatch: "same_family", stackOverlap: "React", postedAt: "2026-09-10" }),
-      tiedCandidate({ id: "newer-stack", titleFamilyMatch: "same_family", stackOverlap: "React", postedAt: "2026-09-12" }),
-      tiedCandidate({ id: "most-stack", titleFamilyMatch: "same_family", stackOverlap: "React, TypeScript", postedAt: "2026-09-11" }),
+      tiedCandidate({ id: "older-exact", titleFamilyMatch: "same_family", postedAt: "2026-09-10" }),
+      tiedCandidate({ id: "newer-exact", titleFamilyMatch: "same_family", postedAt: "2026-09-12" }),
     ];
 
     expect(jobs.sort(compareDiscoveryJobs).map((job) => job.id)).toEqual([
-      "most-stack",
-      "newer-stack",
-      "older-stack",
-      "seniority-conflict",
+      "newer-exact",
+      "older-exact",
       "adjacent",
     ]);
   });
@@ -375,9 +371,10 @@ describe("equal displayed fit ordering", () => {
     ];
 
     expect(() => jobs.sort(compareDiscoveryJobs)).not.toThrow();
+    // Equal verdicts: the newer listing leads.
     expect(jobs.map((job) => job.id)).toEqual([
-      "no-gaps",
       "seniority-conflict",
+      "no-gaps",
     ]);
   });
 });

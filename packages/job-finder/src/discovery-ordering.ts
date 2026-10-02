@@ -157,35 +157,9 @@ export function isProvisionalMatchAssessment(
 }
 
 /**
- * The scorer's own sentences about the listing title versus the saved target
- * roles. They are the reasons and gaps the renderer reads back, so they live
- * here as constants rather than as strings the two sides could drift apart on.
- */
-export const TITLE_MATCHES_TARGET_ROLES_REASON =
-  "Role title aligns closely with the current target roles.";
-export const TITLE_MISSES_TARGET_ROLES_GAPS: readonly string[] = [
-  "Role family is outside the current target roles, so this is unlikely to be a useful match.",
-  "The title does not show a clear connection to the current target role families.",
-  "Role title is adjacent to the target list but not an exact fit.",
-];
-
-/**
- * Whether the assessment positively recorded that the listing title did not
- * match a saved target role. Absence of any title verdict (older rows, seeds,
- * fixtures) reports false: only an explicit miss counts.
- */
-export function assessmentTitleMissesTargetRoles(
-  assessment: Partial<Pick<SavedJob["matchAssessment"], "gaps">>,
-): boolean {
-  return (assessment.gaps ?? []).some((gap) =>
-    TITLE_MISSES_TARGET_ROLES_GAPS.includes(gap),
-  );
-}
-
-/**
  * Tie-breaks applied after the clear-mismatch penalty, assessment confidence,
  * and (for authoritative assessments) fit score:
- * title family, seniority, stack overlap, then newest listing timestamp
+ * the model's role verdict (title family), then newest listing timestamp
  * (postedAt, then firstSeenAt, then discoveredAt; undated last). Detail
  * quality and stable lexical keys settle only otherwise identical signals.
  */
@@ -207,29 +181,6 @@ export function compareDiscoveryFitTieBreaks(
   };
   const titleFamilyDelta = titleFamilyRank(left) - titleFamilyRank(right);
   if (titleFamilyDelta !== 0) return titleFamilyDelta;
-
-  const hasSeniorityConflict = (job: SavedJob) =>
-    (job.matchAssessment.gaps ?? []).some((gap) =>
-      /seniority conflicts?/iu.test(gap),
-    );
-  const seniorityDelta =
-    Number(hasSeniorityConflict(left)) - Number(hasSeniorityConflict(right));
-  if (seniorityDelta !== 0) return seniorityDelta;
-
-  const stackOverlapCount = (job: SavedJob) => {
-    const reason = (job.matchAssessment.reasons ?? []).find((entry) =>
-      entry.startsWith("Stack overlap includes "),
-    );
-    return reason
-      ? reason
-          .slice("Stack overlap includes ".length)
-          .replace(/\.$/u, "")
-          .split(",")
-          .filter((entry) => entry.trim().length > 0).length
-      : 0;
-  };
-  const stackDelta = stackOverlapCount(right) - stackOverlapCount(left);
-  if (stackDelta !== 0) return stackDelta;
 
   const leftRecency = toSortableListingTime(
     left.postedAt ?? left.firstSeenAt ?? left.discoveredAt,

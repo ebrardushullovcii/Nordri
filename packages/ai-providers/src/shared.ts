@@ -331,6 +331,10 @@ export const JobFitAssessmentSchema = z.object({
     .optional()
     .catch(undefined),
   locationReach: MatchLocationReachSchema.optional().catch(undefined),
+  listingClosed: z.boolean().optional().catch(undefined),
+  listingClosedEvidence: NonEmptyStringSchema.max(240)
+    .optional()
+    .catch(undefined),
 });
 
 export type JobFitAssessment = z.infer<typeof JobFitAssessmentSchema>;
@@ -611,6 +615,8 @@ export interface JobFitJudgmentResult {
   locationReach: MatchLocationReach;
   reasons: string[];
   gaps: string[];
+  listingClosed: boolean;
+  listingClosedEvidence: string | null;
 }
 
 export interface JudgeJobFitsInput {

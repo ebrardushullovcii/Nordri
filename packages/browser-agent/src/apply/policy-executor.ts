@@ -8,6 +8,7 @@ import {
   type ApplyAnswerResolution,
 } from "./answer-sourcing";
 import { normalizeSignal } from "./control-classification";
+import type { ApplyQuestionClassification } from "./question-classification";
 import {
   buildCoverLetterRequest,
   coverLetterPolicyAllows,
@@ -109,6 +110,14 @@ export interface ApplyExecutorDeps {
   config: ApplyAgentConfig;
   now: () => Date;
   guardState: ApplyGuardState;
+  /**
+   * The model's reading of the page's questions (ADR 0041): whether one asks
+   * about pay and which declaration one is. Absent offline, where the keyword
+   * classification on the observation stands.
+   */
+  classifyQuestions?: (
+    controls: readonly ApplyFormControl[],
+  ) => Promise<ReadonlyMap<string, ApplyQuestionClassification>>;
   checkWrittenAnswer?: (
     question: string,
     answer: string,
@@ -283,6 +292,43 @@ export function buildPendingQuestion(input: {
     ...(note ? { note } : {}),
     submittedAnswer: null,
     status: "detected",
+  };
+}
+
+/**
+ * The control as the model classified its question: a pay question and a
+ * declaration are what the model says they are, not what a keyword list
+ * matched. If the model cannot be asked, the keyword classification stays,
+ * so the person's pay switch and declaration approvals are never left
+ * unguarded.
+ */
+async function withModelQuestionKinds(
+  deps: ApplyExecutorDeps,
+  observation: ApplyFormObservation,
+  control: ApplyFormControl,
+): Promise<ApplyFormControl> {
+  if (!deps.classifyQuestions) {
+    return control;
+  }
+  let classification: ApplyQuestionClassification | undefined;
+  try {
+    classification = (await deps.classifyQuestions(observation.controls)).get(
+      questionPrompt(control),
+    );
+  } catch {
+    return control;
+  }
+  if (!classification) {
+    return control;
+  }
+  return {
+    ...control,
+    questionKind: classification.asksAboutPay
+      ? "salary_expectation"
+      : control.questionKind === "salary_expectation"
+        ? "other"
+        : control.questionKind,
+    attestationKind: classification.declarationKind,
   };
 }
 
@@ -1198,14 +1244,15 @@ export async function executeApplyProposal(
     }
 
     case "type": {
-      const control = findControl(observation, proposal.ref);
-      if (!control) {
+      const found = findControl(observation, proposal.ref);
+      if (!found) {
         return {
           kind: "refused",
           reason: `There is no ${proposal.ref} on this page.`,
           observation,
         };
       }
+      const control = await withModelQuestionKinds(deps, observation, found);
       if (!control.visible || control.disabled || control.readOnly) {
         return {
           kind: "refused",
@@ -1401,14 +1448,15 @@ export async function executeApplyProposal(
     }
 
     case "select": {
-      const control = findControl(observation, proposal.ref);
-      if (!control) {
+      const found = findControl(observation, proposal.ref);
+      if (!found) {
         return {
           kind: "refused",
           reason: `There is no ${proposal.ref} on this page.`,
           observation,
         };
       }
+      const control = await withModelQuestionKinds(deps, observation, found);
       const resolution = resolveApplyAnswer({
         control,
         sources: config.sources,
@@ -1468,14 +1516,15 @@ export async function executeApplyProposal(
     }
 
     case "set_checkbox": {
-      const control = findControl(observation, proposal.ref);
-      if (!control) {
+      const found = findControl(observation, proposal.ref);
+      if (!found) {
         return {
           kind: "refused",
           reason: `There is no ${proposal.ref} on this page.`,
           observation,
         };
       }
+      const control = await withModelQuestionKinds(deps, observation, found);
       // A radio button is a choice like a select's option: the model's pick
       // stands when the person's facts support it (ADR 0041).
       let radioAnswer: ApplyAnswer | null = null;

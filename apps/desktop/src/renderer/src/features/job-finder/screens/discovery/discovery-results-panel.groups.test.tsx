@@ -2,7 +2,6 @@
 
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { SavedJobSchema, type SavedJob } from "@nordri/contracts";
-import { TITLE_MISSES_TARGET_ROLES_GAPS } from "@nordri/job-finder/discovery-ordering";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -161,10 +160,18 @@ describe("discovery result bands", () => {
   });
 
   it("never puts a closed listing in the worth-opening band", () => {
+    // The model read the listing as closed (ADR 0041); no phrase list does.
+    const base = job({ id: "closed_high_score", score: 92 });
     const closed = {
-      ...job({ id: "closed_high_score", score: 92 }),
-      description:
-        "This role is closed to new applicants. The archived description remains available.",
+      ...base,
+      matchAssessment: {
+        ...base.matchAssessment,
+        judgment: {
+          ...base.matchAssessment.judgment!,
+          listingClosed: true,
+          listingClosedEvidence: "This role is closed to new applicants.",
+        },
+      },
     };
 
     expect(getDiscoveryResultGroup(closed)).toBe("mismatches");
@@ -197,34 +204,8 @@ describe("discovery result bands", () => {
     ).toBe("mismatches");
   });
 
-  it("files a title-only row under weaker matches when the scorer recorded that the title missed every target role", () => {
-    // "Not yet assessed" must mean the title matched. A card-
-    // only "Full-Stack Designer" for a software-engineer search was checked as
-    // far as it could be, and the one thing checked did not fit.
-    //
-    // Only a title the scorer placed OUTSIDE the saved role families demotes.
-    // The third sentence is the scorer's "adjacent" verdict — "Executive
-    // Assistant I" against a saved "Executive Assistant" — and burying that
-    // row for the sole reason that its listing text was never captured hid
-    // exactly the jobs the search was run to find.
-    for (const gap of TITLE_MISSES_TARGET_ROLES_GAPS.slice(0, 2)) {
-      expect(
-        getDiscoveryResultGroup(
-          job({ id: "title_miss", score: 64, titleOnly: true, gaps: [gap] }),
-        ),
-      ).toBe("weaker");
-    }
-    expect(
-      getDiscoveryResultGroup(
-        job({
-          id: "title_adjacent",
-          score: 64,
-          titleOnly: true,
-          gaps: [TITLE_MISSES_TARGET_ROLES_GAPS[2]!],
-        }),
-      ),
-    ).toBe("unchecked");
-    // Only an explicit miss demotes; a row with no title verdict stays put.
+  it("keeps every row the model has not judged in the unchecked band", () => {
+    // No verdict, no judgement for or against it, whatever its old gap text.
     expect(
       getDiscoveryResultGroup(
         job({

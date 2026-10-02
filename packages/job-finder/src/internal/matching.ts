@@ -29,11 +29,7 @@ import {
 import { createMatchAssessmentPostingInput } from "./match-assessment-posting-input";
 import { applyFitJudgment, toFitJudgment } from "./fit-judgment";
 import { buildBookkeepingDimensions } from "./matching-dimensions";
-import {
-  canonicalizeLocationAliases,
-  resolveStatedLocationPlace,
-  resolveCountryName,
-} from "./location-normalization";
+import { canonicalizeLocationAliases } from "./location-normalization";
 import {
   createJobIdentityDigest,
   createJobIdentityIndex,
@@ -74,17 +70,6 @@ const titleTokenAliases = new Map<string, string>([
   ["developer", "engineer"],
   ["developers", "engineer"],
   ["dev", "engineer"],
-]);
-
-const genericTitleTokens = new Set([
-  "designer",
-  "design",
-  "junior",
-  "senior",
-  "staff",
-  "lead",
-  "principal",
-  "engineer",
 ]);
 
 const locationNoiseTokens = new Set([
@@ -186,72 +171,6 @@ function inferEuropeanLocationRegions(
   );
 }
 
-export function getBroadLocationCompatibility(
-  candidate: string,
-  desiredValues: readonly string[],
-): boolean | null {
-  const candidateRegions = inferBroadLocationRegions(candidate);
-  const desiredRegions = new Set(
-    desiredValues.flatMap((value) => [...inferBroadLocationRegions(value)]),
-  );
-
-  if (candidateRegions.size === 0 || desiredRegions.size === 0) {
-    return null;
-  }
-
-  if (candidateRegions.has("europe") && desiredRegions.has("europe")) {
-    const candidateEuropeanRegions = inferEuropeanLocationRegions(candidate);
-    const desiredEuropeanRegions = new Set(
-      desiredValues.flatMap((value) => [
-        ...inferEuropeanLocationRegions(value),
-      ]),
-    );
-
-    if (candidateEuropeanRegions.size > 0) {
-      if (desiredEuropeanRegions.size === 0) {
-        return null;
-      }
-
-      return [...candidateEuropeanRegions].some((region) =>
-        desiredEuropeanRegions.has(region),
-      );
-    }
-  }
-
-  return [...candidateRegions].some((region) => desiredRegions.has(region));
-}
-
-function cleanTitleMatchCandidate(value: string): string {
-  const collapsed = value.replace(/\s+/g, " ").trim();
-  if (!collapsed) {
-    return "";
-  }
-
-  const dismissMatch = collapsed.match(/\bdismiss\s+(.+?)\s+job\b/i);
-  const candidate = dismissMatch?.[1] ?? collapsed;
-
-  return candidate
-    .replace(/\(verified job\)/gi, " ")
-    .replace(/\bverified job\b/gi, " ")
-    .replace(/\b\d+\s+connection(?:s)?\s+works\s+here\b/gi, " ")
-    .replace(/\b\d+\s+school alumni\b/gi, " ")
-    .replace(/\b(viewed|promoted)\b.*$/i, " ")
-    .replace(/\s*[•·|]\s*$/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function getTitleMatchCandidateVariants(value: string): string[] {
-  const collapsed = value.replace(/\s+/g, " ").trim();
-  const cleaned = cleanTitleMatchCandidate(value);
-
-  if (!cleaned || cleaned === collapsed) {
-    return collapsed ? [collapsed] : [];
-  }
-
-  return [cleaned, collapsed];
-}
-
 function normalizePhraseMatchInput(
   value: string,
   mode: PhraseMatchMode,
@@ -293,11 +212,6 @@ function tokenizePhraseMatchValue(
 
 // Noise tokens that assert availability across every geography rather than a
 // work mode alone.
-const worldwideLocationNoiseTokens = new Set([
-  "anywhere",
-  "worldwide",
-  "global",
-]);
 
 const broadRemoteGeographyPattern =
   /\bremote\b|\bhybrid\b|\bemea\b|\beurope\b|\bapac\b|\blatam\b|\bamericas?\b|\bworldwide\b|\bglobal\b/iu;
@@ -406,29 +320,6 @@ function everyPhraseTokenMatches(
       phraseMatchTokensEqual(sourceToken, targetToken),
     ),
   );
-}
-
-function countMatchedPhraseTokens(
-  desiredTokens: readonly string[],
-  candidateTokens: readonly string[],
-): number {
-  const remainingCandidateTokens = [...candidateTokens];
-  let matchedCount = 0;
-
-  for (const desiredToken of desiredTokens) {
-    const matchedIndex = remainingCandidateTokens.findIndex((candidateToken) =>
-      phraseMatchTokensEqual(desiredToken, candidateToken),
-    );
-
-    if (matchedIndex === -1) {
-      continue;
-    }
-
-    matchedCount += 1;
-    remainingCandidateTokens.splice(matchedIndex, 1);
-  }
-
-  return matchedCount;
 }
 
 const remoteGeographyHints = [
@@ -854,110 +745,6 @@ export function enrichDiscoveredPosting(
   return enrichedPosting;
 }
 
-export function matchesAnyPhrase(
-  candidate: string,
-  desiredValues: readonly string[],
-): boolean {
-  if (desiredValues.length === 0) {
-    return true;
-  }
-
-  const normalizedCandidate = normalizeText(candidate);
-  const candidateTokens = new Set(tokenize(candidate));
-
-  return desiredValues.some((desiredValue) => {
-    const normalizedDesired = normalizeText(desiredValue);
-
-    if (!normalizedDesired) {
-      return false;
-    }
-
-    const desiredTokens = tokenize(desiredValue);
-
-    if (desiredTokens.length === 0) {
-      return false;
-    }
-
-    if (desiredTokens.length === 1 && candidateTokens.has(normalizedDesired)) {
-      return true;
-    }
-
-    if (
-      new RegExp(`(^|\\s)${escapeRegex(normalizedDesired)}($|\\s)`).test(
-        normalizedCandidate,
-      )
-    ) {
-      return true;
-    }
-
-    return desiredTokens.every((token) => candidateTokens.has(token));
-  });
-}
-
-export function matchesTitlePreference(
-  candidate: string,
-  desiredValues: readonly string[],
-): boolean {
-  // Title matching is intentionally richer than matchesAnyPhrase and should stay aligned with
-  // target-role semantics unless we explicitly choose to widen or narrow role-title behavior.
-  if (desiredValues.length === 0) {
-    return true;
-  }
-
-  return getTitleMatchCandidateVariants(candidate).some((candidateVariant) => {
-    const candidateTokens = tokenizePhraseMatchValue(candidateVariant, "title");
-    const normalizedCandidate = candidateTokens.join(" ");
-
-    return desiredValues.some((desiredValue) => {
-      const desiredTokens = tokenizePhraseMatchValue(desiredValue, "title");
-
-      if (desiredTokens.length === 0) {
-        return false;
-      }
-
-      if (desiredTokens.length === 1) {
-        return candidateTokens.some((candidateToken) =>
-          phraseMatchTokensEqual(candidateToken, desiredTokens[0]!),
-        );
-      }
-
-      const normalizedDesired = desiredTokens.join(" ");
-      if (
-        new RegExp(`(^|\\s)${escapeRegex(normalizedDesired)}($|\\s)`).test(
-          normalizedCandidate,
-        )
-      ) {
-        return true;
-      }
-
-      if (everyPhraseTokenMatches(desiredTokens, candidateTokens)) {
-        return true;
-      }
-
-      const matchedCount = countMatchedPhraseTokens(
-        desiredTokens,
-        candidateTokens,
-      );
-      const matchRatio = matchedCount / desiredTokens.length;
-
-      if (desiredTokens.length === 3) {
-        const hasSpecificTokenMatch = desiredTokens
-          .filter((token) => !genericTitleTokens.has(token))
-          .some((desiredToken) =>
-            candidateTokens.some((candidateToken) =>
-              phraseMatchTokensEqual(candidateToken, desiredToken),
-            ),
-          );
-        return (
-          matchedCount >= 2 && matchRatio >= 2 / 3 && hasSpecificTokenMatch
-        );
-      }
-
-      return matchedCount >= 3 && matchRatio >= 0.6;
-    });
-  });
-}
-
 function matchesLocationPhrase(
   candidateSignal: LocationGeographySignal,
   desiredSignal: LocationGeographySignal,
@@ -1057,142 +844,11 @@ export type LocationCompatibilityState =
   | "incompatible"
   | "unknown";
 
-/**
- * The saved places that actually constrain a search.
- *
- * An imported profile can push a stored absence placeholder ("Location not
- * stated") into the preferred locations, and a user can type "N/A"; neither
- * states a place. `assessLocationCompatibility` answers "compatible" for both
- * "no constraint" and "verified match", so every caller that distinguishes
- * those two must count the constraints here rather than the raw saved list —
- * otherwise a placeholder-only preference reads as a location the user chose
- * and the listing met.
- */
-function getSavedLocationConstraints(
-  desiredValues: readonly string[],
-): readonly string[] {
-  if (desiredValues.every((value) => !isAbsentFieldText(value))) {
-    return desiredValues;
-  }
-  return desiredValues.filter((value) => !isAbsentFieldText(value));
-}
-
-/**
- * How the person's "Count remote jobs as any location" setting reaches the
- * location checks. On (the default), a remote listing for a region or the
- * whole world that covers a saved place counts as a location match. Off, a
- * remote listing is judged by the place it names alone: it matches only a
- * saved place it names, or a saved "Remote"/"Worldwide" place.
- */
-interface LocationMatchOptions {
-  remoteCountsAsAnyLocation?: boolean;
-}
-
-/** Reads the run-time copy of the remote setting from search preferences. */
-export function readLocationMatchOptions(
-  searchPreferences: Pick<JobSearchPreferences, "discovery"> | null | undefined,
-): LocationMatchOptions {
-  return {
-    remoteCountsAsAnyLocation:
-      searchPreferences?.discovery?.remoteCountsAsAnyLocation !== false,
-  };
-}
-
 // Positive preference fit only. Work-mode noise ("Remote", "Hybrid") states
 // how a job is done, never where, so it cannot confirm geographic
 // compatibility; "worldwide"/"anywhere" coverage is the documented exception
 // because it includes every saved area, unless the person turned off
 // "Count remote jobs as any location".
-export function assessLocationCompatibility(
-  candidate: string,
-  desiredValues: readonly string[],
-  options: LocationMatchOptions = {},
-): LocationCompatibilityState {
-  const remoteCountsAsAnyLocation = options.remoteCountsAsAnyLocation !== false;
-  // An absence placeholder is not a place on either side. A saved preference
-  // that reads "N/A" or "Location not stated" states no geographic constraint,
-  // so tokenising it would fabricate a conflict against every real listing.
-  const desiredPlaces = getSavedLocationConstraints(desiredValues);
-  if (desiredPlaces.length === 0) {
-    return "compatible";
-  }
-
-  // An absence placeholder is not a place. Comparing it against a saved city
-  // can only ever produce a conflict the app never actually observed.
-  if (isAbsentFieldText(candidate)) {
-    return "unknown";
-  }
-
-  const canonicalCandidate = canonicalizeLocationAliases(candidate);
-  const candidateCountries = canonicalCandidate
-    .split(/[,;/|]/u)
-    .map((part) => resolveCountryName(part.trim()))
-    .filter(Boolean);
-  if (
-    desiredPlaces.some((place) => {
-      const country = resolveCountryName(canonicalizeLocationAliases(place));
-      return country !== null && candidateCountries.includes(country);
-    })
-  )
-    return "compatible";
-
-  // A board writes how the work is done and where it is in one cell
-  // ("Hiring Remotely in Chicago, IL, USA", "Remote in Chicago"). Only the
-  // place part can answer the geographic question, so the work-mode lead-in
-  // and the trailing country come off before the comparison.
-  const candidateSignal = readLocationGeographySignal(
-    resolveStatedLocationPlace(candidate),
-  );
-  const desiredSignals = desiredPlaces.map(readLocationGeographySignal);
-
-  if (candidateSignal.genericTokens.length === 0) {
-    return "unknown";
-  }
-
-  const hasGeographicDesired = desiredSignals.some(
-    (signal) => !signal.noiseOnly,
-  );
-
-  if (candidateSignal.noiseOnly) {
-    if (desiredSignals.some((signal) => signal.noiseOnly)) {
-      return "compatible";
-    }
-
-    if (
-      candidateSignal.genericTokens.some((token) =>
-        worldwideLocationNoiseTokens.has(token),
-      )
-    ) {
-      // "Remote, Worldwide" names no saved place. With remote not counting as
-      // any location, it does not fit a person who listed only real places.
-      return remoteCountsAsAnyLocation || !hasGeographicDesired
-        ? "compatible"
-        : "incompatible";
-    }
-
-    return "unknown";
-  }
-
-  if (
-    remoteCountsAsAnyLocation &&
-    broadRemoteGeographyPattern.test(candidateSignal.rawText) &&
-    getBroadLocationCompatibility(candidate, desiredPlaces) === true
-  ) {
-    return "compatible";
-  }
-
-  const matched = desiredSignals.some((desiredSignal) =>
-    matchesLocationPhrase(candidateSignal, desiredSignal),
-  );
-
-  if (matched) {
-    return "compatible";
-  }
-
-  // Without any geographic constraint to compare against, a failed
-  // work-mode token overlap is neutral rather than a conflict.
-  return hasGeographicDesired ? "incompatible" : "unknown";
-}
 
 // A listing that says where it sits but never says it can be done away from
 // there. The place words alone are not enough — a board can leave work mode
@@ -1363,6 +1019,8 @@ export async function createMatchAssessmentAsync(
       locationReach: assistedAssessment.locationReach ?? "unknown",
       reasons: assistedAssessment.reasons,
       gaps: assistedAssessment.gaps,
+      listingClosed: assistedAssessment.listingClosed ?? false,
+      listingClosedEvidence: assistedAssessment.listingClosedEvidence ?? null,
     },
     {
       source: "full",
