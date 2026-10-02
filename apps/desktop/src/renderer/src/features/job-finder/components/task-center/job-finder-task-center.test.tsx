@@ -528,3 +528,43 @@ describe("JobFinderTaskCenter", () => {
     expect(summary.textContent).not.toMatch(/\d/);
   });
 });
+
+test("Activity shows an item cancelled by the person without a failure count", () => {
+  const workspace = createQuietWorkspace();
+  workspace.applyRuns = [
+    {
+      ...createWorkspace().applyRuns[0]!,
+      state: "completed",
+      totalJobs: 1,
+      pendingJobs: 0,
+      submittedJobs: 0,
+      failedJobs: 0,
+      skippedJobs: 0,
+      blockedJobs: 0,
+    },
+  ];
+  workspace.applyJobResults = [
+    {
+      id: "cancelled_item",
+      runId: workspace.applyRuns[0]!.id,
+      jobId: "job_1",
+      state: "cancelled",
+      summary: "Cancelled by you",
+      updatedAt: "2026-10-01T10:00:00.000Z",
+    },
+  ] as JobFinderWorkspaceSnapshot["applyJobResults"];
+  render(
+    <JobFinderTaskCenter
+      isDiscoveryPending={false}
+      isResumeImportPending={false}
+      workspace={workspace}
+    />,
+  );
+  fireEvent.click(document.querySelector("summary") as HTMLElement);
+  const item = document.querySelector(
+    '[data-task-kind="apply"]',
+  ) as HTMLElement;
+  expect(item.textContent).toContain("Cancelled by you");
+  expect(item.textContent).toContain("1 cancelled");
+  expect(item.textContent).not.toMatch(/failed|need attention|security check/i);
+});

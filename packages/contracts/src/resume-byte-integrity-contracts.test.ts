@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   ApplicationResumeArtifactSchema,
   ResumeExportArtifactSchema,
+  ResumeExportArtifactSummarySchema,
   ResumeSourceDocumentSchema,
 } from "./index";
 
@@ -32,6 +33,27 @@ describe("resume byte integrity contracts", () => {
     expect(
       ResumeExportArtifactSchema.parse({ ...exportBase, sha256 }).sha256,
     ).toBe(sha256);
+  });
+
+  it("keeps saved digests in export summaries and defaults legacy digests to null", () => {
+    const artifact = {
+      id: "export_1",
+      draftId: "draft_1",
+      jobId: "job_1",
+      format: "pdf",
+      filePath: "/synthetic/resume.pdf",
+      templateId: "classic_ats",
+      exportedAt: "2026-07-30T12:00:00.000Z",
+      isApproved: true,
+    };
+    expect(
+      ResumeExportArtifactSummarySchema.parse({ ...artifact, sha256 }).sha256,
+    ).toBe(sha256);
+    expect(ResumeExportArtifactSummarySchema.parse(artifact).sha256).toBeNull();
+    expect(
+      ResumeExportArtifactSummarySchema.parse({ ...artifact, sha256: null })
+        .sha256,
+    ).toBeNull();
   });
 
   it("rejects malformed digests on source, export, and application artifacts", () => {

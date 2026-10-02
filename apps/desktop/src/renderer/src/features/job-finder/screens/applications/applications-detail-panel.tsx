@@ -1,5 +1,12 @@
-import { inferApplicationCrmStageForView } from "./applications-crm-model";
+import {
+  inferApplicationCrmStageForView,
+  trackedHiringStageBadge,
+} from "./applications-crm-model";
 import { useMemo } from "react";
+import {
+  isApplicationTrackedAsSentByPerson,
+  type ApplicationCrmStageDefinition,
+} from "@nordri/contracts";
 import type {
   ApplicationAttempt,
   ApplicationRecord,
@@ -88,6 +95,8 @@ function buildLiveAssistantApplicationHref(input: {
 
 interface ApplicationsDetailPanelProps {
   activeFilter: ApplicationsViewFilter;
+  /** Stages the person named in the tracker, shown by those names. */
+  customStages?: readonly ApplicationCrmStageDefinition[];
   /** What each result's run is doing, so a planned job is never "Filling in". */
   readApplyRunContext?: (
     result: JobFinderWorkspaceSnapshot["applyJobResults"][number] | null,
@@ -174,6 +183,7 @@ interface ApplicationsDetailPanelProps {
 
 export function ApplicationsDetailPanel({
   activeFilter,
+  customStages,
   readApplyRunContext,
   applyRunDetails,
   applyRunDetailsTarget,
@@ -320,6 +330,7 @@ export function ApplicationsDetailPanel({
   const selectedApplyState =
     selectedRecord && visibleApplyResult
       ? resolveApplyStatePresentation({
+          recordCrm: selectedRecord.crm,
           mode:
             selectedRecord.automationMode === "autonomous_submit"
               ? "apply_for_me"
@@ -339,21 +350,27 @@ export function ApplicationsDetailPanel({
               : null,
         })
       : null;
-  const selectedStage = selectedApplyState
+  const selectedHiringStage = selectedRecord
+    ? trackedHiringStageBadge(selectedRecord, customStages)
+    : null;
+  const selectedApplyStage = selectedApplyState
     ? {
         label: selectedApplyState.title,
         tone:
           selectedApplyState.kind === "applied"
             ? ("positive" as const)
-            : selectedApplyState.kind === "could_not_apply"
-              ? ("critical" as const)
-              : selectedApplyState.kind === "needs_you"
-                ? ("warning" as const)
-                : ("active" as const),
+            : selectedApplyState.cancelledByPerson
+              ? ("muted" as const)
+              : selectedApplyState.kind === "could_not_apply"
+                ? ("critical" as const)
+                : selectedApplyState.kind === "needs_you"
+                  ? ("warning" as const)
+                  : ("active" as const),
       }
     : selectedRecord
       ? getApplicationStagePresentation(selectedRecord)
       : null;
+  const selectedStage = selectedHiringStage ?? selectedApplyStage;
   const selectedRecordJob = selectedRecord
     ? (discoveryJobs.find((job) => job.id === selectedRecord.jobId) ?? null)
     : null;
@@ -433,6 +450,9 @@ export function ApplicationsDetailPanel({
       selectedRecordJobId={selectedRecord.jobId}
       selectedApplicationRecordId={selectedRecord.id}
       selectedRecordLastActionLabel={selectedRecord.lastActionLabel}
+      selectedRecordTrackedAsApplied={isApplicationTrackedAsSentByPerson(
+        selectedRecord.crm,
+      )}
       selectedRecordLatestBlockerCode={
         selectedRecord.latestBlocker?.code ?? null
       }

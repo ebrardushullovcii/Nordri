@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import { completeTailoredResumeDraft } from "@nordri/ai-providers";
 import { createAiClient } from "./workspace-service.test-runtimes";
 import {
   createWorkspaceServiceHarness,
@@ -6,6 +7,85 @@ import {
 } from "./workspace-service.test-support";
 
 describe("aggressive resume review routing", () => {
+  test("an eight-skill profile generates reviewable stretch skills without country tokens", async () => {
+    const seed = createSeed();
+    const skills = [
+      "React",
+      "TypeScript",
+      "JavaScript",
+      "Node.js",
+      "CSS",
+      "HTML",
+      "Git",
+      "SQL",
+    ];
+    seed.profile = {
+      ...seed.profile,
+      skills,
+      skillGroups: {
+        coreSkills: skills,
+        tools: [],
+        languagesAndFrameworks: [],
+        softSkills: [],
+        highlightedSkills: [],
+      },
+      education: seed.profile.education.slice(0, 1),
+    };
+    seed.savedJobs = seed.savedJobs.map((job) =>
+      job.id === "job_ready"
+        ? {
+            ...job,
+            resumeTailoringMode: "aggressive",
+            location: "United States",
+            keySkills: ["TypeScript"],
+            minimumQualifications: [
+              "Must be authorized to work in the United States.",
+              "Experience with Terraform required.",
+            ],
+          }
+        : job,
+    );
+    const baseAiClient = createAiClient();
+    const { workspaceService } = createWorkspaceServiceHarness({
+      seed,
+      aiClient: {
+        ...baseAiClient,
+        createResumeDraft(input) {
+          return Promise.resolve(
+            completeTailoredResumeDraft(
+              { coreSkills: [...skills, "United", "States", "Terraform"] },
+              input,
+            ),
+          );
+        },
+      },
+    });
+    await workspaceService.generateResume("job_ready");
+    const workspace = await workspaceService.getResumeWorkspace("job_ready");
+    const generatedSkills = workspace.draft.sections
+      .filter((section) => section.kind === "skills")
+      .flatMap((section) => section.bullets);
+    expect(
+      generatedSkills.some((bullet) =>
+        /^(?:United|States|United States)$/i.test(bullet.text),
+      ),
+    ).toBe(false);
+    const stretch = generatedSkills.find(
+      (bullet) => bullet.text === "Terraform",
+    );
+    expect(stretch).toMatchObject({
+      origin: "ai_generated",
+      included: true,
+      locked: false,
+    });
+    expect(
+      workspace.validation?.claimAssessments.find(
+        (claim) => claim.bulletId === stretch?.id,
+      ),
+    ).toMatchObject({ status: "confirm_needed" });
+    expect(workspace.draft.status).toBe("needs_review");
+  });
+
   test.each([
     ["conservative", "aggressive"],
     ["balanced", "conservative"],

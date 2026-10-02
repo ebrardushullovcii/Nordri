@@ -839,7 +839,7 @@ function AssistantSidebarPanel() {
         ) : null}
         <div
           aria-live="off"
-          className="relative min-h-0 flex-1 overflow-y-auto px-3 py-3"
+          className="relative min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto px-3 py-3"
           data-assistant-thread
           onScroll={onScroll}
           ref={threadRef}

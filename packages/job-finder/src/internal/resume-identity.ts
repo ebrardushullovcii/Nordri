@@ -126,6 +126,11 @@ export function extractIdentityNameFromLine(line: string): string | null {
   ) {
     return null;
   }
+  // A document title ("Online Resume Sample", "Curriculum Vitae") is not the
+  // person's name; reading it as one raised a false identity warning.
+  if (/\b(r[eé]sum[eé]|cv|curriculum vitae)\b/iu.test(value)) {
+    return null;
+  }
 
   // Cut at the first token that cannot be part of a name: a digit, a pipe,
   // a bullet, a lowercase word. A token carrying a trailing comma belongs to
@@ -642,8 +647,8 @@ export function resumeIdentityMismatchMessage(
   mismatchReasons: readonly string[],
 ): string {
   return [
-    "Resume identity mismatch: the visible profile and imported resume do not identify one coherent person.",
+    "Check the name and contact details on this resume:",
     ...mismatchReasons,
-    "Review the profile identity and resume source before generating or exporting.",
+    "The resume uses your profile's details. If that is right, nothing else is needed.",
   ].join(" ");
 }

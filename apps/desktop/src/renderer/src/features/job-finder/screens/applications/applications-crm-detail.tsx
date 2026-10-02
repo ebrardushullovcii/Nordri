@@ -1,12 +1,4 @@
-import {
-  useCallback,
-  useEffect,
-  useId,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
-import { createPortal } from "react-dom";
+import { useEffect, useId, useMemo, useState } from "react";
 import type {
   ApplicationCrmExportFormat,
   ApplicationCrmInterview,
@@ -26,8 +18,6 @@ import {
   applicationCrmDataForView,
 } from "./applications-crm-model";
 import { ApplicationsOutcomeRecorder } from "./applications-outcome-recorder";
-import { isImeComposingEvent } from "../../lib/job-finder-shortcuts";
-import { useJobFinderOverlayOwnership } from "../../lib/job-finder-overlay-ownership";
 import { StatusBadge } from "../../components/status-badge";
 import { formatApplicationEmployerLine } from "../../lib/job-employer-location-display";
 import { getJobFinderDateInputLocale } from "../../lib/job-finder-date-input-locale";
@@ -58,26 +48,6 @@ const fieldClassName =
 const areaClassName =
   "min-h-20 w-full resize-y rounded-(--radius-field) border border-(--field-border) bg-(--field) px-3 py-2 text-sm leading-6 text-foreground outline-none focus-visible:border-(--field-focus-border) focus-visible:bg-(--field-strong) focus-visible:shadow-[var(--field-focus-shadow)]";
 
-const externallyClaimedStages = new Set<ApplicationCrmStage>([
-  "employer_viewed",
-  "recruiter_contact",
-  "assessment",
-  "interview",
-  "offer",
-  "rejected",
-]);
-
-function getDialogFocusableElements(root: HTMLElement): HTMLElement[] {
-  return Array.from(
-    root.querySelectorAll<HTMLElement>(
-      "button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled])",
-    ),
-  ).filter(
-    (element) =>
-      element.tabIndex >= 0 && element.getAttribute("aria-hidden") !== "true",
-  );
-}
-
 const legacySubmitApprovalEvent = {
   title: "Automatic submit approval requested",
   detail:
@@ -102,6 +72,25 @@ function applicationCrmEventCopyForView(
   };
 }
 
+/** A reminder or interview time with its zone named. */
+function formatTrackerMoment(value: string): string {
+  return new Date(value).toLocaleString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZoneName: "short",
+  });
+}
+
+/** Dates here are entered and shown in this device's time zone; say which. */
+const DEVICE_TIME_ZONE_LABEL =
+  new Intl.DateTimeFormat(undefined, { timeZoneName: "short" })
+    .formatToParts(new Date())
+    .find((part) => part.type === "timeZoneName")?.value ??
+  Intl.DateTimeFormat().resolvedOptions().timeZone;
+
 export function ApplicationsCrmDetail(props: {
   record: ApplicationRecord;
   relatedJobCanonicalUrl?: string | null;
@@ -115,6 +104,13 @@ export function ApplicationsCrmDetail(props: {
   isRecordOutcomePending?: boolean;
   outcomeCampaignId?: string | null;
   outcomeResumeStrategyId?: string | null;
+  /** Outcomes the person recorded for this application, newest last. */
+  recordedOutcomes?: readonly {
+    id: string;
+    outcome: string;
+    occurredAt: string;
+    note: string | null;
+  }[];
 }) {
   const crm = applicationCrmDataForView(props.record);
   const employerLine = formatApplicationEmployerLine({
@@ -154,28 +150,8 @@ export function ApplicationsCrmDetail(props: {
     readonly CandidateAsset[]
   >([]);
   const [selectedAssetId, setSelectedAssetId] = useState("");
-  const [pendingStage, setPendingStage] = useState<{
-    stage: ApplicationCrmStage;
-    customStageId: string | null;
-    label: string;
-  } | null>(null);
   const addNoteReasonId = useId();
   const exportDisabledReasonId = useId();
-  const stageConfirmationTitleId = useId();
-  const stageConfirmationDescriptionId = useId();
-  const stageConfirmationRef = useRef<HTMLDivElement>(null);
-  const stageConfirmationOpenerRef = useRef<HTMLElement | null>(null);
-  const stageConfirmationInProgressRef = useRef(false);
-  const closeStageConfirmation = useCallback(() => setPendingStage(null), []);
-  // The confirmation modal joins the shared LIFO overlay stack so stacked
-  // surfaces (Task Center, global search, menus) close one per Escape and
-  // shell aliases stay blocked while it owns the surface.
-  const { isTopmost: isStageConfirmationTopmost } =
-    useJobFinderOverlayOwnership({
-      active: pendingStage !== null,
-      close: closeStageConfirmation,
-    });
-
   // Re-seed only when a different record is shown. Revision bumps on the same
   // record must not clobber in-progress drafts; the screen keys this detail by
   // record id, so this also acts as a safety net for unkeyed mounts.
@@ -216,71 +192,6 @@ export function ApplicationsCrmDetail(props: {
     };
   }, []);
 
-  useEffect(() => {
-    if (!pendingStage) return;
-
-    stageConfirmationInProgressRef.current = false;
-    stageConfirmationOpenerRef.current =
-      document.activeElement instanceof HTMLElement
-        ? document.activeElement
-        : null;
-    const appRoot = document.getElementById("root");
-    const previousInert = appRoot?.getAttribute("inert") ?? null;
-    const previousAriaHidden = appRoot?.getAttribute("aria-hidden") ?? null;
-    appRoot?.setAttribute("inert", "");
-    appRoot?.setAttribute("aria-hidden", "true");
-
-    const dialog = stageConfirmationRef.current;
-    const focusableElements = dialog ? getDialogFocusableElements(dialog) : [];
-    (focusableElements[0] ?? dialog)?.focus();
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        if (
-          event.defaultPrevented ||
-          isImeComposingEvent(event) ||
-          !isStageConfirmationTopmost()
-        ) {
-          return;
-        }
-        event.preventDefault();
-        setPendingStage(null);
-        return;
-      }
-      if (event.key !== "Tab") return;
-
-      const currentDialog = stageConfirmationRef.current;
-      if (!currentDialog) return;
-      const currentFocusableElements =
-        getDialogFocusableElements(currentDialog);
-      event.preventDefault();
-      if (currentFocusableElements.length === 0) {
-        currentDialog.focus();
-        return;
-      }
-      const currentIndex = currentFocusableElements.findIndex(
-        (element) => element === document.activeElement,
-      );
-      const nextIndex = event.shiftKey
-        ? (currentIndex - 1 + currentFocusableElements.length) %
-          currentFocusableElements.length
-        : (currentIndex + 1) % currentFocusableElements.length;
-      currentFocusableElements[nextIndex]?.focus();
-    };
-    document.addEventListener("keydown", handleKeyDown);
-
-    return () => {
-      document.removeEventListener("keydown", handleKeyDown);
-      if (appRoot) {
-        if (previousInert === null) appRoot.removeAttribute("inert");
-        else appRoot.setAttribute("inert", previousInert);
-        if (previousAriaHidden === null) appRoot.removeAttribute("aria-hidden");
-        else appRoot.setAttribute("aria-hidden", previousAriaHidden);
-      }
-      stageConfirmationOpenerRef.current?.focus({ preventScroll: true });
-    };
-  }, [isStageConfirmationTopmost, pendingStage]);
-
   const customStagesById = useMemo(
     () =>
       new Map(props.settings.customStages.map((stage) => [stage.id, stage])),
@@ -309,6 +220,15 @@ export function ApplicationsCrmDetail(props: {
     }
   }
 
+  function saveTags() {
+    const nextTags = tags
+      .split(",")
+      .map((tag) => tag.trim())
+      .filter(Boolean);
+    if (nextTags.join("\u0000") === crm.tags.join("\u0000")) return;
+    void mutate({ type: "set_tags", tags: nextTags });
+  }
+
   function selectStage(value: string) {
     const customId = value.startsWith("custom:") ? value.slice(7) : null;
     const custom = customId ? customStagesById.get(customId) : null;
@@ -318,34 +238,11 @@ export function ApplicationsCrmDetail(props: {
       customStageId: custom?.id ?? null,
       label: custom?.label ?? APPLICATION_CRM_STAGE_LABELS[stage],
     };
-    if (externallyClaimedStages.has(stage)) {
-      setPendingStage(selection);
-      return;
-    }
     void mutate({
       type: "set_stage",
       stage: selection.stage,
       customStageId: selection.customStageId,
       note: null,
-    });
-  }
-
-  async function confirmPendingStage() {
-    if (!pendingStage || stageConfirmationInProgressRef.current) return;
-    stageConfirmationInProgressRef.current = true;
-    const selection = pendingStage;
-    const opener = stageConfirmationOpenerRef.current;
-    setPendingStage(null);
-    await mutate({
-      type: "set_stage",
-      stage: selection.stage,
-      customStageId: selection.customStageId,
-      note: null,
-    });
-    requestAnimationFrame(() => {
-      if (opener?.isConnected) {
-        opener.focus({ preventScroll: true });
-      }
     });
   }
 
@@ -428,7 +325,7 @@ export function ApplicationsCrmDetail(props: {
             type="button"
             variant="link"
           >
-            Export CSV
+            Export this application (CSV)
           </Button>
           <Button
             aria-describedby={pending ? exportDisabledReasonId : undefined}
@@ -438,7 +335,7 @@ export function ApplicationsCrmDetail(props: {
             type="button"
             variant="link"
           >
-            Export JSON
+            Export this application (JSON)
           </Button>
           {pending ? (
             <span
@@ -487,17 +384,14 @@ export function ApplicationsCrmDetail(props: {
             ) : null}
           </select>
         </label>
+        {/* Tags save when the field is left or Enter is pressed, the same
+            as the stage beside them saves on change; Add buttons are only for
+            new notes, reminders and interviews. */}
         <form
           className="grid gap-1.5"
           onSubmit={(event) => {
             event.preventDefault();
-            void mutate({
-              type: "set_tags",
-              tags: tags
-                .split(",")
-                .map((tag) => tag.trim())
-                .filter(Boolean),
-            });
+            saveTags();
           }}
         >
           <label
@@ -511,74 +405,14 @@ export function ApplicationsCrmDetail(props: {
               className={fieldClassName}
               disabled={pending}
               id="application-crm-tags"
+              onBlur={saveTags}
               onChange={(event) => setTags(event.target.value)}
               placeholder="priority, remote, referral"
               value={tags}
             />
-            <Button
-              disabled={pending}
-              size="sm"
-              type="submit"
-              variant="secondary"
-            >
-              Save
-            </Button>
           </div>
         </form>
       </div>
-
-      {pendingStage
-        ? createPortal(
-            <div
-              className="fixed inset-0 z-[80] grid place-items-center overflow-y-auto bg-(--modal-scrim) px-4 py-6 backdrop-blur-sm"
-              onClick={() => setPendingStage(null)}
-            >
-              <div
-                aria-describedby={stageConfirmationDescriptionId}
-                aria-labelledby={stageConfirmationTitleId}
-                aria-modal="true"
-                className="surface-panel-shell grid min-w-0 w-full max-w-lg gap-5 rounded-(--radius-panel) border border-(--surface-panel-border) p-6 shadow-(--modal-shadow)"
-                onClick={(event) => event.stopPropagation()}
-                ref={stageConfirmationRef}
-                role="alertdialog"
-                tabIndex={-1}
-              >
-                <div className="grid gap-2">
-                  <p className="label-mono-xs">Update your tracker</p>
-                  <h2
-                    className="font-display font-semibold text-foreground"
-                    id={stageConfirmationTitleId}
-                  >
-                    Mark this as {pendingStage.label}?
-                  </h2>
-                  <p
-                    className="text-sm leading-6 text-foreground-soft"
-                    id={stageConfirmationDescriptionId}
-                  >
-                    This updates your own tracker only. Job Finder does not
-                    check this with the employer.
-                  </p>
-                </div>
-                <div className="flex flex-wrap justify-end gap-3">
-                  <Button
-                    onClick={() => setPendingStage(null)}
-                    type="button"
-                    variant="ghost"
-                  >
-                    Cancel
-                  </Button>
-                  <Button
-                    onClick={() => void confirmPendingStage()}
-                    type="button"
-                  >
-                    Mark as {pendingStage.label}
-                  </Button>
-                </div>
-              </div>
-            </div>,
-            document.body,
-          )
-        : null}
 
       <details
         className="group rounded-(--radius-field) border border-(--surface-panel-border) p-3"
@@ -718,8 +552,17 @@ export function ApplicationsCrmDetail(props: {
               />
             </label>
             <label className="grid gap-1.5 text-sm font-medium text-foreground">
-              Due
+              <span>
+                Due{" "}
+                <span
+                  aria-hidden="true"
+                  className="font-normal text-foreground-muted"
+                >
+                  ({DEVICE_TIME_ZONE_LABEL})
+                </span>
+              </span>
               <input
+                aria-label="Due"
                 className={fieldClassName}
                 disabled={pending}
                 onChange={(event) => setReminderAt(event.target.value)}
@@ -753,7 +596,7 @@ export function ApplicationsCrmDetail(props: {
                         className="mt-0.5 block text-xs text-muted-foreground"
                         dateTime={entry.dueAt}
                       >
-                        Due {new Date(entry.dueAt).toLocaleString()}
+                        Due {formatTrackerMoment(entry.dueAt)}
                       </time>
                     </div>
                     <StatusBadge
@@ -884,8 +727,17 @@ export function ApplicationsCrmDetail(props: {
               />
             </label>
             <label className="grid gap-1.5 text-sm font-medium text-foreground">
-              Starts
+              <span>
+                Starts{" "}
+                <span
+                  aria-hidden="true"
+                  className="font-normal text-foreground-muted"
+                >
+                  ({DEVICE_TIME_ZONE_LABEL})
+                </span>
+              </span>
               <input
+                aria-label="Starts"
                 className={fieldClassName}
                 disabled={pending}
                 onChange={(event) => setInterviewAt(event.target.value)}
@@ -919,7 +771,7 @@ export function ApplicationsCrmDetail(props: {
                         className="mt-0.5 block text-xs text-muted-foreground"
                         dateTime={entry.startsAt}
                       >
-                        Starts {new Date(entry.startsAt).toLocaleString()}
+                        Starts {formatTrackerMoment(entry.startsAt)}
                       </time>
                     </div>
                     <StatusBadge
@@ -1134,8 +986,17 @@ export function ApplicationsCrmDetail(props: {
               </select>
             </label>
             <label className="grid gap-1.5 text-sm font-medium text-foreground">
-              Deadline
+              <span>
+                Deadline{" "}
+                <span
+                  aria-hidden="true"
+                  className="font-normal text-foreground-muted"
+                >
+                  ({DEVICE_TIME_ZONE_LABEL})
+                </span>
+              </span>
               <input
+                aria-label="Deadline"
                 className={fieldClassName}
                 disabled={pending}
                 onChange={(event) => setOfferDeadline(event.target.value)}
@@ -1294,6 +1155,27 @@ export function ApplicationsCrmDetail(props: {
           </p>
         )}
       </details>
+
+      {props.recordedOutcomes && props.recordedOutcomes.length > 0 ? (
+        <div className="grid gap-1.5 rounded-(--radius-field) border border-(--surface-panel-border) p-3">
+          <p className="text-sm font-semibold text-foreground">
+            Outcomes you recorded
+          </p>
+          <ul className="grid gap-1 text-sm text-foreground-soft">
+            {[...props.recordedOutcomes].reverse().map((entry) => (
+              <li key={entry.id}>
+                <span className="font-medium text-foreground">
+                  {entry.outcome
+                    .replaceAll("_", " ")
+                    .replace(/^./u, (first) => first.toUpperCase())}
+                </span>{" "}
+                · {formatTrackerMoment(entry.occurredAt)}
+                {entry.note ? ` · ${entry.note}` : ""}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
 
       {props.onRecordOutcome ? (
         <ApplicationsOutcomeRecorder

@@ -171,12 +171,18 @@ export function applicationRecordNeedsUser(record: ApplicationRecord): boolean {
     record.lastAttemptState === "paused" ||
     record.lastAttemptState === "failed" ||
     record.lastAttemptState === "unsupported" ||
+    // A form filled in and left for the person to send waits on their press,
+    // so it is in this view too: otherwise "Waiting on you 0" sat beside
+    // applications that could not go anywhere until the person sent them.
+    (record.lastAttemptState === "ready" &&
+      !isTerminalApplicationStatus(record.status)) ||
+    // The person stopped it themselves: nothing waits on them until they
+    // choose Try again.
     (Boolean(record.nextActionLabel) &&
       !isTerminalApplicationStatus(record.status) &&
       record.lastAttemptState !== "in_progress" &&
-      // A form filled in and left for the person to send is Ready to send,
-      // not a step waiting on them (ADR 0022).
-      record.lastAttemptState !== "ready")
+      record.lastAttemptState !== "ready" &&
+      record.lastAttemptState !== "cancelled")
   );
 }
 
@@ -188,7 +194,9 @@ export function matchesApplicationsFilter(
   if (applyStateKind) {
     switch (filter) {
       case "needs_action":
-        return applyStateKind === "needs_you";
+        return (
+          applyStateKind === "needs_you" || applyStateKind === "ready_to_send"
+        );
       case "in_progress":
         return applyStateKind === "filling_in";
       case "submitted":

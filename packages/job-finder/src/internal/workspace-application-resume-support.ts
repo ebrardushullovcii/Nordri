@@ -16,7 +16,6 @@ import { fnv1a32 } from "@nordri/core";
 import {
   buildResumeRenderDocument,
   buildTailoredAssetBridge,
-  hasBlockingResumeIdentityMismatch,
   listUnresolvedWorkHistoryOmissionSuggestions,
   sanitizeResumeDraft,
   seedResumeDraft,
@@ -674,13 +673,6 @@ export async function previewResumeDraft(
     profile: state.profile,
     validatedAt: renderedAt,
   });
-  if (hasBlockingResumeIdentityMismatch(validation)) {
-    throw new Error(
-      validation.issues.find((issue) => issue.category === "identity_mismatch")
-        ?.message ??
-        "Resume identity mismatch: review the visible profile and imported resume before previewing.",
-    );
-  }
   throwIfResumePreviewAborted(signal);
   const preview = await ctx.documentManager.renderResumePreview(
     {
@@ -712,7 +704,7 @@ export async function previewResumeDraft(
     metadata: {
       templateId: sanitizedDraft.templateId,
       renderedAt,
-      pageCount: null,
+      pageCount: preview.pageCount ?? null,
       sectionCount: sanitizedDraft.sections.filter(
         (section) => section.included,
       ).length,

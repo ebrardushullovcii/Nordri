@@ -30,6 +30,10 @@ export {
   normalizeSharedMemoryCandidates,
   promoteGroundedSharedMemoryCandidates,
 } from "./resume-import-shared-memory-candidates";
+import {
+  validateResumeImportSourceCandidate,
+  splitImportedRole,
+} from "./resume-import-source-validation";
 import { normalizeText, uniqueStrings } from "./shared";
 import {
   PROFILE_PLACEHOLDER_HEADLINE,
@@ -140,6 +144,13 @@ function existingScalarValueForCandidate(
       return profile.applicationIdentity.preferredPhone;
     case "search_preferences.workModes":
       return searchPreferences.workModes;
+    case "search_preferences.employmentTypes":
+      return searchPreferences.employmentTypes;
+    case "search_preferences.compensation":
+      return searchPreferences.compensation.minimum === null &&
+        searchPreferences.compensation.currency === null
+        ? null
+        : searchPreferences.compensation;
     case "search_preferences.salaryCurrency":
       return searchPreferences.salaryCurrency;
     case "work_eligibility.authorizedWorkCountries":
@@ -238,7 +249,26 @@ function scalarValueConflictsWithWorkspace(
   if (typeof currentValue === "number" && typeof candidate.value === "number") {
     return currentValue !== candidate.value;
   }
+  if (
+    candidate.target.key === "compensation" &&
+    isObject(currentValue) &&
+    isObject(candidate.value)
+  ) {
+    return Object.entries(candidate.value).some(
+      ([key, value]) => currentValue[key] !== value,
+    );
+  }
 
+  if (
+    candidate.target.key === "employmentTypes" &&
+    Array.isArray(currentValue) &&
+    currentValue.length > 0
+  ) {
+    return !normalizedStringValuesMatch(
+      toStringArray(currentValue),
+      toStringArray(candidate.value),
+    );
+  }
   return false;
 }
 
@@ -273,7 +303,8 @@ function scalarValueMatchesWorkspace(
   }
 
   if (
-    candidate.target.section === "work_eligibility" &&
+    (candidate.target.section === "work_eligibility" ||
+      candidate.target.key === "employmentTypes") &&
     Array.isArray(currentValue) &&
     currentValue.length > 0
   ) {
@@ -285,6 +316,15 @@ function scalarValueMatchesWorkspace(
     );
   }
 
+  if (
+    candidate.target.key === "compensation" &&
+    isObject(currentValue) &&
+    isObject(candidate.value)
+  ) {
+    return Object.entries(candidate.value).every(
+      ([key, value]) => currentValue[key] === value,
+    );
+  }
   return (
     typeof currentValue === "number" &&
     typeof candidate.value === "number" &&
@@ -467,6 +507,7 @@ export function splitCertificationNameYear(name: string | null): {
 
 function normalizeRecordCandidateValue(
   candidate: ResumeImportFieldCandidate,
+  bundle?: ResumeDocumentBundle,
 ): ResumeImportFieldCandidate["value"] {
   const parsedValue = (() => {
     if (typeof candidate.value !== "string") {
@@ -496,21 +537,31 @@ function normalizeRecordCandidateValue(
       const endDateSaysCurrent =
         rawEndDate !== null &&
         /^(?:present|current|now|ongoing)$/i.test(rawEndDate.trim());
+      const rawTitle = readAliasString(value, [
+        "title",
+        "role",
+        "position",
+        "jobTitle",
+      ]);
+      const savedCompany = readAliasString(value, [
+        "companyName",
+        "company",
+        "employer",
+        "organization",
+        "organisation",
+      ]);
+      const splitRole = splitImportedRole(rawTitle ?? "", savedCompany, bundle);
       return {
-        companyName: readAliasString(value, [
-          "companyName",
-          "company",
-          "employer",
-          "organization",
-          "organisation",
-        ]),
+        companyName:
+          readAliasString(value, [
+            "companyName",
+            "company",
+            "employer",
+            "organization",
+            "organisation",
+          ]) ?? splitRole.companyName,
         companyUrl: readAliasString(value, ["companyUrl", "companyWebsite"]),
-        title: readAliasString(value, [
-          "title",
-          "role",
-          "position",
-          "jobTitle",
-        ]),
+        title: splitRole.title || null,
         employmentType: readAliasString(value, ["employmentType", "type"]),
         location: readAliasString(value, ["location"]),
         workMode: toStringArray(value.workMode ?? value.workModes),
@@ -562,14 +613,28 @@ function normalizeRecordCandidateValue(
         "university",
         "college",
       ]);
+      const rawDegree = readAliasString(value, [
+        "degree",
+        "qualification",
+        "degreeName",
+      ]);
+      const degreeYear = rawDegree?.match(/^(.*?\S)[,\s]+((?:19|20)\d{2})$/);
+      const cleanDegree = degreeYear?.[1] ?? rawDegree;
+      const degreeWithField = cleanDegree?.match(
+        /^(.*?(?:degree|associate of (?:applied science|arts|science)|bachelor of (?:arts|science)|master of (?:arts|science)))(?:\s+in\s+|,\s+)(.+)$/i,
+      );
       const degree = normalizeSupportedEducationValue(
         candidate,
-        readAliasString(value, ["degree", "qualification", "degreeName"]),
+        degreeWithField?.[1] ?? cleanDegree,
         "degree",
       );
+      const rawField =
+        readAliasString(value, ["fieldOfStudy", "field", "major", "subject"]) ??
+        degreeWithField?.[2];
+      const fieldYear = rawField?.match(/^(.*?\S)[,\s]+((?:19|20)\d{2})$/);
       const fieldOfStudy = normalizeSupportedEducationValue(
         candidate,
-        readAliasString(value, ["fieldOfStudy", "field", "major", "subject"]),
+        fieldYear?.[1] ?? rawField,
         "fieldOfStudy",
       );
       const location = normalizeSupportedEducationValue(
@@ -599,7 +664,9 @@ function normalizeRecordCandidateValue(
             "endYear",
             "graduationDate",
             "graduationYear",
-          ]),
+          ]) ??
+            fieldYear?.[2] ??
+            degreeYear?.[2],
         ),
         summary:
           rawSummary &&
@@ -709,6 +776,7 @@ function normalizeRecordCandidateValue(
 
 function normalizeRecordCandidateForReconciliation(
   candidate: ResumeImportFieldCandidate,
+  bundle?: ResumeDocumentBundle,
 ): ResumeImportFieldCandidate {
   // Some providers emit one named skill object per candidate. Normalize it
   // to the supported single-skill record before ranking and applying it;
@@ -736,7 +804,7 @@ function normalizeRecordCandidateForReconciliation(
     return candidate;
   }
 
-  const value = normalizeRecordCandidateValue(candidate);
+  const value = normalizeRecordCandidateValue(candidate, bundle);
   // The model sometimes keys a structured record by a slug ("experiences",
   // "albanian") instead of "record". Same section, same object shape, same
   // person's job: it must group with the deterministic twin instead of
@@ -1105,6 +1173,23 @@ function enrichRecordCandidateFromSiblings(
     ...winner,
     value: merged,
     valuePreview: buildValuePreview(merged),
+    // Revalidation must see the evidence for the fields borrowed from the
+    // other reading, even when the school/year-only reading ranked first.
+    ...(winner.target.section === "education"
+      ? {
+          evidenceText:
+            uniqueStrings(
+              [winner, ...siblings].flatMap((candidate) =>
+                candidate.evidenceText ? [candidate.evidenceText] : [],
+              ),
+            ).join("\n") || null,
+          sourceBlockIds: uniqueStrings(
+            [winner, ...siblings].flatMap(
+              (candidate) => candidate.sourceBlockIds,
+            ),
+          ),
+        }
+      : {}),
   });
 }
 
@@ -1262,6 +1347,7 @@ function promoteImportCandidatesIntoEmptyProfile(
     if (
       candidate.resolution !== "needs_review" ||
       SHARED_MEMORY_SECTIONS.has(candidate.target.section) ||
+      candidate.resolutionReason === "import_shape_requires_review" ||
       candidate.resolutionReason?.startsWith("identity_mismatch") ||
       candidate.resolutionReason ===
         "text_vs_visual_conflict_requires_review" ||
@@ -1301,6 +1387,13 @@ function promoteImportCandidatesIntoEmptyProfile(
       : freshStart || isListTarget(candidate) || existingIsEmpty;
     if (
       !eligible ||
+      ((candidate.target.key === "employmentTypes" ||
+        candidate.target.key === "compensation") &&
+        scalarValueConflictsWithWorkspace(
+          profile,
+          searchPreferences,
+          candidate,
+        )) ||
       (trustworthyVisualEvidence &&
         !isRecord &&
         !isListTarget(candidate) &&
@@ -1317,27 +1410,144 @@ function promoteImportCandidatesIntoEmptyProfile(
   });
 }
 
+// One branch can leave the issuer in a certificate's name while another
+// separates the same source fields. Match the exact name-plus-issuer pair;
+// a dash alone is not a reason to split a qualification level.
+function normalizeCertificationNamesFromSiblings(
+  candidates: readonly ResumeImportFieldCandidate[],
+): ResumeImportFieldCandidate[] {
+  return candidates.map((candidate) => {
+    if (
+      candidate.target.section !== "certification" ||
+      !isObject(candidate.value)
+    )
+      return candidate;
+    const name = recordFieldText(candidate.value, "name");
+    const sibling = candidates.find((other) => {
+      if (
+        other.id === candidate.id ||
+        other.target.section !== "certification" ||
+        !isObject(other.value)
+      )
+        return false;
+      const otherName = recordFieldText(other.value, "name");
+      const issuer = recordFieldText(other.value, "issuer");
+      return (
+        otherName.length > 0 &&
+        issuer.length > 0 &&
+        name === `${otherName} ${issuer}`
+      );
+    });
+    if (!sibling || !isObject(sibling.value)) return candidate;
+    const value = {
+      ...candidate.value,
+      name: sibling.value.name ?? null,
+      issuer: candidate.value.issuer ?? sibling.value.issuer ?? null,
+    };
+    return {
+      ...candidate,
+      value,
+      normalizedValue: value,
+      valuePreview: buildValuePreview(value),
+    };
+  });
+}
+
+function isSchoolOnlyEducationCandidate(
+  candidate: ResumeImportFieldCandidate,
+): boolean {
+  return (
+    candidate.target.section === "education" &&
+    isObject(candidate.value) &&
+    recordFieldText(candidate.value, "schoolName").length > 0 &&
+    [
+      "degree",
+      "fieldOfStudy",
+      "startDate",
+      "endDate",
+      "summary",
+      "location",
+    ].every((key) => recordFieldText(candidate.value, key).length === 0)
+  );
+}
+
 function isRedundantUnstructuredRecordCandidate(
   candidate: ResumeImportFieldCandidate,
   candidates: readonly ResumeImportFieldCandidate[],
 ): boolean {
-  if (!isRecordTarget(candidate) || typeof candidate.value !== "string") {
-    return false;
+  if (!isRecordTarget(candidate)) return false;
+  if (isSchoolOnlyEducationCandidate(candidate)) {
+    const school = recordFieldText(candidate.value, "schoolName");
+    const complete = candidates.filter(
+      (other) =>
+        other.id !== candidate.id &&
+        other.target.section === "education" &&
+        !isSchoolOnlyEducationCandidate(other) &&
+        recordFieldText(other.value, "schoolName") === school,
+    );
+    return (
+      complete.length > 0 &&
+      complete.every(
+        (other) =>
+          complete[0] !== undefined &&
+          areEquivalentRecordCandidates(complete[0], other),
+      )
+    );
   }
+  if (
+    isObject(candidate.value) &&
+    ["project", "certification"].includes(candidate.target.section)
+  ) {
+    const name = recordFieldText(candidate.value, "name");
+    const containedNames = new Set(
+      candidates.flatMap((other) => {
+        const otherName = recordFieldText(other.value, "name");
+        return other.id !== candidate.id &&
+          other.target.section === candidate.target.section &&
+          otherName.length > 3 &&
+          name !== otherName &&
+          name.includes(otherName)
+          ? [otherName]
+          : [];
+      }),
+    );
+    return containedNames.size >= 2;
+  }
+  if (typeof candidate.value !== "string") return false;
 
-  const evidence = normalizeText(candidate.evidenceText ?? candidate.value);
+  const evidence = normalizeText(candidate.value);
   if (!evidence) {
     return false;
   }
 
-  return candidates.some(
+  const structured = candidates.filter(
     (other) =>
       other.id !== candidate.id &&
       other.target.section === candidate.target.section &&
       other.target.key === candidate.target.key &&
       isObject(other.value) &&
-      hasSufficientEvidence(other) &&
-      normalizeText(other.evidenceText ?? "") === evidence,
+      hasSufficientEvidence(other),
+  );
+  if (
+    structured.some(
+      (other) => normalizeText(other.evidenceText ?? "") === evidence,
+    )
+  )
+    return true;
+  const names = new Set(
+    structured.flatMap((other) => {
+      const name = recordFieldText(
+        other.value,
+        candidate.target.section === "education" ? "schoolName" : "name",
+      );
+      return name.length > 3 && evidence.includes(name) ? [name] : [];
+    }),
+  );
+  return (
+    ["project", "certification", "education"].includes(
+      candidate.target.section,
+    ) &&
+    (names.size >= 2 || names.has(evidence))
   );
 }
 
@@ -1578,6 +1788,7 @@ export function isListTarget(candidate: ResumeImportFieldCandidate): boolean {
     "targetRoles",
     "locations",
     "workModes",
+    "employmentTypes",
     "skills",
     "skillGroups.coreSkills",
     "skillGroups.tools",
@@ -1712,6 +1923,15 @@ function recordCandidateMatchesWorkspace(
   }
 
   if (candidate.target.section === "education") {
+    if (isSchoolOnlyEducationCandidate(candidate)) {
+      return (
+        profile.education.filter(
+          (record) =>
+            recordFieldText(record, "schoolName") ===
+            recordFieldText(candidate.value, "schoolName"),
+        ).length === 1
+      );
+    }
     return profile.education.some(
       (record) =>
         areEquivalentEducationRecords(record, candidate.value) &&
@@ -2187,9 +2407,13 @@ function groupCandidatesForReconciliation(
   for (const candidate of candidates) {
     if (isRecordTarget(candidate)) {
       const existingGroup = groups.find((group) =>
-        group.some((existing) =>
-          areEquivalentRecordCandidates(existing, candidate),
-        ),
+        candidate.target.section === "education"
+          ? group.every((existing) =>
+              areEquivalentRecordCandidates(existing, candidate),
+            )
+          : group.some((existing) =>
+              areEquivalentRecordCandidates(existing, candidate),
+            ),
       );
 
       if (existingGroup) {
@@ -2242,7 +2466,13 @@ function resolutionReasonForCandidate(
       }
 
       if (isListTarget(candidate)) {
-        return "list_candidates_require_review";
+        return scalarValueConflictsWithWorkspace(
+          profile,
+          searchPreferences,
+          candidate,
+        )
+          ? "conflicts_with_existing_profile_value"
+          : "list_candidates_require_review";
       }
 
       if (candidate.target.section === "narrative") {
@@ -2597,9 +2827,69 @@ export function reconcileCandidates(
       ),
     );
   }
-  const normalizedCandidates = foldedCandidates.map(
-    normalizeRecordCandidateForReconciliation,
+  const normalizedCandidates: ResumeImportFieldCandidate[] = [];
+  const recordCandidates = normalizeCertificationNamesFromSiblings(
+    foldedCandidates.map((candidate) =>
+      normalizeRecordCandidateForReconciliation(candidate, bundle),
+    ),
   );
+  for (const normalized of recordCandidates) {
+    if (!hasMeaningfulRecordValue(normalized)) {
+      resolved.push(
+        applyCandidateResolution(
+          profile,
+          searchPreferences,
+          normalized,
+          "rejected",
+          "empty_record_candidate",
+        ),
+      );
+      continue;
+    }
+    if (isRedundantUnstructuredRecordCandidate(normalized, recordCandidates)) {
+      resolved.push(
+        applyCandidateResolution(
+          profile,
+          searchPreferences,
+          normalized,
+          "rejected",
+        ),
+      );
+      continue;
+    }
+    if (
+      isSchoolOnlyEducationCandidate(normalized) &&
+      recordCandidateMatchesWorkspace(profile, normalized)
+    ) {
+      resolved.push(
+        applyCandidateResolution(
+          profile,
+          searchPreferences,
+          normalized,
+          "rejected",
+        ),
+      );
+      continue;
+    }
+    const checked = validateResumeImportSourceCandidate(
+      normalized,
+      bundle,
+      recordCandidates,
+    );
+    if (checked.reject || checked.review) {
+      resolved.push(
+        applyCandidateResolution(
+          profile,
+          searchPreferences,
+          checked.candidate,
+          checked.reject ? "rejected" : "needs_review",
+          checked.reject
+            ? "invalid_source_structure"
+            : "import_shape_requires_review",
+        ),
+      );
+    } else normalizedCandidates.push(checked.candidate);
+  }
   const identityConflicts = findResumeImportIdentityConflicts(
     profile,
     normalizedCandidates,

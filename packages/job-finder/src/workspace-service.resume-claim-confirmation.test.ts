@@ -4,6 +4,7 @@ import type {
 } from "@nordri/contracts";
 import {
   buildResumeIssueApprovalContentHash,
+  isBlockingResumeClaimAssessment,
   resumeClaimOwnershipStatement,
 } from "@nordri/contracts";
 import { describe, expect, test } from "vitest";
@@ -398,6 +399,54 @@ describe("resume claim confirmation commands", () => {
           ?.message,
       ).toMatch(/^You approved this as accurate\. /);
     }
+  });
+
+  test("one Approve as accurate on a line's note also settles that line's claim", async () => {
+    const harness = createClaimHarness({ bullets: [UNSUPPORTED_CLAIM_TEXT] });
+    const { workspaceService } = harness;
+
+    await workspaceService.generateResume("job_ready");
+    const workspace = await workspaceService.getResumeWorkspace("job_ready");
+    const unsupported = workspace.validation?.claimAssessments.find(
+      (candidate) =>
+        candidate.status === "unsupported" && candidate.bulletId !== null,
+    );
+    if (!unsupported) {
+      throw new Error("Expected an unsupported generated claim assessment.");
+    }
+    const lineIssue = workspace.validation?.issues.find(
+      (issue) =>
+        issue.severity === "error" && issue.bulletId === unsupported.bulletId,
+    );
+    if (!lineIssue) {
+      throw new Error("Expected a blocking note on the unsupported line.");
+    }
+
+    await workspaceService.setResumeClaimConfirmation({
+      intent: "approve_issue",
+      jobId: "job_ready",
+      draftId: workspace.draft.id,
+      expectedDraftUpdatedAt: workspace.draft.updatedAt,
+      issueId: lineIssue.id,
+      approvedContentHash: buildResumeIssueApprovalContentHash(lineIssue),
+    });
+
+    const after = await workspaceService.getResumeWorkspace("job_ready");
+    expect(
+      after.draft.claimConfirmations.some(
+        (confirmation) =>
+          confirmation.bulletId === unsupported.bulletId &&
+          confirmation.confirmedClaimContentHash === unsupported.contentHash,
+      ),
+    ).toBe(true);
+    expect(
+      after.validation?.claimAssessments.some((assessment) =>
+        isBlockingResumeClaimAssessment({ assessment, draft: after.draft }),
+      ),
+    ).toBe(false);
+    expect(
+      after.validation?.issues.some((issue) => issue.severity === "error"),
+    ).toBe(false);
   });
 
   test("normalization-only edits cannot escape gating while substantive edits re-block", async () => {

@@ -9,6 +9,7 @@ import type {
 import {
   evaluateProfileSetupReadiness,
   getProfileSetupReadinessBlockers,
+  PREPARED_PAGE_CLOSED_SUMMARY,
 } from "@nordri/contracts";
 import { listSourceAttentionReasons } from "@nordri/job-finder/source-health";
 import {
@@ -99,6 +100,7 @@ interface HomeNextStep {
     | "send"
     | "daily_limit"
     | "retry"
+    | "check_closed"
     | "review_resumes"
     | "apply"
     | "create_resumes"
@@ -110,6 +112,7 @@ interface HomeNextStep {
     | "nothing_found"
     | "search_failed"
     | "source_failed"
+    | "tracker_due"
     | "caught_up";
   title: string;
   detail: string;
@@ -173,6 +176,7 @@ export interface BuildJobSearchHomeModelInput {
 const discoveryRoute = JOB_FINDER_ROUTE_PATHS.discovery;
 const reviewQueueRoute = JOB_FINDER_ROUTE_PATHS.reviewQueue;
 const applicationsRoute = JOB_FINDER_ROUTE_PATHS.applications;
+const trackerRoute = `${JOB_FINDER_ROUTE_PATHS.applications}?view=tracker`;
 const applyingSettingsRoute = `${JOB_FINDER_ROUTE_PATHS.settings}#settings-application-authority`;
 const needsYouRoute = "/job-finder/actions";
 const profileSetupRoute = "/job-finder/profile/setup";
@@ -407,8 +411,17 @@ interface ApplicationCounts {
   applied: number;
   needsYou: number;
   couldNotApply: number;
+  /** Applications the person cancelled or withdrew: not failures. */
+  cancelledByPerson: number;
+  withdrawnByPerson: number;
   /** The jobs Applications' own "Try again for all" would retry, same rule. */
   retryJobIds: readonly string[];
+  /**
+   * Filled-in forms whose page closed while they waited on the person. They
+   * may have sent one themselves, so these are checked one at a time, never
+   * retried together (N-033), the same rule as Applications.
+   */
+  pageClosedJobIds: readonly string[];
   /**
    * Retry jobs whose form was filled in but whose page closed before it was
    * sent, usually because Job Finder was closed. They are not unfinished.
@@ -437,6 +450,7 @@ function countApplications(
   resumeReviewJobIds: ReadonlySet<string>,
 ): ApplicationCounts {
   const retryJobIds: string[] = [];
+  const pageClosedJobIds: string[] = [];
   const closedFilledFormJobIds: string[] = [];
   const notSentRetryReasons = new Map<string, string>();
   const takenOverJobIds: string[] = [];
@@ -454,7 +468,10 @@ function countApplications(
     applied: 0,
     needsYou: 0,
     couldNotApply: 0,
+    cancelledByPerson: 0,
+    withdrawnByPerson: 0,
     retryJobIds,
+    pageClosedJobIds,
     closedFilledFormJobIds,
     notSentRetryReasons,
     takenOverJobIds,
@@ -495,6 +512,7 @@ function countApplications(
       continue;
     }
     const presentation = resolveApplyStatePresentation({
+      recordCrm: record.crm,
       // The same mapping `needs-you-count.ts` uses, so the tile and the badge
       // agree about which applications are waiting on the person.
       mode:
@@ -537,7 +555,22 @@ function countApplications(
         counts.needsYou += 1;
         break;
       case "could_not_apply":
+        // The person stopped these themselves; Home never retries them.
+        if (presentation.withdrawnByPerson) {
+          counts.withdrawnByPerson += 1;
+          break;
+        }
+        if (presentation.cancelledByPerson) {
+          counts.cancelledByPerson += 1;
+          break;
+        }
         counts.couldNotApply += 1;
+        if (result.blockerSummary === PREPARED_PAGE_CLOSED_SUMMARY) {
+          if (!pageClosedJobIds.includes(record.jobId)) {
+            pageClosedJobIds.push(record.jobId);
+          }
+          break;
+        }
         // Every retryable job is counted; the batch limit caps the press,
         // not the number (Applications lists them all). A job whose
         // Aggressive resume is waiting for approval would make the whole
@@ -777,6 +810,29 @@ export function buildJobSearchHomeModel(
 ): JobSearchHomeModel {
   const { workspace, tasks } = input;
   const now = input.now ?? Date.now();
+  const trackerDue = (() => {
+    let overdue = 0;
+    let interviewsSoon = 0;
+    const soon = now + 2 * 86_400_000;
+    for (const record of input.workspace.applicationRecords) {
+      for (const reminder of record.crm?.reminders ?? []) {
+        const due = Date.parse(reminder.dueAt);
+        if (reminder.status === "pending" && Number.isFinite(due) && due < now)
+          overdue += 1;
+      }
+      for (const interview of record.crm?.interviews ?? []) {
+        const starts = Date.parse(interview.startsAt);
+        if (
+          interview.status === "scheduled" &&
+          Number.isFinite(starts) &&
+          starts >= now &&
+          starts <= soon
+        )
+          interviewsSoon += 1;
+      }
+    }
+    return { overdue, interviewsSoon };
+  })();
   const jobIds = selectCampaignJobIds(workspace);
   const queue = (workspace.reviewQueue ?? []).filter((item) =>
     jobIds.has(item.jobId),
@@ -1247,21 +1303,6 @@ export function buildJobSearchHomeModel(
     return recovery ? { recovery, labels } : null;
   })();
 
-  const pendingSampleReviews = (() => {
-    const safeguards = workspace.intelligence?.safeguards;
-    if (!safeguards) return 0;
-    const dismissed = new Set(
-      safeguards.safeguardDismissals.map(
-        (dismissal) => `${dismissal.kind}\u0000${dismissal.referenceId}`,
-      ),
-    );
-    return safeguards.preparedBatchSampleReviews.filter(
-      (review) =>
-        !review.reviewCompleted &&
-        !dismissed.has(`batch_sample_review_pending\u0000${review.id}`),
-    ).length;
-  })();
-
   const unresolvedRequests = (workspace.userActionRequests ?? []).filter(
     (request) =>
       !["resolved", "skipped", "cancelled", "expired", "superseded"].includes(
@@ -1338,22 +1379,11 @@ export function buildJobSearchHomeModel(
         safeguardBlockerCount === 1
           ? "A safeguard is waiting on you"
           : `${safeguardBlockerCount} safeguards are waiting on you`,
-      // A sample review is one decision about a prepared batch; the other
-      // blockers (a company limit, two applications to one employer, a
-      // warning on a listing) each hold one job back. Name what it is.
       detail:
-        pendingSampleReviews > 0
-          ? "Look over a sample of the last prepared batch in Safeguards before more applications start. Searches carry on."
-          : "Job Finder held some application work back until you decide. Safeguards says why and what carries it on; searches carry on meanwhile.",
+        "Job Finder held some application work back until you decide. Safeguards says why and what carries it on; searches carry on meanwhile.",
       primary: {
         label: "Open Safeguards",
-        action: {
-          kind: "navigate",
-          route:
-            pendingSampleReviews > 0
-              ? "/job-finder/safeguards?tab=reviews"
-              : "/job-finder/safeguards",
-        },
+        action: { kind: "navigate", route: "/job-finder/safeguards" },
       },
       // The stopped batch's remaining jobs stay one press away.
       secondary:
@@ -1470,6 +1500,24 @@ export function buildJobSearchHomeModel(
           };
   } else if (retryNext) {
     next = retryNext;
+  } else if (applications.pageClosedJobIds.length > 0 && !applyRunning) {
+    // A filled-in form whose page closed may have been sent by the person
+    // before it closed; only they know. Trying them all again could send one
+    // twice (N-033), so each is checked in Applications.
+    const n = applications.pageClosedJobIds.length;
+    next = {
+      id: "check_closed",
+      title: `Check ${plural(n, "application")} whose page closed`,
+      detail:
+        n === 1
+          ? "Job Finder filled this one in, but its page closed before Job Finder saw it sent. If you sent it yourself, set its tracker stage to Applied. If not, choose Try again on it in Applications."
+          : "Job Finder filled these in, but their pages closed before Job Finder saw them sent. If you sent any yourself, set its tracker stage to Applied. Choose Try again on the others in Applications.",
+      primary: {
+        label: "Open Applications",
+        action: { kind: "navigate", route: applicationsRoute },
+      },
+      secondary: [searchAgain],
+    };
   } else if (applications.heldForResumeReview > 0 && !applyRunning) {
     // Trying these again would be refused until the changed Aggressive
     // resume is read and approved; say that instead of offering the press.
@@ -1727,6 +1775,29 @@ export function buildJobSearchHomeModel(
       // Search again is added below, as for every review step.
       secondary: [],
     };
+  } else if (trackerDue.overdue > 0 || trackerDue.interviewsSoon > 0) {
+    // A follow-up past its date or an interview in the next two days is
+    // waiting on the person even when no application work is: "All caught
+    // up" beside an overdue reminder was not true.
+    const parts = [
+      trackerDue.overdue > 0
+        ? plural(trackerDue.overdue, "follow-up is overdue", "follow-ups are overdue")
+        : null,
+      trackerDue.interviewsSoon > 0
+        ? `${plural(trackerDue.interviewsSoon, "interview")} in the next two days`
+        : null,
+    ].filter((part): part is string => part !== null);
+    next = {
+      id: "tracker_due",
+      title: parts.join(" · ").replace(/^./u, (first) => first.toUpperCase()),
+      detail:
+        "Your tracker has dates coming due. Open it to see them, mark reminders done, or move them.",
+      primary: {
+        label: "Open the tracker",
+        action: { kind: "navigate", route: trackerRoute },
+      },
+      secondary: [searchAgain],
+    };
   } else {
     next = {
       id: "caught_up",
@@ -1896,6 +1967,24 @@ export function buildJobSearchHomeModel(
                 : null,
               applications.notStarted > 0
                 ? `${applications.notStarted} not started`
+                : null,
+              applications.cancelledByPerson > 0
+                ? `${applications.cancelledByPerson} cancelled`
+                : null,
+              applications.withdrawnByPerson > 0
+                ? `${applications.withdrawnByPerson} withdrawn`
+                : null,
+              // Tracker dates stay counted here when another next step wins
+              // the card above (N-013).
+              trackerDue.overdue > 0
+                ? plural(
+                    trackerDue.overdue,
+                    "follow-up overdue",
+                    "follow-ups overdue",
+                  )
+                : null,
+              trackerDue.interviewsSoon > 0
+                ? `${plural(trackerDue.interviewsSoon, "interview")} soon`
                 : null,
             ]),
             route: applicationsRoute,

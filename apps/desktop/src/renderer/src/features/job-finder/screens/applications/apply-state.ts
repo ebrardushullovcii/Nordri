@@ -1,5 +1,8 @@
 import {
   APPLICATION_SKIPPED_BY_PERSON_LABEL,
+  isApplicationTrackedAsSentByPerson,
+  isApplicationWithdrawnByPerson,
+  type ApplicationRecord,
   type JobFinderWorkspaceSnapshot,
 } from "@nordri/contracts";
 import type {
@@ -65,6 +68,10 @@ export interface ApplyStatePresentation {
    * person's pause, or left behind by a batch that stopped. Null otherwise.
    */
   plannedStanding?: PlannedApplyStanding | null;
+  /** The person stopped it: a neutral state, not an error. */
+  cancelledByPerson?: true;
+  /** The person marked it withdrawn in their tracker. */
+  withdrawnByPerson?: true;
 }
 
 function formatQuestionsLeft(count: number): string | null {
@@ -117,10 +124,47 @@ export function resolveApplyStatePresentation(input: {
   run?: ApplyRunContext | null;
   /** The record's last action; a person's skip is not a failure. */
   recordLastActionLabel?: string | null;
+  /** The record's tracker, where the person may have recorded the send. */
+  recordCrm?: ApplicationRecord["crm"] | undefined;
 }): ApplyStatePresentation {
   const { mode, now = Date.now(), pendingQuestionCount = 0, result } = input;
   const questionsLeftLabel = formatQuestionsLeft(pendingQuestionCount);
   const reason = getApplicationStopReasonSentence(result);
+
+  // The person recorded Applied (or a later stage) themselves. Their word is
+  // not the site's confirmation, so it is named as theirs, but nothing asks
+  // them to finish or retry an application they already sent (N-033).
+  if (
+    isApplicationTrackedAsSentByPerson(input.recordCrm) &&
+    result?.state !== "submitted" &&
+    result?.privacyReceipt?.submissionOutcome?.outcome !== "submitted"
+  ) {
+    return {
+      kind: "applied",
+      title: "Marked applied",
+      sentence:
+        "You marked this as applied in your tracker. Job Finder did not see the site's confirmation and will not fill it in again.",
+      action: "none",
+      actionLabel: null,
+      questionsLeftLabel: null,
+    };
+  }
+  if (
+    isApplicationWithdrawnByPerson(input.recordCrm) &&
+    result?.state !== "submitted"
+  ) {
+    return {
+      kind: "could_not_apply",
+      title: "Withdrawn",
+      sentence:
+        "You marked this application withdrawn. Job Finder will not work on it.",
+      action: "none",
+      actionLabel: null,
+      questionsLeftLabel: null,
+      cancelledByPerson: true,
+      withdrawnByPerson: true,
+    };
+  }
 
   if (
     input.recordLastActionLabel === APPLICATION_SKIPPED_BY_PERSON_LABEL &&
@@ -238,6 +282,18 @@ export function resolveApplyStatePresentation(input: {
       action: "try_again",
       actionLabel: TRY_AGAIN_ACTION,
       questionsLeftLabel: null,
+    };
+  }
+
+  if (result?.state === "cancelled") {
+    return {
+      kind: "could_not_apply",
+      title: "Cancelled by you",
+      sentence: result.detail,
+      action: "try_again",
+      actionLabel: TRY_AGAIN_ACTION,
+      questionsLeftLabel: null,
+      cancelledByPerson: true,
     };
   }
 

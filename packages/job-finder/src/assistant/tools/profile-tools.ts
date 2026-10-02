@@ -1086,7 +1086,7 @@ export const listDocumentsTool = defineTool({
   name: "list_documents",
   group: "files",
   description:
-    "Lists the person's files (resumes, cover letters, portfolios, transcripts) with ids. Refer to files only by these ids, never by path. Files the person attached in this chat or added under Documents are used by applications: when Job Finder fills a form, it uploads the matching file (portfolio, transcript, cover letter, other) to that form's file field, so no extra step is needed to use them.",
+    "Lists the person's files (resumes, cover letters, portfolios, transcripts) with ids. Refer to files only by these ids, never by path. original_resume is the imported resume (what Original sends); approved_resume_<jobId> is the approved resume for that one job. Files the person attached in this chat or added under Documents are used by applications: when Job Finder fills a form, it uploads the matching file (portfolio, transcript, cover letter, other) to that form's file field, so no extra step is needed to use them.",
   parameters: json.object({}),
   input: z.object({}).passthrough(),
   label: () => "Listing your files",
@@ -1101,6 +1101,11 @@ export const listDocumentsTool = defineTool({
         name: document.originalName,
         bytes: document.byteSize,
         addedAt: document.createdAt,
+        ...(document.forJob
+          ? {
+              forJob: `${document.forJob.title} at ${document.forJob.company} (job ${document.forJob.jobId}); only for that job`,
+            }
+          : {}),
       })),
     };
   },

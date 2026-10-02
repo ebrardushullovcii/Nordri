@@ -1,5 +1,6 @@
 import {
   buildCandidateSkillBank,
+  buildResumeSkillContextFilter,
   classifyResumeClaimGrounding,
   collectListingRequestedSkills,
   extractYearsOfExperienceNumbers,
@@ -21,6 +22,7 @@ import {
   ResumeValidationResultSchema,
   TailoredAssetSchema,
   applyResumeIssueApprovals,
+  matchResumeIssueApproval,
   isBlockingResumeClaimAssessment,
   isBlockingResumeValidationIssue,
   ResumeProposalApprovalBlockerSchema,
@@ -1392,6 +1394,7 @@ export function sanitizeResumeDraft(input: {
   profile?: CandidateProfile;
   sourceSkills?: readonly string[];
 }): ResumeDraft {
+  const isCompetency = buildResumeSkillContextFilter(input.job, input.profile);
   const jobPhraseBank = buildJobPhraseBank(input.job);
   const profileSupportBank = buildProfileSupportBank(input.profile);
   const listingText = buildVerifierJobListingText(input.job);
@@ -1477,6 +1480,17 @@ export function sanitizeResumeDraft(input: {
       bullets.filter((bullet) => {
         const normalized = normalizeVisibleResumeText(bullet.text);
         if (!normalized) {
+          return false;
+        }
+        // A place or work-authorization phrase is not a skill (N-046). A line
+        // the person locked is theirs and stays.
+        if (
+          (section.kind === "skills" || section.kind === "keywords") &&
+          !isLanguageSection(section) &&
+          !bullet.locked &&
+          isGeneratedResumeClaimOrigin(bullet.origin) &&
+          !isCompetency(bullet.text)
+        ) {
           return false;
         }
         if (bullet.locked) {
@@ -1744,10 +1758,13 @@ export function validateResumeDraft(input: {
           : []),
       ]
     : [];
+  // A warning, not a gate (N-020): the resume always prints the identity the
+  // person chose, and a sample heading read as a name ("Online Resume
+  // Sample") used to block generation even after the person confirmed it.
   if (identityMismatchReasons.length > 0) {
     issues.push({
       id: `issue_identity_mismatch_${input.draft.id}`,
-      severity: "error",
+      severity: "warning",
       category: "identity_mismatch",
       sectionId: null,
       entryId: null,
@@ -2237,6 +2254,8 @@ export function validateResumeDraft(input: {
       assessment,
       draft: input.draft,
     });
+    // A note the person already approved no longer stands in for the claim
+    // row; otherwise the line kept blocking with nothing left to click.
     const alreadyReported = issues.some(
       (issue) =>
         issue.sectionId === assessment.sectionId &&
@@ -2244,7 +2263,8 @@ export function validateResumeDraft(input: {
         issue.bulletId === assessment.bulletId &&
         (issue.category === "unsupported_claim" ||
           issue.category === "invented_metric" ||
-          issue.category === "job_description_bleed"),
+          issue.category === "job_description_bleed") &&
+        !matchResumeIssueApproval({ issue, draft: input.draft }),
     );
     if (input.strategy && assessment.claimOrigin === "ai_generated") {
       const boundary = input.strategy.evidenceBoundaries;
@@ -2281,7 +2301,7 @@ export function validateResumeDraft(input: {
       bulletId: assessment.bulletId,
       message: generatedClaim
         ? "Your saved evidence does not back this generated claim. Rewrite it, or approve it as accurate if you can stand behind it."
-        : "This claim conflicts with candidate evidence and must be corrected before export.",
+        : "Your saved evidence does not back this line you wrote. Edit it, or approve it as accurate if you can stand behind it.",
       // Name the exact flagged sentence so the blocker surface can quote it and
       // offer a one-click restore of the text it replaced.
       flaggedText: assessment.claimText,
@@ -2658,16 +2678,6 @@ function selectAssistantNote(note: string | null | undefined): string {
       ? `${trimmed.slice(0, ASSISTANT_NOTE_MAX_LENGTH).replace(/\s+\S*$/u, "")}…`
       : trimmed;
   return ` ${clipped}`;
-}
-
-export function hasBlockingResumeIdentityMismatch(
-  validation: Pick<ResumeValidationResult, "issues">,
-): boolean {
-  return validation.issues.some(
-    (issue) =>
-      issue.category === "identity_mismatch" &&
-      isBlockingResumeValidationIssue(issue),
-  );
 }
 
 function compareResumeTextSets(

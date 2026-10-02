@@ -268,7 +268,7 @@ describe("ApplicationsCrmDetail", () => {
     );
   });
 
-  test("requires confirmation before saving an external claim and cancel leaves it unchanged", async () => {
+  test("saves a stage the person picks at once, with no confirmation step", async () => {
     Object.defineProperty(window, "nordri", {
       configurable: true,
       value: {
@@ -305,188 +305,24 @@ describe("ApplicationsCrmDetail", () => {
       { container: appRoot },
     );
 
-    const stageSelect = screen.getByRole<HTMLSelectElement>("combobox", {
-      name: "Stage",
-    });
-    for (const stage of [
-      "employer_viewed",
-      "recruiter_contact",
-      "assessment",
-      "interview",
-      "offer",
-      "rejected",
-    ]) {
-      stageSelect.focus();
-      fireEvent.change(stageSelect, {
-        target: { value: stage },
-      });
-      expect(onMutate).not.toHaveBeenCalled();
-      expect(screen.getByRole("alertdialog").textContent).toContain(
-        "does not check this with the employer",
-      );
-      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-      expect(onMutate).not.toHaveBeenCalled();
-      expect(stageSelect.value).toBe("applied");
-      expect(document.activeElement).toBe(stageSelect);
-    }
+    fireEvent.change(
+      screen.getByRole<HTMLSelectElement>("combobox", { name: "Stage" }),
+      { target: { value: "interview" } },
+    );
 
-    stageSelect.focus();
-    fireEvent.change(stageSelect, {
-      target: { value: "recruiter_contact" },
-    });
-    const confirmButton = screen.getByRole("button", {
-      name: /^Mark as /,
-    });
-    fireEvent.click(confirmButton);
-    fireEvent.click(confirmButton);
+    expect(screen.queryByRole("alertdialog")).toBeNull();
     await waitFor(() =>
       expect(onMutate).toHaveBeenCalledWith({
         applicationRecordId: "application_1",
         expectedRevision: 4,
         mutation: {
           type: "set_stage",
-          stage: "recruiter_contact",
+          stage: "interview",
           customStageId: null,
           note: null,
         },
       }),
     );
-    expect(onMutate).toHaveBeenCalledTimes(1);
-    await waitFor(() => expect(document.activeElement).toBe(stageSelect));
-  });
-
-  test("isolates background focus, traps traversal, and restores the opener on Escape and backdrop cancel", () => {
-    Object.defineProperty(window, "nordri", {
-      configurable: true,
-      value: {
-        jobFinder: {
-          listCandidateAssets: vi.fn(() => Promise.resolve({ assets: [] })),
-        },
-      },
-    });
-    const onMutate = vi.fn(() => Promise.resolve());
-    const record = ApplicationRecordSchema.parse({
-      id: "application_1",
-      jobId: "job_1",
-      title: "Engineer",
-      company: "Example",
-      status: "submitted",
-      lastActionLabel: "Applied manually",
-      nextActionLabel: null,
-      lastUpdatedAt: "2026-08-15T10:00:00.000Z",
-      crm: {
-        revision: 4,
-        stage: "applied",
-        stageChangedAt: "2026-08-15T10:00:00.000Z",
-        appliedAt: "2026-08-15T10:00:00.000Z",
-      },
-    });
-
-    render(
-      <ApplicationsCrmDetail
-        onExport={vi.fn(() => Promise.resolve())}
-        onMutate={onMutate}
-        record={record}
-        settings={ApplicationCrmSettingsSchema.parse({})}
-      />,
-      { container: appRoot },
-    );
-
-    const stageSelect = screen.getByRole<HTMLSelectElement>("combobox", {
-      name: "Stage",
-    });
-    stageSelect.focus();
-    fireEvent.change(stageSelect, { target: { value: "interview" } });
-
-    const dialog = screen.getByRole("alertdialog");
-    const cancelButton = screen.getByRole("button", { name: "Cancel" });
-    const confirmButton = screen.getByRole("button", {
-      name: /^Mark as /,
-    });
-    expect(document.activeElement).toBe(cancelButton);
-    expect(appRoot.getAttribute("inert")).toBe("");
-    expect(appRoot.getAttribute("aria-hidden")).toBe("true");
-    expect(appRoot.contains(dialog)).toBe(false);
-
-    fireEvent.keyDown(cancelButton, { key: "Tab" });
-    expect(document.activeElement).toBe(confirmButton);
-    fireEvent.keyDown(confirmButton, { key: "Tab" });
-    expect(document.activeElement).toBe(cancelButton);
-    fireEvent.keyDown(cancelButton, { key: "Tab", shiftKey: true });
-    expect(document.activeElement).toBe(confirmButton);
-
-    stageSelect.focus();
-    fireEvent.keyDown(stageSelect, { key: "Tab" });
-    expect(document.activeElement).toBe(cancelButton);
-    fireEvent.keyDown(cancelButton, { key: "Tab" });
-    fireEvent.keyDown(confirmButton, { key: "Escape" });
-
-    expect(screen.queryByRole("alertdialog")).toBeNull();
-    expect(document.activeElement).toBe(stageSelect);
-    expect(appRoot.hasAttribute("inert")).toBe(false);
-    expect(appRoot.hasAttribute("aria-hidden")).toBe(false);
-    expect(onMutate).not.toHaveBeenCalled();
-
-    fireEvent.change(stageSelect, { target: { value: "offer" } });
-    const backdrop = screen.getByRole("alertdialog").parentElement;
-    expect(backdrop).not.toBeNull();
-    fireEvent.click(backdrop as HTMLElement);
-
-    expect(screen.queryByRole("alertdialog")).toBeNull();
-    expect(document.activeElement).toBe(stageSelect);
-    expect(onMutate).not.toHaveBeenCalled();
-  });
-
-  test("restores preexisting root isolation and removes listeners when unmounted", () => {
-    Object.defineProperty(window, "nordri", {
-      configurable: true,
-      value: {
-        jobFinder: {
-          listCandidateAssets: vi.fn(() => Promise.resolve({ assets: [] })),
-        },
-      },
-    });
-    appRoot.setAttribute("inert", "persisted");
-    appRoot.setAttribute("aria-hidden", "false");
-    const record = ApplicationRecordSchema.parse({
-      id: "application_1",
-      jobId: "job_1",
-      title: "Engineer",
-      company: "Example",
-      status: "submitted",
-      lastActionLabel: "Applied manually",
-      nextActionLabel: null,
-      lastUpdatedAt: "2026-08-15T10:00:00.000Z",
-      crm: {
-        revision: 4,
-        stage: "applied",
-        stageChangedAt: "2026-08-15T10:00:00.000Z",
-        appliedAt: "2026-08-15T10:00:00.000Z",
-      },
-    });
-    const { unmount } = render(
-      <ApplicationsCrmDetail
-        onExport={vi.fn(() => Promise.resolve())}
-        onMutate={vi.fn(() => Promise.resolve())}
-        record={record}
-        settings={ApplicationCrmSettingsSchema.parse({})}
-      />,
-      { container: appRoot },
-    );
-
-    fireEvent.change(screen.getByLabelText("Stage"), {
-      target: { value: "assessment" },
-    });
-    expect(appRoot.getAttribute("inert")).toBe("");
-    expect(appRoot.getAttribute("aria-hidden")).toBe("true");
-
-    unmount();
-
-    expect(screen.queryByRole("alertdialog")).toBeNull();
-    expect(appRoot.getAttribute("inert")).toBe("persisted");
-    expect(appRoot.getAttribute("aria-hidden")).toBe("false");
-    fireEvent.keyDown(document, { key: "Escape" });
-    expect(appRoot.getAttribute("inert")).toBe("persisted");
   });
 
   test("names the tracked role and company in its header", () => {

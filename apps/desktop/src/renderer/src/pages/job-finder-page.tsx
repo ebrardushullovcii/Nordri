@@ -1248,14 +1248,16 @@ export function JobFinderPage() {
         )}
         liveDiscoveryEvents={context.liveDiscoveryEvents}
         onCancelApplyRun={(runId) => {
+          // Cancel stops the whole run; any one of its applications names it
+          // for the lineage check. A batch has several, and requiring exactly
+          // one made Cancel fail on every batch.
           const assignedResults = workspace.applyJobResults.filter(
             (result) =>
               result.runId === runId && result.applicationRecordId !== null,
           );
-          if (assignedResults.length !== 1) {
-            return Promise.resolve(false);
-          }
-          const result = assignedResults[0];
+          const result =
+            assignedResults.find((entry) => entry.state === "filling") ??
+            assignedResults[0];
           if (!result?.applicationRecordId) {
             return Promise.resolve(false);
           }

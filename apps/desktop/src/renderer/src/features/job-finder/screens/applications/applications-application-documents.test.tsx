@@ -184,8 +184,8 @@ describe("ApplicationsApplicationDocuments", () => {
     });
     expect(document.body.textContent).toContain("User-authored revision");
 
-    const approve = [...document.querySelectorAll("button")].find((button) =>
-      button.textContent?.includes("Approve exact revision"),
+    const approve = [...document.querySelectorAll("button")].find(
+      (button) => button.textContent?.trim() === "Approve",
     ) as HTMLButtonElement;
     await act(async () => {
       approve.click();
@@ -196,6 +196,181 @@ describe("ApplicationsApplicationDocuments", () => {
       expectedRevision: 2,
     });
   });
+
+  it("approves the text on screen, saving unsaved typing first", async () => {
+    let currentDocument: typeof proposed | null = null;
+    const listApplicationDocuments = vi.fn(() =>
+      Promise.resolve({
+        documents: currentDocument ? [currentDocument] : [],
+      }),
+    );
+    const proposeApplicationDocument = vi.fn(() => {
+      currentDocument = proposed;
+      return Promise.resolve(proposed);
+    });
+    const edited = ApplicationDocumentRevisionSchema.parse({
+      ...proposed,
+      revision: 2,
+      content: "User-authored revision.",
+      authorship: "user_edited",
+      requiresGroundingReview: true,
+    });
+    const editApplicationDocument = vi.fn(() => {
+      currentDocument = edited;
+      return Promise.resolve(edited);
+    });
+    const approveApplicationDocument = vi.fn(() => {
+      currentDocument = ApplicationDocumentRevisionSchema.parse({
+        ...edited,
+        status: "approved",
+        approvedAt: "2026-08-10T10:05:00.000Z",
+        outputAsset: {
+          id: "asset_1",
+          kind: "cover_letter",
+          originalName: "document_1-r2.txt",
+          mime: "text/plain",
+          byteSize: 42,
+          sha256: "c".repeat(64),
+          createdAt: "2026-08-10T10:05:00.000Z",
+          sensitivity: "sensitive",
+          consentScope: "job_application_attachment",
+          retention: "until_deleted",
+          deletedAt: null,
+          extractedText: null,
+        },
+      });
+      return Promise.resolve(currentDocument);
+    });
+    Object.defineProperty(window, "nordri", {
+      configurable: true,
+      value: {
+        jobFinder: {
+          listApplicationDocuments,
+          proposeApplicationDocument,
+          editApplicationDocument,
+          approveApplicationDocument,
+          exportApplicationDocument: vi.fn(),
+        },
+      },
+    });
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    await act(async () => {
+      root?.render(
+        <ApplicationsApplicationDocuments
+          applicationRecord={applicationRecord}
+          applyRunDetails={null}
+        />,
+      );
+      await Promise.resolve();
+    });
+    const generate = [...document.querySelectorAll("button")].find((button) =>
+      button.textContent?.includes("Draft a cover letter"),
+    ) as HTMLButtonElement;
+    await act(async () => {
+      generate.click();
+      await Promise.resolve();
+    });
+
+    expect(proposeApplicationDocument).toHaveBeenCalledWith(
+      expect.objectContaining({
+        jobId: "job_1",
+        applicationRecordId: "application_1",
+        question: null,
+      }),
+    );
+    expect(document.body.textContent).toContain("Approved profile evidence.");
+    expect(document.body.textContent).toContain(
+      "Exact job: Platform Engineer at Acme",
+    );
+
+    const textarea = document.querySelector("textarea") as HTMLTextAreaElement;
+    await act(async () => {
+      // React tracks textarea values through the instance setter; use the native
+      // setter to exercise the real onChange path in jsdom.
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      const valueSetter = Object.getOwnPropertyDescriptor(
+        HTMLTextAreaElement.prototype,
+        "value",
+      )?.set;
+      if (valueSetter) {
+        Reflect.apply(valueSetter, textarea, ["User-authored revision."]);
+      }
+      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+      await Promise.resolve();
+    });
+    const approve = [...document.querySelectorAll("button")].find(
+      (button) => button.textContent?.trim() === "Save and approve",
+    ) as HTMLButtonElement;
+    await act(async () => {
+      approve.click();
+      await Promise.resolve();
+    });
+    expect(editApplicationDocument).toHaveBeenCalledWith({
+      documentId: "document_1",
+      expectedRevision: 1,
+      content: "User-authored revision.",
+    });
+    expect(approveApplicationDocument).toHaveBeenCalledWith({
+      documentId: "document_1",
+      expectedRevision: 2,
+    });
+  });
+
+  it.each(["", "   \n  "])(
+    "does not approve an empty editor (%j)",
+    async (content) => {
+      const approveApplicationDocument = vi.fn();
+      const editApplicationDocument = vi.fn();
+      Object.defineProperty(window, "nordri", {
+        configurable: true,
+        value: {
+          jobFinder: {
+            listApplicationDocuments: vi.fn(() =>
+              Promise.resolve({ documents: [proposed] }),
+            ),
+            approveApplicationDocument,
+            editApplicationDocument,
+          },
+        },
+      });
+      const container = document.createElement("div");
+      document.body.appendChild(container);
+      root = createRoot(container);
+      await act(async () => {
+        root?.render(
+          <ApplicationsApplicationDocuments
+            applicationRecord={applicationRecord}
+            applyRunDetails={null}
+          />,
+        );
+        await Promise.resolve();
+      });
+      const textarea = container.querySelector("textarea")!;
+      await act(async () => {
+        // eslint-disable-next-line @typescript-eslint/unbound-method
+        const setter = Object.getOwnPropertyDescriptor(
+          HTMLTextAreaElement.prototype,
+          "value",
+        )!.set!;
+        Reflect.apply(setter, textarea, [content]);
+        textarea.dispatchEvent(new Event("input", { bubbles: true }));
+        await Promise.resolve();
+      });
+      const approve = [...container.querySelectorAll("button")].find(
+        (button) => button.textContent?.trim() === "Approve",
+      )!;
+      expect(approve.disabled).toBe(true);
+      await act(async () => {
+        approve.click();
+        await Promise.resolve();
+      });
+      expect(approveApplicationDocument).not.toHaveBeenCalled();
+      expect(editApplicationDocument).not.toHaveBeenCalled();
+    },
+  );
 
   it("renders every native field with canonical tokens, focus hierarchy, and preserved geometry", async () => {
     const listApplicationDocuments = vi.fn(() =>

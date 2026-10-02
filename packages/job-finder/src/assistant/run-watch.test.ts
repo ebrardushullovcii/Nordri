@@ -74,3 +74,31 @@ describe("following an application while an answer is put on the form", () => {
     expect(status.summary).toContain("1 submitted");
   });
 });
+
+it("names a cancelled item and leaves the other item waiting on its own step", () => {
+  const workspace = snapshot("awaiting_user");
+  workspace.applyJobResults.push({
+    ...workspace.applyJobResults[0]!,
+    id: "result_cancelled",
+    jobId: "job_cancelled",
+    state: "cancelled",
+    summary: "Cancelled by you",
+    blockerSummary: null,
+  });
+  const status = readRunStatus(workspace, run);
+  expect(status.summary).toContain("1 cancelled");
+  expect(status.summary).toContain("1 awaiting review");
+  expect(status.summary).not.toContain("failed");
+  expect(status.pendingHandoffKey).toBe("step_1");
+  expect(status.details).toMatchObject({
+    results: [
+      {},
+      {
+        jobId: "job_cancelled",
+        state: "cancelled",
+        summary: "Cancelled by you",
+        blocker: null,
+      },
+    ],
+  });
+});

@@ -254,8 +254,10 @@ export type AssistantChangeTarget = z.infer<typeof AssistantChangeTargetSchema>;
 const DiffPreviewSchema = z
   .object({
     label: NonEmptyStringSchema.max(200),
-    before: z.string().max(600).nullable().default(null),
-    after: z.string().max(600).nullable().default(null),
+    // A removed or added record lists every field, one per line, so it can
+    // be longer than a single changed value.
+    before: z.string().max(2000).nullable().default(null),
+    after: z.string().max(2000).nullable().default(null),
   })
   .strict();
 
@@ -269,7 +271,7 @@ export const AssistantMessagePartSchema = z.discriminatedUnion("type", [
       targetId: IdSchema.nullable().default(null),
       summary: NonEmptyStringSchema.max(400),
       fields: z.array(NonEmptyStringSchema.max(160)).max(40).default([]),
-      preview: z.array(DiffPreviewSchema).max(12).default([]),
+      preview: z.array(DiffPreviewSchema).max(24).default([]),
       status: z
         .enum(["applied", "undone", "partially_undone"])
         .default("applied"),

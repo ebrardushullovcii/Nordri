@@ -5,6 +5,9 @@ import {
 } from "@nordri/job-finder/resume-identity";
 import { Button } from "@renderer/components/ui/button";
 
+// A warning, never a pause (N-020): resumes always print the profile's name
+// and contact details, so the person can keep going. One click confirms the
+// resume is theirs and the note goes away.
 export function ResumeIdentityChoiceNotice(props: {
   profile: CandidateProfile;
   onKeepResumeName: () => void;
@@ -34,12 +37,11 @@ export function ResumeIdentityChoiceNotice(props: {
       <div
         className="grid min-w-0 gap-3 rounded-(--radius-field) border border-(--warning-border) bg-(--warning-surface) px-4 py-3"
         data-testid="resume-identity-choice"
-        role="alert"
+        role="status"
       >
         <p className="text-(length:--text-small) leading-6 text-(--warning-text)">
-          Preparation is paused because the imported resume&apos;s email is “
-          {choice.sourceEmail}” while your profile uses “{profileEmail}”.
-          Confirm this resume is yours, and resumes and applications use your
+          Your imported resume&apos;s email is “{choice.sourceEmail}” and your
+          profile uses “{profileEmail}”. Resumes and applications use your
           profile&apos;s email.
         </p>
         <div className="flex flex-wrap gap-2">
@@ -60,12 +62,11 @@ export function ResumeIdentityChoiceNotice(props: {
     <div
       className="grid min-w-0 gap-3 rounded-(--radius-field) border border-(--warning-border) bg-(--warning-surface) px-4 py-3"
       data-testid="resume-identity-choice"
-      role="alert"
+      role="status"
     >
       <p className="text-(length:--text-small) leading-6 text-(--warning-text)">
-        Preparation is paused because the imported resume says “{sourceName}”
-        while your profile says “{profileName}”; choose which name belongs on
-        this resume before preparing jobs.
+        Your imported resume says “{sourceName}” and your profile says “
+        {profileName}”. Resumes use your profile name.
       </p>
       <div className="flex flex-wrap gap-2">
         <Button
@@ -74,7 +75,7 @@ export function ResumeIdentityChoiceNotice(props: {
           type="button"
           variant="primary"
         >
-          Use my profile name for this resume
+          Keep my profile name
         </Button>
         <Button
           onClick={props.onKeepResumeName}
@@ -82,7 +83,7 @@ export function ResumeIdentityChoiceNotice(props: {
           type="button"
           variant="outline"
         >
-          Keep the resume&apos;s name
+          Use “{sourceName}” instead
         </Button>
       </div>
     </div>

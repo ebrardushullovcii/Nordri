@@ -125,8 +125,12 @@ export function buildWorkspaceStatusCopy(input: {
     selectedTemplateLane,
   } = input;
 
+  // An approved resume has no Approve button: saving is the next step and it
+  // reopens approval (N-048).
   const studioStatusMessage = hasUnsavedChanges
-    ? "Your edits will be saved automatically when you approve."
+    ? draft.approvedExportId
+      ? "Applications use the approved version until you save."
+      : "Your edits will be saved automatically when you approve."
     : approvalBlockedReason
       ? approvalBlockedReason
       : !selectedTemplateApprovalEligible

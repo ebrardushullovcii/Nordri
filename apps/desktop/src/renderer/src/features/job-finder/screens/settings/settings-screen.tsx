@@ -201,12 +201,21 @@ export function SettingsScreen(props: {
   const { dirtySections, registry } = useSettingsDirtySections();
 
   useLayoutEffect(() => {
-    const sectionId = location.hash.slice(1);
-    if (
-      settingsSections.some((section) => section.id === sectionId) &&
-      focusSettingsSection(sectionId)
-    ) {
-      setActiveSectionId(sectionId);
+    // A hash names a whole section or one group inside it (Find jobs links to
+    // the search-pickiness group), and the nav marks the owning section.
+    const targetId = location.hash.slice(1);
+    if (!targetId) {
+      return;
+    }
+    const target = document.getElementById(targetId);
+    const owningSection = settingsSections.find(
+      (section) =>
+        section.id === targetId ||
+        (target !== null &&
+          document.getElementById(section.id)?.contains(target) === true),
+    );
+    if (owningSection && focusSettingsSection(targetId)) {
+      setActiveSectionId(owningSection.id);
     }
   }, [location.hash]);
 

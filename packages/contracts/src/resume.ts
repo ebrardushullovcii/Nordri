@@ -1234,10 +1234,13 @@ export const ResumeExportArtifactSummarySchema =
     jobId: true,
     format: true,
     filePath: true,
+    sha256: true,
     pageCount: true,
     templateId: true,
     exportedAt: true,
     isApproved: true,
+  }).extend({
+    sha256: ResumeExportArtifactSchema.shape.sha256.default(null),
   });
 export type ResumeExportArtifactSummary = z.infer<
   typeof ResumeExportArtifactSummarySchema

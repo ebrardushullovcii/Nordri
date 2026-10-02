@@ -1,6 +1,7 @@
 import type { BrowserSessionRuntime } from "@nordri/browser-runtime";
 import {
   JobPostingSchema,
+  DiscoveryRunResultSchema,
   type DiscoveryActivityEvent,
 } from "@nordri/contracts";
 import { describe, expect, test, vi } from "vitest";
@@ -145,6 +146,82 @@ function createHarness(seedOverrides?: {
 }
 
 describe("discovery checkpoint incremental persistence", () => {
+  test("keeps checkpoint jobs and records a blocked source even when detail retrieval returns partial jobs", async () => {
+    const job = createCollectedJob({ token: "before_bot_check" });
+    const runtime = createIncrementalRuntime({
+      checkpoints: [[job]],
+      finalJobs: [job],
+    });
+    const run = runtime.runAgentDiscovery!.bind(runtime);
+    const runAgentDiscovery = vi.fn<
+      NonNullable<BrowserSessionRuntime["runAgentDiscovery"]>
+    >(async (source, options) => {
+      const partial = await run(source, options);
+      return DiscoveryRunResultSchema.parse({
+        ...partial,
+        warning:
+          "example.com is showing a bot check. Open it in the browser, get past the check, then search again.",
+        agentMetadata: {
+          incomplete: true,
+          accessBlockerReason: "site_protection",
+          parkedTab: {
+            tabId: "tab_bot_check",
+            url: "https://example.com/jobs/blocked",
+            title: "Just a moment...",
+          },
+        },
+      });
+    });
+    const { seed } = createHarness();
+    const fetchListingHtml = vi.fn();
+    const { workspaceService, repository } = createWorkspaceServiceHarness({
+      seed,
+      browserRuntime: { ...runtime, runAgentDiscovery },
+      aiClient: createAgentAiClient(),
+      fetchListingHtml,
+    });
+    await expect(
+      workspaceService.runDiscoveryForTarget(
+        "target_incremental",
+        () => {},
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow("example.com is showing a bot check");
+    const snapshot = await workspaceService.getWorkspaceSnapshot();
+    expect(runAgentDiscovery).toHaveBeenCalledOnce();
+    expect(fetchListingHtml).not.toHaveBeenCalled();
+    expect(
+      (await repository.listSavedJobs()).map((saved) => saved.sourceJobId),
+    ).toContain(job.sourceJobId);
+    expect(snapshot.recentDiscoveryRuns[0]).toMatchObject({
+      state: "failed",
+      summary: {
+        validJobsFound: 1,
+        jobsPersisted: 1,
+        sourceHealth: [{ health: "failed" }],
+      },
+      targetExecutions: [
+        {
+          state: "failed",
+          accessBlockerReason: "site_protection",
+          jobsFound: 1,
+        },
+      ],
+    });
+    expect(snapshot.recentDiscoveryRuns[0]?.summary.warnings).toContain(
+      "example.com is showing a bot check. Open it in the browser, get past the check, then search again.",
+    );
+    const handoff = snapshot.userActionRequests.find(
+      (request) =>
+        request.scope.type === "discovery_source" &&
+        request.scope.parkedTab?.tabId === "tab_bot_check",
+    );
+    expect(handoff?.scope).toMatchObject({
+      type: "discovery_source",
+      parkedTab: { tabId: "tab_bot_check" },
+    });
+  });
+
   test("commits distinct checkpoint jobs mid-run and keeps final counts additive for repeated sources", async () => {
     const jobA = createCollectedJob({ token: "a" });
     const jobB = createCollectedJob({ token: "b" });

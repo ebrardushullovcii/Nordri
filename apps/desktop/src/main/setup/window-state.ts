@@ -161,9 +161,24 @@ export function resolveMainWindowBounds(
   savedState: MainWindowState | null,
   defaultBounds: Pick<Rectangle, "width" | "height">,
   displays: Array<Pick<Display, "bounds"> & Partial<Pick<Display, "workArea">>>,
+  /**
+   * The primary display's usable area (without the menu bar and Dock). A
+   * first-launch or off-screen size is fitted to it: 1440x920 on a 13-inch
+   * laptop put the bottom of the window, the assistant's input among it,
+   * behind the Dock.
+   */
+  primaryWorkArea?: Pick<Rectangle, "width" | "height">,
 ): RestoredMainWindowBounds {
+  const fitToPrimary = (size: Pick<Rectangle, "width" | "height">) =>
+    primaryWorkArea
+      ? {
+          width: Math.min(size.width, primaryWorkArea.width),
+          height: Math.min(size.height, primaryWorkArea.height),
+        }
+      : { width: size.width, height: size.height };
+
   if (!savedState) {
-    return defaultBounds;
+    return fitToPrimary(defaultBounds);
   }
 
   const savedBounds = {
@@ -184,10 +199,7 @@ export function resolveMainWindowBounds(
     );
   }
 
-  return {
-    width: savedState.width,
-    height: savedState.height,
-  };
+  return fitToPrimary(savedState);
 }
 
 export function restoreMainWindowBounds(
@@ -198,6 +210,7 @@ export function restoreMainWindowBounds(
     savedState,
     defaultBounds,
     screen.getAllDisplays(),
+    screen.getPrimaryDisplay().workArea,
   );
 }
 

@@ -34,6 +34,8 @@
       }
     ]
   },
+  "mac": { "icon": "build/icon.icns" },
+  "linux": { "icon": "build/icons" },
   "nsis": {
     "oneClick": false,
     "perMachine": false,

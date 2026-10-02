@@ -6,10 +6,18 @@ import { Input } from "@renderer/components/ui/input";
 import { Textarea } from "@renderer/components/ui/textarea";
 import { useEffect, useRef, useState } from "react";
 
+// Keep exactly what the person typed while they type: a trailing space is the
+// separator before the next word. Fields are trimmed when they lose focus.
 function normalizeNullableText(value: string): string | null {
-  const trimmed = value.trim();
+  return value.trim().length > 0 ? value : null;
+}
+
+function trimNullableText(value: string | null): string | null {
+  const trimmed = value?.trim() ?? "";
   return trimmed.length > 0 ? trimmed : null;
 }
+
+type IdentityTextField = Exclude<keyof ResumeDraftIdentity, "additionalLinks">;
 
 function normalizeLinkList(value: string): string[] {
   return value
@@ -51,6 +59,28 @@ export function ResumeIdentityEditor(props: ResumeIdentityEditorProps) {
   const targetProps = (targetId: string) => ({
     "data-resume-editor-target": targetId,
   });
+
+  const trimOnBlur = (field: IdentityTextField) => () => {
+    const value = identity[field];
+    const trimmed = trimNullableText(value);
+    if (trimmed !== value) {
+      updateIdentity({ [field]: trimmed });
+    }
+  };
+
+  // The links box keeps its own text so Enter can start a new line before the
+  // next link is typed; the saved list drops blank lines.
+  const [linksText, setLinksText] = useState(() =>
+    identity.additionalLinks.join("\n"),
+  );
+  const savedLinksKey = identity.additionalLinks.join("\n");
+  useEffect(() => {
+    setLinksText((current) =>
+      normalizeLinkList(current).join("\n") === savedLinksKey
+        ? current
+        : savedLinksKey,
+    );
+  }, [savedLinksKey]);
 
   useEffect(() => {
     if (!props.selectedTargetId?.startsWith("identity:")) {
@@ -138,6 +168,7 @@ export function ResumeIdentityEditor(props: ResumeIdentityEditorProps) {
             {...targetProps(getResumeIdentityTargetId("fullName"))}
             disabled={props.disabled}
             value={identity.fullName ?? ""}
+            onBlur={trimOnBlur("fullName")}
             onChange={(event) =>
               updateIdentity({
                 fullName: normalizeNullableText(event.currentTarget.value),
@@ -154,6 +185,7 @@ export function ResumeIdentityEditor(props: ResumeIdentityEditorProps) {
               {...targetProps(getResumeIdentityTargetId("headline"))}
               disabled={props.disabled}
               value={identity.headline ?? ""}
+              onBlur={trimOnBlur("headline")}
               onChange={(event) =>
                 updateIdentity({
                   headline: normalizeNullableText(event.currentTarget.value),
@@ -168,6 +200,7 @@ export function ResumeIdentityEditor(props: ResumeIdentityEditorProps) {
               {...targetProps(getResumeIdentityTargetId("location"))}
               disabled={props.disabled}
               value={identity.location ?? ""}
+              onBlur={trimOnBlur("location")}
               onChange={(event) =>
                 updateIdentity({
                   location: normalizeNullableText(event.currentTarget.value),
@@ -185,6 +218,7 @@ export function ResumeIdentityEditor(props: ResumeIdentityEditorProps) {
               {...targetProps(getResumeIdentityTargetId("email"))}
               disabled={props.disabled}
               value={identity.email ?? ""}
+              onBlur={trimOnBlur("email")}
               onChange={(event) =>
                 updateIdentity({
                   email: normalizeNullableText(event.currentTarget.value),
@@ -199,6 +233,7 @@ export function ResumeIdentityEditor(props: ResumeIdentityEditorProps) {
               {...targetProps(getResumeIdentityTargetId("phone"))}
               disabled={props.disabled}
               value={identity.phone ?? ""}
+              onBlur={trimOnBlur("phone")}
               onChange={(event) =>
                 updateIdentity({
                   phone: normalizeNullableText(event.currentTarget.value),
@@ -218,6 +253,7 @@ export function ResumeIdentityEditor(props: ResumeIdentityEditorProps) {
               {...targetProps(getResumeIdentityTargetId("portfolioUrl"))}
               disabled={props.disabled}
               value={identity.portfolioUrl ?? ""}
+              onBlur={trimOnBlur("portfolioUrl")}
               onChange={(event) =>
                 updateIdentity({
                   portfolioUrl: normalizeNullableText(
@@ -236,6 +272,7 @@ export function ResumeIdentityEditor(props: ResumeIdentityEditorProps) {
               {...targetProps(getResumeIdentityTargetId("linkedinUrl"))}
               disabled={props.disabled}
               value={identity.linkedinUrl ?? ""}
+              onBlur={trimOnBlur("linkedinUrl")}
               onChange={(event) =>
                 updateIdentity({
                   linkedinUrl: normalizeNullableText(event.currentTarget.value),
@@ -253,6 +290,7 @@ export function ResumeIdentityEditor(props: ResumeIdentityEditorProps) {
               {...targetProps(getResumeIdentityTargetId("githubUrl"))}
               disabled={props.disabled}
               value={identity.githubUrl ?? ""}
+              onBlur={trimOnBlur("githubUrl")}
               onChange={(event) =>
                 updateIdentity({
                   githubUrl: normalizeNullableText(event.currentTarget.value),
@@ -269,6 +307,7 @@ export function ResumeIdentityEditor(props: ResumeIdentityEditorProps) {
               {...targetProps(getResumeIdentityTargetId("personalWebsiteUrl"))}
               disabled={props.disabled}
               value={identity.personalWebsiteUrl ?? ""}
+              onBlur={trimOnBlur("personalWebsiteUrl")}
               onChange={(event) =>
                 updateIdentity({
                   personalWebsiteUrl: normalizeNullableText(
@@ -290,12 +329,12 @@ export function ResumeIdentityEditor(props: ResumeIdentityEditorProps) {
             {...targetProps(getResumeIdentityTargetId("additionalLinks"))}
             disabled={props.disabled}
             rows={4}
-            value={identity.additionalLinks.join("\n")}
-            onChange={(event) =>
-              updateIdentity({
-                additionalLinks: normalizeLinkList(event.currentTarget.value),
-              })
-            }
+            value={linksText}
+            onChange={(event) => {
+              const text = event.currentTarget.value;
+              setLinksText(text);
+              updateIdentity({ additionalLinks: normalizeLinkList(text) });
+            }}
           />
         </Field>
       </div>

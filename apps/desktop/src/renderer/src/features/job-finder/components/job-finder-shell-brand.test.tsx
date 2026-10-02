@@ -14,7 +14,7 @@ afterEach(cleanup);
  */
 describe("JobFinderShellBrand token classes", () => {
   it("uses the Tailwind v4 custom-property shorthand without a nested var()", () => {
-    const { container } = render(<JobFinderShellBrand />);
+    const { container, getByRole } = render(<JobFinderShellBrand />);
 
     const wordmark = container.querySelector("[data-desktop-brand-wordmark]");
     const subtitle = container.querySelector("[data-desktop-brand-subtitle]");
@@ -22,7 +22,10 @@ describe("JobFinderShellBrand token classes", () => {
     expect(wordmark).not.toBeNull();
     expect(subtitle).not.toBeNull();
 
-    expect(wordmark?.className).toContain("text-(--headline-primary)");
+    expect(wordmark?.contains(getByRole("img", { name: "Nordri" }))).toBe(true);
+    expect(
+      getByRole("img", { name: "Nordri" }).getAttribute("class"),
+    ).toContain("text-(--headline-primary)");
     expect(subtitle?.className).toContain("tracking-(--tracking-caps)");
     expect(subtitle?.className).toContain("text-[0.72rem]");
     expect(subtitle?.className).toContain("sm:text-[0.78rem]");

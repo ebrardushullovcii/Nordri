@@ -25,6 +25,7 @@ const asset: CandidateAsset = {
   retention: "until_deleted",
   deletedAt: null,
   extractedText: null,
+  forJob: null,
 };
 
 const removedAsset: CandidateAsset = {

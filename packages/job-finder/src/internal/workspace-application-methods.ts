@@ -1,3 +1,4 @@
+import { savedResumeDigestMatches } from "./resume-file-integrity";
 import {
   createMonotonicTimestamp,
   preserveWorkHistoryReviewGuidance,
@@ -49,6 +50,8 @@ import {
   JobFinderSetWorkHistoryReviewAcknowledgmentInputSchema,
   JobFinderSetResumeClaimConfirmationInputSchema,
   isResumeClaimAssessmentApprovable,
+  isBlockingResumeClaimAssessment,
+  resumeClaimOwnershipStatement,
   buildResumeIssueApprovalContentHash,
   matchResumeIssueApproval,
   ResumeIssueApprovalSchema,
@@ -146,7 +149,6 @@ import {
   collectResumeWorkspaceEvidence,
   buildResumeProposalReplyContent,
   evaluateResumeProposalGrounding,
-  hasBlockingResumeIdentityMismatch,
   isWorkHistoryOmissionReviewSuggestion,
   hasBlockingResumeClaimAssessment,
   matchWorkHistoryReviewAcknowledgment,
@@ -155,11 +157,6 @@ import {
   sanitizeResumeDraft,
   validateResumeDraft,
 } from "./resume-workspace-helpers";
-import {
-  findResumeDraftIdentityConflicts,
-  resolveResumeIdentity,
-  resumeIdentityMismatchMessage,
-} from "./resume-identity";
 import {
   buildResumeWorkspace,
   buildWorkHistoryReviewSuggestionsFromValidation,
@@ -403,15 +400,6 @@ async function getLatestResumeRevisionId(
   );
 }
 
-function assertCoherentResumeIdentity(profile: CandidateProfile): void {
-  const identityResolution = resolveResumeIdentity(profile);
-  if (identityResolution.mismatchReasons.length > 0) {
-    throw new Error(
-      resumeIdentityMismatchMessage(identityResolution.mismatchReasons),
-    );
-  }
-}
-
 /**
  * True when the only change between two profiles is answers the person saved
  * for next time. Saving an answer while a batch runs (the default now) must
@@ -450,7 +438,6 @@ async function assertPreparationProfileCurrent(
     current.revision !== prerequisites.profileRevision &&
     onlySavedAnswersWereAdded(prerequisites.profile, current.profile)
   ) {
-    assertCoherentResumeIdentity(current.profile);
     return;
   }
   await assertCurrentResumeProfile(
@@ -470,14 +457,12 @@ async function assertCurrentResumeProfile(
     ReturnType<WorkspaceServiceContext["repository"]["getProfileWithRevision"]>
   >
 > {
-  const current = await assertResumeProfileRevisionCurrent(
+  return assertResumeProfileRevisionCurrent(
     ctx,
     expectedRevision,
     operation,
     snapshotProfile,
   );
-  assertCoherentResumeIdentity(current.profile);
-  return current;
 }
 
 export function createWorkspaceApplicationMethods(
@@ -740,7 +725,9 @@ export function createWorkspaceApplicationMethods(
       await ctx.repository.listApplyJobResults({ runId: run.id })
     ).filter(
       (result) =>
-        !["submitted", "skipped", "blocked", "failed"].includes(result.state),
+        !["submitted", "skipped", "blocked", "failed", "cancelled"].includes(
+          result.state,
+        ),
     );
     await Promise.all(
       staleResults.map((result) =>
@@ -860,7 +847,7 @@ export function createWorkspaceApplicationMethods(
     );
     const failedResult =
       latestResult &&
-      !["submitted", "skipped", "blocked", "failed"].includes(
+      !["submitted", "skipped", "blocked", "failed", "cancelled"].includes(
         latestResult.state,
       )
         ? ApplyJobResultSchema.parse({
@@ -1289,7 +1276,7 @@ export function createWorkspaceApplicationMethods(
     }
 
     const actualSha256 = await ctx.exportFileVerifier.sha256(input.filePath);
-    if (actualSha256.toLowerCase() !== input.expectedSha256.toLowerCase()) {
+    if (!savedResumeDigestMatches(input.expectedSha256, actualSha256)) {
       throw new Error(
         `${input.label} changed after it was saved. Re-import or re-export it before starting Apply Copilot.`,
       );
@@ -1419,7 +1406,6 @@ export function createWorkspaceApplicationMethods(
       job,
       settings,
     );
-    assertCoherentResumeIdentity(profileState.profile);
     const profile = profileState.profile;
 
     if (resumeApplicationMode === "original_resume") {
@@ -1881,7 +1867,6 @@ export function createWorkspaceApplicationMethods(
     capacityToken?: ApplicationPreparationCapacityToken,
   ): Promise<void> {
     const [
-      profileState,
       searchPreferences,
       settings,
       sourceInstructionArtifacts,
@@ -1897,7 +1882,6 @@ export function createWorkspaceApplicationMethods(
       campaignState,
       savedJobs,
     ] = await Promise.all([
-      ctx.repository.getProfileWithRevision(),
       ctx.repository.getSearchPreferences(),
       ctx.repository.getSettings(),
       ctx.repository.listSourceInstructionArtifacts(),
@@ -1913,7 +1897,6 @@ export function createWorkspaceApplicationMethods(
       ctx.repository.getCampaignState(),
       ctx.repository.listSavedJobs(),
     ]);
-    assertCoherentResumeIdentity(profileState.profile);
     const run = runs.find((entry) => entry.id === input.runId) ?? null;
     const savedJobsById = new Map(savedJobs.map((job) => [job.id, job]));
 
@@ -2229,6 +2212,7 @@ export function createWorkspaceApplicationMethods(
           let preparedReviewCardRun: ApplicationReviewCard | null = null;
           const applicationAttachmentsRun =
             await resolveApplicationAttachmentsForExecution({
+              jobId: job.id,
               resolver: ctx.candidateAssetResolver,
               questionRecords: [],
               answerRecords: [],
@@ -3384,13 +3368,6 @@ export function createWorkspaceApplicationMethods(
     if (!job) {
       throw new Error(
         `Unable to generate a resume for unknown job '${jobId}'.`,
-      );
-    }
-
-    const identityResolution = resolveResumeIdentity(profile);
-    if (identityResolution.mismatchReasons.length > 0) {
-      throw new Error(
-        resumeIdentityMismatchMessage(identityResolution.mismatchReasons),
       );
     }
 
@@ -4966,8 +4943,7 @@ export function createWorkspaceApplicationMethods(
           hasBlockingResumeClaimAssessment({
             validation: preExportValidation,
             draft: exportDraft,
-          }) ||
-          hasBlockingResumeIdentityMismatch(preExportValidation)
+          })
         ) {
           const previousValidation =
             (await ctx.repository.listResumeValidationResults(draft.id))[0] ??
@@ -4989,9 +4965,7 @@ export function createWorkspaceApplicationMethods(
             tailoredAsset,
           });
           throw new Error(
-            hasBlockingResumeIdentityMismatch(preExportValidation)
-              ? "This resume has an identity mismatch between the visible profile and imported resume and cannot be exported yet."
-              : "Some lines in this resume still need your decision before it can be exported. Open the resume: they are listed under Lines to confirm.",
+            "Some lines in this resume still need your decision before it can be exported. Open the resume: they are listed under Lines to confirm.",
           );
         }
         await assertCurrentResumeProfile(
@@ -5154,29 +5128,6 @@ export function createWorkspaceApplicationMethods(
         ) {
           throw new Error(
             "Some lines in this resume still need your decision before it can be approved. They are listed under Lines to confirm.",
-          );
-        }
-
-        const identityResolution = resolveResumeIdentity(profile);
-        const draftIdentityConflicts = findResumeDraftIdentityConflicts(
-          profile,
-          draft.identity,
-        );
-        if (
-          identityResolution.mismatchReasons.length > 0 ||
-          draftIdentityConflicts.length > 0 ||
-          hasBlockingResumeIdentityMismatch(latestValidation)
-        ) {
-          throw new Error(
-            resumeIdentityMismatchMessage(
-              identityResolution.mismatchReasons.length > 0
-                ? identityResolution.mismatchReasons
-                : draftIdentityConflicts.length > 0
-                  ? draftIdentityConflicts
-                  : [
-                      "The saved validation result contains a blocking resume identity mismatch.",
-                    ],
-            ),
           );
         }
 
@@ -5485,7 +5436,28 @@ export function createWorkspaceApplicationMethods(
               "This note no longer matches the saved draft. Reload the workspace and try again.",
             );
           }
-          if (matchResumeIssueApproval({ issue, draft: currentDraft })) {
+          // The same line can carry a note (a number the evidence does not
+          // show) and a claim check. One "Approve as accurate" settles both:
+          // approving only the note left "Review 1 line" with no control.
+          const sameLineClaims = (
+            latestValidation?.claimAssessments ?? []
+          ).filter(
+            (assessment) =>
+              issue.sectionId !== null &&
+              assessment.sectionId === issue.sectionId &&
+              (assessment.entryId ?? null) === (issue.entryId ?? null) &&
+              (assessment.bulletId ?? null) === (issue.bulletId ?? null) &&
+              assessment.verifier === "deterministic_candidate_evidence_v2" &&
+              isResumeClaimAssessmentApprovable(assessment) &&
+              isBlockingResumeClaimAssessment({
+                assessment,
+                draft: currentDraft,
+              }),
+          );
+          if (
+            matchResumeIssueApproval({ issue, draft: currentDraft }) &&
+            sameLineClaims.length === 0
+          ) {
             return ctx.getWorkspaceSnapshot();
           }
           const mutatedAt = createMonotonicTimestamp(currentDraft.updatedAt);
@@ -5494,17 +5466,39 @@ export function createWorkspaceApplicationMethods(
             currentDraft,
             mutatedAt,
             reason: "Approved a flagged line as accurate.",
-            nextConfirmations: currentDraft.claimConfirmations,
-            nextIssueApprovals: [
-              ...currentDraft.issueApprovals,
-              ResumeIssueApprovalSchema.parse({
-                id: createUniqueId("issue_approval"),
-                draftId: currentDraft.id,
-                issueId: issue.id,
-                approvedContentHash: parsedInput.approvedContentHash,
-                approvedAt: mutatedAt,
-              }),
+            nextConfirmations: [
+              ...currentDraft.claimConfirmations,
+              ...sameLineClaims.map((assessment) =>
+                ResumeClaimConfirmationSchema.parse({
+                  id: createUniqueId(
+                    `claim_confirmation_${assessment.sectionId}`,
+                  ),
+                  draftId: currentDraft.id,
+                  field: assessment.field,
+                  sectionId: assessment.sectionId,
+                  entryId: assessment.entryId,
+                  bulletId: assessment.bulletId,
+                  confirmedClaimContentHash: assessment.contentHash,
+                  ownershipStatement: resumeClaimOwnershipStatement,
+                  confirmedAt: mutatedAt,
+                }),
+              ),
             ],
+            nextIssueApprovals: matchResumeIssueApproval({
+              issue,
+              draft: currentDraft,
+            })
+              ? currentDraft.issueApprovals
+              : [
+                  ...currentDraft.issueApprovals,
+                  ResumeIssueApprovalSchema.parse({
+                    id: createUniqueId("issue_approval"),
+                    draftId: currentDraft.id,
+                    issueId: issue.id,
+                    approvedContentHash: parsedInput.approvedContentHash,
+                    approvedAt: mutatedAt,
+                  }),
+                ],
           });
         }
         if (parsedInput.intent === "remove_issue_approval") {
@@ -6174,22 +6168,18 @@ export function createWorkspaceApplicationMethods(
       return trackDirectApplyExecution(claim, async () => {
         await requireApplyActivityEnabled();
         const [
-          profileState,
           searchPreferences,
           settings,
           savedJobs,
           sourceInstructionArtifacts,
           sourceDebugAttempts,
         ] = await Promise.all([
-          ctx.repository.getProfileWithRevision(),
           ctx.repository.getSearchPreferences(),
           ctx.repository.getSettings(),
           ctx.repository.listSavedJobs(),
           ctx.repository.listSourceInstructionArtifacts(),
           ctx.repository.listSourceDebugAttempts(),
         ]);
-        const profile = profileState.profile;
-        assertCoherentResumeIdentity(profile);
         const job = savedJobs.find((entry) => entry.id === jobId);
 
         if (!job) {
@@ -6276,6 +6266,7 @@ export function createWorkspaceApplicationMethods(
         let activeEnvelopeApproved = applyAuthorityApproved.envelope;
         const applicationAttachmentsApproved =
           await resolveApplicationAttachmentsForExecution({
+            jobId: job.id,
             resolver: ctx.candidateAssetResolver,
             questionRecords: [],
             answerRecords: [],
@@ -6601,7 +6592,6 @@ export function createWorkspaceApplicationMethods(
           buildApplyRecoveryContext(jobId, selectedApplicationRecord.id),
         ]);
         const profile = profileState.profile;
-        assertCoherentResumeIdentity(profile);
         const capturedCampaignId = await ctx.getActiveCampaignId();
         const job = savedJobs.find((entry) => entry.id === jobId) ?? null;
 
@@ -6876,6 +6866,7 @@ export function createWorkspaceApplicationMethods(
         let activeEnvelopeDirect = applyAuthorityDirect.envelope;
         const applicationAttachmentsDirect =
           await resolveApplicationAttachmentsForExecution({
+            jobId: currentJob.id,
             resolver: ctx.candidateAssetResolver,
             questionRecords: [],
             answerRecords: [],

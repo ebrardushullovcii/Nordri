@@ -136,7 +136,7 @@ test("unrelated legacy repair preserves valid explicit authority and partial beh
       expect(recovered.applicationAutomationMode).toBe("confirm_before_submit");
       expect(recovered.aiBehavior?.profileAssistant.initiative).toBe("answer_only");
       expect(recovered.aiBehavior?.applying.coverLetterPolicy).toBe("when_required");
-      expect(recovered.aiBehavior?.applying.preApprovedDeclarations).toEqual(["truthfulness_certification", "privacy_notice_acknowledgement", "terms_acceptance"]);
+      expect(recovered.aiBehavior?.applying.preApprovedDeclarations).toEqual(["truthfulness_certification", "privacy_notice_acknowledgement", "terms_acceptance", "background_check_consent"]);
     } finally { await repository.close(); }
   } finally { await temp.cleanup(); }
 });

@@ -38,6 +38,7 @@ import {
 } from "lucide-react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { Button } from "@renderer/components/ui/button";
+import { NordriWordmark } from "@renderer/components/brand/nordri-wordmark";
 import { ModuleSwitch } from "@renderer/components/module-switch";
 import { cn } from "@renderer/lib/cn";
 import { AnswerCueOverlay, TranscriptOverlay } from "./interview-overlays";
@@ -763,13 +764,12 @@ export function LiveAssistantPage() {
           >
             <div className="flex min-w-0 flex-col">
               <Link
-                className={cn(
-                  "font-display text-[1.45rem] font-black leading-none tracking-[-0.08em] text-(--headline-primary) sm:text-[1.75rem]",
-                )}
+                aria-label="Nordri"
+                className="text-(--headline-primary)"
                 style={noDragRegionStyle}
                 to={jobFinderReturnRoute}
               >
-                NORDRI
+                <NordriWordmark className="block h-[1.05rem] w-auto sm:h-[1.3rem]" />
               </Link>
               {/* Mirrors the Job Finder shell: the module switch sits
                   directly under the wordmark, at the head of the module's own

@@ -1,5 +1,6 @@
 import {
   CandidateProfileSchema,
+  CompensationPreferenceSchema,
   JobSearchPreferencesSchema,
   type CandidateProfile,
   type JobSearchPreferences,
@@ -50,6 +51,11 @@ type ResolvedResumeImportSelection = {
     >
   > & {
     salaryCurrency?: string | null;
+    employmentTypes?: { values: string[]; explicit: boolean };
+    compensation?: {
+      value: JobSearchPreferences["compensation"];
+      explicit: boolean;
+    };
     targetRoles?: string[];
     locations?: string[];
     workModes?: string[];
@@ -211,6 +217,22 @@ function buildResolvedSelection(
             ...toCandidateListValues(candidate),
           ]);
           break;
+        case "employmentTypes": {
+          const existing = selection.scalarFields.employmentTypes;
+          const explicit = candidate.id === confirmedCandidateId;
+          if (!existing?.explicit || explicit) {
+            selection.scalarFields.employmentTypes = {
+              values: explicit
+                ? toStringArray(candidate.value)
+                : uniqueStrings([
+                    ...(existing?.values ?? []),
+                    ...toStringArray(candidate.value),
+                  ]),
+              explicit,
+            };
+          }
+          break;
+        }
         case "workModes":
           selection.scalarFields.workModes = uniqueStrings([
             ...(selection.scalarFields.workModes ?? []),
@@ -273,6 +295,13 @@ function buildResolvedSelection(
     }
 
     const existing = scalarCandidates.get(key);
+    if (key === "search_preferences.compensation") {
+      if (candidate.id === confirmedCandidateId) {
+        scalarCandidates.set(key, candidate);
+        continue;
+      }
+      if (existing?.id === confirmedCandidateId) continue;
+    }
 
     if (!existing) {
       scalarCandidates.set(key, candidate);
@@ -373,6 +402,15 @@ function buildResolvedSelection(
         selection.scalarFields.personalWebsiteUrl =
           typeof value === "string" ? value : null;
         break;
+      case "search_preferences.compensation": {
+        const parsed = CompensationPreferenceSchema.safeParse(value);
+        if (parsed.success)
+          selection.scalarFields.compensation = {
+            value: parsed.data,
+            explicit: candidate.id === confirmedCandidateId,
+          };
+        break;
+      }
       case "search_preferences.salaryCurrency":
         selection.scalarFields.salaryCurrency =
           typeof value === "string" ? value : null;
@@ -753,10 +791,24 @@ function mergeResolvedSelectionIntoWorkspace(
         : searchPreferences.locations,
       // A header that literally says "Remote" answers the work-mode question
       // the person would otherwise be asked; saved choices are never replaced.
-      workModes: searchPreferences.workModes.length === 0 &&
+      workModes:
+        searchPreferences.workModes.length === 0 &&
         selection.scalarFields.workModes?.length
-        ? uniqueStrings(selection.scalarFields.workModes)
-        : searchPreferences.workModes,
+          ? uniqueStrings(selection.scalarFields.workModes)
+          : searchPreferences.workModes,
+      employmentTypes:
+        selection.scalarFields.employmentTypes?.explicit ||
+        searchPreferences.employmentTypes.length === 0
+          ? (selection.scalarFields.employmentTypes?.values ??
+            searchPreferences.employmentTypes)
+          : searchPreferences.employmentTypes,
+      compensation:
+        selection.scalarFields.compensation?.explicit ||
+        (searchPreferences.compensation.minimum === null &&
+          searchPreferences.compensation.currency === null)
+          ? (selection.scalarFields.compensation?.value ??
+            searchPreferences.compensation)
+          : searchPreferences.compensation,
       salaryCurrency:
         selection.scalarFields.salaryCurrency ??
         searchPreferences.salaryCurrency,
@@ -795,8 +847,8 @@ export function applyResolvedResumeImportCandidatesToWorkspace(input: {
   analysisWarnings: readonly string[];
   /**
    * The review item the person is confirming right now. Only its value may
-   * replace a saved eligibility answer; every other candidate in the run is
-   * re-applied as a fill for empty answers, so confirming a later item never
+   * replace saved eligibility or search preferences. Other candidates only
+   * fill empty answers, so confirming a later item never
    * undoes an edit the person made after an earlier one.
    */
   confirmedCandidateId?: string | null;

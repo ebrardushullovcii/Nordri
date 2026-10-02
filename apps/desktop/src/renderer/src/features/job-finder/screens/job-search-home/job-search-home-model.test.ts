@@ -4,6 +4,7 @@ import type {
 } from "@nordri/contracts";
 import {
   AbnormalFailurePauseSchema,
+  ApplicationRecordSchema,
   createFreshStartCandidateProfile,
 } from "@nordri/contracts";
 import { describe, expect, it } from "vitest";
@@ -1404,7 +1405,7 @@ describe("buildJobSearchHomeModel · shortlist and applications", () => {
     expect(model.next.primary.label).toBe("Open Safeguards");
   });
 
-  it("names an open application review without claiming it blocks searching", () => {
+  it("does not hold anything back for an old prepared-batch sample review", () => {
     const ws = withJobs(workspace(), 2);
     ws.intelligence.safeguards.preparedBatchSampleReviews = [
       {
@@ -1418,17 +1419,7 @@ describe("buildJobSearchHomeModel · shortlist and applications", () => {
       },
     ] as unknown as typeof ws.intelligence.safeguards.preparedBatchSampleReviews;
     const model = build(ws);
-    expect(model.next).toMatchObject({
-      id: "safeguards",
-      title: "A safeguard is waiting on you",
-      primary: {
-        label: "Open Safeguards",
-        action: {
-          kind: "navigate",
-          route: "/job-finder/safeguards?tab=reviews",
-        },
-      },
-    });
+    expect(model.next.id).not.toBe("safeguards");
   });
 
   it("is all caught up when every shortlisted job has been applied to", () => {
@@ -2035,5 +2026,143 @@ describe("buildJobSearchHomeModel · planned jobs of a stopped or paused batch",
     );
     expect(tile?.detail).toBe("1 paused · 1 applied");
     expect(model.next.id).not.toBe("retry");
+  });
+});
+
+describe("buildJobSearchHomeModel · tracker dates", () => {
+  function withTrackedApplication(
+    base: JobFinderWorkspaceSnapshot,
+  ): JobFinderWorkspaceSnapshot {
+    return {
+      ...base,
+      applicationRecords: [
+        ApplicationRecordSchema.parse({
+          id: "application_0",
+          jobId: "job_0",
+          title: "Job 0",
+          company: "Employer",
+          status: "submitted",
+          lastAttemptState: "submitted",
+          lastActionLabel: "Applied",
+          nextActionLabel: null,
+          lastUpdatedAt: "2026-08-10T10:00:00.000Z",
+          crm: {
+            stage: "interview",
+            stageChangedAt: "2026-08-12T10:00:00.000Z",
+            reminders: [
+              {
+                id: "reminder_overdue",
+                title: "Send a thank-you note",
+                dueAt: "2026-08-14T09:00:00.000Z",
+                createdAt: "2026-08-12T10:00:00.000Z",
+                updatedAt: "2026-08-12T10:00:00.000Z",
+              },
+            ],
+            interviews: [
+              {
+                id: "interview_soon",
+                title: "Panel interview",
+                startsAt: "2026-08-16T09:00:00.000Z",
+                createdAt: "2026-08-12T10:00:00.000Z",
+                updatedAt: "2026-08-12T10:00:00.000Z",
+              },
+            ],
+          },
+        }),
+      ],
+    } as JobFinderWorkspaceSnapshot;
+  }
+
+  it("counts an overdue follow-up and a near interview on the Applications tile", () => {
+    const model = build(withTrackedApplication(withJobs(workspace(), 1)));
+    const applications = model.stages?.find(
+      (stage) => stage.id === "applications",
+    );
+    expect(applications?.detail).toContain("1 follow-up overdue");
+    expect(applications?.detail).toContain("1 interview soon");
+  });
+
+  it("makes the tracker the next step when nothing else waits on the person", () => {
+    const model = build(
+      withTrackedApplication(
+        withShortlist(withJobs(workspace(), 3), [
+          queueItem("job_0", {
+            assetStatus: "ready",
+            resumeAssetId: "asset-0",
+            resumeReview: {
+              status: "approved",
+            } as ReviewQueueItem["resumeReview"],
+          }),
+        ]),
+      ),
+    );
+    expect(model.next.id).toBe("tracker_due");
+    expect(model.next.title).toBe(
+      "1 follow-up is overdue · 1 interview in the next two days",
+    );
+  });
+});
+
+describe("buildJobSearchHomeModel · applications the person stopped or may have sent", () => {
+  function withResult(
+    result: Record<string, unknown>,
+    lastAttemptState = "failed",
+  ) {
+    const ws = withShortlist(withJobs(workspace(), 2), [
+      queueItem("job_0", {
+        assetStatus: "ready",
+        resumeAssetId: "asset-0",
+        resumeReview: { status: "approved" } as ReviewQueueItem["resumeReview"],
+      }),
+    ]);
+    ws.applicationRecords = [
+      {
+        id: "record-0",
+        jobId: "job_0",
+        title: "Job 0",
+        company: "Employer",
+        status: "ready_for_review",
+        lastAttemptState,
+        automationMode: "prepare_only",
+        questionSummary: { total: 0, answered: 0 },
+        lastActionLabel: "Stopped",
+        lastUpdatedAt: "2026-08-15T11:00:00.000Z",
+      },
+    ] as unknown as JobFinderWorkspaceSnapshot["applicationRecords"];
+    ws.applyJobResults = [
+      {
+        id: "result-0",
+        runId: "apply-1",
+        jobId: "job_0",
+        applicationRecordId: "record-0",
+        updatedAt: "2026-08-15T11:00:00.000Z",
+        ...result,
+      },
+    ] as unknown as JobFinderWorkspaceSnapshot["applyJobResults"];
+    return ws;
+  }
+
+  it("never offers to retry an application the person cancelled", () => {
+    const model = build(
+      withResult({ state: "cancelled", summary: "Cancelled by you" }, "cancelled"),
+    );
+    expect(model.next.id).not.toBe("retry");
+    expect(model.stages?.[2]?.detail).toBe("1 cancelled");
+  });
+
+  it("asks the person to check a form whose page closed instead of retrying it", () => {
+    const model = build(
+      withResult({
+        state: "failed",
+        summary: "The prepared application page is no longer open.",
+        blockerReason: "unexpected_navigation",
+        blockerSummary: "The prepared application page is no longer open.",
+      }),
+    );
+    expect(model.next).toMatchObject({
+      id: "check_closed",
+      title: "Check 1 application whose page closed",
+      primary: { action: { kind: "navigate" } },
+    });
   });
 });

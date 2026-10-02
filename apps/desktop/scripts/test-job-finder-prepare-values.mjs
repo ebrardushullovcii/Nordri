@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import assert from "node:assert/strict";
 
 /**
  * Plain Apply ("Prepare for me", no assistant) on the Lever replica, several
@@ -20,6 +21,7 @@ const PORTFOLIO = "https://portfolio.example.test/jamie-rivers-test";
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export default async function prepareValues(qa) {
+  assert.equal(new URL(qa.sites.url).hostname, "127.0.0.1");
   const site = (path) => new URL(path, qa.sites.url).href;
   const workspace = () =>
     qa.page.evaluate(() => window.nordri.jobFinder.getWorkspace());
@@ -30,8 +32,7 @@ export default async function prepareValues(qa) {
   );
   const jobs = [2, 4, 6, 7, 9, 10];
   await qa.page.evaluate(
-    (input) =>
-      window.nordri.jobFinder.test.loadAgentOwnedBrowserDemo(input),
+    (input) => window.nordri.jobFinder.test.loadAgentOwnedBrowserDemo(input),
     {
       sourceUrl: site("/lever/"),
       applicationUrl: site("/lever/apply/3"),
@@ -255,6 +256,14 @@ export default async function prepareValues(qa) {
     };
     results.push(row);
     console.log(`RUN ${JSON.stringify(row)}`);
+    // Each result has already been read. Release this completed fixture tab
+    // so the next job does not wait forever on the embedded tab limit.
+    await qa.app.evaluate(({ webContents }, url) => {
+      const contents = webContents
+        .getAllWebContents()
+        .find((entry) => url && entry.getURL() === url);
+      contents?.close();
+    }, applyPath ?? "");
   }
   const log = await readFile(qa.sites.log, "utf8").catch(() => "");
   const posts = log.split("\n").filter((line) => line.includes('"POST"'));
@@ -263,7 +272,10 @@ export default async function prepareValues(qa) {
     Object.values(row.verdict).some((value) => value.startsWith("WRONG")),
   );
   const filled = results.filter((row) => row.dom?.linkedin);
-  console.log(
-    `${wrong.length === 0 && filled.length >= 5 && posts.length === 0 ? "PASS" : "FAIL"} F1: ${filled.length} forms read, ${wrong.length} with a wrong value, ${posts.length} POSTs`,
-  );
+  const passed =
+    wrong.length === 0 && filled.length === 6 && posts.length === 0;
+  const summary = `F1: ${filled.length} forms read, ${wrong.length} with a wrong value, ${posts.length} POSTs`;
+  console.log(`${passed ? "PASS" : "FAIL"} ${summary}`);
+  assert.ok(passed, summary);
+  assert.ok(results.every((row) => row.state !== "submitted"));
 }

@@ -88,6 +88,8 @@ function extractLocationFromHeaderLine(
 
   candidate = trimTrailingContactFragments(candidate);
 
+  if (isLikelyLocationValue(candidate))
+    return cleanLocationCandidate(candidate);
   const match = candidate.match(
     /([A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]+)*,\s*(?:[A-Z]{2}(?:\s+\d{5}(?:-\d{4})?)?|[A-Za-z][A-Za-z\s.'-]+))$/,
   );
@@ -151,6 +153,9 @@ function isLikelyLocationValue(value: string): boolean {
   }
 
   return (
+    /^[A-Za-z][A-Za-z\s.'-]+,\s*[A-Za-z][A-Za-z\s.'-]+,\s*[A-Za-z][A-Za-z\s.'-]+$/.test(
+      cleaned,
+    ) ||
     /^[A-Za-z][A-Za-z\s.'-]+,\s*[A-Za-z][A-Za-z\s.'-]+$/.test(cleaned) ||
     /^[A-Za-z][A-Za-z\s.'-]+,\s*[A-Z]{2}(?:\s+\d{5}(?:-\d{4})?)?$/.test(
       cleaned,
@@ -773,6 +778,112 @@ export function extractLiteralCandidates(
       notes: ["explicit_header_work_mode"],
       alternatives: [],
     });
+  }
+
+  // Preferences are explicit statements, never inferred from hours or pay
+  // mentioned in the person's employment history.
+  let inPreferences = false;
+  let inHeader = true;
+  for (const block of [...documentBundle.blocks].sort(
+    (a, b) => a.readingOrder - b.readingOrder,
+  )) {
+    for (const rawLine of block.text.split(/\r?\n/)) {
+      const line = rawLine.trim();
+      if (/^(?:work|employment) preferences\s*:?$/i.test(line)) {
+        inPreferences = true;
+        continue;
+      }
+      if (
+        /^(?:experience|work experience|education|skills|projects?|certifications?|languages?|activities|references|objective|summary)\s*:?$/i.test(
+          line,
+        )
+      ) {
+        inPreferences = false;
+        inHeader = false;
+      }
+      const hours = line.match(
+        /^(?:(?:hours|employment type|work preference)\s*:\s*)?(full[- ]time|part[- ]time)$/i,
+      );
+      if (hours && (inPreferences || inHeader || /:/.test(line))) {
+        const value = [
+          /^full/i.test(hours[1] ?? "") ? "Full-time" : "Part-time",
+        ];
+        drafts.push({
+          target: {
+            section: "search_preferences",
+            key: "employmentTypes",
+            recordId: null,
+          },
+          label: "Employment type",
+          value,
+          normalizedValue: value,
+          valuePreview: value.join(", "),
+          evidenceText: line,
+          sourceBlockIds: [block.id],
+          confidence: 0.97,
+          notes: [],
+          alternatives: [],
+        });
+      }
+      const salary =
+        line.match(
+          /^(?:(?:annual (?:pay|salary)|salary|pay)\s*:\s*)?([A-Z]{3}|\$)\s*([\d,]+)\s+(?:minimum|min)(?:\s+(?:annually|per year|annual))?$/i,
+        ) ??
+        line.match(
+          /^minimum(?: salary)?\s*:\s*(?:([A-Z]{3}|\$)\s*([\d,]+)|([\d,]+)\s*([A-Z]{3}))$/i,
+        );
+      if (
+        salary &&
+        (inPreferences || inHeader || /annual|salary|pay|per year/i.test(line))
+      ) {
+        const value = {
+          minimum: Number((salary[2] ?? salary[3] ?? "").replace(/,/g, "")),
+          maximum: null,
+          interval: "year",
+          currency:
+            (salary[1] ?? salary[4]) === "$"
+              ? null
+              : (salary[1] ?? salary[4] ?? "").toUpperCase(),
+          currencyStatus:
+            (salary[1] ?? salary[4]) === "$"
+              ? "needs_clarification"
+              : "explicit",
+        };
+        drafts.push({
+          target: {
+            section: "search_preferences",
+            key: "compensation",
+            recordId: null,
+          },
+          label: "Pay preference",
+          value,
+          normalizedValue: value,
+          valuePreview: line,
+          evidenceText: line,
+          sourceBlockIds: [block.id],
+          confidence: 0.97,
+          notes: [],
+          alternatives: [],
+        });
+        if (value.currency !== null)
+          drafts.push({
+            target: {
+              section: "search_preferences",
+              key: "salaryCurrency",
+              recordId: null,
+            },
+            label: "Salary currency",
+            value: value.currency,
+            normalizedValue: value.currency,
+            valuePreview: value.currency,
+            evidenceText: line,
+            sourceBlockIds: [block.id],
+            confidence: 0.97,
+            notes: [],
+            alternatives: [],
+          });
+      }
+    }
   }
 
   const eligibility = extractExplicitWorkEligibility(documentBundle);

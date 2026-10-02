@@ -353,7 +353,7 @@ function modelThatNeedsThePerson(reason: string): LLMClient {
   };
 }
 
-function modelThatFinishes(): LLMClient {
+function modelThatFinishes(reason = "Nothing left to fill in"): LLMClient {
   let calls = 0;
   return {
     chatWithTools: () => {
@@ -365,7 +365,7 @@ function modelThatFinishes(): LLMClient {
             type: "function" as const,
             function: {
               name: "finish",
-              arguments: JSON.stringify({ reason: "Nothing left to fill in" }),
+              arguments: JSON.stringify({ reason }),
             },
           },
         ],
@@ -451,6 +451,59 @@ describe("agent application preparation seam", () => {
       "without returning to the listing or reloading it",
     );
     expect(result.replay.checkpointUrls[0]).toBe(liveWizardUrl);
+  });
+
+  test("shows the model's report and the open experience gap without marking preparation ready", async () => {
+    const facts = executionInput();
+    facts.profile = CandidateProfileSchema.parse({
+      ...facts.profile,
+      experiences: [
+        {
+          id: "signal",
+          companyName: "Signal Systems",
+          title: "Engineer",
+          startDate: "2014-01",
+          isCurrent: true,
+        },
+      ],
+    });
+    const source = rawPage("My Experience. Resume attached.");
+    source.controls = [];
+    source.headings = [{ level: 2, text: "My Experience" }];
+    source.actions = [
+      { index: 0, label: "Add", visible: true, disabled: false },
+    ];
+    const openSession = session();
+    openSession.readPage = () => Promise.resolve(source);
+    const modelReason =
+      "I left the employer's optional work rows empty and kept the resume attached.";
+    const llmClient = modelThatFinishes(modelReason);
+    let reviewCard: ReturnType<typeof buildApplyReviewCard> | null = null;
+    const result = await runAgentApplicationPreparation({
+      session: openSession,
+      executionInput: facts,
+      llmClient,
+      startedAt: "2026-09-14T10:00:00.000Z",
+      siteLabel: "the careers site",
+      now: () => new Date("2026-09-14T10:05:00.000Z"),
+      onPrepared: (prepared) => {
+        reviewCard = prepared.reviewCard;
+      },
+    });
+    expect(result.state).toBe("paused");
+    expect(result.summary).toContain(modelReason);
+    expect(result.detail).toContain("Structured work history is incomplete");
+    expect(result.blocker).toBeNull();
+    expect(
+      result.checkpoints.some((checkpoint) =>
+        checkpoint.detail.includes("Structured work history is incomplete"),
+      ),
+    ).toBe(true);
+    expect(reviewCard).toMatchObject({
+      waitingOnYou: [
+        expect.stringContaining("Structured work history is incomplete"),
+      ],
+    });
   });
 
   test("a finished prepare-only run becomes a ready record that says nothing was sent", async () => {

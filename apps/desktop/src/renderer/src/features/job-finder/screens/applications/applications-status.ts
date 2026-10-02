@@ -138,7 +138,7 @@ export function getApplicationSubmissionAnswer(
       writes.length === 0
         ? "Nothing was recorded as written to the site."
         : `${writes.length} prepared ${writes.length === 1 ? "field or file was" : "fields or files were"} recorded as written to the site.`;
-    const didNotFinish = ["blocked", "failed", "skipped"].includes(
+    const didNotFinish = ["blocked", "failed", "skipped", "cancelled"].includes(
       applyResult.state,
     );
     return {
@@ -369,7 +369,10 @@ export function getApplicationNextStepLabel(record: ApplicationRecord): string {
   // Every sent application reads the same, however it was sent: one sent
   // during a batch run carried no saved label and read "No next step saved"
   // beside rows reading "View application".
-  if (record.lastAttemptState === "submitted" || record.status === "submitted") {
+  if (
+    record.lastAttemptState === "submitted" ||
+    record.status === "submitted"
+  ) {
     return record.nextActionLabel ?? "View application";
   }
 

@@ -64,6 +64,7 @@ describe("company preference exclusions", () => {
         sort: "score",
         limit: 25,
         includeExcludedEmployers: false,
+        show: true,
       },
       context,
     );
@@ -86,6 +87,7 @@ describe("company preference exclusions", () => {
         sort: "score",
         limit: 25,
         includeExcludedEmployers: true,
+        show: true,
       },
       context,
     );

@@ -64,9 +64,14 @@ const provenanceSourceLabels: Record<
 const kindOrder: readonly CampaignRuleKind[] = ["must_have", "prefer", "never"];
 
 function describeRule(rule: CampaignRule): string {
-  const numberValue = rule.numericValue === null ? "" : ` ${rule.numericValue}`;
+  // A numeric rule stores its threshold in both `value` and `numericValue`;
+  // say it once.
+  const subject =
+    rule.numericValue === null
+      ? rule.value
+      : rule.numericValue.toLocaleString();
   const currencyValue = rule.currency ? ` ${rule.currency}` : "";
-  return `${fieldLabels[rule.field]} ${operatorLabels[rule.operator]} ${rule.value}${numberValue}${currencyValue}`;
+  return `${fieldLabels[rule.field]} ${operatorLabels[rule.operator]} ${subject}${currencyValue}`;
 }
 
 function formatMeasuredCounts(rule: CampaignRule): string | null {
@@ -324,6 +329,7 @@ export function CampaignRuleBuilder(props: {
 
   const funnel = props.projection?.funnel ?? null;
   const hasSample = (funnel?.sampleSize ?? 0) > 0;
+  const hasEnabledRule = props.campaign.rules.some((rule) => rule.enabled);
   const visibleRules =
     rulesByKind.must_have.length +
     rulesByKind.prefer.length +
@@ -369,6 +375,12 @@ export function CampaignRuleBuilder(props: {
             count. Once a search keeps real jobs here, this line says how many
             these rules removed, downgraded, and left uncertain — measured,
             never estimated.
+          </p>
+        ) : !hasEnabledRule ? (
+          <p className="text-sm text-foreground-soft">
+            No rules are on, so all {funnel.sampleSize} saved{" "}
+            {funnel.sampleSize === 1 ? "job is" : "jobs are"} kept without
+            being screened.
           </p>
         ) : (
           <p className="text-sm text-foreground-soft">

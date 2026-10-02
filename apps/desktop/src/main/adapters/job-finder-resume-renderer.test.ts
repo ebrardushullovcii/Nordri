@@ -478,7 +478,7 @@ describe("job finder resume renderer", () => {
     expect(technicalHtml).toContain("header-spec-shell");
     expect(technicalHtml).toContain("meta-stack");
     expect(technicalHtml).toContain("section-spec-shell");
-    expect(technicalHtml.indexOf("<h3>Technical Skills</h3>")).toBeLessThan(
+    expect(technicalHtml.indexOf("<h3>Skills</h3>")).toBeLessThan(
       technicalHtml.indexOf("<h3>Summary</h3>"),
     );
     expect(technicalHtml.indexOf("<h3>Summary</h3>")).toBeLessThan(

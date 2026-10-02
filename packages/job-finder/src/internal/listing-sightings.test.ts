@@ -438,6 +438,26 @@ describe("merging the same job from two sources", () => {
     expect(read.summary).toEqual({ read: 0, rateLimited: true });
     expect(listUnreadSightings(read.jobs[0]!.provenance)).toHaveLength(2);
   });
+
+  test("skips a source already handed to the person and keeps its sightings", async () => {
+    const job = mergeInOrder("board", "forms").mergedJobs[0]!;
+    const requested: string[] = [];
+    const read = await readSightingApplyRoutes({
+      jobs: [job],
+      canReadUrl: (url) => url !== `${HOST}/board/jobs/9`,
+      fetchHtml: (url) => {
+        requested.push(url);
+        return Promise.resolve({ status: 200, html: "", finalUrl: url });
+      },
+    });
+    expect(requested).toEqual([`${HOST}/forms/jobs/9`]);
+    expect(read.jobs[0]?.provenance).toHaveLength(2);
+    expect(
+      listUnreadSightings(read.jobs[0]!.provenance).map(
+        (entry) => entry.listingUrl,
+      ),
+    ).toEqual([`${HOST}/board/jobs/9`]);
+  });
 });
 
 describe("selectApplicationSighting", () => {

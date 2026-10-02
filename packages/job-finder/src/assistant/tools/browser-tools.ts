@@ -300,16 +300,33 @@ export const browserUploadTool = defineTool({
   name: "browser_upload",
   group: "browser",
   description:
-    "Puts one of the person's files (by document id from list_documents) into a file field or drop zone on the page.",
-  parameters: json.object({ ref: json.string(), documentId: json.string() }, [
-    "ref",
-    "documentId",
-  ]),
-  input: z.object({ ref: Id, documentId: Id }),
+    "Puts one of the person's files (by document id from list_documents) into a file field or drop zone on the page. A file list_documents shows as written for one job (forJob) is only for that job: pass that job's id as jobId. When no letter fits this job, leave the field empty and say so, or write one for this job.",
+  parameters: json.object(
+    {
+      ref: json.string(),
+      documentId: json.string(),
+      jobId: json.string(
+        "The saved job this application is for, when known. Required for a file written for one job.",
+      ),
+    },
+    ["ref", "documentId"],
+  ),
+  input: z.object({ ref: Id, documentId: Id, jobId: Id.optional() }),
   label: () => "Uploading a file into the page",
   effect: "external",
   async execute(input, context) {
     const lease = await leaseFor(context);
+    const document = (await context.ports.listDocuments()).find(
+      (candidate) => candidate.id === input.documentId,
+    );
+    // A letter written for one job must never land in another job's form:
+    // checked before anything touches the page, so the field stays empty.
+    if (document?.forJob && document.forJob.jobId !== input.jobId) {
+      throw new AssistantToolError(
+        "refused",
+        `${document.originalName} was written for ${document.forJob.title} at ${document.forJob.company}. Nothing was uploaded. Use a file made for this job, or write one for it.`,
+      );
+    }
     const file = await context.ports.loadDocumentFile(input.documentId);
     context.session.assertCurrent();
     const result = await lease.hands.uploadFile(input.ref, {
@@ -372,7 +389,12 @@ export const collectPageJobsTool = defineTool({
       return true;
     });
     const all = [...previous, ...added];
-    const itemIds = all.map((_posting, index) => `page_job_${index + 1}`);
+    const collectionId =
+      existing?.id ?? context.session.createId("page_collection");
+    const itemIds = all.map(
+      (_posting, index) =>
+        existing?.itemIds[index] ?? `page_job_${collectionId}_${index + 1}`,
+    );
     const coverage =
       `${existing?.coverage ? `${existing.coverage}; ` : ""}${pageUrl} (${added.length} new)`.slice(
         -600,
@@ -403,6 +425,7 @@ export const collectPageJobsTool = defineTool({
       data: {
         resultSetId,
         jobs: all.slice(0, 50).map((posting, index) => ({
+          id: itemIds[index],
           position: index + 1,
           title: posting.title,
           company: posting.company,
@@ -509,7 +532,7 @@ export const applyHereTool = defineTool({
   name: "apply_here",
   group: "browser",
   description:
-    "For 'apply on this link': reads the job on the current page, saves it (or finds it if already saved) and returns its job id and the address the application will actually use. When this page is the same job as one already saved from another site, the application runs on that saved job's application address, not this page; tell the person which site before applying and after. Then record the person's instruction and call apply_to_jobs; the application service opens and fills the form in its own tab, and sends only if the instruction says so.",
+    "For 'apply on this link': reads the job on the current page, saves it (or finds it if already saved) and returns its job id. The application runs on this page's form, because the person picked it, even when the same job was saved from another site. Then record the person's instruction and call apply_to_jobs; the application service opens and fills the form in its own tab, and sends only if the instruction says so.",
   parameters: json.object({}),
   input: z.object({}).passthrough(),
   label: () => "Taking the job from this page",
@@ -535,6 +558,7 @@ export const applyHereTool = defineTool({
     const saved = await context.service.saveJobsFromPage({
       postings: [posting],
       pageUrl,
+      applyOnThisPage: true,
     });
     const jobId = saved.savedJobIds[0];
     if (!jobId)

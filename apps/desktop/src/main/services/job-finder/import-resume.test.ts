@@ -23,6 +23,7 @@ const {
   mockGenerateResumeVisionImages,
   mockGetJobFinderWorkspaceService,
   mockGetJobFinderDocumentsDirectory,
+  mockGetPdfPageCount,
 } = vi.hoisted(() => ({
   mockMkdir: vi.fn(),
   mockCopyFile: vi.fn(),
@@ -31,6 +32,7 @@ const {
   mockGenerateResumeVisionImages: vi.fn(),
   mockGetJobFinderWorkspaceService: vi.fn(),
   mockGetJobFinderDocumentsDirectory: vi.fn(),
+  mockGetPdfPageCount: vi.fn(() => Promise.resolve(1)),
 }));
 
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -48,6 +50,7 @@ vi.mock("../../adapters/resume-document", () => ({
   detectResumeDocumentFileKind: (filePath: string) =>
     filePath.endsWith(".pdf") ? "pdf" : "plain_text",
   extractResumeDocument: mockExtractResumeDocument,
+  getPdfPageCount: mockGetPdfPageCount,
 }));
 
 vi.mock("../../adapters/resume-vision-images", () => ({
@@ -478,6 +481,36 @@ describe("importResumeFromSourcePath", () => {
       expect(workspaceService.runResumeImport).toHaveBeenCalledWith(
         expect.objectContaining({ visionArtifact }),
       );
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("a damaged PDF", () => {
+  test("is refused before it replaces the current resume", async () => {
+    const { importResumeFromSourcePath, ResumeImportUnreadableFileError } =
+      await import("./import-resume");
+    const { directory, filePath } =
+      await createTempResumeFile("broken-resume.pdf");
+    const workspaceService = {
+      runResumeImport: vi.fn(),
+      getWorkspaceSnapshot: vi.fn(),
+      saveProfile: vi.fn(),
+    };
+    mockMkdir.mockResolvedValue(undefined);
+    mockGetJobFinderDocumentsDirectory.mockReturnValue(directory);
+    mockGetJobFinderWorkspaceService.mockResolvedValue(workspaceService);
+    mockGetPdfPageCount.mockRejectedValueOnce(
+      new Error("Invalid PDF structure"),
+    );
+
+    try {
+      await expect(importResumeFromSourcePath(filePath)).rejects.toBeInstanceOf(
+        ResumeImportUnreadableFileError,
+      );
+      expect(mockCopyFile).not.toHaveBeenCalled();
+      expect(workspaceService.runResumeImport).not.toHaveBeenCalled();
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

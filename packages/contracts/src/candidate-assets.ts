@@ -92,6 +92,19 @@ export type CandidateAssetExtractedTextMetadata = z.infer<
   typeof CandidateAssetExtractedTextMetadataSchema
 >;
 
+/**
+ * The one job a generated document was written for. A letter written for one
+ * job is never attached to another job's application.
+ */
+export const CandidateAssetJobScopeSchema = z.object({
+  jobId: NonEmptyStringSchema,
+  title: z.string().max(300),
+  company: z.string().max(300),
+});
+export type CandidateAssetJobScope = z.infer<
+  typeof CandidateAssetJobScopeSchema
+>;
+
 export const CandidateAssetSchema = z
   .object({
     id: NonEmptyStringSchema,
@@ -112,6 +125,7 @@ export const CandidateAssetSchema = z
     lifecycle: CandidateAssetLifecycleSchema.optional(),
     extractedText:
       CandidateAssetExtractedTextMetadataSchema.nullable().default(null),
+    forJob: CandidateAssetJobScopeSchema.nullable().default(null),
   })
   .superRefine((asset, context) => {
     if (!asset.lifecycle) return;
@@ -222,8 +236,13 @@ export const CandidateAssetImportInputSchema = z.object({
     "private_storage_only",
   ),
   retention: CandidateAssetRetentionSchema.default("until_deleted"),
+  forJob: CandidateAssetJobScopeSchema.nullable().default(null),
 });
-export type CandidateAssetImportInput = z.infer<
+// Callers may omit defaulted fields; the library parses the input.
+export type CandidateAssetImportInput = z.input<
+  typeof CandidateAssetImportInputSchema
+>;
+export type ParsedCandidateAssetImportInput = z.infer<
   typeof CandidateAssetImportInputSchema
 >;
 
@@ -276,4 +295,19 @@ export const CandidateAssetRestoreResultSchema = z.object({
 });
 export type CandidateAssetRestoreResult = z.infer<
   typeof CandidateAssetRestoreResultSchema
+>;
+
+/** Opens a read-only copy of a saved file in the device's default app. */
+export const CandidateAssetOpenInputSchema = z.object({
+  assetId: NonEmptyStringSchema,
+});
+export type CandidateAssetOpenInput = z.infer<
+  typeof CandidateAssetOpenInputSchema
+>;
+
+export const CandidateAssetOpenResultSchema = z.object({
+  outcome: z.enum(["opened", "not_found", "failed"]),
+});
+export type CandidateAssetOpenResult = z.infer<
+  typeof CandidateAssetOpenResultSchema
 >;

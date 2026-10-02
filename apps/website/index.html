@@ -21,7 +21,7 @@
     <meta property="og:url" content="https://nordri.netlify.app/" />
     <meta
       property="og:image"
-      content="https://nordri.netlify.app/assets/brand/og.jpg"
+      content="https://nordri.netlify.app/assets/brand/og-image.jpg"
     />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
@@ -30,11 +30,22 @@
     <meta name="theme-color" content="#f6f3ee" />
     <link
       rel="icon"
-      type="image/png"
-      sizes="64x64"
-      href="assets/brand/favicon-64.png"
+      href="assets/brand/favicon.ico"
+      sizes="16x16 32x32 48x48"
+      type="image/x-icon"
     />
-    <link rel="apple-touch-icon" href="assets/brand/apple-touch-icon.png" />
+    <link
+      rel="icon"
+      href="assets/brand/favicon.svg"
+      sizes="any"
+      type="image/svg+xml"
+    />
+    <link
+      rel="apple-touch-icon"
+      href="assets/brand/apple-touch-icon.png"
+      sizes="180x180"
+    />
+    <link rel="manifest" href="assets/brand/icons.webmanifest" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -49,9 +60,9 @@
 
     <header class="site-header">
       <div class="container header-inner">
-        <a class="wordmark" href="#top" aria-label="Nordri, back to top"
-          >Nordri</a
-        >
+        <a class="wordmark" href="#top" aria-label="Nordri, back to top">
+          <img src="assets/brand/wordmark.svg" alt="" width="166" height="34" />
+        </a>
         <nav aria-label="Sections">
           <ul class="nav-list">
             <li><a href="#path">How it works</a></li>
@@ -742,7 +753,14 @@
 
     <footer class="site-footer">
       <div class="container footer-inner">
-        <span class="wordmark wordmark--small">Nordri</span>
+        <span class="wordmark wordmark--small">
+          <img
+            src="assets/brand/wordmark.svg"
+            alt="Nordri"
+            width="166"
+            height="34"
+          />
+        </span>
         <p>
           Named for Norðri, who in Norse myth holds up the northern corner of
           the sky.

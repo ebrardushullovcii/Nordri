@@ -608,7 +608,7 @@ export function ResumeStudioPreviewPane(props: ResumeStudioPreviewPaneProps) {
   ]);
 
   return (
-    <section className="surface-panel-shell relative flex min-h-0 min-w-0 flex-col overflow-hidden rounded-(--radius-field) border border-(--surface-panel-border) xl:h-full">
+    <section className="surface-panel-shell relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-(--radius-field) border border-(--surface-panel-border)">
       <header className="border-b border-(--surface-panel-border) px-3.5 py-2">
         {/* A two-column grid let the badge column shrink below its content
             while the badges themselves did not, so Refresh preview painted
@@ -642,6 +642,22 @@ export function ResumeStudioPreviewPane(props: ResumeStudioPreviewPaneProps) {
                   {props.isDirty
                     ? "Unsaved edits rendered"
                     : "Saved draft rendered"}
+                </span>
+              ) : null}
+              {props.previewStatus === "ready" &&
+              typeof props.preview?.metadata.pageCount === "number" ? (
+                <span
+                  className={cn(
+                    "inline-flex items-center gap-1",
+                    props.isDirty ? "text-primary" : "text-foreground-soft",
+                  )}
+                  title="Page count of the exported PDF"
+                  data-resume-preview-page-count={
+                    props.preview.metadata.pageCount >= 2 ? "" : undefined
+                  }
+                >
+                  {props.preview.metadata.pageCount} page
+                  {props.preview.metadata.pageCount === 1 ? "" : "s"}
                 </span>
               ) : null}
               {props.templateLabel ? (
@@ -747,12 +763,13 @@ export function ResumeStudioPreviewPane(props: ResumeStudioPreviewPaneProps) {
         ref={widthProbeRef}
       />
 
+      {/* The pane always sits in a bounded box (the Preview tab below xl, a
+          column above it), so the region fills it and scrolls. A 42rem floor
+          below xl made it taller than the tab, which clipped the page under
+          Experience at the default window size (N-042). */}
       <div
         aria-label="Live resume preview"
-        className={cn(
-          "relative min-h-0 flex-1 overflow-x-auto overflow-y-auto bg-[linear-gradient(180deg,var(--surface-gradient-start),var(--surface-gradient-end))] p-0.5 [scrollbar-gutter:stable]",
-          hasReadyPreview ? "min-h-168 xl:min-h-0" : "min-h-80 xl:min-h-0",
-        )}
+        className="relative min-h-0 flex-1 overflow-x-auto overflow-y-auto bg-[linear-gradient(180deg,var(--surface-gradient-start),var(--surface-gradient-end))] p-0.5 [scrollbar-gutter:stable]"
         data-locked-pane-scroll-region
         data-resume-preview-scroll-region
         ref={scrollRegionRef}

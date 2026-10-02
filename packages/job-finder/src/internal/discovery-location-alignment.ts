@@ -50,6 +50,12 @@ function hasNoNamedLocation(location: string): boolean {
   );
 }
 
+/**
+ * The person asked for local work only when they chose on-site or hybrid
+ * themselves. Work modes left blank are not a goal: reading them as "on site
+ * or hybrid in my city" marked every remote job down and told the person
+ * they had asked for something they never chose.
+ */
 function requestedLocalWork(preferences: JobSearchPreferences): boolean {
   return (
     preferences.locations.length > 0 &&
@@ -57,8 +63,7 @@ function requestedLocalWork(preferences: JobSearchPreferences): boolean {
       GLOBAL_REMOTE_PREFERENCE_PATTERN.test(location.trim()),
     ) &&
     !preferences.workModes.includes("remote") &&
-    (preferences.workModes.length === 0 ||
-      preferences.workModes.includes("onsite") ||
+    (preferences.workModes.includes("onsite") ||
       preferences.workModes.includes("hybrid"))
   );
 }
@@ -110,9 +115,7 @@ export function correctRemoteOnlyLocationAlignment(
     ? preferences.workModes.includes("hybrid")
       ? "onsite or hybrid"
       : "onsite"
-    : preferences.workModes.includes("hybrid")
-      ? "hybrid"
-      : "onsite or hybrid";
+    : "hybrid";
   const evidenceSentence = `${
     hasNoNamedLocation(posting.location)
       ? "The listing does not name the requested place"

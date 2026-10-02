@@ -37,6 +37,7 @@ import {
   type UpdateWorkspaceBehaviorInput,
   type UserActionRequest,
 } from "@nordri/contracts";
+import { reassessSavedJobs } from "./saved-job-reassessment";
 import type { JobFinderRepositorySeed } from "@nordri/db";
 
 import { runApplicationNoResponseAutomation } from "./application-crm";
@@ -53,7 +54,6 @@ import {
 import { resolvePendingReviewItemsAfterExplicitSave } from "./profile-setup-review-items";
 import { normalizeProfileBeforeSave } from "./profile-merge";
 import { runResumeImportWorkflow } from "./resume-import-workflow";
-import { hasBlockingResumeIdentityMismatch } from "./resume-workspace-helpers";
 import { persistResumeTimelineRepairAction } from "./resume-timeline-repair";
 import {
   hasResumeAffectingProfileChange,
@@ -92,10 +92,6 @@ import {
 } from "./workspace-helpers";
 import { uniqueStrings } from "./shared";
 import { SOURCE_DEBUG_RECENT_HISTORY_LIMIT } from "./workspace-defaults";
-import {
-  resolveResumeIdentity,
-  resumeIdentityMismatchMessage,
-} from "./resume-identity";
 import { createWorkspaceProfileCopilotMethods } from "./workspace-profile-copilot-methods";
 import { createWorkspaceProfileSetupContextHelpers } from "./workspace-profile-setup-context";
 import { createWorkspaceProfileSetupReviewMethods } from "./workspace-profile-setup-review-methods";
@@ -1066,7 +1062,7 @@ export function createWorkspaceSnapshotProfileMethods(
       const count =
         latestValidation.claimAssessments.filter((assessment) =>
           isBlockingResumeClaimAssessment({ assessment, draft }),
-        ).length + (hasBlockingResumeIdentityMismatch(latestValidation) ? 1 : 0);
+        ).length;
       if (count > 0) linesToDecideByDraftId.set(draft.id, count);
     }
     const reviewQueue = buildReviewQueue(
@@ -1537,6 +1533,7 @@ export function createWorkspaceSnapshotProfileMethods(
       latestResumeImportRunId:
         (await ctx.repository.getLatestResumeImportRun())?.id ?? null,
     });
+    await reassessSavedJobs(ctx);
     return getWorkspaceSnapshot();
   }
 
@@ -1704,6 +1701,7 @@ export function createWorkspaceSnapshotProfileMethods(
         latestResumeImportRunId:
           (await ctx.repository.getLatestResumeImportRun())?.id ?? null,
       });
+      await reassessSavedJobs(ctx);
       return getWorkspaceSnapshot();
     },
     async saveProfileAndSearchPreferences(
@@ -1763,6 +1761,7 @@ export function createWorkspaceSnapshotProfileMethods(
         latestResumeImportRunId:
           (await ctx.repository.getLatestResumeImportRun())?.id ?? null,
       });
+      await reassessSavedJobs(ctx);
 
       return getWorkspaceSnapshot();
     },
@@ -1867,13 +1866,6 @@ export function createWorkspaceSnapshotProfileMethods(
 
         throw new Error(
           "Resume text is required before the profile agent can extract candidate details.",
-        );
-      }
-
-      const identityResolution = resolveResumeIdentity(profile);
-      if (identityResolution.mismatchReasons.length > 0) {
-        throw new Error(
-          resumeIdentityMismatchMessage(identityResolution.mismatchReasons),
         );
       }
 

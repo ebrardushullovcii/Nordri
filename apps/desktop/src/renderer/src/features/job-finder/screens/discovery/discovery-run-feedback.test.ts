@@ -1,5 +1,6 @@
 import {
   DISCOVERY_NO_JOB_SITES_MESSAGE,
+  DiscoveryRunRecordSchema,
   buildDiscoveryCardOnlyEvidenceWarning,
 } from "@nordri/contracts";
 import { describe, expect, it } from "vitest";
@@ -16,18 +17,38 @@ import {
   getDiscoveryLatestRunNotices,
   getDiscoveryLatestRunVerdict,
   getDiscoveryRunFailureRecovery,
+  isDiscoveryFailureSuperseded,
   shouldPresentRepeatedDiscoveryFeedback,
 } from "./discovery-run-feedback";
 
 describe("discovery run failure recovery classification", () => {
-  it("names a human-verification wall and points at job sources, not the browser", () => {
+  it("points a human-verification wall at the in-app browser", () => {
     const recovery = getDiscoveryRunFailureRecovery(
       "Agent discovery stopped after 45 steps. Found 0 jobs. Discovery encountered an error: This site showed a human-verification check instead of its job listings, so nothing could be read. Verification checks cannot be passed automatically; try another job site or a company careers page.",
     );
 
-    expect(recovery.kind).toBe("source_setup");
+    expect(recovery.kind).toBe("browser_session");
     expect(recovery.headline).toContain("human verification check");
-    expect(recovery.actionLabel).toBe("Review job sources");
+    expect(recovery.actionLabel).toBe("Open the Job Finder browser");
+    expect(recovery.nextStep).toBe(
+      "Open the site in the browser, get past the check, then search again.",
+    );
+  });
+
+  it("classifies the bot-check notice before its mention of the browser", () => {
+    const detail =
+      "jobs.example.test is showing a bot check. Open it in the browser, get past the check, then search again.";
+    expect(getDiscoveryRunFailureRecovery(detail).kind).toBe("browser_session");
+    expect(createDiscoveryRunFailedFeedback({ detail }).detail).toBe(detail);
+    expect(
+      getDiscoveryLatestRunNotices([
+        {
+          state: "failed",
+          startedAt: "2026-10-01T10:00:00.000Z",
+          summary: { warnings: [detail] },
+        },
+      ]),
+    ).toEqual([detail]);
   });
 
   it("sends a plan with no job sites to Profile instead of calling it unexpected", () => {
@@ -665,5 +686,78 @@ describe("latest discovery run notices", () => {
     ])) {
       expect(notice).not.toMatch(/open|browser|link/i);
     }
+  });
+});
+
+describe("source errors after later searches", () => {
+  const feedback = {
+    ...createDiscoveryRunFailedFeedback({
+      detail: "Source unavailable",
+      targetId: "source_a",
+      targetLabel: "Source A",
+    }),
+    recordedAtMs: Date.parse("2026-10-01T10:00:00.000Z"),
+  };
+  function completedSource(
+    targetId: string,
+    state: "completed" | "failed" = "completed",
+    completedAt = "2026-10-01T10:02:00.000Z",
+  ) {
+    return DiscoveryRunRecordSchema.parse({
+      id: "run_later",
+      state: "completed",
+      startedAt: "2026-10-01T10:01:00.000Z",
+      completedAt,
+      targetExecutions: [{ targetId, adapterKind: "auto", state, completedAt }],
+    });
+  }
+  it("clears only after the same source completed later, including a partial run", () => {
+    const run = completedSource("source_a");
+    run.state = "failed";
+    expect(
+      isDiscoveryFailureSuperseded({
+        feedback,
+        targetId: "source_a",
+        runs: [run],
+      }),
+    ).toBe(true);
+    for (const run of [
+      completedSource("source_b"),
+      completedSource("source_a", "failed"),
+      completedSource("source_a", "completed", "2026-10-01T09:59:00.000Z"),
+    ]) {
+      expect(
+        isDiscoveryFailureSuperseded({
+          feedback,
+          targetId: "source_a",
+          runs: [run],
+        }),
+      ).toBe(false);
+    }
+  });
+});
+
+describe("AI timeout recovery", () => {
+  it.each([
+    "Model request timed out after 240s",
+    "The AI provider timeout ended the search",
+    "Model request timed out after 120s of silence from the AI service",
+    "The AI service stopped responding",
+  ])("keeps the service cause and saved-job recovery: %s", (detail) => {
+    const recovery = getDiscoveryRunFailureRecovery(detail);
+    expect(recovery).toMatchObject({
+      kind: "retry",
+      headline: "The AI service stopped responding.",
+      nextStep: "Jobs found so far are saved. Search again to continue.",
+    });
+    expect(JSON.stringify(recovery)).not.toMatch(/internet|connection/i);
+  });
+
+  it("does not call a job board's API timeout an AI outage", () => {
+    // Job-board adapters are also "providers" in this codebase.
+    const recovery = getDiscoveryRunFailureRecovery(
+      "Public provider API collection failed: Greenhouse API request timed out.",
+    );
+    expect(recovery?.headline).not.toBe("The AI service stopped responding.");
   });
 });

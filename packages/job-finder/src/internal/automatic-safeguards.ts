@@ -26,7 +26,6 @@ import {
 } from "./campaign-digest-notifications";
 import {
   applyCompanyApplicationEvidence,
-  prepareBatchSampleReview,
   recordAbnormalFailureEvidence,
   recordListingSignal,
   recordSimultaneousApplicationConflict,
@@ -55,9 +54,6 @@ export {
   AUTOMATIC_SOURCE_DEBUG_FAILURE_PAUSE_ID,
   AUTOMATIC_APPLICATION_FAILURE_PAUSE_ID,
 } from "../plan-safeguard-pauses";
-/** Default quality sample ratio for legacy campaigns without the new policy. */
-const AUTOMATIC_QUALITY_REVIEW_MIN_BATCH = 3;
-export const AUTOMATIC_QUALITY_REVIEW_SAMPLE_RATIO = 0.2;
 /** Fallback conflict window for runs not attached to a campaign. */
 export const AUTOMATIC_SIMULTANEOUS_APPLICATION_WINDOW_DAYS = 1;
 
@@ -711,67 +707,6 @@ export function deriveApplicationListingSignals(
   return signals;
 }
 
-type PreparedBatchSampleInput = {
-  batchId: string;
-  prepared: { id: string }[];
-  requiredSampleRatio: number;
-};
-
-/** A sample must be a form the person can actually inspect, not a question or access handoff. */
-export function isReviewablePreparedResult(result: ApplyJobResult): boolean {
-  return (
-    result.state === "awaiting_review" &&
-    result.reviewCard != null &&
-    result.blockerReason == null &&
-    (result.pendingConsentRequestCount ?? 0) === 0
-  );
-}
-
-/**
- * Selects a completed automatic queue's prepared results for quality review.
- * `awaiting_review` is the only prepare-only state counted; submitted results
- * are never treated as preparation, and cancelled/in-flight queues are not
- * sampled before their durable batch state settles.
- */
-export function derivePreparedBatchSampleInput(input: {
-  run: unknown;
-  results: readonly unknown[];
-  campaign: JobSearchCampaign | null;
-}): PreparedBatchSampleInput | null {
-  const run = parseApplyRun(input.run);
-  if (
-    !run ||
-    run.mode !== "queue_auto" ||
-    (run.state !== "completed" && run.state !== "paused_for_user_review")
-  ) {
-    return null;
-  }
-
-  const prepared = input.results
-    .map(parseApplyJobResult)
-    .filter((result): result is ApplyJobResult => result !== null)
-    .filter(
-      (result) =>
-        result.runId === run.id &&
-        run.jobIds.includes(result.jobId) &&
-        isReviewablePreparedResult(result),
-    )
-    .map((result) => ({ id: result.id }));
-
-  // A sample review is a batch safeguard. Demanding one after a single
-  // prepared application stalled a volume persona after every run.
-  if (prepared.length < AUTOMATIC_QUALITY_REVIEW_MIN_BATCH) return null;
-
-  const ratio =
-    input.campaign?.applicationPolicy.qualityReviewSampleRatio ??
-    AUTOMATIC_QUALITY_REVIEW_SAMPLE_RATIO;
-  return {
-    batchId: run.id,
-    prepared,
-    requiredSampleRatio: ratio,
-  };
-}
-
 type VerifiedApplicationRecordEvidence = {
   applicationRecordId: string;
   companyKey: string;
@@ -1160,50 +1095,6 @@ async function persistAutomaticListingSignals(input: {
   });
 }
 
-async function persistAutomaticPreparedBatchReview(input: {
-  ctx: WorkspaceServiceContext;
-  run: ApplyRun;
-  results: readonly unknown[];
-  campaign: JobSearchCampaign | null;
-  now: string;
-}): Promise<void> {
-  const sample = derivePreparedBatchSampleInput({
-    run: input.run,
-    results: input.results,
-    campaign: input.campaign,
-  });
-  if (!sample) return;
-
-  await input.ctx.withIntelligenceTransition(async () => {
-    const state = await input.ctx.repository.getIntelligenceState();
-    const result = prepareBatchSampleReview({
-      safeguards: state.safeguards,
-      reviewId: `automatic_batch_sample_review:${sample.batchId}`,
-      batchId: sample.batchId,
-      prepared: sample.prepared,
-      requiredSampleRatio: sample.requiredSampleRatio,
-      explanation:
-        "Look over a few of these prepared applications before Job Finder prepares more on its own.",
-      recoveryGuidance:
-        "Review every selected prepared application, then mark the sample complete from Safeguards before continuing the queue.",
-      now: input.now,
-    });
-    if (!result.ok) return;
-    if (
-      JSON.stringify(result.safeguards) === JSON.stringify(state.safeguards)
-    ) {
-      return;
-    }
-    await input.ctx.repository.saveIntelligenceState(
-      JobFinderIntelligenceStateSchema.parse({
-        ...state,
-        safeguards: result.safeguards,
-        updatedAt: input.now,
-      }),
-    );
-  });
-}
-
 async function persistAutomaticSimultaneousConflicts(input: {
   ctx: WorkspaceServiceContext;
   runs: readonly unknown[];
@@ -1352,13 +1243,6 @@ export async function persistAutomaticApplicationSafeguards(input: {
   await persistAutomaticListingSignals({
     ctx: input.ctx,
     results: typedResults,
-    now: input.now,
-  });
-  await persistAutomaticPreparedBatchReview({
-    ctx: input.ctx,
-    run,
-    results: typedResults,
-    campaign: campaign ?? null,
     now: input.now,
   });
   await persistAutomaticSimultaneousConflicts({

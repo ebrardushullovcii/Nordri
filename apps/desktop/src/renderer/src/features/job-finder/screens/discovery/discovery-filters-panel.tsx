@@ -26,7 +26,10 @@ import {
 } from "./discovery-filters-panel-sections";
 import { getDiscoverySearchReadiness } from "./discovery-search-readiness";
 import { JOB_FINDER_BROWSER_LABEL } from "../../lib/job-finder-browser-handoff-copy";
-import { JOB_FINDER_ROUTE_PATHS } from "../../lib/job-finder-route-hrefs";
+import {
+  JOB_FINDER_ROUTE_PATHS,
+  JOB_FINDER_SETTINGS_JOB_SEARCH_HREF,
+} from "../../lib/job-finder-route-hrefs";
 
 interface DiscoveryFiltersPanelProps {
   activeRun: DiscoveryRunRecord | null;
@@ -336,7 +339,7 @@ export function DiscoveryFiltersPanel({
               editAction: {
                 label: "Change in Settings",
                 filledLabel: "Change in Settings",
-                href: JOB_FINDER_ROUTE_PATHS.settings,
+                href: JOB_FINDER_SETTINGS_JOB_SEARCH_HREF,
                 variant: "secondary" as const,
               },
             },

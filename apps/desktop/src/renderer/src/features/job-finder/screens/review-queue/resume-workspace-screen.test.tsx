@@ -437,7 +437,10 @@ function buildScreenElement(options?: {
   ) => void;
   onDraftEdited?: () => void;
   onDirtyChange?: (dirty: boolean) => void;
-  onSaveDraft?: (draft: ResumeDraft) => void;
+  onSaveDraft?: (
+    draft: ResumeDraft,
+    onSaved?: (updatedAt: string) => void,
+  ) => void;
   onPreviewDraft?: (draft: ResumeDraft) => Promise<JobFinderResumePreview>;
   onRegenerateDraft?: (jobId: string) => void;
   onResolveAssistantProposal?: (
@@ -619,6 +622,54 @@ describe("ResumeWorkspaceScreen", () => {
 
     expect(proof.open).toBe(true);
     expect(document.activeElement).toBe(proof.querySelector("summary"));
+  });
+
+  it("opens Tools from Review 1 line when the narrow layout shows Preview", async () => {
+    // Below the split breakpoint Tools mounts only once its tab is chosen,
+    // so the button found nothing to scroll to and Preview stayed on screen.
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: vi.fn(() => ({
+        addEventListener: vi.fn(),
+        matches: false,
+        removeEventListener: vi.fn(),
+      })),
+    });
+
+    const workspace = buildWorkspaceWithUnsupportedClaim();
+    renderScreen({
+      workspace: {
+        ...workspace,
+        draft: {
+          ...workspace.draft,
+          status: "needs_review",
+          approvedAt: null,
+          approvedExportId: null,
+        },
+      },
+    });
+    await act(async () => {
+      await vi.runOnlyPendingTimersAsync();
+    });
+    expect(
+      screen
+        .getByRole("tab", { name: "Preview" })
+        .getAttribute("aria-selected"),
+    ).toBe("true");
+    expect(document.getElementById("resume-proof-details")).toBeNull();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Review 1 line" }));
+      await vi.runOnlyPendingTimersAsync();
+    });
+
+    expect(
+      screen.getByRole("tab", { name: "Tools" }).getAttribute("aria-selected"),
+    ).toBe("true");
+    const proof = document.getElementById(
+      "resume-proof-details",
+    ) as HTMLDetailsElement | null;
+    expect(proof?.open).toBe(true);
   });
 
   it("offers a one-click restore of the text a blocked claim replaced", async () => {
@@ -1680,6 +1731,92 @@ describe("ResumeWorkspaceScreen", () => {
       expect(onDraftEdited).toHaveBeenCalledTimes(4);
     }, 15_000);
 
+    it("shows unsaved approval feedback as soon as the template changes", () => {
+      renderScreen();
+      expect(
+        screen.getByText("Resume approved. Continue when you’re ready."),
+      ).toBeTruthy();
+      fireEvent.click(
+        screen.getAllByRole("button", { name: "Change template" })[0]!,
+      );
+      fireEvent.click(
+        screen
+          .getAllByRole("button", { name: /^Use template: Engineering Spec/ })
+          .at(-1)!,
+      );
+      expect(
+        screen.queryByText("Resume approved. Continue when you’re ready."),
+      ).toBeNull();
+      expect(
+        screen.getAllByText("Saving reopens approval for this resume.").length,
+      ).toBeGreaterThanOrEqual(1);
+      expect(
+        screen.queryByText(/saved automatically when you approve/i),
+      ).toBeNull();
+      // The banner offers the save itself, not only the Tools toolbar.
+      expect(
+        screen.getAllByRole("button", { name: "Save draft" }).length,
+      ).toBeGreaterThanOrEqual(2);
+      expect(screen.queryByRole("button", { name: "Apply" })).toBeNull();
+    });
+
+    it("adopts its successful save when removing a numeric line leaves trimmed whitespace", async () => {
+      const workspace = buildWorkspace();
+      const experience = workspace.draft.sections.find(
+        (section) => section.id === "section_experience",
+      )!;
+      const firstBullet = experience.entries[0]!.bullets[0]!;
+      const remainingText = firstBullet.text;
+      firstBullet.text = `${remainingText}\nImproved a synthetic sample by 42%.`;
+      const onSaveDraft =
+        vi.fn<
+          (draft: ResumeDraft, onSaved?: (updatedAt: string) => void) => void
+        >();
+      const onDirtyChange = vi.fn();
+      const options = { workspace, onSaveDraft, onDirtyChange };
+      const view = renderScreen(options);
+      openEditorSection("section_experience");
+      fireEvent.change(screen.getAllByLabelText("Entry bullet 1")[0]!, {
+        target: { value: `${remainingText}\n` },
+      });
+      fireEvent.click(
+        screen.getAllByRole("button", { name: "Save draft" })[0]!,
+      );
+      const [submitted, onSaved] = onSaveDraft.mock.calls[0]!;
+      const savedWorkspace = JobFinderResumeWorkspaceSchema.parse({
+        ...workspace,
+        draft: {
+          ...submitted,
+          approvedAt: null,
+          approvedExportId: null,
+          status: "needs_review",
+          updatedAt: "2026-04-27T00:07:00.000Z",
+          sections: submitted.sections.map((section) => ({
+            ...section,
+            entries: section.entries.map((entry) => ({
+              ...entry,
+              bullets: entry.bullets.map((bullet) => ({
+                ...bullet,
+                text: bullet.text.trim(),
+              })),
+            })),
+          })),
+        },
+      });
+      expect(savedWorkspace.draft.sections).not.toEqual(submitted.sections);
+      await act(async () => {
+        onSaved?.(savedWorkspace.draft.updatedAt);
+        view.rerender(
+          buildScreenElement({ ...options, workspace: savedWorkspace }),
+        );
+        await vi.advanceTimersByTimeAsync(100);
+      });
+      expect(
+        document.querySelector("[data-resume-background-change]"),
+      ).toBeNull();
+      expect(onDirtyChange).toHaveBeenLastCalledWith(false);
+    }, 15_000);
+
     it("adopts a saved template change when the server reopens approval", async () => {
       const workspace = buildWorkspace();
       const onSaveDraft = vi.fn<(draft: ResumeDraft) => void>();
@@ -1697,7 +1834,9 @@ describe("ResumeWorkspaceScreen", () => {
           .getAllByRole("button", { name: /^Use template: Engineering Spec/ })
           .at(-1)!,
       );
-      fireEvent.click(screen.getByRole("button", { name: /^Save draft/ }));
+      fireEvent.click(
+        screen.getAllByRole("button", { name: /^Save draft/ })[0]!,
+      );
       const submittedDraft = onSaveDraft.mock.calls[0]?.[0];
       expect(submittedDraft).toBeDefined();
       const savedWorkspace = JobFinderResumeWorkspaceSchema.parse({
@@ -1721,7 +1860,9 @@ describe("ResumeWorkspaceScreen", () => {
         document.querySelector("[data-resume-background-change]"),
       ).toBeNull();
       expect(onDirtyChange).toHaveBeenLastCalledWith(false);
-      expect(screen.getByRole("button", { name: "Approve resume" })).toBeTruthy();
+      expect(
+        screen.getByRole("button", { name: "Approve resume" }),
+      ).toBeTruthy();
     }, 15_000);
 
     it("keeps unsaved edits when the saved draft changes in the background and offers the saved version", async () => {

@@ -40,11 +40,15 @@ export interface ResumeWorkspaceScreenProps {
     draft: ResumeDraft,
     requestId?: string,
   ) => Promise<JobFinderResumePreview>;
-  onSaveDraft: (draft: ResumeDraft) => void;
+  onSaveDraft: (
+    draft: ResumeDraft,
+    onSaved?: (updatedAt: string) => void,
+  ) => void;
   onSaveDraftAndThen: (
     draft: ResumeDraft,
     next: () => void | Promise<void>,
     successMessage?: string | null,
+    onSaved?: (updatedAt: string) => void,
   ) => void;
   onExportPdf: (jobId: string) => void;
   /** Records that the imported resume is this person's own document. */

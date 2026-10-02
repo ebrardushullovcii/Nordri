@@ -182,8 +182,6 @@ function StudioToolbar(props: {
 }) {
   return (
     <div className="flex flex-wrap items-center gap-1.5">
-      {/* After approval a new save re-opens approval, which the button never
-          said even though the banner above it does. */}
       <Button
         pending={props.isWorkspacePending}
         onClick={props.onSaveDraft}
@@ -197,7 +195,7 @@ function StudioToolbar(props: {
         variant="secondary"
       >
         <Save className="size-4" />
-        {props.isApproved ? "Save draft (re-opens approval)" : "Save draft"}
+        Save draft
       </Button>
       {/* "Refresh draft" here and "Retry with AI" in the disclosure were the
           same whole-draft rewrite under two names, neither of which said it
@@ -862,51 +860,58 @@ export function ResumeWorkspaceStudioShell(
         ) : (
           <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
             <Badge variant="outline">
-              {props.canClearApproval
-                ? "Approved"
-                : approvalBlockedByValidation
-                  ? "Needs fixes"
-                  : approvalBlockedByDecisions
-                    ? "Needs decisions"
-                    : props.exportBlockedReason
-                      ? "Lines to confirm"
-                      : canApproveResume
-                        ? props.hasUnsavedChanges
-                          ? "Unsaved changes"
-                          : "Ready to approve"
-                        : "Choose template"}
+              {props.canClearApproval && props.hasUnsavedChanges
+                ? "Unsaved changes"
+                : props.canClearApproval
+                  ? "Approved"
+                  : approvalBlockedByValidation
+                    ? "Needs fixes"
+                    : approvalBlockedByDecisions
+                      ? "Needs decisions"
+                      : props.exportBlockedReason
+                        ? "Lines to confirm"
+                        : canApproveResume
+                          ? props.hasUnsavedChanges
+                            ? "Unsaved changes"
+                            : "Ready to approve"
+                          : "Choose template"}
             </Badge>
             <strong
               className="min-w-0 text-(length:--text-body) leading-5 text-(--text-headline)"
               id="resume-next-step-title"
             >
-              {props.canClearApproval
-                ? "Resume approved. Continue when you’re ready."
-                : canApproveResume
-                  ? props.hasUnsavedChanges
-                    ? "Approve when ready — your edits will be saved first."
-                    : "Approve the resume shown in the preview."
-                  : approvalBlockedByValidation
-                    ? "Fix the first validation error before approval."
-                    : approvalBlockedByDecisions
-                      ? "Choose whether to leave each hidden role off this resume before approving."
-                      : props.exportBlockedReason
-                        ? "Keep or remove the flagged lines, then approve."
-                        : "Choose an apply-safe template before approval."}
+              {props.canClearApproval && props.hasUnsavedChanges
+                ? "Saving reopens approval for this resume."
+                : props.canClearApproval
+                  ? "Resume approved. Continue when you’re ready."
+                  : canApproveResume
+                    ? props.hasUnsavedChanges
+                      ? "Approve when ready — your edits will be saved first."
+                      : "Approve the resume shown in the preview."
+                    : approvalBlockedByValidation
+                      ? "Fix the first validation error before approval."
+                      : approvalBlockedByDecisions
+                        ? "Choose whether to leave each hidden role off this resume before approving."
+                        : props.exportBlockedReason
+                          ? "Keep or remove the flagged lines, then approve."
+                          : "Choose an apply-safe template before approval."}
             </strong>
             {/* Compact widths used to carry a second, contiguous approval band
               directly under this row — 53px of state plus 63px repeating the
               same fact and owning `Clear approval`. This row is the single
               owner there now, so the one thing the second band said that this
               one did not says it here. */}
-            {!isDesktopStudio && props.canClearApproval ? (
+            {/* With unsaved edits the title already says what saving does;
+                the generic status line ("saved when you approve") did not fit
+                a resume that has no Approve button in this state. */}
+            {!isDesktopStudio &&
+            props.canClearApproval &&
+            !props.hasUnsavedChanges ? (
               <span
                 className="min-w-0 text-(length:--text-body) leading-6 text-foreground"
                 data-resume-studio-compact-approval-note
               >
-                {props.hasUnsavedChanges
-                  ? studioStatusText
-                  : "Any new edit needs approval again."}
+                Any new edit needs approval again.
               </span>
             ) : null}
           </div>
@@ -980,7 +985,20 @@ export function ResumeWorkspaceStudioShell(
               beside `Apply →` read as forward progress to a
               different place. It only appears when there is no Prepare action
               to offer, and then it points back. */}
-          {props.canClearApproval ? (
+          {/* Unsaved edits to an approved resume: the next step is saving
+              them, which reopens approval (N-048). */}
+          {props.canClearApproval && props.hasUnsavedChanges ? (
+            <Button
+              disabled={props.isWorkspacePending || isExportPending}
+              onClick={props.onSaveDraft}
+              pending={props.isWorkspacePending}
+              type="button"
+              variant="primary"
+            >
+              <Save className="size-4" />
+              Save draft
+            </Button>
+          ) : props.canClearApproval ? (
             showApprovedBackAction ? (
               <Button
                 disabled={props.isWorkspacePending || isExportPending}

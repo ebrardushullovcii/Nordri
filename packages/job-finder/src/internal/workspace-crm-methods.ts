@@ -4,9 +4,11 @@ import type {
   ApplicationCrmExportResult,
   ApplicationCrmMutationInput,
   ApplicationCrmSettings,
+  ApplicationCrmStage,
   JobFinderWorkspaceSnapshot,
 } from "@nordri/contracts";
 import {
+  APPLICATION_CRM_STAGES_AFTER_SENDING,
   ApplicationCrmBulkStageMutationInputSchema,
   ApplicationCrmSettingsSchema,
 } from "@nordri/contracts";
@@ -17,7 +19,15 @@ import {
   mutateApplicationCrm,
   runApplicationNoResponseAutomation,
 } from "./application-crm";
+import { closeApplicationStepsTrackedByPerson } from "./workspace-application-user-action";
 import type { WorkspaceServiceContext } from "./workspace-service-context";
+
+function trackedStageCloseReason(
+  stage: ApplicationCrmStage,
+): "sent" | "withdrawn" | null {
+  if (stage === "withdrawn") return "withdrawn";
+  return APPLICATION_CRM_STAGES_AFTER_SENDING.has(stage) ? "sent" : null;
+}
 
 /**
  * Keeps CRM persistence and Candidate Asset validation out of the public
@@ -64,6 +74,19 @@ export function createWorkspaceCrmMethods(input: {
           },
         });
       });
+      // Recording the send, or withdrawing, closes what the application was
+      // still waiting on.
+      const closeReason =
+        command.mutation.type === "set_stage"
+          ? trackedStageCloseReason(command.mutation.stage)
+          : null;
+      if (closeReason) {
+        await closeApplicationStepsTrackedByPerson(
+          input.ctx.repository,
+          [command.applicationRecordId],
+          closeReason,
+        );
+      }
       return input.getWorkspaceSnapshot();
     },
 
@@ -92,6 +115,16 @@ export function createWorkspaceCrmMethods(input: {
           command: parsedCommand,
         });
       });
+      const parsedCommand =
+        ApplicationCrmBulkStageMutationInputSchema.parse(command);
+      const closeReason = trackedStageCloseReason(parsedCommand.stage);
+      if (closeReason) {
+        await closeApplicationStepsTrackedByPerson(
+          input.ctx.repository,
+          parsedCommand.items.map((item) => item.applicationRecordId),
+          closeReason,
+        );
+      }
       return input.getWorkspaceSnapshot();
     },
 
@@ -116,10 +149,14 @@ export function createWorkspaceCrmMethods(input: {
       command: ApplicationCrmExportInput,
     ): Promise<ApplicationCrmExportResult> {
       return input.ctx.withApplicationCrmTransition(async () => {
-        const records = await input.ctx.repository.listApplicationRecords();
+        const [records, settings] = await Promise.all([
+          input.ctx.repository.listApplicationRecords(),
+          input.ctx.repository.getSettings(),
+        ]);
         return exportApplicationCrm({
           records,
           request: command,
+          customStages: settings.applicationCrm?.customStages ?? [],
         });
       });
     },

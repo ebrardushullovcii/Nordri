@@ -38,6 +38,8 @@ function catalogPrompt(asset: CandidateAsset): string {
 }
 
 export async function resolveApplicationAttachmentsForExecution(input: {
+  /** The job being applied to; a letter written for another job is skipped. */
+  jobId: string;
   resolver: CandidateAssetResolver | undefined;
   questionRecords: readonly ApplicationQuestionRecord[];
   answerRecords: readonly ApplicationAnswerRecord[];
@@ -86,6 +88,8 @@ export async function resolveApplicationAttachmentsForExecution(input: {
           candidate.deletedAt === null &&
           candidate.consentScope === "job_application_attachment" &&
           candidate.kind !== "resume" &&
+          (candidate.forJob === null ||
+            candidate.forJob.jobId === input.jobId) &&
           !selectedAssetIds.has(candidate.id),
       )
     : [];
@@ -96,6 +100,9 @@ export async function resolveApplicationAttachmentsForExecution(input: {
       throw new Error("The selected application attachment is stale.");
     }
     const resolved = await resolver.resolveForApplication(value.assetId);
+    if (resolved.asset.forJob && resolved.asset.forJob.jobId !== input.jobId) {
+      throw new Error("That file was written for another job.");
+    }
     return {
       assetId: resolved.asset.id,
       assetKind: resolved.asset.kind,

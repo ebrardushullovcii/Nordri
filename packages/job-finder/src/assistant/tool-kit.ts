@@ -13,6 +13,7 @@ import type {
   AssistantTaskPlan,
 } from "@nordri/contracts";
 import type { ConversationTool } from "@nordri/agent-runtime";
+import { JobPostingSchema } from "@nordri/contracts";
 import type { z, ZodTypeAny } from "zod";
 
 import type { JobFinderWorkspaceService } from "../internal/workspace-service-contracts";
@@ -319,6 +320,69 @@ export interface AssistantToolOutputs {
   touched: AssistantEntityRef[];
 }
 
+const PAGE_JOB_ITEM_ID = /^page_job_/u;
+
+/**
+ * A job read off a page (identified within its collected set) handed to
+ * a tool that works on saved jobs is the person's own pick of that job. It is
+ * saved (merged with the saved job when it is the same one) and its saved id
+ * used, instead of the step failing as an unknown job until the model finds
+ * save_page_jobs on its own.
+ */
+async function resolvePageJobReferences(
+  toolName: string,
+  record: Record<string, unknown>,
+  context: AssistantToolContext,
+): Promise<void> {
+  if (toolName === "save_page_jobs" || toolName === "collect_page_jobs") {
+    return;
+  }
+  const isPageItem = (value: unknown): value is string =>
+    typeof value === "string" && PAGE_JOB_ITEM_ID.test(value);
+  const jobIds: unknown[] = Array.isArray(record.jobIds) ? record.jobIds : [];
+  if (!isPageItem(record.jobId) && !jobIds.some(isPageItem)) return;
+  const pageSets = (await context.session.listResultSets()).filter(
+    (set) => set.kind === "page_jobs",
+  );
+  const savedIdByItem = new Map<string, string>();
+  const resolve = async (itemId: string): Promise<string> => {
+    const known = savedIdByItem.get(itemId);
+    if (known) return known;
+    const matches = pageSets.filter((set) => set.itemIds.includes(itemId));
+    // Older conversations may contain duplicate positional ids. Never guess
+    // which collection an ambiguous reference meant.
+    if (matches.length !== 1) return itemId;
+    const set = matches[0]!;
+    const posting = JobPostingSchema.safeParse(
+      set.pageItems[set.itemIds.indexOf(itemId)],
+    );
+    if (!posting.success) return itemId;
+    context.session.assertCurrent();
+    const saved = await context.service.saveJobsFromPage({
+      postings: [posting.data],
+      pageUrl: set.pageUrl ?? "about:blank",
+    });
+    const savedId = saved.savedJobIds[0];
+    if (!savedId) return itemId;
+    // Only ids saved from a verified collected posting become grant targets.
+    await context.session.createResultSet({
+      kind: "jobs",
+      label: "Saved from the page",
+      itemIds: [savedId],
+      source: "page_collection",
+    });
+    savedIdByItem.set(itemId, savedId);
+    return savedId;
+  };
+  if (isPageItem(record.jobId)) record.jobId = await resolve(record.jobId);
+  if (jobIds.some(isPageItem)) {
+    record.jobIds = await Promise.all(
+      jobIds.map((value) => (isPageItem(value) ? resolve(value) : value)),
+    );
+  }
+  if (savedIdByItem.size > 0) context.ports.publishWorkspaceUpdate();
+}
+
 /**
  * Wraps a definition into a conversation tool: validation, error kinds, and
  * the parts it adds to the reply. The executor never sees raw JSON.
@@ -366,6 +430,11 @@ export function toConversationTool(
           ? { ...(parsedJson as Record<string, unknown>) }
           : {};
       delete record.status;
+      try {
+        await resolvePageJobReferences(definition.name, record, context);
+      } catch {
+        // An unsaved page job stays as it was; the tool reports it plainly.
+      }
       const parsed = definition.input.safeParse(record);
       if (!parsed.success) {
         return {

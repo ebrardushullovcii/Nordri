@@ -8,10 +8,7 @@ import {
   RotateCcw,
   X,
 } from "lucide-react";
-import type {
-  AssistantMessage,
-  AssistantMessagePart,
-} from "@nordri/contracts";
+import type { AssistantMessage, AssistantMessagePart } from "@nordri/contracts";
 
 import { cn } from "@renderer/lib/cn";
 import { AssistantMarkdown } from "./assistant-markdown";
@@ -39,6 +36,22 @@ const TARGET_LABELS: Record<string, string> = {
   settings: "Settings",
   resume_draft: "Resume",
 };
+
+const RECORD_CHANGE_PATTERN = /^(?:Added|Removed) /u;
+
+/**
+ * "Changed Headline · Added Education: Example College". A record added or
+ * removed names itself; only values edited in place read "Changed".
+ */
+export function describeChangedFields(fields: readonly string[]): string {
+  const shown = fields.slice(0, 6);
+  const edited = shown.filter((field) => !RECORD_CHANGE_PATTERN.test(field));
+  const records = shown.filter((field) => RECORD_CHANGE_PATTERN.test(field));
+  return [edited.length > 0 ? `Changed ${edited.join(", ")}` : null, ...records]
+    .filter((part): part is string => part !== null)
+    .join(" · ")
+    .concat(fields.length > 6 ? ` and ${fields.length - 6} more` : "");
+}
 
 function ChangePart(props: {
   part: Extract<AssistantMessagePart, { type: "change" }>;
@@ -76,10 +89,7 @@ function ChangePart(props: {
           </span>
           {part.fields.length > 0 ? (
             <span className="text-[12px] text-muted-foreground">
-              Changed {part.fields.slice(0, 6).join(", ")}
-              {part.fields.length > 6
-                ? ` and ${part.fields.length - 6} more`
-                : ""}
+              {describeChangedFields(part.fields)}
             </span>
           ) : null}
           {part.status === "partially_undone" ? (
@@ -133,12 +143,14 @@ function ChangePart(props: {
             <div className="grid gap-0.5" key={`${entry.label}_${index}`}>
               <dt className="font-medium text-foreground">{entry.label}</dt>
               {entry.before ? (
-                <dd className="text-muted-foreground line-through">
+                <dd className="whitespace-pre-line break-words text-muted-foreground line-through">
                   {entry.before}
                 </dd>
               ) : null}
               {entry.after ? (
-                <dd className="text-foreground">{entry.after}</dd>
+                <dd className="whitespace-pre-line break-words text-foreground">
+                  {entry.after}
+                </dd>
               ) : null}
             </div>
           ))}

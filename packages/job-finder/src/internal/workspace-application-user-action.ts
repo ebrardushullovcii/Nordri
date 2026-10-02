@@ -1,4 +1,5 @@
 import {
+  PREPARED_PAGE_CLOSED_SUMMARY,
   ApplicationRecordSchema,
   ApplyJobResultSchema,
   ApplyRunSchema,
@@ -398,8 +399,7 @@ async function commitApplicationActionSuperseded(input: {
  * Finder was restarted). The form had been filled; nothing went wrong on the
  * site, so it is not a failed attempt for the failure-rate safeguard.
  */
-export const PREPARED_PAGE_CLOSED_SUMMARY =
-  "The prepared application page is no longer open.";
+export { PREPARED_PAGE_CLOSED_SUMMARY };
 
 /**
  * Written on a result whose site refused the send: nothing went out and
@@ -745,12 +745,23 @@ export async function terminalizeApplicationAfterPreparedPageLost(input: {
     return;
   }
 
+  // A form that was filled in and waiting on the person may have been sent by
+  // them before the page went away. Job Finder did not send it, but it can no
+  // longer see whether they did, so it never says "nothing was sent" here.
+  const mayHaveBeenSentByPerson =
+    record.lastAttemptState === "ready" ||
+    (result.state === "awaiting_review" && result.blockerReason === null);
+  const pageClosedDetail = mayHaveBeenSentByPerson
+    ? "Job Finder did not send this application and can no longer see the page. If you sent it yourself, set its stage to Applied; Try again would fill the form in again."
+    : "The exact prepared page could not be reopened. Nothing was sent, and you can choose Try again to prepare this application again.";
   await input.repository.upsertApplicationRecord(
     ApplicationRecordSchema.parse({
       ...record,
       lastAttemptState: "failed",
       lastActionLabel: "The prepared application page is no longer open.",
-      nextActionLabel: "Try again, or finish it yourself on the job site.",
+      nextActionLabel: mayHaveBeenSentByPerson
+        ? "If you sent it, set its stage to Applied. If not, Try again."
+        : "Try again, or finish it yourself on the job site.",
       lastUpdatedAt: input.occurredAt,
       questionSummary: {
         total: 0,
@@ -764,8 +775,7 @@ export async function terminalizeApplicationAfterPreparedPageLost(input: {
           id: input.eventId,
           at: input.occurredAt,
           title: "Prepared page closed",
-          detail:
-            "The exact prepared page could not be reopened. Nothing was sent, and you can choose Try again to prepare this application again.",
+          detail: pageClosedDetail,
           emphasis: "warning",
         },
       ],
@@ -776,8 +786,7 @@ export async function terminalizeApplicationAfterPreparedPageLost(input: {
     ...result,
     state: "failed",
     summary: PREPARED_PAGE_CLOSED_SUMMARY,
-    detail:
-      "The exact prepared page could not be reopened. Nothing was sent; choose Try again to prepare this application again.",
+    detail: pageClosedDetail,
     updatedAt: input.occurredAt,
     completedAt: input.occurredAt,
     blockerReason: "unexpected_navigation",
@@ -799,15 +808,17 @@ export async function terminalizeApplicationAfterPreparedPageLost(input: {
     results: nextResults,
     submittedAt: input.occurredAt,
     submittedSummary: "A prepared application page was no longer open",
-    submittedDetail:
-      "Nothing was sent. The affected application can be prepared again.",
+    submittedDetail: mayHaveBeenSentByPerson
+      ? "Job Finder did not send it. If you sent it yourself, set its stage to Applied."
+      : "Nothing was sent. The affected application can be prepared again.",
   });
   await input.repository.upsertApplyRun(
     ApplyRunSchema.parse({
       ...reconciledRun,
       summary: "A prepared application page was no longer open.",
-      detail:
-        "Nothing was sent. The affected application can be prepared again while any other work keeps its own state.",
+      detail: mayHaveBeenSentByPerson
+        ? "Job Finder did not send it. If you sent it yourself, set its stage to Applied; other work keeps its own state."
+        : "Nothing was sent. The affected application can be prepared again while any other work keeps its own state.",
     }),
   );
 }
@@ -840,6 +851,8 @@ export async function releaseApplicationRecordAfterDismissedUserAction(input: {
     eventDetail: string;
     resultSummary: string;
     resultDetail: string;
+    /** Null when nothing is left for the person to do here. */
+    nextActionLabel?: string | null;
   };
 }): Promise<void> {
   const { request } = input;
@@ -880,18 +893,26 @@ export async function releaseApplicationRecordAfterDismissedUserAction(input: {
     return;
   }
 
+  const cancelledByPerson =
+    input.dismissal === "cancelled" && !input.closedBecause;
   const closedWord = input.dismissal === "skipped" ? "skipped" : "cancelled";
   await input.repository.upsertApplicationRecord(
     ApplicationRecordSchema.parse({
       ...record,
       // Closing the step is not the end of the application: the person can
       // press Try again later, or finish it on the site themselves.
-      lastAttemptState: "failed",
+      lastAttemptState: cancelledByPerson ? "cancelled" : "failed",
       lastActionLabel:
         input.closedBecause?.lastActionLabel ??
-        `You ${closedWord} the step Job Finder was waiting on.`,
-      nextActionLabel: "Try again, or finish it yourself on the job site.",
+        (cancelledByPerson
+          ? "Cancelled by you"
+          : `You ${closedWord} the step Job Finder was waiting on.`),
+      nextActionLabel:
+        input.closedBecause?.nextActionLabel !== undefined
+          ? input.closedBecause.nextActionLabel
+          : "Try again, or finish it yourself on the job site.",
       lastUpdatedAt: input.occurredAt,
+      latestBlocker: cancelledByPerson ? null : record.latestBlocker,
       questionSummary: {
         total: 0,
         required: 0,
@@ -930,17 +951,27 @@ export async function releaseApplicationRecordAfterDismissedUserAction(input: {
 
   const terminalResult = ApplyJobResultSchema.parse({
     ...result,
-    state: input.dismissal === "skipped" ? "skipped" : "failed",
+    state:
+      input.dismissal === "skipped"
+        ? "skipped"
+        : cancelledByPerson
+          ? "cancelled"
+          : "failed",
     summary:
       input.closedBecause?.resultSummary ??
-      `The person ${closedWord} the step Job Finder was waiting on.`,
+      (cancelledByPerson
+        ? "Cancelled by you"
+        : `The person ${closedWord} the step Job Finder was waiting on.`),
     detail:
       input.closedBecause?.resultDetail ??
       "Job Finder stopped working on this application. Nothing was sent; choose Try again to prepare it again.",
     updatedAt: input.occurredAt,
     completedAt: input.occurredAt,
-    blockerReason: result.blockerReason,
-    blockerSummary: result.blockerSummary,
+    blockerReason: cancelledByPerson ? null : result.blockerReason,
+    blockerSummary: cancelledByPerson ? null : result.blockerSummary,
+    pendingConsentRequestCount: cancelledByPerson
+      ? 0
+      : result.pendingConsentRequestCount,
     latestQuestionCount: 0,
   });
   await input.repository.upsertApplyJobResult(terminalResult);
@@ -975,6 +1006,30 @@ export async function releaseApplicationRecordAfterDismissedUserAction(input: {
           : pendingResults.length > 0
             ? null
             : input.occurredAt,
+      // Every outcome in the batch is counted, so one cancel does not hide
+      // the applications that went out or failed.
+      ...(cancelledByPerson
+        ? {
+            summary: (
+              [
+                ["submitted", "applied"],
+                ["cancelled", "cancelled"],
+                ["failed", "failed"],
+                ["blocked", "blocked"],
+                ["skipped", "skipped"],
+                ["awaiting_review", "waiting on you"],
+              ] as const
+            )
+              .map(([state, label]) => {
+                const count = nextResults.filter(
+                  (entry) => entry.state === state,
+                ).length;
+                return count > 0 ? `${count} ${label}` : null;
+              })
+              .filter(Boolean)
+              .join(" · "),
+          }
+        : {}),
       pendingJobs: pendingResults.length,
       submittedJobs: nextResults.filter((entry) => entry.state === "submitted")
         .length,
@@ -1093,6 +1148,98 @@ export async function retireCancelledApplicationUserActions(
           },
         });
       },
+    );
+  }
+}
+
+/**
+ * The person recorded in their tracker that an application was sent (Applied
+ * or a later stage), or that they withdrew it. Its open steps (a question,
+ * "finish it on the site") are no longer theirs to do, so they are closed
+ * instead of staying in Needs you and inviting a second submission (N-033).
+ * Nothing is marked as a verified send: the result keeps its own state, and
+ * the tracker carries their word.
+ */
+export async function closeApplicationStepsTrackedByPerson(
+  repository: JobFinderRepository,
+  applicationRecordIds: readonly string[],
+  reason: "sent" | "withdrawn",
+): Promise<void> {
+  const recordIds = new Set(applicationRecordIds);
+  if (recordIds.size === 0) return;
+  const wording =
+    reason === "sent"
+      ? {
+          commandReason:
+            "You recorded this application as sent in your tracker.",
+          lastActionLabel: "You recorded this application as sent.",
+          eventTitle: "Application step closed: you sent it",
+          eventDetail:
+            "You set its tracker stage to one that comes after sending, so Job Finder closed the step it was waiting on. Nothing was sent by Job Finder.",
+          resultDetail:
+            "Your tracker says this application was sent. Job Finder did not see the site's confirmation and will not fill it in again.",
+        }
+      : {
+          commandReason: "You marked this application withdrawn.",
+          lastActionLabel: "You marked this application withdrawn.",
+          eventTitle: "Application step closed: you withdrew it",
+          eventDetail:
+            "You marked it withdrawn in your tracker, so Job Finder closed the step it was waiting on. Nothing was sent by Job Finder.",
+          resultDetail:
+            "You marked this application withdrawn. Job Finder will not work on it again unless you choose Try again.",
+        };
+  const requests = await repository.listUserActionRequests({
+    scopeType: "application",
+  });
+  for (const request of requests) {
+    const scope = request.scope;
+    if (
+      scope.type !== "application" ||
+      !scope.applicationRecordId ||
+      !recordIds.has(scope.applicationRecordId) ||
+      isUserActionTerminal(request.state)
+    )
+      continue;
+    const now = new Date().toISOString();
+    const transition = reduceUserActionCommand(
+      request,
+      {
+        requestId: request.id,
+        commandId: `${request.id}_tracked_${reason}_r${request.revision}`,
+        expectedRevision: request.revision,
+        action: "skip",
+        reason: wording.commandReason,
+        credentialsPolicy: "browser_only",
+        submitAuthorized: false,
+        accountCreationAuthorized: false,
+      },
+      now,
+    );
+    if (transition.status !== "applied") continue;
+    const commit = await repository.commitUserActionTransition({
+      request: transition.request,
+      event: transition.event,
+    });
+    if (commit.status === "stale") continue;
+    await withApplicationRecordTransition(
+      repository,
+      scope.applicationRecordId,
+      () =>
+        releaseApplicationRecordAfterDismissedUserAction({
+          repository,
+          request: commit.request,
+          occurredAt: now,
+          eventId: `event_${request.id}_tracked_${reason}`,
+          dismissal: "skipped",
+          closedBecause: {
+            lastActionLabel: wording.lastActionLabel,
+            eventTitle: wording.eventTitle,
+            eventDetail: wording.eventDetail,
+            resultSummary: wording.lastActionLabel,
+            resultDetail: wording.resultDetail,
+            nextActionLabel: null,
+          },
+        }),
     );
   }
 }

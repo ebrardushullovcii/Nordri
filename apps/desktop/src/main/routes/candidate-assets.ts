@@ -1,4 +1,6 @@
-import { BrowserWindow, dialog } from "electron";
+import os from "node:os";
+import path from "node:path";
+import { BrowserWindow, dialog, shell } from "electron";
 import type { IpcMain, IpcMainInvokeEvent, OpenDialogOptions } from "electron";
 import {
   CandidateAssetDeleteInputSchema,
@@ -7,6 +9,8 @@ import {
   CandidateAssetImportResultSchema,
   CandidateAssetListInputSchema,
   CandidateAssetListResultSchema,
+  CandidateAssetOpenInputSchema,
+  CandidateAssetOpenResultSchema,
   CandidateAssetRestoreInputSchema,
   CandidateAssetRestoreResultSchema,
   type CandidateAsset,
@@ -151,6 +155,28 @@ export function registerCandidateAssetRouteHandlers(
           await dependencies.library.softDelete(input.assetId),
         ),
       );
+    },
+  );
+
+  // Opens a read-only copy in the default app, so the person can see what an
+  // application would attach without hunting for Job Finder's private folder.
+  ipcMain.handle(
+    "job-finder:candidate-assets:open",
+    async (_event, payload) => {
+      const input = CandidateAssetOpenInputSchema.parse(payload);
+      let viewingPath: string;
+      try {
+        viewingPath = await dependencies.library.writeViewingCopy(
+          input.assetId,
+          path.join(os.tmpdir(), "nordri-file-views"),
+        );
+      } catch {
+        return CandidateAssetOpenResultSchema.parse({ outcome: "not_found" });
+      }
+      const failure = await shell.openPath(viewingPath);
+      return CandidateAssetOpenResultSchema.parse({
+        outcome: failure ? "failed" : "opened",
+      });
     },
   );
 

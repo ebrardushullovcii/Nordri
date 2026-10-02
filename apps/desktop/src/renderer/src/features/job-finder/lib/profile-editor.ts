@@ -65,6 +65,44 @@ export function getProfileEmailValidationMessage(
     : `${label} must be a valid email address.`;
 }
 
+/**
+ * Profile links are optional, but a value that is present must be a web
+ * address. A scheme is optional ("example.com" is fine); spaces and a host
+ * without a dot are not.
+ */
+export function getProfileLinkValidationMessage(
+  value: string | null | undefined,
+  label: string,
+): string | null {
+  const normalizedValue = (value ?? "").trim();
+  if (normalizedValue === "") {
+    return null;
+  }
+  const message = `${label} must be a web address, like example.com.`;
+  if (/\s/u.test(normalizedValue)) {
+    return message;
+  }
+  try {
+    const url = new URL(
+      /^[a-z][a-z\d+.-]*:\/\//iu.test(normalizedValue)
+        ? normalizedValue
+        : `https://${normalizedValue}`,
+    );
+    return /^https?:$/u.test(url.protocol) && url.hostname.includes(".")
+      ? null
+      : message;
+  } catch {
+    return message;
+  }
+}
+
+export const PROFILE_LINK_FIELDS = [
+  { field: "linkedinUrl", label: "LinkedIn URL" },
+  { field: "portfolioUrl", label: "Website" },
+  { field: "githubUrl", label: "GitHub URL" },
+  { field: "personalWebsiteUrl", label: "Extra website" },
+] as const;
+
 function shouldPersistReviewCandidateEntry(input: {
   sourceCandidateId?: string | null | undefined;
   sourceCandidateFingerprint?: string | null | undefined;
@@ -441,6 +479,16 @@ export function buildProfilePayload(
   );
   if (preferredEmailValidationMessage) {
     return { validationMessage: preferredEmailValidationMessage };
+  }
+
+  for (const { field, label } of PROFILE_LINK_FIELDS) {
+    const linkValidationMessage = getProfileLinkValidationMessage(
+      values.identity[field],
+      label,
+    );
+    if (linkValidationMessage) {
+      return { validationMessage: linkValidationMessage };
+    }
   }
 
   const incompleteRowMessage =

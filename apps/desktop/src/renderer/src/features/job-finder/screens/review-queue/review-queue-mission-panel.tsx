@@ -260,7 +260,7 @@ export function ReviewQueueMissionPanel({
   const dailyCapacityDescription = formatDailyPreparationCapacitySummaryText(
     globalDailyApplicationPreparationCapacity,
   );
-  const resumeIdentityBlocked =
+  const resumeIdentityDiffers =
     profile !== undefined &&
     resolveResumeIdentity(profile).mismatchReasons.length > 0;
   const showsApplyOutcome =
@@ -436,7 +436,9 @@ export function ReviewQueueMissionPanel({
             ) : null}
           </>
         )}
-        {usesOriginalResume && originalResume ? (
+        {usesOriginalResume &&
+        originalResume &&
+        selectedItem.resumeReview.status === "original_resume" ? (
           <p
             className="text-(length:--text-small) leading-5 text-foreground-muted"
             role="note"
@@ -484,7 +486,7 @@ export function ReviewQueueMissionPanel({
             </p>
           </div>
         ) : null}
-        {resumeIdentityBlocked &&
+        {resumeIdentityDiffers &&
         profile &&
         onKeepResumeIdentity &&
         onClaimResumeIdentity ? (
@@ -535,7 +537,6 @@ export function ReviewQueueMissionPanel({
               variant="primary"
               disabled={
                 !primaryApplicationAction.enabled ||
-                resumeIdentityBlocked ||
                 (primaryApplicationAction.kind === "start_apply" &&
                   dailyCapacityExhausted)
               }

@@ -13,7 +13,7 @@ import {
 } from "./workspace-service.test-support";
 
 const now = "2026-08-23T10:00:00.000Z";
-function harness() {
+function harness(sameBatch = false) {
   const seed = createSeed();
   const job = seed.savedJobs.find((entry) => entry.id === "job_ready")!;
   seed.applicationRecords = ["a", "b"].map((id) =>
@@ -118,6 +118,30 @@ function harness() {
       updatedAt: now,
     }),
   );
+  if (sameBatch) {
+    const otherJobId = "job_other";
+    seed.savedJobs.push({ ...job, id: otherJobId });
+    seed.applicationRecords[1]!.jobId = otherJobId;
+    seed.applicationAttempts[1]!.jobId = otherJobId;
+    seed.applyRuns = [
+      ApplyRunSchema.parse({
+        ...seed.applyRuns[0],
+        jobIds: [job.id, otherJobId],
+        totalJobs: 2,
+        pendingJobs: 2,
+      }),
+    ];
+    seed.applyJobResults[1] = ApplyJobResultSchema.parse({
+      ...seed.applyJobResults[1],
+      runId: "run_a",
+      jobId: otherJobId,
+    });
+    const request = seed.userActionRequests[1]!;
+    seed.userActionRequests[1] = UserActionRequestSchema.parse({
+      ...request,
+      scope: { ...request.scope, runId: "run_a", jobId: otherJobId },
+    });
+  }
   return createWorkspaceServiceHarness({ seed });
 }
 
@@ -250,5 +274,140 @@ describe("cancelled application hand-offs", () => {
     });
     await retireCancelledApplicationUserActions(repository);
     expect(await repository.getUserActionRequest("request_a")).toEqual(request);
+  });
+});
+
+test("cancelling one paused item records cancellation and leaves its batch sibling alone", async () => {
+  const { repository, workspaceService } = harness(true);
+  const sibling = (await repository.listApplyJobResults()).find(
+    (result) => result.id === "result_b",
+  );
+  const siblingRecord = (await repository.listApplicationRecords()).find(
+    (record) => record.id === "application_b",
+  );
+  const snapshot = await workspaceService.performUserAction({
+    action: "cancel",
+    requestId: "request_a",
+    commandId: "cancel_item",
+    expectedRevision: 1,
+    credentialsPolicy: "browser_only",
+    submitAuthorized: false,
+    accountCreationAuthorized: false,
+  });
+  expect(
+    snapshot.applyJobResults.find((result) => result.id === "result_a"),
+  ).toMatchObject({
+    state: "cancelled",
+    summary: "Cancelled by you",
+    blockerReason: null,
+    blockerSummary: null,
+  });
+  expect(
+    snapshot.applicationRecords.find((record) => record.id === "application_a"),
+  ).toMatchObject({
+    lastAttemptState: "cancelled",
+    lastActionLabel: "Cancelled by you",
+    latestBlocker: null,
+  });
+  expect(
+    snapshot.applyJobResults.find((result) => result.id === "result_b"),
+  ).toEqual(sibling);
+  expect(
+    snapshot.applicationRecords.find((record) => record.id === "application_b"),
+  ).toEqual(siblingRecord);
+  expect(await repository.getUserActionRequest("request_b")).toMatchObject({
+    state: "pending",
+    revision: 1,
+  });
+  expect(snapshot.applyRuns.find((run) => run.id === "run_a")).toMatchObject({
+    state: "paused_for_user_review",
+    pendingJobs: 1,
+    failedJobs: 0,
+    summary: "1 cancelled · 1 waiting on you",
+  });
+});
+
+test("recording an application as sent in the tracker closes its open step and nothing else", async () => {
+  const { repository, workspaceService } = harness();
+  const siblingRecord = (await repository.listApplicationRecords()).find(
+    (record) => record.id === "application_b",
+  );
+  const snapshot = await workspaceService.mutateApplicationCrm({
+    applicationRecordId: "application_a",
+    expectedRevision: 0,
+    mutation: {
+      type: "set_stage",
+      stage: "interview",
+      customStageId: null,
+      note: null,
+    },
+    actor: "user",
+  });
+  expect(await repository.getUserActionRequest("request_a")).toMatchObject({
+    state: "skipped",
+  });
+  expect(await repository.getUserActionRequest("request_b")).toMatchObject({
+    state: "pending",
+    revision: 1,
+  });
+  const result = snapshot.applyJobResults.find(
+    (entry) => entry.id === "result_a",
+  );
+  // Their word, not a verified send: the result is closed, never "submitted".
+  expect(result).toMatchObject({
+    state: "skipped",
+    summary: "You recorded this application as sent.",
+  });
+  expect(
+    snapshot.applicationRecords.find((record) => record.id === "application_a"),
+  ).toMatchObject({
+    lastActionLabel: "You recorded this application as sent.",
+    nextActionLabel: null,
+    crm: { stage: "interview" },
+  });
+  expect(
+    snapshot.applicationRecords.find((record) => record.id === "application_b"),
+  ).toEqual(siblingRecord);
+});
+
+test("an earlier tracker stage leaves the open step alone", async () => {
+  const { repository, workspaceService } = harness();
+  await workspaceService.mutateApplicationCrm({
+    applicationRecordId: "application_a",
+    expectedRevision: 0,
+    mutation: {
+      type: "set_stage",
+      stage: "preparing",
+      customStageId: null,
+      note: null,
+    },
+    actor: "user",
+  });
+  expect(await repository.getUserActionRequest("request_a")).toMatchObject({
+    state: "pending",
+  });
+});
+
+test("marking an application withdrawn closes its step without calling it sent", async () => {
+  const { repository, workspaceService } = harness();
+  const snapshot = await workspaceService.mutateApplicationCrm({
+    applicationRecordId: "application_a",
+    expectedRevision: 0,
+    mutation: {
+      type: "set_stage",
+      stage: "withdrawn",
+      customStageId: null,
+      note: null,
+    },
+    actor: "user",
+  });
+  expect(await repository.getUserActionRequest("request_a")).toMatchObject({
+    state: "skipped",
+  });
+  expect(
+    snapshot.applyJobResults.find((entry) => entry.id === "result_a"),
+  ).toMatchObject({
+    state: "skipped",
+    summary: "You marked this application withdrawn.",
   });
 });

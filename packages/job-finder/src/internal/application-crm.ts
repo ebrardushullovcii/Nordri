@@ -1281,7 +1281,14 @@ export function exportApplicationCrm(input: {
   records: readonly ApplicationRecord[];
   request: ApplicationCrmExportInput;
   exportedAt?: string;
+  /** The person's named stages, so an export carries their words. */
+  customStages?: readonly { id: string; label: string }[];
 }): ApplicationCrmExportResult {
+  const customStageLabel = (customStageId: string | null | undefined) =>
+    customStageId
+      ? (input.customStages?.find((stage) => stage.id === customStageId)
+          ?.label ?? null)
+      : null;
   const request = ApplicationCrmExportInputSchema.parse(input.request);
   const selectedIds = new Set(request.applicationRecordIds);
   const records = input.records.filter(
@@ -1289,11 +1296,21 @@ export function exportApplicationCrm(input: {
   );
   const exportedAt = input.exportedAt ?? new Date().toISOString();
   const dateLabel = exportedAt.slice(0, 10);
+  // One application exports under its own name, so the file says what it
+  // holds; a list keeps the plural name.
+  const single = records.length === 1 ? records[0] : null;
+  const fileStem = single
+    ? `application-${single.company}-${single.title}`
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/gu, "-")
+        .replace(/^-+|-+$/gu, "")
+        .slice(0, 80)
+    : "applications";
 
   if (request.format === "json") {
     return {
       format: "json",
-      fileName: `applications-${dateLabel}.json`,
+      fileName: `${fileStem}-${dateLabel}.json`,
       mimeType: "application/json",
       content: JSON.stringify(
         {
@@ -1309,6 +1326,7 @@ export function exportApplicationCrm(input: {
               lastUpdatedAt: record.lastUpdatedAt,
               crm: {
                 ...crm,
+                customStageLabel: customStageLabel(crm.customStageId),
                 stageProvenance: provenance,
                 appliedAtProvenance: crm.appliedAt ? provenance : null,
                 externalVerification: "not_verified_with_employer_or_ats",
@@ -1329,6 +1347,7 @@ export function exportApplicationCrm(input: {
     "Title",
     "Company",
     "Stage",
+    "Your stage name",
     "Stage provenance",
     "Tags",
     "Applied at",
@@ -1353,6 +1372,7 @@ export function exportApplicationCrm(input: {
       record.title,
       record.company,
       crm.stage,
+      customStageLabel(crm.customStageId),
       provenance,
       crm.tags.join("; "),
       crm.appliedAt,
@@ -1365,7 +1385,7 @@ export function exportApplicationCrm(input: {
   });
   return {
     format: "csv",
-    fileName: `applications-${dateLabel}.csv`,
+    fileName: `${fileStem}-${dateLabel}.csv`,
     mimeType: "text/csv;charset=utf-8",
     // Every row ends with a line break, the last one too, so line-counting
     // tools see one line per application (without it, `wc -l` reported one

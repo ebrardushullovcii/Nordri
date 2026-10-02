@@ -34,6 +34,7 @@ const QueryInput = z.object({
   sort: z.enum(["score", "recent"]).default("score"),
   limit: z.number().int().min(1).max(25).default(10),
   includeExcludedEmployers: z.boolean().default(false),
+  show: z.boolean().default(true),
 });
 
 function filterJobs(
@@ -97,6 +98,9 @@ export const queryJobsTool = defineTool({
     includeExcludedEmployers: json.boolean(
       "Only when the person names an excluded employer.",
     ),
+    show: json.boolean(
+      "False when you are only looking things up for your answer; the rows then are not shown as cards. Show your picks with show_jobs.",
+    ),
   }),
   input: QueryInput,
   label: () => "Looking through your jobs",
@@ -157,7 +161,7 @@ export const queryJobsTool = defineTool({
         }),
       },
       parts:
-        shown.length > 0
+        input.show && shown.length > 0
           ? [
               jobRowsPart({
                 jobs: shown,
@@ -167,6 +171,55 @@ export const queryJobsTool = defineTool({
               }),
             ]
           : [],
+    };
+  },
+});
+
+/**
+ * Shows exactly the jobs the answer is about as cards, in the order given:
+ * the three it recommends, not the twenty-five it looked through.
+ */
+export const showJobsTool = defineTool({
+  name: "show_jobs",
+  group: "jobs",
+  description:
+    "Shows the given saved jobs to the person as cards under your reply, in this order. Use it for the jobs your answer is about (a top three, the ones you shortlisted); it reads nothing new.",
+  parameters: json.object(
+    {
+      jobIds: json.ids(),
+      title: json.string("A short heading, like 'Top three'."),
+    },
+    ["jobIds"],
+  ),
+  input: z.object({
+    jobIds: z.array(Id).min(1).max(25),
+    title: z.string().trim().max(120).optional(),
+  }),
+  label: () => "Showing the jobs",
+  effect: "read",
+  async execute(input, { service, session }) {
+    const snapshot = await service.getWorkspaceSnapshot();
+    const jobs = input.jobIds
+      .map((jobId) => findJob(snapshot, jobId))
+      .filter((job): job is NonNullable<typeof job> => job !== null);
+    if (jobs.length === 0) {
+      throw new AssistantToolError("not_found", "None of those jobs is saved.");
+    }
+    const resultSet = await session.createResultSet({
+      kind: "jobs",
+      label: input.title ?? "Jobs shown",
+      itemIds: jobs.map((job) => job.id),
+      source: "tool_query",
+    });
+    return {
+      summary: `Showing ${plural(jobs.length, "job")} (result set ${resultSet.id}).`,
+      parts: [
+        jobRowsPart({
+          jobs,
+          title: input.title ?? null,
+          resultSetId: resultSet.id,
+        }),
+      ],
     };
   },
 });
@@ -718,6 +771,7 @@ export const checkSourceTool = defineTool({
 
 export const jobsTools = [
   queryJobsTool,
+  showJobsTool,
   getJobTool,
   compareJobsTool,
   shortlistJobsTool,

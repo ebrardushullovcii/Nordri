@@ -126,6 +126,29 @@ describe("main window state", () => {
     });
   });
 
+  test("fits a first-launch window to a small laptop screen", () => {
+    // A 13-inch MacBook with the Dock showing: 1470 wide, about 860 usable.
+    expect(
+      resolveMainWindowBounds(
+        null,
+        { width: 1440, height: 920 },
+        [{ bounds: { x: 0, y: 0, width: 1470, height: 956 } }],
+        { width: 1470, height: 860 },
+      ),
+    ).toEqual({ width: 1440, height: 860 });
+  });
+
+  test("fits a size saved on a display that is no longer attached", () => {
+    expect(
+      resolveMainWindowBounds(
+        { x: 4000, y: 100, width: 2200, height: 1300, displayMode: "normal" },
+        { width: 1440, height: 920 },
+        [{ bounds: { x: 0, y: 0, width: 1470, height: 956 } }],
+        { width: 1470, height: 860 },
+      ),
+    ).toEqual({ width: 1470, height: 860 });
+  });
+
   test("round-trips the persisted state through the desktop user data directory", () => {
     const userDataDirectory = mkdtempSync(
       path.join(tmpdir(), "nordri-window-state-"),

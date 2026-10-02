@@ -159,6 +159,24 @@ export function ProfileFilesTab({
     }
   }
 
+  async function openFile(asset: CandidateAsset) {
+    setStatus(null);
+    try {
+      const result = await window.nordri.jobFinder.openCandidateAsset({
+        assetId: asset.id,
+      });
+      if (result.outcome !== "opened") {
+        setStatus(
+          result.outcome === "not_found"
+            ? `${asset.originalName} is no longer saved. Add it again if you still need it.`
+            : `${asset.originalName} could not be opened on this device.`,
+        );
+      }
+    } catch {
+      setStatus(`${asset.originalName} could not be opened. Try again.`);
+    }
+  }
+
   async function restoreFile(asset: CandidateAsset) {
     if (pendingAction) return;
     setPendingAction(`restore:${asset.id}`);
@@ -259,18 +277,36 @@ export function ProfileFilesTab({
                   {formatKind(asset.kind)} · {formatByteSize(asset.byteSize)} ·
                   Added {formatDate(asset.createdAt)}
                 </p>
+                {asset.forJob ? (
+                  <p className="text-(length:--text-description) text-foreground-soft">
+                    Written for {asset.forJob.title} at {asset.forJob.company};
+                    only attached to that application.
+                  </p>
+                ) : null}
               </div>
-              <Button
-                aria-label={`Remove ${asset.originalName}`}
-                disabled={controlsDisabled}
-                onClick={() => void removeFile(asset)}
-                pending={pendingAction === asset.id}
-                size="compact"
-                type="button"
-                variant="ghost"
-              >
-                Remove
-              </Button>
+              <div className="flex shrink-0 items-center gap-1">
+                <Button
+                  aria-label={`Open ${asset.originalName}`}
+                  disabled={controlsDisabled}
+                  onClick={() => void openFile(asset)}
+                  size="compact"
+                  type="button"
+                  variant="ghost"
+                >
+                  Open
+                </Button>
+                <Button
+                  aria-label={`Remove ${asset.originalName}`}
+                  disabled={controlsDisabled}
+                  onClick={() => void removeFile(asset)}
+                  pending={pendingAction === asset.id}
+                  size="compact"
+                  type="button"
+                  variant="ghost"
+                >
+                  Remove
+                </Button>
+              </div>
             </li>
           ))}
         </ul>

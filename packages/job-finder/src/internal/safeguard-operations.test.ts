@@ -1524,7 +1524,8 @@ describe("deriveHighestPriorityBlocker", () => {
         contradictions: [detectedContradiction("detection_1")],
       }),
     });
-    expect(withoutPauses?.kind).toBe("batch_sample_review_pending");
+    // A pending sample review no longer holds anything back.
+    expect(withoutPauses?.kind).toBe("contradictory_answer");
 
     const advisoryOnly = deriveHighestPriorityBlocker({
       safeguards: buildSafeguards({

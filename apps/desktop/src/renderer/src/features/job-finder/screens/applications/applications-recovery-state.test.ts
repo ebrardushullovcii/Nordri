@@ -610,3 +610,21 @@ describe("a job the person asked to skip", () => {
     });
   });
 });
+
+it("names cancellation before interpreting any retained security-check evidence", () => {
+  expect(
+    resolve(
+      buildResult({
+        state: "cancelled",
+        summary: "Cancelled by you",
+        detail: "Nothing was sent.",
+        blockerReason: "site_protection",
+        blockerSummary: "Complete the security check.",
+      }),
+    ),
+  ).toMatchObject({
+    statusLine: "Cancelled by you",
+    reasonSentence: "Nothing was sent.",
+    primaryAction: "try_again",
+  });
+});

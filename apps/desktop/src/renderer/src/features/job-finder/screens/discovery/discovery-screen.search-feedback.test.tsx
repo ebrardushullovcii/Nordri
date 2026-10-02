@@ -8,7 +8,11 @@ import type {
   PlanSafeguardPause,
   SavedJob,
 } from "@nordri/contracts";
-import { buildDiscoveryCardOnlyEvidenceWarning } from "@nordri/contracts";
+import {
+  DiscoveryRunRecordSchema,
+  DiscoveryTargetExecutionSchema,
+  buildDiscoveryCardOnlyEvidenceWarning,
+} from "@nordri/contracts";
 import type { ReactNode } from "react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -253,6 +257,14 @@ describe("DiscoveryScreen Search now truthful feedback", () => {
         {
           ...cleanRun,
           completedAt: "2026-08-28T10:02:00.000Z",
+          targetExecutions: [
+            DiscoveryTargetExecutionSchema.parse({
+              targetId: "source_1",
+              adapterKind: "auto",
+              state: "completed",
+              completedAt: "2026-08-28T10:02:00.000Z",
+            }),
+          ],
         },
       ],
     });
@@ -673,5 +685,82 @@ describe("DiscoveryScreen Results-mode shortlist feedback", () => {
     const status = await screen.findByRole("status");
     expect(status.textContent).toBe("Job added to Shortlisted.");
     expect(screen.queryByRole("alert")).toBeNull();
+  });
+});
+
+describe("source-specific stale errors and provider timeouts", () => {
+  it("keeps a different source's error and clears it when its own search succeeds", () => {
+    const feedback = {
+      ...createDiscoveryRunFailedFeedback({
+        detail: "The source is unavailable.",
+        targetLabel: "Example Board",
+        targetId: "source_1",
+      }),
+      recordedAtMs: Date.parse("2026-10-01T10:00:00.000Z"),
+    };
+    const completed = (targetId: string) =>
+      DiscoveryRunRecordSchema.parse({
+        id: "run_later",
+        state: "completed",
+        startedAt: "2026-10-01T10:01:00.000Z",
+        completedAt: "2026-10-01T10:02:00.000Z",
+        targetExecutions: [
+          {
+            targetId,
+            adapterKind: "auto",
+            state: "completed",
+            completedAt: "2026-10-01T10:02:00.000Z",
+          },
+        ],
+      });
+    const view = renderScreen({
+      discoveryRunFeedback: feedback,
+      recentRuns: [completed("other_source")],
+    });
+    expect(screen.getByTestId("discovery-run-feedback").textContent).toContain(
+      "Search could not start for Example Board.",
+    );
+    view.rerender(
+      buildScreen({
+        discoveryRunFeedback: feedback,
+        recentRuns: [completed("source_1")],
+      }),
+    );
+    expect(screen.getByTestId("discovery-run-feedback").textContent).toContain(
+      "Search finished",
+    );
+    expect(
+      screen.getByTestId("discovery-run-feedback").textContent,
+    ).not.toContain("Search could not start");
+  });
+  it("tells the person a timed-out plan kept jobs and can be searched again", () => {
+    const onRunAgentDiscovery = vi.fn();
+    renderScreen({
+      onRunAgentDiscovery,
+      jobs: [createJob("saved_before_timeout")],
+      recentRuns: [
+        DiscoveryRunRecordSchema.parse({
+          id: "run_timeout",
+          state: "failed",
+          startedAt: "2026-10-01T10:01:00.000Z",
+          completedAt: "2026-10-01T10:02:00.000Z",
+          summary: {
+            jobsPersisted: 1,
+            validJobsFound: 1,
+            warnings: [
+              "Model request timed out after 120s of silence from the AI service",
+            ],
+          },
+        }),
+      ],
+    });
+    const banner = screen.getByTestId("discovery-run-feedback");
+    expect(banner.textContent).toContain("The AI service stopped responding.");
+    expect(banner.textContent).toContain(
+      "Jobs found so far are saved. Search again to continue.",
+    );
+    expect(banner.textContent).not.toMatch(/internet|check your connection/i);
+    fireEvent.click(screen.getByRole("button", { name: "Search now" }));
+    expect(onRunAgentDiscovery).toHaveBeenCalledOnce();
   });
 });

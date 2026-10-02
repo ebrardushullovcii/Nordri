@@ -703,6 +703,47 @@ describe("apply agent run endings", () => {
     );
   });
 
+  test("a run stopping for the person first fills what it knows, then names what is still empty", async () => {
+    const seen: string[] = [];
+    let calls = 0;
+    const model: LLMClient = {
+      chatWithTools: (messages) => {
+        calls += 1;
+        seen.push(JSON.stringify(messages.at(-1) ?? null));
+        return Promise.resolve({
+          toolCalls: [
+            {
+              id: `call_${calls}`,
+              type: "function" as const,
+              function: {
+                name: "finish",
+                arguments: JSON.stringify({
+                  reason:
+                    "The form is filled in; a security check needs the person.",
+                  stuck: true,
+                }),
+              },
+            },
+          ],
+        });
+      },
+    };
+
+    const result = await runApplyAgent(
+      config(page({ controls: [{ ...nameControl(), value: "" }] })),
+      model,
+    );
+
+    expect(
+      seen.some(
+        (entry) =>
+          entry.includes("Fill it with") && entry.includes("Robin Ashford"),
+      ),
+    ).toBe(true);
+    expect(result.outcome).toBe("stuck");
+    expect(result.reason).toContain("Still empty on the form: Full name");
+  });
+
   test("finishing normally reports what was filled in, in plain words", async () => {
     const result = await runApplyAgent(
       config(
@@ -1530,5 +1571,363 @@ describe("shared navigation and Apply safety stay in one state", () => {
 
     expect(result.outcome).toBe("prepared");
     expect(reviews).toBe(1);
+  });
+});
+
+describe("answers and structured history on a retained form", () => {
+  function withExperience(source: RawApplyPage) {
+    const input = config(source);
+    input.sources.profile = CandidateProfileSchema.parse({
+      ...input.sources.profile,
+      experiences: [
+        {
+          id: "signal",
+          companyName: "Signal Systems",
+          title: "Engineer",
+          startDate: "January 2014",
+          isCurrent: true,
+        },
+      ],
+    });
+    return input;
+  }
+
+  function experiencePage() {
+    return page({
+      controls: [],
+      headings: [{ level: 2, text: "My Experience" }],
+      actions: [
+        { index: 0, label: "Add", visible: true, disabled: false },
+        {
+          index: 1,
+          label: "Save and continue",
+          visible: true,
+          disabled: false,
+        },
+      ],
+      stepLabel: "Step 2 of 4",
+    });
+  }
+
+  test("gives the model current saved roles and exact answers as data", async () => {
+    const input = withExperience(page());
+    input.sources.reusableAnswers = [
+      {
+        id: "remote",
+        kind: "other",
+        label: "Remote",
+        question: "Are you open to remote work?",
+        answer: "Yes",
+        roleFamilies: [],
+        proofEntryIds: [],
+      },
+    ];
+    const chatWithTools = vi.fn(
+      scriptedModel([{ name: "finish", args: { reason: "Prepared" } }])
+        .chatWithTools,
+    );
+    await runApplyAgent(input, { chatWithTools });
+    const facts = chatWithTools.mock.calls[0][0].find((message) =>
+      message.content?.includes('"savedApplicationFacts"'),
+    );
+    expect(facts?.content).toContain('"startDate":"January 2014"');
+    expect(facts?.content).toContain('"isCurrent":true');
+    expect(facts?.content).toContain(
+      '"question":"Are you open to remote work?","answer":"Yes"',
+    );
+    expect(facts?.content).not.toContain("storagePath");
+  });
+
+  test("fills saved remote and notice answers and reaches Review on the same page", async () => {
+    const source = page({
+      controls: [
+        {
+          ...nameControl(),
+          index: 0,
+          label: "Remote work",
+          inputType: "",
+          tagName: "select",
+          value: "",
+          options: ["Yes", "No"],
+        },
+        {
+          ...nameControl(),
+          index: 1,
+          label: "",
+          placeholder: "What is your notice period?",
+          value: "",
+        },
+      ],
+      stepLabel: "Step 3 of 4",
+    });
+    const input = config(source);
+    input.application.continuation = { sourceUrls: [source.url!] };
+    input.sources.reusableAnswers = [
+      {
+        id: "remote",
+        kind: "other",
+        label: "Remote work",
+        question: "Remote work",
+        answer: "Yes",
+        roleFamilies: [],
+        proofEntryIds: [],
+      },
+      {
+        id: "notice",
+        kind: "notice_period",
+        label: "Notice",
+        question: "What is your notice period?",
+        answer: "Two weeks",
+        roleFamilies: [],
+        proofEntryIds: [],
+      },
+    ];
+    input.hands.chooseOption = vi.fn((_ref: string, option: string) => {
+      source.controls[0].value = option;
+      source.controls[0].selectedOptionLabel = option;
+      return Promise.resolve({ ok: true as const, observedValue: option });
+    });
+    input.hands.fillText = vi.fn((_ref: string, value: string) => {
+      source.controls[1].value = value;
+      return Promise.resolve({ ok: true as const, observedValue: value });
+    });
+    input.hands.clickElement = vi.fn(() => {
+      source.stepLabel = "Step 4 of 4";
+      source.actions = [
+        {
+          index: 0,
+          label: "Submit application",
+          visible: true,
+          disabled: false,
+        },
+      ];
+      return Promise.resolve({ ok: true as const, observedValue: "Review" });
+    });
+    input.hands.navigate = vi.fn(input.hands.navigate);
+    const result = await runApplyAgent(
+      input,
+      scriptedModel([
+        { name: "select", args: { ref: "c0", option: "Yes" } },
+        { name: "type", args: { ref: "c1", text: "Two weeks" } },
+        { name: "finish", args: { reason: "Answers saved" } },
+        { name: "click", args: { ref: "a0" } },
+        { name: "finish", args: { reason: "At Review" } },
+      ]),
+    );
+    expect(result.outcome).toBe("prepared");
+    expect(source.controls.map((control) => control.value)).toEqual([
+      "Yes",
+      "Two weeks",
+    ]);
+    expect(source.stepLabel).toBe("Step 4 of 4");
+    expect(input.hands.navigate).not.toHaveBeenCalled();
+    expect(input.hands.clickElement).toHaveBeenCalledTimes(1);
+  });
+
+  test("allows another fill when a receipt succeeded but the live field cleared", async () => {
+    const source = page({ controls: [{ ...nameControl(), value: "" }] });
+    const input = config(source);
+    let writes = 0;
+    input.hands.fillText = vi.fn((_ref: string, value: string) => {
+      if (++writes === 2) source.controls[0].value = value;
+      return Promise.resolve({ ok: true as const, observedValue: value });
+    });
+    const result = await runApplyAgent(
+      input,
+      scriptedModel([
+        { name: "type", args: { ref: "c0", text: "Robin Ashford" } },
+        { name: "finish", args: { reason: "Ready" } },
+        { name: "type", args: { ref: "c0", text: "Robin Ashford" } },
+        { name: "finish", args: { reason: "Ready" } },
+      ]),
+    );
+    expect(writes).toBe(2);
+    expect(result.outcome).toBe("prepared");
+  });
+
+  test("gives the gap fact once and preserves a second finish's own report", async () => {
+    const source = experiencePage();
+    source.stepLabel = null;
+    source.actions = [
+      { index: 0, label: "Add", visible: true, disabled: false },
+    ];
+    const modelReason =
+      "The employer accepts the attached resume; I left its optional rows empty.";
+    const chatWithTools = vi.fn(
+      scriptedModel([
+        { name: "finish", args: { reason: "Resume attached" } },
+        { name: "finish", args: { reason: modelReason } },
+      ]).chatWithTools,
+    );
+    const result = await runApplyAgent(withExperience(source), {
+      chatWithTools,
+    });
+    expect(result.outcome).toBe("prepared");
+    expect(result.reason).toBe(
+      `${modelReason} ${result.structuredExperienceGap}`,
+    );
+    expect(result.readyToSend).toBeNull();
+    expect(
+      result.notes.filter((note) => note === result.structuredExperienceGap),
+    ).toHaveLength(1);
+    expect(
+      chatWithTools.mock.calls
+        .at(-1)![0]
+        .filter(
+          (message) =>
+            message.role === "tool" &&
+            message.content === result.structuredExperienceGap,
+        ),
+    ).toHaveLength(1);
+    expect(result.modelTurns).toBe(2);
+  });
+
+  test("a second multi-step finish keeps the model's reason", async () => {
+    const source = page({ stepLabel: "Step 3 of 4" });
+    const modelReason = "I stopped on the saved questions page as requested.";
+    const chatWithTools = vi.fn(
+      scriptedModel([
+        { name: "finish", args: { reason: "The current step is filled" } },
+        { name: "finish", args: { reason: modelReason } },
+      ]).chatWithTools,
+    );
+    const result = await runApplyAgent(config(source), { chatWithTools });
+    expect(result.outcome).toBe("prepared");
+    expect(result.reason).toContain(modelReason);
+    expect(result.reason).not.toContain("Preparation stopped before Review");
+    expect(result.modelTurns).toBe(2);
+    expect(
+      chatWithTools.mock.calls
+        .at(-1)![0]
+        .filter(
+          (message) =>
+            message.role === "tool" &&
+            message.content?.startsWith("This form has another step"),
+        ),
+    ).toHaveLength(1);
+  });
+
+  test.each(["finish", "submit_application"] as const)(
+    "a final action after a gap fact from %s proceeds with the gap note",
+    async (firstTool) => {
+      const source = experiencePage();
+      source.stepLabel = "Step 4 of 4";
+      source.actions = [
+        {
+          index: 0,
+          label: "Submit application",
+          visible: true,
+          disabled: false,
+        },
+        { index: 1, label: "Add", visible: true, disabled: false },
+      ];
+      const input = withExperience(source);
+      input.authority = {
+        ...input.authority,
+        mode: "autonomous_submit",
+        submitAuthorized: true,
+        allowedOrigins: ["https://apply.example.test"],
+      };
+      const modelReason =
+        "The optional employment rows remain empty; the employer accepts the resume.";
+      const chatWithTools = vi.fn(
+        scriptedModel([
+          {
+            name: firstTool,
+            args:
+              firstTool === "finish"
+                ? { reason: "Resume attached" }
+                : { ref: "a0" },
+          },
+          { name: "submit_application", args: { ref: "a0" } },
+          { name: "finish", args: { reason: modelReason } },
+        ]).chatWithTools,
+      );
+      const result = await runApplyAgent(input, { chatWithTools });
+      expect(result.outcome).toBe("ready_to_send");
+      expect(result.readyToSend).toEqual({
+        actionRef: "a0",
+        actionLabel: "Submit application",
+      });
+      expect(result.reason).toBe(
+        `${modelReason} ${result.structuredExperienceGap}`,
+      );
+      expect(result.notes).toContain(result.structuredExperienceGap);
+      expect(
+        chatWithTools.mock.calls
+          .at(-1)![0]
+          .filter(
+            (message) =>
+              message.role === "tool" &&
+              message.content === result.structuredExperienceGap,
+          ),
+      ).toHaveLength(1);
+    },
+  );
+
+  test("adds and fills a known role using the approved month before continuing to Review", async () => {
+    const source = experiencePage();
+    const input = withExperience(source);
+    input.hands.clickElement = (ref) => {
+      if (ref === "a0")
+        source.controls = [
+          {
+            ...nameControl(),
+            index: 0,
+            label: "Job title",
+            groupLabel: "Work experience 2",
+            value: "",
+          },
+          {
+            ...nameControl(),
+            index: 1,
+            label: "Company",
+            groupLabel: "Work experience 2",
+            value: "",
+          },
+          {
+            ...nameControl(),
+            index: 2,
+            label: "From",
+            groupLabel: "Work experience 2",
+            inputType: "month",
+            value: "",
+          },
+        ];
+      else {
+        source.controls = [];
+        source.headings = [{ level: 2, text: "Review" }];
+        source.stepLabel = "Step 4 of 4";
+        source.actions = [
+          {
+            index: 0,
+            label: "Submit application",
+            visible: true,
+            disabled: false,
+          },
+        ];
+      }
+      return Promise.resolve({ ok: true as const, observedValue: "clicked" });
+    };
+    const filled: string[] = [];
+    input.hands.fillText = (ref, value) => {
+      source.controls[Number(ref.slice(1))].value = value;
+      filled.push(value);
+      return Promise.resolve({ ok: true as const, observedValue: value });
+    };
+    const result = await runApplyAgent(
+      input,
+      scriptedModel([
+        { name: "finish", args: { reason: "PDF attached" } },
+        { name: "click", args: { ref: "a0" } },
+        { name: "type", args: { ref: "c0", text: "Engineer" } },
+        { name: "type", args: { ref: "c1", text: "Signal Systems" } },
+        { name: "type", args: { ref: "c2", text: "2014-01" } },
+        { name: "click", args: { ref: "a1" } },
+        { name: "finish", args: { reason: "At Review" } },
+      ]),
+    );
+    expect(filled).toEqual(["Engineer", "Signal Systems", "2014-01"]);
+    expect(result.outcome).toBe("prepared");
   });
 });

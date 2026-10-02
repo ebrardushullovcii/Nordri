@@ -33,7 +33,7 @@ import { z } from "zod";
 export class AssistantContextOverflowError extends Error {
   constructor() {
     super(
-      "This conversation grew too long for the model even after it was summarized. Start a new chat from the history menu to continue; nothing was lost.",
+      "This conversation grew too long for the model even after it was summarized. Start a new chat with the New chat button at the top of this panel and ask again; nothing was lost.",
     );
     this.name = "AssistantContextOverflowError";
   }
@@ -295,6 +295,7 @@ export async function assembleModelInput(
     options.conversationId,
     checkpoint,
   );
+  let turnMessages = options.turnMessages;
   const measure = () =>
     options.calibrator.adjust(
       estimateTokens(
@@ -302,7 +303,7 @@ export async function assembleModelInput(
           options.systemPrompt,
           checkpoint,
           tail,
-          options.turnMessages,
+          turnMessages,
           checkpoint ? pinnedForMeasure : null,
         ),
       ),
@@ -427,6 +428,17 @@ export async function assembleModelInput(
     await options.repository.appendCheckpoint(saved);
     await options.onCompacted(saved);
   }
+  // One long request (reading many pages, checking many jobs) fills the
+  // context with its own tool results before any earlier exchange exists to
+  // summarize. Older results of this turn shrink to their one-line summaries,
+  // newest first kept, so the request finishes instead of stopping.
+  for (const keepRecent of [6, 2, 0]) {
+    if (measure() <= budget) break;
+    turnMessages = elideOldToolOutputs(turnMessages, {
+      keepRecent,
+      minCharsToElide: 300,
+    }).messages;
+  }
   if (measure() > budget) {
     throw new AssistantContextOverflowError();
   }
@@ -434,7 +446,7 @@ export async function assembleModelInput(
     options.systemPrompt,
     checkpoint,
     tail,
-    options.turnMessages,
+    turnMessages,
     checkpoint ? await pinned() : null,
   );
 }

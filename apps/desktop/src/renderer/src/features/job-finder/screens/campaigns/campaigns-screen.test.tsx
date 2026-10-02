@@ -645,7 +645,7 @@ describe("CampaignsScreen", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save search plan" }));
 
     const saved = onSaveCampaign.mock.calls.at(-1)?.[0];
-    expect(saved?.limits.retainedJobTarget).toBe(1_000);
+    expect(saved?.limits.retainedJobTarget).toBe(10_000);
     expect(saved?.limits.preparationBatchSize).toBe(5);
     expect(saved?.limits.dailyPreparationLimit).toBe(20);
     expect(saved?.stopRules).toEqual(existing.stopRules);
@@ -1184,6 +1184,30 @@ describe("CampaignsScreen", () => {
     expect(screen.getByLabelText<HTMLInputElement>("Name").value).toBe(
       "Broad engineering",
     );
+  });
+
+  it("does not ask to discard an edit that was typed and then undone", () => {
+    render(
+      <CampaignsScreen
+        activeCampaignId="one"
+        campaigns={[campaign("one", "Remote TypeScript", "precision")]}
+        onSaveCampaign={vi.fn()}
+        onSelectCampaign={vi.fn()}
+        pending={false}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    const name = screen.getByLabelText<HTMLInputElement>("Name");
+    fireEvent.change(name, { target: { value: "Something else" } });
+    fireEvent.change(name, { target: { value: "Remote TypeScript" } });
+    fireEvent.click(screen.getByRole("button", { name: "New search plan" }));
+
+    expect(
+      screen.queryByRole("alertdialog", {
+        name: "Discard unsaved search-plan changes?",
+      }),
+    ).toBeNull();
   });
 
   it("asks through the app-owned dialog before a dirty switch to New", () => {

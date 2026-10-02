@@ -466,8 +466,12 @@ describe("JobFinderPage answers close requests in every render state", () => {
     expect(openingShell).not.toBeNull();
     expect(header?.className).toContain("h-14");
     expect(brand?.style.paddingInlineStart).toBe("");
-    expect(wordmark?.textContent).toBe("NORDRI");
-    expect(wordmark?.className).toContain("sm:text-[1.6rem]");
+    expect(
+      wordmark?.contains(screen.getByRole("img", { name: "Nordri" })),
+    ).toBe(true);
+    expect(
+      screen.getByRole("img", { name: "Nordri" }).getAttribute("class"),
+    ).toContain("sm:h-[1.3rem]");
     // The opening skeleton mirrors the loaded shell header: the caption row
     // carries the brand lockup and the native window-control reserve, and the
     // module switch is the wordmark's subtitle inside the brand region — the

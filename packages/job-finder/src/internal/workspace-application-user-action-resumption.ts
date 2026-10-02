@@ -886,13 +886,14 @@ export function createApplicationUserActionResumer(
       );
       if (answerEvent && scope.resultId) {
         const recordPrefix = `manual_answer_${request.id}_${request.revision}`;
-        const storedAnswers =
-          await ctx.repository.listApplicationAnswerRecords({
+        const storedAnswers = await ctx.repository.listApplicationAnswerRecords(
+          {
             runId: scope.runId,
             jobId: scope.jobId,
             resultId: scope.resultId,
             applicationRecordId: scope.applicationRecordId,
-          });
+          },
+        );
         const answerStored = storedAnswers.some(
           (record) =>
             record.id === recordPrefix ||
@@ -1166,9 +1167,14 @@ export function createApplicationUserActionResumer(
     // the agent can go straight to those fields, fill them and carry on
     // instead of working the whole form a second time.
     const answeredQuestionLines = questionRecords.flatMap((question) => {
-      const latest = [...answerRecords]
-        .filter((answer) => answer.questionId === question.id)
-        .sort((left, right) => right.revision - left.revision)[0];
+      const selected = answerRecords.find(
+        (answer) => answer.id === question.selectedAnswerId,
+      );
+      const latest =
+        selected ??
+        [...answerRecords]
+          .filter((answer) => answer.questionId === question.id)
+          .sort((left, right) => right.revision - left.revision)[0];
       return latest
         ? [`Answer to "${question.prompt.trim()}": ${latest.text.trim()}`]
         : [];
@@ -1195,6 +1201,7 @@ export function createApplicationUserActionResumer(
     let preparationError: Error | null = null;
     try {
       applicationAttachments = await resolveApplicationAttachmentsForExecution({
+        jobId: scope.jobId,
         resolver: ctx.candidateAssetResolver,
         answerRecords,
         questionRecords,
@@ -1215,7 +1222,8 @@ export function createApplicationUserActionResumer(
     if (orphanedAttempt) {
       await ctx.repository.upsertApplicationAttempt(scheduledAttempt);
     } else {
-      ownsClaim = await ctx.repository.claimApplicationAttempt(scheduledAttempt);
+      ownsClaim =
+        await ctx.repository.claimApplicationAttempt(scheduledAttempt);
     }
     if (!ownsClaim) {
       const claimedAttempt = (

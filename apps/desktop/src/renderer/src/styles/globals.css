@@ -366,6 +366,8 @@
 
   /* Component tokens - Colors */
   --headline-primary: #eceef1;
+  --brand-stone-sage: #a9bcaa;
+  --brand-stone-blue: #91acc9;
   --headline-secondary: #e3e6ea;
   --text-headline: #eceef1;
   --text-badge: #e3e6ea;
@@ -548,6 +550,8 @@
   --critical-foreground: #fff9f8;
 
   --headline-primary: #20252a;
+  --brand-stone-sage: #839889;
+  --brand-stone-blue: #3e5979;
   --headline-secondary: #2b3137;
   --text-headline: #20252a;
   --text-badge: #f5f7f9;

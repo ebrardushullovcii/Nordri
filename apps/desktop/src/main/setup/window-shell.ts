@@ -21,6 +21,7 @@ import {
   type MainWindowFailure,
   type MainWindowRecoveryChoice,
 } from "./main-window-lifecycle";
+import { resolveBrandIconPaths } from "./brand-icons";
 import { getMainWindowCloseGuard } from "./main-window-close-guard";
 
 const defaultMainWindowBounds = {
@@ -455,6 +456,7 @@ export function createMainWindow(currentDir: string) {
     defaultMainWindowBounds,
     savedState,
   );
+  const brandIcons = !isMac ? resolveBrandIconPaths(app.getAppPath()) : null;
   const mainWindow = new BrowserWindow({
     // Only an explicit geometry request consults the primary display work
     // area; without one, the existing bounds path is preserved untouched.
@@ -469,6 +471,7 @@ export function createMainWindow(currentDir: string) {
     minHeight: 720,
     show: true,
     title: "Nordri",
+    ...(brandIcons ? { icon: brandIcons.appIcon } : {}),
     backgroundColor: "#0e1726",
     autoHideMenuBar: true,
     frame: !(isMac || isWindows),

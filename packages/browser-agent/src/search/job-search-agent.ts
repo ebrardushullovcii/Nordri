@@ -32,6 +32,10 @@ import type { AgentConfig, AgentProgress, AgentResult } from "../types";
 import { createSearchCatalogTools } from "./job-search-catalog-tools";
 import { createJobSearchPrompts } from "./job-search-prompts";
 import { createMoveReviewer, describeSearchGoal } from "./move-reviewer";
+import {
+  createBotCheckTracker,
+  inspectBotCheckInterstitial,
+} from "./bot-check";
 
 /**
  * The agent that searches one site for jobs, and the agent that checks a
@@ -39,9 +43,8 @@ import { createMoveReviewer, describeSearchGoal } from "./move-reviewer";
  *
  * It browses with the ordinary powers a person has, saves what it finds, is
  * told what was new and what it already had, and decides when the source is
- * done. Nothing here ends the run on the host's judgement; the deterministic
- * card scanner and the extractor are tools it calls when they help. See
- * ADR 0023.
+ * done. Repeated bot-check interstitials are facts handed to the model;
+ * the card scanner and the extractor remain tools it calls when they help.
  */
 
 export interface JobSearchAgentInput {
@@ -56,8 +59,45 @@ export interface JobSearchAgentInput {
   now?: () => Date;
 }
 
-const DEFAULT_MAX_STEPS = 300;
-const DEFAULT_TIME_BUDGET_MS = 20 * 60_000;
+/**
+ * Why a read-off item is not a job posting, or null when it is one. Structure
+ * only, never a list of words: a posting has a title with letters in it that
+ * is not just the company's name, and on a results page a link of its own.
+ * A site's brand, a category heading and a "124,564 jobs" counter fail it.
+ */
+export function describeNonPosting(
+  posting: Pick<JobPosting, "title" | "company" | "canonicalUrl">,
+  pageUrl: string,
+  pageType: "search_results" | "job_detail",
+): string | null {
+  const title = posting.title.trim();
+  if (!/\p{L}/u.test(title)) return "it has no job title";
+  if (title.toLowerCase() === posting.company.trim().toLowerCase()) {
+    return "its title is just the company name";
+  }
+  if (pageType === "search_results") {
+    try {
+      const link = new URL(posting.canonicalUrl);
+      const page = new URL(pageUrl);
+      const samePage =
+        link.origin === page.origin &&
+        link.pathname.replace(/\/+$/u, "") ===
+          page.pathname.replace(/\/+$/u, "") &&
+        link.search === page.search;
+      if (link.pathname === "/" || samePage) {
+        return "it has no link of its own";
+      }
+    } catch {
+      return "it has no link of its own";
+    }
+  }
+  return null;
+}
+
+// Runaway protection only: productive searches routinely need hundreds of turns.
+const DEFAULT_MAX_STEPS = 10_000;
+const DEFAULT_TIME_BUDGET_MS = 60 * 60_000;
+const DEFAULT_NO_PROGRESS_STEP_LIMIT = 24;
 
 function repairExtractedTitleFromOwnHeading(
   job: Awaited<ReturnType<JobExtractor["extractJobsFromPage"]>>[number],
@@ -231,22 +271,66 @@ export async function runJobSearchAgent(
     homeHosts: config.navigationPolicy.allowedHostnames,
     ...(input.signal ? { signal: input.signal } : {}),
   });
-  const pageTools = createPageTools(hands, {
-    allowUrl: (url) => {
-      const check = isAllowedUrl(url, config.navigationPolicy);
-      return check.valid
-        ? null
-        : `${url} is outside ${siteLabel}, the site this run is on.`;
+  let observationRevision = 0;
+  const pageTools = createPageTools(
+    {
+      ...hands,
+      observe: async () => {
+        const observation = await hands.observe();
+        observationRevision += 1;
+        return observation;
+      },
     },
-    reviewMove: async (move) => {
-      emit("review_move", `Reviewing a move off ${siteLabel} to ${move.url}.`);
-      const review = await reviewMove(move);
-      notes.push(
-        review.allowed
-          ? `Left ${siteLabel} for ${move.url} because: ${move.reason} Allowed after review: ${review.verdict}`
-          : `Stayed on ${siteLabel} rather than going to ${move.url}. Reason given: ${move.reason} Review: ${review.verdict}`,
-      );
-      return review;
+    {
+      allowUrl: (url) => {
+        const check = isAllowedUrl(url, config.navigationPolicy);
+        return check.valid
+          ? null
+          : `${url} is outside ${siteLabel}, the site this run is on.`;
+      },
+      reviewMove: async (move) => {
+        emit(
+          "review_move",
+          `Reviewing a move off ${siteLabel} to ${move.url}.`,
+        );
+        const review = await reviewMove(move);
+        notes.push(
+          review.allowed
+            ? `Left ${siteLabel} for ${move.url} because: ${move.reason} Allowed after review: ${review.verdict}`
+            : `Stayed on ${siteLabel} rather than going to ${move.url}. Reason given: ${move.reason} Review: ${review.verdict}`,
+        );
+        return review;
+      },
+    },
+  );
+  const trackBotCheck = createBotCheckTracker();
+  const checkBotCheck = async () => {
+    const observation = pageTools.state.observation;
+    if (!observation) return null;
+    const repeated = trackBotCheck(
+      observation.url,
+      await inspectBotCheckInterstitial(observation, input.page),
+    );
+    return repeated && observation.url ? new URL(observation.url).host : null;
+  };
+  // Count once per tool, not once per internal pre/post-action page read.
+  const withBotCheckHandoff = (tool: AgentLoopTool): AgentLoopTool => ({
+    ...tool,
+    execute: async (raw, context) => {
+      const before = observationRevision;
+      const outcome = await tool.execute(raw, context);
+      // Only a fresh page read can show a new bot check; re-reading the page
+      // after every tool would slow long searches for nothing.
+      if (outcome.kind !== "ok" || observationRevision === before) {
+        return outcome;
+      }
+      const host = await checkBotCheck();
+      return host
+        ? {
+            ...outcome,
+            content: `${outcome.content}\n\nThis page is a bot check, seen twice in a row on ${host}. Only the person can get past it. If it is still showing, finish this source with blockedBy: security_check and needsPerson: true, and tell the person to open ${host} in the app's browser, get past the check, and search again. Jobs saved so far are kept.`,
+          }
+        : outcome;
     },
   });
   for (const url of config.resumeCheckpoint?.visitedUrls ?? []) {
@@ -255,6 +339,8 @@ export async function runJobSearchAgent(
   }
 
   let steps = 0;
+  let lastProgressStep = 0;
+  let pagesWithoutNewJobs = 0;
   const emit = (currentAction: string, message: string): void => {
     input.onProgress?.({
       currentUrl:
@@ -417,6 +503,7 @@ export async function runJobSearchAgent(
         ...(context.signal ? { signal: context.signal } : {}),
       });
       const added: JobPosting[] = [];
+      const skipped: string[] = [];
       const ignoredBefore = outsideCatalogAttempts;
       for (const partial of found) {
         const posting = toPosting(
@@ -428,6 +515,13 @@ export async function runJobSearchAgent(
             ),
           ),
         );
+        const notAPosting = posting
+          ? describeNonPosting(posting, observation.url, pageType)
+          : null;
+        if (posting && notAPosting) {
+          skipped.push(`"${posting.title}" (${notAPosting})`);
+          continue;
+        }
         if (posting && keep(posting)) added.push(posting);
       }
       if (added.length > 0) await checkpoint();
@@ -440,11 +534,18 @@ export async function runJobSearchAgent(
         content:
           found.length === 0
             ? "No job postings could be read from this page. If jobs are visible, they may load on scroll or sit behind a control; if not, this is not a listings page."
-            : describeSave(
-                added,
-                found.length,
-                outsideCatalogAttempts - ignoredBefore,
-              ),
+            : [
+                describeSave(
+                  added,
+                  found.length - skipped.length,
+                  outsideCatalogAttempts - ignoredBefore,
+                ),
+                skipped.length > 0
+                  ? `Not saved, because they do not look like job postings: ${skipped.slice(0, 8).join("; ")}. If one is a real job, open its own page and use extract_jobs there.`
+                  : null,
+              ]
+                .filter((line): line is string => line !== null)
+                .join("\n"),
         progress: added.length > 0,
       };
     },
@@ -485,7 +586,11 @@ export async function runJobSearchAgent(
       }
       const added: JobPosting[] = [];
       const ignoredBefore = outsideCatalogAttempts;
+      const scannedPageUrl = input.page.url();
       for (const posting of observed.postingCandidates) {
+        if (describeNonPosting(posting, scannedPageUrl, "search_results")) {
+          continue;
+        }
         if (keep(posting)) added.push(posting);
       }
       if (added.length > 0) await checkpoint();
@@ -766,6 +871,7 @@ export async function runJobSearchAgent(
 
   try {
     const landed = await pageTools.observe();
+    await checkBotCheck();
     messages.push({
       role: "user",
       content: `The page you have landed on:\n\n${describeObservation(landed)}`,
@@ -788,18 +894,58 @@ export async function runJobSearchAgent(
     isSourceCheck ? `Checking ${siteLabel}.` : `Searching ${siteLabel}.`,
   );
 
+  const tools = [
+    ...pageTools.tools.map(withBotCheckHandoff),
+    ...catalogTools,
+    withBotCheckHandoff(extractTool),
+    withBotCheckHandoff(scanTool),
+    savedTool,
+    withBotCheckHandoff(pageApiTool),
+    finishTool,
+  ];
+  // Reads that look at a page of jobs; a run of them with nothing new saved
+  // is what "no new jobs on the last N page reads" counts.
+  const pageReadToolNames = new Set([
+    extractTool.definition.function.name,
+    scanTool.definition.function.name,
+    "list_catalog_jobs",
+  ]);
+  // These tools report progress only for rows/details not previously read.
+  // Page movement tools also report progress, but a new URL alone does not
+  // prove that duplicate-only pagination found anything new.
+  const unreadContentToolNames = new Set([
+    "list_catalog_jobs",
+    "read_catalog_job",
+  ]);
   const loop = await runAgentLoop({
     messages,
     model: input.llmClient,
-    tools: [
-      ...pageTools.tools,
-      ...catalogTools,
-      extractTool,
-      scanTool,
-      savedTool,
-      pageApiTool,
-      finishTool,
-    ],
+    tools: isSourceCheck
+      ? tools
+      : tools.map(
+          (tool): AgentLoopTool => ({
+            ...tool,
+            execute: async (raw, context) => {
+              const savedBefore = collected.length;
+              const outcome = await tool.execute(raw, context);
+              if (outcome.kind !== "ok") return outcome;
+              const savedNewJobs = collected.length > savedBefore;
+              const readUnreadContent =
+                outcome.progress === true &&
+                unreadContentToolNames.has(tool.definition.function.name);
+              const madeProgress = savedNewJobs || readUnreadContent;
+              if (madeProgress) {
+                lastProgressStep = context.step;
+                pagesWithoutNewJobs = 0;
+              } else if (pageReadToolNames.has(tool.definition.function.name)) {
+                pagesWithoutNewJobs += 1;
+              }
+              // Moving to another URL, scrolling, or reading the same feed again
+              // cannot keep duplicate-only pagination alive indefinitely.
+              return { ...outcome, progress: madeProgress };
+            },
+          }),
+        ),
     subjectLabel: siteLabel,
     ceilings: {
       maxSteps: Math.max(config.maxSteps, DEFAULT_MAX_STEPS),
@@ -808,9 +954,9 @@ export async function runJobSearchAgent(
       // service failure ran no tools, so asking once more repeats nothing,
       // and one provider hiccup no longer ends the search on this source.
       modelTurnTimeoutRetries: 1,
-      ...(config.runControl?.noProgressStepLimit
-        ? { noProgressStepLimit: config.runControl.noProgressStepLimit }
-        : {}),
+      noProgressStepLimit:
+        config.runControl?.noProgressStepLimit ??
+        DEFAULT_NO_PROGRESS_STEP_LIMIT,
     },
     describeStall: () =>
       [
@@ -829,6 +975,12 @@ export async function runJobSearchAgent(
     now,
   });
 
+  if (!isSourceCheck && loop.ending === "stalled") {
+    loop.reason =
+      pagesWithoutNewJobs > 0
+        ? `Stopped: no new jobs on the last ${pagesWithoutNewJobs} page reads.`
+        : `Stopped: no new jobs in the last ${loop.steps - lastProgressStep} steps.`;
+  }
   emit("finish", loop.reason);
   return buildResult(loop);
 

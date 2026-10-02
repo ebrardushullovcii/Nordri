@@ -113,14 +113,11 @@ export function getReviewQueueWorkflowStatus(
   }
 
   if (item.assetStatus === "not_started") {
-    return {
-      label:
-        item.resumeApplicationMode === "original_resume"
-          ? "Ready to apply"
-          : "No resume yet",
-      tone:
-        item.resumeApplicationMode === "original_resume" ? "positive" : "muted",
-    };
+    // Original with nothing imported has no file to send; Apply stays off and
+    // the label says what unblocks it.
+    return item.resumeApplicationMode === "original_resume"
+      ? { label: "Import your resume", tone: "warning" }
+      : { label: "No resume yet", tone: "muted" };
   }
 
   if (item.assetStatus === "generating" || item.assetStatus === "queued") {

@@ -123,7 +123,7 @@ describe("ProfileResumePanel", () => {
     expect(container?.textContent).toContain("Profile details");
     expect(container?.textContent).not.toContain("Imported 01 Jan 1970");
     expect(container?.textContent).not.toContain(
-      "This resume needs cleaner text",
+      "Job Finder could not read text from this file",
     );
   });
 

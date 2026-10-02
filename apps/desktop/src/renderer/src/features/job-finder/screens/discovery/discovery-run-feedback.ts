@@ -212,6 +212,7 @@ export interface DiscoveryRunFeedback {
     route: PlanSafeguardPause["route"];
   };
   targetLabel: string | null;
+  targetId?: string | null;
 }
 
 const BROWSER_RUNTIME_FAILURE_RE =
@@ -221,8 +222,10 @@ const SOURCE_SETUP_FAILURE_RE =
   /single_target|not found or unavailable|missing, disabled|no runnable|no enabled|enable at least one|add at least one|add or enable/i;
 const CONNECTION_FAILURE_RE =
   /fetch failed|network|offline|\bdns\b|ENOTFOUND|ECONNREFUSED|ERR_CONNECTION_REFUSED|ECONNRESET|ETIMEDOUT|timed?\s?out|unreachable|socket|provider (is )?(unavailable|unreachable)/i;
+const AI_SERVICE_TIMEOUT_RE =
+  /(?:model request|AI service|AI provider|model provider|the model)[^\n]*(?:timed?\s?out|timeout|silence|stopped responding)|(?:timed?\s?out|timeout|silence)[^\n]*(?:AI service|AI provider|model provider|the model)/i;
 const SITE_PROTECTION_FAILURE_RE =
-  /human-verification check|verification check|verify you are human|\bcaptcha\b|are you a robot/i;
+  /bot check|human-verification check|verification check|verify you are human|\bcaptcha\b|are you a robot/i;
 const SIGN_IN_WALL_FAILURE_RE =
   /asks you to sign in before it shows job listings/i;
 const NO_PROGRESS_FAILURE_RE =
@@ -244,12 +247,12 @@ export function getDiscoveryRunFailureRecovery(
   // which the broader classifiers below would read as a runtime failure.
   if (SITE_PROTECTION_FAILURE_RE.test(detail)) {
     return {
-      kind: "source_setup",
+      kind: "browser_session",
       headline:
         "This site asked for a human verification check, so the search could not read it.",
-      actionLabel: "Review job sources",
+      actionLabel: OPEN_JOB_FINDER_BROWSER_ACTION,
       nextStep:
-        "Verification checks cannot be passed automatically. Try another job site or a company careers page, then search again.",
+        "Open the site in the browser, get past the check, then search again.",
     };
   }
 
@@ -301,6 +304,18 @@ export function getDiscoveryRunFailureRecovery(
       headline: "No searchable source was ready for this run.",
       actionLabel: "Review job sources",
       nextStep: "Enable a valid public job-source URL, then search again.",
+    };
+  }
+
+  // The AI going quiet mid-search is the service, not the person's network:
+  // telling them to check their internet sent them looking for a fault that
+  // was not there.
+  if (AI_SERVICE_TIMEOUT_RE.test(detail)) {
+    return {
+      kind: "retry",
+      headline: "The AI service stopped responding.",
+      actionLabel: null,
+      nextStep: "Jobs found so far are saved. Search again to continue.",
     };
   }
 
@@ -504,6 +519,7 @@ export function getDiscoveryCancelledSavedJobCount(
 export function createDiscoveryRunInterruptedFeedback(input: {
   detail: string | null;
   targetLabel?: string | null;
+  targetId?: string | null;
 }): DiscoveryRunFeedback {
   const detail = input.detail?.trim() || null;
 
@@ -516,6 +532,7 @@ export function createDiscoveryRunInterruptedFeedback(input: {
       : "The search stopped before it could finish.",
     recovery: detail ? getDiscoveryRunFailureRecovery(detail) : null,
     targetLabel: input.targetLabel ?? null,
+    targetId: input.targetId ?? null,
   };
 }
 
@@ -561,6 +578,7 @@ export function createDiscoveryRunRefreshIncompleteFeedback(
 export function createDiscoveryRunFailedFeedback(input: {
   detail: string | null;
   targetLabel?: string | null;
+  targetId?: string | null;
 }): DiscoveryRunFeedback {
   const detail = input.detail?.trim() || null;
 
@@ -573,5 +591,37 @@ export function createDiscoveryRunFailedFeedback(input: {
       : "Search could not start.",
     recovery: detail ? getDiscoveryRunFailureRecovery(detail) : null,
     targetLabel: input.targetLabel ?? null,
+    targetId: input.targetId ?? null,
   };
+}
+
+/** A source error is obsolete only after that same source succeeds later. */
+export function isDiscoveryFailureSuperseded(input: {
+  feedback: DiscoveryRunFeedback | null | undefined;
+  targetId: string | null;
+  runs: readonly DiscoveryRunRecord[];
+}): boolean {
+  const { feedback } = input;
+  if (feedback?.status !== "failed" || feedback.recordedAtMs === undefined) {
+    return false;
+  }
+  const recordedAtMs = feedback.recordedAtMs;
+  return input.runs.some((run) => {
+    if (input.targetId) {
+      return (run.targetExecutions ?? []).some(
+        (execution) =>
+          execution.targetId === input.targetId &&
+          execution.state === "completed" &&
+          execution.completedAt !== null &&
+          Date.parse(execution.completedAt) > recordedAtMs,
+      );
+    }
+    // A named source without an identity cannot be cleared by another source.
+    return (
+      !feedback.targetLabel &&
+      run.state === "completed" &&
+      run.completedAt !== null &&
+      Date.parse(run.completedAt) > recordedAtMs
+    );
+  });
 }

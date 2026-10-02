@@ -11,6 +11,7 @@ import {
 import {
   detectResumeDocumentFileKind,
   extractResumeDocument,
+  getPdfPageCount,
 } from "../../adapters/resume-document";
 import { generateResumeVisionImages } from "../../adapters/resume-vision-images";
 import { getJobFinderWorkspaceService } from "./workspace-service";
@@ -45,6 +46,28 @@ export function resolveResumeWorkingCopyPath(input: {
 }
 
 export class ResumeImportRetryUnavailableError extends Error {}
+
+export class ResumeImportUnreadableFileError extends Error {}
+
+/**
+ * A damaged or truncated PDF must never replace a working resume: it would be
+ * attached to applications as-is. A scanned PDF with no text is still a valid
+ * file and passes; only a file that does not open as a PDF with pages fails.
+ */
+export async function assertResumeFileOpens(
+  filePath: string,
+  fileName: string,
+): Promise<void> {
+  if (detectResumeDocumentFileKind(filePath) !== "pdf") {
+    return;
+  }
+  const pageCount = await getPdfPageCount(filePath).catch(() => 0);
+  if (pageCount < 1) {
+    throw new ResumeImportUnreadableFileError(
+      `${fileName} could not be opened as a PDF; it looks damaged or incomplete. Your current resume is unchanged. Save or export it again, or import a DOCX or text copy.`,
+    );
+  }
+}
 
 /**
  * Imports again the file an import was reading when the app closed. The
@@ -142,6 +165,7 @@ export async function importResumeFromSourcePath(
     sourceFileKind !== "plain_text" &&
     sourceFileKind !== "markdown";
 
+  await assertResumeFileOpens(sourcePath, fileName);
   await copyFile(sourcePath, targetPath);
   const sourceSha256 = createHash("sha256")
     .update(await readFile(targetPath))

@@ -41,7 +41,11 @@ export async function extractJobsFromPageText(
 
 export async function saveJobsFromPage(
   ctx: WorkspaceServiceContext,
-  input: { postings: readonly JobPosting[]; pageUrl: string },
+  input: {
+    postings: readonly JobPosting[];
+    pageUrl: string;
+    applyOnThisPage?: boolean;
+  },
 ): Promise<{
   savedJobIds: string[];
   newJobIds: string[];
@@ -103,8 +107,15 @@ export async function saveJobsFromPage(
     const seen = new Set(
       existing.provenance.map((entry) => JSON.stringify(entry)),
     );
+    // "Apply on this link" is the person choosing where to apply: the same
+    // job saved from another site applies on this page's own form.
+    const chosenApplicationUrl =
+      input.applyOnThisPage && input.postings.length === 1
+        ? (input.postings[0]?.applicationUrl ?? input.pageUrl)
+        : null;
     return {
       ...existing,
+      ...(chosenApplicationUrl ? { applicationUrl: chosenApplicationUrl } : {}),
       provenance: [
         ...existing.provenance,
         ...job.provenance.filter((entry) => !seen.has(JSON.stringify(entry))),

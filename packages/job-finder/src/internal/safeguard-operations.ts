@@ -1914,29 +1914,6 @@ function collectGateCandidates(
     });
   }
 
-  for (const review of safeguards.preparedBatchSampleReviews) {
-    if (review.reviewCompleted) continue;
-    if (isDismissed(dismissals, "batch_sample_review_pending", review.id)) {
-      continue;
-    }
-    candidates.push({
-      sortKey: [
-        BLOCKER_PRIORITY.batch_sample_review_pending,
-        "",
-        "",
-        review.id,
-      ],
-      blocker: makeBlocker({
-        kind: "batch_sample_review_pending",
-        id: review.id,
-        severity: "blocker",
-        scope: "apply",
-        explanation: review.explanation,
-        recoveryGuidance: review.recoveryGuidance,
-      }),
-    });
-  }
-
   for (const detection of safeguards.contradictoryAnswerDetections) {
     if (detection.status !== "detected") continue;
     if (isDismissed(dismissals, "contradictory_answer", detection.id)) {
@@ -2142,24 +2119,6 @@ export function deriveScopeBlockers(
         scope: abnormalFailurePauseScope(pause.id),
         explanation: pause.explanation,
         recoveryGuidance: pause.recoveryGuidance,
-      }),
-    );
-  }
-
-  for (const review of safeguards.preparedBatchSampleReviews) {
-    if (review.reviewCompleted) continue;
-    if (isDismissed(dismissals, "batch_sample_review_pending", review.id)) {
-      continue;
-    }
-    push(
-      [BLOCKER_PRIORITY.batch_sample_review_pending, "", "", review.id],
-      makeBlocker({
-        kind: "batch_sample_review_pending",
-        id: review.id,
-        severity: "blocker",
-        scope: "apply",
-        explanation: review.explanation,
-        recoveryGuidance: review.recoveryGuidance,
       }),
     );
   }

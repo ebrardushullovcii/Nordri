@@ -1,4 +1,5 @@
 import {
+  app,
   BrowserWindow,
   desktopCapturer,
   nativeImage,
@@ -16,6 +17,7 @@ import type {
   InterviewWorkspaceSnapshot,
 } from "@nordri/contracts";
 import { getLiveAssistantService } from "../services/live-assistant";
+import { resolveBrandIconPaths } from "./brand-icons";
 import { resolveVisibleInterviewPopupInputMode } from "./interview-surface-mode";
 
 type InterviewOverlayKind = "answer" | "transcript";
@@ -157,7 +159,12 @@ function createOverlayWindow(
   }
 
   const isAnswer = kind === "answer";
+  const brandIcons =
+    process.platform !== "darwin"
+      ? resolveBrandIconPaths(app.getAppPath())
+      : null;
   const window = new BrowserWindow({
+    ...(brandIcons ? { icon: brandIcons.appIcon } : {}),
     width: isAnswer ? 600 : 680,
     height: isAnswer ? 640 : 460,
     minWidth: isAnswer ? 460 : 500,

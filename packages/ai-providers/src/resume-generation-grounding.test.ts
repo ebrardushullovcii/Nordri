@@ -1397,6 +1397,19 @@ describe("compactJobDescriptionForModel", () => {
 });
 
 describe("collectListingRequestedSkills", () => {
+  it("does not split a work-authorization country into requested skills", () => {
+    const collected = collectListingRequestedSkills({
+      keySkills: ["TypeScript"],
+      minimumQualifications: [
+        "Must be authorized to work in the United States.",
+        "Experience with Terraform required.",
+      ],
+    });
+
+    expect(collected).toContain("Terraform");
+    expect(collected).not.toContain("United");
+    expect(collected).not.toContain("States");
+  });
   it.each([
     "Practical knowledge of Terraform and Kubernetes.",
     "Experience with practical Terraform and Kubernetes skills.",

@@ -304,11 +304,6 @@ export function normalizeGroupedManualAnswerCommit(
         `Question "${questionId}" does not match its lineage identity.`,
       );
     }
-    if (next.status !== "detected" || next.submittedAnswer !== null) {
-      throw new Error(
-        `Question "${questionId}" must remain detected and unsubmitted.`,
-      );
-    }
   }
   const questionChanges: GroupedManualAnswerQuestionChange[] =
     lineageQuestionIds.map((questionId) => ({
@@ -349,6 +344,20 @@ export function normalizeGroupedManualAnswerCommit(
       );
     }
     nextAnswerByQuestionId.set(answer.questionId, answer);
+  }
+
+  for (const [questionId, question] of questionById) {
+    const answer = nextAnswerByQuestionId.get(questionId);
+    if (
+      !answer ||
+      question.status !== "answered" ||
+      question.selectedAnswerId !== answer.id ||
+      question.submittedAnswer !== answer.text
+    ) {
+      throw new Error(
+        `Question "${questionId}" must select its approved answer and be marked answered.`,
+      );
+    }
   }
 
   const answerChanges: GroupedManualAnswerAnswerChange[] = [];

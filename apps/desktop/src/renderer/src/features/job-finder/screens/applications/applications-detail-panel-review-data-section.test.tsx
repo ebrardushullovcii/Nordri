@@ -262,7 +262,31 @@ describe("application question answer review", () => {
       value: {
         jobFinder: {
           listCandidateAssets: vi.fn(() =>
-            Promise.resolve({ assets: [asset] }),
+            Promise.resolve({
+              assets: [
+                asset,
+                {
+                  ...asset,
+                  id: "asset-other-job",
+                  originalName: "other-job.pdf",
+                  forJob: {
+                    jobId: "job-other",
+                    title: "Engineer",
+                    company: "Cedar",
+                  },
+                },
+                {
+                  ...asset,
+                  id: "asset-this-job",
+                  originalName: "this-job.pdf",
+                  forJob: {
+                    jobId: details.result!.jobId,
+                    title: "Engineer",
+                    company: "Cedar",
+                  },
+                },
+              ],
+            }),
           ),
         },
       },
@@ -286,6 +310,8 @@ describe("application question answer review", () => {
     const selector = await screen.findByRole("combobox", {
       name: "Answer for Upload a portfolio",
     });
+    expect(screen.queryByRole("option", { name: /other-job.pdf/ })).toBeNull();
+    expect(screen.getByRole("option", { name: /this-job.pdf/ })).toBeTruthy();
     fireEvent.change(selector, { target: { value: asset.id } });
     fireEvent.click(
       screen.getByRole("button", { name: "Save prepared answer" }),

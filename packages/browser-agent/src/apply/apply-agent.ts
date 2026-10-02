@@ -32,6 +32,7 @@ import {
   isCoverLetterControl,
 } from "./cover-letter";
 import { resolveApplyAnswer } from "./answer-sourcing";
+import { applicationFacts, structuredExperienceGap } from "./application-facts";
 import {
   checkWrittenApplicationAnswer,
   WrittenAnswerCheckUnavailableError,
@@ -207,6 +208,10 @@ export async function runApplyAgent(
   const notes: string[] = [];
   const timeline: { at: string; text: string }[] = [];
   const pendingQuestions = new Map<string, ApplicationAttemptQuestion>();
+  // A run that stops for the person (a check only they can pass) is first
+  // asked once to fill the fields it already knows, so the person is left
+  // only the part the agent could not do.
+  let stuckFinishNudged = false;
   const guardState = createApplyGuardState();
   const documentCatalog: ApplyDocument[] = [...config.sources.documents];
   const runConfig: ApplyAgentConfig = {
@@ -214,6 +219,9 @@ export async function runApplyAgent(
     sources: { ...config.sources, documents: documentCatalog },
   };
   let readyToSend: ApplyAgentResult["readyToSend"] = null;
+  const experienceState: { gap: string | null } = { gap: null };
+  let experienceGapNudged = false;
+  let advanceFinishNudged = false;
 
   const pendingQuestionKey = (
     control: Pick<
@@ -277,6 +285,14 @@ export async function runApplyAgent(
 
   const syncObservation = (next: ApplyFormObservation): void => {
     pageTools.state.observation = next;
+    const gap = structuredExperienceGap(next, config.sources);
+    if (gap !== null) experienceState.gap = gap || null;
+    // A person or a later page write may have answered a previously pending
+    // question. Keep the live controls authoritative when continuing.
+    for (const control of next.controls) {
+      if (control.answered)
+        pendingQuestions.delete(pendingQuestionKey(control));
+    }
     if (next.url && !pageTools.state.visitedUrls.includes(next.url)) {
       pageTools.state.visitedUrls.push(next.url);
     }
@@ -389,22 +405,58 @@ export async function runApplyAgent(
         };
       case "ready_to_send":
         syncObservation(outcome.observation);
+        if (experienceState.gap && !experienceGapNudged) {
+          experienceGapNudged = true;
+          return { kind: "ok", content: experienceState.gap };
+        }
         readyToSend = {
           actionRef: outcome.finalActionRef,
           actionLabel: outcome.finalActionLabel,
         };
-        note("The form is complete and ready to send.");
+        if (!experienceState.gap)
+          note("The form is complete and ready to send.");
         return {
           kind: "ok",
           progress: true,
-          content:
-            "The form is complete and everything checks out. Nothing has been sent: call finish now.",
+          content: experienceState.gap
+            ? "The final action is recorded. Nothing has been sent: call finish now."
+            : "The form is complete and everything checks out. Nothing has been sent: call finish now.",
         };
       case "finished": {
         // A write receipt is not proof that a controlled field retained its
         // value. Re-read the live form before accepting the model's finish.
         const observation = await pageTools.observe();
         syncObservation(observation);
+        if (experienceState.gap && !experienceGapNudged) {
+          experienceGapNudged = true;
+          return { kind: "ok", content: experienceState.gap };
+        }
+        // Completing the current step is not completing a multi-step form.
+        // Give the model a chance to carry on before accepting a handoff.
+        const hasAnotherStep =
+          observation.step.index !== null &&
+          observation.step.total !== null &&
+          observation.step.index < observation.step.total &&
+          observation.actions.some(
+            (action) =>
+              action.kind === "advance" && action.visible && !action.disabled,
+          );
+        if (
+          hasAnotherStep &&
+          !outcome.stuck &&
+          !outcome.needsPerson &&
+          observation.blocker?.requiresPerson !== true &&
+          pendingQuestions.size === 0
+        ) {
+          if (!advanceFinishNudged) {
+            advanceFinishNudged = true;
+            return {
+              kind: "ok",
+              content:
+                "This form has another step. Continue on the current page to Review before finishing.",
+            };
+          }
+        }
         const unansweredRequired = observation.controls.filter(
           (control, index, controls) => {
             if (
@@ -439,13 +491,29 @@ export async function runApplyAgent(
               stuckReasonMentionsRequiredFile(outcome.reason, control),
           );
         if (
-          (!outcome.stuck || stuckOnMissingFile) &&
+          (!outcome.stuck || stuckOnMissingFile || !stuckFinishNudged) &&
           unansweredRequired.length > 0
         ) {
           const actionable: string[] = [];
           for (const control of unansweredRequired) {
             if (pendingQuestions.has(pendingQuestionKey(control))) continue;
-            if (outcome.stuck && control.kind !== "file") continue;
+            if (outcome.stuck && control.kind !== "file") {
+              if (stuckFinishNudged) continue;
+              const known = resolveApplyAnswer({
+                control,
+                sources: config.sources,
+                salaryDisclosure: config.authority.salaryDisclosure,
+              });
+              if (known.status === "answered") {
+                actionable.push(
+                  `"${questionPrompt(control)}" is required and still empty. Fill it with "${known.answer.value}" before handing the page over; the person should only have to do what you cannot.`,
+                );
+              }
+              continue;
+            }
+            // A run stuck on something other than a file leaves files as
+            // they are.
+            if (outcome.stuck && !stuckOnMissingFile) continue;
             if (control.kind === "file") {
               if (hasMatchingApplicationDocument(control, documentCatalog)) {
                 actionable.push(
@@ -517,12 +585,23 @@ export async function runApplyAgent(
             );
           }
           if (actionable.length > 0) {
+            if (outcome.stuck) stuckFinishNudged = true;
             return {
               kind: "ok",
               content: `The form is not finished yet. ${actionable.join(" ")} Inspect the current form after writing it, then finish only when every required control is answered.`,
             };
           }
         }
+        // The summary the person reads must not say "filled in" over empty
+        // required fields; name what is still empty.
+        const stillEmpty = unansweredRequired
+          .filter((control) => !isSecurityChallengeControl(control))
+          .map((control) => questionPrompt(control))
+          .slice(0, 6);
+        const reasonWithGaps =
+          stillEmpty.length > 0
+            ? `${outcome.reason.trim()} Still empty on the form: ${stillEmpty.join(", ")}.`
+            : outcome.reason;
         if (
           !outcome.stuck &&
           !outcome.needsPerson &&
@@ -542,7 +621,7 @@ export async function runApplyAgent(
           }
         }
         const finish: AgentLoopFinish = {
-          reason: outcome.reason,
+          reason: reasonWithGaps,
           stuck: outcome.stuck,
           needsPerson: outcome.needsPerson,
           data: {},
@@ -626,7 +705,16 @@ export async function runApplyAgent(
         const parsed = parseApplyProposal(name, rawArguments);
         if (!parsed.ok) return { kind: "ok", content: parsed.error };
         const writeKey = controlWriteKey(parsed.proposal);
-        if (writeKey && completedControlWrites.has(writeKey)) {
+        const proposedRef =
+          "ref" in parsed.proposal ? parsed.proposal.ref : null;
+        const writeControl = pageTools.state.observation?.controls.find(
+          (control) => control.ref === proposedRef,
+        );
+        if (
+          writeKey &&
+          writeControl?.answered &&
+          completedControlWrites.has(writeKey)
+        ) {
           return {
             kind: "ok",
             content:
@@ -782,6 +870,12 @@ export async function runApplyAgent(
     messages: [
       { role: "system", content: createApplySystemPrompt(runConfig) },
       { role: "user", content: createApplyUserPrompt(runConfig) },
+      {
+        role: "user",
+        content: JSON.stringify({
+          savedApplicationFacts: applicationFacts(runConfig.sources),
+        }),
+      },
       { role: "user", content: openingMessage },
     ],
     model: llmClient as unknown as AgentLoopModel,
@@ -864,8 +958,9 @@ export async function runApplyAgent(
       readyToSend && config.authority.mode === "autonomous_submit"
         ? "ready_to_send"
         : defaultOutcomeFor(config);
-    reason =
-      outcome === "ready_to_send"
+    reason = experienceState.gap
+      ? (loop.finish?.reason ?? loop.reason)
+      : outcome === "ready_to_send"
         ? `${loop.finish?.reason ?? loop.reason} Job Finder filled this application in on ${config.siteLabel} and it is ready to send.`
         : `${loop.finish?.reason ?? loop.reason} ${describePrepared(config, filled.length, attachments.length)}`;
   } else if (loop.ending === "stalled") {
@@ -876,6 +971,10 @@ export async function runApplyAgent(
     reason = loop.reason;
   }
 
+  if (experienceState.gap) {
+    note(experienceState.gap);
+    reason = `${reason.trim()} ${experienceState.gap}`;
+  }
   const timing = `[apply] timing read=0ms entry=0ms fill=${loop.timing.toolMs}ms (${filled.length + attachments.length} writes) model=${loop.timing.modelTurns} turns ${loop.timing.modelMs}ms total=${loop.timing.totalMs}ms`;
   return {
     outcome,
@@ -889,5 +988,6 @@ export async function runApplyAgent(
     timeline,
     modelTurns: loop.timing.modelTurns,
     readyToSend,
+    structuredExperienceGap: experienceState.gap,
   };
 }

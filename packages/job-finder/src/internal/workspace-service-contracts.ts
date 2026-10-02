@@ -518,6 +518,17 @@ export interface JobFinderWorkspaceService {
     jobId: string,
     applicationRecordId?: string | null,
   ): Promise<ApplyRunDetails>;
+  /**
+   * Writes a letter or written answer for one saved job with the model, the
+   * same way the apply agent writes the letter it sends. Null when no model is
+   * available; the caller keeps its plain evidence-built draft.
+   */
+  writeApplicationDocumentText(input: {
+    jobId: string;
+    kind: "cover_letter" | "short_response";
+    questionPrompt: string | null;
+    priorText: string | null;
+  }): Promise<string | null>;
   buildApplicationPacket(
     runId: string,
     jobId: string,
@@ -646,6 +657,11 @@ export interface JobFinderWorkspaceService {
   saveJobsFromPage(input: {
     postings: readonly JobPosting[];
     pageUrl: string;
+    /**
+     * The person asked to apply on this page: a saved copy of the same job
+     * from another site applies here from now on.
+     */
+    applyOnThisPage?: boolean;
   }): Promise<{
     savedJobIds: string[];
     newJobIds: string[];
@@ -720,6 +736,7 @@ export interface JobFinderDocumentManager {
     signal?: AbortSignal,
   ): Promise<{
     html: string;
+    pageCount?: JobFinderResumePreview["metadata"]["pageCount"];
     warnings?: readonly string[];
   }>;
   renderResumeArtifact(input: {

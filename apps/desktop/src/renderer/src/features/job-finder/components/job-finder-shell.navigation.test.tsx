@@ -496,7 +496,7 @@ describe("JobFinderShell section navigation", () => {
     );
 
     const brand = document.querySelector<HTMLElement>("[data-desktop-brand]");
-    const brandName = brand?.querySelector("span");
+    const brandName = screen.getByRole("img", { name: "Nordri" });
     const sectionNavigation = screen.getByRole("navigation", {
       name: "Job Finder sections",
     });
@@ -508,8 +508,8 @@ describe("JobFinderShell section navigation", () => {
     // The traffic-light reserve is mirrored on the trailing edge, so
     // reserving it cannot push the centred switcher off the window centre.
     expect(brand?.style.paddingInlineEnd).toBe("5.5rem");
-    expect(brandName?.className).toContain("sm:text-[1.6rem]");
-    expect(brandName?.className).not.toContain("xl:text-[2.7rem]");
+    expect(brandName.getAttribute("class")).toContain("sm:h-[1.3rem]");
+    expect(brand?.contains(brandName)).toBe(true);
     expect(screen.queryByRole("group", { name: "Window controls" })).toBeNull();
     // The switch sits in the brand row's leading track, which carries this
     // reserve, so it can never land under the traffic lights.
@@ -592,17 +592,19 @@ describe("JobFinderShell section navigation", () => {
     "keeps painted wordmark ink clear of the shell row edges at $label",
     ({ height, width, zoomFactor }) => {
       // The viewport matrix is intentionally named here even though jsdom
-      // cannot paint fonts. The CSS box budget below is the source-level
-      // assertion: padding plus explicit line boxes leave real breathing room
+      // cannot paint the SVG. The CSS box budget below is the source-level
+      // assertion: padding plus explicit heights leave real breathing room
       // in the 56px row at every desktop scale, including native 125%.
       const headerRowHeightPx = 56;
-      const wordmarkLineBoxHeightPx = 32 * 1.05;
-      const subtitleLineBoxHeightPx = 10.88 * 1.1;
+      const wordmarkHeightPx = 16 * 1.3;
+      const subtitleHeightPx = 20; // The module switch trigger is h-5.
+      const lockupGapPx = 2;
       const verticalPaddingPx = 4 * 2;
       const remainingInkBudgetPx =
         headerRowHeightPx -
-        wordmarkLineBoxHeightPx -
-        subtitleLineBoxHeightPx -
+        wordmarkHeightPx -
+        subtitleHeightPx -
+        lockupGapPx -
         verticalPaddingPx;
 
       const cssViewportWidth = width / zoomFactor;
@@ -626,13 +628,11 @@ describe("JobFinderShell section navigation", () => {
       const lockup = document.querySelector<HTMLElement>(
         "[data-desktop-brand-lockup]",
       );
-      const wordmark = document.querySelector<HTMLElement>(
-        "[data-desktop-brand-wordmark]",
-      );
+      const wordmark = screen.getByRole("img", { name: "Nordri" });
       expect(header?.className).toContain("overflow-visible");
       expect(lockup?.className).toContain("py-1");
-      expect(wordmark?.className).toContain("leading-[1.05]");
-      expect(wordmark?.className).not.toContain("leading-none");
+      expect(wordmark.getAttribute("class")).toContain("block");
+      expect(wordmark.getAttribute("class")).toContain("sm:h-[1.3rem]");
       expect(brand?.style.paddingInlineStart).toBe("5.5rem");
       expect(brand?.style.paddingInlineEnd).toBe("5.5rem");
       // The caption row carries the lockup alone, so the 56px budget above is
@@ -1105,15 +1105,18 @@ describe("JobFinderShell section navigation", () => {
     fireEvent.click(screen.getByRole("button", { name: "Collapse sidebar" }));
 
     expect(shell?.dataset.sidebarCollapsed).toBe("true");
-    const collapsedWordmark = screen.getByText("NORDRI");
+    const collapsedWordmark = screen.getByRole("img", { name: "Nordri" });
     const collapsedLockup = collapsedWordmark.closest<HTMLElement>(
       "[data-desktop-brand-lockup]",
     );
     const collapsedSubtitle = collapsedLockup?.querySelector<HTMLElement>(
       "[data-desktop-brand-subtitle]",
     );
-    expect(collapsedWordmark.className).not.toContain("min-[1440px]:hidden");
-    expect(collapsedWordmark.className).toContain("leading-[1.05]");
+    expect(collapsedWordmark.parentElement?.className).toContain(
+      "max-[639px]:hidden",
+    );
+    expect(collapsedWordmark.getAttribute("class")).toContain("h-[1.05rem]");
+    expect(collapsedWordmark.getAttribute("class")).toContain("sm:h-[1.3rem]");
     expect(collapsedLockup?.className).toContain("py-1");
     expect(collapsedLockup?.className).toContain("w-max");
     expect(collapsedLockup?.className).toContain("shrink-0");

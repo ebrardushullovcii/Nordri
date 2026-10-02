@@ -525,11 +525,15 @@ describe("workspace grouped reusable manual answers", () => {
       }),
     );
 
-    // Questions stay detected and unsubmitted.
+    // Each question selects the approved local answer; nothing was submitted.
     const questions = await harness.repository.listApplicationQuestionRecords();
     for (const question of questions) {
-      expect(question.status).toBe("detected");
-      expect(question.submittedAnswer).toBeNull();
+      const answer = answers.find(
+        (answer) => answer.id === question.selectedAnswerId,
+      )!;
+      expect(question.status).toBe("answered");
+      expect(question.submittedAnswer).toBe(answer.text);
+      expect(answer.submittedAt).toBeNull();
     }
 
     // Re-applying the same command is an idempotent duplicate: nothing new is
@@ -1127,7 +1131,7 @@ describe("workspace grouped reusable manual answers", () => {
     ).toEqual([]);
 
     // Prepare-only safety is preserved: members stay verifying (never
-    // resolved), questions stay detected and unsubmitted, and nothing was
+    // resolved), questions select their approved answers, and nothing was
     // submitted.
     const afterById = new Map(
       (await harness.repository.listUserActionRequests()).map((request) => [
@@ -1142,8 +1146,9 @@ describe("workspace grouped reusable manual answers", () => {
       expect.objectContaining({ state: "verifying", revision: 2 }),
     );
     for (const question of await harness.repository.listApplicationQuestionRecords()) {
-      expect(question.status).toBe("detected");
-      expect(question.submittedAnswer).toBeNull();
+      expect(question.status).toBe("answered");
+      expect(question.selectedAnswerId).not.toBeNull();
+      expect(question.submittedAnswer).toBe("5 years");
     }
     for (const answer of await harness.repository.listApplicationAnswerRecords()) {
       expect(answer.status).toBe("suggested");

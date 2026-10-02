@@ -1,6 +1,8 @@
 import { describe, expect, test } from "vitest";
+import { ResumeImportFieldCandidateSchema } from "@nordri/contracts";
 
 import {
+  areEquivalentRecordCandidates,
   toCandidateListValues,
   toNarrativeStringArray,
   toStringArray,
@@ -67,6 +69,85 @@ describe("resume import common helpers", () => {
       ),
     ).toEqual(["Built the workflow dashboard.", "Reduced triage time by 30%."]);
   });
+});
+
+describe("complementary education source evidence", () => {
+  test.each([
+    {
+      label: "shared block",
+      leftBlocks: ["entry"],
+      rightBlocks: ["entry"],
+      leftText: null,
+      rightText: null,
+      matches: true,
+    },
+    {
+      label: "contained evidence",
+      leftBlocks: [],
+      rightBlocks: [],
+      leftText: "Supply Chain Management, 2018",
+      rightText:
+        "Synthetic College\nAssociate of Applied Science in Supply Chain Management, 2018",
+      matches: true,
+    },
+    {
+      label: "overlapping evidence lines",
+      leftBlocks: [],
+      rightBlocks: [],
+      leftText: "Synthetic College\nSupply Chain Management\n2018",
+      rightText: "Associate of Applied Science\nSupply Chain Management",
+      matches: true,
+    },
+    {
+      label: "school name alone",
+      leftBlocks: [],
+      rightBlocks: [],
+      leftText: "Synthetic College\n2018",
+      rightText: "Synthetic College\nAssociate of Applied Science",
+      matches: false,
+    },
+    {
+      label: "distinct source entries",
+      leftBlocks: ["first"],
+      rightBlocks: ["second"],
+      leftText: "Synthetic College\nComputer Science, 2018",
+      rightText:
+        "Synthetic College\nAssociate of Applied Science in Supply Chain Management",
+      matches: false,
+    },
+  ])(
+    "matches only shared source entries: $label",
+    ({ leftBlocks, rightBlocks, leftText, rightText, matches }) => {
+      const base = {
+        runId: "source-evidence",
+        target: { section: "education", key: "record", recordId: null },
+        label: "Education",
+        sourceKind: "model_background",
+        confidence: 0.99,
+        createdAt: "2026-10-01T10:00:00.000Z",
+      };
+      const left = ResumeImportFieldCandidateSchema.parse({
+        ...base,
+        id: "year-only",
+        sourceBlockIds: leftBlocks,
+        evidenceText: leftText,
+        value: { schoolName: "Synthetic College", endDate: "2018" },
+      });
+      const right = ResumeImportFieldCandidateSchema.parse({
+        ...base,
+        id: "qualification-only",
+        sourceBlockIds: rightBlocks,
+        evidenceText: rightText,
+        value: {
+          schoolName: "Synthetic College",
+          degree: "Associate of Applied Science",
+          fieldOfStudy: "Supply Chain Management",
+        },
+      });
+      expect(areEquivalentRecordCandidates(left, right)).toBe(matches);
+      expect(areEquivalentRecordCandidates(right, left)).toBe(matches);
+    },
+  );
 });
 
 describe("toNarrativeStringArray bullet splitting", () => {

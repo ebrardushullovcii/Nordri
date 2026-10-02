@@ -8,6 +8,7 @@ import {
   type JobFinderAgentDiscoveryResult,
   type JobFinderWorkspaceSnapshot,
   type ResumeExtractionStatus,
+  type ResumeDraft,
 } from "@nordri/contracts";
 import type {
   ActionState,
@@ -2933,5 +2934,72 @@ describe("createPrimaryPageActions auto-apply queue outcomes", () => {
     });
     expect(harness.startAutoApplyQueueRun).not.toHaveBeenCalled();
     expect(harness.navigate).not.toHaveBeenCalled();
+  });
+});
+
+describe("resume save revision acknowledgment", () => {
+  it("acknowledges the stored revision before refreshing the studio", async () => {
+    const draft = {
+      id: "draft_synthetic",
+      jobId: "job_synthetic",
+    } as ResumeDraft;
+    const snapshot = {
+      resumeDrafts: [{ ...draft, updatedAt: "2026-10-01T10:00:00.000Z" }],
+    } as unknown as JobFinderWorkspaceSnapshot;
+    const onSaved = vi.fn();
+    const refreshResumeWorkspace = vi.fn(() => {
+      expect(onSaved).toHaveBeenCalledWith(snapshot.resumeDrafts[0]!.updatedAt);
+      return Promise.resolve(true);
+    });
+    const runners = createActionRunners({
+      setActionState: vi.fn(),
+      setPendingActionState: vi.fn(),
+    });
+    const pageActions = createPrimaryPageActions({
+      ...runners,
+      actions: {
+        saveResumeDraft: vi.fn().mockResolvedValue(snapshot),
+      } as unknown as JobFinderShellActions,
+      refreshResumeWorkspace,
+    } as unknown as Parameters<typeof createPrimaryPageActions>[0]);
+    pageActions.onSaveResumeDraft(draft, onSaved);
+    await vi.waitFor(() =>
+      expect(refreshResumeWorkspace).toHaveBeenCalledWith(draft.jobId),
+    );
+  });
+
+  it("does not acknowledge a real save conflict", async () => {
+    const draft = {
+      id: "draft_synthetic",
+      jobId: "job_synthetic",
+    } as ResumeDraft;
+    const onSaved = vi.fn();
+    const refreshResumeWorkspace = vi.fn();
+    const setActionState = vi.fn();
+    const runners = createActionRunners({
+      setActionState,
+      setPendingActionState: vi.fn(),
+    });
+    const pageActions = createPrimaryPageActions({
+      ...runners,
+      actions: {
+        saveResumeDraft: vi
+          .fn()
+          .mockRejectedValue(
+            new Error("Resume draft changed before this edit could be saved."),
+          ),
+      } as unknown as JobFinderShellActions,
+      refreshResumeWorkspace,
+    } as unknown as Parameters<typeof createPrimaryPageActions>[0]);
+    pageActions.onSaveResumeDraft(draft, onSaved);
+    await vi.waitFor(() =>
+      expect(setActionState).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: "Resume draft changed before this edit could be saved.",
+        }),
+      ),
+    );
+    expect(onSaved).not.toHaveBeenCalled();
+    expect(refreshResumeWorkspace).not.toHaveBeenCalled();
   });
 });

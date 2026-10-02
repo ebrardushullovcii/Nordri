@@ -205,6 +205,8 @@ export function getAttemptLabel(
       return "Ready to send";
     case "unsupported":
       return "Needs you on the site";
+    case "cancelled":
+      return "Cancelled by you";
     case "failed":
       return "Attempt failed";
     case "submitted":

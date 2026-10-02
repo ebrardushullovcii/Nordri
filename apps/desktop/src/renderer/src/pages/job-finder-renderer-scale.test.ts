@@ -300,9 +300,9 @@ describe("Job Finder renderer workspace scale", () => {
     expect(viewModel.selection.selectedReviewJob?.id).toBe("renderer_job_0990");
     expect(viewModel.filterCounts).toEqual({
       all: 200,
-      in_progress: 80,
+      in_progress: 40,
       manual_only: 40,
-      needs_action: 80,
+      needs_action: 120,
       submitted: 40,
     });
     expect(viewModel.selectedRecord?.id).toBe("renderer_application_199");

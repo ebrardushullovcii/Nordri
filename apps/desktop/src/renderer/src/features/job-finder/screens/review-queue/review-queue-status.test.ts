@@ -524,6 +524,19 @@ describe("safe application presentation labels", () => {
     );
   });
 
+  it("asks for an import when Original is chosen but nothing is imported", () => {
+    const status = getReviewQueueWorkflowStatus(
+      createItem("original-missing", {
+        resumeApplicationMode: "original_resume",
+        assetStatus: "not_started",
+        resumeAssetId: null,
+        resumeReview: { status: "not_started" },
+      }),
+    );
+
+    expect(status).toEqual({ label: "Import your resume", tone: "warning" });
+  });
+
   it("presents an unchanged original resume job without submission claims", () => {
     const status = getReviewQueueWorkflowStatus(
       createItem("original", {

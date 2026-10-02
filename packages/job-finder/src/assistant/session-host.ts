@@ -1,3 +1,4 @@
+import { buildChangePreview } from "./change-diff";
 import { createHash, randomUUID } from "node:crypto";
 
 import {
@@ -168,6 +169,31 @@ function runWatchKey(
 
 const OUTAGE_TEXT =
   "The assistant could not reach its AI service just now. Your message is kept; send it again in a moment.";
+
+/**
+ * The failure the person reads names what actually happened: a reply cut off
+ * for length is not an outage, and a service that went quiet is not the
+ * person's internet.
+ */
+function describeModelFailure(error: unknown): string {
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : "";
+  if (
+    /\bincomplete\b|finish_reason[^a-z]*length|response:length|max(?:imum)?[\s_-]?(?:output[\s_-]?)?tokens/iu.test(
+      message,
+    )
+  ) {
+    return "The AI stopped before finishing its reply because the reply ran too long. Your message is kept; ask again, or ask for a shorter answer.";
+  }
+  if (/timed?\s?out|silence|idle/iu.test(message)) {
+    return "The AI service stopped answering partway through. Your message is kept; send it again in a moment.";
+  }
+  return OUTAGE_TEXT;
+}
 const EVENT_KEEP_LAST = 2_000;
 
 /** A change card's title: the first sentence, kept short. */
@@ -801,11 +827,12 @@ export class AssistantSessionHost {
     }
     if (result.ending === "model_failed") {
       this.log("Assistant model call failed", result.error);
+      const failureText = describeModelFailure(result.error);
       await this.finishTurn(live, {
         status: "failed",
-        error: OUTAGE_TEXT,
+        error: failureText,
         usage,
-        replyParts: [{ type: "notice", kind: "outage", text: OUTAGE_TEXT }],
+        replyParts: [{ type: "notice", kind: "outage", text: failureText }],
       });
       return;
     }
@@ -1036,10 +1063,32 @@ export class AssistantSessionHost {
     const conversationId = live.turn.conversationId;
     this.stopStallWatch(live);
     await this.releaseLease(live, "turn ended");
-    const plan =
+    let plan =
       (
         await this.repository.listPlans({ conversationId, status: "active" })
       )[0] ?? null;
+    // A turn that failed or was stopped leaves no step "running" unless a
+    // background run is still doing it; otherwise the checklist kept showing
+    // work in progress after the error.
+    if (
+      plan &&
+      (outcome.status === "failed" || outcome.status === "stopped") &&
+      plan.steps.some((step) => step.status === "running" && !step.run)
+    ) {
+      plan = {
+        ...plan,
+        steps: plan.steps.map((step) =>
+          step.status === "running" && !step.run
+            ? {
+                ...step,
+                status: outcome.status === "failed" ? "failed" : "cancelled",
+              }
+            : step,
+        ),
+        updatedAt: this.now(),
+      };
+      await this.savePlan(plan);
+    }
     const parts: AssistantMessagePart[] = [
       ...outcome.replyParts,
       ...live.outputs.parts,
@@ -1323,22 +1372,23 @@ export class AssistantSessionHost {
           target: receipt.target,
           targetId: receipt.targetId,
           summary: shortChangeTitle(receipt.summary),
-          fields: receipt.fieldLabels.slice(0, 40),
-          // Bookkeeping (where text came from) is not a change to show.
-          preview: input.entries
-            .filter(
-              (entry) =>
-                entry.kind === "set" &&
-                !["origin", "sourceRefs", "lastGeneratedContentHash"].includes(
-                  entry.path.at(-1) ?? "",
-                ),
-            )
-            .slice(0, 12)
-            .map((entry) => ({
-              label: (entry.label ?? entry.path.join(".")).slice(0, 200),
-              before: previewText(entry.before),
-              after: previewText(entry.after),
-            })),
+          // A record added or removed says so on the card; "Changed" is only
+          // for values edited in place.
+          fields: [
+            ...new Set(
+              input.entries.map((entry) => {
+                const label = entry.label ?? entry.path.at(-1) ?? "value";
+                return (
+                  entry.kind === "insert"
+                    ? `Added ${label}`
+                    : entry.kind === "remove"
+                      ? `Removed ${label}`
+                      : label
+                ).slice(0, 160);
+              }),
+            ),
+          ].slice(0, 40),
+          preview: buildChangePreview(input.entries),
           status: "applied",
           unsaved: false,
         };
@@ -2731,31 +2781,4 @@ export class AssistantSessionHost {
       ((text, extra) => console.warn(`[assistant] ${text}`, extra ?? ""))
     )(message, detail);
   }
-}
-
-function previewText(value: unknown): string | null {
-  if (value === undefined || value === null) return null;
-  if (typeof value === "string") return value.slice(0, 600);
-  if (typeof value === "number" || typeof value === "boolean")
-    return String(value);
-  if (Array.isArray(value)) {
-    const strings = value.filter(
-      (entry): entry is string => typeof entry === "string",
-    );
-    return strings.length === value.length
-      ? strings.join(", ").slice(0, 600)
-      : `${value.length} item${value.length === 1 ? "" : "s"}`;
-  }
-  if (typeof value === "object") {
-    const record = value as Record<string, unknown>;
-    const name = [
-      record.title,
-      record.companyName,
-      record.name,
-      record.label,
-      record.text,
-    ].find((entry): entry is string => typeof entry === "string");
-    return name ? name.slice(0, 600) : "a record";
-  }
-  return null;
 }

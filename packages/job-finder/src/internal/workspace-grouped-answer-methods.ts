@@ -393,11 +393,9 @@ export function createWorkspaceGroupedAnswerMethods(input: {
             `Question '${entry.questionId}' no longer has exact application lineage for decision '${pending.id}'; the whole group is aborted.`,
           );
         }
-        // Questions carry no persisted revision; the atomic commit
-        // compare-and-swaps the full record and keeps the detected question
-        // unchanged.
+        // Questions carry no revision; compare the full record before the
+        // atomic commit selects the approved answer.
         expectedQuestions.push(question);
-        nextQuestions.push(question);
 
         const latest = latestAnswerForQuestion(answerRecords, entry.questionId);
         if (
@@ -456,8 +454,8 @@ export function createWorkspaceGroupedAnswerMethods(input: {
         } else {
           // Critical architecture decision: a revision-0 member gets its first
           // revision-1 suggested answer inside the same atomic commit as the
-          // decision approval, request verifying transition, unchanged detected
-          // question, and event. Nothing is deferred until resumption.
+          // decision approval, request verifying transition, answered question,
+          // and event. Nothing is deferred until resumption.
           nextAnswers.push(
             ApplicationAnswerRecordSchema.parse({
               ...baseAnswer,
@@ -466,6 +464,13 @@ export function createWorkspaceGroupedAnswerMethods(input: {
             }),
           );
         }
+        const answer = nextAnswers.at(-1)!;
+        nextQuestions.push({
+          ...question,
+          selectedAnswerId: answer.id,
+          submittedAnswer: answer.text,
+          status: "answered",
+        });
       }
 
       const result = await ctx.repository.commitGroupedManualAnswer({

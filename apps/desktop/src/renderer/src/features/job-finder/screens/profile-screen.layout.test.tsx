@@ -397,11 +397,11 @@ describe("ProfileScreen ready-state density and save-bar footprint", () => {
     });
 
     expect(screen.getByTestId("resume-identity-choice").textContent).toContain(
-      "Preparation is paused because the imported resume says “CASEY ROWAN” while your profile says “Jordan Vance”",
+      "Your imported resume says “CASEY ROWAN” and your profile says “Jordan Vance”. Resumes use your profile name.",
     );
     fireEvent.click(
       screen.getByRole("button", {
-        name: "Use my profile name for this resume",
+        name: "Keep my profile name",
       }),
     );
     expect(onSaveAll).toHaveBeenCalledTimes(1);

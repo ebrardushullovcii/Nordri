@@ -27,6 +27,27 @@ export interface ApplicationDocumentGrounding {
   question: ApplicationQuestionRecord | null;
 }
 
+function fileNameSegment(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/gu, "-")
+    .replace(/^-+|-+$/gu, "")
+    .slice(0, 40);
+}
+
+/** "cover-letter-cedar-compass-operations-coordinator-v3.txt" */
+function approvedDocumentFileName(document: ApplicationDocumentRevision) {
+  const kind =
+    document.kind === "cover_letter" ? "cover-letter" : "application-answer";
+  const parts = [
+    kind,
+    fileNameSegment(document.job.company),
+    fileNameSegment(document.job.title),
+    `v${document.revision}`,
+  ].filter(Boolean);
+  return `${parts.join("-")}.txt`;
+}
+
 export class ApplicationDocumentLibraryError extends Error {
   constructor(message: string) {
     super(message);
@@ -395,6 +416,11 @@ export class ApplicationDocumentLibrary {
     documentId?: string;
     expectedRevision?: number;
     grounding: ApplicationDocumentGrounding;
+    /**
+     * Text the model wrote from the same profile and posting. When absent the
+     * draft is assembled from the selected evidence, as before.
+     */
+    writtenContent?: string | null;
   }): Promise<ApplicationDocumentRevision> {
     return this.runExclusive(async () => {
       const index = await this.readIndex();
@@ -459,13 +485,15 @@ export class ApplicationDocumentLibrary {
           }),
         },
         question: questionLineage,
-        content: renderDocument({
-          kind: input.kind,
-          profile,
-          job,
-          question,
-          evidence,
-        }),
+        content:
+          input.writtenContent?.trim() ||
+          renderDocument({
+            kind: input.kind,
+            profile,
+            job,
+            question,
+            evidence,
+          }),
         evidence,
         evidenceDigest: digest(evidence),
         authorship: "system_grounded",
@@ -519,11 +547,17 @@ export class ApplicationDocumentLibrary {
       if (document.status !== "proposed") {
         return document;
       }
-      const temporaryPath = path.join(
+      // The saved file keeps a name a person can read in Profile › Files and
+      // an employer sees on upload: what it is, for which job, which version.
+      const temporaryDirectory = path.join(
         this.rootDirectory,
-        `${document.id}-r${document.revision}.txt`,
+        `${document.id}-r${document.revision}`,
       );
-      await mkdir(this.rootDirectory, { recursive: true, mode: 0o700 });
+      const temporaryPath = path.join(
+        temporaryDirectory,
+        approvedDocumentFileName(document),
+      );
+      await mkdir(temporaryDirectory, { recursive: true, mode: 0o700 });
       await writeFile(temporaryPath, document.content, {
         flag: "wx",
         mode: 0o600,
@@ -539,6 +573,11 @@ export class ApplicationDocumentLibrary {
             sensitivity: "sensitive",
             consentScope: "job_application_attachment",
             retention: "until_deleted",
+            forJob: {
+              jobId: document.job.jobId,
+              title: document.job.title.slice(0, 300),
+              company: document.job.company.slice(0, 300),
+            },
           },
         );
         if (imported.status !== "imported") {
@@ -557,7 +596,9 @@ export class ApplicationDocumentLibrary {
         await this.writeIndex(index);
         return approved;
       } finally {
-        await rm(temporaryPath, { force: true }).catch(() => undefined);
+        await rm(temporaryDirectory, { recursive: true, force: true }).catch(
+          () => undefined,
+        );
       }
     });
   }

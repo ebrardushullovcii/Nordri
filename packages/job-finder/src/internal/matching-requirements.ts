@@ -1405,7 +1405,7 @@ export function buildRequirementEvidenceAssessment(input: {
     requirements.push({
       id: requirementId("work_mode", posting.workMode.join(" ")),
       category: "work_mode",
-      label: `Work mode: ${posting.workMode.join(", ")}`,
+      label: `Work mode: ${uniqueStrings(posting.workMode).join(", ")}`,
       importance: "required",
       status: workModeStatus,
       jobEvidence: uniqueStrings([posting.location, ...posting.workMode]).join(
@@ -1518,9 +1518,23 @@ function preferenceRequirementRationale(
           : "The listing location is outside the saved search areas.";
     }
     case "work_mode":
-      return requirement.status === "unknown"
-        ? `${requirement.label} — not stated clearly enough to compare with your preferred work modes.`
-        : `${requirement.label} — does not match your preferred work modes.`;
+      if (requirement.status !== "unknown") {
+        return `${requirement.label} — does not match your preferred work modes.`;
+      }
+      if (requirement.label.startsWith("Work mode (not stated")) {
+        return "The listing does not say whether the job is remote, hybrid or on site.";
+      }
+      // The listing said remote plainly; what is unknown is the person's own
+      // remote eligibility, so the row names that field instead of blaming
+      // the listing.
+      if (
+        /remote-work eligibility is not confirmed/iu.test(
+          requirement.explanation,
+        )
+      ) {
+        return `${requirement.label} — fits your preferred work modes, but your profile does not say yet whether you can work remotely. Answer it in Profile under work eligibility and the score updates.`;
+      }
+      return `${requirement.label} — not stated clearly enough to compare with your preferred work modes.`;
     case "work_authorization":
       return requirement.status === "unknown"
         ? "Work authorization is not stated in your profile yet."

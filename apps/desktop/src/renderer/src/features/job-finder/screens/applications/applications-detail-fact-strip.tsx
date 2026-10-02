@@ -6,6 +6,10 @@ import type {
 } from "@nordri/contracts";
 import type { ReactNode } from "react";
 import {
+  isApplicationTrackedAsSentByPerson,
+  isApplicationWithdrawnByPerson,
+} from "@nordri/contracts";
+import {
   formatStatusLabel,
   formatTimestamp,
   getAttemptLabel,
@@ -104,8 +108,9 @@ export function ApplicationsDetailFactStrip(props: {
     visibleApplyResult?.state === "awaiting_review" &&
     !visibleApplyResult.blockerReason;
   const persistedAttemptState =
-    selectedRecord.lastAttemptState === "failed"
-      ? "failed"
+    selectedRecord.lastAttemptState === "failed" ||
+    selectedRecord.lastAttemptState === "cancelled"
+      ? selectedRecord.lastAttemptState
       : (selectedAttempt?.state ?? selectedRecord.lastAttemptState);
   const fallbackAttemptLabel =
     persistedAttemptState === "paused" ||
@@ -116,7 +121,7 @@ export function ApplicationsDetailFactStrip(props: {
         : persistedAttemptState
           ? getAttemptLabel(persistedAttemptState)
           : null;
-  const attemptStateLabel =
+  const runAttemptStateLabel =
     plannedStanding === "not_started"
       ? "Not started"
       : plannedStanding === "paused"
@@ -129,17 +134,31 @@ export function ApplicationsDetailFactStrip(props: {
               ? "Outcome needs verification"
               : visibleApplyResult?.state === "submitted"
                 ? "Submitted"
-                : visibleApplyResult?.state === "failed"
-                  ? "Could not apply"
-                  : visibleRunIsActive && !selectedAttemptBelongsToVisibleRun
-                    ? "In progress"
-                    : isResolvedAwaitingReview
-                      ? "Ready to send"
-                      : visibleApplyResult?.state === "blocked" ||
-                          (visibleApplyResult?.state === "awaiting_review" &&
-                            visibleApplyResult.blockerReason)
-                        ? "Needs you"
-                        : fallbackAttemptLabel;
+                : visibleApplyResult?.state === "cancelled"
+                  ? "Cancelled by you"
+                  : visibleApplyResult?.state === "failed"
+                    ? "Could not apply"
+                    : visibleRunIsActive && !selectedAttemptBelongsToVisibleRun
+                      ? "In progress"
+                      : isResolvedAwaitingReview
+                        ? "Ready to send"
+                        : visibleApplyResult?.state === "blocked" ||
+                            (visibleApplyResult?.state === "awaiting_review" &&
+                              visibleApplyResult.blockerReason)
+                          ? "Needs you"
+                          : fallbackAttemptLabel;
+  // The person's own tracker record wins over the run's last state, short of
+  // a verified send: they sent it, or withdrew it, themselves.
+  const personRecordedLabel =
+    submissionOutcome === "submitted" ||
+    visibleApplyResult?.state === "submitted"
+      ? null
+      : isApplicationTrackedAsSentByPerson(selectedRecord.crm)
+        ? "Marked applied by you"
+        : isApplicationWithdrawnByPerson(selectedRecord.crm)
+          ? "Withdrawn by you"
+          : null;
+  const attemptStateLabel = personRecordedLabel ?? runAttemptStateLabel;
 
   const replayNoteSegments = [
     replaySummary.evidenceCount > 0

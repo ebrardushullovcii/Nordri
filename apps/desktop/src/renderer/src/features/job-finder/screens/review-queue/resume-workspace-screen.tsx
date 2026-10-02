@@ -241,6 +241,21 @@ export function ResumeWorkspaceScreen(props: ResumeWorkspaceScreenProps) {
   const [backgroundDraft, setBackgroundDraft] = useState<ResumeDraft | null>(
     null,
   );
+  const [ownSave, setOwnSave] = useState<{
+    draftId: string;
+    updatedAt: string;
+    submittedContentKey: string;
+  } | null>(null);
+  const acknowledgeSave = useCallback(
+    (submittedDraft: ResumeDraft, updatedAt: string) => {
+      setOwnSave({
+        draftId: submittedDraft.id,
+        updatedAt,
+        submittedContentKey: draftContentKey(submittedDraft),
+      });
+    },
+    [],
+  );
   useEffect(() => {
     const persistedDraft = props.workspace?.draft ?? null;
     const previousPersisted = persistedDraftRef.current;
@@ -251,6 +266,28 @@ export function ResumeWorkspaceScreen(props: ResumeWorkspaceScreenProps) {
       return;
     }
     const currentDraft = draftRef.current;
+    // Saving trims text and normalizes ordering and section inclusion.
+    // The successful save's revision identifies that result, not a comparison
+    // with the unnormalized editor contents. Later revisions remain conflicts.
+    if (
+      ownSave?.draftId === persistedDraft.id &&
+      ownSave.updatedAt === persistedDraft.updatedAt &&
+      currentDraft?.id === persistedDraft.id
+    ) {
+      setBackgroundDraft(null);
+      setDraft(
+        draftContentKey(currentDraft) === ownSave.submittedContentKey
+          ? cloneDraft(persistedDraft)
+          : {
+              ...cloneDraft(persistedDraft),
+              templateId: currentDraft.templateId,
+              identity: currentDraft.identity,
+              sections: currentDraft.sections,
+              targetPageCount: currentDraft.targetPageCount,
+            },
+      );
+      return;
+    }
     if (
       currentDraft &&
       currentDraft.id === persistedDraft.id &&
@@ -274,7 +311,7 @@ export function ResumeWorkspaceScreen(props: ResumeWorkspaceScreenProps) {
     }
     setBackgroundDraft(null);
     setDraft(cloneDraft(persistedDraft));
-  }, [workspaceDraftRevisionKey, props.workspace?.draft]);
+  }, [workspaceDraftRevisionKey, props.workspace?.draft, ownSave]);
 
   const {
     handlePreviewTargetSelect,
@@ -419,6 +456,7 @@ export function ResumeWorkspaceScreen(props: ResumeWorkspaceScreenProps) {
           cloneDraft(currentDraft),
           next,
           successMessage ?? "Changes saved.",
+          (updatedAt) => acknowledgeSave(currentDraft, updatedAt),
         );
         return;
       }
@@ -432,7 +470,7 @@ export function ResumeWorkspaceScreen(props: ResumeWorkspaceScreenProps) {
         console.error("Resume workspace follow-up action failed.", error);
       }
     },
-    [draft, hasUnsavedChanges, props.onSaveDraftAndThen],
+    [draft, hasUnsavedChanges, props.onSaveDraftAndThen, acknowledgeSave],
   );
 
   const runWithSavedDraftAsync = useCallback(
@@ -1218,31 +1256,59 @@ export function ResumeWorkspaceScreen(props: ResumeWorkspaceScreenProps) {
               }
             : {})}
           onReviewBlockingIssues={() => {
-            const confirmationPanel = document.querySelector<HTMLElement>(
-              "[data-resume-claim-confirmations]",
-            );
-            if (confirmationPanel) {
-              confirmationPanel.scrollIntoView({
-                behavior: getJobFinderScrollBehavior(),
-                block: "start",
-              });
-              confirmationPanel.focus({ preventScroll: true });
-              return;
-            }
-            const details = document.getElementById(
-              "resume-proof-details",
-            ) as HTMLDetailsElement | null;
-            if (details) {
-              details.open = true;
-              details.scrollIntoView({
-                behavior: getJobFinderScrollBehavior(),
-                block: "start",
-              });
-              details.querySelector("summary")?.focus();
-            }
+            // The compact layout mounts Tools only once its tab is chosen, so
+            // "Review N lines" used to find nothing and leave Preview showing.
+            setMobileStudioTab("editor");
+            const reveal = (attempt: number) => {
+              // The first line still waiting on the person: an undecided
+              // stretch row, or a blocker row that offers Approve as accurate.
+              const undecidedRow = document.querySelector<HTMLElement>(
+                "[data-resume-claim-confirmation-row]:not([data-resume-claim-kept])",
+              );
+              const approvableIssue = document
+                .querySelector<HTMLElement>("[data-resume-validation-approve]")
+                ?.closest<HTMLElement>("[data-resume-validation-issue]");
+              const target =
+                undecidedRow?.closest<HTMLElement>(
+                  "[data-resume-claim-confirmations]",
+                ) ??
+                approvableIssue ??
+                document.querySelector<HTMLElement>(
+                  "[data-resume-claim-confirmations]",
+                );
+              if (target) {
+                target.scrollIntoView({
+                  behavior: getJobFinderScrollBehavior(),
+                  block: "start",
+                });
+                target.focus({ preventScroll: true });
+                return;
+              }
+              const details = document.getElementById(
+                "resume-proof-details",
+              ) as HTMLDetailsElement | null;
+              if (details) {
+                details.open = true;
+                details.scrollIntoView({
+                  behavior: getJobFinderScrollBehavior(),
+                  block: "start",
+                });
+                details.querySelector("summary")?.focus();
+                return;
+              }
+              // Nothing mounted yet: Tools is still opening.
+              if (attempt < 3) {
+                requestAnimationFrame(() => reveal(attempt + 1));
+              }
+            };
+            reveal(0);
           }}
           exportBlockedActionLabel={exportBlockedActionLabel}
-          onSaveDraft={() => props.onSaveDraft(draft)}
+          onSaveDraft={() =>
+            props.onSaveDraft(draft, (updatedAt) =>
+              acknowledgeSave(draft, updatedAt),
+            )
+          }
           onSelectValidationIssue={handleValidationIssueSelection}
           onSetMobileStudioTab={setMobileStudioTab}
           {...(props.originalResumeRoute || writingEditableLevel

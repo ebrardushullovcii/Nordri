@@ -317,10 +317,9 @@ function getResumePanelCopy(input: {
             "The last import did not produce usable text. Replace the file, then refresh your profile suggestions once the text is ready.",
         }
       : {
-          headline:
-            "This resume needs cleaner text before it can help your profile",
+          headline: "Job Finder could not read text from this file",
           description:
-            "This file was imported, but Job Finder still needs cleaner text before it can refresh your profile suggestions.",
+            "It may be a scan or an image. It still goes out unchanged as your Original resume. To fill your profile from it, replace it with a DOCX or a PDF saved from a document editor, or paste the text below.",
         };
   }
 
@@ -689,6 +688,10 @@ export function ProfileResumePanel({
                 Refresh from resume
               </Button>
             </div>
+            <ResumeImportProgress
+              isPending={isImportResumePending}
+              progress={resumeImportProgress}
+            />
             {showResumeTextRecovery ? (
               <Field>
                 <FieldLabel htmlFor="profile-resume-recovery-text">
@@ -711,10 +714,6 @@ export function ProfileResumePanel({
                 </p>
               </Field>
             ) : null}
-            <ResumeImportProgress
-              isPending={isImportResumePending}
-              progress={resumeImportProgress}
-            />
             {importDisabledReason ? (
               <p className="text-sm leading-6 text-foreground-soft">
                 {importDisabledReason}

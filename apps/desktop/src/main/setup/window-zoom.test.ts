@@ -4,6 +4,7 @@ import {
   bindMainWindowZoomShortcuts,
   getMainWindowZoomCommand,
   getNextMainWindowZoomFactor,
+  routeMainWindowZoomShortcut,
   MAIN_WINDOW_DEFAULT_ZOOM_FACTOR,
   MAIN_WINDOW_MAX_ZOOM_FACTOR,
   MAIN_WINDOW_MIN_ZOOM_FACTOR,
@@ -27,6 +28,77 @@ function createInput(overrides: Partial<Input> = {}): Input {
 }
 
 describe("main window zoom shortcuts", () => {
+  test.each(["darwin", "win32", "linux"] as const)(
+    "routes embedded-view keys to the shell on %s",
+    (platform) => {
+      let factor = 1;
+      const target = {
+        getZoomFactor: () => factor,
+        setZoomFactor: vi.fn((next: number) => {
+          factor = next;
+        }),
+      };
+      const event = { preventDefault: vi.fn() };
+      const modifiers =
+        platform === "darwin" ? { meta: true } : { control: true };
+      for (const [key, code, expected] of [
+        ["-", "Minus", 0.9],
+        ["=", "Equal", 1],
+        ["+", "Equal", 1.1],
+        ["0", "Digit0", 1],
+      ] as const) {
+        expect(
+          routeMainWindowZoomShortcut(
+            event,
+            createInput({ ...modifiers, key, code }),
+            target,
+            platform,
+          ),
+        ).toBe(true);
+        expect(factor).toBe(expected);
+      }
+      expect(event.preventDefault).toHaveBeenCalledTimes(4);
+      expect(
+        routeMainWindowZoomShortcut(
+          event,
+          createInput({ ...modifiers, key: "a", code: "KeyA" }),
+          target,
+          platform,
+        ),
+      ).toBe(false);
+      expect(event.preventDefault).toHaveBeenCalledTimes(4);
+    },
+  );
+
+  test("embedded shortcuts update the factor restored after reload without intercepting wheel input", () => {
+    let factor = 1;
+    const listeners = new Map<string, (...args: unknown[]) => void>();
+    const target = {
+      getZoomFactor: () => factor,
+      setZoomFactor: vi.fn((next: number) => {
+        factor = next;
+      }),
+      on: (name: string, listener: (...args: unknown[]) => void) => {
+        listeners.set(name, listener);
+        return target;
+      },
+    } as unknown as Pick<WebContents, "getZoomFactor" | "setZoomFactor" | "on">;
+    const event = { preventDefault: vi.fn() };
+    bindMainWindowZoomShortcuts(target, "win32");
+    routeMainWindowZoomShortcut(
+      event,
+      createInput({ control: true }),
+      target,
+      "win32",
+    );
+    expect(factor).toBe(1.1);
+    expect(listeners.has("before-mouse-event")).toBe(false);
+    factor = 1.5; // Chromium restores an older per-origin factor at commit.
+    listeners.get("did-finish-load")?.();
+    expect(factor).toBe(1.1);
+    expect(event.preventDefault).toHaveBeenCalledOnce();
+  });
+
   test.each([
     [createInput({ control: true, key: "=", code: "Equal" }), "in"],
     [

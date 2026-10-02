@@ -32,7 +32,9 @@ function contactCandidate(
   });
 }
 
-function applyImportedContacts(profile: ReturnType<typeof createSeed>["profile"]) {
+function applyImportedContacts(
+  profile: ReturnType<typeof createSeed>["profile"],
+) {
   const seed = createSeed();
   return applyResolvedResumeImportCandidatesToWorkspace({
     profile,
@@ -53,7 +55,9 @@ describe("resume import preferred contact synchronization", () => {
 
     expect(profile.email).toBe("jamie@example.com");
     expect(profile.phone).toBe("+49 555 0000000");
-    expect(profile.applicationIdentity.preferredEmail).toBe("jamie@example.com");
+    expect(profile.applicationIdentity.preferredEmail).toBe(
+      "jamie@example.com",
+    );
     expect(profile.applicationIdentity.preferredPhone).toBe("+49 555 0000000");
   });
 
@@ -119,4 +123,82 @@ describe("resume import preferred contact synchronization", () => {
       preferredEmail: "jamie@example.com",
       preferredPhone: "+49 555 0000000",
     });
-  });});
+  });
+});
+
+describe("explicit approval of imported preferences", () => {
+  test.each([false, true])(
+    "hours only replace a saved choice when explicitly confirmed (%s)",
+    (confirmed) => {
+      const seed = createSeed();
+      const imported = ResumeImportFieldCandidateSchema.parse({
+        ...contactCandidate("email", "placeholder@example.test"),
+        id: "hours",
+        target: {
+          section: "search_preferences",
+          key: "employmentTypes",
+          recordId: null,
+        },
+        value: ["Part-time"],
+      });
+      const result = applyResolvedResumeImportCandidatesToWorkspace({
+        profile: seed.profile,
+        searchPreferences: {
+          ...seed.searchPreferences,
+          employmentTypes: ["Full-time"],
+        },
+        candidates: [imported],
+        confirmedCandidateId: confirmed ? imported.id : null,
+        analysisProviderKind: "deterministic",
+        analysisProviderLabel: "Test",
+        analysisWarnings: [],
+      });
+      expect(result.searchPreferences.employmentTypes).toEqual([
+        confirmed ? "Part-time" : "Full-time",
+      ]);
+    },
+  );
+  test.each([false, true])(
+    "pay only replaces a saved choice when explicitly confirmed (%s)",
+    (confirmed) => {
+      const seed = createSeed();
+      const saved = {
+        minimum: 70000,
+        maximum: null,
+        interval: "year" as const,
+        currency: "USD",
+        currencyStatus: "explicit" as const,
+      };
+      const next = { ...saved, minimum: 90000, currency: "EUR" };
+      const imported = ResumeImportFieldCandidateSchema.parse({
+        ...contactCandidate("email", "placeholder@example.test"),
+        id: "pay",
+        target: {
+          section: "search_preferences",
+          key: "compensation",
+          recordId: null,
+        },
+        value: next,
+      });
+      const result = applyResolvedResumeImportCandidatesToWorkspace({
+        profile: seed.profile,
+        searchPreferences: {
+          ...seed.searchPreferences,
+          minimumSalaryUsd: 70000,
+          compensation: saved,
+        },
+        candidates: [imported],
+        confirmedCandidateId: confirmed ? imported.id : null,
+        analysisProviderKind: "deterministic",
+        analysisProviderLabel: "Test",
+        analysisWarnings: [],
+      });
+      expect(result.searchPreferences.compensation).toEqual(
+        confirmed ? next : saved,
+      );
+      expect(result.searchPreferences.salaryCurrency).toBe(
+        confirmed ? "EUR" : "USD",
+      );
+    },
+  );
+});

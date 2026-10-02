@@ -9,6 +9,8 @@ import {
   buildApplicationCrmCalendarForView,
   groupApplicationRecordsByStage,
   inferApplicationCrmStageForView,
+  nextTrackerStepLabel,
+  trackedHiringStageBadge,
 } from "./applications-crm-model";
 
 function record(overrides: Record<string, unknown> = {}) {
@@ -167,5 +169,84 @@ describe("application CRM renderer model", () => {
       "interview",
       "offer_deadline",
     ]);
+  });
+
+  test("leaves out the deadline of an offer already settled", () => {
+    const entries = buildApplicationCrmCalendarForView([
+      record({
+        crm: {
+          stage: "offer",
+          stageChangedAt: "2026-08-15T10:00:00.000Z",
+          compensation: {
+            offerDeadlineAt: "2026-08-18T10:00:00.000Z",
+            offerStatus: "accepted",
+          },
+        },
+      }),
+    ]);
+    expect(entries).toEqual([]);
+  });
+});
+
+describe("an application the person moved on in the tracker", () => {
+  const NOW = Date.parse("2026-08-15T12:00:00.000Z");
+  const tracked = (overrides: Record<string, unknown> = {}) =>
+    record({
+      crm: {
+        stage: "interview",
+        stageSource: "user",
+        customStageId: "stage_panel",
+        stageChangedAt: "2026-08-14T10:00:00.000Z",
+        ...overrides,
+      },
+    });
+
+  test("leads with the stage they named", () => {
+    expect(
+      trackedHiringStageBadge(tracked(), [
+        {
+          id: "stage_panel",
+          label: "Panel interview",
+          baseStage: "interview",
+          color: "violet",
+          position: 0,
+          isTerminal: false,
+        },
+      ]),
+    ).toEqual({ label: "Panel interview", tone: "positive" });
+    expect(trackedHiringStageBadge(tracked({ customStageId: null }))).toEqual(
+      { label: APPLICATION_CRM_STAGE_LABELS.interview, tone: "positive" },
+    );
+    expect(
+      trackedHiringStageBadge(tracked({ stage: "preparing", customStageId: null })),
+    ).toBeNull();
+  });
+
+  test("names an overdue follow-up before the next interview", () => {
+    const reminders = [
+      {
+        id: "reminder_1",
+        title: "Send a thank-you note",
+        dueAt: "2026-08-14T09:00:00.000Z",
+        createdAt: "2026-08-13T10:00:00.000Z",
+        updatedAt: "2026-08-13T10:00:00.000Z",
+      },
+    ];
+    const interviews = [
+      {
+        id: "interview_1",
+        title: "Panel interview",
+        startsAt: "2026-08-16T09:00:00.000Z",
+        createdAt: "2026-08-13T10:00:00.000Z",
+        updatedAt: "2026-08-13T10:00:00.000Z",
+      },
+    ];
+    expect(
+      nextTrackerStepLabel(tracked({ reminders, interviews }), NOW),
+    ).toBe("Send a thank-you note (overdue)");
+    expect(nextTrackerStepLabel(tracked({ interviews }), NOW)).toMatch(
+      /^Panel interview, /u,
+    );
+    expect(nextTrackerStepLabel(tracked(), NOW)).toBeNull();
   });
 });

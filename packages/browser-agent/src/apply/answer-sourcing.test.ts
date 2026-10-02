@@ -1085,3 +1085,86 @@ describe("a notice period or start date with nothing saved", () => {
     });
   });
 });
+
+describe("saved answer control identity on resumption", () => {
+  test("matches a question shown only as a placeholder", () => {
+    const input = sources([
+      savedAnswer("What is your notice period?", "Two weeks"),
+    ]);
+    expect(
+      resolveApplyAnswer({
+        control: control({
+          kind: "text",
+          label: "",
+          placeholder: "What is your notice period?",
+          options: [],
+          questionKind: "notice_period",
+        }),
+        sources: input,
+        salaryDisclosure: "pause_for_user",
+      }),
+    ).toMatchObject({
+      status: "answered",
+      answer: { value: "Two weeks", sourceKind: "answer_library" },
+    });
+  });
+  test("a deduplicated question beats an older general profile answer", () => {
+    const input = sources([savedAnswer("Notice period", "Two weeks")]);
+    input.profile.answerBank.noticePeriod = "Three months";
+    expect(
+      resolveApplyAnswer({
+        control: control({
+          kind: "text",
+          label: "Notice period",
+          groupLabel: "Notice period",
+          options: [],
+          questionKind: "notice_period",
+        }),
+        sources: input,
+        salaryDisclosure: "pause_for_user",
+      }),
+    ).toMatchObject({
+      status: "answered",
+      answer: { value: "Two weeks", sourceKind: "answer_library" },
+    });
+  });
+  test.each([
+    ["January 2014", "month", "2014-01"],
+    ["2014-01-23", "month", "2014-01"],
+    ["2014-01-23", "date", "2014-01-23"],
+    ["January 2014", "date", null],
+    ["2014", "month", null],
+  ] as const)(
+    "fits %s to a %s input without inventing dates",
+    (startDate, dateInputType, expected) => {
+      const input = sources([]);
+      input.profile = CandidateProfileSchema.parse({
+        ...input.profile,
+        experiences: [
+          {
+            id: "signal",
+            companyName: "Signal Systems",
+            title: "Engineer",
+            startDate,
+            isCurrent: true,
+          },
+        ],
+      });
+      const result = resolveApplyAnswer({
+        control: control({
+          kind: "date",
+          dateInputType,
+          label: "From",
+          groupLabel: "Work experience 1",
+          options: [],
+          questionKind: "experience",
+        }),
+        sources: input,
+        salaryDisclosure: "pause_for_user",
+      });
+      expect(result.status).toBe(expected ? "answered" : "needs_you");
+      if (result.status === "answered")
+        expect(result.answer.value).toBe(expected);
+    },
+  );
+});

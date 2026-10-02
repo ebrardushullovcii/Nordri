@@ -424,6 +424,9 @@ export const listApplicationsTool = defineTool({
     stage: json.enumOf(applicationCrmStageValues),
     needsAttention: json.boolean("Only ones blocked or waiting on the person."),
     limit: json.number(),
+    show: json.boolean(
+      "False when you are only checking facts for your answer; the rows then are not shown as cards.",
+    ),
   }),
   input: z.object({
     text: z.string().trim().max(200).optional(),
@@ -431,6 +434,7 @@ export const listApplicationsTool = defineTool({
     stage: ApplicationCrmStageSchema.optional(),
     needsAttention: z.boolean().default(false),
     limit: z.number().int().min(1).max(25).default(10),
+    show: z.boolean().default(true),
   }),
   label: () => "Reading your applications",
   effect: "read",
@@ -469,15 +473,16 @@ export const listApplicationsTool = defineTool({
         resultSetId: resultSet.id,
         applications: shown.map(compactApplication),
       },
-      parts: shown.length
-        ? [
-            applicationRowsPart({
-              records: shown,
-              title: null,
-              resultSetId: resultSet.id,
-            }),
-          ]
-        : [],
+      parts:
+        input.show && shown.length
+          ? [
+              applicationRowsPart({
+                records: shown,
+                title: null,
+                resultSetId: resultSet.id,
+              }),
+            ]
+          : [],
     };
   },
 });
@@ -523,7 +528,7 @@ export function openApplicationFor(
       return (
         run !== undefined &&
         (OPEN_RUN_STATES.has(run.state) || answerIsBeingApplied) &&
-        !["submitted", "failed", "skipped"].includes(result.state)
+        !["submitted", "failed", "skipped", "cancelled"].includes(result.state)
       );
     })
     .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
@@ -636,6 +641,7 @@ export const getApplicationTool = defineTool({
               stage: record.crm.stage,
               revision: record.crm.revision,
               reminders: record.crm.reminders.slice(0, 5),
+              interviews: record.crm.interviews.slice(0, 5),
               notes: record.crm.notes.slice(-5),
             }
           : null,

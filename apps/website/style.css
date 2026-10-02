@@ -191,14 +191,14 @@ strong {
   min-height: 68px;
 }
 .wordmark {
-  font-family: var(--sans);
-  font-weight: 800;
-  font-size: 1.375rem;
-  letter-spacing: -0.07em;
-  text-transform: uppercase;
   text-decoration: none;
   color: var(--slate);
   padding-right: 0.07em;
+}
+.wordmark img {
+  display: block;
+  height: 1.375rem;
+  width: auto;
 }
 .site-header nav {
   margin-left: auto;
@@ -870,8 +870,8 @@ strong {
   align-items: center;
   gap: 10px 28px;
 }
-.wordmark--small {
-  font-size: 1.25rem;
+.wordmark--small img {
+  height: 1.125rem;
 }
 .footer-inner p:last-child {
   margin-left: auto;

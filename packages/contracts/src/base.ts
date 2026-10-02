@@ -721,6 +721,7 @@ export const applicationAttemptStateValues = [
   "paused",
   "submitted",
   "failed",
+  "cancelled",
   "unsupported",
 ] as const;
 

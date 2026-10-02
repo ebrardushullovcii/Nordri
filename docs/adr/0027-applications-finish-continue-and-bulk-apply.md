@@ -1,6 +1,6 @@
 # ADR 0027: Applications that finish, continue, and apply in bulk with one press
 
-Status: accepted (2026-09-20).
+Status: accepted (2026-09-20); amended (2026-10-01).
 
 ## Context
 
@@ -44,3 +44,7 @@ Rejected alternatives: pre-approving every declaration kind by default (backgrou
 ## Related Decisions
 
 - ADR 0012, ADR 0022, ADR 0023, ADR 0024, ADR 0025, ADR 0026
+
+## Update (2026-10-01)
+
+Background-check consent now joins the routine declarations that are on by default: the answers are true, the privacy notice and the site's terms. The agent may tick declarations the person agrees to, and the person can turn any off in Settings. Self-identification and marketing contact stay off by default. These permissions avoid leaving routine declarations for the person on every application; they do not grant final submission authority (ADR 0012, ADR 0024).

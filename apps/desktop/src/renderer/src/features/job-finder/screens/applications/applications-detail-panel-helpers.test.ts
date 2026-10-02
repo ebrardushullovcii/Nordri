@@ -22,6 +22,8 @@ import {
   getManualFieldFinishReason,
   getQueueStateExplanation,
   buildQueueEntries,
+  applyRunJobNeedsPreparation,
+  getQueueRecoveryTone,
   getVerifiedExternalWriteRecoveryText,
   applicationNeedsPrimaryRecovery,
   MANUAL_FIELD_CONFLICT_REASON,
@@ -669,4 +671,24 @@ describe("blocked-attempt diagnostics", () => {
     );
     expect(getApplyBlockedAttemptDetail("This page needs a human.")).toBeNull();
   });
+});
+
+it("lets the person retry a cancelled item without including it in the remaining batch", () => {
+  const result = {
+    state: "cancelled",
+    applicationRecordId: "application_1",
+  } as JobFinderWorkspaceSnapshot["applyJobResults"][number];
+  expect(
+    applicationNeedsPrimaryRecovery({
+      lastAttemptState: "cancelled",
+      visibleApplyResult: result,
+    }),
+  ).toBe(true);
+  expect(applyRunJobNeedsPreparation(result)).toBe(false);
+  expect(
+    applyRunJobNeedsPreparation({ ...result, applicationRecordId: null }),
+  ).toBe(false);
+  expect(getQueueRecoveryTone("cancelled")).toBe(
+    getQueueRecoveryTone("failed"),
+  );
 });

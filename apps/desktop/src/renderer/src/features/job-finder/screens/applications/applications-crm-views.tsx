@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
   ApplicationCrmStage,
+  ApplicationCrmStageDefinition,
   ApplicationRecord,
 } from "@nordri/contracts";
 import { Button } from "@renderer/components/ui/button";
@@ -117,6 +118,58 @@ const emptyStateCopy: Record<
   },
 };
 
+/**
+ * A date and time in this device's time zone, with the zone named so an
+ * interview set up across borders reads unambiguously.
+ */
+function formatCalendarMoment(value: string): string {
+  return new Date(value).toLocaleString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZoneName: "short",
+  });
+}
+
+function startOfLocalDay(time: number, daysAhead = 0): number {
+  const date = new Date(time);
+  date.setDate(date.getDate() + daysAhead);
+  date.setHours(0, 0, 0, 0);
+  return date.getTime();
+}
+
+/** Overdue first, then today, tomorrow and later, so what is due is on top. */
+function groupCalendarEntries<T extends { startsAt: string }>(
+  entries: readonly T[],
+  now: number,
+): { key: string; label: string; entries: T[] }[] {
+  const tomorrow = startOfLocalDay(now, 1);
+  const dayAfter = startOfLocalDay(now, 2);
+  const groups = [
+    { key: "overdue", label: "Overdue", entries: [] as T[] },
+    { key: "today", label: "Today", entries: [] as T[] },
+    { key: "tomorrow", label: "Tomorrow", entries: [] as T[] },
+    { key: "later", label: "Later", entries: [] as T[] },
+  ];
+  for (const entry of entries) {
+    const at = Date.parse(entry.startsAt);
+    const group =
+      at < now
+        ? groups[0]
+        : at < tomorrow
+          ? groups[1]
+          : at < dayAfter
+            ? groups[2]
+            : groups[3];
+    group?.entries.push(entry);
+  }
+  return groups.filter((group) => group.entries.length > 0);
+}
+
+const NO_CUSTOM_STAGES: readonly ApplicationCrmStageDefinition[] = [];
+
 function RecordButton(props: {
   record: ApplicationRecord;
   selected: boolean;
@@ -191,7 +244,12 @@ export function ApplicationsCrmViews(props: {
     recordIds: readonly string[],
     stage: ApplicationCrmStage,
   ) => Promise<void>;
+  /** Stages the person named; shown and searchable by those names. */
+  customStages?: readonly ApplicationCrmStageDefinition[];
+  /** Marks a reminder done straight from the calendar (N-018). */
+  onCompleteReminder?: (recordId: string, reminderId: string) => Promise<void>;
 }) {
+  const customStages = props.customStages ?? NO_CUSTOM_STAGES;
   const {
     applySavedView,
     deleteSavedView,
@@ -234,6 +292,30 @@ export function ApplicationsCrmViews(props: {
   const [showEmptyKanbanStages, setShowEmptyKanbanStages] = useState(false);
   const [bulkPending, setBulkPending] = useState(false);
   const [bulkError, setBulkError] = useState<string | null>(null);
+  const [completingEntryId, setCompletingEntryId] = useState<string | null>(
+    null,
+  );
+  const [calendarError, setCalendarError] = useState<string | null>(null);
+  async function completeReminder(entry: {
+    id: string;
+    applicationRecordId: string;
+  }) {
+    if (!props.onCompleteReminder) return;
+    setCompletingEntryId(entry.id);
+    setCalendarError(null);
+    try {
+      await props.onCompleteReminder(
+        entry.applicationRecordId,
+        entry.id.slice("reminder_".length),
+      );
+    } catch {
+      setCalendarError(
+        "The reminder could not be marked done. Open the application and try again.",
+      );
+    } finally {
+      setCompletingEntryId(null);
+    }
+  }
   const selectedIdsRef = useRef(selectedIds);
   const pagedRecordIdsRef = useRef<readonly string[]>([]);
   selectedIdsRef.current = selectedIds;
@@ -280,7 +362,11 @@ export function ApplicationsCrmViews(props: {
             crm.interviews.some(
               (interview) => interview.status === "scheduled",
             )) ||
-          (savedView === "offers" && crm.stage === "offer");
+          // An offer is an offer whether or not the stage was moved to it:
+          // a saved, still-open offer counts.
+          (savedView === "offers" &&
+            (crm.stage === "offer" ||
+              crm.compensation.offerStatus === "active"));
         const employerLine = formatApplicationEmployerLine({
           company: record.company,
           ...(relatedJobsById.get(record.jobId)?.canonicalUrl
@@ -294,13 +380,13 @@ export function ApplicationsCrmViews(props: {
             record.company,
             employerLine,
             crm.stage,
-            crm.customStageId,
+            applicationCrmStageLabelForView(record, customStages),
             ...crm.tags,
             ...crm.contacts.flatMap((contact) => [contact.name, contact.email]),
           ])
         );
       }),
-    [props.records, query, relatedJobsById, savedView],
+    [customStages, props.records, query, relatedJobsById, savedView],
   );
   const visibleRecordIdKey = useMemo(
     () => encodeVisibleRecordIdKey(filteredRecords.map((record) => record.id)),
@@ -558,7 +644,7 @@ export function ApplicationsCrmViews(props: {
           description={emptyStateCopy[props.view].description}
           title={emptyStateCopy[props.view].title}
         />
-      ) : filteredRecords.length === 0 && query ? (
+      ) : filteredRecords.length === 0 && query && savedView === "all" ? (
         <CollectionNoMatches
           noun="applications"
           onClear={() => setQuery("")}
@@ -568,17 +654,31 @@ export function ApplicationsCrmViews(props: {
         <div className="grid min-h-48 place-items-center px-6 text-center">
           <div>
             <h3 className="font-semibold text-foreground">
-              No applications in this view right now
+              {query
+                ? `Nothing in ${crmSavedViewLabels[savedView]} matches "${query}"`
+                : "No applications in this view right now"}
             </h3>
-            <Button
-              className="mt-3"
-              onClick={() => setSavedView("all")}
-              size="sm"
-              type="button"
-              variant="ghost"
-            >
-              Show all applications
-            </Button>
+            {/* Both filters can hide a row; each gets its own way back. */}
+            <div className="mt-3 flex flex-wrap justify-center gap-2">
+              <Button
+                onClick={() => setSavedView("all")}
+                size="sm"
+                type="button"
+                variant="ghost"
+              >
+                Show all applications
+              </Button>
+              {query ? (
+                <Button
+                  onClick={() => setQuery("")}
+                  size="sm"
+                  type="button"
+                  variant="ghost"
+                >
+                  Clear search
+                </Button>
+              ) : null}
+            </div>
           </div>
         </div>
       ) : null}
@@ -719,7 +819,10 @@ export function ApplicationsCrmViews(props: {
                             record,
                           )}
                         >
-                          {applicationCrmStageLabelForView(record)}
+                          {applicationCrmStageLabelForView(
+                            record,
+                            customStages,
+                          )}
                         </span>
                       </td>
                     ) : null}
@@ -742,8 +845,10 @@ export function ApplicationsCrmViews(props: {
                           rowPadding,
                         )}
                       >
+                        {/* The zone is named so a time set up across
+                            borders reads unambiguously (N-014). */}
                         {interview
-                          ? new Date(interview.startsAt).toLocaleString()
+                          ? formatCalendarMoment(interview.startsAt)
                           : "—"}
                       </td>
                     ) : null}
@@ -911,42 +1016,87 @@ export function ApplicationsCrmViews(props: {
           className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto p-5"
           data-locked-pane-scroll-region
         >
+          {calendarError ? (
+            <p
+              className="mb-4 rounded-(--radius-field) border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive"
+              role="alert"
+            >
+              {calendarError}
+            </p>
+          ) : null}
           {calendar.length > 0 ? (
-            <ol className="grid gap-3">
-              {pagedCalendar.map((entry) => {
-                const record = recordsById.get(entry.applicationRecordId);
-                return (
-                  <li
-                    className="grid gap-1 rounded-(--radius-field) border border-(--surface-panel-border) bg-(--surface-panel-tint) p-4 sm:grid-cols-[10rem_minmax(0,1fr)_auto] sm:items-center sm:gap-4"
-                    key={entry.id}
+            <div className="grid gap-5">
+              {groupCalendarEntries(pagedCalendar, Date.now()).map((group) => (
+                <section
+                  aria-label={group.label}
+                  className="grid gap-2"
+                  key={group.key}
+                >
+                  <h3
+                    className={
+                      group.key === "overdue"
+                        ? "text-xs font-bold uppercase tracking-(--tracking-label) text-(--warning-text)"
+                        : "text-xs font-bold uppercase tracking-(--tracking-label) text-foreground-muted"
+                    }
                   >
-                    <time
-                      className="text-sm font-semibold text-foreground"
-                      dateTime={entry.startsAt}
-                    >
-                      {new Date(entry.startsAt).toLocaleString()}
-                    </time>
-                    <div className="min-w-0">
-                      <strong className="block break-words text-sm text-foreground">
-                        {entry.title}
-                      </strong>
-                      <span className="label-mono-xs">
-                        {entry.kind.replaceAll("_", " ")}
-                      </span>
-                    </div>
-                    <Button
-                      disabled={!record}
-                      onClick={() => record && props.onSelectRecord(record.id)}
-                      size="sm"
-                      type="button"
-                      variant="ghost"
-                    >
-                      Open
-                    </Button>
-                  </li>
-                );
-              })}
-            </ol>
+                    {group.label}
+                  </h3>
+                  <ol className="grid gap-3">
+                    {group.entries.map((entry) => {
+                      const record = recordsById.get(entry.applicationRecordId);
+                      return (
+                        <li
+                          className="grid gap-1 rounded-(--radius-field) border border-(--surface-panel-border) bg-(--surface-panel-tint) p-4 sm:grid-cols-[12rem_minmax(0,1fr)_auto] sm:items-center sm:gap-4"
+                          key={entry.id}
+                        >
+                          <time
+                            className="text-sm font-semibold text-foreground"
+                            dateTime={entry.startsAt}
+                          >
+                            {formatCalendarMoment(entry.startsAt)}
+                          </time>
+                          <div className="min-w-0">
+                            <strong className="block break-words text-sm text-foreground">
+                              {entry.title}
+                            </strong>
+                            <span className="label-mono-xs">
+                              {entry.kind.replaceAll("_", " ")}
+                            </span>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-1">
+                            {entry.kind === "reminder" &&
+                            props.onCompleteReminder ? (
+                              <Button
+                                aria-label={`Mark "${entry.title}" done`}
+                                disabled={completingEntryId !== null}
+                                onClick={() => void completeReminder(entry)}
+                                pending={completingEntryId === entry.id}
+                                size="sm"
+                                type="button"
+                                variant="ghost"
+                              >
+                                Mark done
+                              </Button>
+                            ) : null}
+                            <Button
+                              disabled={!record}
+                              onClick={() =>
+                                record && props.onSelectRecord(record.id)
+                              }
+                              size="sm"
+                              type="button"
+                              variant="ghost"
+                            >
+                              Open
+                            </Button>
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ol>
+                </section>
+              ))}
+            </div>
           ) : (
             <div className="grid min-h-48 place-items-center text-center">
               <div>

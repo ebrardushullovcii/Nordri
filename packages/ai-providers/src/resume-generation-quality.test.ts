@@ -13,6 +13,93 @@ import {
 } from "./test-fixtures";
 
 describe("resume generation quality", () => {
+  test("aggressive generation filters country fragments from extraction and model output without losing stretch skills", () => {
+    const skills = [
+      "React",
+      "TypeScript",
+      "JavaScript",
+      "Node.js",
+      "CSS",
+      "HTML",
+      "Git",
+      "SQL",
+    ];
+    const baseProfile = createProfile();
+    const profile = {
+      ...baseProfile,
+      skills,
+      skillGroups: {
+        coreSkills: skills,
+        tools: [],
+        languagesAndFrameworks: [],
+        softSkills: [],
+        highlightedSkills: [],
+      },
+      education: [
+        {
+          id: "education_synthetic",
+          schoolName: "Example College",
+          degree: "BSc",
+          fieldOfStudy: "Computer Science",
+          location: "New Zealand",
+          startDate: "2016",
+          endDate: "2020",
+          isDraft: false,
+          summary: null,
+        },
+      ],
+    };
+    const job = {
+      ...createJobPosting(),
+      location: "Remote",
+      keySkills: ["TypeScript"],
+      minimumQualifications: [
+        "Must be authorized to work in the United States.",
+        "Experience with Terraform required.",
+      ],
+    };
+    const input = {
+      profile,
+      job,
+      searchPreferences: {
+        ...createPreferences(),
+        tailoringMode: "aggressive" as const,
+      },
+      settings: createSettings(),
+      resumeText: profile.baseResume.textContent,
+    };
+    for (const primary of [
+      {},
+      {
+        coreSkills: [
+          "United",
+          "States",
+          "United States",
+          "Terraform",
+          "TypeScript",
+        ],
+      },
+    ]) {
+      const draft = completeTailoredResumeDraft(primary, input);
+      const generatedSkills = [...draft.coreSkills, ...draft.additionalSkills];
+      expect(generatedSkills).toContain("Terraform");
+      expect(generatedSkills).not.toContain("United");
+      expect(generatedSkills).not.toContain("States");
+      expect(generatedSkills).not.toContain("United States");
+      expect(draft.notes.join("\n")).toMatch(
+        /Aggressive tailoring added.*Terraform/,
+      );
+      expect(draft.notes.join("\n")).not.toMatch(/added.*(?:United|States)/);
+    }
+    const fallback = buildDeterministicStructuredResumeDraft(input);
+    for (const token of ["United", "States"]) {
+      expect([
+        ...fallback.coreSkills,
+        ...fallback.additionalSkills,
+      ]).not.toContain(token);
+    }
+  });
+
   test("builds a genuinely job-targeted frontend resume instead of preserving a generic full-stack profile", () => {
     const baseProfile = createProfile();
     const profile: typeof baseProfile = {

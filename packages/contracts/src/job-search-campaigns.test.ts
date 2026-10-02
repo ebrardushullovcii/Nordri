@@ -53,18 +53,12 @@ describe("JobSearchCampaignSchema", () => {
       expect(campaign.applicationPolicy.requireReviewBeforeExternalWrite).toBe(
         true,
       );
-      expect(campaign.limits.retainedJobTarget).toBe(
-        mode === "precision" ? 1_000 : 1_000,
-      );
-      expect(campaign.limits.discoveryRunJobBudget).toBe(
-        mode === "precision"
-          ? null
-          : DEFAULT_SCALE_CAMPAIGN_DISCOVERY_RUN_JOB_BUDGET,
-      );
+      expect(campaign.limits.retainedJobTarget).toBe(10_000);
+      expect(campaign.limits.discoveryRunJobBudget).toBeNull();
     },
   );
 
-  test("pins the scale campaign discovery run budget default and hard cap", () => {
+  test("preserves the legacy explicit scale budget and its hard cap", () => {
     expect(DEFAULT_SCALE_CAMPAIGN_DISCOVERY_RUN_JOB_BUDGET).toBe(1_000);
     expect(DISCOVERY_RUN_JOB_BUDGET_MAX).toBe(2_000);
   });

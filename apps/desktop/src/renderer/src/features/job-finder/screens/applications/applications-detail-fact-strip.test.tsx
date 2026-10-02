@@ -938,3 +938,45 @@ describe("Applications detail heading weight", () => {
     expect(offenders).toEqual([]);
   });
 });
+
+it("shows cancellation by the person in application facts", () => {
+  renderStrip({
+    record: {
+      ...baseRecord,
+      lastAttemptState: "cancelled",
+      lastActionLabel: "Cancelled by you",
+      latestBlocker: null,
+    },
+    visibleApplyResult: {
+      ...baseApplyResult,
+      state: "cancelled",
+      summary: "Cancelled by you",
+      detail: "Nothing was sent.",
+    },
+  });
+  expect(screen.getAllByText("Cancelled by you").length).toBeGreaterThan(0);
+  expect(screen.queryByText("Could not apply")).toBeNull();
+  expect(screen.queryByText("Needs you")).toBeNull();
+});
+
+it("labels a cancelled preparation history entry as cancelled by the person", () => {
+  render(
+    <ApplicationsDetailPanelRunHistorySection
+      applyRunHistory={[
+        {
+          result: {
+            ...baseApplyResult,
+            state: "cancelled",
+            summary: "Cancelled by you",
+            detail: "Nothing was sent.",
+          },
+          run: null,
+        },
+      ]}
+      onSelectApplyRun={vi.fn()}
+      selectedApplyRunId={baseApplyResult.runId}
+    />,
+  );
+  expect(screen.getAllByText("Cancelled by you")).toHaveLength(2);
+  expect(screen.queryByText("Cancelled")).toBeNull();
+});

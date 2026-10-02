@@ -256,9 +256,7 @@ describe("resolveDiscoveryBudgetPlan exact-total semantics", () => {
             (total, share) => total + share,
             0,
           ),
-        ).toBe(
-          runJobBudget,
-        );
+        ).toBe(runJobBudget);
         expect(planShares(targetIds, runJobBudget)).toEqual(shares);
       }
     }
@@ -516,8 +514,8 @@ describe("campaign discovery run budgets", () => {
     expect(agentOptions?.targetJobCount).toBe(1_000);
     expect(agentOptions?.searchMode).toBe("scale");
     expect(agentOptions?.maxSteps).toBe(240);
-    expect(agentOptions?.runControl?.timeBudgetMs).toBe(30 * 60_000);
-    expect(agentOptions?.runControl?.noProgressStepLimit).toBe(8);
+    expect(agentOptions?.runControl?.timeBudgetMs).toBe(60 * 60_000);
+    expect(agentOptions?.runControl?.noProgressStepLimit).toBe(24);
 
     const discoveryState = await repository.getDiscoveryState();
     const run = discoveryState.recentRuns.at(-1);
@@ -560,6 +558,9 @@ describe("campaign discovery run budgets", () => {
 
     expect(agentCalls).toHaveLength(1);
     expect(agentCalls[0]?.searchMode).toBe("precision");
+    expect(agentCalls[0]?.retainAllFound).toBe(true);
+    expect(agentCalls[0]?.runControl?.timeBudgetMs).toBe(60 * 60_000);
+    expect(agentCalls[0]?.runControl?.noProgressStepLimit).toBe(24);
   }, 60_000);
 
   test("honors the run-scoped goal, breadth, freshness, and selected sources", async () => {
@@ -826,7 +827,9 @@ describe("campaign discovery run budgets", () => {
     expect(executions.funded_board?.requestedJobBudget).toBe(1);
 
     expect(
-      (run?.activity ?? []).filter((event) => event.terminalState === "skipped"),
+      (run?.activity ?? []).filter(
+        (event) => event.terminalState === "skipped",
+      ),
     ).toHaveLength(0);
   }, 60_000);
 

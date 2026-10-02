@@ -61,6 +61,100 @@ afterEach(() => {
 });
 
 describe("ApplicationsCrmViews", () => {
+  test.each([
+    ["2026-10-25T10:00:00+01:00", "2026-10-25T23:30:00+01:00", "Today"],
+    ["2026-10-24T10:00:00+02:00", "2026-10-25T23:30:00+01:00", "Tomorrow"],
+    ["2026-03-29T10:00:00+02:00", "2026-03-30T00:30:00+02:00", "Tomorrow"],
+  ])("groups %s / %s by local calendar day", (now, dueAt, label) => {
+    const previousTZ = process.env.TZ;
+    process.env.TZ = "Europe/Belgrade";
+    vi.spyOn(Date, "now").mockReturnValue(Date.parse(now));
+    try {
+      expect(new Date("2026-10-25T23:30:00+01:00").getHours()).toBe(23);
+      render(
+        <ApplicationsCrmViews
+          onSelectRecord={vi.fn()}
+          onViewChange={vi.fn()}
+          records={[
+            record("dst", "Engineer", "Cedar", {
+              crm: {
+                stage: "reviewing",
+                stageChangedAt: "2026-08-15T10:00:00.000Z",
+                reminders: [
+                  {
+                    id: "reminder_dst",
+                    title: "DST reminder",
+                    dueAt: new Date(dueAt).toISOString(),
+                    createdAt: "2026-08-15T10:00:00.000Z",
+                    updatedAt: "2026-08-15T10:00:00.000Z",
+                  },
+                ],
+              },
+            }),
+          ]}
+          selectedRecordId={null}
+          view="calendar"
+        />,
+      );
+      expect(screen.getByRole("heading", { name: label })).toBeTruthy();
+      expect(screen.getByText(/DST reminder/)).toBeTruthy();
+    } finally {
+      if (previousTZ === undefined) delete process.env.TZ;
+      else process.env.TZ = previousTZ;
+      vi.restoreAllMocks();
+    }
+  });
+
+  test("marks a reminder done from the calendar", async () => {
+    const onCompleteReminder = vi.fn().mockResolvedValue(undefined);
+    render(
+      <ApplicationsCrmViews
+        onCompleteReminder={onCompleteReminder}
+        onSelectRecord={vi.fn()}
+        onViewChange={vi.fn()}
+        records={[
+          record("application_1", "Engineer", "Cedar", {
+            crm: {
+              stage: "applied",
+              stageChangedAt: "2026-08-15T10:00:00.000Z",
+              reminders: [
+                {
+                  id: "follow_up",
+                  title: "Follow up",
+                  dueAt: "2026-08-16T10:00:00.000Z",
+                  createdAt: "2026-08-15T10:00:00.000Z",
+                  updatedAt: "2026-08-15T10:00:00.000Z",
+                },
+              ],
+              interviews: [
+                {
+                  id: "screen",
+                  title: "Phone screen",
+                  startsAt: "2026-08-17T10:00:00.000Z",
+                  createdAt: "2026-08-15T10:00:00.000Z",
+                  updatedAt: "2026-08-15T10:00:00.000Z",
+                },
+              ],
+            },
+          }),
+        ]}
+        selectedRecordId={null}
+        view="calendar"
+      />,
+    );
+    // Only reminders get the button; an interview is not "done" from here.
+    expect(screen.getAllByRole("button", { name: /done/u })).toHaveLength(1);
+    fireEvent.click(
+      screen.getByRole("button", { name: /Mark "Follow up · .*" done/u }),
+    );
+    await waitFor(() =>
+      expect(onCompleteReminder).toHaveBeenCalledWith(
+        "application_1",
+        "follow_up",
+      ),
+    );
+  });
+
   test("searches locally without resetting the selected application", () => {
     const onSelectRecord = vi.fn();
     render(

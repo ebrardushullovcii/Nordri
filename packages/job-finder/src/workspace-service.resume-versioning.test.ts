@@ -22,6 +22,45 @@ function findEditableTextSection(
 }
 
 describe("resume draft versioning", () => {
+  test("returns the committed revision when an edited bullet is trimmed during save", async () => {
+    const { workspaceService } = createWorkspaceServiceHarness();
+    await workspaceService.generateResume("job_ready");
+    const before = await workspaceService.getResumeWorkspace("job_ready");
+    const section = before.draft.sections.find(
+      (entry) => entry.bullets.length > 0,
+    );
+    expect(section).toBeDefined();
+    const bulletId = section!.bullets[0]!.id;
+    const edited = {
+      ...before.draft,
+      sections: before.draft.sections.map((entry) =>
+        entry.id === section!.id
+          ? {
+              ...entry,
+              bullets: entry.bullets.map((bullet) =>
+                bullet.id === bulletId
+                  ? { ...bullet, text: `${bullet.text}\n` }
+                  : bullet,
+              ),
+            }
+          : entry,
+      ),
+    };
+    const result = await workspaceService.saveResumeDraft(edited);
+    const after = await workspaceService.getResumeWorkspace("job_ready");
+    expect(
+      after.draft.sections
+        .find((entry) => entry.id === section!.id)
+        ?.bullets.find((bullet) => bullet.id === bulletId)?.text,
+    ).toBe(section!.bullets[0]!.text);
+    expect(after.draft.sections).not.toEqual(edited.sections);
+    expect(
+      result.resumeDrafts.find((entry) => entry.id === before.draft.id)
+        ?.updatedAt,
+    ).toBe(after.draft.updatedAt);
+    expect(after.draft.updatedAt).not.toBe(before.draft.updatedAt);
+  });
+
   test("captures the exact pre-save draft and skips no-op revisions", async () => {
     const { repository, workspaceService } = createWorkspaceServiceHarness();
     await workspaceService.generateResume("job_ready");
