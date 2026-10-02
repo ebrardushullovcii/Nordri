@@ -49,6 +49,7 @@ export type OpenAiCompatibleJsonOperation =
   | "reviseCandidateProfile"
   | "tailorResume"
   | "assessJobFit"
+  | "judgeJobFits"
   | "extractJobsFromPage";
 
 // Declared as a type alias (not an interface) so the shape carries an
@@ -541,6 +542,7 @@ function responseHeadroomTokensForOperation(
     case "adjudicateResumeImportCandidates":
     case "createResumeDraft":
     case "tailorResume":
+    case "judgeJobFits":
       return 4_096;
     case "reviseResumeDraft":
     case "reviseCandidateProfile":

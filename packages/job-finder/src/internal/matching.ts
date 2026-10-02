@@ -5,6 +5,7 @@ import {
   jobPostingDetailQualityValues,
   type ApplicationStatus,
   type CandidateProfile,
+  type FitRecommendation,
   type JobKeywordSignal,
   type JobRequirementAssessment,
   type JobSearchPreferences,
@@ -22,7 +23,13 @@ import {
 } from "./matching-compensation";
 import type { MatchAssessmentPostingInput } from "./match-assessment-posting-input";
 import { createMatchAssessmentChangeAudit } from "./match-assessment-change-audit";
-import { MATCH_ASSESSMENT_SCORER_VERSION } from "./match-assessment-session";
+import {
+  MATCH_ASSESSMENT_SCORER_VERSION,
+  createMatchAssessmentContextFingerprint,
+  createMatchAssessmentPostingFingerprint,
+} from "./match-assessment-session";
+import { createMatchAssessmentPostingInput } from "./match-assessment-posting-input";
+import { applyFitJudgment, toFitJudgment } from "./fit-judgment";
 import { assessRemoteGeographyRequirement } from "./matching-eligibility";
 import { resolvePostingSeniority } from "./posting-seniority";
 import { buildMatchDimensionsAssessment } from "./matching-dimensions";
@@ -2598,19 +2605,58 @@ export async function createMatchAssessmentAsync(
     return fallbackAssessment;
   }
 
-  // Rebuild dimensions, gaps and safety ceilings from the extracted evidence.
-  // A model score cannot remove a known occupational or eligibility conflict.
+  // The model read the full listing against the profile and goals; its score
+  // and verdict stand (ADR 0041). The requirements it found feed the
+  // evidence counts and the requirement list the screen shows.
+  const withRequirements = createMatchAssessment(
+    profile,
+    searchPreferences,
+    posting,
+    assistedAssessment.requirements,
+  );
+  const judgment = toFitJudgment(
+    {
+      score: assistedAssessment.score,
+      recommendation:
+        assistedAssessment.recommendation ??
+        recommendationForModelScore(assistedAssessment.score),
+      role: assistedAssessment.role ?? "unknown",
+      roleExplanation: assistedAssessment.roleExplanation ?? null,
+      preferences: assistedAssessment.preferences ?? "unknown",
+      preferencesExplanation: assistedAssessment.preferencesExplanation ?? null,
+      locationReach: assistedAssessment.locationReach ?? "unknown",
+      reasons: assistedAssessment.reasons,
+      gaps: assistedAssessment.gaps,
+    },
+    {
+      source: "full",
+      judgedAt: new Date().toISOString(),
+      contextFingerprint: createMatchAssessmentContextFingerprint(
+        profile,
+        searchPreferences,
+      ),
+      postingFingerprint: createMatchAssessmentPostingFingerprint(
+        createMatchAssessmentPostingInput(posting),
+      ),
+    },
+  );
   return {
-    ...createMatchAssessment(
-      profile,
-      searchPreferences,
-      posting,
-      assistedAssessment.requirements,
-    ),
+    ...applyFitJudgment(withRequirements, judgment),
     ...(assistedAssessment.requirements
       ? { requirementsSource: "model" as const }
       : {}),
   };
+}
+
+/**
+ * Only for a model reply that gave a score without a recommendation (an
+ * older provider or a fake): the score's own band, not a rule verdict.
+ */
+function recommendationForModelScore(score: number): FitRecommendation {
+  if (score >= 80) return "strong_fit";
+  if (score >= 65) return "apply_with_original";
+  if (score >= 40) return "review_before_applying";
+  return "skip";
 }
 
 export function preserveJobStatus(

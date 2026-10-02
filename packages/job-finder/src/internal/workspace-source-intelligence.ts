@@ -21,7 +21,6 @@ import {
 } from "./matching";
 import { isExplicitSearchProbeDisproof } from "./source-instruction-evidence";
 import { normalizeText, uniqueStrings } from "./shared";
-import { CLOSED_LISTING_BODY_PATTERN } from "./listing-activity";
 
 const technicalRoleSignalPatterns = [
   /\bsoftware\b/,
@@ -2078,9 +2077,6 @@ export async function collectPublicProviderJobs(input: {
   }
 }
 
-const ACCOUNT_WALL_BODY_PATTERN =
-  /\b(?:sign in to (?:continue|view|see|apply|access)|log in to (?:continue|view|see|apply)|join now|welcome back|create (?:an|your|a free) account|get notified about new [^.\n]{0,80}\bjobs\b|by clicking (?:continue|agree|join)|forgot password|new to [a-z]+\? join now)\b/iu;
-
 export function applyDiscoveryTitleTriage(input: {
   posting: JobPosting;
   searchPreferences: JobSearchPreferences;
@@ -2092,10 +2088,6 @@ export function applyDiscoveryTitleTriage(input: {
   const allowsPollutedTitleEvidence =
     posting.providerKey === null &&
     /\bdismiss\b.{0,160}\bjob\b/iu.test(postingEvidenceText);
-  const isGenericTalentPool =
-    /^(?:keep me in mind!?|general application|open application|join (?:our )?talent (?:pool|network)|talent (?:pool|network)|future opportunities|submit (?:your )?resume|expression of interest)$/iu.test(
-      posting.title.trim(),
-    );
 
   if (
     searchPreferences.companyBlacklist.some(
@@ -2121,44 +2113,9 @@ export function applyDiscoveryTitleTriage(input: {
     };
   }
 
-  if (isGenericTalentPool) {
-    return {
-      outcome: "skip_title" as const,
-      reason:
-        "This is a general talent-pool invitation rather than a specific open role.",
-    };
-  }
-
-  if (
-    CLOSED_LISTING_BODY_PATTERN.test(
-      `${posting.summary ?? ""} ${posting.description}`,
-    )
-  ) {
-    return {
-      outcome: "skip_title" as const,
-      reason:
-        "The listing says it is closed or no longer accepting applications.",
-    };
-  }
-
-  // A sign-in or account wall captured as a "job": the body is the site's
-  // login prompt, not a role. Boards show these behind generic titles
-  // ("Customer Service") and they outscore real jobs on title match alone.
-  const listingBody = `${posting.summary ?? ""} ${posting.description}`;
-  if (
-    listingBody.length < 900 &&
-    ACCOUNT_WALL_BODY_PATTERN.test(listingBody) &&
-    !/\b(?:responsibilit|requirement|qualification|salary|you will|we are looking)/iu.test(
-      listingBody,
-    )
-  ) {
-    return {
-      outcome: "skip_title" as const,
-      reason:
-        "This page asks you to sign in or create an account; it is not a job listing.",
-    };
-  }
-
+  // Talent pools, closed listings and sign-in pages are not filtered here by
+  // phrase lists: the model reading the page skips them, and the model
+  // judging fit marks any that arrive as skip (ADR 0041).
   if (searchPreferences.discovery.collectOnlyHardCriteriaMatches !== true) {
     return {
       outcome: "pass" as const,

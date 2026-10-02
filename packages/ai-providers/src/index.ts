@@ -11,6 +11,7 @@ export * from "./deterministic";
 export * from "./openai-compatible";
 export * from "./agent-capabilities";
 export { completeTailoredResumeDraft } from "./openai-compatible-shared";
+export { JOB_FIT_JUDGING_BATCH_SIZE } from "./openai-compatible-fit";
 
 export const aiProvidersPackageReady = true;
 export * from "./assistant-model";

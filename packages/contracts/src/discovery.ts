@@ -661,6 +661,34 @@ export const TitleFamilyMatchSchema = z.enum(titleFamilyMatchValues);
  */
 export type TitleFamilyMatch = z.infer<typeof TitleFamilyMatchSchema>;
 
+/**
+ * The model's verdict on how one listing fits the person (ADR 0041). The
+ * model reads the listing and the person's goals and decides; the scorer
+ * builds the assessment from this verdict instead of its own title, place and
+ * keyword rules. `batch` verdicts come from the search's per-page judging of
+ * many jobs at once; `full` comes from reading and assessing one listing.
+ * The fingerprints record what the verdict was made from, so a later change
+ * to the profile or the listing can be judged again.
+ */
+export const FitJudgmentSchema = z.object({
+  source: z.enum(["batch", "full"]),
+  judgedAt: IsoDateTimeSchema,
+  contextFingerprint: NonEmptyStringSchema.nullable().default(null),
+  postingFingerprint: NonEmptyStringSchema.nullable().default(null),
+  score: z.number().int().min(0).max(100),
+  recommendation: FitRecommendationSchema,
+  role: RoleSuitabilityStateSchema.default("unknown"),
+  roleExplanation: NonEmptyStringSchema.max(320).nullable().default(null),
+  preferences: PreferenceAlignmentStateSchema.default("unknown"),
+  preferencesExplanation: NonEmptyStringSchema.max(320)
+    .nullable()
+    .default(null),
+  locationReach: MatchLocationReachSchema.default("unknown"),
+  reasons: z.array(NonEmptyStringSchema).max(4).default([]),
+  gaps: z.array(NonEmptyStringSchema).max(4).default([]),
+});
+export type FitJudgment = z.infer<typeof FitJudgmentSchema>;
+
 export const MatchAssessmentSchema = z.object({
   scorerVersion: z.number().int().positive().default(1),
   contextFingerprint: NonEmptyStringSchema.nullable().default(null),
@@ -690,6 +718,8 @@ export const MatchAssessmentSchema = z.object({
   ),
   requirements: z.array(JobRequirementAssessmentSchema).default([]),
   requirementsSource: z.enum(["model", "deterministic"]).optional(),
+  /** The model's verdict this assessment was built from; absent until judged. */
+  judgment: FitJudgmentSchema.nullable().optional(),
 });
 export type MatchAssessment = z.infer<typeof MatchAssessmentSchema>;
 

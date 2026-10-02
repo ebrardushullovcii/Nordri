@@ -24,7 +24,7 @@ export const fitRecommendationCopy: Record<
     label: "Review before applying",
     tone: "neutral",
   },
-  skip: { label: "Skip — hard conflict", tone: "critical" },
+  skip: { label: "Probably skip", tone: "critical" },
 };
 
 /**

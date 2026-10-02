@@ -2650,3 +2650,137 @@ describe("Round 2 application recovery", () => {
     ).toMatchObject({ kind: "refused" });
   });
 });
+
+describe("the model's answers stand when the person's facts support them (ADR 0041)", () => {
+  const deps = (
+    config: ApplyAgentConfig,
+    supported: boolean,
+    reason = "checked",
+  ) => {
+    const checkWrittenAnswer = vi.fn(() =>
+      Promise.resolve({ supported, reason }),
+    );
+    return {
+      checkWrittenAnswer,
+      deps: {
+        config,
+        now,
+        guardState: createApplyGuardState(),
+        checkWrittenAnswer,
+      },
+    };
+  };
+
+  test("text matching a stored fact goes in as that fact without a check", async () => {
+    const page = rawPage({
+      controls: [rawControl({ index: 0, label: "Email", inputType: "email" })],
+    });
+    const { config } = configFor(page);
+    const { deps: run, checkWrittenAnswer } = deps(config, true);
+    const outcome = await executeApplyProposal(
+      { tool: "type", ref: "c0", text: "robin.ashford@example.test" },
+      observationOf(page).signature,
+      run,
+    );
+    expect(checkWrittenAnswer).not.toHaveBeenCalled();
+    if (outcome.kind !== "filled") throw new Error("Expected a fill");
+    expect(outcome.filled.answer.sourceKind).toBe("profile");
+  });
+
+  test("the model's text replaces a stored fact the question was not asking for", async () => {
+    // Read by keywords this is the person's own email; the model saw it asks
+    // for a referee's.
+    const page = rawPage({
+      controls: [
+        rawControl({
+          index: 0,
+          label: "Email",
+          inputType: "email",
+          groupLabel: "Referee",
+        }),
+      ],
+    });
+    const fillText = vi.fn((_ref: string, value: string) =>
+      Promise.resolve({ ok: true as const, observedValue: value }),
+    );
+    const { config } = configFor(page, { hands: { fillText } });
+    config.sources.reusableAnswers = [];
+    const { deps: run, checkWrittenAnswer } = deps(config, true);
+    const outcome = await executeApplyProposal(
+      { tool: "type", ref: "c0", text: "referee@example.test" },
+      observationOf(page).signature,
+      run,
+    );
+    expect(checkWrittenAnswer).toHaveBeenCalledOnce();
+    expect(fillText).toHaveBeenCalledWith("c0", "referee@example.test");
+    if (outcome.kind !== "filled") throw new Error("Expected a fill");
+    expect(outcome.filled.answer.value).toBe("referee@example.test");
+  });
+
+  test("an unsupported answer is not written, and the saved one is named", async () => {
+    const page = rawPage({
+      controls: [rawControl({ index: 0, label: "Email", inputType: "email" })],
+    });
+    const fillText = vi.fn();
+    const { config } = configFor(page, { hands: { fillText } });
+    const { deps: run } = deps(
+      config,
+      false,
+      "That is not the applicant's email.",
+    );
+    const outcome = await executeApplyProposal(
+      { tool: "type", ref: "c0", text: "someone.else@example.test" },
+      observationOf(page).signature,
+      run,
+    );
+    expect(fillText).not.toHaveBeenCalled();
+    if (outcome.kind !== "suggestion") throw new Error("Expected a note");
+    expect(outcome.note).toContain(
+      'Their saved answer is "robin.ashford@example.test"',
+    );
+  });
+
+  test("the model chooses an option nothing stored answers once the check supports it", async () => {
+    const page = rawPage({
+      controls: [
+        rawControl({
+          index: 0,
+          tagName: "select",
+          label: "How did you hear about this job?",
+          required: true,
+          options: ["LinkedIn", "A friend", "Other"],
+        }),
+      ],
+    });
+    const { config, hands } = configFor(page);
+    const choose = vi.spyOn(hands, "chooseOption");
+    const { deps: run, checkWrittenAnswer } = deps(config, true);
+    const outcome = await executeApplyProposal(
+      { tool: "select", ref: "c0", option: "Other" },
+      observationOf(page).signature,
+      run,
+    );
+    expect(checkWrittenAnswer).toHaveBeenCalledOnce();
+    expect(choose).toHaveBeenCalledWith("c0", "Other");
+    expect(outcome.kind).toBe("filled");
+  });
+
+  test("pay the person keeps to themselves is left for them whatever the model chose", async () => {
+    const page = rawPage({
+      controls: [
+        rawControl({ index: 0, label: "Expected salary", required: true }),
+      ],
+    });
+    const fillText = vi.fn();
+    const { config } = configFor(page, { hands: { fillText } });
+    const { deps: run, checkWrittenAnswer } = deps(config, true);
+    const outcome = await executeApplyProposal(
+      { tool: "type", ref: "c0", text: "60000" },
+      observationOf(page).signature,
+      run,
+    );
+    expect(checkWrittenAnswer).not.toHaveBeenCalled();
+    expect(fillText).not.toHaveBeenCalled();
+    expect(outcome.kind).not.toBe("filled");
+  });
+});

@@ -66,6 +66,11 @@ import {
   type OpenAiCompatibleJsonOperation,
 } from "./openai-compatible-request-compaction";
 import {
+  buildJobFitJudgingPayload,
+  buildJobFitJudgingPrompt,
+  normalizeJobFitJudgments,
+} from "./openai-compatible-fit";
+import {
   buildJobsExtractionPrompt,
   normalizeExtractedJobs,
 } from "./openai-compatible-jobs";
@@ -605,6 +610,7 @@ export function createOpenAiCompatibleJobFinderAiClient(
           "Keep explanations specific to the provided profile and job.",
           "Include requirements for every explicit language and level, enrollment or availability window, education, portfolio, experience, and named tool in the full listing. Compare each with the profile; absence is missing or unknown, never support. A conflict needs explicit contradictory evidence. Use assessmentDate for availability windows.",
           "Each requirement has id, category (skill, experience, seniority, location, work_mode, work_authorization, domain), label, importance (required, preferred, inferred), status (supported, partial, missing, unknown, conflict), jobEvidence (quote from the listing), resumeEvidence (array of {sourceKind: profile_skill, experience, project, or profile; sourceId: string or null; label; detail}), and explanation. Use skill for languages and tools, experience for education, enrollment, availability and portfolio. Keep required country restrictions separate from remote work mode.",
+          'Also return your verdict: recommendation (strong_fit, apply_with_original, review_before_applying, or skip); role ("exact" when it is the kind of work the person is looking for, "adjacent" for related work they could credibly do, "conflict" for a different occupation or a level far from theirs, "unknown"); roleExplanation (one plain sentence to the person); preferences ("aligned", "mixed", "conflict", "unknown", or "not_configured" against the saved goals for place, work mode, level, employment type and pay); preferencesExplanation (one sentence); and locationReach ("in_area", "remote_preferred", "outside_area", or "unknown"). Your score and recommendation stand as the assessment; nothing recomputes them.',
         ].join(" "),
         assessmentInput,
         {
@@ -613,6 +619,25 @@ export function createOpenAiCompatibleJobFinderAiClient(
         },
       );
       return JobFitAssessmentSchema.parse(payload);
+    },
+    async judgeJobFits(input) {
+      const { signal, ...rest } = input;
+      if (rest.jobs.length === 0) {
+        return [];
+      }
+      const payload = await fetchModelJson(
+        "judgeJobFits",
+        buildJobFitJudgingPrompt(),
+        buildJobFitJudgingPayload(rest),
+        {
+          ...(signal ? { signal } : {}),
+          reasoningEffort: agentReasoningEffort,
+        },
+      );
+      return normalizeJobFitJudgments(
+        payload,
+        new Set(rest.jobs.map((job) => job.jobId)),
+      );
     },
     async extractJobsFromPage(input) {
       const maxJobs = Math.max(0, Math.floor(input.maxJobs));
@@ -1521,6 +1546,22 @@ export function createJobFinderAiClientFromEnvironment(
         if (input.signal?.aborted) throw error;
         logFallbackError("assessJobFit", error);
         return fallbackClient.assessJobFit(input);
+      }
+    },
+    async judgeJobFits(input) {
+      if (!primaryClient.judgeJobFits) {
+        return [];
+      }
+      try {
+        return await primaryClient.judgeJobFits(input);
+      } catch (error) {
+        if (input.signal?.aborted) {
+          throw error;
+        }
+        // No rule-made verdict stands in: the jobs stay unjudged and the
+        // next pass asks again.
+        logFallbackError("judgeJobFits", error);
+        return [];
       }
     },
     async extractJobsFromPage(input) {

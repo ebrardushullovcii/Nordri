@@ -110,24 +110,25 @@ describe("Round two fit findings", () => {
     },
   );
 
-  test("compares model-extracted substantive requirements and keeps conflict ceilings", async () => {
+  test("the full assessment's verdict stands, with the requirements it found", async () => {
     const seed = createSeed();
     const requirements = [
       requirement("Very good German", "conflict"),
       requirement("Eight months of enrollment", "conflict", "experience"),
       requirement("Power BI", "missing"),
       requirement("Design education", "supported", "experience"),
-      requirement("Strong portfolio", "supported", "experience"),
-      requirement("AI tools", "unknown"),
     ];
     const client = {
       ...createAiClient(),
       assessJobFit: () =>
         Promise.resolve({
-          score: 99,
+          score: 34,
           reasons: ["Remote"],
-          gaps: [],
+          gaps: ["Very good German is required"],
           requirements,
+          recommendation: "skip" as const,
+          role: "exact" as const,
+          roleExplanation: "This is the analyst work you are looking for.",
         }),
     };
     const assessed = await createMatchAssessmentAsync(
@@ -136,27 +137,54 @@ describe("Round two fit findings", () => {
       seed.searchPreferences,
       seed.savedJobs[0]!,
     );
-    expect(assessed.requirements).toEqual(expect.arrayContaining(requirements));
+    expect(assessed.score).toBe(34);
     expect(assessed.recommendation).toBe("skip");
-    expect(assessed.score).toBeLessThanOrEqual(39);
-    expect(
-      assessed.dimensions.evidenceConfidence.conflictCount,
-    ).toBeGreaterThanOrEqual(2);
+    expect(assessed.recommendationRationale).toBe(
+      "Very good German is required",
+    );
+    expect(assessed.gaps).toEqual(["Very good German is required"]);
+    expect(assessed.dimensions.roleSuitability.state).toBe("exact");
+    expect(assessed.requirements).toEqual(expect.arrayContaining(requirements));
+    expect(assessed.requirementsSource).toBe("model");
+    expect(assessed.judgment?.source).toBe("full");
+    expect(assessed.dimensions.evidenceConfidence.conflictCount).toBe(2);
   });
 
-  test("a required country restriction wins over generic remote alignment", async () => {
+  test("no rule recomputes the model's score", async () => {
     const seed = createSeed();
-    const restrictions = [
-      requirement("Remote work in Germany only", "conflict", "location"),
-    ];
+    const client = {
+      ...createAiClient(),
+      assessJobFit: () =>
+        Promise.resolve({ score: 88, reasons: ["Close match"], gaps: [] }),
+    };
+    const assessed = await createMatchAssessmentAsync(
+      client,
+      seed.profile,
+      { ...seed.searchPreferences, targetRoles: ["Instructional Designer"] },
+      { ...seed.savedJobs[0]!, title: "Backend Engineer" },
+    );
+    // The title rules call this an occupational conflict; the model read the
+    // listing and the profile and decided otherwise.
+    expect(assessed.score).toBe(88);
+    expect(assessed.recommendation).toBe("strong_fit");
+    expect(assessed.reasons).toEqual(["Close match"]);
+  });
+
+  test("the model's place verdict stands over remote alignment", async () => {
+    const seed = createSeed();
     const client = {
       ...createAiClient(),
       assessJobFit: () =>
         Promise.resolve({
-          score: 99,
+          score: 30,
           reasons: [],
-          gaps: [],
-          requirements: restrictions,
+          gaps: ["Remote only for people in Germany"],
+          requirements: [
+            requirement("Remote work in Germany only", "conflict", "location"),
+          ],
+          recommendation: "skip" as const,
+          preferences: "conflict" as const,
+          locationReach: "outside_area" as const,
         }),
     };
     const assessed = await createMatchAssessmentAsync(
@@ -165,8 +193,8 @@ describe("Round two fit findings", () => {
       seed.searchPreferences,
       { ...seed.savedJobs[0]!, location: "Remote", workMode: ["remote"] },
     );
-    expect(assessed.dimensions.preferenceAlignment.state).not.toBe("aligned");
-    expect(assessed.requirements).toEqual(expect.arrayContaining(restrictions));
+    expect(assessed.dimensions.preferenceAlignment.state).toBe("conflict");
+    expect(assessed.locationReach).toBe("outside_area");
     expect(assessed.recommendation).toBe("skip");
   });
 

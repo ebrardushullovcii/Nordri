@@ -252,41 +252,9 @@ test("keeps jobs outside soft preferences visible unless strict collection is en
   ).toEqual({ outcome: "pass", reason: null });
 });
 
-test("skips a sign-in wall captured as a job even when broad discovery is enabled", () => {
+test("leaves sign-in walls and talent pools to the model rather than phrase lists", () => {
   const seed = createSeed();
-  const posting = createPosting({
-    title: "Customer Service",
-    company: "Linkedin",
-    summary: "Get notified about new Customer Service jobs in San Antonio.",
-    description:
-      "Sign in to continue. Welcome back. Email or phone. Password. New to LinkedIn? Join now. Get notified about new Customer Service jobs in San Antonio, TX.",
-  });
-
-  expect(
-    applyDiscoveryTitleTriage({
-      posting,
-      profile: seed.profile,
-      searchPreferences: createSearchPreferences({
-        discovery: {
-          targets: [],
-          historyLimit: 5,
-          collectOnlyHardCriteriaMatches: false,
-        },
-      }),
-    }),
-  ).toEqual({
-    outcome: "skip_title",
-    reason:
-      "This page asks you to sign in or create an account; it is not a job listing.",
-  });
-});
-
-test("skips generic talent-pool invitations even when broad discovery is enabled", () => {
-  const seed = createSeed();
-  const posting = createPosting({
-    title: "Keep me in mind!",
-  });
-  const broadPreferences = createSearchPreferences({
+  const searchPreferences = createSearchPreferences({
     targetRoles: ["Marketing Coordinator"],
     discovery: {
       targets: [],
@@ -294,18 +262,24 @@ test("skips generic talent-pool invitations even when broad discovery is enabled
       collectOnlyHardCriteriaMatches: false,
     },
   });
-
-  expect(
-    applyDiscoveryTitleTriage({
-      posting,
-      profile: seed.profile,
-      searchPreferences: broadPreferences,
+  for (const posting of [
+    createPosting({
+      title: "Customer Service",
+      description:
+        "Sign in to continue. Welcome back. Email or phone. Password. New to LinkedIn? Join now.",
     }),
-  ).toEqual({
-    outcome: "skip_title",
-    reason:
-      "This is a general talent-pool invitation rather than a specific open role.",
-  });
+    createPosting({ title: "Keep me in mind!" }),
+  ]) {
+    // The model reading the page skips these, and fit judging marks any that
+    // arrive as skip (ADR 0041).
+    expect(
+      applyDiscoveryTitleTriage({
+        posting,
+        profile: seed.profile,
+        searchPreferences,
+      }),
+    ).toEqual({ outcome: "pass", reason: null });
+  }
 });
 
 test("always skips an explicitly excluded location", () => {

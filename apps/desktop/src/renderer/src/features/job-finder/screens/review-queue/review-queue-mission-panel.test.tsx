@@ -140,7 +140,7 @@ describe("ReviewQueueMissionPanel", () => {
         },
       },
     });
-    expect(screen.getByText("Skip — hard conflict")).toBeTruthy();
+    expect(screen.getByText("Probably skip")).toBeTruthy();
     expect(
       screen.getByText("The listing belongs to a different occupational role."),
     ).toBeTruthy();

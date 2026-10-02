@@ -5,6 +5,7 @@ import {
   personFacingNeedsYouReason,
   resolveApplyAnswer,
   resolveReusableAnswer,
+  type ApplyAnswerResolution,
 } from "./answer-sourcing";
 import { normalizeSignal } from "./control-classification";
 import {
@@ -282,6 +283,109 @@ export function buildPendingQuestion(input: {
     ...(note ? { note } : {}),
     submittedAnswer: null,
     status: "detected",
+  };
+}
+
+type ChoiceDecision =
+  | { kind: "use"; option: string; answer: ApplyAnswer | null }
+  | { kind: "leave"; reason: string; suggestion: ApplyAnswer | null }
+  | { kind: "refused"; reason: string };
+
+/**
+ * Which option goes in for a choice the model made (ADR 0041). The model's
+ * choice stands when it matches the person's stored answer or the fact check
+ * finds it supported by their profile, resume and saved answers (ADR 0021).
+ * Pay the person keeps to themselves is left for them. Without a fact check
+ * (an offline run) the stored answer decides, as it did before.
+ */
+async function decideChoice(input: {
+  deps: ApplyExecutorDeps;
+  control: ApplyFormControl;
+  resolution: ApplyAnswerResolution;
+  offered: readonly string[];
+  proposed: string;
+}): Promise<ChoiceDecision> {
+  const { deps, control, resolution, offered } = input;
+  const proposed =
+    offered.length > 0
+      ? (matchOption(offered, input.proposed) ?? input.proposed)
+      : input.proposed;
+  const stored =
+    resolution.status === "answered"
+      ? offered.length > 0
+        ? matchOption(offered, resolution.answer.value)
+        : resolution.answer.value
+      : null;
+  const storedAnswer =
+    resolution.status === "answered"
+      ? resolution.answer
+      : resolution.status === "map_choice"
+        ? resolution.context
+        : resolution.status === "needs_you"
+          ? resolution.suggestion
+          : null;
+  if (resolution.status === "needs_you" && resolution.permission === true) {
+    return {
+      kind: "leave",
+      reason: resolution.reason,
+      suggestion: resolution.suggestion,
+    };
+  }
+  if (
+    stored !== null &&
+    normalizeSignal(stored) === normalizeSignal(proposed)
+  ) {
+    return {
+      kind: "use",
+      option: stored,
+      answer:
+        resolution.status === "answered"
+          ? { ...resolution.answer, value: stored }
+          : null,
+    };
+  }
+  if (!deps.checkWrittenAnswer) {
+    if (
+      resolution.status === "needs_you" ||
+      resolution.status === "map_choice"
+    ) {
+      return {
+        kind: "leave",
+        reason:
+          resolution.status === "needs_you"
+            ? resolution.reason
+            : "Your saved answer does not settle which choice to use.",
+        suggestion: storedAnswer,
+      };
+    }
+    if (resolution.status === "answered") {
+      return stored !== null
+        ? {
+            kind: "use",
+            option: stored,
+            answer: { ...resolution.answer, value: stored },
+          }
+        : {
+            kind: "refused",
+            reason: `The saved answer for ${questionPrompt(control)} does not match an option on the form.`,
+          };
+    }
+    return { kind: "use", option: proposed, answer: null };
+  }
+  const check = await deps.checkWrittenAnswer(
+    questionPrompt(control),
+    proposed,
+  );
+  if (!check.supported) {
+    return { kind: "leave", reason: check.reason, suggestion: storedAnswer };
+  }
+  return {
+    kind: "use",
+    option: proposed,
+    answer:
+      resolution.status === "map_choice"
+        ? { ...resolution.context, value: proposed }
+        : null,
   };
 }
 
@@ -1196,14 +1300,21 @@ export async function executeApplyProposal(
         };
       }
 
-      // An answer about the person comes from the person. When their own facts
-      // answer this question, that is what goes in, whatever the model typed.
+      // The model read the question and the person's facts and chose what to
+      // type (ADR 0041). An answer about the person still comes only from
+      // them (ADR 0021): text that matches a stored fact goes in as that
+      // fact, and anything else is read by the fact check against their
+      // profile, resume and saved answers before it is written. Pay the
+      // person keeps to themselves is never typed for them.
       const resolution = resolveApplyAnswer({
         control,
         sources: config.sources,
         salaryDisclosure: config.authority.salaryDisclosure,
       });
-      if (resolution.status === "needs_you") {
+      if (
+        resolution.status === "needs_you" &&
+        (resolution.permission === true || !deps.checkWrittenAnswer)
+      ) {
         return leaveUnansweredForPerson({
           control,
           observation,
@@ -1213,7 +1324,11 @@ export async function executeApplyProposal(
           suggestion: resolution.suggestion,
         });
       }
-      if (resolution.status !== "answered" && deps.checkWrittenAnswer) {
+      const matchesStoredFact =
+        resolution.status === "answered" &&
+        normalizeSignal(resolution.answer.value) ===
+          normalizeSignal(proposal.text);
+      if (!matchesStoredFact && deps.checkWrittenAnswer) {
         const check = await deps.checkWrittenAnswer(
           questionPrompt(control),
           proposal.text,
@@ -1222,13 +1337,16 @@ export async function executeApplyProposal(
           return {
             kind: "suggestion",
             answer: null,
-            note: `That answer was not written because it contains an unsupported applicant claim: ${check.reason} Use only supported facts, or leave this field blank and continue with the other fields. ${control.required ? "The required question has been kept for the person if no supported answer is available." : "This field is optional; do not ask the person to fill it."}`,
+            note: `That answer was not written because it contains an unsupported applicant claim: ${check.reason} ${resolution.status === "answered" ? `Their saved answer is "${resolution.answer.value}". ` : ""}Use only supported facts, or leave this field blank and continue with the other fields. ${control.required ? "The required question has been kept for the person if no supported answer is available." : "This field is optional; do not ask the person to fill it."}`,
             question: control.required
               ? buildPendingQuestion({
                   control,
                   jobId: config.application.jobId,
                   detectedAt: at,
-                  suggestion: null,
+                  suggestion:
+                    resolution.status === "needs_you"
+                      ? resolution.suggestion
+                      : null,
                   siblings: observation.controls,
                 })
               : null,
@@ -1237,8 +1355,11 @@ export async function executeApplyProposal(
           };
         }
       }
+      // Without a fact check (an offline run), a stored fact still wins over
+      // the model's text.
       const answer: ApplyAnswer =
-        resolution.status === "answered"
+        resolution.status === "answered" &&
+        (matchesStoredFact || !deps.checkWrittenAnswer)
           ? resolution.answer
           : {
               value: proposal.text,
@@ -1251,7 +1372,7 @@ export async function executeApplyProposal(
                   ? proposal.groundedIn
                   : resolution.status === "write_free_text"
                     ? resolution.grounding
-                    : ["the posting"],
+                    : ["your profile"],
             };
 
       const write = await writeUnderGuard(deps, {
@@ -1293,61 +1414,27 @@ export async function executeApplyProposal(
         sources: config.sources,
         salaryDisclosure: config.authority.salaryDisclosure,
       });
-      if (resolution.status === "needs_you") {
+      const choice = await decideChoice({
+        deps,
+        control,
+        resolution,
+        offered: control.options,
+        proposed: proposal.option,
+      });
+      if (choice.kind === "leave") {
         return leaveUnansweredForPerson({
           control,
           observation,
           config,
           at,
-          reason: resolution.reason,
-          suggestion: resolution.suggestion,
+          reason: choice.reason,
+          suggestion: choice.suggestion,
         });
       }
-      if (resolution.status === "map_choice") {
-        const option = matchOption(control.options, proposal.option);
-        const check =
-          option && deps.checkWrittenAnswer
-            ? await deps.checkWrittenAnswer(questionPrompt(control), option)
-            : null;
-        if (!check?.supported) {
-          return leaveUnansweredForPerson({
-            control,
-            observation,
-            config,
-            at,
-            reason:
-              check?.reason ??
-              "Your saved answer does not settle which choice to use.",
-            suggestion: resolution.context,
-          });
-        }
+      if (choice.kind === "refused") {
+        return { kind: "refused", reason: choice.reason, observation };
       }
-      const groundedOption =
-        resolution.status === "answered"
-          ? matchOption(control.options, resolution.answer.value)
-          : null;
-      if (
-        resolution.status === "answered" &&
-        control.options.length > 0 &&
-        !groundedOption
-      ) {
-        return {
-          kind: "refused",
-          reason: `The saved answer for ${questionPrompt(control)} does not match an option on the form.`,
-          observation,
-        };
-      }
-      const option =
-        groundedOption ??
-        (control.options.length > 0
-          ? (matchOption(control.options, proposal.option) ?? proposal.option)
-          : resolution.status === "answered"
-            ? resolution.answer.value
-            : proposal.option);
-      const usedGroundedAnswer =
-        resolution.status === "answered" &&
-        (groundedOption === option ||
-          (control.options.length === 0 && resolution.answer.value === option));
+      const option = choice.option;
       const write = await writeUnderGuard(deps, {
         declaredValue: option,
         write: () => config.hands.chooseOption(control.ref, option),
@@ -1366,19 +1453,14 @@ export async function executeApplyProposal(
           ref: control.ref,
           label: questionPrompt(control),
           questionKind: control.questionKind,
-          answer:
-            resolution.status === "map_choice"
-              ? { ...resolution.context, value: option }
-              : resolution.status === "answered" && usedGroundedAnswer
-                ? resolution.answer
-                : {
-                    value: option,
-                    kind: control.questionKind,
-                    sourceKind: "generated",
-                    sourceId: `chosen.${control.ref}`,
-                    provenanceLabel: "chosen from the options on the form",
-                    groundedIn: ["the options this form offered"],
-                  },
+          answer: choice.answer ?? {
+            value: option,
+            kind: control.questionKind,
+            sourceKind: "generated",
+            sourceId: `chosen.${control.ref}`,
+            provenanceLabel: "chosen from the options on the form",
+            groundedIn: ["the options this form offered"],
+          },
           at,
         },
         observation: await config.hands.observe(),
@@ -1394,76 +1476,56 @@ export async function executeApplyProposal(
           observation,
         };
       }
-      const groundedRadioResolution =
-        control.kind === "radio"
-          ? resolveApplyAnswer({
-              control,
-              sources: config.sources,
-              salaryDisclosure: config.authority.salaryDisclosure,
-            })
-          : null;
-      if (
-        control.kind === "radio" &&
-        proposal.checked &&
-        groundedRadioResolution?.status === "needs_you"
-      ) {
-        return leaveUnansweredForPerson({
-          control,
-          observation,
-          config,
-          at,
-          reason: groundedRadioResolution.reason,
-          suggestion: groundedRadioResolution.suggestion,
-        });
-      }
+      // A radio button is a choice like a select's option: the model's pick
+      // stands when the person's facts support it (ADR 0041).
+      let radioAnswer: ApplyAnswer | null = null;
       if (control.kind === "radio" && proposal.checked) {
-        if (groundedRadioResolution?.status === "map_choice") {
-          const check = deps.checkWrittenAnswer
-            ? await deps.checkWrittenAnswer(
-                questionPrompt(control),
-                control.label || control.value,
-              )
-            : null;
-          if (!check?.supported) {
-            return leaveUnansweredForPerson({
-              control,
-              observation,
-              config,
-              at,
-              reason:
-                check?.reason ??
-                "Your saved answer does not settle which choice to use.",
-              suggestion: groundedRadioResolution.context,
-            });
-          }
-        }
-        if (groundedRadioResolution?.status === "answered") {
-          const groupControls = observation.controls.filter(
-            (candidate) =>
-              candidate.kind === "radio" &&
-              (control.choiceGroupKey
-                ? candidate.choiceGroupKey === control.choiceGroupKey
-                : candidate.ref === control.ref),
-          );
-          const offeredValues = groupControls.map(
+        const groupControls = observation.controls.filter(
+          (candidate) =>
+            candidate.kind === "radio" &&
+            (control.choiceGroupKey
+              ? candidate.choiceGroupKey === control.choiceGroupKey
+              : candidate.ref === control.ref),
+        );
+        const proposedOption = control.label || control.value;
+        const resolution = resolveApplyAnswer({
+          control,
+          sources: config.sources,
+          salaryDisclosure: config.authority.salaryDisclosure,
+        });
+        const choice = await decideChoice({
+          deps,
+          control,
+          resolution,
+          offered: groupControls.map(
             (candidate) => candidate.label || candidate.value,
-          );
-          const groundedOption = matchOption(
-            offeredValues,
-            groundedRadioResolution.answer.value,
-          );
-          const proposedOption = control.label || control.value;
-          if (
-            !groundedOption ||
-            normalizeSignal(groundedOption) !== normalizeSignal(proposedOption)
-          ) {
-            return {
-              kind: "refused",
-              reason: `That choice contradicts ${groundedRadioResolution.answer.provenanceLabel}. The grounded answer is "${groundedRadioResolution.answer.value}"; select its matching option instead.`,
-              observation,
-            };
-          }
+          ),
+          proposed: proposedOption,
+        });
+        if (choice.kind === "leave") {
+          return leaveUnansweredForPerson({
+            control,
+            observation,
+            config,
+            at,
+            reason: choice.reason,
+            suggestion: choice.suggestion,
+          });
         }
+        if (
+          choice.kind === "refused" ||
+          normalizeSignal(choice.option) !== normalizeSignal(proposedOption)
+        ) {
+          return {
+            kind: "refused",
+            reason:
+              choice.kind === "refused"
+                ? choice.reason
+                : `That choice contradicts ${resolution.status === "answered" ? resolution.answer.provenanceLabel : "the person's saved answer"}. The grounded answer is "${choice.option}"; select its matching option instead.`,
+            observation,
+          };
+        }
+        radioAnswer = choice.answer;
       }
       // A declaration the person makes about themselves is theirs. This is the
       // one place the model is overruled rather than advised. It is not,
@@ -1530,36 +1592,27 @@ export async function executeApplyProposal(
           answer:
             savedDeclarationSaysYes && savedDeclaration
               ? savedDeclaration
-              : groundedRadioResolution?.status === "map_choice"
-                ? {
-                    ...groundedRadioResolution.context,
-                    value: control.label || control.value,
-                  }
-                : groundedRadioResolution?.status === "answered"
-                  ? groundedRadioResolution.answer
-                  : {
-                      value:
-                        control.kind === "radio" && proposal.checked
-                          ? control.value || control.label
-                          : proposal.checked
-                            ? "Yes"
-                            : "No",
-                      kind: control.questionKind,
-                      sourceKind: control.attestationKind
-                        ? "profile"
-                        : "generated",
-                      sourceId: control.attestationKind
-                        ? `authority.attestation.${control.attestationKind}`
-                        : `chosen.${control.ref}`,
-                      provenanceLabel: control.attestationKind
-                        ? "a declaration you approved in advance"
-                        : "chosen on the form",
-                      groundedIn: [
-                        control.attestationKind
-                          ? "a declaration you approved in advance"
-                          : "the form",
-                      ],
-                    },
+              : (radioAnswer ?? {
+                  value:
+                    control.kind === "radio" && proposal.checked
+                      ? control.value || control.label
+                      : proposal.checked
+                        ? "Yes"
+                        : "No",
+                  kind: control.questionKind,
+                  sourceKind: control.attestationKind ? "profile" : "generated",
+                  sourceId: control.attestationKind
+                    ? `authority.attestation.${control.attestationKind}`
+                    : `chosen.${control.ref}`,
+                  provenanceLabel: control.attestationKind
+                    ? "a declaration you approved in advance"
+                    : "chosen on the form",
+                  groundedIn: [
+                    control.attestationKind
+                      ? "a declaration you approved in advance"
+                      : "the form",
+                  ],
+                }),
           at,
         },
         observation: await config.hands.observe(),

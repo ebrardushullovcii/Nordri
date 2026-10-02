@@ -113,6 +113,7 @@ import {
 import { createUniqueId, normalizeText, uniqueStrings } from "./shared";
 import { createJobIdentityIndex } from "./job-identity";
 import { assessJobPostingDetailQuality } from "./job-posting-detail-quality";
+import { jobNeedsFitJudgment, judgeJobFitsInBatches } from "./fit-judgment";
 import {
   LISTING_DETAIL_READS_PER_RUN,
   describeListingDetailEnrichment,
@@ -211,6 +212,8 @@ export function resolveListingLocation(
 }
 
 const DISCOVERY_ACTIVITY_SAMPLE_LIMIT = 3;
+/** Five model calls at most: twenty jobs judged per call. */
+const FIT_JUDGMENTS_PER_RUN = 100;
 const PUBLIC_API_PREFETCH_CONCURRENCY = 8;
 /**
  * How many sources one search works on at the same time. Each gets its own
@@ -3089,8 +3092,8 @@ export function createWorkspaceDiscoveryMethods(
             jobs: enrichmentCandidates,
             fetchHtml: fetchListingHtml,
             readPage: createModelListingPageReader(ctx.aiClient),
-            // Searches score without model calls; a full model assessment
-            // runs when the person asks for it (Read and assess listing).
+            // Re-scoring keeps a job's model verdict; the judging stage below
+            // asks the model about jobs whose listing changed.
             assess: assessDiscoveryPosting,
             signal: executionSignal,
           });
@@ -3244,6 +3247,79 @@ export function createWorkspaceDiscoveryMethods(
               } found on more than one source.`,
             ),
           );
+        }
+      }
+
+      // The model judges how the jobs fit the person (ADR 0041): many jobs
+      // per call, only those never judged or judged before the profile, the
+      // goals or the listing changed, this run's jobs first. A job it does
+      // not answer for keeps the rule score until the next search.
+      if (!executionSignal.aborted && ctx.aiClient.judgeJobFits) {
+        const toJudge = mergeSavedJobs(workingSavedJobs, workingPendingJobs)
+          .filter((job) =>
+            jobNeedsFitJudgment(job, assessmentSession.contextFingerprint),
+          )
+          .sort(
+            (left, right) =>
+              Number(runRetainedJobIds.has(right.id)) -
+              Number(runRetainedJobIds.has(left.id)),
+          )
+          .slice(0, FIT_JUDGMENTS_PER_RUN);
+        if (toJudge.length > 0) {
+          emitActivity(
+            readEvent(
+              `Judging how ${toJudge.length} ${
+                toJudge.length === 1 ? "job fits" : "jobs fit"
+              } your profile and goals`,
+            ),
+          );
+          try {
+            const judgments = await judgeJobFitsInBatches({
+              aiClient: ctx.aiClient,
+              profile,
+              searchPreferences: enrichedPreferences,
+              jobs: toJudge,
+              contextFingerprint: assessmentSession.contextFingerprint,
+              signal: executionSignal,
+            });
+            if (judgments.size > 0) {
+              const pendingJobIds = new Set(
+                workingPendingJobs.map((job) => job.id),
+              );
+              const applyJudgment = <T extends SavedJob>(job: T): T => {
+                const judgment = judgments.get(job.id);
+                if (!judgment) return job;
+                if (pendingJobIds.has(job.id)) {
+                  touchedPendingJobIds.add(job.id);
+                } else {
+                  touchedSavedJobIds.add(job.id);
+                }
+                return {
+                  ...job,
+                  matchAssessment: assessmentSession.assess(job, judgment),
+                };
+              };
+              workingSavedJobs = workingSavedJobs.map(applyJudgment);
+              workingPendingJobs = workingPendingJobs.map(applyJudgment);
+              await persistWorkingSavedJobs();
+            }
+            emitActivity(
+              readEvent(
+                judgments.size === toJudge.length
+                  ? `Judged ${judgments.size} ${judgments.size === 1 ? "job" : "jobs"} against your profile and goals`
+                  : `Judged ${judgments.size} of ${toJudge.length} jobs; the rest are judged on the next search`,
+              ),
+            );
+          } catch (error) {
+            if (executionSignal.aborted) {
+              throw error;
+            }
+            emitActivity(
+              readEvent(
+                `Jobs could not be judged this time: ${describeUnknownThrowable(error)}`,
+              ),
+            );
+          }
         }
       }
 

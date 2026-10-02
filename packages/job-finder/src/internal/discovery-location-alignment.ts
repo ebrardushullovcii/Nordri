@@ -96,6 +96,10 @@ export function correctRemoteOnlyLocationAlignment(
   assessment: MatchAssessment,
   preferences: JobSearchPreferences,
 ): MatchAssessment {
+  // The model judged the place itself; no rule corrects it (ADR 0041).
+  if (assessment.judgment) {
+    return assessment;
+  }
   // A concrete city/region match is the strongest location evidence. A
   // generic remote word elsewhere in the page must never overturn it.
   if (hasNamedCompatibleLocation(posting, preferences)) {

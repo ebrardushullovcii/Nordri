@@ -20,8 +20,16 @@ import {
   WorkModeListSchema,
   candidateLinkKindValues,
   type CandidateProfile,
+  type FitRecommendation,
+  FitRecommendationSchema,
   type JobFinderSettings,
   type JobPosting,
+  MatchLocationReachSchema,
+  type MatchLocationReach,
+  PreferenceAlignmentStateSchema,
+  type PreferenceAlignmentState,
+  RoleSuitabilityStateSchema,
+  type RoleSuitabilityState,
   type JobSearchPreferences,
   type ResumeApproach,
   type ResumeDraft,
@@ -313,6 +321,16 @@ export const JobFitAssessmentSchema = z.object({
   score: z.number().int().min(0).max(100),
   reasons: z.array(NonEmptyStringSchema).default([]),
   gaps: z.array(NonEmptyStringSchema).default([]),
+  // The model's verdict on the same terms as a search's batch judging. Older
+  // replies and fakes without them leave the verdict to the score alone.
+  recommendation: FitRecommendationSchema.optional().catch(undefined),
+  role: RoleSuitabilityStateSchema.optional().catch(undefined),
+  roleExplanation: NonEmptyStringSchema.max(320).optional().catch(undefined),
+  preferences: PreferenceAlignmentStateSchema.optional().catch(undefined),
+  preferencesExplanation: NonEmptyStringSchema.max(320)
+    .optional()
+    .catch(undefined),
+  locationReach: MatchLocationReachSchema.optional().catch(undefined),
 });
 
 export type JobFitAssessment = z.infer<typeof JobFitAssessmentSchema>;
@@ -581,6 +599,29 @@ export interface AssessJobFitInput {
   job: JobPosting;
 }
 
+/** One job's verdict from batch fit judging (ADR 0041). */
+export interface JobFitJudgmentResult {
+  jobId: string;
+  score: number;
+  recommendation: FitRecommendation;
+  role: RoleSuitabilityState;
+  roleExplanation: string | null;
+  preferences: PreferenceAlignmentState;
+  preferencesExplanation: string | null;
+  locationReach: MatchLocationReach;
+  reasons: string[];
+  gaps: string[];
+}
+
+export interface JudgeJobFitsInput {
+  signal?: AbortSignal;
+  assessmentDate: string;
+  profile: CandidateProfile;
+  searchPreferences: JobSearchPreferences;
+  /** At most one batch; callers split larger sets. */
+  jobs: ReadonlyArray<{ jobId: string; posting: JobPosting }>;
+}
+
 export interface ExtractJobsFromPageInput {
   pageText: string;
   pageUrl: string;
@@ -653,6 +694,11 @@ export interface JobFinderAiClient {
   ): Promise<ProfileCopilotReply>;
   tailorResume(input: TailorResumeInput): Promise<TailoredResumeDraft>;
   assessJobFit(input: AssessJobFitInput): Promise<JobFitAssessment | null>;
+  /**
+   * Judges many jobs in one call. Absent on clients without a model; an
+   * empty answer leaves those jobs unjudged.
+   */
+  judgeJobFits?(input: JudgeJobFitsInput): Promise<JobFitJudgmentResult[]>;
   extractJobsFromPage(input: ExtractJobsFromPageInput): Promise<JobPosting[]>;
   analyzeBrowserVisualSnapshot?(
     input: BrowserVisualAnalysisInput,

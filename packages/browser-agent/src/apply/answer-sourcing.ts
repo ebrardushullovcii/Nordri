@@ -40,8 +40,18 @@ export type ApplyAnswerResolution =
   | { status: "map_choice"; context: ApplyAnswer }
   /** Free text the loop may write for this question, grounded in these facts. */
   | { status: "write_free_text"; grounding: string[] }
-  /** Nothing here can answer it truthfully. Ask the person. */
-  | { status: "needs_you"; reason: string; suggestion: ApplyAnswer | null };
+  /**
+   * Nothing stored answers it. `permission` marks the person's own choice to
+   * answer this themselves (pay they keep private), which no model answer
+   * overrides; otherwise the model may still answer from the person's facts
+   * when the fact check supports it.
+   */
+  | {
+      status: "needs_you";
+      reason: string;
+      suggestion: ApplyAnswer | null;
+      permission?: true;
+    };
 
 /** The reason given when nothing stored bears on a question at all. */
 export const NO_STORED_ANSWER_REASON =
@@ -1101,6 +1111,7 @@ export function resolveApplyAnswer(input: {
     if (input.salaryDisclosure !== "answer_from_profile") {
       return {
         status: "needs_you",
+        permission: true,
         reason:
           "This asks what pay you expect, and you asked Job Finder to leave that to you.",
         suggestion: saved

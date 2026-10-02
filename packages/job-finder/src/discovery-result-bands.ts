@@ -109,7 +109,9 @@ export function getFitEvidenceDepth(
   const verifiedDimensionCount = verifiedChecks.filter(Boolean).length;
 
   return {
-    isTitleOnly: verifiedDimensionCount === 0,
+    // A model verdict is the model's reading of whatever the listing showed,
+    // not a guess from title words (ADR 0041), so its number is shown.
+    isTitleOnly: verifiedDimensionCount === 0 && !assessment.judgment,
     reason: FIT_TITLE_ONLY_REASON,
     verifiedDimensionCount,
   };
