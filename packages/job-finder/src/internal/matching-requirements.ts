@@ -1266,7 +1266,9 @@ export function buildRequirementEvidenceAssessment(input: {
   );
   if (yearsEvidenceLine && yearsMatch?.[1]) {
     const requiredYears = Number.parseInt(yearsMatch[1], 10);
-    const supported = profile.yearsExperience >= requiredYears;
+    const supported =
+      profile.yearsExperience !== null &&
+      profile.yearsExperience >= requiredYears;
     requirements.push({
       id: requirementId("experience", `${requiredYears} years`),
       category: "experience",
@@ -1274,19 +1276,30 @@ export function buildRequirementEvidenceAssessment(input: {
       importance: preferredMarkers.test(yearsEvidenceLine)
         ? "preferred"
         : "required",
-      status: supported ? "supported" : "missing",
+      status:
+        profile.yearsExperience === null
+          ? "unknown"
+          : supported
+            ? "supported"
+            : "missing",
       jobEvidence: clip(yearsEvidenceLine),
       resumeEvidence: [
         {
           sourceKind: "profile",
           sourceId: profile.id,
           label: "Imported experience timeline",
-          detail: `${profile.yearsExperience} years of experience are recorded in the profile.`,
+          detail:
+            profile.yearsExperience === null
+              ? "Years of experience have not been recorded."
+              : `${profile.yearsExperience} years of experience are recorded in the profile.`,
         },
       ],
-      explanation: supported
-        ? "The imported experience timeline meets the stated threshold."
-        : "The imported experience timeline is below the stated threshold.",
+      explanation:
+        profile.yearsExperience === null
+          ? "Review your work dates to check this requirement."
+          : supported
+            ? "The imported experience timeline meets the stated threshold."
+            : "The imported experience timeline is below the stated threshold.",
     });
   }
 

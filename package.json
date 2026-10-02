@@ -13,7 +13,7 @@
     "structure:check": "node scripts/check-structure.mjs",
     "source-generic:check": "node scripts/check-source-generic-discovery.mjs",
     "hotspots": "node scripts/repo-hotspots.mjs",
-    "job-finder:fit-calibration": "node scripts/run-fit-calibration-benchmark.cjs --baseline packages/job-finder/test-fixtures/fit-calibration-baseline-v12.json",
+    "job-finder:fit-calibration": "node scripts/run-fit-calibration-benchmark.cjs --baseline packages/job-finder/test-fixtures/fit-calibration-baseline-v13.json",
     "ai:benchmark": "node packages/ai-evals/scripts/run.mjs",
     "lsp:typescript": "typescript-language-server --stdio",
     "typecheck": "node scripts/run-turbo.mjs typecheck",
@@ -33,7 +33,7 @@
     "test:performance": "vitest run packages/job-finder/src/internal/workspace-discovery-ledger.performance.test.ts packages/job-finder/src/workspace-service.discovery-ledger-performance.test.ts --maxWorkers=1 --minWorkers=1",
     "test:coverage": "vitest run --coverage --maxWorkers=4 --minWorkers=4 --exclude packages/job-finder/src/internal/workspace-discovery-ledger.performance.test.ts --exclude packages/job-finder/src/workspace-service.discovery-ledger-performance.test.ts",
     "test:evidence": "node scripts/collect-release-evidence.mjs",
-    "verify": "node scripts/check-source-generic-discovery.mjs && node scripts/check-structure.mjs && node scripts/run-turbo.mjs lint && node scripts/run-turbo.mjs typecheck && node scripts/run-fit-calibration-benchmark.cjs --baseline packages/job-finder/test-fixtures/fit-calibration-baseline-v12.json && pnpm test"
+    "verify": "node scripts/check-source-generic-discovery.mjs && node scripts/check-structure.mjs && node scripts/run-turbo.mjs lint && node scripts/run-turbo.mjs typecheck && node scripts/run-fit-calibration-benchmark.cjs --baseline packages/job-finder/test-fixtures/fit-calibration-baseline-v13.json && pnpm test"
   },
   "devDependencies": {
     "@eslint/js": "^9.22.0",

@@ -69,6 +69,7 @@ import {
   ResumeDraftPatchSchema,
   ResumeDraftSchema,
   SavedJobSchema,
+  type SavedJob,
   TailoredAssetSchema,
   type ApplyExecutionResult,
   type BrowserVisualEvidenceSummary,
@@ -215,13 +216,14 @@ import type {
 } from "./workspace-service-context";
 import type { JobFinderWorkspaceService } from "./workspace-service-contracts";
 import {
+  createModelListingPageReader,
   enrichSavedJobListingDetails,
   jobNeedsListingDetail,
 } from "./listing-detail-enrichment";
 import { createMatchAssessmentSession } from "./match-assessment-session";
 import { withSavedJobSearchBehavior } from "./job-search-behavior";
 import { enrichSearchPreferencesFromProfile } from "./workspace-helpers";
-import { createMatchAssessment } from "./matching";
+import { createMatchAssessment, createMatchAssessmentAsync } from "./matching";
 
 function buildRecoveryInstructions(input: {
   blockerSummary: string | null;
@@ -301,6 +303,7 @@ function getApplyResultSortTime(input: {
 type WorkspaceApplicationMethods = Omit<
   Pick<
     JobFinderWorkspaceService,
+    | "assessJobListing"
     | "queueJobForReview"
     | "setJobResumeApplicationMode"
     | "removeJobFromReview"
@@ -483,6 +486,7 @@ export function createWorkspaceApplicationMethods(
        * network blip must not leave the job untailorable for hours.
        */
       force?: boolean;
+      throwOnFailure?: boolean;
     } = {},
   ): Promise<void> {
     const fetchListingHtml = ctx.fetchListingHtml;
@@ -490,15 +494,20 @@ export function createWorkspaceApplicationMethods(
       return;
     }
     try {
-      const savedJobs = await ctx.repository.listSavedJobs();
-      const job = savedJobs.find((entry) => entry.id === jobId);
+      const [savedJobs, discoveryState] = await Promise.all([
+        ctx.repository.listSavedJobs(),
+        ctx.repository.getDiscoveryState(),
+      ]);
+      const job =
+        savedJobs.find((entry) => entry.id === jobId) ??
+        discoveryState.pendingDiscoveryJobs.find((entry) => entry.id === jobId);
       if (!job) {
         return;
       }
       const alreadyRead =
         job.detailQuality === "detail_enriched" &&
         job.listingDetailFetch?.outcome === "enriched";
-      if (alreadyRead || (!options.force && !jobNeedsListingDetail(job))) {
+      if (!options.force && !alreadyRead && !jobNeedsListingDetail(job)) {
         return;
       }
       const [profile, searchPreferences, settings] = await Promise.all([
@@ -516,10 +525,66 @@ export function createWorkspaceApplicationMethods(
         ),
         calculate: createMatchAssessment,
       });
+      if (
+        alreadyRead &&
+        !options.throwOnFailure &&
+        session.assessPersisted(job, job.matchAssessment).requirementsSource ===
+          "model"
+      )
+        return;
+      if (alreadyRead) {
+        const bound = session.assess(job);
+        const assessed = await createMatchAssessmentAsync(
+          ctx.aiClient,
+          profile,
+          withSavedJobSearchBehavior(
+            enrichSearchPreferencesFromProfile(searchPreferences, profile),
+            settings,
+          ),
+          job,
+        );
+        const matchAssessment = {
+          ...assessed,
+          contextFingerprint: bound.contextFingerprint,
+          postingFingerprint: bound.postingFingerprint,
+        };
+        await ctx.repository.commitSavedJobDelta({
+          update: (current) =>
+            current.id === jobId && current.description === job.description
+              ? { ...current, matchAssessment }
+              : current,
+          updateDiscoveryState: (current) => ({
+            ...current,
+            pendingDiscoveryJobs: current.pendingDiscoveryJobs.map((entry) =>
+              entry.id === jobId && entry.description === job.description
+                ? { ...entry, matchAssessment }
+                : entry,
+            ),
+          }),
+        });
+        return;
+      }
       const enrichment = await enrichSavedJobListingDetails({
         jobs: [job],
         fetchHtml: fetchListingHtml,
-        assess: session.assess,
+        readPage: createModelListingPageReader(ctx.aiClient),
+        assess: async (posting) => {
+          const bound = session.assess(posting);
+          const assessed = await createMatchAssessmentAsync(
+            ctx.aiClient,
+            profile,
+            withSavedJobSearchBehavior(
+              enrichSearchPreferencesFromProfile(searchPreferences, profile),
+              settings,
+            ),
+            posting,
+          ).catch(() => bound);
+          return {
+            ...assessed,
+            contextFingerprint: bound.contextFingerprint,
+            postingFingerprint: bound.postingFingerprint,
+          };
+        },
         timeBudgetMs: 9_000,
         ...(options.force ? { ignoreRetryBackoff: true } : {}),
       });
@@ -527,32 +592,38 @@ export function createWorkspaceApplicationMethods(
       if (!next || enrichment.changedJobIds.length === 0) {
         return;
       }
+      const applyRead = (current: SavedJob): SavedJob =>
+        current.id === jobId &&
+        current.description === job.description &&
+        current.canonicalUrl === job.canonicalUrl
+          ? {
+              ...current,
+              company: next.company,
+              location: next.location,
+              description: next.description,
+              summary: next.summary,
+              salaryText: next.salaryText,
+              postedAt: next.postedAt,
+              employmentType: next.employmentType,
+              workMode: next.workMode,
+              applicationUrl: next.applicationUrl,
+              normalizedCompensation: next.normalizedCompensation,
+              screeningHints: next.screeningHints,
+              detailQuality: next.detailQuality,
+              listingDetailFetch: next.listingDetailFetch,
+              listingDetailCapture: next.listingDetailCapture,
+              matchAssessment: next.matchAssessment,
+            }
+          : current;
       await ctx.repository.commitSavedJobDelta({
-        update: (current) =>
-          current.id === jobId
-            ? SavedJobSchema.parse({
-                ...current,
-                company: next.company,
-                location: next.location,
-                description: next.description,
-                summary: next.summary,
-                salaryText: next.salaryText,
-                postedAt: next.postedAt,
-                employmentType: next.employmentType,
-                workMode: next.workMode,
-                applicationUrl: next.applicationUrl,
-                normalizedCompensation: next.normalizedCompensation,
-                screeningHints: next.screeningHints,
-                detailQuality: next.detailQuality,
-                listingDetailFetch: next.listingDetailFetch,
-                // The capture state goes with the read: leaving the old one
-                // kept a job read on shortlist counted as "gave nothing".
-                listingDetailCapture: next.listingDetailCapture,
-                matchAssessment: next.matchAssessment,
-              })
-            : current,
+        update: applyRead,
+        updateDiscoveryState: (current) => ({
+          ...current,
+          pendingDiscoveryJobs: current.pendingDiscoveryJobs.map(applyRead),
+        }),
       });
-    } catch {
+    } catch (error) {
+      if (options.throwOnFailure) throw error;
       // The shortlist itself succeeded; the body stays unread for now and the
       // job records nothing, so the next look can try again.
     }
@@ -3137,6 +3208,20 @@ export function createWorkspaceApplicationMethods(
         detail: `${message} Nothing was sent for this job; the rest of the batch carried on.`,
       }),
     );
+    if (latest.applicationRecordId) {
+      await syncRunApplicationRecord({
+        applicationRecordId: latest.applicationRecordId,
+        jobId: latest.jobId,
+        lastAttemptState: "failed",
+        lastActionLabel: "Could not apply.",
+        nextActionLabel: "Try again",
+        eventId: `event_${latest.id}_failed`,
+        eventTitle: "Could not apply.",
+        eventDetail: message,
+        eventEmphasis: "critical",
+        updatedAt: failedAt,
+      });
+    }
   }
 
   /**
@@ -3154,8 +3239,8 @@ export function createWorkspaceApplicationMethods(
     await Promise.all(
       results
         .filter((result) => UNFINISHED_QUEUED_RESULT_STATES.has(result.state))
-        .map((result) =>
-          ctx.repository.upsertApplyJobResult(
+        .map(async (result) => {
+          await ctx.repository.upsertApplyJobResult(
             // Skipped, not failed: the batch stopped around these jobs, so
             // they must not count toward a failure-streak safeguard that
             // would then refuse the Try again.
@@ -3169,8 +3254,24 @@ export function createWorkspaceApplicationMethods(
                 : "Not started.",
               detail: input.reason,
             }),
-          ),
-        ),
+          );
+          if (result.applicationRecordId) {
+            await syncRunApplicationRecord({
+              applicationRecordId: result.applicationRecordId,
+              jobId: result.jobId,
+              lastAttemptState: "failed",
+              lastActionLabel: result.applicationPreparationStartedAt
+                ? "Could not apply."
+                : "Not started.",
+              nextActionLabel: "Try again",
+              eventId: `event_${result.id}_stopped`,
+              eventTitle: "Application preparation stopped",
+              eventDetail: input.reason,
+              eventEmphasis: "neutral",
+              updatedAt: input.at,
+            });
+          }
+        }),
     );
   }
 
@@ -3362,7 +3463,20 @@ export function createWorkspaceApplicationMethods(
       ctx.repository.getIntelligenceState(),
       ctx.repository.getCampaignState(),
     ]);
-    const { profile, revision: profileRevision } = profileState;
+    const { revision: profileRevision } = profileState;
+    const profile = {
+      ...profileState.profile,
+      experiences: profileState.profile.experiences.filter(
+        (record) => !record.isDraft,
+      ),
+      education: profileState.profile.education.filter(
+        (record) => !record.isDraft,
+      ),
+      certifications: profileState.profile.certifications.filter(
+        (record) => !record.isDraft,
+      ),
+      links: profileState.profile.links.filter((record) => !record.isDraft),
+    };
     const job = savedJobs.find((entry) => entry.id === jobId);
 
     if (!job) {
@@ -4148,6 +4262,15 @@ export function createWorkspaceApplicationMethods(
       );
       return ctx.getWorkspaceSnapshot();
     },
+    async assessJobListing(jobId) {
+      if (!ctx.fetchListingHtml)
+        throw new Error("The listing reader is unavailable.");
+      await readListingDetailForShortlistedJob(jobId, {
+        force: true,
+        throwOnFailure: true,
+      });
+      return ctx.getWorkspaceSnapshot();
+    },
     async queueJobForReview(jobId) {
       const [
         discoveryState,
@@ -4181,6 +4304,7 @@ export function createWorkspaceApplicationMethods(
         jobs: activityJobs,
         discoveryLedger: discoveryState.discoveryLedger,
         listingSignals: intelligence.safeguards.listingSignals,
+        applicationAttempts: await ctx.repository.listApplicationAttempts(),
       }).find((job) => job.id === jobId);
 
       if (currentJobView?.listingActivity.status === "closed") {
@@ -7430,7 +7554,7 @@ export function createWorkspaceApplicationMethods(
         updatedAt: createdAt,
         completedAt: null,
         summary: inheritedApproval
-          ? `Applying to the remaining ${uniqueJobIds.length} ${uniqueJobIds.length === 1 ? "job" : "jobs"}.`
+          ? `${uniqueJobIds.length} ${uniqueJobIds.length === 1 ? "job was" : "jobs were"} queued for another attempt.`
           : `Working through ${uniqueJobIds.length} ${uniqueJobIds.length === 1 ? "application" : "applications"}.`,
         detail:
           effectiveApplicationAutomationMode === "autonomous_submit"
@@ -7769,6 +7893,13 @@ export function createWorkspaceApplicationMethods(
                   : runOwnsJobOutcome
                     ? {
                         lastActionLabel: updatedRun.summary,
+                        // A record with an earlier attempt must not keep
+                        // showing that attempt's state (Tracker read a
+                        // stopped retry as Ready for approval). A job the
+                        // stop reached first has no attempt to describe.
+                        ...(existingRecord.lastAttemptState
+                          ? { lastAttemptState: "cancelled" as const }
+                          : {}),
                         nextActionLabel:
                           "Press Try again to pick this up later.",
                       }

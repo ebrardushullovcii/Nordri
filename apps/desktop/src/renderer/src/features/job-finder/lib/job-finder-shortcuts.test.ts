@@ -119,7 +119,7 @@ describe("job finder shortcut registry", () => {
     // Grouping by id alone used to concatenate two different conditions into
     // one three-line grey paragraph beside a pair of keycaps that read as a
     // single broken token.
-    expect(buildJobFinderShortcutHelp("darwin")).toEqual([
+    expect(buildJobFinderShortcutHelp("darwin").slice(0, 5)).toEqual([
       {
         combos: [["⌘", "K"]],
         id: "open-global-search",
@@ -212,3 +212,19 @@ describe("job finder shortcut registry", () => {
     }
   });
 });
+
+it.each(["darwin", "win32", "linux"] as const)(
+  "lists standard zoom shortcuts on %s",
+  (platform) => {
+    const modifier = platform === "darwin" ? "⌘" : "Ctrl";
+    expect(
+      buildJobFinderShortcutHelp(platform)
+        .slice(-3)
+        .map(({ label, combos }) => ({ label, combos })),
+    ).toEqual([
+      { label: "Zoom In", combos: [[modifier, "="]] },
+      { label: "Zoom Out", combos: [[modifier, "-"]] },
+      { label: "Actual Size", combos: [[modifier, "0"]] },
+    ]);
+  },
+);

@@ -467,10 +467,12 @@ const BODY_SALARY_MONEY_MARKER_PATTERN =
 export function extractSalaryRangeFromListingBody(
   description: string,
 ): string | null {
-  const candidate = BODY_SALARY_RANGE_PATTERN.exec(description)?.[1]?.trim();
-  return candidate && BODY_SALARY_MONEY_MARKER_PATTERN.test(candidate)
-    ? candidate
-    : null;
+  const explicitAmount =
+    /(?:\b(?:USD|CAD|AUD|EUR|GBP)\s*|(?:CA\$|A\$|\$|€|£)\s*)\d[\d,.]*(?:\s*[kK])?(?:\s*(?:-|–|—|to)\s*(?:(?:USD|CAD|AUD|EUR|GBP)\s*)?(?:CA\$|A\$|\$|€|£)?\s*\d[\d,.]*(?:\s*[kK])?)?\s*(?:per\s+(?:year|month|week|day|hour)|\/(?:year|yr|month|week|day|hour|hr)|annually|yearly|monthly|weekly|daily|hourly)\b/iu;
+  const labelled = BODY_SALARY_RANGE_PATTERN.exec(description)?.[1]?.trim();
+  if (labelled && BODY_SALARY_MONEY_MARKER_PATTERN.test(labelled))
+    return labelled;
+  return explicitAmount.exec(description)?.[0]?.trim() ?? null;
 }
 
 /**

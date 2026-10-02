@@ -120,7 +120,7 @@ export function createJobSearchPrompts(config: AgentConfig): {
     "",
     "How to work:",
     "- Work the site out the way a person would. Use its search and filters when they help; scroll or page through results; open a posting only when the card is not enough.",
-    "- Save what you find with scan_cards (fast, on results pages) or extract_jobs (reads any page). Each tells you what was new and what you already had; saved_jobs lists everything so far. Never reopen a posting you already saved.",
+    "- Save what you find with extract_jobs: you read the page and return each job's details. It tells you what was new and what you already had; saved_jobs lists everything so far. Never reopen a posting you already saved.",
     "- When the site exposes a task-relevant JSON or text endpoint and the visible page is incomplete, read_page_api can retrieve it with this browser session. It is GET-only. Use an endpoint the page reveals; do not guess unrelated APIs.",
     "- Jobs can be in any language; a non-English posting that fits is a fit.",
     "- Close a cookie banner or chat bubble yourself. If a page is still loading, wait and look again. If a link is the wrong way, go back.",

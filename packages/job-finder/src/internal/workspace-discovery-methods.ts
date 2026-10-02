@@ -116,6 +116,7 @@ import { assessJobPostingDetailQuality } from "./job-posting-detail-quality";
 import {
   LISTING_DETAIL_READS_PER_RUN,
   describeListingDetailEnrichment,
+  createModelListingPageReader,
   enrichSavedJobListingDetails,
   jobNeedsListingDetail,
   readSightingApplyRoutes,
@@ -1224,6 +1225,25 @@ async function collectTargetJobs(input: {
       experimental: adapter.experimental,
       aiClient: ctx.aiClient,
       ...(input.signal ? { signal: input.signal } : {}),
+      onWaitingForBrowserTab: () => {
+        input.emitActivity(
+          createDiscoveryEvent({
+            runId: input.activeRun.id,
+            timestamp: new Date().toISOString(),
+            kind: "progress",
+            stage: "navigation",
+            targetId: target.id,
+            adapterKind: target.adapterKind,
+            message: `${target.label}: browser tab limit reached. Waiting for a free tab; close finished tabs to continue.`,
+            url: null,
+            jobsFound: null,
+            jobsPersisted: input.activeRun.summary.jobsPersisted,
+            jobsStaged: input.activeRun.summary.jobsStaged,
+            duplicatesMerged: input.activeRun.summary.duplicatesMerged,
+            invalidSkipped: input.activeRun.summary.invalidSkipped,
+          }),
+        );
+      },
       onProgress: (progress) => {
         const summary = summarizeProgressAction(
           progress,
@@ -3068,6 +3088,9 @@ export function createWorkspaceDiscoveryMethods(
           const enrichment = await enrichSavedJobListingDetails({
             jobs: enrichmentCandidates,
             fetchHtml: fetchListingHtml,
+            readPage: createModelListingPageReader(ctx.aiClient),
+            // Searches score without model calls; a full model assessment
+            // runs when the person asks for it (Read and assess listing).
             assess: assessDiscoveryPosting,
             signal: executionSignal,
           });
@@ -3188,7 +3211,7 @@ export function createWorkspaceDiscoveryMethods(
               ...routed,
               matchAssessment: assessDiscoveryPosting(routed),
             });
-            switchedCount += 1;
+            if (routed.canonicalUrl !== job.canonicalUrl) switchedCount += 1;
           }
           if (next !== originalById.get(job.id)) {
             reroutedById.set(job.id, next);

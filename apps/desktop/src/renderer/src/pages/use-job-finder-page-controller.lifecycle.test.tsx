@@ -90,6 +90,10 @@ function createBatchHarness(options: { parkFirstCall?: boolean } = {}) {
     configurable: true,
     value: {
       ping: vi.fn(() => Promise.resolve({ platform: "darwin" as const })),
+      assistant: {
+        syncResumeBatch: (state: unknown) => Promise.resolve(state),
+        onResumeBatchStop: () => () => undefined,
+      },
       jobFinder: {
         getWorkspaceBootstrap: vi.fn(() => Promise.resolve(workspace)),
         generateResume,
@@ -307,6 +311,10 @@ describe("useJobFinderPageController cross-route status lifetime", () => {
       configurable: true,
       value: {
         ping: vi.fn(() => Promise.resolve({ platform: "darwin" as const })),
+        assistant: {
+          syncResumeBatch: (state: unknown) => Promise.resolve(state),
+          onResumeBatchStop: () => () => undefined,
+        },
         jobFinder: {
           getWorkspaceBootstrap: vi.fn(() => Promise.resolve(workspace)),
           mutateWorkspaceEntities,

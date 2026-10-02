@@ -267,14 +267,23 @@ export function buildDiscoveryRunReport(
     (total, execution) => total + execution.jobsSkippedByLedger,
     0,
   );
-  const found =
+  const unique = Math.max(
+    new Set(
+      run.targetExecutions.flatMap((execution) => execution.encounteredJobIds),
+    ).size,
+    run.summary.validJobsFound,
+  );
+  const found = Math.max(
+    unique,
     Math.max(reviewed, run.summary.validJobsFound + duplicates) +
-    Math.max(skippedAsSaved, run.summary.jobsSkippedByLedger);
+      Math.max(skippedAsSaved, run.summary.jobsSkippedByLedger),
+  );
 
   return DiscoveryRunReportSchema.parse({
-    version: 1,
+    version: 2,
     measuredAt,
     found,
+    unique,
     new: run.summary.validJobsFound,
     saved,
     retained: run.campaignId === null ? saved : null,
@@ -292,7 +301,6 @@ export function applyDiscoveryRunRetentionCounts(
   run: DiscoveryRunRecord,
   counts: {
     measuredAt: string;
-    new?: number;
     alreadyHere?: number;
     retained: number;
     worthOpening: number;
@@ -307,7 +315,6 @@ export function applyDiscoveryRunRetentionCounts(
       ...run.summary,
       report: DiscoveryRunReportSchema.parse({
         ...report,
-        new: counts.new ?? report.new,
         alreadyHere: counts.alreadyHere ?? report.alreadyHere,
         retained: counts.retained,
         worthOpening: counts.worthOpening,
@@ -383,7 +390,10 @@ export function recoverInterruptedDiscoveryRun(
     }),
   );
 
-  return finalizeDiscoveryRun(recoveredRun, "failed", completedAt);
+  return DiscoveryRunRecordSchema.parse({
+    ...finalizeDiscoveryRun(recoveredRun, "failed", completedAt),
+    runPhase: "interrupted",
+  });
 }
 
 /**

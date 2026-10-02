@@ -67,6 +67,8 @@ export interface AutomationRunOptions {
    * result id), reported back through `handback` if the person steps in.
    */
   owner?: string | null;
+  /** Finished discovery pages can be closed by the person in one action. */
+  cleanupOnFinish?: boolean;
 }
 
 /** Reports the page a run works in, so a click there stops only that run. */
@@ -268,11 +270,32 @@ export class EmbeddedBrowser {
   }
 
   private visibleAttention(): DesktopBrowserAttention | null {
-    if (this.attention) return this.attention;
-    const banners = [...this.parkedTabs.values()].filter(
-      (banner): banner is DesktopBrowserAttention => banner !== null,
-    );
-    return banners.at(-1) ?? null;
+    if (this.attention && this.attentionTabId === this.activeTabId)
+      return this.attention;
+    return this.activeTabId
+      ? (this.parkedTabs.get(this.activeTabId) ?? null)
+      : null;
+  }
+
+  private readonly finishedTabs = new Set<string>();
+
+  markFinishedTabs(tabIds: readonly string[]): void {
+    for (const id of tabIds) this.finishedTabs.add(id);
+  }
+
+  private closeFinishedTabs(): void {
+    for (const id of this.finishedTabs) {
+      if (
+        this.heldTabs.has(id) ||
+        this.parkedTabs.has(id) ||
+        this.personTabs.has(id) ||
+        this.lentTabs.has(id) ||
+        [...this.operationClaims.values()].some((claim) => claim.tabs.has(id))
+      )
+        continue;
+      this.closePage(id);
+      this.finishedTabs.delete(id);
+    }
   }
   onStateChanged(listener: (state: DesktopBrowserState) => void): () => void {
     this.stateListeners.add(listener);
@@ -743,6 +766,7 @@ export class EmbeddedBrowser {
     });
     page.contents.once("destroyed", () => {
       this.pageMap.delete(page.id);
+      this.finishedTabs.delete(page.id);
       this.agentPresses.forget(page.id);
       this.parkedTabs.delete(page.id);
       this.heldTabs.delete(page.id);
@@ -1157,7 +1181,10 @@ export class EmbeddedBrowser {
       const landed = bridge
         .waitForToken(token, 5_000)
         .then((tabId) => {
-          if (tabId && this.operations.has(controller)) claim.tabs.add(tabId);
+          if (tabId && this.operations.has(controller)) {
+            claim.tabs.add(tabId);
+            this.finishedTabs.delete(tabId);
+          }
         })
         .catch(() => undefined)
         .finally(() => pendingClaims.delete(landed));
@@ -1191,6 +1218,7 @@ export class EmbeddedBrowser {
       combined.throwIfAborted();
       throw error;
     } finally {
+      if (options.cleanupOnFinish) this.markFinishedTabs(await claimedTabs());
       this.operations.delete(controller);
       this.operationClaims.delete(controller);
       if (this.operations.size === 0)
@@ -1261,6 +1289,7 @@ export class EmbeddedBrowser {
       if (owners.length > 0 && this.activityHooks?.handback)
         void this.activityHooks.handback(owners).catch(() => undefined);
     } else if (command.type === "select_tab") this.selectPage(command.tabId);
+    else if (command.type === "close_finished_tabs") this.closeFinishedTabs();
     else if (command.type === "close_tab") {
       this.takeTabByPerson(command.tabId, false, true);
       this.closePage(command.tabId);

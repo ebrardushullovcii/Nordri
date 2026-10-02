@@ -1,3 +1,5 @@
+import { readAssistantWorkState } from "../work-state";
+import { stopResumeWork } from "./resume-tools";
 import {
   AiBehaviorPreferenceSchema,
   ApplicationAttestationKindSchema,
@@ -318,7 +320,7 @@ export const pauseActivityTool = defineTool({
   name: "pause_activity",
   group: "settings",
   description:
-    "Pauses or resumes all background Job Finder work (searches, applications), like Home's Pause. finishCurrent lets running work finish first. The pause is the person's brake: resume only when they ask to resume, or when they answer yes after you asked, never just because another request needs it.",
+    "Pauses or resumes all background Job Finder work (searches, applications, resume queues), like Home's Pause. finishCurrent lets running work finish first. The pause is the person's brake: resume only when they ask to resume, or when they answer yes after you asked, never just because another request needs it.",
   parameters: json.object(
     {
       paused: json.boolean(),
@@ -344,8 +346,27 @@ export const pauseActivityTool = defineTool({
         ? { pauseBehavior: "finish_current" as const }
         : {}),
     });
+    const resumes = input.paused ? stopResumeWork(ports) : null;
+    const after = await service.getWorkspaceSnapshot();
+    const work = readAssistantWorkState(ports, after);
     ports.publishWorkspaceUpdate();
-    return { summary: input.paused ? "Paused." : "Resumed." };
+    return {
+      summary: input.paused
+        ? `Background work is paused. ${resumes?.summary}${work.resumeImport.active ? " Resume import is still running; it was not stopped." : ""}${after.activeDiscoveryRun?.state === "running" ? " The current search is still finishing." : ""}${after.applyRuns.some((run) => run.state === "running") ? " Current applications are still finishing." : ""}${after.activeSourceDebugRun?.state === "running" ? " The source check is still running; it was not stopped." : ""}`
+        : "Resumed.",
+      data: {
+        activityPaused: after.activityControl.paused,
+        resumes: resumes?.data ?? null,
+        finishingSearch:
+          after.activeDiscoveryRun?.state === "running"
+            ? after.activeDiscoveryRun.id
+            : null,
+        finishingApplications: after.applyRuns
+          .filter((run) => run.state === "running")
+          .map((run) => ({ id: run.id, jobIds: run.jobIds })),
+        resumeImport: work.resumeImport,
+      },
+    };
   },
 });
 

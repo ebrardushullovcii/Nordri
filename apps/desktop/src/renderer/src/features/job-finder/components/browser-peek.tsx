@@ -577,6 +577,16 @@ export function BrowserPeek(props: {
                         <button
                           type="button"
                           role="menuitem"
+                          onClick={() => {
+                            setMenuOpen(false);
+                            void command({ type: "close_finished_tabs" });
+                          }}
+                        >
+                          <X size={14} /> Close finished tabs
+                        </button>
+                        <button
+                          type="button"
+                          role="menuitem"
                           onClick={() => void openImportPicker()}
                         >
                           <Import size={14} /> Bring sign-ins from another

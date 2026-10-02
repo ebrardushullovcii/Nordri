@@ -88,11 +88,11 @@ describe("US country aliases in saved search places", () => {
       ...current,
       scorerVersion: 11,
       contextFingerprint: current.contextFingerprint!.replace(
-        "logic12",
+        "logic13",
         "logic10",
       ),
       postingFingerprint: current.postingFingerprint!.replace(
-        "logic12",
+        "logic13",
         "logic10",
       ),
       score: 40,
@@ -104,7 +104,7 @@ describe("US country aliases in saved search places", () => {
     });
     const refreshed = resumed.assessPersisted(posting, stale);
     expect(refreshed).not.toBe(stale);
-    expect(refreshed.scorerVersion).toBe(13);
+    expect(refreshed.scorerVersion).toBe(14);
     expect(refreshed.dimensions.preferenceAlignment.state).not.toBe("conflict");
     expect(calculate).toHaveBeenCalledTimes(2);
   });

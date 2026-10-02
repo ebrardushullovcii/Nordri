@@ -689,7 +689,7 @@ describe("an answer the person saved earlier", () => {
     }
   });
 
-  test("an answer none of the choices carry says so, with the choices", () => {
+  test("descriptive saved prose is context for the model to map to a choice", () => {
     const field = control({ options: ["Yes", "No"] });
     const resolution = resolveApplyAnswer({
       control: field,
@@ -697,12 +697,10 @@ describe("an answer the person saved earlier", () => {
       salaryDisclosure: "pause_for_user",
     });
 
-    expect(resolution.status).toBe("needs_you");
-    if (resolution.status === "needs_you") {
-      expect(resolution.reason).toBe(
-        'Your answer "Only as a contractor" did not match one of the choices: Yes, No',
-      );
-    }
+    expect(resolution).toMatchObject({
+      status: "map_choice",
+      context: { value: "Only as a contractor" },
+    });
   });
 });
 
@@ -1167,4 +1165,24 @@ describe("saved answer control identity on resumption", () => {
         expect(result.answer.value).toBe(expected);
     },
   );
+});
+
+test("a calling-code-only picker uses the saved international phone rather than residence", () => {
+  const answerSources = sources([]);
+  answerSources.profile.phone = "+351912345678";
+  answerSources.profile.currentCountry = "Portugal";
+  expect(
+    resolveApplyAnswer({
+      control: control({
+        label: "Phone country code",
+        questionKind: "location",
+        options: ["+1", "+44", "+49", "+351", "+961"],
+      }),
+      sources: answerSources,
+      salaryDisclosure: "pause_for_user",
+    }),
+  ).toMatchObject({
+    status: "answered",
+    answer: { value: "+351", sourceId: "profile.phoneCountry" },
+  });
 });

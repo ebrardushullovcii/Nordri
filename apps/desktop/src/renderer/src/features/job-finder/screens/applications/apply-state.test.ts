@@ -43,6 +43,24 @@ function buildResult(overrides: Partial<ApplyResult>): ApplyResult {
 }
 
 describe("the five apply states (ADR 0022)", () => {
+  it("never recommends retry for an observed closed listing", () => {
+    expect(
+      resolveApplyStatePresentation({
+        mode: "fill_only",
+        result: buildResult({
+          state: "failed",
+          blockerReason: "application_closed",
+          summary: "This job is no longer accepting applications.",
+        }),
+      }),
+    ).toMatchObject({
+      kind: "could_not_apply",
+      title: "Listing closed",
+      action: "none",
+      actionLabel: null,
+    });
+  });
+
   it.each(["site_protection", "required_human_input"] as const)(
     "keeps a CAPTCHA without a question in Needs you (%s)",
     (blockerReason) => {
@@ -174,9 +192,11 @@ describe("the five apply states (ADR 0022)", () => {
     });
     expect(presentation).toMatchObject({
       kind: "filling_in",
-      title: "Waiting for a browser tab",
       sentence: "Close a tab you no longer need and this one starts.",
     });
+    expect(presentation.title).toMatch(
+      /^Waiting for a browser tab \(.*min\)$/u,
+    );
   });
 
   it("never calls an unverified outcome Applied", () => {
@@ -434,6 +454,19 @@ describe("a planned job is never Filling in", () => {
     },
   );
 
+  it("does not call an untouched safety-paused batch active", () => {
+    expect(
+      resolveApplyStatePresentation({
+        mode: "fill_only",
+        result: planned,
+        run: {
+          state: "paused_for_user_review",
+          activityPaused: false,
+          started: false,
+        },
+      }).title,
+    ).toBe("Not started");
+  });
   it("names the safety limit when one stopped the batch", () => {
     expect(
       resolveApplyStatePresentation({

@@ -53,7 +53,10 @@ import {
 } from "./profile-workspace-state";
 import { resolvePendingReviewItemsAfterExplicitSave } from "./profile-setup-review-items";
 import { normalizeProfileBeforeSave } from "./profile-merge";
-import { runResumeImportWorkflow } from "./resume-import-workflow";
+import {
+  isResumeImportActiveInProcess,
+  runResumeImportWorkflow,
+} from "./resume-import-workflow";
 import { persistResumeTimelineRepairAction } from "./resume-timeline-repair";
 import {
   hasResumeAffectingProfileChange,
@@ -75,6 +78,7 @@ import { persistAutomaticApplicationSafeguards } from "./automatic-safeguards";
 import { reconcileAutomaticBatchSampleReviews } from "./automatic-batch-review-recovery";
 import { reconcileStaleMissingResumeBlockers } from "./workspace-application-blocker-sync";
 import { terminalizeApplicationAfterPreparedPageLost } from "./workspace-application-user-action";
+import { recordCampaignDiscoveryResult } from "./workspace-campaign-methods";
 import { recoverInterruptedDiscoveryRun } from "./workspace-discovery-run-helpers";
 import {
   deriveSourceAccessPrompts,
@@ -397,8 +401,9 @@ export function createWorkspaceSnapshotProfileMethods(
               // Plans own only the on/off choice. A source newly added in
               // Profile follows Profile's current setting in every plan until
               // the person changes that plan.
-              enabled:
-                existingTargets.get(target.id)?.enabled ?? target.enabled,
+              enabled: existingTargets.has(target.id)
+                ? campaign.sourceTargetIds.includes(target.id)
+                : target.enabled,
             }),
           );
           const campaignPreferences =
@@ -833,6 +838,19 @@ export function createWorkspaceSnapshotProfileMethods(
             : current.recentRuns,
         };
       });
+      const persisted = await ctx.repository.getDiscoveryState();
+      if (
+        recoveredRun?.campaignId &&
+        persisted.recentRuns.some(
+          (run) => run.id === recoveredRun.id && run.runPhase === "interrupted",
+        )
+      ) {
+        await recordCampaignDiscoveryResult({
+          ctx,
+          campaignId: recoveredRun.campaignId,
+          beforeJobProvenanceFingerprints: new Map(),
+        });
+      }
     })();
 
     interruptedDiscoveryRecoveryPromise = recoveryPromise;
@@ -1009,6 +1027,7 @@ export function createWorkspaceSnapshotProfileMethods(
       jobs: [...savedJobs, ...mergedPendingJobs],
       discoveryLedger: discovery.discoveryLedger,
       listingSignals: intelligence.safeguards.listingSignals,
+      applicationAttempts,
     });
     const projectedJobById = new Map(
       projectedJobs.map((job) => [job.id, job] as const),
@@ -1056,13 +1075,11 @@ export function createWorkspaceSnapshotProfileMethods(
         continue;
       }
       const latestValidation =
-        (await ctx.repository.listResumeValidationResults(draft.id))[0] ??
-        null;
+        (await ctx.repository.listResumeValidationResults(draft.id))[0] ?? null;
       if (!latestValidation) continue;
-      const count =
-        latestValidation.claimAssessments.filter((assessment) =>
-          isBlockingResumeClaimAssessment({ assessment, draft }),
-        ).length;
+      const count = latestValidation.claimAssessments.filter((assessment) =>
+        isBlockingResumeClaimAssessment({ assessment, draft }),
+      ).length;
       if (count > 0) linesToDecideByDraftId.set(draft.id, count);
     }
     const reviewQueue = buildReviewQueue(
@@ -1305,6 +1322,9 @@ export function createWorkspaceSnapshotProfileMethods(
       applicationAttempts,
       sourceInstructionArtifacts,
       latestResumeImportRun: setupContext.latestResumeImportRun,
+      resumeImportActive:
+        isResumeImportActiveInProcess(ctx) ||
+        ctx.activeResumeVisionRunIds.size > 0,
       latestResumeImportReviewCandidates:
         setupContext.latestResumeImportReviewCandidateSummaries,
       profileCopilotMessages,
@@ -1456,6 +1476,9 @@ export function createWorkspaceSnapshotProfileMethods(
       applicationAttempts: [],
       sourceInstructionArtifacts: [],
       latestResumeImportRun: setupContext.latestResumeImportRun,
+      resumeImportActive:
+        isResumeImportActiveInProcess(ctx) ||
+        ctx.activeResumeVisionRunIds.size > 0,
       latestResumeImportReviewCandidates:
         setupContext.latestResumeImportReviewCandidateSummaries,
       profileCopilotMessages: [],

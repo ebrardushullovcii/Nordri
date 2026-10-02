@@ -282,7 +282,7 @@ export function buildResumeGenerationEvidenceCatalog(
   addProfileEvidence("profile:summary", input.profile.summary);
   addProfileEvidence(
     "profile:yearsExperience",
-    input.profile.yearsExperience > 0
+    input.profile.yearsExperience !== null && input.profile.yearsExperience > 0
       ? `${input.profile.yearsExperience} years of professional experience.`
       : null,
   );
@@ -1681,10 +1681,7 @@ function listingTextMentions(text: string, phrase: string): boolean {
 }
 
 function stripListingNames(text: string, names: readonly string[]): string {
-  return names.reduce(
-    (current, name) => current.split(name).join(" "),
-    text,
-  );
+  return names.reduce((current, name) => current.split(name).join(" "), text);
 }
 
 const LISTING_SKILL_PROMPT_PATTERN =

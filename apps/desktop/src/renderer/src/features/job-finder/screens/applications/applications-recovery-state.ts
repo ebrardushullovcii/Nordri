@@ -44,6 +44,7 @@ export type ApplicationRecoveryState =
  * anyway is what made the screen a loop of clicks that changed nothing.
  */
 export type ApplicationRecoveryPrimaryAction =
+  | "close_finished_tabs"
   | "none"
   | "open_browser"
   | "open_safeguards"
@@ -206,6 +207,7 @@ const RUNNING_RESULT_STATES = new Set([
  */
 export interface ApplyRunContext {
   state: ApplyRunState;
+  detail?: string | null;
   /** The person paused new work ("Pause new work"). */
   activityPaused: boolean;
   /** Any job in the run has been started. */
@@ -245,6 +247,7 @@ export function buildApplyRunContextReader(workspace: {
     if (!run) return null;
     return {
       state: run.state,
+      detail: run.detail,
       activityPaused,
       started: startedRunIds.has(run.id),
     };
@@ -268,7 +271,7 @@ export function resolvePlannedApplyStanding(
     case "paused_for_user_review":
       // A batch reusing an approval is written paused and started a moment
       // later; until any job in it starts, it is a batch about to run.
-      return run.started ? "not_started" : "waiting_turn";
+      return "not_started";
     default:
       return "not_started";
   }
@@ -279,7 +282,7 @@ export function describeNotStartedApplication(
   run: ApplyRunContext | null | undefined,
 ): string {
   return run?.state === "paused_for_user_review"
-    ? "A safety limit stopped the batch before Job Finder got to this one. Nothing was filled in or sent."
+    ? `${run.detail?.trim() || "A safety limit stopped the batch before Job Finder got to this one."} Nothing was filled in or sent.`
     : "The batch stopped before Job Finder got to this one. Nothing was filled in or sent.";
 }
 
@@ -872,8 +875,8 @@ export function resolveApplicationRecoveryPresentation(input: {
       state: "preparing",
       statusLine: WAITING_FOR_BROWSER_TAB_SUMMARY,
       reasonSentence: visibleApplyResult.detail ?? null,
-      primaryAction: "none",
-      primaryActionLabel: null,
+      primaryAction: "close_finished_tabs",
+      primaryActionLabel: "Close finished tabs",
     };
   }
   if (

@@ -492,7 +492,9 @@ describe("filterSafeguardRows", () => {
     expect(row?.explanation).toBe(
       "Job Finder stopped after your search plan's safety rule was reached.",
     );
-    expect(row?.recoveryGuidance).toContain("Prepare remaining jobs");
+    expect(row?.recoveryGuidance).toContain("Try again on an unstarted job");
+    expect(row?.recoveryGuidance).toContain("Daily limits reset tomorrow");
+    expect(row?.recoveryGuidance).not.toContain("Settle the limit above");
     expect(row?.recoveryLink).toEqual({
       href: "/job-finder/applications",
       label: "Open Applications",

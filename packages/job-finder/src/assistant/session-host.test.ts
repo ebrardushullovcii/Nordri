@@ -332,6 +332,116 @@ describe("assistant session host", () => {
     return result;
   }
 
+  it("refreshes the current approval and import state between model calls", async () => {
+    let calls = 0;
+    const inputs: string[] = [];
+    const world = setup({
+      modelHandle: {
+        ...createScriptedAssistantModelHandle(),
+        createModel: () => ({
+          chatWithTools: (messages) => {
+            inputs.push(
+              messages.filter((message) => message.role === "user").at(-1)!
+                .content,
+            );
+            calls += 1;
+            if (calls === 1) {
+              current.resumeImportActive = true;
+              current.resumeDrafts[0]!.status = "needs_review";
+              return Promise.resolve({
+                content: "",
+                toolCalls: [
+                  {
+                    id: "read_current",
+                    type: "function" as const,
+                    function: {
+                      name: "get_workspace_summary",
+                      arguments: "{}",
+                    },
+                  },
+                ],
+              });
+            }
+            return Promise.resolve({ content: "Review is pending." });
+          },
+        }),
+      },
+    });
+    const current = await world.harness.workspaceService.getWorkspaceSnapshot();
+    const workspace = await world.harness.workspaceService.getResumeWorkspace(
+      current.reviewQueue[0]!.jobId,
+    );
+    current.resumeDrafts = [{ ...workspace.draft, status: "approved" }];
+    vi.spyOn(
+      world.harness.workspaceService,
+      "getWorkspaceSnapshot",
+    ).mockResolvedValue(current);
+    await sendAndWait(world.host, "Is this resume approved?");
+    expect(inputs[0]).toContain('"approved":true');
+    expect(inputs[1]).toContain('"approved":false');
+    expect(inputs[1]).toContain('"active":true');
+    expect(inputs[1]).toContain("Is this resume approved?");
+  });
+
+  it("persists the exact proposed summary on its review card", async () => {
+    let calls = 0;
+    const proposed =
+      "Synthetic designer for senior in-house roles. Improved a synthetic result by 23%.";
+    const { host } = setup({
+      modelHandle: {
+        ...createScriptedAssistantModelHandle(),
+        createModel: () => ({
+          chatWithTools: () => {
+            calls += 1;
+            return Promise.resolve(
+              calls === 1
+                ? {
+                    content: "",
+                    toolCalls: [
+                      {
+                        id: "suggest_summary",
+                        type: "function" as const,
+                        function: {
+                          name: "edit_profile",
+                          arguments: JSON.stringify({
+                            mode: "suggest",
+                            summary: "Rewrite your summary",
+                            operations: [
+                              {
+                                operation:
+                                  "replace_professional_summary_fields",
+                                value: { fullSummary: proposed },
+                              },
+                            ],
+                          }),
+                        },
+                      },
+                    ],
+                  }
+                : { content: "The wording is ready to review." },
+            );
+          },
+        }),
+      },
+    });
+    const sent = await sendAndWait(host, "Propose a summary.");
+    const view = await host.readConversation({
+      conversationId: sent.conversationId,
+    });
+    const card = view.messages
+      .flatMap((message) => message.parts)
+      .find((part) => part.type === "proposal");
+    expect(card).toMatchObject({
+      type: "proposal",
+      items: [
+        {
+          label: "Update summary",
+          detail: expect.stringContaining(proposed) as unknown,
+        },
+      ],
+    });
+  });
+
   it("clears streamed commentary before publishing its shortened progress note", async () => {
     const text = "Reading the profile before changing it. ".repeat(40);
     let calls = 0;

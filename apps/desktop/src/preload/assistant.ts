@@ -14,6 +14,8 @@ import {
   AssistantSendMessageInputSchema,
   AssistantSendMessageResultSchema,
   AssistantStatusSchema,
+  AssistantResumeBatchStateSchema,
+  NonEmptyStringSchema,
   AssistantUndoChangeInputSchema,
   AssistantUndoChangeResultSchema,
   type DesktopAssistantBridge,
@@ -39,6 +41,22 @@ export function createAssistantBridge(ipc: {
   pathForFile: (file: File) => string;
 }): DesktopAssistantBridge {
   return {
+    syncResumeBatch: async (state) =>
+      AssistantResumeBatchStateSchema.parse(
+        await ipc.invoke(
+          "job-finder:assistant:sync-resume-batch",
+          AssistantResumeBatchStateSchema.parse(state),
+        ),
+      ),
+    onResumeBatchStop: (listener) => {
+      const handler = (_event: unknown, payload: unknown) => {
+        const parsed = NonEmptyStringSchema.safeParse(payload);
+        if (parsed.success) listener(parsed.data);
+      };
+      ipc.on("job-finder:assistant:resume-batch-stop", handler);
+      return () =>
+        ipc.removeListener("job-finder:assistant:resume-batch-stop", handler);
+    },
     getStatus: async () =>
       AssistantStatusSchema.parse(
         await ipc.invoke("job-finder:assistant:get-status"),

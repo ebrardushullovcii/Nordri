@@ -279,7 +279,7 @@ export const CandidateProfileSchema = z.object({
   currentRegion: NonEmptyStringSchema.nullable().default(null),
   currentCountry: NonEmptyStringSchema.nullable().default(null),
   timeZone: NonEmptyStringSchema.nullable().default(null),
-  yearsExperience: z.number().int().min(0),
+  yearsExperience: z.number().int().min(0).nullable(),
   email: NonEmptyStringSchema.nullable().default(null),
   secondaryEmail: NonEmptyStringSchema.nullable().default(null),
   phone: NonEmptyStringSchema.nullable().default(null),

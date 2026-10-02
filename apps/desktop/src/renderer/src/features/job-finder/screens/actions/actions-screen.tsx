@@ -367,7 +367,7 @@ export function isSameSiteApplicationActive(
   });
 }
 
-function useMinutesSince(since: string | null): number | null {
+export function useMinutesSince(since: string | null): number | null {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (!since) return;
@@ -530,7 +530,9 @@ function ActionCard(props: {
             {request.state === "awaiting_user" ? null : (
               <Badge variant="outline">
                 {request.state === "verifying"
-                  ? "Checking"
+                  ? request.kind === "manual_answer"
+                    ? `${props.sameSiteApplicationActive ? "Waiting its turn" : "Inserting your answer"} (${checkingMinutes === 0 ? "under a minute" : `${checkingMinutes ?? 0} min`})`
+                    : "Checking"
                   : request.state.replaceAll("_", " ")}
               </Badge>
             )}
@@ -560,12 +562,12 @@ function ActionCard(props: {
                     waitsForSameSite && !checkingStalled
                     ? "Waiting for the other application on this site to finish. It carries on by itself after that; nothing is needed from you."
                     : checkingStalled
-                    ? `This check has not finished after ${checkingMinutes} minutes, so Job Finder has probably lost track of it. Nothing was sent. Prepare it again to start this application afresh with your answers.`
-                    : checkingWaits
-                      ? request.scope.type === "application"
-                        ? `Still checking after ${checkingMinutes} minutes. Another application on the same site is probably ahead of it; it carries on by itself when that one finishes.`
-                        : `Still checking after ${checkingMinutes} minutes. Another search is still running; this source is searched as soon as it ends.`
-                      : "Job Finder is checking this step and carries on by itself once it is done. Nothing is needed from you unless it asks again."
+                      ? `This check has not finished after ${checkingMinutes} minutes, so Job Finder has probably lost track of it. Nothing was sent. Prepare it again to start this application afresh with your answers.`
+                      : checkingWaits
+                        ? request.scope.type === "application"
+                          ? `Still checking after ${checkingMinutes} minutes. Another application on the same site is probably ahead of it; it carries on by itself when that one finishes.`
+                          : `Still checking after ${checkingMinutes} minutes. Another search is still running; this source is searched as soon as it ends.`
+                        : "Job Finder is checking this step and carries on by itself once it is done. Nothing is needed from you unless it asks again."
                   : stripScrapedGlyphs(summaryParts.message)}
           </p>
         </div>
@@ -1523,9 +1525,14 @@ export function QuestionAnswerForm(props: {
 }) {
   const { isPending, onAnswer, questions, requestId } = props;
   const [answers, setAnswers] = useState<Record<string, string>>({});
-  // Remembered by default: the same question on the next application is
-  // answered without asking again. The person unticks it for a one-off.
-  const [saveForFuture, setSaveForFuture] = useState(true);
+  const [saveForFuture, setSaveForFuture] = useState(
+    () =>
+      !questions.some((question) =>
+        /neither.*(?:country|region)|ambiguous|does not (?:identify|name).*country/iu.test(
+          question.note ?? "",
+        ),
+      ),
+  );
   const [working, setWorking] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const saveId = `${requestId}-save-answer`;

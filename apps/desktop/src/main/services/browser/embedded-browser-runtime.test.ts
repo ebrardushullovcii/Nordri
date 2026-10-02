@@ -252,7 +252,7 @@ describe("withEmbeddedBrowserActivity", () => {
       "tab_verification",
       expect.objectContaining({
         kind: "challenge",
-        title: "This page needs a human",
+        title: "This page needs you: Example Jobs",
       }),
     );
     expect(requestAttention).not.toHaveBeenCalled();

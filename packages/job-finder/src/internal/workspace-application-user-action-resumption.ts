@@ -1,3 +1,4 @@
+import { mergeApplyReviewCards } from "./agent-application-preparation";
 import type { ExecuteApplicationFlowInput } from "@nordri/browser-runtime";
 import {
   completeTaskLocalSignIn,
@@ -1574,6 +1575,7 @@ export function createApplicationUserActionResumer(
       runId: run.id,
       resultId: result.id,
       visualCheckpointsEnabled: run.visualCheckpointsEnabled,
+      reviewCard: mergeApplyReviewCards(result.reviewCard, preparedReviewCard),
     });
     const existingQuestionIds = new Set(
       questionRecords.map((record) => record.id),
@@ -1621,7 +1623,8 @@ export function createApplicationUserActionResumer(
       pendingConsentRequestCount: isConsentBlocked ? 1 : 0,
       latestCheckpointId: checkpoint.id,
       lastUserActionResumptionId: attemptId,
-      reviewCard: preparedReviewCard ?? result.reviewCard,
+      reviewCard: resumedArtifacts.result.reviewCard,
+      privacyReceipt: resumedArtifacts.result.privacyReceipt,
     });
 
     await ctx.repository.upsertApplicationAttempt({

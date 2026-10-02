@@ -21,6 +21,8 @@ import type {
 } from "@nordri/contracts";
 import {
   ApplicationAttemptSchema,
+  ApplyRunSchema,
+  ApplyJobResultSchema,
   ApplicationCrmSettingsSchema,
   ApplicationRecordSchema,
   JobFinderIntelligenceSafeguardsSchema,
@@ -242,6 +244,183 @@ describe("ApplicationsScreen", () => {
     },
   );
 
+  it("shows the newest retry rather than an abandoned run's skipped count", () => {
+    vi.stubGlobal("ResizeObserver", ResizeObserverMock);
+    stubCandidateAssetsBridge();
+    const a = createTrackedApplication({
+      id: "a",
+      jobId: "job_a",
+      lastAttemptState: "paused",
+    });
+    const b = createTrackedApplication({
+      id: "b",
+      jobId: "job_b",
+      lastAttemptState: "in_progress",
+    });
+    const old = ApplyRunSchema.parse({
+      id: "old",
+      mode: "queue_auto",
+      state: "cancelled",
+      jobIds: [a.jobId, b.jobId],
+      createdAt: "2026-10-02T09:00:00.000Z",
+      updatedAt: "2026-10-02T11:00:00.000Z",
+      summary: "Stopped",
+      detail: "Stopped",
+      totalJobs: 2,
+    });
+    const latest = ApplyRunSchema.parse({
+      ...old,
+      id: "latest",
+      state: "running",
+      createdAt: "2026-10-02T10:00:00.000Z",
+      updatedAt: "2026-10-02T10:01:00.000Z",
+    });
+    const result = (
+      record: ApplicationRecord,
+      runId: string,
+      state: "skipped" | "blocked" | "filling",
+    ) =>
+      ApplyJobResultSchema.parse({
+        id: `${runId}_${record.id}`,
+        runId,
+        jobId: record.jobId,
+        applicationRecordId: record.id,
+        state,
+        summary: "Application",
+        detail: "Application",
+        startedAt: runId === "old" ? old.createdAt : latest.createdAt,
+        updatedAt: runId === "old" ? old.updatedAt : latest.updatedAt,
+      });
+    render(
+      <MemoryRouter>
+        <ApplicationsScreen
+          {...buildCrmScreenProps({
+            applicationRecords: [a, b],
+            selectedRecord: a,
+            onSelectRecord: vi.fn(),
+          })}
+          dailyPreparationCapacity={null}
+          onGetApplyRunDetails={vi.fn(() =>
+            Promise.reject(new Error("No review details in this fixture")),
+          )}
+          applyRuns={[old, latest]}
+          applyJobResults={[
+            result(a, "old", "skipped"),
+            result(b, "old", "skipped"),
+            result(a, "latest", "blocked"),
+            result(b, "latest", "filling"),
+          ]}
+          userActionRequests={
+            [
+              {
+                id: "question",
+                state: "awaiting_user",
+                scope: {
+                  type: "application",
+                  runId: "latest",
+                  jobId: a.jobId,
+                  applicationRecordId: a.id,
+                },
+              },
+            ] as unknown as JobFinderWorkspaceSnapshot["userActionRequests"]
+          }
+        />
+      </MemoryRouter>,
+    );
+    expect(
+      screen.getByText(/2 jobs · 1 need attention · 1 in progress/),
+    ).toBeTruthy();
+  });
+  it.each(["failed", "awaiting_review"] as const)(
+    "tracks a stopped %s attempt even before all stored fields were synchronized",
+    (state) => {
+      vi.stubGlobal("ResizeObserver", ResizeObserverMock);
+      stubCandidateAssetsBridge();
+      const record = createTrackedApplication({
+        lastAttemptState: state === "failed" ? "ready" : "failed",
+        lastUpdatedAt: "2026-10-02T11:00:00.000Z",
+        crm: {
+          stage: "ready_for_approval",
+          stageSource: "activity",
+          stageChangedAt: "2026-10-02T09:00:00.000Z",
+        },
+      });
+      const result = ApplyJobResultSchema.parse({
+        id: "closed",
+        jobId: record.jobId,
+        applicationRecordId: record.id,
+        runId: "closed_run",
+        state,
+        summary: "Listing closed",
+        detail: "The posting is closed",
+        startedAt: "2026-10-02T09:00:00.000Z",
+        updatedAt: "2026-10-02T10:00:00.000Z",
+      });
+      render(
+        <MemoryRouter>
+          <ApplicationsScreen
+            {...buildCrmScreenProps({
+              applicationRecords: [record],
+              selectedRecord: record,
+              onSelectRecord: vi.fn(),
+            })}
+            dailyPreparationCapacity={null}
+            applyJobResults={[result]}
+            onGetApplyRunDetails={vi.fn(() =>
+              Promise.reject(new Error("No retained details")),
+            )}
+          />
+        </MemoryRouter>,
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Open tracker" }));
+      expect(
+        screen.getByRole<HTMLSelectElement>("combobox", { name: "Stage" })
+          .value,
+      ).toBe("failed");
+    },
+  );
+  it("keeps an open review when another application changes in the background", () => {
+    vi.stubGlobal("ResizeObserver", ResizeObserverMock);
+    stubCandidateAssetsBridge();
+    const a = createTrackedApplication({
+      id: "a",
+      jobId: "job_a",
+      title: "Job A",
+    });
+    const b = createTrackedApplication({
+      id: "b",
+      jobId: "job_b",
+      title: "Job B",
+    });
+    const onSelectRecord = vi.fn();
+    const props = buildCrmScreenProps({
+      applicationRecords: [a, b],
+      selectedRecord: a,
+      onSelectRecord,
+    });
+    const view = render(
+      <MemoryRouter>
+        <ApplicationsScreen {...props} dailyPreparationCapacity={null} />
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Open tracker" }));
+    fireEvent.change(screen.getByLabelText("Tags"), {
+      target: { value: "Draft in progress" },
+    });
+    view.rerender(
+      <MemoryRouter>
+        <ApplicationsScreen
+          {...props}
+          applicationRecords={[{ ...b, lastAttemptState: "paused" }, a]}
+          dailyPreparationCapacity={null}
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.getByLabelText<HTMLInputElement>("Tags").value).toBe(
+      "Draft in progress",
+    );
+    expect(onSelectRecord).not.toHaveBeenCalled();
+  });
   it("shows action-led first-run CTAs when there are no applications yet", () => {
     class ResizeObserverMock {
       observe() {}
@@ -286,7 +465,9 @@ describe("ApplicationsScreen", () => {
 
     expect(screen.getByText("Nothing applied to yet")).toBeTruthy();
     expect(
-      screen.getByText(/Press Apply on a shortlisted job and it shows up here/i),
+      screen.getByText(
+        /Press Apply on a shortlisted job and it shows up here/i,
+      ),
     ).toBeTruthy();
     expect(
       screen.queryByText("Application details will appear here"),
@@ -487,7 +668,7 @@ describe("ApplicationsScreen", () => {
               artifactCount: 0,
               latestCheckpointId: null,
               privacyReceipt: null,
-    reviewCard: null,
+              reviewCard: null,
             },
           ]}
           // The banner counts this run's share of the Needs you population
@@ -618,7 +799,7 @@ describe("ApplicationsScreen", () => {
       },
       events: [],
       crm: null,
-    automationMode: "prepare_only" as const,
+      automationMode: "prepare_only" as const,
     };
     const applyRuns: ApplyRunSummary[] = [
       {
@@ -688,7 +869,7 @@ describe("ApplicationsScreen", () => {
         artifactCount: 0,
         latestCheckpointId: null,
         privacyReceipt: null,
-    reviewCard: null,
+        reviewCard: null,
       },
       {
         id: "apply_result_older",
@@ -713,7 +894,7 @@ describe("ApplicationsScreen", () => {
         artifactCount: 0,
         latestCheckpointId: null,
         privacyReceipt: null,
-    reviewCard: null,
+        reviewCard: null,
       },
     ];
     const otherRecordForSameJob: ApplicationRecord = {
@@ -748,7 +929,7 @@ describe("ApplicationsScreen", () => {
           artifactRefs: [],
           checkpoints: [],
           consentRequests: [],
-  reviewCard: null,
+          reviewCard: null,
         }),
     );
 
@@ -845,7 +1026,7 @@ describe("ApplicationsScreen", () => {
       },
       events: [],
       crm: null,
-    automationMode: "prepare_only" as const,
+      automationMode: "prepare_only" as const,
     };
     const applyRuns: ApplyRunSummary[] = [
       {
@@ -915,7 +1096,7 @@ describe("ApplicationsScreen", () => {
         artifactCount: 0,
         latestCheckpointId: null,
         privacyReceipt: null,
-    reviewCard: null,
+        reviewCard: null,
       },
       {
         id: "apply_result_older",
@@ -940,7 +1121,7 @@ describe("ApplicationsScreen", () => {
         artifactCount: 0,
         latestCheckpointId: null,
         privacyReceipt: null,
-    reviewCard: null,
+        reviewCard: null,
       },
     ];
     const otherRecordForSameJob: ApplicationRecord = {
@@ -975,7 +1156,7 @@ describe("ApplicationsScreen", () => {
           artifactRefs: [],
           checkpoints: [],
           consentRequests: [],
-  reviewCard: null,
+          reviewCard: null,
         }),
     );
 
@@ -1090,7 +1271,7 @@ describe("ApplicationsScreen", () => {
       artifactCount: 0,
       latestCheckpointId: null,
       privacyReceipt: null,
-    reviewCard: null,
+      reviewCard: null,
     };
     const legacyAttempt = ApplicationAttemptSchema.parse({
       id: "attempt_legacy",
@@ -1117,7 +1298,7 @@ describe("ApplicationsScreen", () => {
           artifactRefs: [],
           checkpoints: [],
           consentRequests: [],
-  reviewCard: null,
+          reviewCard: null,
         }),
     );
 
@@ -1245,7 +1426,7 @@ describe("ApplicationsScreen", () => {
       artifactCount: 0,
       latestCheckpointId: null,
       privacyReceipt: null,
-    reviewCard: null,
+      reviewCard: null,
     };
 
     render(
@@ -1329,7 +1510,7 @@ describe("ApplicationsScreen", () => {
       },
       events: [],
       crm: null,
-    automationMode: "prepare_only" as const,
+      automationMode: "prepare_only" as const,
     };
     const applyRun: ApplyRunSummary = {
       id: "apply_run_visual",
@@ -1393,7 +1574,7 @@ describe("ApplicationsScreen", () => {
       artifactCount: 1,
       latestCheckpointId: "apply_checkpoint_visual",
       privacyReceipt: null,
-    reviewCard: null,
+      reviewCard: null,
     };
     const onGetApplyRunDetails = vi.fn(
       (): Promise<ApplyRunDetails> =>
@@ -1459,7 +1640,7 @@ describe("ApplicationsScreen", () => {
             },
           ],
           consentRequests: [],
-  reviewCard: null,
+          reviewCard: null,
         }),
     );
 
@@ -1650,8 +1831,12 @@ describe("ApplicationsScreen", () => {
       await screen.findByText("No application selected in this view"),
     ).toBeTruthy();
     expect(screen.queryByRole("combobox", { name: "Stage" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Export this application (CSV)" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Export this application (JSON)" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Export this application (CSV)" }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Export this application (JSON)" }),
+    ).toBeNull();
     expect(onSelectRecord).not.toHaveBeenCalled();
 
     fireEvent.change(
@@ -1660,8 +1845,12 @@ describe("ApplicationsScreen", () => {
     );
     expect(await screen.findByRole("combobox", { name: "Stage" })).toBeTruthy();
     expect(screen.getByText("Backend Engineer · Beta")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Export this application (CSV)" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Export this application (JSON)" })).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "Export this application (CSV)" }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "Export this application (JSON)" }),
+    ).toBeTruthy();
     expect(onSelectRecord).not.toHaveBeenCalled();
   });
 
@@ -1694,7 +1883,9 @@ describe("ApplicationsScreen", () => {
       await screen.findByText("No application selected in this view"),
     ).toBeTruthy();
     expect(screen.queryByRole("combobox", { name: "Stage" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Export this application (CSV)" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Export this application (CSV)" }),
+    ).toBeNull();
     expect(onSelectRecord).not.toHaveBeenCalled();
 
     fireEvent.click(
@@ -1777,8 +1968,12 @@ describe("ApplicationsScreen", () => {
     ]) {
       expect(screen.queryByRole("button", { name })).toBeNull();
     }
-    expect(screen.queryByRole("button", { name: "Export this application (CSV)" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Export this application (JSON)" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Export this application (CSV)" }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Export this application (JSON)" }),
+    ).toBeNull();
     expect(screen.queryByRole("button", { name: "Saved views" })).toBeNull();
 
     // The tracker is a named destination reached explicitly, and the route

@@ -1,3 +1,4 @@
+import { stopAssistantUiResumeBatch } from "./use-job-finder-page-controller-actions";
 import { useResumeOperationStarts } from "./use-resume-operation-starts";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
@@ -53,7 +54,7 @@ import {
   getActiveResumeWorkspaceJobId,
   getJobFinderWorkspaceSelection,
   getLatestApplicationAttempt,
-  useResettableSelection,
+  useApplicationSelection,
   useRetainedSelection,
 } from "./use-job-finder-page-controller-helpers";
 import { applyJobFinderWindowCloseGuard } from "./job-finder-window-close-guard";
@@ -441,6 +442,18 @@ export function useJobFinderPageController() {
     useState<TailoredDraftPreparationViewState>(
       createIdleTailoredDraftPreparationState,
     );
+  useEffect(
+    () =>
+      window.nordri.assistant?.onResumeBatchStop?.((batchId) => {
+        if (!stopAssistantUiResumeBatch(batchId)) return;
+        setTailoredDraftPreparation((current) =>
+          current.status === "running"
+            ? { ...current, stopRequested: true }
+            : current,
+        );
+      }),
+    [],
+  );
   const tailoredDraftPreparationRunRef = useRef(false);
   const tailoredDraftPreparationStopRequestedRef = useRef(false);
   const tailoredDraftPreparationDisposedRef = useRef(false);
@@ -537,7 +550,7 @@ export function useJobFinderPageController() {
     },
   });
   const [selectedApplicationRecordId, setSelectedApplicationRecordId] =
-    useResettableSelection(
+    useApplicationSelection(
       workspaceState.status === "ready"
         ? workspaceState.workspace.selectedApplicationRecordId
         : null,

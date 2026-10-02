@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { Script } from "node:vm";
+import { checkMore, checkMoreLogs } from "./check-more.mjs";
 
 const confirmation = "Thank you! Your application has been received.";
 const directory = new URL("./", import.meta.url);
@@ -323,6 +324,7 @@ try {
   await request("/missing", {}, 404);
   await request("/greenhouse/jobs/999", {}, 404);
   await request("/workday/apply/999", {}, 404);
+  const more = await checkMore({ request, application, index });
   // Stop only this child, drain its output, then compare stdout with the on-disk log.
   server.kill("SIGTERM");
   await exited;
@@ -332,7 +334,7 @@ try {
     .map((line) => JSON.parse(line));
   assert.equal(
     posts.length,
-    18,
+    18 + more.postCount,
     "Every POST must produce one stdout JSON line",
   );
   assert.deepEqual(
@@ -360,7 +362,11 @@ try {
   assert.equal(documentsPost.fields.transcript.filename, "transcript.txt");
   await rm(submissionsLogPath, { force: true });
   console.log(
-    `PASS: ${requestCount} requests; 5 listings, 50 jobs, 50 apply pages, account gate, CAPTCHA gate, uploads, autosaves, 5 confirmations and POST logs.`,
+    `PASS: 5 original listings, 50 jobs, 50 apply pages, account gate, CAPTCHA gate, uploads, autosaves, 5 confirmations and POST logs.`,
+  );
+  checkMoreLogs(posts, more);
+  console.log(
+    `PASS: ${requestCount} HTTP requests; ${posts.length} stdout/file POST log entries match; passwords redacted and uploads metadata only.`,
   );
 } catch (error) {
   console.error(error);

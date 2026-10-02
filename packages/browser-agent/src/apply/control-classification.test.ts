@@ -141,3 +141,21 @@ describe("answered controls", () => {
     ).toBe(true);
   });
 });
+
+test("privacy notice acknowledgement is a declaration, never a notice period", () => {
+  const control = {
+    kind: "checkbox" as const,
+    label: "I acknowledge the privacy notice",
+    groupLabel: "Review and send",
+    placeholder: "",
+  };
+  expect(inferAttestationKind(control)).toBe("privacy_notice_acknowledgement");
+  expect(inferQuestionKind(control)).toBe("other");
+  expect(
+    inferQuestionKind({
+      ...control,
+      kind: "text",
+      label: "What is your notice period?",
+    }),
+  ).toBe("notice_period");
+});

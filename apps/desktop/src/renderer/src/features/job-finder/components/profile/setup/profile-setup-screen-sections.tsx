@@ -282,6 +282,7 @@ export function ProfileSetupSummaryCards(props: {
 
 export function ProfileSetupPathCard(props: {
   currentStep: ProfileSetupStep;
+  unsavedSteps?: readonly ProfileSetupStep[];
   disabled?: boolean;
   /** Omitted means no imported resume: the Import row must then never read complete. */
   hasImportedResume?: boolean;
@@ -328,16 +329,21 @@ export function ProfileSetupPathCard(props: {
           const optionalReviewCount = stepReviewItems.filter(
             isOptionalPendingReviewItem,
           ).length;
-          const isComplete = isProfileSetupPathStepComplete({
-            currentStep: props.currentStep,
-            hasImportedResume: props.hasImportedResume ?? false,
-            pendingBlockingReviewCount: pendingReviewCount,
-            readiness: props.readiness ?? null,
-            setupStatus: props.profileSetupState.status,
-            stepId: step.id,
-          });
-          const stateBadge =
-            requiredSetupItemCount > 0
+          const hasUnsavedChanges =
+            props.unsavedSteps?.includes(step.id) ?? false;
+          const isComplete =
+            !hasUnsavedChanges &&
+            isProfileSetupPathStepComplete({
+              currentStep: props.currentStep,
+              hasImportedResume: props.hasImportedResume ?? false,
+              pendingBlockingReviewCount: pendingReviewCount,
+              readiness: props.readiness ?? null,
+              setupStatus: props.profileSetupState.status,
+              stepId: step.id,
+            });
+          const stateBadge = hasUnsavedChanges
+            ? { label: "Unsaved changes", variant: "outline" as const }
+            : requiredSetupItemCount > 0
               ? {
                   label: formatProfileSetupRequiredItemCount(
                     requiredSetupItemCount,

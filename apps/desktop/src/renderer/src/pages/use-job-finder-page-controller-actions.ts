@@ -12,6 +12,7 @@ import {
 } from "@nordri/contracts";
 import type {
   AppearanceTheme,
+  AssistantResumeBatchState,
   ApplicationCrmSettings,
   CandidateProfile,
   DiscoveryActivityEvent,
@@ -253,6 +254,16 @@ let isTailoredDraftPreparationRunActive = false;
  * forty-five seconds after pressing it. This flag lives as long as the run.
  */
 let tailoredDraftPreparationStopRequested = false;
+let uiResumeBatch: AssistantResumeBatchState | null = null;
+
+export function stopAssistantUiResumeBatch(batchId: string): boolean {
+  if (uiResumeBatch?.id === batchId && !uiResumeBatch.done) {
+    uiResumeBatch.stopRequested = true;
+    tailoredDraftPreparationStopRequested = true;
+    return true;
+  }
+  return false;
+}
 
 /**
  * Route ownership for the single page-level action status (`ActionState`).
@@ -1224,7 +1235,9 @@ export function createPrimaryPageActions(
               return;
             }
             setResumeWorkspaceDirty(false);
-            navigate("/job-finder/applications");
+            if (jobFinderStatusRoute !== "/job-finder/applications") {
+              navigate("/job-finder/applications");
+            }
           },
           successMessage,
           // Preparation can run for minutes and can hang on a job site; the
@@ -1295,6 +1308,19 @@ export function createPrimaryPageActions(
 
     const eligibleTotal = countTailoredDraftPreparationEligible(queue);
     const completedJobIds = new Set<string>();
+    const batch: AssistantResumeBatchState = {
+      id: crypto.randomUUID(),
+      jobIds: candidates.map((item) => item.jobId),
+      activeJobIds: [],
+      completedJobIds: [],
+      done: false,
+      stopRequested: false,
+    };
+    uiResumeBatch = batch;
+    const syncBatch = async () => {
+      const result = await window.nordri.assistant.syncResumeBatch(batch);
+      if (result.stopRequested) stopAssistantUiResumeBatch(batch.id);
+    };
     isTailoredDraftPreparationRunActive = true;
     tailoredDraftPreparationRunRef.current = true;
     tailoredDraftPreparationStopRequestedRef.current = false;
@@ -1311,45 +1337,92 @@ export function createPrimaryPageActions(
         totalCount: candidates.length,
       });
 
-      void prepareTailoredDraftBatch(
-        candidates,
-        async (jobId) => {
-          try {
-            await withPendingScope(
-              jobFinderPendingActions.resumeJob(jobId),
-              () => actions.generateResume(jobId),
-            );
-            completedJobIds.add(jobId);
-            return true;
-          } catch {
-            return false;
-          }
-        },
-        {
-          onProgress: ({
-            completedCount,
-            currentIndex,
-            failedCount,
-            totalCount,
-          }) => {
-            if (tailoredDraftPreparationDisposedRef.current) return;
+      void syncBatch()
+        .then(() =>
+          prepareTailoredDraftBatch(
+            candidates,
+            async (jobId) => {
+              try {
+                batch.activeJobIds.push(jobId);
+                await syncBatch();
+                if (
+                  batch.stopRequested ||
+                  tailoredDraftPreparationStopRequested ||
+                  tailoredDraftPreparationStopRequestedRef.current ||
+                  tailoredDraftPreparationDisposedRef.current
+                )
+                  return null;
+                const current = latestWorkspaceRef.current ?? workspace;
+                if (
+                  current.reviewQueue.find((item) => item.jobId === jobId)
+                    ?.resumeApplicationMode === "original_resume"
+                ) {
+                  completedJobIds.add(jobId);
+                  batch.completedJobIds.push(jobId);
+                  return "original";
+                }
+                const generated = await withPendingScope(
+                  jobFinderPendingActions.resumeJob(jobId),
+                  () => actions.generateResume(jobId),
+                );
+                completedJobIds.add(jobId);
+                batch.completedJobIds.push(jobId);
+                if (
+                  generated?.reviewQueue?.find((item) => item.jobId === jobId)
+                    ?.resumeApplicationMode === "original_resume"
+                ) {
+                  return "original";
+                }
+                // A finished generation counts as written unless its asset
+                // says the AI was unavailable and the saved wording was kept.
+                const asset = generated?.tailoredAssets?.find(
+                  (entry) => entry.jobId === jobId,
+                );
+                return asset?.generationMethod === "deterministic"
+                  ? "fallback"
+                  : "written";
+              } catch {
+                return false;
+              } finally {
+                batch.activeJobIds = batch.activeJobIds.filter(
+                  (id) => id !== jobId,
+                );
+                await syncBatch();
+              }
+            },
+            {
+              onProgress: ({
+                completedCount,
+                fallbackCount,
+                originalChoiceCount,
+                currentIndex,
+                failedCount,
+                totalCount,
+              }) => {
+                if (tailoredDraftPreparationDisposedRef.current) return;
 
-            setTailoredDraftPreparation((current) => ({
-              ...current,
-              attemptedCount: currentIndex,
-              completedCount,
-              failedCount,
-              currentIndex,
-              totalCount,
-              status: "running",
-            }));
-          },
-          shouldStop: () =>
-            tailoredDraftPreparationStopRequested ||
-            tailoredDraftPreparationStopRequestedRef.current ||
-            tailoredDraftPreparationDisposedRef.current,
-        },
-      )
+                setTailoredDraftPreparation((current) => ({
+                  ...current,
+                  attemptedCount: currentIndex,
+                  completedCount,
+                  ...(fallbackCount ? { fallbackCount } : {}),
+                  ...(originalChoiceCount ? { originalChoiceCount } : {}),
+                  failedCount,
+                  currentIndex,
+                  totalCount,
+                  status: "running",
+                  stopRequested:
+                    batch.stopRequested ||
+                    tailoredDraftPreparationStopRequested,
+                }));
+              },
+              shouldStop: () =>
+                tailoredDraftPreparationStopRequested ||
+                tailoredDraftPreparationStopRequestedRef.current ||
+                tailoredDraftPreparationDisposedRef.current,
+            },
+          ),
+        )
         .then((result) => {
           // A disposed controller no longer owns visible state; skip the
           // final aggregate write instead of updating a dead tree.
@@ -1374,6 +1447,12 @@ export function createPrimaryPageActions(
           const finalState: TailoredDraftPreparationViewState = {
             attemptedCount: result.attemptedCount,
             completedCount: result.completedCount,
+            ...(result.fallbackCount
+              ? { fallbackCount: result.fallbackCount }
+              : {}),
+            ...(result.originalChoiceCount
+              ? { originalChoiceCount: result.originalChoiceCount }
+              : {}),
             currentIndex: null,
             eligibleRemainingCount: Math.max(
               0,
@@ -1401,7 +1480,17 @@ export function createPrimaryPageActions(
             ownerStartRoute,
           );
         })
-        .finally(() => {
+        .catch(() => {
+          if (tailoredDraftPreparationDisposedRef.current) return;
+          setTailoredDraftPreparation((current) => ({
+            ...current,
+            status: "failed",
+          }));
+        })
+        .finally(async () => {
+          batch.done = true;
+          batch.activeJobIds = [];
+          await syncBatch().catch(() => undefined);
           isTailoredDraftPreparationRunActive = false;
           tailoredDraftPreparationStopRequested = false;
           tailoredDraftPreparationRunRef.current = false;
@@ -1494,7 +1583,9 @@ export function createPrimaryPageActions(
               }),
             () => {
               setResumeWorkspaceDirty(false);
-              navigate("/job-finder/applications");
+              if (jobFinderStatusRoute !== "/job-finder/applications") {
+                navigate("/job-finder/applications");
+              }
             },
             "Applications updated. Check the latest attempt and next step there.",
             {
@@ -1573,7 +1664,9 @@ export function createPrimaryPageActions(
         () => {
           setResumeWorkspaceDirty(false);
           if (!options?.stayOnCurrentPage) {
-            navigate("/job-finder/applications");
+            if (jobFinderStatusRoute !== "/job-finder/applications") {
+              navigate("/job-finder/applications");
+            }
           }
         },
         (snapshot) =>
@@ -1603,6 +1696,25 @@ export function createPrimaryPageActions(
         () => actions.startAutoApplyRun(input),
         "Application staged. Press Apply now in Applications to start it.",
         jobFinderPendingActions.apply(),
+      );
+    },
+    onReviewResumePdf: (jobId: string) => {
+      const current = latestWorkspaceRef.current ?? workspace;
+      const approved = current.resumeExportArtifacts.some(
+        (artifact) => artifact.jobId === jobId && artifact.isApproved,
+      );
+      if (!approved) {
+        navigate(buildResumeWorkspaceRoute(jobId));
+        applyRouteScopedMessage({
+          message: "Review and approve a PDF for this job, then apply again.",
+        });
+        return;
+      }
+      void runAction(
+        () => actions.setJobResumeApplicationMode(jobId, "tailored_per_job"),
+        () => navigate(buildResumeWorkspaceRoute(jobId)),
+        "This job will use your approved PDF. Review it before applying again.",
+        { scope: jobFinderPendingActions.resumeJob(jobId) },
       );
     },
     onStartApplyCopilot: (input: JobFinderApplicationStartTarget) => {
@@ -1745,7 +1857,7 @@ export function createPrimaryPageActions(
       ),
     onRemoveReviewJob: (jobId: string) => {
       void confirmLeaveDirtyResumeWorkspace(
-        "move this job back to Find jobs",
+        "remove this job from Shortlisted",
       ).then((mayLeave) => {
         if (!mayLeave) {
           return;
@@ -1755,8 +1867,11 @@ export function createPrimaryPageActions(
           () => actions.removeJobFromReview(jobId),
           () => {
             clearResumeWorkspaceState();
-            setSelectedReviewJobId("");
-            navigate("/job-finder/discovery");
+            const queue = getCampaignReviewQueue();
+            const index = queue.findIndex((item) => item.jobId === jobId);
+            const next = queue[index + 1] ?? queue[index - 1];
+            setSelectedReviewJobId(next?.jobId ?? "");
+            navigate("/job-finder/review-queue", { replace: true });
           },
           "Job moved back to Find jobs.",
           { scope: jobFinderPendingActions.resumeJob(jobId) },
@@ -2024,6 +2139,11 @@ export function createPrimaryPageActions(
         },
       );
     },
+    onAssessJobListing: async (jobId: string) => {
+      await withPendingScope(jobFinderPendingActions.discoveryJob(jobId), () =>
+        actions.assessJobListing(jobId),
+      );
+    },
     onQueueJob: async (jobId: string): Promise<JobFinderQueuedJobOutcome> => {
       // Request-local shortlist outcome: the awaited result belongs to this
       // exact click, so overlapping shortlists resolving out of order can
@@ -2082,6 +2202,12 @@ export function createPrimaryPageActions(
 
       tailoredDraftPreparationStopRequestedRef.current = true;
       tailoredDraftPreparationStopRequested = true;
+      if (uiResumeBatch && !uiResumeBatch.done) {
+        uiResumeBatch.stopRequested = true;
+        void window.nordri.assistant
+          .syncResumeBatch(uiResumeBatch)
+          .catch(() => undefined);
+      }
       // Show at once that the press landed; the active drafts still finish.
       setTailoredDraftPreparation((current) =>
         current.status === "running"

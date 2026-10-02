@@ -11,6 +11,7 @@ import {
 } from "@nordri/contracts";
 import {
   buildApplyFormObservation,
+  inferAttestationKind,
   selectObservedSignInAction,
 } from "@nordri/browser-agent";
 
@@ -349,8 +350,9 @@ const OPEN_MANUAL_ANSWER_STATES = [
 /**
  * Other open question steps a just-given answer covers completely: every
  * question they still wait on (every required one at least) is the same
- * question, by its normalized wording. Within the same batch always; across
- * batches only when the person saved the answer for next time.
+ * question, by its normalized wording. Factual answers can cover the batch;
+ * declarations and context-dependent answers need deliberate saving to be
+ * reused on another application.
  */
 export async function findManualAnswerStepsCoveredBy(input: {
   ctx: Pick<WorkspaceServiceContext, "repository">;
@@ -420,6 +422,23 @@ export async function findManualAnswerStepsCoveredBy(input: {
         question.status === "detected" && !answeredIds.has(question.id),
     );
     const answers = waiting.flatMap((question) => {
+      if (
+        !input.savedForFuture &&
+        /neither.*(?:country|region)|ambiguous|does not (?:identify|name).*country/iu.test(
+          question.note ?? "",
+        )
+      )
+        return [];
+      if (
+        !input.savedForFuture &&
+        inferAttestationKind({
+          label: question.prompt,
+          groupLabel: question.description ?? "",
+          placeholder: "",
+          kind: "other",
+        }) !== null
+      )
+        return [];
       const answer = answerByPrompt.get(
         normalizeAnswerQuestion(question.prompt),
       );

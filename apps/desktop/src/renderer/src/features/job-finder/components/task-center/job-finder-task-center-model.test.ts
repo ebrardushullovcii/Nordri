@@ -707,7 +707,7 @@ describe("buildJobFinderTaskCenterModel", () => {
     expect(durationMs).toBeLessThan(500);
   });
 
-  test("marks a persisted nonterminal resume run interrupted after restart instead of pretending it is active", () => {
+  test("keeps a persisted running import active after navigation clears the local pending flag", () => {
     const run = {
       id: "resume_stale",
       sourceResumeId: "resume_1",
@@ -730,10 +730,10 @@ describe("buildJobFinderTaskCenterModel", () => {
     });
     const task = findTask(model, "resume_import");
 
-    expect(task.status).toBe("interrupted");
-    expect(task.stageLabel).toBe("Import interrupted");
+    expect(task.status).toBe("active");
+    expect(task.stageLabel).toBe("Building profile suggestions");
     expect(task.canCancel).toBe(false);
-    expect(task.resumeRoute).toBe("/job-finder/profile");
+    expect(task.resumeRoute).toBeNull();
     expect(task.historyEstimateLabel).toBeNull();
   });
 

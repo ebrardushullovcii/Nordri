@@ -19,6 +19,8 @@ export const APPLICATION_CRM_STAGE_ORDER: readonly ApplicationCrmStage[] = [
   "shortlisted",
   "preparing",
   "ready_for_approval",
+  "failed",
+  "cancelled",
   "applied",
   "employer_viewed",
   "recruiter_contact",
@@ -37,6 +39,8 @@ export const APPLICATION_CRM_STAGE_NAMES: Record<ApplicationCrmStage, string> =
     shortlisted: "Shortlisted",
     preparing: "Preparing",
     ready_for_approval: "Ready for approval",
+    failed: "Could not apply",
+    cancelled: "Cancelled by you",
     applied: "Applied",
     employer_viewed: "Employer viewed",
     recruiter_contact: "Recruiter contact",
@@ -55,6 +59,8 @@ export const APPLICATION_CRM_STAGE_LABELS: Record<ApplicationCrmStage, string> =
     shortlisted: "Shortlisted",
     preparing: "Preparing",
     ready_for_approval: "Ready for approval",
+    failed: "Could not apply",
+    cancelled: "Cancelled by you",
     // Provenance lives in the "You recorded this" badge, not in every label.
     applied: "Applied",
     employer_viewed: "Employer viewed",
@@ -77,6 +83,25 @@ export function inferApplicationCrmStageForView(
 }
 
 function inferActivityStage(record: ApplicationRecord): ApplicationCrmStage {
+  if (
+    ![
+      "submitted",
+      "assessment",
+      "interview",
+      "offer",
+      "rejected",
+      "withdrawn",
+      "archived",
+    ].includes(record.status)
+  ) {
+    if (record.lastAttemptState === "cancelled") return "cancelled";
+    if (
+      record.lastAttemptState === "failed" ||
+      record.lastAttemptState === "unsupported"
+    )
+      return "failed";
+  }
+
   // A paused or blocked attempt is still being prepared and is waiting on the
   // user. Reading only `status` showed "Ready for approval" on the Stages tab
   // while the Preparation tab said Needs you about the same application.
@@ -313,6 +338,7 @@ export function buildApplicationCrmCalendarForView(
             kind: "interview" as const,
             title: `${interview.title}${employerSuffix}`,
             startsAt: interview.startsAt,
+            timeZone: interview.timeZone,
             endsAt: interview.endsAt,
             status: interview.status,
           })),

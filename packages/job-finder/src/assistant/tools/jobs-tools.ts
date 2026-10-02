@@ -1,3 +1,4 @@
+import { runningSearchState } from "../work-state";
 import {
   DiscoveryFeedbackReasonSchema,
   JobDiscoveryTargetSchema,
@@ -606,7 +607,11 @@ export const searchForJobsTool = defineTool({
       );
       return {
         summary: `A search is already running (run ${before.activeDiscoveryRun.id}); this conversation continues when it ends.`,
-        data: { runId: before.activeDiscoveryRun.id },
+        data: {
+          runId: before.activeDiscoveryRun.id,
+          running: runningSearchState(before),
+          started: false,
+        },
       };
     }
     session.assertCurrent();
@@ -628,7 +633,11 @@ export const searchForJobsTool = defineTool({
     );
     return {
       summary: `The search started (run ${started.runId}). This conversation continues when it ends; do not wait for it.`,
-      data: { runId: started.runId },
+      data: {
+        runId: started.runId,
+        running: runningSearchState(await service.getWorkspaceSnapshot()),
+        started: true,
+      },
     };
   },
 });

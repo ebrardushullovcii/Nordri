@@ -14,6 +14,7 @@ import {
   areEquivalentRecordCandidates,
   isClearlyResumeDateRange,
   isObject,
+  cleanImportedValue,
   stringifyCandidateTarget,
   toCandidateListValues,
   toNarrativeStringArray,
@@ -409,7 +410,7 @@ function normalizeSupportedEducationValue(
 
   const trimmed = value.trim();
   const evidenceText = candidate.evidenceText?.trim();
-  if (evidenceText) {
+  if (evidenceText && kind === "location") {
     const evidenceTokens = new Set(educationEvidenceTokens(evidenceText));
     const valueTokens = educationEvidenceTokens(trimmed);
     if (
@@ -421,15 +422,11 @@ function normalizeSupportedEducationValue(
   }
 
   const normalized = normalizeText(trimmed);
-  const compact = normalized.replace(/\s+/g, "");
   const degreeMarker =
     /\b(?:associate|associates|bachelor|bachelors|master|masters|doctor|doctorate|phd|degree|diploma|certificate|bsc|bba|msc|mba|ba|bs|ma|ms)\b/;
 
   if (kind === "degree") {
-    return degreeMarker.test(normalized) ||
-      ["ba", "bs", "ma", "ms"].some((prefix) => compact.startsWith(prefix))
-      ? trimmed
-      : null;
+    return trimmed;
   }
 
   if (kind === "fieldOfStudy") {
@@ -1387,8 +1384,7 @@ function promoteImportCandidatesIntoEmptyProfile(
       : freshStart || isListTarget(candidate) || existingIsEmpty;
     if (
       !eligible ||
-      ((candidate.target.key === "employmentTypes" ||
-        candidate.target.key === "compensation") &&
+      (["employmentTypes", "compensation"].includes(candidate.target.key) &&
         scalarValueConflictsWithWorkspace(
           profile,
           searchPreferences,
@@ -2271,53 +2267,6 @@ function shouldMergeRecordCandidate(
   }
 }
 
-function shouldAutoApplyAdditionalFreshStartRecordCandidate(
-  profile: CandidateProfile,
-  candidate: ResumeImportFieldCandidate,
-): boolean {
-  if (
-    !isFreshStartCandidateProfile(profile) ||
-    !isRecordTarget(candidate) ||
-    !isObject(candidate.value)
-  ) {
-    return false;
-  }
-
-  if (
-    candidate.target.section !== "experience" ||
-    profile.experiences.length > 0
-  ) {
-    return false;
-  }
-
-  const value = candidate.value;
-  const hasCompany =
-    typeof value.companyName === "string" &&
-    value.companyName.trim().length > 0;
-  const hasTitle =
-    typeof value.title === "string" && value.title.trim().length > 0;
-  const hasDates =
-    (typeof value.startDate === "string" &&
-      value.startDate.trim().length > 0) ||
-    (typeof value.endDate === "string" && value.endDate.trim().length > 0) ||
-    value.isCurrent === true;
-  const hasSubstantiveDetails =
-    (typeof value.summary === "string" && value.summary.trim().length >= 24) ||
-    toNarrativeStringArray(value.achievements).length > 0 ||
-    toStringArray(value.skills).length > 0;
-  const completeness = scoreExperienceRecordCompleteness(value);
-  const overall = candidateOverallConfidence(candidate);
-
-  return (
-    hasCompany &&
-    hasTitle &&
-    (hasDates || hasSubstantiveDetails) &&
-    completeness >= (hasDates ? 4 : 3) &&
-    overall >= 0.72 &&
-    hasSufficientEvidence(candidate)
-  );
-}
-
 function shouldMergeListCandidate(
   candidate: ResumeImportFieldCandidate,
 ): boolean {
@@ -2815,7 +2764,14 @@ export function reconcileCandidates(
 ): ResumeImportFieldCandidate[] {
   const resolved: ResumeImportFieldCandidate[] = [];
   const { candidates: foldedCandidates, foldedAway } =
-    foldLooseRecordFieldCandidates(candidates);
+    foldLooseRecordFieldCandidates(
+      candidates.map((candidate) => ({
+        ...candidate,
+        value: cleanImportedValue(
+          candidate.value,
+        ) as ResumeImportFieldCandidate["value"],
+      })),
+    );
   for (const candidate of foldedAway) {
     resolved.push(
       applyCandidateResolution(
@@ -3013,18 +2969,12 @@ export function reconcileCandidates(
               )
             : candidate,
         );
-        let hasAutoAppliedCollectionCandidate = false;
         const recordGroupResolved: ResumeImportFieldCandidate[] = [];
 
         rankedGroup.forEach((candidate, index) => {
           const recommendation = recommendationForCandidate(candidate);
           const shouldAutoApplyCollectionCandidate =
-            shouldMergeRecordCandidate(profile, candidate) &&
-            (!hasAutoAppliedCollectionCandidate ||
-              shouldAutoApplyAdditionalFreshStartRecordCandidate(
-                profile,
-                candidate,
-              ));
+            index === 0 && shouldMergeRecordCandidate(profile, candidate);
           const resolution =
             recommendation === "abstain"
               ? "abstained"
@@ -3033,10 +2983,6 @@ export function reconcileCandidates(
                 : index === 0
                   ? "needs_review"
                   : "rejected";
-
-          if (resolution === "auto_applied") {
-            hasAutoAppliedCollectionCandidate = true;
-          }
 
           const resolvedCandidate = applyCandidateResolution(
             profile,

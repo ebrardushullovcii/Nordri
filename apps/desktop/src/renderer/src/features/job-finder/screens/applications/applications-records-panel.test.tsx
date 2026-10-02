@@ -30,6 +30,108 @@ import {
 afterEach(cleanup);
 
 describe("ApplicationsRecordsPanel", () => {
+  it("removes stale preparing guidance from a failed row", () => {
+    const record = ApplicationRecordSchema.parse({
+      id: "failed",
+      jobId: "job_failed",
+      title: "Engineer",
+      company: "Example",
+      status: "approved",
+      lastAttemptState: "failed",
+      lastActionLabel: "Profile changed",
+      nextActionLabel: "Job Finder is preparing this job now.",
+      lastUpdatedAt: "2026-10-02T10:00:00.000Z",
+    });
+    const result = ApplyJobResultSchema.parse({
+      id: "result",
+      runId: "run",
+      jobId: record.jobId,
+      applicationRecordId: record.id,
+      state: "failed",
+      summary: "Could not apply",
+      detail: "Profile changed",
+      startedAt: record.lastUpdatedAt,
+      updatedAt: record.lastUpdatedAt,
+    });
+    render(
+      <MemoryRouter>
+        <ApplicationsRecordsPanel
+          activeFilter="all"
+          applicationRecords={[record]}
+          latestApplyResultByRecordId={new Map([[record.id, result]])}
+          filterCounts={{
+            all: 1,
+            needs_action: 1,
+            in_progress: 0,
+            submitted: 0,
+            manual_only: 0,
+          }}
+          hasAnyApplications
+          onFilterChange={vi.fn()}
+          onSelectRecord={vi.fn()}
+          selectedRecord={record}
+        />
+      </MemoryRouter>,
+    );
+    expect(
+      screen.queryByText(/Job Finder is preparing this job now/),
+    ).toBeNull();
+    expect(screen.getByText("Next: Try again")).toBeTruthy();
+  });
+  it("names an empty plan and links to all saved applications", () => {
+    render(
+      <MemoryRouter>
+        <ApplicationsRecordsPanel
+          activeFilter="all"
+          applicationRecords={[]}
+          filterCounts={{
+            all: 0,
+            needs_action: 0,
+            in_progress: 0,
+            submitted: 0,
+            manual_only: 0,
+          }}
+          hasAnyApplications={false}
+          searchPlanName="UK design"
+          hasOtherPlanApplications
+          onFilterChange={vi.fn()}
+          onSelectRecord={vi.fn()}
+          selectedRecord={null}
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.getByText("No applications in UK design")).toBeTruthy();
+    expect(
+      screen
+        .getByRole("link", { name: "Show all applications" })
+        .getAttribute("href"),
+    ).toBe("/job-finder/applications?scope=all");
+  });
+  it("keeps filter guidance when the current plan has applications", () => {
+    render(
+      <MemoryRouter>
+        <ApplicationsRecordsPanel
+          activeFilter="submitted"
+          applicationRecords={[]}
+          filterCounts={{
+            all: 1,
+            needs_action: 1,
+            in_progress: 0,
+            submitted: 0,
+            manual_only: 0,
+          }}
+          hasAnyApplications
+          searchPlanName="UK design"
+          hasOtherPlanApplications
+          onFilterChange={vi.fn()}
+          onSelectRecord={vi.fn()}
+          selectedRecord={null}
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.getByText("No applications in this view")).toBeTruthy();
+    expect(screen.queryByText("No applications in UK design")).toBeNull();
+  });
   it.each(["filling", "submitted"] as const)(
     "announces the current %s result instead of a stale attempt",
     (state) => {

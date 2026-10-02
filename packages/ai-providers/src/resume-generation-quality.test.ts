@@ -100,7 +100,7 @@ describe("resume generation quality", () => {
     }
   });
 
-  test("builds a genuinely job-targeted frontend resume instead of preserving a generic full-stack profile", () => {
+  test("keeps the saved fallback summary while ordering skills and roles for the job", () => {
     const baseProfile = createProfile();
     const profile: typeof baseProfile = {
       ...baseProfile,
@@ -207,11 +207,7 @@ describe("resume generation quality", () => {
       resumeText: profile.baseResume.textContent,
     });
 
-    expect(result.summary).toMatch(
-      /^JavaScript Frontend Developer with 7\+ years/,
-    );
-    expect(result.summary).toContain("responsive React and Next.js interfaces");
-    expect(result.summary).not.toContain("AWS");
+    expect(result.summary).toBe(profile.summary);
     expect(result.coreSkills.slice(0, 4)).toEqual([
       "JavaScript",
       "React",
@@ -1147,10 +1143,10 @@ describe("resume generation quality", () => {
     expect(result.summary).not.toContain(
       "Acme Cloud is redefining enterprise workflow orchestration",
     );
-    expect(result.summary).toContain("Staff Frontend Engineer");
+    expect(result.summary).toBe(input.profile.summary);
   });
 
-  test("replaces first-person career-change meta with grounded resume copy", () => {
+  test("keeps saved fallback summary while cleaning role-level career-change meta", () => {
     const baseProfile = createProfile();
     const careerChangeMeta =
       "After deciding to return to my passion for development, I transitioned back into a hands-on developer role.";
@@ -1209,9 +1205,7 @@ describe("resume generation quality", () => {
       },
     });
 
-    expect(result.summary).toContain("Senior Frontend Engineer");
-    expect(result.summary).toContain("React");
-    expect(result.summary).not.toContain("passion");
+    expect(result.summary).toBe(profile.professionalSummary.fullSummary);
     expect(result.summary).not.toContain("Unproven Job Keyword");
     expect(result.experienceEntries[0]?.summary).toBeNull();
     expect(result.experienceEntries[0]?.bullets).toContain(

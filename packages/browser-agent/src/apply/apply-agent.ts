@@ -23,6 +23,7 @@ import {
   buildPendingQuestion,
   createApplyGuardState,
   executeApplyProposal,
+  fileFieldHoldsOtherFile,
   questionPrompt,
   type ApplyExecutionOutcome,
 } from "./policy-executor";
@@ -204,6 +205,8 @@ export async function runApplyAgent(
   const now = config.now ?? (() => new Date());
   const filled: ApplyFilledControl[] = [];
   const attachments: ApplyAttachedDocument[] = [];
+  const observedAnswers = new Map<string, ApplyFilledControl>();
+  const observedAttachments = new Map<string, ApplyAttachedDocument>();
   const pauses: ApplyPause[] = [];
   const notes: string[] = [];
   const timeline: { at: string; text: string }[] = [];
@@ -222,6 +225,8 @@ export async function runApplyAgent(
   const experienceState: { gap: string | null } = { gap: null };
   let experienceGapNudged = false;
   let advanceFinishNudged = false;
+  let staleResumeNudged = false;
+  let optionalLetterNudged = false;
 
   const pendingQuestionKey = (
     control: Pick<
@@ -290,6 +295,73 @@ export async function runApplyAgent(
     // A person or a later page write may have answered a previously pending
     // question. Keep the live controls authoritative when continuing.
     for (const control of next.controls) {
+      const label = questionPrompt(control);
+      const fieldKey =
+        `${next.url?.split(/[?#]/u)[0] ?? ""}|${next.step.label ?? ""}|${control.choiceGroupKey ?? control.ref}|${label}`.slice(
+          0,
+          2_000,
+        );
+      if (control.kind === "file") {
+        if (control.answered) {
+          const fileName =
+            control.value.split(/[\\/]/u).at(-1) ?? control.value;
+          const recorded = [...attachments]
+            .reverse()
+            .find(
+              (entry) =>
+                entry.controlLabel === label && entry.fileName === fileName,
+            );
+          observedAttachments.set(fieldKey, {
+            ...(recorded ?? {
+              documentId: `observed.${control.ref}`,
+              fileName,
+              label,
+              controlLabel: label,
+              at: next.observedAt,
+            }),
+            fieldKey,
+          });
+        } else {
+          observedAttachments.delete(fieldKey);
+        }
+      } else if (
+        control.answered &&
+        (control.kind !== "radio" || control.checked) &&
+        !isSecurityChallengeControl(control)
+      ) {
+        const value =
+          control.kind === "checkbox"
+            ? "Yes"
+            : control.kind === "radio"
+              ? control.label || control.value
+              : control.selectedOptionLabel || control.value;
+        if (value.trim()) {
+          const recorded = [...filled]
+            .reverse()
+            .find(
+              (entry) => entry.label === label && entry.answer.value === value,
+            );
+          observedAnswers.set(fieldKey, {
+            ...(recorded ?? {
+              ref: control.ref,
+              label,
+              questionKind: control.questionKind,
+              answer: {
+                value,
+                kind: control.questionKind,
+                sourceKind: "profile",
+                sourceId: `observed.${control.ref}`,
+                provenanceLabel: "the filled application form",
+                groundedIn: [],
+              },
+              at: next.observedAt,
+            }),
+            fieldKey,
+          });
+        }
+      } else if (control.kind !== "radio" || !control.answered) {
+        observedAnswers.delete(fieldKey);
+      }
       if (control.answered)
         pendingQuestions.delete(pendingQuestionKey(control));
     }
@@ -431,6 +503,49 @@ export async function runApplyAgent(
           experienceGapNudged = true;
           return { kind: "ok", content: experienceState.gap };
         }
+        const resume = documentCatalog.find(
+          (document) => document.kind === "resume",
+        );
+        const staleUpload = observation.controls.find(
+          (control) =>
+            control.kind === "file" &&
+            control.questionKind === "resume" &&
+            control.answered &&
+            resume &&
+            fileFieldHoldsOtherFile(control.value, resume.fileName),
+        );
+        if (staleUpload && resume && !staleResumeNudged) {
+          staleResumeNudged = true;
+          return {
+            kind: "ok",
+            content: `"${questionPrompt(staleUpload)}" contains a different resume. The selected file is ${resume.fileName}.`,
+          };
+        }
+        // "Whenever there is room" covers optional letter fields too. Ask
+        // once; an empty optional field never stops the application.
+        const emptyOptionalLetter =
+          runConfig.writing?.coverLetterPolicy === "when_possible"
+            ? observation.controls.find(
+                (control) =>
+                  !control.required &&
+                  !control.disabled &&
+                  (control.visible || control.kind === "file") &&
+                  !control.answered &&
+                  isCoverLetterControl(control),
+              )
+            : undefined;
+        if (emptyOptionalLetter && !optionalLetterNudged) {
+          optionalLetterNudged = true;
+          return {
+            kind: "ok",
+            content: `"${questionPrompt(emptyOptionalLetter)}" is empty. The cover-letter setting asks for a letter in optional fields too: create and attach one before finishing.`,
+          };
+        }
+        if (emptyOptionalLetter) {
+          note(
+            `Left "${questionPrompt(emptyOptionalLetter)}" empty: Job Finder could not attach a letter there.`,
+          );
+        }
         // Completing the current step is not completing a multi-step form.
         // Give the model a chance to carry on before accepting a handoff.
         const hasAnotherStep =
@@ -554,6 +669,12 @@ export async function runApplyAgent(
                     detectedAt: now().toISOString(),
                     suggestion: null,
                     siblings: observation.controls,
+                    ...(isApplicationLetterOrStatement(control)
+                      ? {
+                          reason:
+                            "Job Finder could not create a letter for this field.",
+                        }
+                      : {}),
                   }),
                 );
               }
@@ -854,7 +975,10 @@ export async function runApplyAgent(
         (document) => document.id === created.document!.id,
       );
       if (existingIndex >= 0) documentCatalog.splice(existingIndex, 1);
-      documentCatalog.push(created.document);
+      documentCatalog.push({
+        ...created.document,
+        reviewText: { text: created.text, groundedIn: grounding.groundedIn },
+      });
       note(
         `Created ${purpose.replace(/_/gu, " ")} ${created.document.fileName} for this application.`,
       );
@@ -924,6 +1048,18 @@ export async function runApplyAgent(
   if (pauses.length > 0) {
     outcome = "paused";
     reason = pauses[0]?.summary ?? loop.reason;
+  } else if (
+    pageTools.state.observation?.blocker?.code === "application_closed"
+  ) {
+    const blocker = pageTools.state.observation.blocker;
+    pauses.push({
+      code: "page_blocked",
+      summary: blocker.summary,
+      question: null,
+      blocker,
+    });
+    outcome = "stuck";
+    reason = blocker.summary;
   } else if (personOwnedBlocker) {
     const pause: ApplyPause = {
       code: "page_blocked",
@@ -983,6 +1119,8 @@ export async function runApplyAgent(
     finalUrl: pageTools.state.observation?.url ?? null,
     filled,
     attachments,
+    reviewFilled: [...observedAnswers.values()],
+    reviewAttachments: [...observedAttachments.values()],
     pauses,
     notes: [...notes, ...guardState.notes, ...loop.turnNotes, timing],
     timeline,

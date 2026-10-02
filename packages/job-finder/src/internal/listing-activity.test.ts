@@ -1,4 +1,5 @@
 import {
+  ApplicationAttemptSchema,
   DiscoveryLedgerEntrySchema,
   ListingSignalRecordSchema,
   type DiscoveryLedgerEntry,
@@ -88,6 +89,43 @@ function activity(input: {
 }
 
 describe("listing activity projection", () => {
+  test("an apply-agent closure supersedes active discovery without closing another job", () => {
+    const target = job({ lastSeenAt: hour(9), lastVerifiedActiveAt: hour(9) });
+    const other = job({
+      id: "other",
+      canonicalUrl: "https://jobs.example.com/other",
+      lastSeenAt: hour(9),
+    });
+    const attempt = ApplicationAttemptSchema.parse({
+      id: "closed-attempt",
+      jobId: target.id,
+      applicationRecordId: "record",
+      state: "failed",
+      outcome: "shortlisted",
+      nextActionLabel: "Find another job",
+      summary: "This job is closed.",
+      detail: "No longer accepting applications.",
+      startedAt: hour(10),
+      updatedAt: hour(10),
+      completedAt: hour(10),
+      blocker: {
+        code: "application_closed",
+        summary: "This job is closed.",
+        detail: "No longer accepting applications.",
+      },
+    });
+    const views = projectDiscoveryJobViews({
+      jobs: [target, other],
+      discoveryLedger: [],
+      listingSignals: [],
+      applicationAttempts: [attempt],
+    });
+    expect(views.map((view) => view.listingActivity.status)).toEqual([
+      "closed",
+      "active",
+    ]);
+  });
+
   test("returns unknown without an activity observation", () => {
     expect(activity({ job: job() })).toEqual({ status: "unknown" });
   });

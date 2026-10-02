@@ -8,7 +8,11 @@ import { StatusBadge } from "../../components/status-badge";
 
 export type ResumeKeywordEvidenceJob = Pick<
   JobPosting,
-  "title" | "keySkills" | "keywordSignals" | "minimumQualifications"
+  | "title"
+  | "keySkills"
+  | "keywordSignals"
+  | "minimumQualifications"
+  | "benefits"
 >;
 
 export type ResumeKeywordEvidenceItem = {
@@ -205,13 +209,27 @@ function collectJobTerms(
 ): string[] {
   const terms = [
     ...(job?.keySkills ?? []),
-    ...(job?.keywordSignals ?? []).map((signal) => signal.label),
+    ...(job?.keywordSignals ?? [])
+      .filter((signal) => signal.kind !== "benefit")
+      .map((signal) => signal.label),
   ];
 
   // Qualification prose is intentionally not converted into keyword terms.
   // Explicit skills/signals and the saved targeted-keyword section are the
   // bounded request data this review aid can show without keyword stuffing.
-  return uniqueTerms([...terms, ...collectTargetedKeywords(draft)]);
+  const employerTerms = new Set(
+    [
+      ...(job?.benefits ?? []),
+      ...(job?.keywordSignals ?? [])
+        .filter((signal) => signal.kind === "benefit")
+        .map((signal) => signal.label),
+    ].map(normalizeForMatch),
+  );
+  // Perks and culture labels describe the employer, not what the person
+  // must show.
+  return uniqueTerms([...terms, ...collectTargetedKeywords(draft)]).filter(
+    (term) => !employerTerms.has(normalizeForMatch(term)),
+  );
 }
 
 function shortenEvidence(value: string): string {

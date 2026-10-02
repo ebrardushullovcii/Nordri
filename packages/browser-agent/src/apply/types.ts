@@ -209,6 +209,7 @@ export interface ApplyDocument {
   label: string;
   kind: CandidateAssetKind;
   loadBytes: () => Promise<Uint8Array>;
+  reviewText?: { text: string; groundedIn: string[] };
 }
 
 /**
@@ -363,6 +364,7 @@ export interface ApplyPause {
 }
 
 export interface ApplyFilledControl {
+  fieldKey?: string;
   ref: string;
   label: string;
   questionKind: ApplicationQuestionKind;
@@ -371,11 +373,13 @@ export interface ApplyFilledControl {
 }
 
 export interface ApplyAttachedDocument {
+  fieldKey?: string;
   documentId: string;
   fileName: string;
   label: string;
   controlLabel: string;
   at: string;
+  reviewText?: { text: string; groundedIn: string[] };
 }
 
 export type ApplyAgentOutcome =
@@ -394,6 +398,8 @@ export interface ApplyAgentResult {
   finalUrl: string | null;
   filled: ApplyFilledControl[];
   attachments: ApplyAttachedDocument[];
+  reviewFilled?: ApplyFilledControl[];
+  reviewAttachments?: ApplyAttachedDocument[];
   pauses: ApplyPause[];
   /** Plain-sentence trail of what happened, oldest first. */
   notes: string[];

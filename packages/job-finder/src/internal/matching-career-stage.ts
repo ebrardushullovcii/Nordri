@@ -218,9 +218,8 @@ export function deriveProfileCareerStage(
   ]
     .filter((value) => typeof value === "string" && value.trim().length > 0)
     .join(" ");
-  const years = Number.isFinite(profile.yearsExperience)
-    ? profile.yearsExperience
-    : 0;
+  const years = profile.yearsExperience;
+  if (years === null) return null;
 
   if (EARLY_CAREER_PROFILE_TITLE_PATTERN.test(titleEvidence) && years < 3) {
     return {

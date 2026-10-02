@@ -158,6 +158,7 @@ export function detectPostingLanguage(description: string): string | null {
 export function buildCoverLetterRequest(input: {
   sources: ApplyAnswerSources;
   preference: CoverLetterPreference;
+  today?: string;
 }): CoverLetterRequest {
   const { sources, preference } = input;
   const language =
@@ -179,7 +180,8 @@ export function buildCoverLetterRequest(input: {
     "- Claims about the person's skills, experience, achievements, and qualifications must be supported by their resume or profile. The posting describes the employer and role; it is not evidence of the person's experience. Do not state anything else as fact.",
     "- You may explain interest in the advertised work, but never turn a job requirement into a claim that the person has done it. Leave unsupported candidate claims out.",
     "- No invented employers, dates, numbers, qualifications, or enthusiasm for things not in the posting.",
-    "- Do not repeat the resume line by line. Say why this person and this job fit.",
+    "- Choose two or three supported examples and explain how each meets a stated need in the posting. Do not recap the full career or skills list.",
+    "- Use the role dates and today’s date for any duration. If the dates do not establish it, omit the duration.",
     `- ${TONE_GUIDANCE[preference.tone]}`,
     `- ${LENGTH_GUIDANCE[preference.length]}`,
     language
@@ -196,7 +198,8 @@ export function buildCoverLetterRequest(input: {
       ? `Resume going out with this application:\n${sources.resumeText.slice(0, 6_000)}`
       : null,
     "",
-    `About them: ${sources.profile.headline}. ${sources.profile.summary}`,
+    `Today: ${input.today ?? new Date().toISOString().slice(0, 10)}`,
+    buildApplicationProfileGrounding(sources.profile),
     preference.sample
       ? `\nTheir own letter, for voice only:\n${preference.sample.slice(0, 4_000)}`
       : null,

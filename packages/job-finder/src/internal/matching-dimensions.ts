@@ -6,6 +6,7 @@ import {
   type MatchDimensionsAssessment,
 } from "@nordri/contracts";
 
+import { resolvePostingSeniority } from "./posting-seniority";
 import type { MatchAssessmentPostingInput } from "./match-assessment-posting-input";
 import type {
   LocationCompatibilityState,
@@ -241,14 +242,15 @@ function buildPreferenceAlignment(
   const hasLocationPreference = searchPreferences.locations.length > 0;
   const hasWorkModePreference = searchPreferences.workModes.length > 0;
   const hasCompanyPreference = searchPreferences.companyWhitelist.length > 0;
+  const statedSeniority = resolvePostingSeniority(posting);
   const hasSeniorityPreference = searchPreferences.seniorityLevels.length > 0;
   const hasEmploymentTypePreference =
     searchPreferences.employmentTypes.length > 0;
   const senioritySignal = hasSeniorityPreference
-    ? posting.seniority
+    ? statedSeniority
       ? searchPreferences.seniorityLevels.some(
           (seniority) =>
-            normalizeText(seniority) === normalizeText(posting.seniority!),
+            normalizeText(seniority) === normalizeText(statedSeniority),
         )
       : null
     : undefined;
@@ -334,8 +336,8 @@ function buildPreferenceAlignment(
       evidence: evidence(
         "preference",
         "Seniority comparison",
-        posting.seniority
-          ? `${posting.seniority} compared with ${formatList(searchPreferences.seniorityLevels)}: ${senioritySignal ? "aligned" : "not aligned"}.`
+        statedSeniority
+          ? `${statedSeniority} compared with ${formatList(searchPreferences.seniorityLevels)}: ${senioritySignal ? "aligned" : "not aligned"}.`
           : `The listing does not state seniority; saved levels are ${formatList(searchPreferences.seniorityLevels)}.`,
       ),
     });

@@ -111,7 +111,7 @@ function preferencesMatchingNothing(
 }
 
 describe("workspace campaign scheduled runs", () => {
-  test("a duplicate-only second plan retains the shared jobs as new to that plan", async () => {
+  test("a duplicate-only second plan retains shared jobs without calling them new to you", async () => {
     const harness = createWorkspaceServiceHarness();
     const { repository, workspaceService } = harness;
     const firstPlan = await getActiveCampaign(harness);
@@ -143,7 +143,8 @@ describe("workspace campaign scheduled runs", () => {
       (campaign) => campaign.id === secondPlan.id,
     );
     expect(retainedBySecond?.jobIds.length).toBeGreaterThan(0);
-    expect(retainedBySecond?.latestDigest?.report?.new).toBeGreaterThan(0);
+    expect(retainedBySecond?.latestDigest?.report?.new).toBe(0);
+    expect(retainedBySecond?.latestDigest?.report?.unique).toBeGreaterThan(0);
     expect(retainedBySecond?.latestDigest?.report?.retained).toBeGreaterThan(0);
 
     const sharedJob = (await repository.listSavedJobs()).find((job) =>

@@ -47,6 +47,23 @@ describe("job identity", () => {
     expect(match).toBe(aggregator);
   });
 
+  test("a shared employer application endpoint does not merge different roles", () => {
+    const existing = identity({
+      applicationUrl: "https://employer.test/apply",
+    });
+    const index = createJobIdentityIndex([existing], (value) => value);
+    expect(
+      index.find(
+        identity({
+          sourceJobId: "junior",
+          canonicalUrl: "https://other-board.test/jobs/junior",
+          title: "Junior Software Engineer",
+          applicationUrl: "https://employer.test/apply",
+        }),
+      ),
+    ).toBeNull();
+  });
+
   test("normalizes only non-identity URL decoration", () => {
     expect(
       normalizeJobIdentityUrl(

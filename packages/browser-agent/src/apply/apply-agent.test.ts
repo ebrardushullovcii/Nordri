@@ -306,6 +306,34 @@ describe("written answer fact check recovery", () => {
     });
     expect(client.chatWithTools).toHaveBeenCalledTimes(1);
   });
+
+  test("gives the independent choice check the saved profile prose as applicant context", async () => {
+    const request = input();
+    request.sources.profile.answerBank.visaSponsorship =
+      "I will need employer sponsorship after my student permit ends.";
+    const client: LLMClient = {
+      chatWithTools: vi.fn().mockResolvedValue({
+        toolCalls: [
+          call({ supported: true, reason: "The saved answer supports Yes." }),
+        ],
+      }),
+    };
+    await checkWrittenApplicationAnswer({
+      ...request,
+      client,
+      question: "Do you need visa sponsorship in Germany?",
+      answer: "Yes",
+    });
+    const content = vi
+      .mocked(client.chatWithTools)
+      .mock.calls[0]?.[0].find((message) => message.role === "user")?.content;
+    const facts: unknown = JSON.parse(content ?? "{}");
+    expect(facts).toMatchObject({
+      savedProfileAnswers: {
+        visaSponsorship: request.sources.profile.answerBank.visaSponsorship,
+      },
+    });
+  });
 });
 
 test("preserves an explicitly reported CAPTCHA even when finish omits needsPerson", async () => {
@@ -1930,4 +1958,231 @@ describe("answers and structured history on a retained form", () => {
     expect(filled).toEqual(["Engineer", "Signal Systems", "2014-01"]);
     expect(result.outcome).toBe("prepared");
   });
+});
+
+test.each(["Yes", "No"])(
+  "the review retains contacts across steps and records the selected radio (%s)",
+  async (answer) => {
+    const source = page({
+      actions: [{ index: 0, label: "Next", visible: true, disabled: false }],
+      stepLabel: "Step 1 of 2",
+    });
+    const runConfig = config(source);
+    runConfig.sources.reusableAnswers = [
+      {
+        id: "one_use",
+        kind: "other",
+        roleFamilies: [],
+        proofEntryIds: [],
+        question: "Are you legally authorized to work in Germany?",
+        answer,
+        label: "Authorization",
+      },
+    ];
+    runConfig.hands.clickElement = () => {
+      source.controls = [
+        {
+          ...workAuthorizationRadio(0, "Yes"),
+          groupLabel: "Are you legally authorized to work in Germany?",
+        },
+        {
+          ...workAuthorizationRadio(1, "No"),
+          groupLabel: "Are you legally authorized to work in Germany?",
+        },
+      ];
+      source.stepLabel = "Step 2 of 2";
+      source.actions = [];
+      return Promise.resolve({ ok: true, observedValue: "next" });
+    };
+    runConfig.hands.setToggle = (ref, checked) => {
+      source.controls[ref === "c0" ? 0 : 1].checked = checked;
+      return Promise.resolve({ ok: true, observedValue: "checked" });
+    };
+    const result = await runApplyAgent(
+      runConfig,
+      scriptedModel([
+        { name: "click", args: { ref: "a0" } },
+        {
+          name: "set_checkbox",
+          args: { ref: answer === "Yes" ? "c0" : "c1", checked: true },
+        },
+        { name: "finish", args: { reason: "Ready for review." } },
+      ]),
+    );
+    expect(
+      result.reviewFilled?.find((entry) => entry.label === "Full name")?.answer
+        .value,
+    ).toBe("Robin Ashford");
+    expect(
+      result.reviewFilled?.find(
+        (entry) =>
+          entry.label === "Are you legally authorized to work in Germany?",
+      )?.answer,
+    ).toMatchObject({
+      value: answer,
+      provenanceLabel: "your answer to this question",
+    });
+  },
+);
+
+test("whenever there is room cannot finish with an empty optional cover-letter upload", async () => {
+  const source = page({
+    controls: [
+      {
+        ...nameControl(),
+        inputType: "file",
+        label: "Cover letter",
+        value: "",
+        required: false,
+      },
+    ],
+    actions: [],
+  });
+  const runConfig = config(source, {
+    writing: {
+      coverLetterPolicy: "when_possible",
+      writtenAnswerLength: "short",
+      preApprovedDeclarations: [],
+    },
+  });
+  let provided = 0;
+  runConfig.letters = {
+    preference: {
+      tone: "plain_professional",
+      length: "standard",
+      language: null,
+      sample: null,
+    },
+    provide: () => {
+      provided += 1;
+      return Promise.resolve({
+        ok: true,
+        text: "Dear Hiring Team, I am applying for this role. My experience building dependable platforms and internal tools would support your team. I would welcome the opportunity to discuss the role and learn more about your priorities. Thank you for your consideration.",
+        document: {
+          id: "letter",
+          kind: "cover_letter",
+          label: "Cover letter",
+          fileName: "letter.pdf",
+          mimeType: "application/pdf",
+          loadBytes: () => Promise.resolve(new Uint8Array([1])),
+        },
+      });
+    },
+  };
+  runConfig.hands.uploadFile = (_ref, file) => {
+    source.controls[0].value = file.name;
+    return Promise.resolve({ ok: true, observedValue: file.name });
+  };
+  const result = await runApplyAgent(
+    runConfig,
+    scriptedModel([
+      { name: "finish", args: { reason: "Done." } },
+      { name: "upload", args: { ref: "c0", documentId: "letter" } },
+      { name: "finish", args: { reason: "Done." } },
+    ]),
+  );
+  expect(provided).toBe(1);
+  expect(result.reviewAttachments).toHaveLength(1);
+  expect(result.reviewAttachments?.[0]?.fileName).toBe("letter.pdf");
+  expect(result.reviewAttachments?.[0]?.reviewText?.text).toContain(
+    "Dear Hiring Team",
+  );
+  expect(result.outcome).toBe("prepared");
+});
+
+test("a retry replaces the retained original before handing back missing files", async () => {
+  const source = page({
+    controls: [
+      {
+        ...nameControl(),
+        inputType: "file",
+        label: "Resume",
+        value: "original.docx",
+      },
+      {
+        ...nameControl(),
+        index: 1,
+        inputType: "file",
+        label: "Transcript",
+        value: "",
+      },
+    ],
+    actions: [],
+  });
+  const runConfig = config(source);
+  runConfig.sources.documents = [
+    {
+      id: "approved-resume",
+      kind: "resume",
+      label: "Your CV",
+      fileName: "approved.pdf",
+      mimeType: "application/pdf",
+      loadBytes: () => Promise.resolve(new Uint8Array([1, 2, 3])),
+    },
+  ];
+  runConfig.hands.uploadFile = (_ref, file) => {
+    source.controls[0].value = file.name;
+    return Promise.resolve({ ok: true, observedValue: file.name });
+  };
+  const result = await runApplyAgent(
+    runConfig,
+    scriptedModel([
+      {
+        name: "finish",
+        args: {
+          reason: "The transcript needs the person.",
+          needsPerson: true,
+          stuck: true,
+        },
+      },
+      { name: "upload", args: { ref: "c0", documentId: "approved-resume" } },
+      {
+        name: "finish",
+        args: { reason: "The transcript needs the person.", needsPerson: true },
+      },
+    ]),
+  );
+  expect(source.controls[0].value).toBe("approved.pdf");
+  expect(
+    result.reviewAttachments?.map((attachment) => attachment.fileName),
+  ).toEqual(["approved.pdf"]);
+  expect(result.outcome).toBe("paused");
+  expect(
+    result.pauses
+      .flatMap((pause) => pause.questions ?? [])
+      .map((question) => question.prompt),
+  ).toContain("Transcript");
+});
+
+test("an optional letter the run cannot attach is noted, never a stop", async () => {
+  const source = page({
+    controls: [
+      {
+        ...nameControl(),
+        inputType: "file",
+        label: "Cover letter",
+        value: "",
+        required: false,
+      },
+    ],
+    actions: [],
+  });
+  const result = await runApplyAgent(
+    config(source, {
+      writing: {
+        coverLetterPolicy: "when_possible",
+        writtenAnswerLength: "short",
+        preApprovedDeclarations: [],
+      },
+    }),
+    scriptedModel([
+      { name: "finish", args: { reason: "Done." } },
+      { name: "finish", args: { reason: "Done." } },
+    ]),
+  );
+  expect(result.outcome).not.toBe("paused");
+  expect(result.pauses).toHaveLength(0);
+  expect(result.notes.join(" ")).toContain(
+    'Left "Cover letter" empty: Job Finder could not attach a letter there.',
+  );
 });

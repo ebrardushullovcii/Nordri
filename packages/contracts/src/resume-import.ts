@@ -433,6 +433,15 @@ export const resumeImportRunStatusValues = [
   "applied",
   "failed",
 ] as const;
+export function isResumeImportRunInProgress(
+  run: { status: string } | null,
+): boolean {
+  return (
+    run !== null &&
+    ["queued", "parsing", "extracting", "reconciling"].includes(run.status)
+  );
+}
+
 export const ResumeImportRunStatusSchema = z.enum(resumeImportRunStatusValues);
 export type ResumeImportRunStatus = z.infer<typeof ResumeImportRunStatusSchema>;
 

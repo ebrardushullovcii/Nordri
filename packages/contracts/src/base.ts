@@ -78,12 +78,14 @@ export function isPreparedApplicationStatus(record: {
  */
 export const DiscoveryRunReportSchema = z.object({
   /** Schema generation, so a later counting change is detectable. */
-  version: z.literal(1).default(1),
+  version: z.union([z.literal(1), z.literal(2)]).default(1),
   /** When the counts were frozen. */
   measuredAt: IsoDateTimeSchema,
   /** Listings this run reviewed, duplicates and rejects included. */
   found: z.number().int().nonnegative().nullable().default(null),
-  /** Listing identities this run introduced for the first time. */
+  /** Distinct job identities encountered, after merging duplicate postings. */
+  unique: z.number().int().nonnegative().nullable().optional(),
+  /** Jobs this run added to the device for the first time. */
   new: z.number().int().nonnegative().nullable().default(null),
   /** Distinct listings this run durably persisted or staged. */
   saved: z.number().int().nonnegative().nullable().default(null),
@@ -816,3 +818,21 @@ export const WriteClipboardTextResultSchema = z.object({
 export type WriteClipboardTextResult = z.infer<
   typeof WriteClipboardTextResultSchema
 >;
+
+/** The same frozen accounting sentence for history, plans, Home and Activity. */
+export function formatDiscoveryAccounting(
+  report: Pick<
+    DiscoveryRunReport,
+    "found" | "unique" | "new" | "retained" | "duplicates"
+  >,
+): string {
+  const count = (value: number | null | undefined, label: string) =>
+    value == null ? `${label} not recorded` : `${value} ${label}`;
+  return [
+    count(report.found, "postings seen"),
+    count(report.unique, "unique jobs"),
+    count(report.new, "new to you"),
+    count(report.retained, "kept by this plan"),
+    count(report.duplicates, "duplicates merged"),
+  ].join(" · ");
+}

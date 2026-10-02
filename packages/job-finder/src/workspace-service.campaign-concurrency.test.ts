@@ -1215,7 +1215,11 @@ describe("workspace source-target metadata mirror integrity", () => {
   }
 
   test("validated source guidance is mirrored into the active campaign and consumed by its next run", async () => {
-    const captured: { siteLabel: string; startingUrls: readonly string[]; siteInstructions: readonly string[] }[] = [];
+    const captured: {
+      siteLabel: string;
+      startingUrls: readonly string[];
+      siteInstructions: readonly string[];
+    }[] = [];
     const harness = createConcurrencyHarness({
       browserRuntime: createCapturingAgentRuntime(captured),
       aiClient: createAgentAiClient(),
@@ -1257,9 +1261,8 @@ describe("workspace source-target metadata mirror integrity", () => {
     if (!validatedArtifact) throw new Error("Expected a validated artifact.");
     // Discovery projects the bound instruction into prefixed agent guidance
     // lines; the campaign run must carry them.
-    const expectedGuidanceLines = buildDiscoveryInstructionGuidance(
-      validatedArtifact,
-    );
+    const expectedGuidanceLines =
+      buildDiscoveryInstructionGuidance(validatedArtifact);
     expect(expectedGuidanceLines.length).toBeGreaterThan(0);
     const callsBeforeRun = captured.length;
     await service.runCampaignNow();
@@ -1275,7 +1278,11 @@ describe("workspace source-target metadata mirror integrity", () => {
   });
 
   test("a plan switch away and back preserves the six validated-guidance fields (A→B→A)", async () => {
-    const captured: { siteLabel: string; startingUrls: readonly string[]; siteInstructions: readonly string[] }[] = [];
+    const captured: {
+      siteLabel: string;
+      startingUrls: readonly string[];
+      siteInstructions: readonly string[];
+    }[] = [];
     const harness = createConcurrencyHarness({
       browserRuntime: createCapturingAgentRuntime(captured),
       aiClient: createAgentAiClient(),
@@ -1302,7 +1309,9 @@ describe("workspace source-target metadata mirror integrity", () => {
     await service.selectCampaign(planB.id);
     let pointed = await expectActivePairIsStored(harness.baseRepository);
     expect(pointed.id).toBe(planB.id);
-    expect(targetIn(pointed.searchPreferences).validatedInstructionId).toBeNull();
+    expect(
+      targetIn(pointed.searchPreferences).validatedInstructionId,
+    ).toBeNull();
 
     // ...but plan A's stored snapshot kept the validation, so switching back
     // restores all six fields instead of reverting them.
@@ -1481,7 +1490,11 @@ describe("workspace source-target metadata mirror integrity", () => {
   });
 
   test("an excluded source is not discovered by the run owned by its plan", async () => {
-    const captured: { siteLabel: string; startingUrls: readonly string[]; siteInstructions: readonly string[] }[] = [];
+    const captured: {
+      siteLabel: string;
+      startingUrls: readonly string[];
+      siteInstructions: readonly string[];
+    }[] = [];
     const harness = createConcurrencyHarness({
       browserRuntime: createCapturingAgentRuntime(captured),
       aiClient: createAgentAiClient(),
@@ -1557,6 +1570,7 @@ describe("workspace source-target metadata mirror integrity", () => {
       toCampaignInput(planA, {
         id: null,
         name: "Plan B",
+        sourceTargetIds: [],
         searchPreferences: {
           ...planA.searchPreferences,
           discovery: {
@@ -1608,21 +1622,104 @@ describe("workspace source-target metadata mirror integrity", () => {
     ).toBe(false);
   });
 
+  test("profile edits keep both plans' explicit source scopes and their next runs", async () => {
+    const captured: {
+      siteLabel: string;
+      startingUrls: readonly string[];
+      siteInstructions: readonly string[];
+    }[] = [];
+    const seed = createSeed();
+    const initial = seed.searchPreferences.discovery.targets[0];
+    if (!initial) throw new Error("Expected a source.");
+    seed.searchPreferences.discovery.targets = Array.from(
+      { length: 31 },
+      (_, index) => ({
+        ...initial,
+        id: `source_${index}`,
+        label: `Source ${index}`,
+        startingUrl: `https://source-${index}.example.test/jobs`,
+        enabled: true,
+      }),
+    );
+    const { repository, service } = createConcurrencyHarness({
+      seed,
+      browserRuntime: createCapturingAgentRuntime(captured),
+      aiClient: createAgentAiClient(),
+    });
+    const planA = await getActiveCampaign(service);
+    const selectedIds = planA.searchPreferences.discovery.targets
+      .slice(0, 8)
+      .map((target) => target.id);
+    await service.saveCampaign(
+      toCampaignInput(planA, { sourceTargetIds: selectedIds }),
+    );
+    const focusedIds = planA.searchPreferences.discovery.targets
+      .slice(0, 28)
+      .map((target) => target.id);
+    await service.saveCampaign(
+      toCampaignInput(planA, {
+        id: null,
+        name: "Focused plan",
+        sourceTargetIds: focusedIds,
+      }),
+    );
+    for (const patch of [
+      { headline: "Synthetic backend engineer" },
+      { skills: ["TypeScript", "Go"] },
+      { experiences: [] },
+    ]) {
+      const current = await service.getWorkspaceSnapshot();
+      await service.saveProfileAndSearchPreferences(
+        { ...current.profile, ...patch },
+        current.searchPreferences,
+      );
+      const state = await repository.getCampaignState();
+      expect(
+        state?.campaigns.find((campaign) => campaign.id === planA.id)
+          ?.sourceTargetIds,
+      ).toEqual(selectedIds);
+      expect(
+        state?.campaigns.find((campaign) => campaign.name === "Focused plan")
+          ?.sourceTargetIds,
+      ).toEqual(focusedIds);
+    }
+    const restarted = createJobFinderWorkspaceService({
+      repository,
+      browserRuntime: createCapturingAgentRuntime(captured),
+      aiClient: createAgentAiClient(),
+      documentManager: createDocumentManager(),
+    });
+    const callsBefore = captured.length;
+    await restarted.runCampaignNow();
+    const run = (await repository.getDiscoveryState()).recentRuns.find(
+      (candidate) => candidate.campaignId === planA.id,
+    );
+    expect(
+      run?.targetExecutions.map((execution) => execution.targetId).sort(),
+    ).toEqual([...selectedIds].sort());
+    expect(
+      captured
+        .slice(callsBefore)
+        .map((call) => call.siteLabel)
+        .sort(),
+    ).toEqual(selectedIds.map((id) => `Source ${id.slice(7)}`).sort());
+  });
+
   test("changing one plan's source selection leaves Profile and sibling plans unchanged", async () => {
     const { repository, service } = createConcurrencyHarness();
     const planA = await getActiveCampaign(service);
     const created = await service.saveCampaign(
       toCampaignInput(planA, { id: null, name: "Plan B" }),
     );
-    const planB = created.campaigns.find((campaign) => campaign.name === "Plan B");
+    const planB = created.campaigns.find(
+      (campaign) => campaign.name === "Plan B",
+    );
     if (!planB) throw new Error("Expected Plan B.");
     await service.selectCampaign(planA.id);
 
-    const profileSourceBefore =
-      (await repository.getSearchPreferences()).discovery.targets[0];
-    await service.saveCampaign(
-      toCampaignInput(planA, { sourceTargetIds: [] }),
-    );
+    const profileSourceBefore = (await repository.getSearchPreferences())
+      .discovery.targets[0];
+    await service.saveCampaign(toCampaignInput(planA, { sourceTargetIds: [] }));
 
     const profileSourceAfter =
       (await repository.getSearchPreferences()).discovery.targets[0];

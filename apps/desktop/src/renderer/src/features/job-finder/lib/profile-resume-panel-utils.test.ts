@@ -1,9 +1,15 @@
 import { describe, expect, test } from "vitest";
-import { ResumeImportFieldCandidateSummarySchema } from "@nordri/contracts";
-import { getVisibleYearsExperience } from "./profile-resume-panel-utils";
+import {
+  ResumeImportFieldCandidateSummarySchema,
+  ResumeImportRunSchema,
+} from "@nordri/contracts";
+import {
+  getVisibleYearsExperience,
+  getRunningResumeImportProgress,
+} from "./profile-resume-panel-utils";
 
 describe("profile resume panel utils", () => {
-  test("shows pending years of experience when canonical profile still has zero", () => {
+  test("does not present unreviewed years as a saved experience total", () => {
     const yearsCandidate = ResumeImportFieldCandidateSummarySchema.parse({
       id: "years_candidate",
       target: { section: "identity", key: "yearsExperience", recordId: null },
@@ -19,10 +25,10 @@ describe("profile resume panel utils", () => {
 
     expect(
       getVisibleYearsExperience({
-        profileYearsExperience: 0,
+        profileYearsExperience: null,
         reviewCandidates: [yearsCandidate],
       }),
-    ).toBe(7);
+    ).toBeNull();
   });
 
   test("prefers canonical years of experience when already saved", () => {
@@ -47,7 +53,7 @@ describe("profile resume panel utils", () => {
     ).toBe(10);
   });
 
-  test("estimates years of experience from imported experience records when scalar candidate is missing", () => {
+  test("estimates years only from confirmed experience dates", () => {
     const experienceCandidates = [
       ResumeImportFieldCandidateSummarySchema.parse({
         id: "experience_candidate_1",
@@ -97,8 +103,19 @@ describe("profile resume panel utils", () => {
 
     expect(
       getVisibleYearsExperience({
-        profileYearsExperience: 0,
+        profileYearsExperience: null,
         reviewCandidates: experienceCandidates,
+      }),
+    ).toBeNull();
+    const confirmedCandidates = experienceCandidates.map((candidate) => ({
+      ...candidate,
+      resolution: "auto_applied" as const,
+      resolutionReason: "review_confirmed",
+    }));
+    expect(
+      getVisibleYearsExperience({
+        profileYearsExperience: 0,
+        reviewCandidates: confirmedCandidates,
         today: new Date(Date.UTC(2026, 3, 15)),
       }),
     ).toBe(4);
@@ -124,8 +141,8 @@ describe("profile resume panel utils", () => {
         valuePreview: "Company A | Lead Engineer | 01/2020 | 12/2021",
         evidenceText: "01/2020 – 12/2021",
         confidence: 0.84,
-        resolution: "needs_review",
-        resolutionReason: null,
+        resolution: "auto_applied",
+        resolutionReason: "review_confirmed",
         notes: [],
       }),
       ResumeImportFieldCandidateSummarySchema.parse({
@@ -146,8 +163,8 @@ describe("profile resume panel utils", () => {
         valuePreview: "Company B | Consultant | 07/2021 | 06/2022",
         evidenceText: "07/2021 – 06/2022",
         confidence: 0.84,
-        resolution: "needs_review",
-        resolutionReason: null,
+        resolution: "auto_applied",
+        resolutionReason: "review_confirmed",
         notes: [],
       }),
       ResumeImportFieldCandidateSummarySchema.parse({
@@ -168,8 +185,8 @@ describe("profile resume panel utils", () => {
         valuePreview: "Company C | Engineer | 08/2022 | 07/2023",
         evidenceText: "08/2022 – 07/2023",
         confidence: 0.84,
-        resolution: "needs_review",
-        resolutionReason: null,
+        resolution: "auto_applied",
+        resolutionReason: "review_confirmed",
         notes: [],
       }),
     ];
@@ -182,3 +199,39 @@ describe("profile resume panel utils", () => {
     ).toBe(3);
   });
 });
+
+test("unknown years stay empty", () => {
+  expect(
+    getVisibleYearsExperience({
+      profileYearsExperience: null,
+      reviewCandidates: [],
+    }),
+  ).toBeNull();
+});
+
+test.each(["queued", "parsing", "extracting", "reconciling"] as const)(
+  "R2-050 restores progress from persisted %s state",
+  (status) => {
+    const run = ResumeImportRunSchema.parse({
+      id: "running",
+      sourceResumeId: "synthetic",
+      sourceResumeFileName: "synthetic.txt",
+      trigger: "import",
+      status,
+      startedAt: "2026-10-02T10:00:00.000Z",
+    });
+    expect(getRunningResumeImportProgress(run)?.stage).toBe(
+      status === "reconciling"
+        ? "saving_results"
+        : status === "extracting"
+          ? "building_profile"
+          : "reading_document",
+    );
+    expect(
+      getRunningResumeImportProgress({ ...run, status: "failed" }),
+    ).toBeNull();
+    expect(
+      getRunningResumeImportProgress({ ...run, status: "applied" }),
+    ).toBeNull();
+  },
+);

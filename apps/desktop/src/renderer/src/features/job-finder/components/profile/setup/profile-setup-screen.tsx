@@ -1,3 +1,4 @@
+import { getRunningResumeImportProgress } from "@renderer/features/job-finder/lib/profile-resume-panel-utils";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
@@ -32,6 +33,7 @@ import {
   getProfileSetupReadinessBlockerStep,
   getProfileSetupReviewItemCopy,
   isFinishBlockingReviewItem,
+  isReadinessCoveredSetupReviewItem,
   isProfileSetupMissingFieldReviewItem,
 } from "./profile-setup-screen-helpers";
 import {
@@ -165,12 +167,12 @@ export function ProfileSetupScreen(props: {
   const {
     actionState,
     importResumeGuardMessage,
-    isImportResumePending,
+    isImportResumePending: localImportPending,
     isProfileSetupPending,
     isReviewItemPending,
     latestResumeImportReviewCandidates,
     latestResumeImportRun,
-    resumeImportProgress,
+    resumeImportProgress: localImportProgress,
     onApplyProfileSetupReviewAction,
     onContinueToProfile,
     onImportResume,
@@ -287,6 +289,12 @@ export function ProfileSetupScreen(props: {
   const flushPendingSource = () => {
     pendingSourceFlushRef.current?.();
   };
+  const runningImportProgress = getRunningResumeImportProgress(
+    latestResumeImportRun,
+  );
+  const isImportResumePending =
+    localImportPending || runningImportProgress !== null;
+  const resumeImportProgress = localImportProgress ?? runningImportProgress;
   const interruptedImportMessage =
     isInterruptedResumeImport(latestResumeImportRun) && !isImportResumePending
       ? RESUME_IMPORT_INTERRUPTED_MESSAGE
@@ -295,7 +303,6 @@ export function ProfileSetupScreen(props: {
     latestResumeImportRun && isInterruptedResumeImport(latestResumeImportRun)
       ? latestResumeImportRun.sourceResumeFileName
       : null;
-
   const pendingCurrentStepReviewItems = currentStepReviewItems.filter(
     (item) => item.status === "pending",
   );
@@ -332,7 +339,9 @@ export function ProfileSetupScreen(props: {
         editor: "profile",
         savedRevision: null,
         draftVersion: dirtyPaths.length,
-        dirtyFields: [...new Set(dirtyPaths.map(profileFieldForEditorPath))].slice(0, 80),
+        dirtyFields: [
+          ...new Set(dirtyPaths.map(profileFieldForEditorPath)),
+        ].slice(0, 80),
         unsavedValues: {},
         section: profileSetupState.currentStep,
         selection: null,
@@ -362,7 +371,9 @@ export function ProfileSetupScreen(props: {
   const remainingBlockerLabels = useMemo(() => {
     const currentStep = profileSetupState.currentStep;
     const whereToGo = (step: ProfileSetupStep) =>
-      step === currentStep ? "" : ` (${formatProfileSetupStepLabel(step)} step)`;
+      step === currentStep
+        ? ""
+        : ` (${formatProfileSetupStepLabel(step)} step)`;
     return [
       ...readinessPresentation.blockers.map(
         (blocker) =>
@@ -370,15 +381,25 @@ export function ProfileSetupScreen(props: {
             getProfileSetupReadinessBlockerStep(blocker.id),
           )}`,
       ),
-      ...draftAwareReviewItems.filter(isFinishBlockingReviewItem).map((item) => {
-        const label = getProfileSetupReviewItemCopy(item).label;
-        const verb = isProfileSetupMissingFieldReviewItem(item)
-          ? "Fill in"
-          : "Confirm";
-        return `${verb} ${label.charAt(0).toLowerCase()}${label.slice(1)}${whereToGo(item.step)}`;
-      }),
+      ...draftAwareReviewItems
+        .filter(
+          (item) =>
+            isFinishBlockingReviewItem(item) &&
+            !isReadinessCoveredSetupReviewItem(item),
+        )
+        .map((item) => {
+          const label = getProfileSetupReviewItemCopy(item).label;
+          const verb = isProfileSetupMissingFieldReviewItem(item)
+            ? "Fill in"
+            : "Confirm";
+          return `${verb} ${label.charAt(0).toLowerCase()}${label.slice(1)}${whereToGo(item.step)}`;
+        }),
     ];
-  }, [draftAwareReviewItems, profileSetupState.currentStep, readinessPresentation]);
+  }, [
+    draftAwareReviewItems,
+    profileSetupState.currentStep,
+    readinessPresentation,
+  ]);
 
   const reviewQueue = (
     <ProfileSetupReviewQueueCard
@@ -437,18 +458,18 @@ export function ProfileSetupScreen(props: {
               // First run opens guided setup directly, so setup owns the way
               // back out of it.
               <div className="flex flex-wrap items-center gap-2">
-              <AskAssistantButton prompt={starterQuestion ?? undefined} />
-              <Button
-                onClick={() => {
-                  markGuidedSetupAutoOpenSpent();
-                  void navigate("/job-finder");
-                }}
-                size="sm"
-                type="button"
-                variant="ghost"
-              >
-                Back to Home
-              </Button>
+                <AskAssistantButton prompt={starterQuestion ?? undefined} />
+                <Button
+                  onClick={() => {
+                    markGuidedSetupAutoOpenSpent();
+                    void navigate("/job-finder");
+                  }}
+                  size="sm"
+                  type="button"
+                  variant="ghost"
+                >
+                  Back to Home
+                </Button>
               </div>
             }
             eyebrow="Profile setup"
@@ -465,8 +486,26 @@ export function ProfileSetupScreen(props: {
               currentStep={profileSetupState.currentStep}
               disabled={setupMutationPending}
               hasImportedResume={hasImportedResume}
-              onGoToStep={goToStep}
+              onGoToStep={(step) => {
+                flushPendingSource();
+                goToStep(step);
+              }}
               profileSetupState={profileSetupState}
+              unsavedSteps={[
+                ...flattenDirtyFields(profileForm.formState.dirtyFields).map(
+                  (path): ProfileSetupStep =>
+                    path.startsWith("identity.") || path.startsWith("summary.")
+                      ? "essentials"
+                      : path.startsWith("records.")
+                        ? "background"
+                        : path.startsWith("eligibility.")
+                          ? "targeting"
+                          : "extras",
+                ),
+                ...(preferencesForm.formState.isDirty
+                  ? ["targeting" as const]
+                  : []),
+              ]}
               readiness={pathReadiness}
               reviewItems={draftAwareReviewItems}
             />
@@ -620,7 +659,6 @@ export function ProfileSetupScreen(props: {
 
           <div className={profileSetupLayoutClassNames.reviewRail}>
             {profileSetupState.currentStep !== "targeting" ? reviewQueue : null}
-
           </div>
         </div>
       )}

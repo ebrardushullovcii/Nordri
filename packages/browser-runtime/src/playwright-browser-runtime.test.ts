@@ -3521,6 +3521,74 @@ describe("managed context active service worker gate", () => {
     }
   });
 
+  test("discovery waits for capacity, resumes after cleanup, and preserves the occupied forms", async () => {
+    const userDataDir = await mkdtemp(
+      join(tmpdir(), "nordri-discovery-capacity-"),
+    );
+    vi.doMock("@nordri/browser-agent", async (importOriginal) => ({
+      ...(await importOriginal<typeof browserAgent>()),
+      runJobSearchAgent: vi.fn().mockResolvedValue({
+        jobs: [],
+        steps: 1,
+        incomplete: false,
+        transcriptMessageCount: 1,
+      }),
+    }));
+    try {
+      const harness = createGateHarness({ activeServiceWorkers: () => [] });
+      await harness.fakePage.goto("https://prepared.example/form");
+      let occupied = 8;
+      const forms = Array.from({ length: 7 }, () => ({
+        isClosed: () => false,
+        url: () => "https://prepared.example/form",
+        close: vi.fn(),
+      }));
+      Object.assign(harness.fakeContext, { pages: () => forms });
+      const { createBrowserAgentRuntime } =
+        await import("./playwright-browser-runtime");
+      const runtime = createBrowserAgentRuntime({
+        userDataDir,
+        jobExtractor: vi.fn().mockResolvedValue([]),
+        browserHost: {
+          connect: () => Promise.resolve(harness.fakeBrowser as never),
+          getOpenBrowser: () => Promise.resolve(harness.fakeBrowser as never),
+          close: () => Promise.resolve(),
+          assertAutomationSafe: () => undefined,
+          openTabCount: () => occupied,
+        },
+      });
+      const onWaiting = vi.fn();
+      const controller = new AbortController();
+      const run = runtime.runAgentDiscovery!("target_site", {
+        maxSteps: 1,
+        targetJobCount: 1,
+        userProfile: createTestProfile(),
+        searchPreferences: { targetRoles: [], locations: [] },
+        startingUrls: ["https://jobs.example/list"],
+        navigationHostnames: ["jobs.example"],
+        siteLabel: "Example Jobs",
+        dedicatedPage: true,
+        signal: controller.signal,
+        onWaitingForBrowserTab: onWaiting,
+      });
+      await vi.waitFor(() => expect(onWaiting).toHaveBeenCalledOnce(), {
+        timeout: 5000,
+      });
+      expect(harness.fakeContext.newPage).not.toHaveBeenCalled();
+      occupied = 6;
+      forms.splice(0, 1);
+      const result = await run;
+      expect(result.warning).not.toContain("Target.createTarget");
+      expect(harness.fakeContext.newPage).toHaveBeenCalledOnce();
+      expect(forms.every((page) => page.close.mock.calls.length === 0)).toBe(
+        true,
+      );
+    } finally {
+      vi.doUnmock("@nordri/browser-agent");
+      await rm(userDataDir, { recursive: true, force: true });
+    }
+  }, 15000);
+
   test("embedded tab headroom waits abortably without closing existing tabs", async () => {
     const userDataDir = await mkdtemp(join(tmpdir(), "nordri-runtime-tab-headroom-"));
     try {

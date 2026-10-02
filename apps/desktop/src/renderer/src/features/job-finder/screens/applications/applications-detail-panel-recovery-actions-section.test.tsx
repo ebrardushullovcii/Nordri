@@ -2,13 +2,60 @@
 
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { JobFinderWorkspaceSnapshot } from "@nordri/contracts";
+import {
+  UserActionRequestSchema,
+  type JobFinderWorkspaceSnapshot,
+} from "@nordri/contracts";
+import { ApplicationAnswerStepCard } from "./applications-answer-step";
 import {
   ApplicationsDetailPanelRecoveryActionsSection,
   type FinishInBrowserHandler,
 } from "./applications-detail-panel-recovery-actions-section";
 
 afterEach(cleanup);
+
+it.each([false, true])(
+  "answer progress distinguishes waiting from insertion with elapsed time (%s)",
+  (waitingForTurn) => {
+    const at = new Date(Date.now() - 125_000).toISOString();
+    const request = UserActionRequestSchema.parse({
+      id: "request-answer",
+      revision: 1,
+      dedupeKey: "answer",
+      kind: "manual_answer",
+      state: "verifying",
+      scope: {
+        type: "application",
+        runId: "run_1",
+        jobId: "job_1",
+        applicationRecordId: "application_1",
+        source: "target_site",
+      },
+      verification: {
+        type: "page_blocker_absent",
+        blockerFingerprint: "question",
+      },
+      title: "Answer",
+      summary: "Continue",
+      createdAt: at,
+      updatedAt: at,
+    });
+    const view = render(
+      <ApplicationAnswerStepCard
+        step={{
+          request,
+          questions: [],
+          isPending: false,
+          waitingForTurn,
+          onCommand: vi.fn(),
+        }}
+      />,
+    );
+    expect(view.getByRole("status").textContent).toContain(
+      `${waitingForTurn ? "Waiting its turn" : "Inserting your answer"} (2 min)`,
+    );
+  },
+);
 
 type ApplyResult = JobFinderWorkspaceSnapshot["applyJobResults"][number];
 
@@ -302,6 +349,39 @@ describe("ApplicationsDetailPanelRecoveryActionsSection", () => {
     expect(onOpenNeedsYou).not.toHaveBeenCalled();
   });
 
+  it("offers one cleanup action while capacity is full instead of claiming it is filling", () => {
+    const previous = window.nordri;
+    const command = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(window, "nordri", {
+      configurable: true,
+      value: { browser: { command } },
+    });
+    try {
+      const { container, getByRole, queryByTestId } = renderSection({
+        visibleApplyResult: buildResult({
+          state: "filling",
+          completedAt: null,
+          summary: "Waiting for a free browser tab",
+          detail:
+            "Browser tab limit reached. Prepared, unsent forms stay open.",
+        }),
+      });
+      expect(primaryButtonLabels(container)).toEqual(["Close finished tabs"]);
+      expect(
+        queryByTestId("applications-recovery-progress-spinner"),
+      ).toBeNull();
+      fireEvent.click(getByRole("button", { name: "Close finished tabs" }));
+      expect(command).toHaveBeenCalledExactlyOnceWith({
+        type: "close_finished_tabs",
+      });
+    } finally {
+      Object.defineProperty(window, "nordri", {
+        configurable: true,
+        value: previous,
+      });
+    }
+  });
+
   it("shows a progress sentence with a spinner and no button while preparing", () => {
     const { getByTestId, container } = renderSection({
       isApplyPending: true,
@@ -479,4 +559,21 @@ describe("ApplicationsDetailPanelRecoveryActionsSection", () => {
       "Checking this step in the Job Finder browser… When it is complete, Job Finder continues in your chosen apply mode.",
     );
   });
+});
+
+it("a rejected original format opens PDF review instead of retrying the same upload", () => {
+  const onReviewResumePdf = vi.fn();
+  const onStartApplyCopilot = vi.fn();
+  const view = renderSection({
+    onReviewResumePdf,
+    onStartApplyCopilot,
+    visibleApplyResult: buildResult({
+      state: "failed",
+      summary: "Resume upload failed",
+      detail: "Upload a nonempty TXT, PDF, DOC or DOCX file.",
+    }),
+  });
+  fireEvent.click(view.getByRole("button", { name: "Review a PDF" }));
+  expect(onReviewResumePdf).toHaveBeenCalledWith("job_1");
+  expect(onStartApplyCopilot).not.toHaveBeenCalled();
 });

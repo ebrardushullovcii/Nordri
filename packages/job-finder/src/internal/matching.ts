@@ -6,6 +6,7 @@ import {
   type ApplicationStatus,
   type CandidateProfile,
   type JobKeywordSignal,
+  type JobRequirementAssessment,
   type JobSearchPreferences,
   type JobPosting,
   type JobPostingDetailQuality,
@@ -23,6 +24,7 @@ import type { MatchAssessmentPostingInput } from "./match-assessment-posting-inp
 import { createMatchAssessmentChangeAudit } from "./match-assessment-change-audit";
 import { MATCH_ASSESSMENT_SCORER_VERSION } from "./match-assessment-session";
 import { assessRemoteGeographyRequirement } from "./matching-eligibility";
+import { resolvePostingSeniority } from "./posting-seniority";
 import { buildMatchDimensionsAssessment } from "./matching-dimensions";
 import {
   buildFitRecommendation,
@@ -32,6 +34,7 @@ import {
 import {
   canonicalizeLocationAliases,
   resolveStatedLocationPlace,
+  resolveCountryName,
 } from "./location-normalization";
 import {
   createJobIdentityDigest,
@@ -80,6 +83,8 @@ const titleTokenAliases = new Map<string, string>([
 ]);
 
 const genericTitleTokens = new Set([
+  "designer",
+  "design",
   "junior",
   "senior",
   "staff",
@@ -117,6 +122,9 @@ type RoleFamily =
   | "legal"
   | "risk_compliance"
   | "security"
+  | "learning"
+  | "physical_engineering"
+  | "quality_engineering"
   | "design"
   | "operations"
   | "clerical"
@@ -124,6 +132,13 @@ type RoleFamily =
   | "healthcare";
 
 const roleFamilyPatterns: Record<RoleFamily, readonly RegExp[]> = {
+  learning: [
+    /\b(?:instructional|learning|training|curriculum) (?:design(?:er)?|specialist|developer|manager)\b/,
+  ],
+  physical_engineering: [
+    /\b(?:mechanical|electrical|civil|chemical|industrial) engineer/,
+  ],
+  quality_engineering: [/\bquality engineer/],
   engineering: [
     /\bengineer(?:ing)?\b/,
     /\bdeveloper\b/,
@@ -266,6 +281,15 @@ const roleFamilyPatterns: Record<RoleFamily, readonly RegExp[]> = {
 
 const primaryRoleFamilyPatterns: ReadonlyArray<readonly [RoleFamily, RegExp]> =
   [
+    [
+      "learning",
+      /\b(?:instructional|learning|training|curriculum) (?:design(?:er)?|specialist|developer|manager)\b/iu,
+    ],
+    [
+      "physical_engineering",
+      /\b(?:mechanical|electrical|civil|chemical|industrial) engineer/iu,
+    ],
+    ["quality_engineering", /\bquality engineer/iu],
     [
       "data",
       /\b(?:data engineer|data scientist|data analyst|analytics engineer|machine learning engineer|ml engineer|ai engineer)\b/iu,
@@ -1480,6 +1504,19 @@ export function assessLocationCompatibility(
     return "unknown";
   }
 
+  const canonicalCandidate = canonicalizeLocationAliases(candidate);
+  const candidateCountries = canonicalCandidate
+    .split(/[,;/|]/u)
+    .map((part) => resolveCountryName(part.trim()))
+    .filter(Boolean);
+  if (
+    desiredPlaces.some((place) => {
+      const country = resolveCountryName(canonicalizeLocationAliases(place));
+      return country !== null && candidateCountries.includes(country);
+    })
+  )
+    return "compatible";
+
   // A board writes how the work is done and where it is in one cell
   // ("Hiring Remotely in Chicago, IL, USA", "Remote in Chicago"). Only the
   // place part can answer the geographic question, so the work-mode lead-in
@@ -1891,6 +1928,8 @@ const ROLE_HEAD_NOUN_TOKENS = new Set([
   "analyst",
   "engineer",
   "developer",
+  "designer",
+  "design",
   "owner",
   "supervisor",
   "advisor",
@@ -1962,6 +2001,11 @@ function sharesOnlyRoleHeadNoun(
   }
 
   const titleFamilies = collectRoleFamilies(title);
+  if (tokenize(title).every((token) => ROLE_HEAD_NOUN_TOKENS.has(token))) {
+    return targetRoles.some((role) =>
+      tokenize(role).some((token) => !ROLE_HEAD_NOUN_TOKENS.has(token)),
+    );
+  }
   let anyRoleIsDistinguishable = false;
 
   for (const role of targetRoles) {
@@ -1971,7 +2015,7 @@ function sharesOnlyRoleHeadNoun(
     const sharedFamily = [...collectRoleFamilies(role)].some((family) =>
       titleFamilies.has(family),
     );
-    if (sharedFamily) {
+    if (sharedFamily && !titleFamilies.has("design")) {
       return false;
     }
 
@@ -2018,7 +2062,9 @@ export function createMatchAssessment<
   profile: CandidateProfile,
   searchPreferences: JobSearchPreferences,
   posting: TPosting,
+  extractedRequirements: readonly JobRequirementAssessment[] = [],
 ): MatchAssessment {
+  posting = { ...posting, seniority: resolvePostingSeniority(posting) };
   let score = 48;
   // Deterministic overlap is a shortlist signal, not proof that every listed requirement is met.
   let scoreCeiling = 94;
@@ -2057,7 +2103,13 @@ export function createMatchAssessment<
     posting,
   });
   const remoteGeographyConflicts =
-    remoteGeographyRequirement?.status === "conflict";
+    remoteGeographyRequirement?.status === "conflict" ||
+    extractedRequirements.some(
+      (requirement) =>
+        requirement.category === "location" &&
+        requirement.importance === "required" &&
+        requirement.status === "conflict",
+    );
   const locationCompatibility = remoteGeographyConflicts
     ? ("incompatible" as const)
     : assessedLocation.state;
@@ -2151,7 +2203,7 @@ export function createMatchAssessment<
   const overlappingTechnologies = listingTechnologies.filter((technology) =>
     profileTechnologies.has(technology),
   );
-  const requirements = buildRequirementEvidenceAssessment({
+  const detectedRequirements = buildRequirementEvidenceAssessment({
     profile,
     posting,
     locationCompatibility,
@@ -2164,6 +2216,17 @@ export function createMatchAssessment<
     workModeExcluded,
     targetRoles: searchPreferences.targetRoles,
   });
+  const requirements = [
+    ...detectedRequirements.filter(
+      (detected) =>
+        !extractedRequirements.some(
+          (extracted) =>
+            extracted.category === detected.category &&
+            normalizeText(extracted.label) === normalizeText(detected.label),
+        ),
+    ),
+    ...extractedRequirements,
+  ];
   const missingCoreRequirements = requirements.filter(
     (requirement) =>
       requirement.importance === "required" &&
@@ -2189,7 +2252,7 @@ export function createMatchAssessment<
     score -= 28;
     scoreCeiling = Math.min(scoreCeiling, 39);
     gaps.push(TITLE_MISSES_TARGET_ROLES_GAPS[0]!);
-  } else if (matchesRole) {
+  } else if (matchesRole && !roleFamilyUnclear) {
     score += 16;
     reasons.push(TITLE_MATCHES_TARGET_ROLES_REASON);
   } else if (roleFamilyUnclear) {
@@ -2260,7 +2323,9 @@ export function createMatchAssessment<
   if (careerStageMismatch) {
     score -= 18;
     scoreCeiling = Math.min(scoreCeiling, 56);
-    gaps.push(
+    gaps.splice(
+      roleFamilyMismatch ? 1 : 0,
+      0,
       postingCareerStage === "entry"
         ? "The role is aimed at students or entry-level candidates, while the profile shows experienced scope."
         : "The role expects experienced scope that is not yet explicit in the current profile.",
@@ -2396,7 +2461,7 @@ export function createMatchAssessment<
         ? searchPreferences
         : { ...searchPreferences, locations: [...savedLocationConstraints] },
     requirements,
-    matchesRole,
+    matchesRole: matchesRole && !roleFamilyUnclear,
     roleFamilyMismatch,
     roleFamilyUnclear,
     locationCompatibility,
@@ -2497,7 +2562,9 @@ export function createMatchAssessment<
     compensationFit,
     locationReach,
     dimensions,
-    reasons: reasons.slice(0, 3),
+    reasons: roleFamilyMismatch
+      ? [recommendation.rationale, ...reasons].slice(0, 3)
+      : reasons.slice(0, 3),
     gaps: gaps.slice(0, 3),
     recommendation: recommendation.recommendation,
     recommendationRationale: recommendation.rationale,
@@ -2510,33 +2577,39 @@ export async function createMatchAssessmentAsync(
   profile: CandidateProfile,
   searchPreferences: JobSearchPreferences,
   posting: JobPosting,
+  signal?: AbortSignal,
 ): Promise<MatchAssessment> {
   const fallbackAssessment = createMatchAssessment(
     profile,
     searchPreferences,
     posting,
   );
+  signal?.throwIfAborted();
   const assistedAssessment = await aiClient.assessJobFit({
+    ...(signal ? { signal } : {}),
+    assessmentDate: new Date().toISOString().slice(0, 10),
     profile,
     searchPreferences,
     job: posting,
   });
 
+  signal?.throwIfAborted();
   if (!assistedAssessment) {
     return fallbackAssessment;
   }
 
-  const assistedScore = clampScore(assistedAssessment.score);
+  // Rebuild dimensions, gaps and safety ceilings from the extracted evidence.
+  // A model score cannot remove a known occupational or eligibility conflict.
   return {
-    ...fallbackAssessment,
-    score: assistedScore,
-    // The "up to" qualifier belongs to the deterministic ceiling. Once the
-    // assisted pass names its own number, that number is not this ceiling.
-    scoreIsUpperBound:
-      fallbackAssessment.scoreIsUpperBound &&
-      assistedScore === fallbackAssessment.score,
-    reasons: assistedAssessment.reasons.slice(0, 3),
-    gaps: assistedAssessment.gaps.slice(0, 3),
+    ...createMatchAssessment(
+      profile,
+      searchPreferences,
+      posting,
+      assistedAssessment.requirements,
+    ),
+    ...(assistedAssessment.requirements
+      ? { requirementsSource: "model" as const }
+      : {}),
   };
 }
 
@@ -2691,6 +2764,15 @@ export function mergeDiscoveredPostings(
     const builtProvenance = provenanceBuilder(posting);
     const provenance: SavedJobDiscoveryProvenance = {
       ...builtProvenance,
+      listingFacts: {
+        title: posting.title,
+        company: posting.company,
+        location: posting.location,
+        salaryText: posting.salaryText,
+        seniority: posting.seniority,
+        description: posting.description,
+        summary: posting.summary,
+      },
       listingUrl: builtProvenance.listingUrl ?? posting.canonicalUrl,
       applicationUrl:
         builtProvenance.applicationUrl ?? posting.applicationUrl ?? null,
@@ -2708,6 +2790,7 @@ export function mergeDiscoveredPostings(
           enrichDiscoveredPosting(posting, existingJob),
           existingJob,
           mergedProvenance,
+          posting,
         )
       : enrichDiscoveredPosting(posting, existingJob);
     const matchAssessment = assessPosting
@@ -2796,6 +2879,10 @@ export function uniqueProvenance(
     // fills in what the first did not record (older provenance had no links).
     kept.set(key, {
       ...first,
+      listingFacts:
+        parsed.listingUrl === first.listingUrl
+          ? (parsed.listingFacts ?? first.listingFacts)
+          : first.listingFacts,
       listingUrl: first.listingUrl ?? parsed.listingUrl ?? null,
       applicationUrl: first.listingUrl
         ? (first.applicationUrl ?? null)
@@ -2858,18 +2945,30 @@ function copySightingRouteFields<T extends JobPosting>(
 /**
  * Point a job at one of its own sightings: listing, application link, apply
  * path and identity fields all come from that sighting, never half from
- * another. Content (description, salary, skills) is left as it is.
+ * another. Its stored display facts move with the route.
  */
 export function applySightingRoute<T extends JobPosting>(
   job: T,
   sighting: SavedJobDiscoveryProvenance,
 ): T {
-  if (!sighting.listingUrl) return job;
+  if (
+    !sighting.listingUrl ||
+    (!sighting.listingFacts && sighting.listingUrl !== job.canonicalUrl)
+  )
+    return job;
   const applyPath = sighting.applyPath ?? job.applyPath;
   const sameProvider =
     (sighting.providerKey ?? null) === (job.providerKey ?? null);
   const routed = {
     ...job,
+    ...(sighting.listingFacts ?? {}),
+    ...(sighting.listingFacts
+      ? {
+          normalizedCompensation: parseNormalizedCompensation(
+            sighting.listingFacts.salaryText,
+          ),
+        }
+      : {}),
     canonicalUrl: sighting.listingUrl,
     applicationUrl: sighting.applicationUrl ?? null,
     applyPath,
@@ -2887,17 +2986,57 @@ function settleCanonicalRoute(
   enrichedPosting: JobPosting,
   existingJob: SavedJob,
   provenance: readonly SavedJobDiscoveryProvenance[],
+  posting: JobPosting,
 ): JobPosting {
   // Work has started on this job: its listing and link stay where they are.
   if (!canSwitchCanonicalSighting(existingJob)) {
-    return copySightingRouteFields(enrichedPosting, existingJob);
+    return copySightingRouteFields(
+      {
+        ...enrichedPosting,
+        title: existingJob.title,
+        company: existingJob.company,
+        location: existingJob.location,
+        description: existingJob.description,
+        summary: existingJob.summary,
+        salaryText: existingJob.salaryText,
+        normalizedCompensation: existingJob.normalizedCompensation,
+        seniority: existingJob.seniority,
+      },
+      existingJob,
+    );
   }
   const winner = selectCanonicalSighting(provenance);
   if (!winner || winner.listingUrl === existingJob.canonicalUrl) {
-    return copySightingRouteFields(enrichedPosting, existingJob);
+    if (posting.canonicalUrl === existingJob.canonicalUrl)
+      return enrichedPosting;
+    return copySightingRouteFields(
+      {
+        ...enrichedPosting,
+        title: existingJob.title,
+        company: existingJob.company,
+        location: existingJob.location,
+        description: existingJob.description,
+        summary: existingJob.summary,
+        salaryText: existingJob.salaryText,
+        normalizedCompensation: existingJob.normalizedCompensation,
+        seniority: existingJob.seniority,
+      },
+      existingJob,
+    );
   }
   if (winner.listingUrl === enrichedPosting.canonicalUrl) {
-    return enrichedPosting;
+    return {
+      ...enrichedPosting,
+      title: posting.title,
+      company: enrichedPosting.company,
+      applicationUrl: posting.applicationUrl ?? null,
+      location: posting.location,
+      seniority: posting.seniority,
+      salaryText: posting.salaryText,
+      description: posting.description,
+      summary: posting.summary,
+      normalizedCompensation: parseNormalizedCompensation(posting.salaryText),
+    };
   }
   return applySightingRoute(enrichedPosting, winner);
 }

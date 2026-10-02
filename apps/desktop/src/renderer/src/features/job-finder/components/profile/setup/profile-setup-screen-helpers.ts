@@ -258,6 +258,27 @@ export function getProfileSetupReadinessBlockerStep(
  * items add review work. Edited or optional review items must not inflate the
  * count shown in the summary or sticky finish action.
  */
+export function isReadinessCoveredSetupReviewItem(
+  item: ProfileSetupFinishGateReviewItem,
+): boolean {
+  if (
+    item.target?.recordId !== null ||
+    item.proposedValue !== null ||
+    item.sourceCandidateId !== null ||
+    item.sourceRunId !== null ||
+    item.sourceSnippet !== null
+  ) {
+    return false;
+  }
+  const { domain, key } = item.target;
+  return (
+    (domain === "identity" &&
+      ["firstName", "lastName", "contactPath"].includes(key)) ||
+    (domain === "work_eligibility" &&
+      ["authorizedWorkCountries", "requiresVisaSponsorship"].includes(key))
+  );
+}
+
 export function buildProfileSetupReadinessPresentation(input: {
   readiness: Pick<
     ProfileSetupReadiness,
@@ -286,7 +307,11 @@ export function buildProfileSetupReadinessPresentation(input: {
     ) {
       return false;
     }
-    return isFinishBlockingReviewItem(item);
+    // Missing basics are already listed once as readiness blockers.
+    return (
+      isFinishBlockingReviewItem(item) &&
+      !isReadinessCoveredSetupReviewItem(item)
+    );
   }).length;
 
   return {
@@ -822,7 +847,10 @@ export function buildProfileSetupIdentityBlockerReason(
     missingRequirements.push("at least one contact method");
   }
 
-  if (isFreshStartCandidateProfile(profile) && profile.yearsExperience <= 0) {
+  if (
+    isFreshStartCandidateProfile(profile) &&
+    profile.yearsExperience === null
+  ) {
     missingRequirements.push("your years of experience");
   }
 

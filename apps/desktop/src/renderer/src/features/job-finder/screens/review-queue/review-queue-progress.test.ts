@@ -1,4 +1,6 @@
+import { RESUME_DRAFT_LONG_RUNNING_MS } from "@renderer/features/job-finder/lib/wait-state";
 import { describe, expect, it } from "vitest";
+import { isWaitLongRunning } from "../../lib/wait-state";
 import * as reviewQueueProgress from "./review-queue-progress";
 import {
   formatResumeOperationElapsed,
@@ -39,4 +41,10 @@ describe("review queue progress helpers", () => {
     expect(formatResumeOperationElapsed(69)).toBe("1:09");
     expect(formatResumeOperationElapsed(-4)).toBe("0:00");
   });
+});
+
+it("does not call a draft late before the displayed 70-second range ends", () => {
+  expect(isWaitLongRunning(36, RESUME_DRAFT_LONG_RUNNING_MS)).toBe(false);
+  expect(isWaitLongRunning(69, RESUME_DRAFT_LONG_RUNNING_MS)).toBe(false);
+  expect(isWaitLongRunning(70, RESUME_DRAFT_LONG_RUNNING_MS)).toBe(true);
 });

@@ -106,7 +106,7 @@ export async function persistApplicationWaitingForBrowserTab(input: {
       ...current,
       summary: WAITING_FOR_BROWSER_TAB_SUMMARY,
       detail:
-        "The Job Finder browser has as many tabs open as it allows. This application starts as soon as one frees up: close a tab you no longer need, or send a filled-in application.",
+        "Browser tab limit reached. Close finished tabs to continue. Prepared, unsent forms stay open.",
       updatedAt: new Date().toISOString(),
       completedAt: null,
     }),

@@ -35,6 +35,51 @@ it("preserves a CAPTCHA handoff as site protection instead of an unanswered ques
 });
 
 describe("reconcileApplyRunAfterConfirmedSubmission", () => {
+  it("keeps a paused batch's exact limit and does not invent a confirmed send", () => {
+    const run = ApplyRunSchema.parse({
+      id: "run_limit",
+      state: "paused_for_user_review",
+      jobIds: ["a", "b"],
+      createdAt: "2026-10-02T09:00:00.000Z",
+      updatedAt: "2026-10-02T09:00:00.000Z",
+      summary: "Daily limit reached",
+      detail: "The daily limit of 8 applications was reached.",
+      totalJobs: 2,
+      pendingJobs: 2,
+    });
+    const results = ["a", "b"].map((jobId) =>
+      ApplyJobResultSchema.parse({
+        id: jobId,
+        runId: run.id,
+        jobId,
+        state: jobId === "a" ? "failed" : "planned",
+        summary: "Not sent",
+        detail: "Not sent",
+        startedAt: run.createdAt,
+        updatedAt: run.updatedAt,
+      }),
+    );
+    const next = reconcileApplyRunAfterConfirmedSubmission({
+      run,
+      results,
+      submittedAt: run.updatedAt,
+      submittedSummary: "Could not apply",
+      submittedDetail: "Nothing sent",
+    });
+    expect(next.detail).toBe(run.detail);
+    expect(next.submittedJobs).toBe(0);
+    const review = reconcileApplyRunAfterConfirmedSubmission({
+      run: { ...run, state: "running" },
+      results: results.map((result) => ({
+        ...result,
+        state: "awaiting_review",
+      })),
+      submittedAt: run.updatedAt,
+      submittedSummary: "Prepared",
+      submittedDetail: "Review",
+    });
+    expect(review.detail).toContain("Nothing was confirmed sent");
+  });
   const at = "2026-07-30T10:00:00.000Z";
   const later = "2026-07-30T10:05:00.000Z";
   const result = (jobId: string, state: "awaiting_review" | "submitted") =>
@@ -151,6 +196,51 @@ describe("summarizeApplyJobResultStates", () => {
 });
 
 describe("buildApplicationPrivacyReceipt", () => {
+  it("records the actual form upload without claiming a different approved file's identity", () => {
+    const job = createSeed().savedJobs[0]!;
+    const at = "2026-07-30T10:00:00.000Z";
+    const receipt = buildApplicationPrivacyReceipt({
+      applicationRecordId: "application-mismatch",
+      job,
+      generatedAt: at,
+      runId: "run-mismatch",
+      resultId: "result-mismatch",
+      resumeArtifact: ApplicationResumeArtifactSchema.parse({
+        id: "approved-resume",
+        jobId: job.id,
+        source: "tailored_export",
+        sourceDocumentId: null,
+        exportArtifactId: "approved-export",
+        fileName: "approved.pdf",
+        filePath: "/tmp/approved.pdf",
+        sha256: "a".repeat(64),
+        approvedAt: at,
+      }),
+      reviewCard: ApplicationReviewCardSchema.parse({
+        siteLabel: "Replica",
+        pageUrl: job.applicationUrl,
+        attachments: [
+          { label: "Resume", field: "Resume / CV", fileName: "original.docx" },
+        ],
+        preparedAt: at,
+      }),
+      executionResult: ApplyExecutionResultSchema.parse({
+        state: "paused",
+        summary: "Needs a document",
+        detail: "Nothing was sent.",
+        submittedAt: null,
+        outcome: null,
+        nextActionLabel: null,
+      }),
+    });
+    expect(receipt.resume).toMatchObject({
+      fileName: "original.docx",
+      sourceDocumentId: null,
+      exportArtifactId: null,
+      sha256: null,
+    });
+  });
+
   it("redacts destination secrets and records verified preparation writes", () => {
     const job = {
       ...createSeed().savedJobs[0]!,

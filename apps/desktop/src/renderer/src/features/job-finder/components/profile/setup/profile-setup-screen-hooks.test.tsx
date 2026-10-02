@@ -10,6 +10,7 @@ import {
 } from "@nordri/contracts";
 import { act, renderHook } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import { buildSearchPreferencesPayload } from "../../../lib/profile-editor";
 import { buildProfileSetupPayload } from "./profile-setup-screen-actions";
 import {
   backgroundConflictNoticeMessage,
@@ -92,6 +93,61 @@ function createInput(
 }
 
 describe("useProfileSetupForms background-snapshot durability", () => {
+  it("keeps corrections and removed rows through step changes until the finish save", () => {
+    const initial = createInput({
+      searchPreferences: {
+        ...searchPreferences,
+        targetRoles: ["Freelance designer", "Product designer"],
+      },
+    });
+    const { result, rerender } = renderHook(
+      (input: ProfileSetupFormProps) => useProfileSetupForms(input),
+      { initialProps: initial },
+    );
+    act(() =>
+      result.current.profileForm.setValue(
+        "identity.headline",
+        "Product designer",
+        { shouldDirty: true },
+      ),
+    );
+    rerender({
+      ...initial,
+      profile: structuredClone(initial.profile),
+      profileSetupState: { ...profileSetupState, currentStep: "background" },
+    });
+    act(() => result.current.experienceArray.remove(0));
+    rerender({
+      ...initial,
+      profileSetupState: { ...profileSetupState, currentStep: "targeting" },
+    });
+    act(() =>
+      result.current.preferencesForm.setValue(
+        "targetRoles",
+        "Product designer",
+        { shouldDirty: true },
+      ),
+    );
+    rerender({
+      ...initial,
+      profileSetupState: { ...profileSetupState, currentStep: "extras" },
+    });
+    const savedProfile = buildProfileSetupPayload(
+      initial.profile,
+      result.current.profileForm.getValues(),
+    ).payload;
+    const savedPreferences = buildSearchPreferencesPayload(
+      initial.searchPreferences,
+      result.current.preferencesForm.getValues(),
+    ).payload;
+    expect(savedProfile?.headline).toBe("Product designer");
+    expect(
+      savedProfile?.experiences.map((experience) => experience.id),
+    ).toEqual(["exp_2"]);
+    expect(savedPreferences?.targetRoles).toEqual(["Product designer"]);
+    expect(result.current.hasUserDraftChanges).toBe(true);
+  });
+
   it("keeps dirty profile and preference drafts across identical-content snapshot commits", () => {
     const { result, rerender } = renderHook(
       (input: ProfileSetupFormProps) => useProfileSetupForms(input),

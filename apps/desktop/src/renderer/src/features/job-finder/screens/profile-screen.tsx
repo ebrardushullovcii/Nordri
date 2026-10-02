@@ -1,3 +1,4 @@
+import { getRunningResumeImportProgress } from "@renderer/features/job-finder/lib/profile-resume-panel-utils";
 import { useEffect, useRef, useState } from "react";
 import { useLocation, useSearchParams } from "react-router-dom";
 import type {
@@ -348,8 +349,13 @@ export function ProfileScreen(props: {
   // The renderer receives no progress event until a native picker has
   // returned a file. Treat that picker-only phase as recoverable rather than
   // freezing every profile field behind an unresolved local pending flag.
-  const isResumeImportProcessing =
-    pendingActions.importResume && resumeImportProgress !== null;
+  const runningImportProgress = getRunningResumeImportProgress(
+    latestResumeImportRun,
+  );
+  const importProgress = resumeImportProgress ?? runningImportProgress;
+  const importPending =
+    pendingActions.importResume || runningImportProgress !== null;
+  const isResumeImportProcessing = importPending && importProgress !== null;
   const resumeAnalysisPending =
     isResumeImportProcessing || pendingActions.analyzeProfile;
   // Job sources and Files hold no profile facts, so the assistant talks about
@@ -691,12 +697,12 @@ export function ProfileScreen(props: {
                     importDisabledReason={importResumeGuardMessage}
                     isProfileReady={profileSetupState.status === "completed"}
                     isAnalyzeProfilePending={pendingActions.analyzeProfile}
-                    isImportResumePending={pendingActions.importResume}
+                    isImportResumePending={importPending}
                     latestResumeImportReviewCandidates={
                       latestResumeImportReviewCandidates
                     }
                     latestResumeImportRun={latestResumeImportRun}
-                    resumeImportProgress={resumeImportProgress}
+                    resumeImportProgress={importProgress}
                     onAnalyzeProfileFromResume={onAnalyzeProfileFromResume}
                     onApplyTimelineRepairAction={(proposalId, action) => {
                       if (!latestResumeImportRun) {
@@ -877,12 +883,12 @@ export function ProfileScreen(props: {
                       importDisabledReason={importResumeGuardMessage}
                       isProfileReady={profileSetupState.status === "completed"}
                       isAnalyzeProfilePending={pendingActions.analyzeProfile}
-                      isImportResumePending={pendingActions.importResume}
+                      isImportResumePending={importPending}
                       latestResumeImportReviewCandidates={
                         latestResumeImportReviewCandidates
                       }
                       latestResumeImportRun={latestResumeImportRun}
-                      resumeImportProgress={resumeImportProgress}
+                      resumeImportProgress={importProgress}
                       onAnalyzeProfileFromResume={onAnalyzeProfileFromResume}
                       onApplyTimelineRepairAction={(proposalId, action) => {
                         if (!latestResumeImportRun) {

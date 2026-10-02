@@ -322,7 +322,7 @@ describe("DiscoveryHistoryModal", () => {
 
     expect(
       screen.getByText(
-        "Contributed 0 new jobs to this run; 10 were already saved.",
+        "Contributed 0 new jobs to this run; 0 duplicates merged · 10 seen before.",
       ),
     ).toBeTruthy();
     expect(screen.queryByText(/No jobs matched this plan/u)).toBeNull();

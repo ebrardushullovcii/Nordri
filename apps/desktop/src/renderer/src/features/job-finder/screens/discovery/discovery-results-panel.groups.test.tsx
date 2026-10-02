@@ -90,8 +90,7 @@ afterEach(() => {
 
 describe("discovery result bands", () => {
   it("keeps the header to a plain count and leaves the run report to the banner", () => {
-    const runReportLabel =
-      "57 found · 35 new · 15 kept · 47 duplicates merged";
+    const runReportLabel = "57 found · 35 new · 15 kept · 47 duplicates merged";
     render(
       <DiscoveryResultsPanel
         browserSession={browserSession}
@@ -191,7 +190,7 @@ describe("discovery result bands", () => {
   });
 
   it("files a title-only row under weaker matches when the scorer recorded that the title missed every target role", () => {
-    // "Matches your role, not yet scored" must mean the title matched. A card-
+    // "Not yet assessed" must mean the title matched. A card-
     // only "Full-Stack Designer" for a software-engineer search was checked as
     // far as it could be, and the one thing checked did not fit.
     //
@@ -340,16 +339,14 @@ describe("discovery result bands", () => {
       ["title_only", "unchecked", 1],
       ["verified_mismatch", "mismatches", 1],
     ]);
-    expect(headings.get("title_only")?.label).toBe(
-      "Matches your role, not yet scored",
-    );
+    expect(headings.get("title_only")?.label).toBe("Not yet assessed");
     // The one line under the label states what was and was not read. It must
     // not promise a capability the app does not have — there is no
     // external-URL action — and it must not send the user to an inspector
     // that holds nothing the row does not already show.
     const description = headings.get("title_only")?.description ?? "";
     expect(description).toBe(
-      "Matched on the title alone; the full requirements have not been assessed.",
+      "The full requirements have not been assessed. Check the role and level before applying.",
     );
     for (const promise of ["Open", "open", "browser", "link"]) {
       expect(description).not.toContain(promise);
@@ -377,7 +374,7 @@ describe("discovery result bands", () => {
         .getAllByTestId(/^discovery-results-group-/u)
         .map((heading) => heading.textContent?.split(")")[0] ?? ""),
     ).toEqual([
-      "Matches your role, not yet scored (1",
+      "Not yet assessed (1",
       "Weaker matches (1",
       "Clear mismatches (1",
     ]);
@@ -410,7 +407,7 @@ describe("discovery result bands", () => {
         (heading) => [heading.label, heading.count],
       ),
     ).toEqual([
-      ["Matches your role, not yet scored", 2],
+      ["Not yet assessed", 2],
       ["Weaker matches", 1],
     ]);
   });
@@ -664,11 +661,9 @@ describe("discovery three-band result counts", () => {
     const headings = screen.getAllByTestId(/^discovery-results-group-/u);
     // Exactly one, at the top, covering every row.
     expect(headings).toHaveLength(1);
+    expect(headings[0]!.textContent).toContain("Not yet assessed (14)");
     expect(headings[0]!.textContent).toContain(
-      "Matches your role, not yet scored (14)",
-    );
-    expect(headings[0]!.textContent).toContain(
-      "Matched on the title alone; the full requirements have not been assessed.",
+      "The full requirements have not been assessed. Check the role and level before applying.",
     );
     expect(screen.getByTestId("discovery-result-count").textContent).toContain(
       "14 jobs",
@@ -767,7 +762,7 @@ describe("discovery three-band result counts", () => {
     ).toBe("Title-only estimate");
     expect(
       screen.getByTestId("discovery-result-fit-reason-conflicted").textContent,
-    ).toContain("Fit is based on the title alone");
+    ).toContain("Review the listing and resume evidence before applying.");
     expect(
       screen.queryByTestId("discovery-result-fit-sr-conflicted"),
     ).toBeNull();
@@ -815,11 +810,9 @@ describe("discovery three-band result counts", () => {
     );
 
     const heading = screen.getByTestId("discovery-results-group-unchecked");
+    expect(heading.textContent).toContain("Not yet assessed (1)");
     expect(heading.textContent).toContain(
-      "Matches your role, not yet scored (1)",
-    );
-    expect(heading.textContent).toContain(
-      "Matched on the title alone; the full requirements have not been assessed.",
+      "The full requirements have not been assessed. Check the role and level before applying.",
     );
   });
 

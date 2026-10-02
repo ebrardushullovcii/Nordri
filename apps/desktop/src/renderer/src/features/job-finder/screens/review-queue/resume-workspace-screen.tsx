@@ -1,3 +1,4 @@
+import { OriginalResumeFilePanel } from "./original-resume-file-panel";
 import {
   useCallback,
   useEffect,
@@ -350,7 +351,9 @@ export function ResumeWorkspaceScreen(props: ResumeWorkspaceScreenProps) {
         bulletId = bulletMatch[1];
       }
     }
-    const hasSelection = Boolean(selectedSectionId || selectedEntryId || bulletId);
+    const hasSelection = Boolean(
+      selectedSectionId || selectedEntryId || bulletId,
+    );
     return {
       focus: {
         kind: "job",
@@ -505,11 +508,13 @@ export function ResumeWorkspaceScreen(props: ResumeWorkspaceScreenProps) {
       // before this edit. Signalling first lets this patch's own save capture
       // its post-edit epoch and keep a truthful Retry if it fails.
       props.onDraftEdited?.();
-      props.onApplyPatch(scopedPatch, revisionReason);
+      if (scopedPatch.operation !== "toggle_include")
+        props.onApplyPatch(scopedPatch, revisionReason);
 
       if (
         scopedPatch.operation !== "move_entry" &&
-        scopedPatch.operation !== "reset_entry_order"
+        scopedPatch.operation !== "reset_entry_order" &&
+        scopedPatch.operation !== "toggle_include"
       ) {
         return;
       }
@@ -524,6 +529,52 @@ export function ResumeWorkspaceScreen(props: ResumeWorkspaceScreenProps) {
           sections: currentDraft.sections.map((section) => {
             if (section.id !== scopedPatch.targetSectionId) {
               return section;
+            }
+
+            if (scopedPatch.operation === "toggle_include") {
+              const entries = section.entries.map((entry) => {
+                if (entry.id !== scopedPatch.targetEntryId) return entry;
+                if (scopedPatch.targetBulletId)
+                  return {
+                    ...entry,
+                    bullets: entry.bullets.map((bullet) =>
+                      bullet.id === scopedPatch.targetBulletId
+                        ? {
+                            ...bullet,
+                            included:
+                              scopedPatch.newIncluded ?? !bullet.included,
+                          }
+                        : bullet,
+                    ),
+                  };
+                return {
+                  ...entry,
+                  included: scopedPatch.newIncluded ?? !entry.included,
+                  origin: "user_edited" as const,
+                };
+              });
+              return {
+                ...section,
+                entries,
+                included:
+                  scopedPatch.targetEntryId || scopedPatch.targetBulletId
+                    ? entries.some(
+                        (entry) =>
+                          entry.id === scopedPatch.targetEntryId &&
+                          entry.included,
+                      )
+                      ? true
+                      : section.included
+                    : (scopedPatch.newIncluded ?? !section.included),
+                bullets: section.bullets.map((bullet) =>
+                  bullet.id === scopedPatch.targetBulletId
+                    ? {
+                        ...bullet,
+                        included: scopedPatch.newIncluded ?? !bullet.included,
+                      }
+                    : bullet,
+                ),
+              };
             }
 
             if (scopedPatch.operation === "reset_entry_order") {
@@ -574,7 +625,7 @@ export function ResumeWorkspaceScreen(props: ResumeWorkspaceScreenProps) {
 
   const { preview, previewError, previewStatus, refreshPreview } =
     useResumeWorkspacePreview({
-      draft,
+      draft: props.originalResumeRoute ? null : draft,
       hasUnsavedChanges,
       onPreviewDraft: props.onPreviewDraft,
     });
@@ -1093,34 +1144,34 @@ export function ResumeWorkspaceScreen(props: ResumeWorkspaceScreenProps) {
   const claimConfirmationPanel =
     props.onSetResumeClaimConfirmation &&
     listDecidableClaimAssessments(claimAssessments).length > 0 ? (
-    <ResumeClaimConfirmationPanel
-      claimAssessments={props.workspace.validation?.claimAssessments ?? []}
-      draft={props.workspace.draft}
-      hasUnsavedChanges={hasUnsavedChanges}
-      isWorkspacePending={props.isWorkspacePending}
-      jobId={props.jobId}
-      onRejectClaim={(assessment) => {
-        if (!assessment.bulletId) {
-          return;
-        }
+      <ResumeClaimConfirmationPanel
+        claimAssessments={props.workspace.validation?.claimAssessments ?? []}
+        draft={props.workspace.draft}
+        hasUnsavedChanges={hasUnsavedChanges}
+        isWorkspacePending={props.isWorkspacePending}
+        jobId={props.jobId}
+        onRejectClaim={(assessment) => {
+          if (!assessment.bulletId) {
+            return;
+          }
 
-        // Rejecting is the same reversible draft edit the bullet row's own
-        // delete makes, so it is logged and undoable like any other.
-        handleApplyPatch(
-          createResumeDraftPatch({
-            bulletId: assessment.bulletId,
-            entryId: assessment.entryId,
-            idPrefix: `resume_patch_claim_reject_${assessment.bulletId}`,
-            operation: "remove_bullet",
-            sectionId: assessment.sectionId,
-          }),
-          "Removed a line you did not confirm",
-        );
-      }}
-      onEditClaim={editClaimWording}
-      onSetResumeClaimConfirmation={props.onSetResumeClaimConfirmation}
-    />
-  ) : null;
+          // Rejecting is the same reversible draft edit the bullet row's own
+          // delete makes, so it is logged and undoable like any other.
+          handleApplyPatch(
+            createResumeDraftPatch({
+              bulletId: assessment.bulletId,
+              entryId: assessment.entryId,
+              idPrefix: `resume_patch_claim_reject_${assessment.bulletId}`,
+              operation: "remove_bullet",
+              sectionId: assessment.sectionId,
+            }),
+            "Removed a line you did not confirm",
+          );
+        }}
+        onEditClaim={editClaimWording}
+        onSetResumeClaimConfirmation={props.onSetResumeClaimConfirmation}
+      />
+    ) : null;
   const { approvalStateLabel, studioStatusMessage } = buildWorkspaceStatusCopy({
     approvalBlockedReason,
     availableExportToApprove,
@@ -1314,6 +1365,11 @@ export function ResumeWorkspaceScreen(props: ResumeWorkspaceScreenProps) {
           {...(props.originalResumeRoute || writingEditableLevel
             ? {
                 originalResume: {
+                  filePanel: (
+                    <OriginalResumeFilePanel
+                      source={props.originalResumeRoute?.source}
+                    />
+                  ),
                   levelLabel:
                     writingEditableLevel ??
                     props.originalResumeRoute?.levelLabel ??

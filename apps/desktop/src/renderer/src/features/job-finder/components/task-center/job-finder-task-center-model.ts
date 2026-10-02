@@ -336,8 +336,17 @@ function buildDiscoveryTask(
   input: BuildJobFinderTaskCenterModelInput,
 ): JobFinderTaskCenterItem | null {
   const recentRuns = input.workspace.recentDiscoveryRuns ?? [];
-  const liveEvent = input.liveDiscoveryEvents?.at(-1) ?? null;
+  const observedLiveEvent = input.liveDiscoveryEvents?.at(-1) ?? null;
   const activeRun = input.workspace.activeDiscoveryRun;
+  const newestRun =
+    activeRun ?? newestBy(recentRuns, (candidate) => candidate.startedAt);
+  const liveEvent =
+    observedLiveEvent &&
+    newestRun &&
+    observedLiveEvent.runId !== newestRun.id &&
+    observedLiveEvent.timestamp < newestRun.startedAt
+      ? null
+      : observedLiveEvent;
   // A new search publishes activity before its workspace snapshot arrives.
   // Never combine that activity with the previous search's sources or counts.
   const run = liveEvent
@@ -379,11 +388,14 @@ function buildDiscoveryTask(
   const targetsCompleted = run?.summary.targetsCompleted ?? 0;
   const now = input.now ?? Date.now();
   const stopState = getDiscoveryStopState(run, now);
-  const status = discoveryStatus(
-    run,
-    input.isDiscoveryPending || Boolean(liveEvent),
-    now,
-  );
+  const status =
+    run?.runPhase === "interrupted"
+      ? "interrupted"
+      : discoveryStatus(
+          run,
+          input.isDiscoveryPending || Boolean(liveEvent),
+          now,
+        );
   const compatibleHistory = recentRuns.filter(
     (candidate) =>
       candidate.id !== run?.id &&
@@ -464,7 +476,7 @@ function resumeStatus(
     return "failed";
   }
 
-  return "interrupted";
+  return "active";
 }
 
 function buildResumeTask(
@@ -497,7 +509,13 @@ function buildResumeTask(
       status === "active"
         ? input.resumeImportProgress
           ? resumeStageLabels[input.resumeImportProgress.stage]
-          : "Waiting for file selection"
+          : run?.status === "extracting"
+            ? "Building profile suggestions"
+            : run?.status === "reconciling"
+              ? "Saving your review items"
+              : run?.status === "parsing"
+                ? "Reading your resume"
+                : "Waiting for file selection"
         : status === "completed"
           ? "Ready for review"
           : status === "failed"

@@ -1464,3 +1464,108 @@ describe("buildResumeDraftFromTailoredDraft work-history acknowledgment carry-fo
     expect(draft.workHistoryReviewAcknowledgments).toEqual([]);
   });
 });
+
+test("education graduation-only dates keep unknown starts empty", () => {
+  const seed = createSeed();
+  const education = {
+    ...seed.profile.education[0]!,
+    id: "student",
+    schoolName: "Example University",
+    degree: "MSc",
+    startDate: null,
+    endDate: "2027-03",
+    summary: "Expected graduation March 2027",
+    isDraft: false,
+  };
+  const draft = buildResumeDraftFromTailoredDraft({
+    job: seed.savedJobs[0]!,
+    templateId: seed.settings.resumeTemplateId,
+    createdAt: "2026-10-02T10:00:00.000Z",
+    generationMethod: "ai",
+    profile: { ...seed.profile, education: [education] },
+    draft: {
+      label: "Tailored Resume",
+      summary: "",
+      experienceHighlights: [],
+      coreSkills: [],
+      targetedKeywords: [],
+      experienceEntries: [],
+      projectEntries: [],
+      educationEntries: [
+        {
+          school: education.schoolName,
+          degree: education.degree,
+          fieldOfStudy: null,
+          location: null,
+          dateRange: "March 2027",
+          summary: education.summary,
+          profileRecordId: education.id,
+        },
+      ],
+      certificationEntries: [],
+      coverageMetadata: [],
+      additionalSkills: [],
+      languages: [],
+      fullText: "",
+      compatibilityScore: 80,
+      notes: [],
+    },
+  });
+  const entry = draft.sections.find((section) => section.kind === "education")
+    ?.entries[0];
+  expect(entry?.startDate).toBeNull();
+  expect(entry?.endDate).toBe("2027-03");
+  expect(entry?.summary).toBe("Expected graduation March 2027");
+});
+
+test("generated old achievement wording is replaced by the saved edit before rendering", () => {
+  const seed = createSeed();
+  const edited =
+    "Redesigned pension-app onboarding, lifting activation 23% in eight weeks.";
+  const old =
+    "Redesigned onboarding for a pensions app; activation up 23% in eight weeks.";
+  const experience = {
+    ...seed.profile.experiences[0]!,
+    id: "designer",
+    summary: old,
+    achievements: [edited],
+  };
+  const profile = { ...seed.profile, experiences: [experience] };
+  const draft = buildResumeDraftFromTailoredDraft({
+    job: seed.savedJobs[0]!,
+    templateId: seed.settings.resumeTemplateId,
+    createdAt: "2026-10-02T10:00:00.000Z",
+    generationMethod: "ai",
+    profile,
+    draft: {
+      label: "Tailored Resume",
+      summary: "",
+      experienceHighlights: [],
+      coreSkills: [],
+      targetedKeywords: [],
+      experienceEntries: [
+        {
+          title: experience.title,
+          employer: experience.companyName,
+          location: null,
+          dateRange: null,
+          summary: null,
+          bullets: [old],
+          profileRecordId: experience.id,
+        },
+      ],
+      projectEntries: [],
+      educationEntries: [],
+      certificationEntries: [],
+      coverageMetadata: [],
+      additionalSkills: [],
+      languages: [],
+      fullText: "",
+      compatibilityScore: 80,
+      notes: [],
+    },
+  });
+  const entry = draft.sections.find((section) => section.kind === "experience")
+    ?.entries[0];
+  expect(entry?.bullets.map((bullet) => bullet.text)).toEqual([edited]);
+});

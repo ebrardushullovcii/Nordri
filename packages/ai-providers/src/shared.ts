@@ -1,5 +1,6 @@
 import {
   AssetGenerationReasonSchema,
+  JobRequirementAssessmentSchema,
   type AiProfileAssistantBehavior,
   type AgentProviderStatus,
   AgentTaskExecutionReceiptSchema,
@@ -197,7 +198,8 @@ export type TailoredResumeGenerationProvenance = z.infer<
 export const TailoredResumeDraftSchema = z.object({
   recommendedTemplateId: ResumeTemplateIdSchema.nullable().optional(),
   label: NullableStringSchema,
-  summary: NonEmptyStringSchema,
+  // A candidate without a saved summary may omit it in a fallback.
+  summary: z.string(),
   experienceHighlights: z.array(NonEmptyStringSchema).default([]),
   coreSkills: z.array(NonEmptyStringSchema).default([]),
   targetedKeywords: z.array(NonEmptyStringSchema).default([]),
@@ -307,6 +309,7 @@ export type ResumeGenerationStrategyPolicy = z.infer<
 >;
 
 export const JobFitAssessmentSchema = z.object({
+  requirements: z.array(JobRequirementAssessmentSchema).max(40).optional(),
   score: z.number().int().min(0).max(100),
   reasons: z.array(NonEmptyStringSchema).default([]),
   gaps: z.array(NonEmptyStringSchema).default([]),
@@ -571,6 +574,8 @@ export const PROFILE_RESUME_APPROACH_VOCABULARY = [
 ].join(" ");
 
 export interface AssessJobFitInput {
+  signal?: AbortSignal;
+  assessmentDate?: string;
   profile: CandidateProfile;
   searchPreferences: JobSearchPreferences;
   job: JobPosting;

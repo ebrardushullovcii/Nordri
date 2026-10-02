@@ -7,11 +7,9 @@ import type { ApplyFormControl } from "./types";
  * The country picker that sits next to a phone number.
  *
  * Forms split a phone number into a country and the rest of it. Getting this
- * wrong is not cosmetic: pick the wrong country and the number that reaches
- * the employer is unreachable, and leave the code in both halves and it is
- * dialled twice. Several countries share a calling code, so a code alone is
- * never enough — the country has to be known too, and when it is not, the
- * control is left for the person.
+ * wrong can make the number unreachable or repeat its calling code. A
+ * calling-code-only choice comes from the international number. A choice
+ * naming a country also needs that country, because some codes are shared.
  */
 
 export function isPhoneCountryControl(
@@ -103,19 +101,16 @@ export function resolveCallingCode(input: {
   }
 
   const compact = input.phone.trim();
-  const country = normalizeSignal(input.countryHint ?? "");
-  if (!/^\+\d{7,15}$/u.test(compact) || !country) {
+  if (!/^\+\d{7,15}$/u.test(compact)) {
     return null;
   }
 
   const matching = [
     ...new Set(
       input.optionLabels.flatMap((optionLabel) =>
-        optionCountry(optionLabel) === country
-          ? optionCallingCodes(optionLabel).filter((code) =>
-              compact.startsWith(code),
-            )
-          : [],
+        optionCallingCodes(optionLabel).filter((code) =>
+          compact.startsWith(code),
+        ),
       ),
     ),
   ];
@@ -125,9 +120,8 @@ export function resolveCallingCode(input: {
 /**
  * The option to choose for a phone-country control.
  *
- * Both halves must agree: the code has to be on the option and the country
- * has to be the one the profile points at. One without the other leaves the
- * control alone.
+ * Code-only choices use the number's calling code. Choices naming a country
+ * must also match the saved country; shared calling codes do not settle it.
  */
 export function matchPhoneCountryOption(input: {
   options: readonly string[];
@@ -135,12 +129,13 @@ export function matchPhoneCountryOption(input: {
   countryHint: string | null;
 }): string | null {
   const country = normalizeSignal(input.countryHint ?? "");
-  if (!country || !/^\+\d{1,4}$/u.test(input.callingCode)) {
+  if (!/^\+\d{1,4}$/u.test(input.callingCode)) {
     return null;
   }
   const matches = input.options.filter(
     (optionLabel) =>
-      optionCountry(optionLabel) === country &&
+      (!optionCountry(optionLabel) ||
+        (Boolean(country) && optionCountry(optionLabel) === country)) &&
       optionCallingCodes(optionLabel).includes(input.callingCode),
   );
   return matches.length === 1 ? (matches[0] ?? null) : null;

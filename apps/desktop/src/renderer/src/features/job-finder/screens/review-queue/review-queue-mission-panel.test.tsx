@@ -127,6 +127,25 @@ function renderPanel(
 }
 
 describe("ReviewQueueMissionPanel", () => {
+  it("keeps a hard conflict visible beside Apply for an Original resume", () => {
+    renderPanel({
+      selectedItem: createItem({ resumeApplicationMode: "original_resume" }),
+      selectedJob: {
+        ...createJob(),
+        matchAssessment: {
+          ...createJob().matchAssessment,
+          recommendation: "skip",
+          recommendationRationale:
+            "The listing belongs to a different occupational role.",
+        },
+      },
+    });
+    expect(screen.getByText("Skip — hard conflict")).toBeTruthy();
+    expect(
+      screen.getByText("The listing belongs to a different occupational role."),
+    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Apply" })).toBeTruthy();
+  });
   it("shows the resume level, one Apply, and one sentence on what Apply does", () => {
     const props = renderPanel();
 
@@ -252,7 +271,9 @@ describe("ReviewQueueMissionPanel", () => {
       }),
     });
 
-    expect(screen.queryByRole("button", { name: "Try again with AI" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Try again with AI" }),
+    ).toBeNull();
   });
 
   it("sends an Aggressive draft to review instead of Apply", () => {

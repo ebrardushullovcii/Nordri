@@ -41,6 +41,7 @@ export async function checkWrittenApplicationAnswer(input: {
           input.sources.resumeText ??
           input.sources.profile.baseResume.textContent,
         savedAnswers: input.sources.reusableAnswers,
+        savedProfileAnswers: input.sources.profile.answerBank,
         postingContextOnly: input.sources.posting,
         question: input.question,
         proposedAnswer: input.answer,

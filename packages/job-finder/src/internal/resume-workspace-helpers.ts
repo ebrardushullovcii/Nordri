@@ -1,4 +1,8 @@
 import {
+  resumeFactIsCovered,
+  resumeSentences,
+} from "./resume-content-comparison";
+import {
   buildCandidateSkillBank,
   buildResumeSkillContextFilter,
   classifyResumeClaimGrounding,
@@ -238,7 +242,7 @@ function buildProfileSupportBank(
       profile.summary ?? "",
       profile.professionalSummary.fullSummary ?? "",
       profile.professionalSummary.shortValueProposition ?? "",
-      profile.yearsExperience > 0
+      profile.yearsExperience !== null && profile.yearsExperience > 0
         ? `${profile.yearsExperience} years of experience`
         : "",
       profile.narrative.professionalStory ?? "",
@@ -921,7 +925,7 @@ function buildResumeClaimEvidenceBank(
   add(
     "profile",
     "profile:years-experience",
-    profile.yearsExperience > 0
+    profile.yearsExperience !== null && profile.yearsExperience > 0
       ? `${profile.yearsExperience} years of professional experience`
       : null,
   );
@@ -954,7 +958,9 @@ function buildResumeClaimEvidenceBank(
   for (const [index, skill] of profile.skills.entries()) {
     add("profile", `profile:skill:${index + 1}`, skill, 1);
   }
-  for (const experience of profile.experiences) {
+  for (const experience of profile.experiences.filter(
+    (record) => !record.isDraft,
+  )) {
     add(
       "profile",
       `experience:${experience.id}:summary`,
@@ -1285,13 +1291,57 @@ function assessResumeClaims(input: {
         });
     // Only a skill the evidence cannot support becomes a confirmation: one
     // the person demonstrably has keeps its own grounded verdict.
-    const status = isCandidateOwnVerbatimLine
-      ? ("exact" as const)
-      : isProfileGroundedSkill
-        ? ("exact" as const)
-        : baseStatus === "unsupported" && isListingAnchoredSkillAddition
-          ? ("confirm_needed" as const)
-          : baseStatus;
+    const linkedSkills =
+      !isSkillsSectionClaim &&
+      generatedClaim &&
+      (claim.field === "entry_bullet" || claim.field === "entry_summary")
+        ? candidateSkillBank.filter((skill) =>
+            matchesWholePhrase(claim.text, skill),
+          )
+        : [];
+    // A project's own tools apply to the whole project ("Technologies:
+    // Figma"), so naming them with it is not a new link. A role's skills do
+    // not vouch for one achievement: separate achievements in one role are
+    // exactly where a tool gets joined to the wrong result.
+    const claimRecordId =
+      input.draft.sections
+        .flatMap((section) => section.entries)
+        .find((entry) => entry.id === claim.entryId)?.profileRecordId ?? null;
+    const claimRecordSkills = claimRecordId
+      ? (input.profile?.projects.find((record) => record.id === claimRecordId)
+          ?.skills ?? [])
+      : [];
+    const hasUnconfirmedLink = linkedSkills.some((skill) => {
+      if (
+        claimRecordSkills.some((recordSkill) =>
+          skillsAreEquivalent(recordSkill, skill),
+        )
+      )
+        return false;
+      const fact = claim.text.replace(
+        new RegExp(skill.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "giu"),
+        "",
+      );
+      if (fact.trim().split(/\s+/u).length < 5) return false;
+      return !evidenceBank.some((evidence) =>
+        resumeSentences(evidence.text).some(
+          (sentence) =>
+            matchesWholePhrase(sentence, skill) &&
+            resumeFactIsCovered(fact, [sentence]),
+        ),
+      );
+    });
+    const status =
+      hasUnconfirmedLink &&
+      (baseStatus === "exact" || baseStatus === "paraphrase")
+        ? ("confirm_needed" as const)
+        : isCandidateOwnVerbatimLine
+          ? ("exact" as const)
+          : isProfileGroundedSkill
+            ? ("exact" as const)
+            : baseStatus === "unsupported" && isListingAnchoredSkillAddition
+              ? ("confirm_needed" as const)
+              : baseStatus;
     const locator = [
       claim.field,
       claim.sectionId,
@@ -1358,18 +1408,15 @@ function removeBulletDuplicatesFromSummary(
   summary: string,
   bullets: readonly { included: boolean; text: string }[],
 ): string | null {
-  const visibleBulletLines = new Set(
-    bullets
-      .filter((bullet) => bullet.included)
-      .map((bullet) => normalizeVisibleResumeText(bullet.text))
-      .filter(Boolean),
-  );
+  const visibleBulletLines = bullets
+    .filter((bullet) => bullet.included)
+    .map((bullet) => bullet.text);
   const sentences = summary
     .split(/(?<=[.!?])\s+(?=[A-Z])/u)
     .map((sentence) => sentence.trim())
     .filter(Boolean);
   const uniqueSentences = sentences.filter(
-    (sentence) => !visibleBulletLines.has(normalizeVisibleResumeText(sentence)),
+    (sentence) => !resumeFactIsCovered(sentence, visibleBulletLines),
   );
 
   return uniqueSentences.length > 0 ? uniqueSentences.join(" ") : null;
@@ -1546,6 +1593,17 @@ export function sanitizeResumeDraft(input: {
       });
 
     const nextEntries = section.entries
+      .filter(
+        (entry) =>
+          !input.profile?.experiences.some(
+            (record) =>
+              record.isDraft &&
+              (entry.profileRecordId
+                ? entry.profileRecordId === record.id
+                : entry.title === record.title &&
+                  entry.subtitle === record.companyName),
+          ),
+      )
       .map((entry) => {
         if (entry.locked) {
           if (entry.summary) {
@@ -2090,7 +2148,9 @@ export function validateResumeDraft(input: {
         .map((entry) => entry.profileRecordId),
     );
 
-    for (const experience of input.profile.experiences) {
+    for (const experience of input.profile.experiences.filter(
+      (record) => !record.isDraft,
+    )) {
       const isCanonicalRole = Boolean(
         experience.companyName ||
         experience.title ||
@@ -2645,11 +2705,10 @@ export function buildResumeProposalReplyContent(input: {
     // is one of its tools), so its note usually says why it kept the wording:
     // the person stated the fact themselves. A note that still calls the edit
     // grounded contradicts the gate and is left out.
-    const blockedNote = /\bgrounded\b|\b(?:is|are|fully) (?:supported|backed)\b/iu.test(
-      note,
-    )
-      ? ""
-      : note;
+    const blockedNote =
+      /\bgrounded\b|\b(?:is|are|fully) (?:supported|backed)\b/iu.test(note)
+        ? ""
+        : note;
     return `I prepared ${input.changeCount} resume edit${plural}${scope}, but ${unsupportedCount === 1 ? "1 of them would block approval" : `${unsupportedCount} of them would block approval`}: your saved evidence does not back the new wording. Nothing changed yet. If it is true, accept it and approve it as accurate in the resume checks; otherwise ask me to reword it from your saved evidence.${blockedNote}`;
   }
 
@@ -2719,6 +2778,7 @@ export function buildResumeCoverageComparison(input: {
   const roles = input.profile.experiences
     .filter(
       (experience) =>
+        !experience.isDraft &&
         Boolean(experience.id) &&
         Boolean(experience.title?.trim()) &&
         Boolean(experience.companyName?.trim()),
@@ -2729,9 +2789,9 @@ export function buildResumeCoverageComparison(input: {
       const metadata = coverageByRecordId.get(experience.id) ?? null;
       const isVisible = Boolean(experienceSection?.included && entry?.included);
       const originalClaims = uniqueStrings(
-        [experience.summary, ...experience.achievements].filter(
-          (value): value is string => Boolean(value?.trim()),
-        ),
+        [experience.summary, ...experience.achievements]
+          .filter((value): value is string => Boolean(value?.trim()))
+          .flatMap(resumeSentences),
       );
       const tailoredClaims =
         entry && isVisible
@@ -2744,9 +2804,8 @@ export function buildResumeCoverageComparison(input: {
               ].filter((value): value is string => Boolean(value?.trim())),
             )
           : [];
-      const removedClaimText = compareResumeTextSets(
-        originalClaims,
-        tailoredClaims,
+      const removedClaimText = originalClaims.filter(
+        (claim) => !resumeFactIsCovered(claim, tailoredClaims),
       );
       const addedClaimText = compareResumeTextSets(
         tailoredClaims,
@@ -2771,10 +2830,7 @@ export function buildResumeCoverageComparison(input: {
       }));
       const reordered = match ? match.index !== originalIndex : false;
       const retainedClaimCount = originalClaims.filter((claim) =>
-        tailoredClaims.some(
-          (tailoredClaim) =>
-            normalizeText(tailoredClaim) === normalizeText(claim),
-        ),
+        resumeFactIsCovered(claim, tailoredClaims),
       ).length;
       const status = !entry
         ? ("missing" as const)

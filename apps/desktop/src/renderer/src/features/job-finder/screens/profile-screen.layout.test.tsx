@@ -11,6 +11,7 @@ import {
   CandidateProfileSchema,
   JobSearchPreferencesSchema,
   ResumeImportFieldCandidateSummarySchema,
+  ResumeImportRunSchema,
 } from "@nordri/contracts";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter, useLocation } from "react-router-dom";
@@ -154,14 +155,58 @@ describe("ProfileScreen ready-state density and save-bar footprint", () => {
     }
 
     vi.stubGlobal("ResizeObserver", ResizeObserverStub);
-    window.localStorage.removeItem(
-      "nordri.profile-ready-banner-dismissed-v1",
-    );
+    window.localStorage.removeItem("nordri.profile-ready-banner-dismissed-v1");
   });
 
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
+  });
+
+  it("R2-050 shows a running import after returning with no local pending action", () => {
+    const props = buildProfileScreenProps();
+    props.latestResumeImportRun = ResumeImportRunSchema.parse({
+      id: "synthetic_import",
+      sourceResumeId: profile.baseResume.id,
+      sourceResumeFileName: "synthetic.txt",
+      trigger: "import",
+      status: "extracting",
+      startedAt: "2026-10-02T10:00:00.000Z",
+    });
+    const view = render(
+      <MemoryRouter>
+        <ProfileScreen {...props} />
+      </MemoryRouter>,
+    );
+    expect(screen.queryAllByText("Importing").length).toBeGreaterThan(0);
+    expect(screen.queryByText(/Import interrupted/i)).toBeNull();
+    expect(
+      screen
+        .getAllByRole("button", { name: /Replace resume/i })
+        .every((button) => button.getAttribute("aria-disabled") === "true"),
+    ).toBe(true);
+    fireEvent.click(
+      screen.getAllByRole("button", { name: /Replace resume/i })[0]!,
+    );
+    expect(props.onImportResume).not.toHaveBeenCalled();
+    view.rerender(
+      <MemoryRouter>
+        <ProfileScreen
+          {...props}
+          latestResumeImportRun={{
+            ...props.latestResumeImportRun,
+            status: "applied",
+            completedAt: "2026-10-02T10:01:00.000Z",
+          }}
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.queryAllByText("Importing")).toHaveLength(0);
+    expect(
+      screen
+        .getAllByRole("button", { name: /Replace resume/i })
+        .every((button) => button.getAttribute("aria-disabled") === "true"),
+    ).toBe(false);
   });
 
   it("keeps the full-Profile route state and draft when switching tabs before setup", () => {

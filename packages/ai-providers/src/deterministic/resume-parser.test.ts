@@ -1122,7 +1122,7 @@ describe("buildDeterministicResumeProfileExtraction", () => {
     expect(JSON.stringify(entry)).not.toContain("●");
   });
 
-  test("seeds target roles from the headline and the two most recent role titles", () => {
+  test("uses the header title without turning old employment titles into targets", () => {
     const extraction = buildDeterministicResumeProfileExtraction(
       {
         existingProfile: createProfile(),
@@ -1145,10 +1145,7 @@ describe("buildDeterministicResumeProfileExtraction", () => {
     );
 
     expect(extraction.headline).toBe("Senior Software Engineer");
-    expect(extraction.targetRoles).toEqual([
-      "Senior Software Engineer",
-      "Staff Backend Engineer",
-    ]);
+    expect(extraction.targetRoles).toEqual(["Senior Software Engineer"]);
     expect(extraction.targetRoles.length).toBeLessThanOrEqual(3);
   });
 });

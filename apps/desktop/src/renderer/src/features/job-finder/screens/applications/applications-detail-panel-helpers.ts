@@ -405,8 +405,10 @@ export function applyResultNeedsResumeAttachment(
       .filter(Boolean)
       .join(" ");
     return (
-      /\b(?:resume|cv)\b/i.test(text) &&
-      /\b(?:not attached|attach(?:ment)? needs|could not be attached|retry.*attach|upload.*failed)\b/i.test(
+      (/\b(?:resume|cv)\b/i.test(text) ||
+        (Boolean(result.privacyReceipt?.resume?.fileName) &&
+          /upload.*(?:pdf|docx|format)/i.test(text))) &&
+      /\b(?:not attached|attach(?:ment)? needs|could not be attached|retry.*attach|upload.*failed|rejected|not accepted|unsupported (?:file|format)|upload a nonempty)\b/i.test(
         text,
       )
     );
@@ -623,6 +625,7 @@ export function getQueueStateExplanation(
     failedJobCount: number;
     completedJobCount: number;
     unfinishedJobCount: number;
+    stopReason?: string | null;
   } | null,
 ) {
   if (!input) {
@@ -641,8 +644,8 @@ export function getQueueStateExplanation(
   // never resume; finishing the remaining jobs requires a fresh recovery run.
   if (input.runState === "paused_for_user_review") {
     return input.unfinishedJobCount > 0
-      ? "Job Finder paused because one of your safety limits was reached and will not carry on by itself. Review the prepared sample in Safeguards. Use Prepare remaining jobs to finish the ones it did not get to."
-      : "Job Finder paused because one of your safety limits was reached and will not carry on by itself. Review the completed outcomes in Safeguards.";
+      ? `${input.stopReason?.trim() || "A safety limit paused this run."} It will not carry on by itself. Open Safeguards to see the limit, then press Try again on an unstarted job when the limit allows it.`
+      : `${input.stopReason?.trim() || "A safety limit paused this run."} It will not carry on by itself. Review each job's outcome.`;
   }
 
   if (input.runState === "awaiting_submit_approval") {

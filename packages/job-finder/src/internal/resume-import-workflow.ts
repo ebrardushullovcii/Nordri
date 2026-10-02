@@ -48,7 +48,8 @@ import {
   promoteGroundedSharedMemoryCandidates,
   reconcileCandidates,
 } from "./resume-import-reconciliation";
-import { createUniqueId, uniqueStrings } from "./shared";
+import { createUniqueId, uniqueStrings, normalizeText } from "./shared";
+import { stripImportFormatting, isObject } from "./resume-import-common";
 import { deriveResumeTimelineRepairProposals } from "./resume-timeline-repair";
 import {
   buildResumeAnalysisCacheIdentity,
@@ -80,7 +81,43 @@ export const RESUME_IMPORT_SUPERSEDED_MESSAGE =
  */
 export const RESUME_IMPORT_VISION_SUPERSEDED_MESSAGE =
   "Your profile changed while the visual resume scan was finishing. The imported text details stayed applied; visual-scan refinements were not applied automatically.";
+export const NO_USABLE_RESUME_MESSAGE =
+  "No resume details were found in this file. Choose another file.";
 const RESUME_IMPORT_HELD_FOR_REVIEW_REASON = "profile_changed_before_apply";
+
+function holdChangedImportPreferences(
+  candidates: ResumeImportFieldCandidate[],
+  originalProfile: CandidateProfile,
+  originalPreferences: JobSearchPreferences,
+  latestProfile: CandidateProfile,
+  latestPreferences: JobSearchPreferences,
+): ResumeImportFieldCandidate[] {
+  return candidates.map((candidate) => {
+    const key = candidate.target.key;
+    if (
+      candidate.target.section !== "search_preferences" ||
+      (key !== "targetRoles" && key !== "locations")
+    )
+      return candidate;
+    const changed =
+      JSON.stringify(originalProfile[key]) !==
+        JSON.stringify(latestProfile[key]) ||
+      JSON.stringify(originalPreferences[key]) !==
+        JSON.stringify(latestPreferences[key]);
+    if (
+      !changed ||
+      candidate.resolution === "rejected" ||
+      candidate.resolution === "abstained"
+    )
+      return candidate;
+    return {
+      ...candidate,
+      resolution: "needs_review",
+      resolutionReason: "preferences_changed_during_import",
+      resolvedAt: null,
+    };
+  });
+}
 
 /**
  * A degraded extraction stage still returns usable fields, so nothing downstream
@@ -773,6 +810,8 @@ async function completeDeferredVisionBranch(input: {
   runId: string;
   now: string;
   textCandidates: readonly ResumeImportFieldCandidate[];
+  baselineProfile: CandidateProfile;
+  baselineSearchPreferences: JobSearchPreferences;
   visionTimeoutMs: number;
 }): Promise<void> {
   const { ctx, promise, bundle, runId, now, textCandidates, visionTimeoutMs } =
@@ -972,10 +1011,22 @@ async function completeDeferredVisionBranch(input: {
     const finalizeVisionStage = (
       candidates: readonly ResumeImportFieldCandidate[],
     ) => {
+      const heldCandidates = holdChangedImportPreferences(
+        [...candidates],
+        input.baselineProfile,
+        input.baselineSearchPreferences,
+        latestProfile,
+        latestSearchPreferences,
+      );
+      reconciledCandidates = heldCandidates;
+      run = ResumeImportRunSchema.parse({
+        ...run,
+        candidateCounts: countResumeImportCandidates(heldCandidates),
+      });
       const merged = applyResolvedResumeImportCandidatesToWorkspace({
         profile: latestProfile,
         searchPreferences: latestSearchPreferences,
-        candidates,
+        candidates: heldCandidates,
         analysisProviderKind: run.analysisProviderKind,
         analysisProviderLabel: run.analysisProviderLabel,
         analysisWarnings: stageNotes,
@@ -987,7 +1038,7 @@ async function completeDeferredVisionBranch(input: {
         searchPreferences: merged.searchPreferences,
         run,
         documentBundles: [bundle],
-        fieldCandidates: candidates,
+        fieldCandidates: heldCandidates,
         staleMode: "report_only",
       });
     };
@@ -1347,9 +1398,18 @@ async function runResumeImportWorkflowInProcess(
       ...(input.importWarnings ?? []),
       ...cachedAnalysis.run.warnings,
     ]);
+    const latestPreferences = await ctx.repository.getSearchPreferences();
+    const latestProfile = await ctx.repository.getProfile();
+    cachedArtifacts.candidates = holdChangedImportPreferences(
+      cachedArtifacts.candidates,
+      input.profile,
+      input.searchPreferences,
+      latestProfile,
+      latestPreferences,
+    );
     const merged = applyResolvedResumeImportCandidatesToWorkspace({
       profile: input.profile,
-      searchPreferences: input.searchPreferences,
+      searchPreferences: latestPreferences,
       candidates: cachedArtifacts.candidates,
       analysisProviderKind: cachedAnalysis.run.analysisProviderKind,
       analysisProviderLabel: cachedAnalysis.run.analysisProviderLabel,
@@ -1871,6 +1931,50 @@ async function runResumeImportWorkflowInProcess(
         bundle,
       ),
     );
+    const sourceText = normalizeText(
+      stripImportFormatting(bundle.fullText ?? ""),
+    );
+    const usableResumeDetails = [
+      ...reconciledCandidates,
+      ...extractLiteralCandidates(runId, bundle, now),
+    ].some((candidate) => {
+      if (
+        ["invalid_source_structure", "empty_record_candidate"].includes(
+          candidate.resolutionReason ?? "",
+        )
+      )
+        return false;
+      const matchesSource = (value: unknown) =>
+        typeof value === "string" &&
+        value.trim().length > 0 &&
+        sourceText.includes(normalizeText(stripImportFormatting(value)));
+      const hasVisualEvidence = (candidate.visualEvidence?.length ?? 0) > 0;
+      if (
+        candidate.target.section === "identity" &&
+        candidate.target.key === "fullName"
+      )
+        return matchesSource(candidate.value) || hasVisualEvidence;
+      if (
+        candidate.target.section === "contact" &&
+        ["email", "phone"].includes(candidate.target.key)
+      )
+        return matchesSource(candidate.value) || hasVisualEvidence;
+      if (
+        ["experience", "education"].includes(candidate.target.section) &&
+        isObject(candidate.value)
+      )
+        return (
+          hasVisualEvidence ||
+          [
+            candidate.value.companyName,
+            candidate.value.schoolName,
+            candidate.value.title,
+            candidate.value.degree,
+          ].some(matchesSource)
+        );
+      return false;
+    });
+    if (!usableResumeDetails) throw new Error(NO_USABLE_RESUME_MESSAGE);
     const adjudicationStartedAt = new Date().toISOString();
     run = ResumeImportRunSchema.parse({
       ...run,
@@ -1955,9 +2059,18 @@ async function runResumeImportWorkflowInProcess(
     );
     const finalizationStartedAtMs = performance.now();
 
+    const latestPreferences = await ctx.repository.getSearchPreferences();
+    const latestProfile = await ctx.repository.getProfile();
+    reconciledCandidates = holdChangedImportPreferences(
+      reconciledCandidates,
+      input.profile,
+      input.searchPreferences,
+      latestProfile,
+      latestPreferences,
+    );
     const merged = applyResolvedResumeImportCandidatesToWorkspace({
       profile: input.profile,
-      searchPreferences: input.searchPreferences,
+      searchPreferences: latestPreferences,
       candidates: reconciledCandidates,
       analysisProviderKind: run.analysisProviderKind,
       analysisProviderLabel: run.analysisProviderLabel,
@@ -2042,7 +2155,8 @@ async function runResumeImportWorkflowInProcess(
         ...retryState.profile,
         baseResume: input.profile.baseResume,
       });
-      const retrySearchPreferences = await ctx.repository.getSearchPreferences();
+      const retrySearchPreferences =
+        await ctx.repository.getSearchPreferences();
       reconciledCandidates = await preserveLatestCandidateDecisions(
         ctx,
         run.id,
@@ -2052,6 +2166,13 @@ async function runResumeImportWorkflowInProcess(
           reconciledCandidates,
           bundle,
         ),
+      );
+      reconciledCandidates = holdChangedImportPreferences(
+        reconciledCandidates,
+        input.profile,
+        input.searchPreferences,
+        retryProfile,
+        retrySearchPreferences,
       );
       const retryMerged = applyResolvedResumeImportCandidatesToWorkspace({
         profile: retryProfile,
@@ -2097,7 +2218,7 @@ async function runResumeImportWorkflowInProcess(
       Math.round(performance.now() - finalizationStartedAtMs),
     );
     const measuredRun = ResumeImportRunSchema.parse({
-      ...atomicallyFinalizedRun,
+      ...run,
       timing: {
         ...timingBeforeFinalization,
         totalMs: Math.max(
@@ -2132,6 +2253,8 @@ async function runResumeImportWorkflowInProcess(
         run,
         runId,
         now,
+        baselineProfile: finalization.profile,
+        baselineSearchPreferences: finalization.searchPreferences,
         textCandidates: provisionalCandidates.filter(
           (candidate) => candidate.sourceKind !== "vision_omni",
         ),
@@ -2162,6 +2285,7 @@ async function runResumeImportWorkflowInProcess(
       fieldCandidates: [],
     });
 
+    if (run.errorMessage === NO_USABLE_RESUME_MESSAGE) throw error;
     await ctx.repository.commitProfileUpdate(
       (current) =>
         CandidateProfileSchema.parse({

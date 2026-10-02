@@ -104,6 +104,7 @@ function createJob(
     keySkills: ["React", "TypeScript"],
     keywordSignals: [],
     minimumQualifications: [],
+    benefits: [],
     ...overrides,
   };
 }
@@ -426,4 +427,20 @@ describe("ResumeJobKeywordEvidencePanel", () => {
       expect.stringContaining("A missing term is not added to the draft."),
     );
   });
+});
+
+it("does not turn employer benefits into candidate evidence gaps", () => {
+  const job = createJob({
+    keySkills: ["Figma", "Inclusive team"],
+    benefits: ["Inclusive team", "Training offered"],
+    keywordSignals: [
+      { id: "culture", label: "Inclusive team", kind: "benefit", weight: 1 },
+      { id: "training", label: "Training offered", kind: "benefit", weight: 1 },
+      { id: "tool", label: "Figma", kind: "tool", weight: 3 },
+    ],
+  });
+  const evidence = buildResumeJobKeywordEvidence({ job, draft: createDraft() });
+  expect(JSON.stringify(evidence)).not.toContain("Inclusive team");
+  expect(JSON.stringify(evidence)).not.toContain("Training offered");
+  expect(JSON.stringify(evidence)).toContain("Figma");
 });

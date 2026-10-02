@@ -625,10 +625,10 @@ export function buildSafeguardsPresentationModel(
       run.summary?.trim() ||
       "Job Finder stopped preparing this batch because one of your safety limits was reached.";
     const recoveryGuidance = hasPendingSampleReview(workspace, run.id)
-      ? "It will not carry on by itself. Review the prepared sample below, then press Prepare remaining jobs in Applications to finish the ones it did not get to. Nothing is sent or submitted."
+      ? "It will not carry on by itself. Review the prepared sample below, then open Applications to prepare the remaining jobs."
       : remainingJobs > 0
-        ? "It will not carry on by itself. Settle the limit above, then press Prepare remaining jobs in Applications to finish the ones it did not get to. Nothing is sent or submitted."
-        : "It will not carry on by itself. Open Applications to review what it prepared. Nothing is sent or submitted.";
+        ? "It will not carry on by itself. Check the limit named here. Daily limits reset tomorrow; search-plan limits can be changed in Search plans. Then open Applications and press Try again on an unstarted job."
+        : "It will not carry on by itself. Open Applications to review each outcome.";
     pushRow({
       key: `apply-run-pause-${run.id}`,
       kind: "pauses",

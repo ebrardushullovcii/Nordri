@@ -551,6 +551,42 @@ describe("createDiscoveryWorkspaceRefreshCoordinator", () => {
 });
 
 describe("createPrimaryPageActions", () => {
+  it("removes a shortlisted job and stays on Shortlisted with the next job selected", async () => {
+    const navigate = vi.fn();
+    const setSelectedReviewJobId = vi.fn();
+    const runAction = vi.fn(
+      async (action: () => Promise<unknown>, success: () => void) => {
+        await action();
+        success();
+        return true;
+      },
+    );
+    const pageActions = createPrimaryPageActions({
+      actions: { removeJobFromReview: vi.fn(() => Promise.resolve({})) },
+      confirmLeaveDirtyResumeWorkspace: () => Promise.resolve(true),
+      clearResumeWorkspaceState: vi.fn(),
+      navigate,
+      runAction,
+      setSelectedReviewJobId,
+      workspace: {
+        activeCampaignId: "plan",
+        campaigns: [{ id: "plan", jobIds: ["a", "b", "c"] }],
+        reviewQueue: [
+          { jobId: "a" },
+          { jobId: "b" },
+          { jobId: "other_plan" },
+          { jobId: "c" },
+        ],
+      },
+    } as unknown as Parameters<typeof createPrimaryPageActions>[0]);
+    pageActions.onRemoveReviewJob("b");
+    await vi.waitFor(() =>
+      expect(setSelectedReviewJobId).toHaveBeenCalledWith("c"),
+    );
+    expect(navigate).toHaveBeenCalledWith("/job-finder/review-queue", {
+      replace: true,
+    });
+  });
   const completeSetupProfile = CandidateProfileSchema.parse({
     id: "candidate_setup_ready",
     firstName: "Alex",
@@ -2862,6 +2898,16 @@ describe("createPrimaryPageActions auto-apply queue outcomes", () => {
     };
   }
 
+  it("does not navigate away from a review when a background batch finishes", async () => {
+    setJobFinderStatusRoute("/job-finder/applications");
+    try {
+      const harness = createQueueHarness();
+      await harness.startQueue(["job_a"]);
+      expect(harness.navigate).not.toHaveBeenCalled();
+    } finally {
+      setJobFinderStatusRoute(null);
+    }
+  });
   it("refuses a batch start with a visible status when the daily limit is reached", async () => {
     const harness = createQueueHarness({ capacity: exhaustedCapacity });
 
@@ -3003,3 +3049,46 @@ describe("resume save revision acknowledgment", () => {
     expect(refreshResumeWorkspace).not.toHaveBeenCalled();
   });
 });
+
+it.each([true, false])(
+  "resume-format recovery opens review and selects only this job's approved PDF (%s)",
+  async (approved) => {
+    type Args = Parameters<typeof createPrimaryPageActions>[0];
+    const navigate = vi.fn();
+    const setJobResumeApplicationMode = vi.fn().mockResolvedValue({});
+    const startApplyCopilotRun = vi.fn();
+    const runAction = vi.fn(
+      async (action: () => Promise<unknown>, onSuccess: () => void) => {
+        await action();
+        onSuccess();
+        return true;
+      },
+    );
+    const workspace = {
+      resumeExportArtifacts: [
+        { jobId: approved ? "job_pdf" : "another_job", isApproved: true },
+      ],
+    } as unknown as JobFinderWorkspaceSnapshot;
+    const pageActions = createPrimaryPageActions({
+      workspace,
+      latestWorkspaceRef: { current: workspace },
+      navigate,
+      runAction,
+      setActionState: vi.fn(),
+      actions: { setJobResumeApplicationMode, startApplyCopilotRun },
+    } as unknown as Args);
+    pageActions.onReviewResumePdf("job_pdf");
+    await vi.waitFor(() =>
+      expect(navigate).toHaveBeenCalledWith(
+        "/job-finder/review-queue/job_pdf/resume",
+      ),
+    );
+    expect(setJobResumeApplicationMode).toHaveBeenCalledTimes(approved ? 1 : 0);
+    if (approved)
+      expect(setJobResumeApplicationMode).toHaveBeenCalledWith(
+        "job_pdf",
+        "tailored_per_job",
+      );
+    expect(startApplyCopilotRun).not.toHaveBeenCalled();
+  },
+);

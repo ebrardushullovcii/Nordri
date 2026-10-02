@@ -11,7 +11,9 @@ import {
   describeListingDetailEnrichment,
   enrichSavedJobListingDetails,
   jobNeedsListingDetail,
+  namesDifferentRole,
   type ListingHtmlFetcher,
+  type ListingPageReader,
 } from "./listing-detail-enrichment";
 
 const NOW = "2026-09-05T10:00:00.000Z";
@@ -99,6 +101,46 @@ const assess = vi.fn(
 );
 
 describe("jobNeedsListingDetail", () => {
+  it("treats reworded titles as the same role and other roles as a conflict", () => {
+    expect(
+      namesDifferentRole(
+        "Werkstudent Data Analyst",
+        "Werkstudent Data Analyst (m/w/d)",
+      ),
+    ).toBe(false);
+    expect(
+      namesDifferentRole("Data Engineer", "Data Engineer, Meadow Pipelines"),
+    ).toBe(false);
+    expect(
+      namesDifferentRole(
+        "Lead Operations Planner",
+        "Intern Operations Planner",
+      ),
+    ).toBe(true);
+    expect(
+      namesDifferentRole(
+        "Junior Instructional Designer",
+        "Lead Learning Coordinator",
+      ),
+    ).toBe(true);
+  });
+
+  it("records a structured title conflict without attaching the other role's facts", async () => {
+    const job = cardOnlyJob({ title: "Junior Instructional Designer" });
+    const result = await enrichSavedJobListingDetails({
+      jobs: [job],
+      assess,
+      fetchHtml: fakeFetcher({ [job.canonicalUrl]: { html: RECORD_PAGE } }),
+      now: () => NOW,
+    });
+    expect(result.jobs[0]?.title).toBe(job.title);
+    expect(result.jobs[0]?.listingDetailFetch?.identityConflict).toEqual({
+      expectedTitle: job.title,
+      observedTitle: "Senior Software Engineer",
+    });
+    expect(result.jobs[0]?.description).toBe(job.description);
+  });
+
   it("reads a rate-limited page as soon as the site's own wait has passed", () => {
     const rateLimited = (attemptedAt: string, retryAfterAt: string) =>
       cardOnlyJob({
@@ -273,7 +315,8 @@ describe("enrichSavedJobListingDetails", () => {
     expect(next.normalizedCompensation.minAnnualUsd).toBe(180000);
     expect(next.postedAt).toBe("2026-08-30T00:00:00.000Z");
     expect(next.employmentType).toBe("Full-Time");
-    expect(next.workMode).toContain("remote");
+    // Work mode comes from the record's own fields, not from words in the body.
+    expect(next.workMode).toEqual(job.workMode);
     expect(next.summary).toMatch(/^Garner is building tools/u);
     expect(next.summary?.length ?? 0).toBeLessThan(430);
     expect(next.matchAssessment.score).toBe(82);
@@ -287,8 +330,78 @@ describe("enrichSavedJobListingDetails", () => {
     expect(result.summary).toMatchObject({ attempted: 1, enriched: 1 });
   });
 
-  it("uses the salary stated in the body when a separate cell doubled the floor", () => {
-    const applied = applyListingDetailToJob({
+  it("has the model read a page that publishes no record", async () => {
+    const job = cardOnlyJob();
+    const html = `<html><head><title>Senior Software Engineer | Garner</title></head><body><main><h1>Senior Software Engineer</h1><p>${"Design and ship .NET services. ".repeat(30)}</p></main></body></html>`;
+    const fetchHtml = fakeFetcher({ [job.canonicalUrl]: { html } });
+    const body = `Garner is building tools that make healthcare affordable.\n\n${"Design and ship .NET services with the provider platform team. ".repeat(6)}\n\nRequirements\n\n• 5+ years with .NET Core and REST APIs.`;
+    const readPage = vi.fn<ListingPageReader>(() =>
+      Promise.resolve({
+        ...job,
+        title: "Senior Software Engineer",
+        company: "Garner Health",
+        location: "New York, NY, United States",
+        description: body,
+        workMode: ["hybrid" as const],
+        keySkills: [".NET Core", "REST APIs"],
+        minimumQualifications: ["5+ years with .NET Core and REST APIs"],
+      }),
+    );
+
+    const result = await enrichSavedJobListingDetails({
+      jobs: [job],
+      fetchHtml,
+      readPage,
+      assess,
+      now: () => NOW,
+    });
+
+    expect(readPage).toHaveBeenCalledTimes(1);
+    const pageRead = readPage.mock.calls[0]?.[0];
+    expect(pageRead?.pageUrl).toBe(job.canonicalUrl);
+    expect(pageRead?.pageText).toContain(
+      "Page title: Senior Software Engineer | Garner",
+    );
+    const next = result.jobs[0]!;
+    expect(next.listingDetailFetch).toMatchObject({
+      outcome: "enriched",
+      method: "page_text",
+    });
+    expect(next.description).toContain("5+ years with .NET Core");
+    expect(next.company).toBe("Garner Health");
+    expect(next.location).toBe("New York, NY, United States");
+    expect(next.workMode).toContain("hybrid");
+    expect(next.keySkills).toEqual([".NET Core", "REST APIs"]);
+    expect(next.minimumQualifications).toEqual([
+      "5+ years with .NET Core and REST APIs",
+    ]);
+  });
+
+  it("records no detail when the model finds no listing on the page", async () => {
+    const job = cardOnlyJob();
+    const fetchHtml = fakeFetcher({
+      [job.canonicalUrl]: {
+        html: "<html><body><main><p>Sign in to view this listing.</p></main></body></html>",
+      },
+    });
+
+    const result = await enrichSavedJobListingDetails({
+      jobs: [job],
+      fetchHtml,
+      readPage: () => Promise.resolve(null),
+      assess,
+      now: () => NOW,
+    });
+
+    expect(result.jobs[0]?.listingDetailFetch).toMatchObject({
+      outcome: "no_detail",
+      detail:
+        "The page published no JobPosting record, and reading its text found no job listing.",
+    });
+  });
+
+  it("uses the salary stated in the body when a separate cell doubled the floor", async () => {
+    const applied = await applyListingDetailToJob({
       job: cardOnlyJob({ salaryText: "$200000 - 500000" }),
       detail: {
         method: "page_text",
@@ -633,9 +746,9 @@ describe("enrichSavedJobListingDetails", () => {
 });
 
 describe("applyListingDetailToJob", () => {
-  it("reports partial when the page text is thin but still better than the card", () => {
+  it("reports partial when the page text is thin but still better than the card", async () => {
     const job = cardOnlyJob();
-    const applied = applyListingDetailToJob({
+    const applied = await applyListingDetailToJob({
       job,
       detail: {
         method: "page_text",

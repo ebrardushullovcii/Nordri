@@ -770,6 +770,7 @@ export const SERVICE_METHOD_COVERAGE: Record<
   keyof JobFinderWorkspaceService,
   string
 > = {
+  assessJobListing: "internal",
   shutdown: "internal",
   getWorkspaceSnapshot: "get_workspace_summary",
   getWorkspaceBootstrap: "internal",

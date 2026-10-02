@@ -78,6 +78,8 @@ interface ApplicationsRecordsPanelProps {
   }>;
   filterCounts: Record<ApplicationsViewFilter, number>;
   hasAnyApplications: boolean;
+  searchPlanName?: string | undefined;
+  hasOtherPlanApplications?: boolean | undefined;
   /**
    * What a run is doing right now for a job, by job id. A row whose
    * application is being filled in says so, instead of repeating the saved
@@ -108,6 +110,8 @@ export function ApplicationsRecordsPanel({
   discoveryJobs = [],
   filterCounts,
   hasAnyApplications,
+  searchPlanName,
+  hasOtherPlanApplications,
   liveRunLinesByJobId,
   latestApplyResultByRecordId,
   readApplyRunContext,
@@ -255,7 +259,18 @@ export function ApplicationsRecordsPanel({
       </div>
       {applicationRecords.length === 0 ? (
         <div className="flex min-h-0 flex-1 items-start p-6">
-          {hasAnyApplications ? (
+          {!hasAnyApplications && hasOtherPlanApplications && searchPlanName ? (
+            <EmptyState
+              title={`No applications in ${searchPlanName}`}
+              description="Your applications in other search plans are still saved."
+            >
+              <Button asChild size="sm" type="button" variant="primary">
+                <Link to={`${JOB_FINDER_ROUTE_PATHS.applications}?scope=all`}>
+                  Show all applications
+                </Link>
+              </Button>
+            </EmptyState>
+          ) : hasAnyApplications ? (
             <EmptyState
               title="No applications in this view"
               description="Try another filter to review the rest of your application history."
@@ -349,11 +364,14 @@ export function ApplicationsRecordsPanel({
             // panel and in the row's assistive description.
             const attemptLabel =
               applyState?.title ?? getAttemptLabel(record.lastAttemptState);
-            const liveLine = liveRunLinesByJobId?.get(record.jobId) ?? null;
+            const liveLine =
+              applyState && applyState.kind !== "filling_in"
+                ? null
+                : (liveRunLinesByJobId?.get(record.jobId) ?? null);
             // A job its batch never reached has one next step; the record's
             // own label still named the approval that batch started from.
             const preparationNextStep =
-              (applyState?.plannedStanding === "not_started"
+              (applyState?.kind === "could_not_apply"
                 ? applyState.actionLabel
                 : null) ??
               applyState?.questionsLeftLabel ??
@@ -421,7 +439,11 @@ export function ApplicationsRecordsPanel({
                           }
                         >
                           {liveLine && !applyState?.plannedStanding
-                            ? "Filling in"
+                            ? liveLine.startsWith("Waiting")
+                              ? "Waiting its turn"
+                              : liveLine.startsWith("Inserting")
+                                ? "Inserting your answer"
+                                : "Filling in"
                             : stage.label}
                         </StatusBadge>
                       </div>

@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type {
-  CandidateProfile,
-  UserActionRequest,
-} from "@nordri/contracts";
+import type { CandidateProfile, UserActionRequest } from "@nordri/contracts";
 import { onlySavedAnswersWereAdded } from "./workspace-application-methods";
 import { findManualAnswerStepsCoveredBy } from "./workspace-user-action-methods";
 
@@ -31,7 +28,13 @@ function fakeRepository(input: {
   requests: UserActionRequest[];
   questions: Record<
     string,
-    { id: string; prompt: string; isRequired?: boolean; status?: string }[]
+    {
+      id: string;
+      prompt: string;
+      isRequired?: boolean;
+      status?: string;
+      note?: string;
+    }[]
   >;
   userAnswered?: Record<string, string[]>;
 }) {
@@ -172,4 +175,50 @@ describe("an answer saved while a batch runs", () => {
       } as unknown as CandidateProfile),
     ).toBe(false);
   });
+});
+
+it.each([false, true])(
+  "a background-check answer crosses applications only when deliberately saved (%s)",
+  async (savedForFuture) => {
+    const answered = request("a", "run_1", "r_a");
+    const other = request("b", "run_1", "r_b");
+    const prompt = "I consent to a background check";
+    const repository = fakeRepository({
+      requests: [answered, other],
+      questions: { r_b: [{ id: "q_b", prompt }] },
+    });
+    const covered = await findManualAnswerStepsCoveredBy({
+      ctx: { repository } as never,
+      answered: [{ prompt, answer: "Yes" }],
+      request: answered,
+      savedForFuture,
+    });
+    expect(covered).toHaveLength(savedForFuture ? 1 : 0);
+  },
+);
+
+it("a one-use answer to an unnamed-country question stays on its application", async () => {
+  const answered = request("a", "run_1", "r_a");
+  const other = request("b", "run_1", "r_b");
+  const prompt = "Are you authorized to work in this country?";
+  const repository = fakeRepository({
+    requests: [answered, other],
+    questions: {
+      r_b: [
+        {
+          id: "q_b",
+          prompt,
+          note: "Neither the question nor the posting names the country.",
+        },
+      ],
+    },
+  });
+  expect(
+    await findManualAnswerStepsCoveredBy({
+      ctx: { repository } as never,
+      answered: [{ prompt, answer: "No" }],
+      request: answered,
+      savedForFuture: false,
+    }),
+  ).toEqual([]);
 });

@@ -41,8 +41,10 @@ import {
  * Revision 12 (scorer version 13): explicit summary language evidence and
  * customer implementation requirements now participate in assessment.
  */
-export const MATCH_ASSESSMENT_SCORER_VERSION = 13;
-const MATCH_ASSESSMENT_LOGIC_REVISION = 12;
+// Revision 13: country codes, discipline and title-level evidence, and model
+// requirement comparisons replace scores written by the previous logic.
+export const MATCH_ASSESSMENT_SCORER_VERSION = 14;
+const MATCH_ASSESSMENT_LOGIC_REVISION = 13;
 
 function stableSerialize(value: unknown): string {
   if (value === null || typeof value !== "object") {
@@ -149,9 +151,25 @@ export function createMatchAssessmentSession(input: {
     return assess(posting);
   };
 
+  const remember = (
+    posting: JobPosting,
+    assessment: MatchAssessment,
+  ): MatchAssessment => {
+    const postingFingerprint = createMatchAssessmentPostingFingerprint(posting);
+    const bound = {
+      ...assessment,
+      scorerVersion: MATCH_ASSESSMENT_SCORER_VERSION,
+      contextFingerprint,
+      postingFingerprint,
+    };
+    cache.set(postingFingerprint, bound);
+    return bound;
+  };
+
   return {
     assess,
     assessPersisted,
+    remember,
     contextFingerprint,
     getComputationCount: () => computationCount,
   };

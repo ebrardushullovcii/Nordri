@@ -1,5 +1,6 @@
 import {
   CandidateProfileSchema,
+  isFreshStartCandidateProfile,
   CompensationPreferenceSchema,
   JobSearchPreferencesSchema,
   type CandidateProfile,
@@ -690,7 +691,10 @@ function mergeResolvedSelectionIntoWorkspace(
           ? selection.scalarFields.timeZone
           : profile.timeZone,
       yearsExperience:
-        selection.scalarFields.yearsExperience ?? profile.yearsExperience,
+        selection.scalarFields.yearsExperience ??
+        (isFreshStartCandidateProfile(profile) && profile.yearsExperience === 0
+          ? null
+          : profile.yearsExperience),
       email: nextEmail,
       phone: nextPhone,
       portfolioUrl:

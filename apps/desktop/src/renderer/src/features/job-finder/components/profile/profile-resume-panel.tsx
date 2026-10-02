@@ -2,6 +2,7 @@ import {
   PROFILE_SETUP_PLACEHOLDER_HEADLINE,
   PROFILE_SETUP_PLACEHOLDER_SUMMARY,
   isInterruptedResumeImportRun,
+  isResumeImportRunInProgress,
   RESUME_IMPORT_INTERRUPTED_MESSAGE,
   type AssetStatus,
   type CandidateProfile,
@@ -111,17 +112,6 @@ interface ProfileResumePanelProps {
   ) => void;
   profileForm: UseFormReturn<ProfileEditorValues>;
   profile: CandidateProfile;
-}
-
-function isResumeImportRunInProgress(
-  run: Pick<ResumeImportRun, "status"> | null,
-): boolean {
-  return (
-    run?.status === "queued" ||
-    run?.status === "parsing" ||
-    run?.status === "extracting" ||
-    run?.status === "reconciling"
-  );
 }
 
 /**
@@ -408,7 +398,11 @@ export function ProfileResumePanel({
     reviewCandidates: latestResumeImportReviewCandidates,
   });
   const experienceLabel =
-    visibleYearsExperience === 1 ? "1 year" : `${visibleYearsExperience} years`;
+    visibleYearsExperience === null
+      ? "Years of experience need review"
+      : visibleYearsExperience === 1
+        ? "1 year"
+        : `${visibleYearsExperience} years`;
   const latestRunSummary = latestResumeImportRun
     ? latestResumeImportRun.status === "review_ready"
       ? `${latestResumeImportRun.candidateCounts.autoApplied} imported automatically, ${latestResumeImportRun.candidateCounts.needsReview} waiting for review.`

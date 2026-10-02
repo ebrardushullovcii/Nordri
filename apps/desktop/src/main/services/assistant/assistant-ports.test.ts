@@ -37,6 +37,7 @@ vi.mock("../job-finder/create-workspace-service", () => ({
 }));
 vi.mock("../job-finder/import-resume", () => ({
   importResumeFromSourcePath: vi.fn(),
+  isDesktopResumeImportActive: () => false,
 }));
 vi.mock("../job-finder/paths", () => ({
   getJobFinderUserDataDirectory: () => path.resolve(".tmp"),

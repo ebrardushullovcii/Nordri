@@ -1,3 +1,6 @@
+import { readAssistantWorkState } from "../work-state";
+import { profileProposalPreview } from "../proposal-preview";
+import { isResumeImportRunInProgress } from "@nordri/contracts";
 import {
   NonEmptyStringSchema,
   ProfileCopilotPatchOperationSchema,
@@ -519,18 +522,22 @@ export const readProfileTool = defineTool({
       ? `Reading your profile (${argText(input.section)})`
       : "Reading your profile",
   effect: "read",
-  async execute(input, { service, session }) {
+  async execute(input, { service, session, ports }) {
     const snapshot = await service.getWorkspaceSnapshot();
+    const work = readAssistantWorkState(ports, snapshot);
     const { profile, searchPreferences } = snapshot;
     const pendingReview = snapshot.profileSetupState.reviewItems.filter(
       (item) => item.status === "pending",
     );
-    const data: Record<string, unknown> = { setup: setupReadiness(snapshot) };
+    const data: Record<string, unknown> = {
+      setup: setupReadiness(snapshot),
+      resumeImport: work.resumeImport,
+    };
     if (input.section === "review" || input.section === "all") {
       const importState = await service.getResumeImportState();
-      const currentRun = importState.resumeImportRuns
-        .filter((run) => run.sourceResumeId === profile.baseResume.id)
-        .sort((left, right) =>
+      const currentRun =
+        snapshot.latestResumeImportRun ??
+        [...importState.resumeImportRuns].sort((left, right) =>
           right.startedAt.localeCompare(left.startedAt),
         )[0];
       const runCandidates = importState.resumeImportFieldCandidates.filter(
@@ -545,9 +552,10 @@ export const readProfileTool = defineTool({
             sourceResumeId: currentRun.sourceResumeId,
             sourceFileName: currentRun.sourceResumeFileName,
             status: currentRun.status,
-            isStillImporting: importState.activeVisionRunIds.includes(
-              currentRun.id,
-            ),
+            isStillImporting:
+              work.resumeImport.active ||
+              importState.activeVisionRunIds.includes(currentRun.id) ||
+              isResumeImportRunInProgress(currentRun),
             totalDetailCount: runCandidates.length,
             savedDetailCount: runCandidates.filter(
               (candidate) => candidate.resolution === "auto_applied",
@@ -802,11 +810,6 @@ function parseOperations(
   return operations;
 }
 
-function describeOperation(operation: ProfileCopilotPatchOperation): string {
-  const fields = fieldsTouchedByOperation(operation);
-  return `${operation.operation.replaceAll("_", " ")}${fields.length ? ` (${fields.join(", ")})` : ""}`;
-}
-
 async function recordEditChanges(
   context: AssistantToolContext,
   changes: readonly {
@@ -898,7 +901,7 @@ export const editProfileTool = defineTool({
         summary: input.summary,
         items: operations.map((operation, index) => ({
           id: `item_${index + 1}`,
-          label: describeOperation(operation),
+          ...profileProposalPreview(operation, snapshot),
           payload: operation,
         })),
         baseRevision: snapshot.generatedAt,

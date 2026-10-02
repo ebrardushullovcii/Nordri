@@ -602,6 +602,10 @@ export const CampaignDigestSchema = z
     id: NonEmptyStringSchema,
     campaignId: NonEmptyStringSchema,
     discoveryRunId: NonEmptyStringSchema.nullable().default(null),
+    /** Terminal run outcome, also available on cards without the run record. */
+    outcome: z
+      .enum(["completed", "stopped", "interrupted", "failed"])
+      .optional(),
     generatedAt: IsoDateTimeSchema,
     counts: CampaignDigestCountsSchema.default({}),
     /**

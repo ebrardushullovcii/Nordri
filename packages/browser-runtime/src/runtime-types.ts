@@ -406,6 +406,8 @@ export interface BrowserApplicationExecutionOptions {
 }
 
 export interface AgentDiscoveryOptions {
+  /** Capacity waits happen before page navigation and do not fail a source. */
+  onWaitingForBrowserTab?: () => void;
   /** No person-specified result cap; retain every suitable posting found. */
   retainAllFound?: boolean;
   /** Public feed postings available for the model to inspect and select. */

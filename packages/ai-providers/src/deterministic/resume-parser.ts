@@ -778,6 +778,14 @@ export function buildDeterministicResumeProfileExtraction(
 ): ResumeProfileExtraction {
   const preserveExistingValues = options?.preserveExistingValues ?? true;
   const now = resolveNow(options?.now);
+  input = {
+    ...input,
+    resumeText: input.resumeText
+      .replace(/(\*\*|__|~~)(.+?)\1/g, "$2")
+      .replace(/(?<!\w)([*_])([^\n]+?)\1(?!\w)/g, "$2")
+      .replace(/^\s*#{1,6}\s+/gm, "")
+      .replace(/(\p{L})-\s*\r?\n\s*(?=\p{Ll})/gu, "$1"),
+  };
   const lines = splitLines(input.resumeText);
   const fullName = normalizeShoutedName(inferName(lines));
   const nameParts = parseNameParts(fullName);
@@ -826,26 +834,12 @@ export function buildDeterministicResumeProfileExtraction(
   const extractedTimeZone = inferTimeZoneFromLocation(currentLocation);
   const extractedSalaryCurrency =
     inferSalaryCurrencyFromLocation(currentLocation);
-  // Seed target roles from the headline plus the titles of the two most
-  // recent roles so a resume without a headline (or whose headline is a
-  // generic label) still produces a usable search target. Dedupe
-  // case-insensitively and cap at three so the list stays a suggestion.
-  const recentExperienceTitles = experiences
-    .slice(0, 2)
-    .flatMap((experience) => {
-      // Drop engagement qualifiers such as "(Part-Time Consultant)" so the
-      // same role at two employers seeds one target instead of two.
-      const title = cleanLine(
-        (experience.title ?? "").replace(/\s*\([^)]*\)\s*$/, ""),
-      );
-      return title && title.length <= 80 ? [title] : [];
-    });
   const objectiveRoles = findSectionBodyLinesByAliases(lines, [
     "OBJECTIVE",
     "CAREER OBJECTIVE",
   ]).flatMap((line) => {
     const match = line.match(
-      /(?:seeking|looking for|objective:)\s+(?:an?\s+)?(.+?)(?:\s+(?:role|position|job|with|where|at)\b|[.!]|$)/i,
+      /(?:seeking|looking for|objective:)\s+(?:an?\s+)?(.+?)(?:\s+(?:roles?|positions?|jobs?|with|where|at)\b|[.!]|$)/i,
     );
     const role = cleanLine(match?.[1] ?? line);
     return role.length <= 80 && headlineKeywordPattern.test(role) ? [role] : [];
@@ -853,10 +847,7 @@ export function buildDeterministicResumeProfileExtraction(
   const extractedTargetRoles =
     objectiveRoles.length > 0
       ? uniqueStrings(objectiveRoles)
-      : uniqueStrings([
-          ...(headline ? [headline] : []),
-          ...recentExperienceTitles,
-        ]).slice(0, 3);
+      : uniqueStrings(headline ? [headline] : []);
   const targetRoles =
     extractedTargetRoles.length > 0
       ? extractedTargetRoles

@@ -14,7 +14,7 @@ import {
 } from "@nordri/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ActionsScreen } from "./actions-screen";
+import { ActionsScreen, QuestionAnswerForm } from "./actions-screen";
 
 afterEach(cleanup);
 
@@ -277,7 +277,10 @@ describe("ActionsScreen persisted grouped reusable answers", () => {
   });
 
   it("offers a consent box as a box, and names what the profile has when it does not settle a question", () => {
-    const request = createManualAnswerRequest({ id: "request_a", jobId: "job_a" });
+    const request = createManualAnswerRequest({
+      id: "request_a",
+      jobId: "job_a",
+    });
     const applicationAttempts = [
       {
         applicationRecordId: "application_job_a",
@@ -318,7 +321,9 @@ describe("ActionsScreen persisted grouped reusable answers", () => {
       );
 
     expect(
-      queryByText("Nothing in your profile, resume, or saved answers covers this."),
+      queryByText(
+        "Nothing in your profile, resume, or saved answers covers this.",
+      ),
     ).toBeNull();
     expect(getByText(/Your profile says you can work in Germany/)).toBeTruthy();
     const box = getByTestId("needs-you-question-checkbox") as HTMLInputElement;
@@ -786,3 +791,38 @@ describe("Needs you question step shapes", () => {
     ).toEqual(["+1 555 0100", "Yes"]);
   });
 });
+
+it.each([true, false])(
+  "ambiguous country questions default to one use; ordinary questions stay saved (%s)",
+  (ambiguous) => {
+    const question = {
+      id: "q",
+      prompt: "Are you authorized to work in this country?",
+      kind: "work_authorization" as const,
+      isRequired: true,
+      note: ambiguous
+        ? "Neither the question nor the posting names the country."
+        : null,
+      detectedAt: "2026-09-14T10:00:00.000Z",
+      answerOptions: ["Yes", "No"],
+      suggestedAnswers: [],
+      submittedAnswer: null,
+      status: "detected" as const,
+    };
+    const view = render(
+      <QuestionAnswerForm
+        isPending={false}
+        onAnswer={vi.fn()}
+        questions={[question]}
+        requestId="r"
+      />,
+    );
+    expect(
+      (
+        view.getByLabelText(
+          "Save this answer for next time",
+        ) as HTMLInputElement
+      ).checked,
+    ).toBe(!ambiguous);
+  },
+);

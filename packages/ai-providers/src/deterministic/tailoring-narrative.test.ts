@@ -8,6 +8,7 @@ import {
 } from "../test-fixtures";
 import {
   buildDeterministicTailoredResume,
+  buildDeterministicStructuredResumeDraft,
   VISIBLE_ADDITIONAL_SKILL_LIMIT,
   VISIBLE_CORE_SKILL_LIMIT,
 } from "./tailoring";
@@ -207,4 +208,41 @@ describe("deterministic tailoring narrative presentation", () => {
       expect.arrayContaining(["C#", ".NET", "Docker"]),
     );
   });
+});
+
+test("fallback summary ignores listing/form evidence and omits absent candidate summaries", () => {
+  const profile = createProfile();
+  const candidate = {
+    ...profile,
+    summary: null,
+    professionalSummary: {
+      ...profile.professionalSummary,
+      fullSummary: null,
+      shortValueProposition: null,
+    },
+  };
+  const input = {
+    ...buildInput(candidate),
+    evidence: {
+      summary: ["Employer workshop. Apply now. Contact details."],
+      candidateSummary: ["Employer workshop"],
+      skills: [],
+      keywords: [],
+      experience: [],
+    },
+    availableTemplates: [],
+    selectedTemplateId: "classic_ats" as const,
+  };
+  const fallback = buildDeterministicStructuredResumeDraft(input);
+  expect(fallback.summary).toBe("");
+  expect(fallback.fullText).not.toContain("Contact details");
+  expect(
+    buildDeterministicStructuredResumeDraft({
+      ...input,
+      profile: {
+        ...candidate,
+        summary: "Analyst with saved research experience.",
+      },
+    }).summary,
+  ).toBe("Analyst with saved research experience.");
 });

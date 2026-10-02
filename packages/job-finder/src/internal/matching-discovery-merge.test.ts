@@ -175,10 +175,7 @@ describe("discovered posting detail-quality merges", () => {
     expect(merged.firstSeenAt).toBe(existing.firstSeenAt);
     expect(merged.lastSeenAt).toBe("2026-03-21T10:00:00.000Z");
     expect(merged.lastVerifiedActiveAt).toBe("2026-03-21T10:00:00.000Z");
-    expect(merged.campaignIds).toEqual([
-      "campaign_first",
-      "campaign_second",
-    ]);
+    expect(merged.campaignIds).toEqual(["campaign_first", "campaign_second"]);
     // No resume-affecting regression means approved exports stay valid.
     expect(collectResumeAffectingChangedJobIds([existing], [merged])).toEqual(
       [],
@@ -447,6 +444,66 @@ describe("mergeDiscoveredPostings detail-quality monotonicity", () => {
     );
   }
 
+  test.each([
+    { title: "Junior Product Designer", seniority: "Junior" },
+    { title: "Lead Learning Coordinator", seniority: "Lead" },
+    { title: "Senior Product Designer", seniority: "Director" },
+  ])(
+    "keeps distinct vacancies at one employer and location ($title / $seniority)",
+    (facts) => {
+      const first = createRecrawl({
+        canonicalUrl: "http://127.0.0.1:47950/board-a/jobs/20",
+        applicationUrl: null,
+      });
+      const second = createRecrawl({
+        ...facts,
+        canonicalUrl: "http://127.0.0.1:47950/board-b/jobs/20",
+        applicationUrl: null,
+      });
+      const result = mergeWithExisting([], [first, second]);
+      expect(result.mergedJobs).toHaveLength(2);
+      expect(result.duplicatesMerged).toBe(0);
+      expect(
+        result.mergedJobs.map((job) => [job.title, job.canonicalUrl]),
+      ).toEqual([
+        [first.title, first.canonicalUrl],
+        [second.title, second.canonicalUrl],
+      ]);
+    },
+  );
+
+  test("true reposts retain both sources and one posting's display facts in either order", () => {
+    const first = createRecrawl({
+      canonicalUrl: "https://board-a.test/jobs/20",
+      applicationUrl: null,
+      salaryText: "EUR 96,000 per year",
+      discoveredAt: "2026-03-20T09:00:00.000Z",
+    });
+    const second = createRecrawl({
+      canonicalUrl: "https://board-b.test/jobs/30",
+      sourceJobId: "30",
+      applicationUrl: "https://board-b.test/apply/30",
+      salaryText: "USD 99,000 per year",
+      discoveredAt: "2026-03-20T10:00:00.000Z",
+    });
+    for (const postings of [
+      [first, second],
+      [second, first],
+    ]) {
+      const result = mergeWithExisting([], postings);
+      expect(result.mergedJobs).toHaveLength(1);
+      expect(result.duplicatesMerged).toBe(1);
+      expect(result.mergedJobs[0]).toMatchObject({
+        title: first.title,
+        location: first.location,
+        canonicalUrl: first.canonicalUrl,
+        applicationUrl: null,
+        salaryText: first.salaryText,
+      });
+      expect(result.mergedJobs[0]?.provenance).toHaveLength(2);
+    }
+  });
+
   test("a thinner recrawl appends provenance without regressing rich detail", () => {
     const existing = createSavedJob(createRecrawl());
     const result = mergeWithExisting([existing], [createThinRecrawl()]);
@@ -521,9 +578,7 @@ describe("mergeDiscoveredPostings detail-quality monotonicity", () => {
     expect(result.duplicatesMerged).toBe(1);
     expect(result.mergedJobs).toHaveLength(1);
     expect(result.mergedJobs[0]?.id).toBe(existing.id);
-    expect(result.mergedJobs[0]?.title).toBe(
-      "Data Engineer, Meadow Pipelines",
-    );
+    expect(result.mergedJobs[0]?.title).toBe("Data Engineer, Meadow Pipelines");
   });
 
   test("never persists pagination or an empty non-detail site section", () => {

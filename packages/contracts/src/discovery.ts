@@ -689,6 +689,7 @@ export const MatchAssessmentSchema = z.object({
     "Review the listing and resume evidence before applying.",
   ),
   requirements: z.array(JobRequirementAssessmentSchema).default([]),
+  requirementsSource: z.enum(["model", "deterministic"]).optional(),
 });
 export type MatchAssessment = z.infer<typeof MatchAssessmentSchema>;
 
@@ -950,6 +951,13 @@ export const ListingDetailFetchSchema = z.object({
   outcome: ListingDetailFetchOutcomeSchema,
   method: z.enum(["json_ld", "page_text"]).nullable().default(null),
   detail: NonEmptyStringSchema.nullable().default(null),
+  /** The linked vacancy names a different role from the saved posting. */
+  identityConflict: z
+    .object({
+      expectedTitle: NonEmptyStringSchema,
+      observedTitle: NonEmptyStringSchema,
+    })
+    .optional(),
   /** A server-requested earliest retry time after rate limiting. */
   retryAfterAt: IsoDateTimeSchema.nullable().optional(),
 });
@@ -1276,6 +1284,16 @@ export const SavedJobDiscoveryProvenanceSchema = z.object({
   // built from exactly one of these sightings (ADR 0030), so each keeps its own
   // listing and application link instead of the latest one overwriting the job.
   // Optional: provenance written before these fields existed stays valid.
+  /** Display facts from this posting, kept together when its route wins. */
+  listingFacts: JobPostingSchema.pick({
+    title: true,
+    company: true,
+    location: true,
+    salaryText: true,
+    seniority: true,
+    description: true,
+    summary: true,
+  }).optional(),
   /** The listing page this source linked to. */
   listingUrl: NonEmptyStringSchema.nullable().optional(),
   /** The application link this source's collection carried. */
@@ -1684,6 +1702,7 @@ export type ApplicationQuestionStatus = z.infer<
 export const applicationBlockerCodeValues = [
   "missing_candidate_answer",
   "requires_manual_review",
+  "application_closed",
   "unsupported_apply_path",
   "missing_resume",
   "missing_consent",

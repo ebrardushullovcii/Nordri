@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   getLatestApplicationAttempt,
+  useApplicationSelection,
   useRetainedSelection,
 } from "./use-job-finder-page-controller-helpers";
 
@@ -451,5 +452,22 @@ describe("useRetainedSelection persistence", () => {
 
     // The pick stays in memory only; nothing is written without a scope.
     expect(storage.rawDocument()).toBeNull();
+  });
+});
+
+describe("application selection", () => {
+  it("restores once after hydration and keeps the user's choice during background updates", () => {
+    const { result, rerender } = renderHook(
+      ({ stored }: { stored: string | null }) =>
+        useApplicationSelection(stored),
+      { initialProps: { stored: null as string | null } },
+    );
+    rerender({ stored: "application_a" });
+    expect(result.current[0]).toBe("application_a");
+    act(() => result.current[1]("application_reviewed"));
+    rerender({ stored: "application_waiting" });
+    expect(result.current[0]).toBe("application_reviewed");
+    rerender({ stored: null });
+    expect(result.current[0]).toBe("application_reviewed");
   });
 });

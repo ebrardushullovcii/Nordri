@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { app } from "electron";
+import { app, BrowserWindow } from "electron";
 import {
   CandidateAssetSchema,
   type CandidateAsset,
@@ -14,6 +14,8 @@ import {
   type AssistantHostPorts,
 } from "@nordri/job-finder";
 
+import { readUiResumeBatch, stopUiResumeBatch } from "./ui-resume-batch";
+
 import { extractResumeDocument } from "../../adapters/resume-document";
 import {
   approveApplicationResumes,
@@ -24,7 +26,10 @@ import {
 import { getEmbeddedBrowser } from "../browser/embedded-browser";
 import { getCandidateAssetLibrary } from "../job-finder/candidate-asset-library-instance";
 import { getJobFinderRepositoryForWorkspaceService } from "../job-finder/create-workspace-service";
-import { importResumeFromSourcePath } from "../job-finder/import-resume";
+import {
+  importResumeFromSourcePath,
+  isDesktopResumeImportActive,
+} from "../job-finder/import-resume";
 import { getJobFinderUserDataDirectory } from "../job-finder/paths";
 import {
   listJobsNotInProgress,
@@ -210,6 +215,22 @@ export function createAssistantHostPorts(input: {
 }): AssistantHostPorts {
   const library = getCandidateAssetLibrary();
   const ports: AssistantHostPorts = {
+    isResumeImportActive: isDesktopResumeImportActive,
+    readResumeBatch: readUiResumeBatch,
+    stopResumeBatch: () => {
+      const batch = stopUiResumeBatch();
+      if (batch) {
+        for (const window of BrowserWindow.getAllWindows()) {
+          if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
+            window.webContents.send(
+              "job-finder:assistant:resume-batch-stop",
+              batch.id,
+            );
+          }
+        }
+      }
+      return batch;
+    },
     async startSearch({ searchRequest, targetId }) {
       const service = await getJobFinderWorkspaceService();
       const before = await service.getWorkspaceSnapshot();

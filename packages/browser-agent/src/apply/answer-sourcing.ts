@@ -17,7 +17,11 @@ import type {
   ApplyAnswerSources,
   ApplyFormControl,
 } from "./types";
-import { judgeWorkCountry, type WorkCountryVerdict } from "./work-country";
+import {
+  judgeWorkCountry,
+  namedWorkCountries,
+  type WorkCountryVerdict,
+} from "./work-country";
 
 /**
  * Where an answer comes from, in the order Job Finder trusts.
@@ -33,6 +37,7 @@ import { judgeWorkCountry, type WorkCountryVerdict } from "./work-country";
 
 export type ApplyAnswerResolution =
   | { status: "answered"; answer: ApplyAnswer }
+  | { status: "map_choice"; context: ApplyAnswer }
   /** Free text the loop may write for this question, grounded in these facts. */
   | { status: "write_free_text"; grounding: string[] }
   /** Nothing here can answer it truthfully. Ask the person. */
@@ -786,6 +791,8 @@ function eligibilityAnswer(
     }
     case "experience": {
       if (asksForOverallYearsExperience(control)) {
+        // Unknown is not zero: leave the question for the person.
+        if (profile.yearsExperience === null) return null;
         return profileAnswer(
           String(profile.yearsExperience),
           control.questionKind,
@@ -833,6 +840,8 @@ export function resolveExactProfileAnswer(
   if (ELIGIBILITY_QUESTION_KINDS.has(control.questionKind)) {
     return eligibilityAnswer(control, profile, posting);
   }
+  if (isPhoneCountryControl(control))
+    return phoneCountryAnswer(control, profile);
   return (
     personalInfoAnswer(control, profile) ??
     locationAnswer(control, profile) ??
@@ -970,8 +979,8 @@ export function resolveReusableAnswer(
     kind: control.questionKind,
     sourceKind: "answer_library",
     sourceId: `answerLibrary.${best.answer.id}`,
-    provenanceLabel: "an answer you saved earlier",
-    groundedIn: ["an answer you saved earlier"],
+    provenanceLabel: "your answer to this question",
+    groundedIn: ["your answer to this question"],
   };
 }
 
@@ -1150,6 +1159,28 @@ export function resolveApplyAnswer(input: {
           null)
         : matchOption(control.options, direct.value);
       if (!option) {
+        if (
+          (direct.sourceKind === "answer_library" ||
+            direct.sourceId.startsWith("profile.answerBank.")) &&
+          direct.value.trim().split(/\s+/u).length > 1 &&
+          control.attestationKind === null
+        ) {
+          if (
+            (control.questionKind === "work_authorization" ||
+              control.questionKind === "visa_sponsorship") &&
+            namedWorkCountries(
+              `${control.groupLabel} ${control.label} ${sources.posting.location}`,
+            ).length === 0
+          ) {
+            return {
+              status: "needs_you",
+              reason:
+                "Neither the question nor the posting names the country. Your saved answer needs that context.",
+              suggestion: direct,
+            };
+          }
+          return { status: "map_choice", context: direct };
+        }
         // Saying which answer did not fit and what the choices are is what
         // stops the person answering the identical question over and over.
         return {

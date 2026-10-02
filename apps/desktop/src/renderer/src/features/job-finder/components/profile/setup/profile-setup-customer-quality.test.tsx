@@ -180,6 +180,31 @@ describe("profile setup customer-quality guidance", () => {
     vi.clearAllMocks();
   });
 
+  it("marks an edited earlier step as unsaved instead of Complete", () => {
+    render(
+      <ProfileSetupPathCard
+        currentStep="targeting"
+        hasImportedResume
+        unsavedSteps={["essentials", "background"]}
+        profileSetupState={{
+          status: "in_progress",
+          currentStep: "targeting",
+          completedAt: null,
+          reviewItems: [],
+          lastResumedAt: null,
+        }}
+        onGoToStep={() => undefined}
+      />,
+    );
+    const getSetupPathRowText = (label: string) =>
+      Array.from(container?.querySelectorAll("button") ?? []).find((button) =>
+        button.textContent?.includes(label),
+      )?.textContent ?? "";
+    expect(getSetupPathRowText("Basics")).toContain("Unsaved changes");
+    expect(getSetupPathRowText("Basics")).not.toContain("Complete");
+    expect(getSetupPathRowText("Work history")).toContain("Unsaved changes");
+  });
+
   it("keeps pending review counts visible instead of presenting a contradictory completed step", () => {
     render(
       <ProfileSetupPathCard

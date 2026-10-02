@@ -94,7 +94,7 @@ export interface UntailorableListingPresentation {
  * form on screen, and the person presses the final button themselves.
  */
 export const APPROVAL_FILLS_NOTHING_SENT_MESSAGE =
-  "Approving lets Job Finder fill the application form with this resume, on your screen. Nothing is sent or submitted — you press the final button yourself. Read the listing on the job site before you apply.";
+  "Approving lets Job Finder fill the application form with this resume, on your screen. Whether it is then sent follows your Applying setting. Read the listing on the job site before you apply.";
 
 export function describeUntailorableListing(
   asset: ResumeGenerationPathInput | null | undefined,
@@ -136,7 +136,9 @@ function plainGenerationDetail(detail: string | null): string | null {
   if (!detail) {
     return null;
   }
-  if (/stopped before completing|permanent_failure|budget_exhausted/i.test(detail)) {
+  if (
+    /stopped before completing|permanent_failure|budget_exhausted/i.test(detail)
+  ) {
     return "the AI stopped partway through";
   }
   if (/closed the stream before finishing/i.test(detail)) {
@@ -518,7 +520,10 @@ export function cloneDraft(draft: ResumeDraft): ResumeDraft {
  * instead of making the person retype it.
  */
 export function findUnansweredAssistantRequest(
-  messages: readonly Pick<ResumeAssistantMessage, "role" | "content" | "patches">[],
+  messages: readonly Pick<
+    ResumeAssistantMessage,
+    "role" | "content" | "patches"
+  >[],
 ): string | null {
   const reply = messages.at(-1);
   const request = messages.at(-2);

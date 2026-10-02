@@ -227,6 +227,24 @@ export function inferApplicationCrmStage(
   record: Pick<ApplicationRecord, "status" | "lastAttemptState"> &
     Partial<Pick<ApplicationRecord, "latestBlocker">>,
 ): ApplicationCrmStage {
+  if (
+    ![
+      "submitted",
+      "assessment",
+      "interview",
+      "offer",
+      "rejected",
+      "withdrawn",
+      "archived",
+    ].includes(record.status)
+  ) {
+    if (record.lastAttemptState === "cancelled") return "cancelled";
+    if (
+      record.lastAttemptState === "failed" ||
+      record.lastAttemptState === "unsupported"
+    )
+      return "failed";
+  }
   // Match the Tracker's inferred stage when its first note, tag, or reminder
   // creates the CRM payload. A paused form is still being prepared.
   const preparationBlocked =
@@ -1093,6 +1111,7 @@ export function buildApplicationCrmCalendar(
             kind: "interview" as const,
             title: `${interview.title} · ${record.company}`,
             startsAt: interview.startsAt,
+            timeZone: interview.timeZone,
             endsAt: interview.endsAt,
             status: interview.status,
           })),

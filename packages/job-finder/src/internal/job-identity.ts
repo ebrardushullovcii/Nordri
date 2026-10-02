@@ -20,6 +20,7 @@ export type JobIdentityInput = {
   providerBoardToken?: string | null;
   providerIdentifier?: string | null;
   title?: string | null;
+  seniority?: string | null;
   company?: string | null;
   location?: string | null;
   description?: string | null;
@@ -208,14 +209,39 @@ function readCompatibleTitleShape(title: string | null | undefined): {
 }
 
 /**
+ * The same title, or the same title where one source drops a comma-delimited
+ * team/product qualifier ("Data Engineer, Payments" and "Data Engineer").
+ * Different roles or levels never pass.
+ */
+function hasCompatibleTitles(
+  left: JobIdentityInput,
+  right: JobIdentityInput,
+): boolean {
+  const leftTitle = readCompatibleTitleShape(left.title);
+  const rightTitle = readCompatibleTitleShape(right.title);
+  if (!leftTitle || !rightTitle) {
+    return false;
+  }
+  return (
+    leftTitle.full === rightTitle.full ||
+    ((!leftTitle.hasExplicitQualifier || !rightTitle.hasExplicitQualifier) &&
+      (leftTitle.hasExplicitQualifier
+        ? leftTitle.stem === rightTitle.full
+        : rightTitle.stem === leftTitle.full))
+  );
+}
+
+/**
  * Strong content identity is deliberately narrow. It only accepts a complete
- * body, exact employer and location, and a compatible title (including a
- * source that drops a comma-delimited team/product qualifier).
+ * body, exact employer and location, a compatible title (including a source
+ * that drops a comma-delimited team/product qualifier) and compatible
+ * seniority.
  */
 export function hasEquivalentListingContentIdentity(
   left: JobIdentityInput,
   right: JobIdentityInput,
 ): boolean {
+  if (!hasCompatibleSeniority(left, right)) return false;
   const leftContent = normalizeListingContentIdentity(left.description);
   const rightContent = normalizeListingContentIdentity(right.description);
   if (!leftContent || leftContent !== rightContent) {
@@ -233,21 +259,7 @@ export function hasEquivalentListingContentIdentity(
   ) {
     return false;
   }
-  const leftTitle = readCompatibleTitleShape(left.title);
-  const rightTitle = readCompatibleTitleShape(right.title);
-  if (!leftTitle || !rightTitle) {
-    return false;
-  }
-  const titlesAreCompatible =
-    leftTitle.full === rightTitle.full ||
-    (!leftTitle.hasExplicitQualifier || !rightTitle.hasExplicitQualifier) &&
-      (leftTitle.hasExplicitQualifier
-        ? leftTitle.stem === rightTitle.full
-        : rightTitle.stem === leftTitle.full);
-  if (!titlesAreCompatible) {
-    return false;
-  }
-  return true;
+  return hasCompatibleTitles(left, right);
 }
 
 export function buildJobIdentityAliases(
@@ -397,7 +409,7 @@ function readListingSiteKey(value: string): string | null {
   try {
     const parsed = new URL(value);
     const firstSegment = parsed.pathname.split("/").find(Boolean) ?? "";
-    return `${parsed.hostname.toLowerCase()}/${firstSegment.toLowerCase()}`;
+    return `${parsed.host.toLowerCase()}/${firstSegment.toLowerCase()}`;
   } catch {
     return null;
   }
@@ -405,7 +417,10 @@ function readListingSiteKey(value: string): string | null {
 
 function readListingSiteKeys(input: JobIdentityInput): Set<string> {
   const keys = new Set<string>();
-  for (const url of [input.canonicalUrl, ...(input.alternateListingUrls ?? [])]) {
+  for (const url of [
+    input.canonicalUrl,
+    ...(input.alternateListingUrls ?? []),
+  ]) {
     const key = url ? readListingSiteKey(url) : null;
     if (key) keys.add(key);
   }
@@ -433,6 +448,15 @@ function readApplicationRoutePath(input: JobIdentityInput): string | null {
   }
 }
 
+function hasCompatibleSeniority(
+  left: JobIdentityInput,
+  right: JobIdentityInput,
+): boolean {
+  const leftLevel = normalizeText(left.seniority ?? "");
+  const rightLevel = normalizeText(right.seniority ?? "");
+  return !leftLevel || !rightLevel || leftLevel === rightLevel;
+}
+
 /**
  * Title, employer and place identify one job only across sites, and only
  * when the two do not name different application forms: a site that lists
@@ -443,6 +467,7 @@ export function areListedOnDifferentSites(
   left: JobIdentityInput,
   right: JobIdentityInput,
 ): boolean {
+  if (!hasCompatibleSeniority(left, right)) return false;
   const leftSites = readListingSiteKeys(left);
   const rightSites = readListingSiteKeys(right);
   if (leftSites.size === 0 || rightSites.size === 0) return false;
@@ -489,9 +514,7 @@ function intersectValues<T>(
   }
 
   const [smaller, larger] =
-    current.size <= incoming.size
-      ? [current, incoming]
-      : [incoming, current];
+    current.size <= incoming.size ? [current, incoming] : [incoming, current];
   const intersection = new Set<T>();
   for (const value of smaller) {
     if (larger.has(value)) {
@@ -544,28 +567,44 @@ export function createJobIdentityIndex<T extends object>(
       }
       const indexedMatches = valuesByAlias.get(alias.key);
       const matches =
-        alias.kind === "exact_listing_content" && indexedMatches
+        (alias.kind === "employer_application_url" ||
+          alias.kind === "source_posting_id") &&
+        indexedMatches
           ? new Set(
-              [...indexedMatches].filter((candidate) =>
-                hasEquivalentListingContentIdentity(
-                  identity,
-                  selectIdentity(candidate),
-                ),
-              ),
+              [...indexedMatches].filter((candidate) => {
+                // One employer form can serve several roles, and boards on
+                // one host reuse posting numbers: neither makes two postings
+                // the same job when they name different roles.
+                const other = selectIdentity(candidate);
+                return (
+                  (!identity.title?.trim() ||
+                    !other.title?.trim() ||
+                    hasCompatibleTitles(identity, other)) &&
+                  hasCompatibleSeniority(identity, other)
+                );
+              }),
             )
-          : alias.kind === "cross_source_listing_facts" && indexedMatches
+          : alias.kind === "exact_listing_content" && indexedMatches
             ? new Set(
-                indexedMatches.size > MAX_CROSS_SOURCE_CANDIDATES
-                  ? []
-                  :
-                    [...indexedMatches].filter((candidate) =>
-                      areListedOnDifferentSites(
-                        identity,
-                        selectIdentity(candidate),
-                      ),
-                    ),
+                [...indexedMatches].filter((candidate) =>
+                  hasEquivalentListingContentIdentity(
+                    identity,
+                    selectIdentity(candidate),
+                  ),
+                ),
               )
-            : indexedMatches;
+            : alias.kind === "cross_source_listing_facts" && indexedMatches
+              ? new Set(
+                  indexedMatches.size > MAX_CROSS_SOURCE_CANDIDATES
+                    ? []
+                    : [...indexedMatches].filter((candidate) =>
+                        areListedOnDifferentSites(
+                          identity,
+                          selectIdentity(candidate),
+                        ),
+                      ),
+                )
+              : indexedMatches;
       if (!matches || matches.size === 0) {
         continue;
       }

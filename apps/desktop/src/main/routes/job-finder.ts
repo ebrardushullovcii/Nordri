@@ -867,6 +867,10 @@ export function registerJobFinderRouteHandlers(
       const jobFinderWorkspaceService = await getJobFinderWorkspaceService();
       const snapshot = await (async () => {
         switch (input.mutation.type) {
+          case "assess_job_listing":
+            return jobFinderWorkspaceService.assessJobListing(
+              input.mutation.jobId,
+            );
           case "queue_job_for_review":
             return jobFinderWorkspaceService.queueJobForReview(
               input.mutation.jobId,

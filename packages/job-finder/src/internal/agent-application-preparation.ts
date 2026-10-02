@@ -200,7 +200,7 @@ const BLOCKER_CODES: Record<
   account_creation_required: "requires_manual_review",
   security_challenge: "requires_manual_review",
   multi_factor_required: "requires_manual_review",
-  application_closed: "requires_manual_review",
+  application_closed: "application_closed",
   application_page_unreachable: "application_page_unreachable",
   site_saves_as_you_go: "site_saves_as_you_go",
 };
@@ -357,6 +357,8 @@ function toModelUse(
 function nextActionFor(result: ApplyAgentResult): string {
   const blocked = result.pauses.find((pause) => pause.blocker !== null);
   if (blocked?.blocker) {
+    if (blocked.blocker.code === "application_closed")
+      return "Find another job";
     return blocked.blocker.nextActionLabel;
   }
   if (result.pauses.some((pause) => pause.question !== null)) {
@@ -642,7 +644,7 @@ export async function runAgentApplicationPreparation(
   // them to read over and send. Recording it as "paused" put every finished
   // application in the Waiting-on-you count beside the ones that were stuck.
   const attemptState: ApplyExecutionResult["state"] =
-    result.outcome === "stuck"
+    result.outcome === "stuck" || blocker?.code === "application_closed"
       ? "failed"
       : blocker === null &&
           questions.length === 0 &&
@@ -911,9 +913,12 @@ export function buildApplyReviewCard(input: {
   siteLabel: string;
   preparedAt: string;
 }): ApplicationReviewCard {
-  const letterEntry = input.result.filled.find(
+  const filled = input.result.reviewFilled ?? input.result.filled;
+  const attached = input.result.reviewAttachments ?? input.result.attachments;
+  const letterEntry = filled.find(
     (entry) => entry.questionKind === "cover_letter",
   );
+  const attachedLetter = attached.find((entry) => entry.reviewText)?.reviewText;
   // The card's schema caps every string. The run's own text (a grounding
   // note that quotes a resume line, a long field label) can run past a cap,
   // and an over-long note used to make this parse throw after the form had
@@ -936,24 +941,43 @@ export function buildApplyReviewCard(input: {
   return ApplicationReviewCardSchema.parse({
     siteLabel: clamp(input.siteLabel, 240),
     pageUrl: input.result.finalUrl,
-    answers: input.result.filled.slice(0, 200).map((entry) => ({
-      question: clamp(entry.label, 2_000),
-      answer: clamp(entry.answer.value, 12_000),
-      source: clamp(entry.answer.provenanceLabel, 240),
-      written: entry.answer.sourceKind === "generated",
-      groundedIn: clampGrounding(entry.answer.groundedIn),
-    })),
-    attachments: input.result.attachments.slice(0, 20).map((attachment) => ({
-      label: clamp(attachment.label, 240),
-      fileName: clamp(attachment.fileName, 240),
-      field: clamp(attachment.controlLabel, 2_000),
-    })),
+    answers: [
+      ...new Map(
+        filled.map((entry) => [entry.fieldKey ?? entry.label, entry]),
+      ).values(),
+    ]
+      .slice(0, 200)
+      .map((entry) => ({
+        ...(entry.fieldKey ? { fieldKey: entry.fieldKey } : {}),
+        question: clamp(entry.label, 2_000),
+        answer: clamp(entry.answer.value, 12_000),
+        source: clamp(entry.answer.provenanceLabel, 240),
+        written: entry.answer.sourceKind === "generated",
+        groundedIn: clampGrounding(entry.answer.groundedIn),
+      })),
+    attachments: [
+      ...new Map(
+        attached.map((entry) => [entry.fieldKey ?? entry.controlLabel, entry]),
+      ).values(),
+    ]
+      .slice(0, 20)
+      .map((attachment) => ({
+        ...(attachment.fieldKey ? { fieldKey: attachment.fieldKey } : {}),
+        label: clamp(attachment.label, 240),
+        fileName: clamp(attachment.fileName, 240),
+        field: clamp(attachment.controlLabel, 2_000),
+      })),
     letter: letterEntry
       ? {
           text: clamp(letterEntry.answer.value, 12_000),
           groundedIn: clampGrounding(letterEntry.answer.groundedIn),
         }
-      : null,
+      : attachedLetter
+        ? {
+            text: clamp(attachedLetter.text, 12_000),
+            groundedIn: clampGrounding(attachedLetter.groundedIn),
+          }
+        : null,
     waitingOnYou: [
       ...input.result.pauses.map((pause) => pause.summary),
       ...(input.result.structuredExperienceGap
@@ -963,5 +987,59 @@ export function buildApplyReviewCard(input: {
       .slice(0, 20)
       .map((summary) => clamp(summary, 2_000)),
     preparedAt: input.preparedAt,
+  });
+}
+
+/** A continuation adds to the retained form review; latest fields win. */
+
+export function mergeApplyReviewCards(
+  previous: ApplicationReviewCard | null,
+  current: ApplicationReviewCard | null,
+): ApplicationReviewCard | null {
+  if (!current) return previous;
+  if (!previous) return current;
+  const answers = current.answers.map((answer) => {
+    const recorded = previous.answers.find((entry) =>
+      answer.fieldKey && entry.fieldKey
+        ? answer.fieldKey === entry.fieldKey
+        : answer.question === entry.question,
+    );
+    return answer.source === "the filled application form" &&
+      recorded?.answer === answer.answer
+      ? {
+          ...recorded,
+          ...(answer.fieldKey ? { fieldKey: answer.fieldKey } : {}),
+        }
+      : answer;
+  });
+  const earlierAnswers = previous.answers.filter(
+    (answer) =>
+      answer.fieldKey ||
+      !answers.some((entry) => entry.question === answer.question),
+  );
+  const earlierAttachments = previous.attachments.filter(
+    (attachment) =>
+      attachment.fieldKey ||
+      !current.attachments.some((entry) => entry.field === attachment.field),
+  );
+  return ApplicationReviewCardSchema.parse({
+    ...current,
+    answers: [
+      ...new Map(
+        [...earlierAnswers, ...answers].map((answer) => [
+          answer.fieldKey ?? answer.question,
+          answer,
+        ]),
+      ).values(),
+    ],
+    attachments: [
+      ...new Map(
+        [...earlierAttachments, ...current.attachments].map((attachment) => [
+          attachment.fieldKey ?? attachment.field,
+          attachment,
+        ]),
+      ).values(),
+    ],
+    letter: current.letter ?? previous.letter,
   });
 }

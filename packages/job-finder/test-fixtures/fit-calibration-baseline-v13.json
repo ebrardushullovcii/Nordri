@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "corpusVersion": "fit-calibration-v1-2026-07-30",
-  "generatedAt": "2026-09-26T16:29:51.483Z",
-  "scorerVersion": 13,
-  "durationMs": 332.534625,
+  "generatedAt": "2026-10-02T05:01:48.146Z",
+  "scorerVersion": 14,
+  "durationMs": 2863.422917,
   "thresholds": {
     "maxHardConflictsInTopFive": 0,
     "maxUnsafeHardConflictRecommendations": 0,
@@ -62,7 +62,7 @@
             "compensation"
           ],
           "rank": 1,
-          "scorerVersion": 13,
+          "scorerVersion": 14,
           "score": 94,
           "recommendation": "strong_fit",
           "recommendationRationale": "No hard conflicts or unsupported required requirements were detected.",
@@ -374,7 +374,7 @@
             "application_effort"
           ],
           "rank": 2,
-          "scorerVersion": 13,
+          "scorerVersion": 14,
           "score": 93,
           "recommendation": "strong_fit",
           "recommendationRationale": "No hard conflicts or unsupported required requirements were detected.",
@@ -685,7 +685,7 @@
             "senior_engineering"
           ],
           "rank": 3,
-          "scorerVersion": 13,
+          "scorerVersion": 14,
           "score": 78,
           "recommendation": "apply_with_original",
           "recommendationRationale": "The original resume has credible evidence for the detected requirements, with no hard blocker found.",
@@ -933,7 +933,7 @@
             "senior_engineering"
           ],
           "rank": 4,
-          "scorerVersion": 13,
+          "scorerVersion": 14,
           "score": 72,
           "recommendation": "apply_with_original",
           "recommendationRationale": "The original resume has credible evidence for the detected requirements, with no hard blocker found.",
@@ -1152,7 +1152,7 @@
             "senior_engineering"
           ],
           "rank": 5,
-          "scorerVersion": 13,
+          "scorerVersion": 14,
           "score": 70,
           "recommendation": "review_before_applying",
           "recommendationRationale": "The listing location could not be compared with the saved search areas yet.",
@@ -1420,7 +1420,7 @@
             "compensation"
           ],
           "rank": 6,
-          "scorerVersion": 13,
+          "scorerVersion": 14,
           "score": 70,
           "recommendation": "review_before_applying",
           "recommendationRationale": "The listing compensation is below the saved salary minimum.",
@@ -1732,7 +1732,7 @@
             "incomplete_listing"
           ],
           "rank": 7,
-          "scorerVersion": 13,
+          "scorerVersion": 14,
           "score": 70,
           "recommendation": "review_before_applying",
           "recommendationRationale": "The listing location could not be compared with the saved search areas yet.",
@@ -1760,11 +1760,6 @@
               "evidence": [
                 {
                   "source": "preference",
-                  "label": "Seniority comparison",
-                  "detail": "The listing does not state seniority; saved levels are Senior."
-                },
-                {
-                  "source": "preference",
                   "label": "Employment-type comparison",
                   "detail": "The listing does not state employment type; saved types are Full-time."
                 },
@@ -1777,6 +1772,11 @@
                   "source": "preference",
                   "label": "Work-mode comparison",
                   "detail": "remote compared with remote: aligned."
+                },
+                {
+                  "source": "preference",
+                  "label": "Seniority comparison",
+                  "detail": "Senior compared with Senior: aligned."
                 }
               ]
             },
@@ -1889,7 +1889,7 @@
             "hard_requirement_conflict"
           ],
           "rank": 8,
-          "scorerVersion": 13,
+          "scorerVersion": 14,
           "score": 63,
           "recommendation": "review_before_applying",
           "recommendationRationale": "Go is not yet supported by explicit resume evidence.",
@@ -2087,7 +2087,7 @@
             "senior_engineering"
           ],
           "rank": 9,
-          "scorerVersion": 13,
+          "scorerVersion": 14,
           "score": 0,
           "recommendation": "review_before_applying",
           "recommendationRationale": "Kubernetes is not yet supported by explicit resume evidence.",
@@ -2274,7 +2274,7 @@
             "misleading_title"
           ],
           "rank": 10,
-          "scorerVersion": 13,
+          "scorerVersion": 14,
           "score": 38,
           "recommendation": "skip",
           "recommendationRationale": "This is a talent-pool or future-interest listing, not a current vacancy.",
@@ -2547,7 +2547,7 @@
             "hard_requirement_conflict"
           ],
           "rank": 11,
-          "scorerVersion": 13,
+          "scorerVersion": 14,
           "score": 34,
           "recommendation": "skip",
           "recommendationRationale": "Remote geography eligibility conflicts with the saved profile or search preferences.",
@@ -2881,7 +2881,7 @@
             "misleading_title"
           ],
           "rank": 12,
-          "scorerVersion": 13,
+          "scorerVersion": 14,
           "score": 29,
           "recommendation": "skip",
           "recommendationRationale": "The listing belongs to a different occupational role.",
@@ -3152,7 +3152,7 @@
             "senior_engineering"
           ],
           "rank": 13,
-          "scorerVersion": 13,
+          "scorerVersion": 14,
           "score": 27,
           "recommendation": "skip",
           "recommendationRationale": "The listing belongs to a different occupational role.",
@@ -3378,7 +3378,7 @@
             "nontechnical"
           ],
           "rank": 1,
-          "scorerVersion": 13,
+          "scorerVersion": 14,
           "score": 68,
           "recommendation": "review_before_applying",
           "recommendationRationale": "The fit is plausible, but the evidence is not strong enough for an unqualified recommendation.",
@@ -3611,7 +3611,7 @@
             "nontechnical"
           ],
           "rank": 2,
-          "scorerVersion": 13,
+          "scorerVersion": 14,
           "score": 68,
           "recommendation": "review_before_applying",
           "recommendationRationale": "The fit is plausible, but the evidence is not strong enough for an unqualified recommendation.",
@@ -3828,7 +3828,7 @@
             "incomplete_listing"
           ],
           "rank": 3,
-          "scorerVersion": 13,
+          "scorerVersion": 14,
           "score": 68,
           "recommendation": "review_before_applying",
           "recommendationRationale": "The listing location could not be compared with the saved search areas yet.",
@@ -3984,7 +3984,7 @@
             "nontechnical"
           ],
           "rank": 4,
-          "scorerVersion": 13,
+          "scorerVersion": 14,
           "score": 67,
           "recommendation": "review_before_applying",
           "recommendationRationale": "The fit is plausible, but the evidence is not strong enough for an unqualified recommendation.",
@@ -4172,7 +4172,7 @@
             "compensation"
           ],
           "rank": 5,
-          "scorerVersion": 13,
+          "scorerVersion": 14,
           "score": 66,
           "recommendation": "review_before_applying",
           "recommendationRationale": "The listing compensation is below the saved salary minimum.",
@@ -4394,7 +4394,7 @@
           "failureCodes": []
         },
         {
-          "id": "cs_onboarding_manager_adjacent",
+          "id": "cs_implementation_manager_adjacent",
           "expectedDisposition": "consider",
           "actualDisposition": "review",
           "grade": 2,
@@ -4403,15 +4403,185 @@
             "nontechnical"
           ],
           "rank": 6,
-          "scorerVersion": 13,
-          "score": 62,
+          "scorerVersion": 14,
+          "score": 48,
+          "recommendation": "review_before_applying",
+          "recommendationRationale": "The fit is plausible, but the evidence is not strong enough for an unqualified recommendation.",
+          "labelRationale": "Implementation scope is adjacent and grounded in onboarding work.",
+          "dimensions": {
+            "roleSuitability": {
+              "state": "unknown",
+              "explanation": "The listing title does not say enough about the kind of work for a reliable comparison.",
+              "evidence": [
+                {
+                  "source": "listing",
+                  "label": "Listing title",
+                  "detail": "Customer Implementation Manager"
+                },
+                {
+                  "source": "preference",
+                  "label": "Saved target roles",
+                  "detail": "Customer Success Manager, Customer Onboarding Manager"
+                }
+              ]
+            },
+            "preferenceAlignment": {
+              "state": "aligned",
+              "explanation": "The listing aligns with the configured search preferences.",
+              "evidence": [
+                {
+                  "source": "preference",
+                  "label": "Location comparison",
+                  "detail": "Hybrid - London, United Kingdom compared with London, United Kingdom, Remote - United Kingdom: aligned."
+                },
+                {
+                  "source": "preference",
+                  "label": "Work-mode comparison",
+                  "detail": "hybrid compared with remote, hybrid: aligned."
+                },
+                {
+                  "source": "preference",
+                  "label": "Seniority comparison",
+                  "detail": "Senior compared with Senior: aligned."
+                },
+                {
+                  "source": "preference",
+                  "label": "Employment-type comparison",
+                  "detail": "Full-time compared with Full-time: aligned."
+                }
+              ]
+            },
+            "applicationEffort": {
+              "level": "moderate",
+              "explanation": "The application redirects to an employer or ATS form, which usually requires more review and form entry.",
+              "evidence": [
+                {
+                  "source": "listing",
+                  "label": "Application path",
+                  "detail": "external redirect"
+                }
+              ]
+            },
+            "evidenceConfidence": {
+              "level": "moderate",
+              "explanation": "Several requirements could be checked, but some evidence is still incomplete. This describes how much was read, not how good the job is.",
+              "evidence": [
+                {
+                  "source": "listing",
+                  "label": "Listing detail depth",
+                  "detail": "partial detail"
+                },
+                {
+                  "source": "derived",
+                  "label": "Requirement supportability",
+                  "detail": "1 of 1 role or eligibility requirements have explicit positive or negative evidence."
+                }
+              ],
+              "supportedCount": 1,
+              "partialCount": 0,
+              "missingCount": 0,
+              "unknownCount": 0,
+              "conflictCount": 0
+            }
+          },
+          "compensationFit": {
+            "state": "meets_minimum",
+            "confidence": "high",
+            "minimumSalaryUsd": 80000,
+            "listingMinimumAnnualUsd": 88000,
+            "listingCurrency": "USD",
+            "explanation": "The listing minimum meets or exceeds the saved USD minimum after normalizing both to annual amounts."
+          },
+          "requirements": [
+            {
+              "id": "requirement_domain_customer_onboarding",
+              "category": "domain",
+              "label": "Customer onboarding",
+              "importance": "inferred",
+              "status": "supported",
+              "jobEvidence": "Customer onboarding",
+              "resumeEvidence": [
+                {
+                  "sourceKind": "profile",
+                  "sourceId": "fit_customer_success",
+                  "label": "Profile summary",
+                  "detail": "Customer onboarding, Renewals, Customer adoption, Stakeholder management, Zendesk, CRM."
+                },
+                {
+                  "sourceKind": "profile_skill",
+                  "sourceId": null,
+                  "label": "Profile skill: Customer onboarding",
+                  "detail": "Customer onboarding is explicitly listed in the imported profile."
+                },
+                {
+                  "sourceKind": "experience",
+                  "sourceId": "fit_customer_success_experience",
+                  "label": "Customer Success Lead at Established Employer",
+                  "detail": "Customer onboarding"
+                }
+              ],
+              "explanation": "The resume contains explicit customer onboarding evidence."
+            },
+            {
+              "id": "requirement_location_hybrid_london_united_kingdom",
+              "category": "location",
+              "label": "Location: Hybrid - London, United Kingdom",
+              "importance": "required",
+              "status": "supported",
+              "jobEvidence": "Hybrid - London, United Kingdom",
+              "resumeEvidence": [
+                {
+                  "sourceKind": "profile",
+                  "sourceId": "fit_customer_success",
+                  "label": "Current location",
+                  "detail": "London, United Kingdom"
+                }
+              ],
+              "explanation": "The listing location is compatible with the saved search area."
+            },
+            {
+              "id": "requirement_work_mode_hybrid",
+              "category": "work_mode",
+              "label": "Work mode: hybrid",
+              "importance": "required",
+              "status": "supported",
+              "jobEvidence": "Hybrid - London, United Kingdom; hybrid",
+              "resumeEvidence": [
+                {
+                  "sourceKind": "profile",
+                  "sourceId": "fit_customer_success",
+                  "label": "Remote-work eligibility",
+                  "detail": "The profile confirms remote-work eligibility."
+                }
+              ],
+              "explanation": "The listing work mode matches the saved preference."
+            }
+          ],
+          "deterministicReplay": true,
+          "explicitExpectationFailureCodes": [],
+          "failureCodes": [
+            "unexpected_disposition"
+          ]
+        },
+        {
+          "id": "cs_onboarding_manager_adjacent",
+          "expectedDisposition": "consider",
+          "actualDisposition": "review",
+          "grade": 2,
+          "hardConflict": false,
+          "tags": [
+            "nontechnical"
+          ],
+          "rank": 7,
+          "scorerVersion": 14,
+          "score": 48,
           "recommendation": "review_before_applying",
           "recommendationRationale": "The fit is plausible, but the evidence is not strong enough for an unqualified recommendation.",
           "labelRationale": "Saved adjacent target with strong onboarding evidence.",
           "dimensions": {
             "roleSuitability": {
-              "state": "adjacent",
-              "explanation": "The title matches and the listing body was read, but it did not state a required core skill clearly enough to compare.",
+              "state": "unknown",
+              "explanation": "The listing title does not say enough about the kind of work for a reliable comparison.",
               "evidence": [
                 {
                   "source": "listing",
@@ -4581,176 +4751,6 @@
           ]
         },
         {
-          "id": "cs_implementation_manager_adjacent",
-          "expectedDisposition": "consider",
-          "actualDisposition": "review",
-          "grade": 2,
-          "hardConflict": false,
-          "tags": [
-            "nontechnical"
-          ],
-          "rank": 7,
-          "scorerVersion": 13,
-          "score": 61,
-          "recommendation": "review_before_applying",
-          "recommendationRationale": "The fit is plausible, but the evidence is not strong enough for an unqualified recommendation.",
-          "labelRationale": "Implementation scope is adjacent and grounded in onboarding work.",
-          "dimensions": {
-            "roleSuitability": {
-              "state": "adjacent",
-              "explanation": "The title matches and the listing body was read, but it did not state a required core skill clearly enough to compare.",
-              "evidence": [
-                {
-                  "source": "listing",
-                  "label": "Listing title",
-                  "detail": "Customer Implementation Manager"
-                },
-                {
-                  "source": "preference",
-                  "label": "Saved target roles",
-                  "detail": "Customer Success Manager, Customer Onboarding Manager"
-                }
-              ]
-            },
-            "preferenceAlignment": {
-              "state": "aligned",
-              "explanation": "The listing aligns with the configured search preferences.",
-              "evidence": [
-                {
-                  "source": "preference",
-                  "label": "Location comparison",
-                  "detail": "Hybrid - London, United Kingdom compared with London, United Kingdom, Remote - United Kingdom: aligned."
-                },
-                {
-                  "source": "preference",
-                  "label": "Work-mode comparison",
-                  "detail": "hybrid compared with remote, hybrid: aligned."
-                },
-                {
-                  "source": "preference",
-                  "label": "Seniority comparison",
-                  "detail": "Senior compared with Senior: aligned."
-                },
-                {
-                  "source": "preference",
-                  "label": "Employment-type comparison",
-                  "detail": "Full-time compared with Full-time: aligned."
-                }
-              ]
-            },
-            "applicationEffort": {
-              "level": "moderate",
-              "explanation": "The application redirects to an employer or ATS form, which usually requires more review and form entry.",
-              "evidence": [
-                {
-                  "source": "listing",
-                  "label": "Application path",
-                  "detail": "external redirect"
-                }
-              ]
-            },
-            "evidenceConfidence": {
-              "level": "moderate",
-              "explanation": "Several requirements could be checked, but some evidence is still incomplete. This describes how much was read, not how good the job is.",
-              "evidence": [
-                {
-                  "source": "listing",
-                  "label": "Listing detail depth",
-                  "detail": "partial detail"
-                },
-                {
-                  "source": "derived",
-                  "label": "Requirement supportability",
-                  "detail": "1 of 1 role or eligibility requirements have explicit positive or negative evidence."
-                }
-              ],
-              "supportedCount": 1,
-              "partialCount": 0,
-              "missingCount": 0,
-              "unknownCount": 0,
-              "conflictCount": 0
-            }
-          },
-          "compensationFit": {
-            "state": "meets_minimum",
-            "confidence": "high",
-            "minimumSalaryUsd": 80000,
-            "listingMinimumAnnualUsd": 88000,
-            "listingCurrency": "USD",
-            "explanation": "The listing minimum meets or exceeds the saved USD minimum after normalizing both to annual amounts."
-          },
-          "requirements": [
-            {
-              "id": "requirement_domain_customer_onboarding",
-              "category": "domain",
-              "label": "Customer onboarding",
-              "importance": "inferred",
-              "status": "supported",
-              "jobEvidence": "Customer onboarding",
-              "resumeEvidence": [
-                {
-                  "sourceKind": "profile",
-                  "sourceId": "fit_customer_success",
-                  "label": "Profile summary",
-                  "detail": "Customer onboarding, Renewals, Customer adoption, Stakeholder management, Zendesk, CRM."
-                },
-                {
-                  "sourceKind": "profile_skill",
-                  "sourceId": null,
-                  "label": "Profile skill: Customer onboarding",
-                  "detail": "Customer onboarding is explicitly listed in the imported profile."
-                },
-                {
-                  "sourceKind": "experience",
-                  "sourceId": "fit_customer_success_experience",
-                  "label": "Customer Success Lead at Established Employer",
-                  "detail": "Customer onboarding"
-                }
-              ],
-              "explanation": "The resume contains explicit customer onboarding evidence."
-            },
-            {
-              "id": "requirement_location_hybrid_london_united_kingdom",
-              "category": "location",
-              "label": "Location: Hybrid - London, United Kingdom",
-              "importance": "required",
-              "status": "supported",
-              "jobEvidence": "Hybrid - London, United Kingdom",
-              "resumeEvidence": [
-                {
-                  "sourceKind": "profile",
-                  "sourceId": "fit_customer_success",
-                  "label": "Current location",
-                  "detail": "London, United Kingdom"
-                }
-              ],
-              "explanation": "The listing location is compatible with the saved search area."
-            },
-            {
-              "id": "requirement_work_mode_hybrid",
-              "category": "work_mode",
-              "label": "Work mode: hybrid",
-              "importance": "required",
-              "status": "supported",
-              "jobEvidence": "Hybrid - London, United Kingdom; hybrid",
-              "resumeEvidence": [
-                {
-                  "sourceKind": "profile",
-                  "sourceId": "fit_customer_success",
-                  "label": "Remote-work eligibility",
-                  "detail": "The profile confirms remote-work eligibility."
-                }
-              ],
-              "explanation": "The listing work mode matches the saved preference."
-            }
-          ],
-          "deterministicReplay": true,
-          "explicitExpectationFailureCodes": [],
-          "failureCodes": [
-            "unexpected_disposition"
-          ]
-        },
-        {
           "id": "cs_technical_sql_missing",
           "expectedDisposition": "review",
           "actualDisposition": "review",
@@ -4760,7 +4760,7 @@
             "nontechnical"
           ],
           "rank": 8,
-          "scorerVersion": 13,
+          "scorerVersion": 14,
           "score": 46,
           "recommendation": "review_before_applying",
           "recommendationRationale": "SQL is not yet supported by explicit resume evidence.",
@@ -4972,7 +4972,7 @@
             "hard_requirement_conflict"
           ],
           "rank": 9,
-          "scorerVersion": 13,
+          "scorerVersion": 14,
           "score": 32,
           "recommendation": "skip",
           "recommendationRationale": "Remote geography eligibility conflicts with the saved profile or search preferences.",
@@ -5151,7 +5151,7 @@
             "misleading_title"
           ],
           "rank": 10,
-          "scorerVersion": 13,
+          "scorerVersion": 14,
           "score": 30,
           "recommendation": "skip",
           "recommendationRationale": "This is a talent-pool or future-interest listing, not a current vacancy.",
@@ -5365,7 +5365,7 @@
             "nontechnical"
           ],
           "rank": 11,
-          "scorerVersion": 13,
+          "scorerVersion": 14,
           "score": 28,
           "recommendation": "skip",
           "recommendationRationale": "The listing belongs to a different occupational role.",
@@ -5522,7 +5522,7 @@
             "misleading_title"
           ],
           "rank": 12,
-          "scorerVersion": 13,
+          "scorerVersion": 14,
           "score": 20,
           "recommendation": "skip",
           "recommendationRationale": "The listing belongs to a different occupational role.",
@@ -5710,7 +5710,7 @@
             "hard_requirement_conflict"
           ],
           "rank": 13,
-          "scorerVersion": 13,
+          "scorerVersion": 14,
           "score": 32,
           "recommendation": "skip",
           "recommendationRationale": "Location: On-site - Madrid, Spain conflicts with the saved profile or search preferences.",
@@ -5863,7 +5863,7 @@
             "career_change"
           ],
           "rank": 1,
-          "scorerVersion": 13,
+          "scorerVersion": 14,
           "score": 94,
           "recommendation": "strong_fit",
           "recommendationRationale": "No hard conflicts or unsupported required requirements were detected.",
@@ -6102,7 +6102,7 @@
             "career_change"
           ],
           "rank": 2,
-          "scorerVersion": 13,
+          "scorerVersion": 14,
           "score": 94,
           "recommendation": "strong_fit",
           "recommendationRationale": "No hard conflicts or unsupported required requirements were detected.",
@@ -6368,7 +6368,7 @@
             "career_change"
           ],
           "rank": 3,
-          "scorerVersion": 13,
+          "scorerVersion": 14,
           "score": 85,
           "recommendation": "apply_with_original",
           "recommendationRationale": "The original resume has credible evidence for the detected requirements, with no hard blocker found.",
@@ -6619,7 +6619,7 @@
             "career_change"
           ],
           "rank": 4,
-          "scorerVersion": 13,
+          "scorerVersion": 14,
           "score": 85,
           "recommendation": "apply_with_original",
           "recommendationRationale": "The original resume has credible evidence for the detected requirements, with no hard blocker found.",
@@ -6856,7 +6856,7 @@
             "career_change"
           ],
           "rank": 5,
-          "scorerVersion": 13,
+          "scorerVersion": 14,
           "score": 84,
           "recommendation": "apply_with_original",
           "recommendationRationale": "The original resume has credible evidence for the detected requirements, with no hard blocker found.",
@@ -7094,7 +7094,7 @@
             "incomplete_listing"
           ],
           "rank": 6,
-          "scorerVersion": 13,
+          "scorerVersion": 14,
           "score": 70,
           "recommendation": "review_before_applying",
           "recommendationRationale": "The listing location could not be compared with the saved search areas yet.",
@@ -7250,7 +7250,7 @@
             "career_change"
           ],
           "rank": 7,
-          "scorerVersion": 13,
+          "scorerVersion": 14,
           "score": 67,
           "recommendation": "review_before_applying",
           "recommendationRationale": "TypeScript is not yet supported by explicit resume evidence.",
@@ -7473,7 +7473,7 @@
             "career_change"
           ],
           "rank": 8,
-          "scorerVersion": 13,
+          "scorerVersion": 14,
           "score": 67,
           "recommendation": "review_before_applying",
           "recommendationRationale": "The fit is plausible, but the evidence is not strong enough for an unqualified recommendation.",
@@ -7652,7 +7652,7 @@
             "career_change"
           ],
           "rank": 9,
-          "scorerVersion": 13,
+          "scorerVersion": 14,
           "score": 64,
           "recommendation": "review_before_applying",
           "recommendationRationale": "The fit is plausible, but the evidence is not strong enough for an unqualified recommendation.",
@@ -7867,7 +7867,7 @@
             "misleading_title"
           ],
           "rank": 10,
-          "scorerVersion": 13,
+          "scorerVersion": 14,
           "score": 60,
           "recommendation": "review_before_applying",
           "recommendationRationale": "The fit is plausible, but the evidence is not strong enough for an unqualified recommendation.",
@@ -8025,7 +8025,7 @@
             "career_change"
           ],
           "rank": 11,
-          "scorerVersion": 13,
+          "scorerVersion": 14,
           "score": 56,
           "recommendation": "review_before_applying",
           "recommendationRationale": "The fit is plausible, but the evidence is not strong enough for an unqualified recommendation.",
@@ -8204,7 +8204,7 @@
             "misleading_title"
           ],
           "rank": 12,
-          "scorerVersion": 13,
+          "scorerVersion": 14,
           "score": 38,
           "recommendation": "skip",
           "recommendationRationale": "This is a talent-pool or future-interest listing, not a current vacancy.",
@@ -8443,7 +8443,7 @@
             "hard_requirement_conflict"
           ],
           "rank": 13,
-          "scorerVersion": 13,
+          "scorerVersion": 14,
           "score": 34,
           "recommendation": "skip",
           "recommendationRationale": "Remote geography eligibility conflicts with the saved profile or search preferences.",
@@ -8687,7 +8687,7 @@
             "regional_eligibility"
           ],
           "rank": 1,
-          "scorerVersion": 13,
+          "scorerVersion": 14,
           "score": 94,
           "recommendation": "strong_fit",
           "recommendationRationale": "No hard conflicts or unsupported required requirements were detected.",
@@ -8947,7 +8947,7 @@
             "regional_eligibility"
           ],
           "rank": 2,
-          "scorerVersion": 13,
+          "scorerVersion": 14,
           "score": 94,
           "recommendation": "strong_fit",
           "recommendationRationale": "No hard conflicts or unsupported required requirements were detected.",
@@ -9190,7 +9190,7 @@
             "regional_eligibility"
           ],
           "rank": 3,
-          "scorerVersion": 13,
+          "scorerVersion": 14,
           "score": 94,
           "recommendation": "strong_fit",
           "recommendationRationale": "No hard conflicts or unsupported required requirements were detected.",
@@ -9450,7 +9450,7 @@
             "regional_eligibility"
           ],
           "rank": 4,
-          "scorerVersion": 13,
+          "scorerVersion": 14,
           "score": 94,
           "recommendation": "strong_fit",
           "recommendationRationale": "No hard conflicts or unsupported required requirements were detected.",
@@ -9711,7 +9711,7 @@
             "compensation"
           ],
           "rank": 5,
-          "scorerVersion": 13,
+          "scorerVersion": 14,
           "score": 88,
           "recommendation": "strong_fit",
           "recommendationRationale": "No hard conflicts or unsupported required requirements were detected.",
@@ -9971,7 +9971,7 @@
             "regional_eligibility"
           ],
           "rank": 6,
-          "scorerVersion": 13,
+          "scorerVersion": 14,
           "score": 70,
           "recommendation": "review_before_applying",
           "recommendationRationale": "The listing location could not be compared with the saved search areas yet.",
@@ -10234,7 +10234,7 @@
             "incomplete_listing"
           ],
           "rank": 7,
-          "scorerVersion": 13,
+          "scorerVersion": 14,
           "score": 70,
           "recommendation": "review_before_applying",
           "recommendationRationale": "The listing location could not be compared with the saved search areas yet.",
@@ -10449,7 +10449,7 @@
             "hard_requirement_conflict"
           ],
           "rank": 8,
-          "scorerVersion": 13,
+          "scorerVersion": 14,
           "score": 70,
           "recommendation": "review_before_applying",
           "recommendationRationale": "Work authorization is not stated in your profile yet.",
@@ -10599,7 +10599,7 @@
             "incomplete_listing"
           ],
           "rank": 9,
-          "scorerVersion": 13,
+          "scorerVersion": 14,
           "score": 70,
           "recommendation": "review_before_applying",
           "recommendationRationale": "The listing location could not be compared with the saved search areas yet.",
@@ -10785,7 +10785,7 @@
             "hard_requirement_conflict"
           ],
           "rank": 10,
-          "scorerVersion": 13,
+          "scorerVersion": 14,
           "score": 34,
           "recommendation": "skip",
           "recommendationRationale": "Remote geography eligibility conflicts with the saved profile or search preferences.",
@@ -10964,7 +10964,7 @@
             "hard_requirement_conflict"
           ],
           "rank": 11,
-          "scorerVersion": 13,
+          "scorerVersion": 14,
           "score": 34,
           "recommendation": "skip",
           "recommendationRationale": "Remote geography eligibility conflicts with the saved profile or search preferences.",
@@ -11143,7 +11143,7 @@
             "hard_requirement_conflict"
           ],
           "rank": 12,
-          "scorerVersion": 13,
+          "scorerVersion": 14,
           "score": 34,
           "recommendation": "skip",
           "recommendationRationale": "Remote geography eligibility conflicts with the saved profile or search preferences.",
@@ -11322,7 +11322,7 @@
             "hard_requirement_conflict"
           ],
           "rank": 13,
-          "scorerVersion": 13,
+          "scorerVersion": 14,
           "score": 34,
           "recommendation": "skip",
           "recommendationRationale": "Location: On-site - Berlin, Germany conflicts with the saved profile or search preferences.",

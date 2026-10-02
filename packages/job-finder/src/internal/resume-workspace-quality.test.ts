@@ -2280,3 +2280,163 @@ ${ownSentence}`,
     ).toBe(true);
   });
 });
+
+test("separate project and tool facts require confirmation of their new link", () => {
+  const { profile, job } = getSeedContext();
+  const candidate = {
+    ...profile,
+    summary: null,
+    skills: ["Figma"],
+    skillGroups: { ...profile.skillGroups, tools: ["Figma"] },
+    baseResume: {
+      ...profile.baseResume,
+      textContent:
+        "Redesigned pension-app onboarding, lifting activation 23% in eight weeks. Built a separate design system in Figma.",
+    },
+    experiences: profile.experiences.map((role) => ({
+      ...role,
+      summary: null,
+      achievements: [
+        "Redesigned pension-app onboarding, lifting activation 23% in eight weeks.",
+        "Built a separate design system in Figma.",
+      ],
+    })),
+  };
+  const text =
+    "Redesigned pension-app onboarding in Figma, lifting activation 23% in eight weeks.";
+  const draft = updateSection(
+    createBaseDraft(),
+    "section_experience",
+    (section) => ({
+      ...section,
+      entries: section.entries.map((entry) => ({
+        ...entry,
+        summary: null,
+        bullets: createBullets("onboarding", [text]),
+      })),
+    }),
+  );
+  expect(
+    validateResumeDraft({
+      draft,
+      job,
+      profile: candidate,
+    }).claimAssessments.find((claim) => claim.claimText === text)?.status,
+  ).toBe("confirm_needed");
+  const supported = {
+    ...candidate,
+    baseResume: { ...candidate.baseResume, textContent: text },
+    experiences: candidate.experiences.map((role) => ({
+      ...role,
+      achievements: [text],
+    })),
+  };
+  expect(
+    validateResumeDraft({
+      draft,
+      job,
+      profile: supported,
+    }).claimAssessments.find((claim) => claim.claimText === text)?.status,
+  ).toBe("exact");
+});
+
+test("edited achievements replace old adjacent summary wording once", () => {
+  const { profile, job } = getSeedContext();
+  const edited =
+    "Redesigned pension-app onboarding, lifting activation 23% in eight weeks.";
+  const old =
+    "Redesigned onboarding for a pensions app; activation up 23% in eight weeks.";
+  const draft = updateSection(
+    createBaseDraft(),
+    "section_experience",
+    (section) => ({
+      ...section,
+      entries: section.entries.map((entry) => ({
+        ...entry,
+        summary: old,
+        bullets: createBullets("edited", [edited]),
+      })),
+    }),
+  );
+  const result = sanitizeResumeDraft({ draft, profile, job });
+  expect(getExperienceEntry(result).summary).toBeNull();
+  expect(
+    getExperienceEntry(result).bullets.map((bullet) => bullet.text),
+  ).toEqual([edited]);
+});
+
+test("comparison preserves sentences split into bullets and offers only missing facts", () => {
+  const { profile } = getSeedContext();
+  const facts = [
+    "Built research dashboards for the payments team.",
+    "Designed accessible prototypes for customer onboarding.",
+    "Reduced review time 23% across eight weeks.",
+  ];
+  const role = {
+    ...profile.experiences[0]!,
+    id: "experience_1",
+    summary: facts.join(" "),
+    achievements: [],
+  };
+  const draft = updateSection(
+    createBaseDraft(),
+    "section_experience",
+    (section) => ({
+      ...section,
+      entries: section.entries.map((entry) => ({
+        ...entry,
+        summary: null,
+        bullets: createBullets("facts", facts),
+      })),
+    }),
+  );
+  expect(
+    buildResumeCoverageComparison({
+      profile: { ...profile, experiences: [role] },
+      draft,
+    }).removedClaimCount,
+  ).toBe(0);
+  const missing = updateSection(draft, "section_experience", (section) => ({
+    ...section,
+    entries: section.entries.map((entry) => ({
+      ...entry,
+      bullets: entry.bullets.slice(0, 2),
+    })),
+  }));
+  expect(
+    buildResumeCoverageComparison({
+      profile: { ...profile, experiences: [role] },
+      draft: missing,
+    }).roles[0]?.removedClaims,
+  ).toEqual([{ field: "bullet", text: facts[2], restorable: true }]);
+});
+
+test("unconfirmed import roles are excluded from seed, preview and comparison", () => {
+  const { profile, job } = getSeedContext();
+  const candidate = {
+    ...profile,
+    experiences: [
+      ...profile.experiences,
+      {
+        ...profile.experiences[0]!,
+        id: "unconfirmed",
+        title: "/",
+        isDraft: true,
+      },
+    ],
+  };
+  const seeded = seedResumeDraft({
+    profile: candidate,
+    job,
+    templateId: "classic_ats",
+  });
+  expect(
+    seeded.sections
+      .flatMap((section) => section.entries)
+      .some((entry) => entry.profileRecordId === "unconfirmed"),
+  ).toBe(false);
+  expect(
+    buildResumeCoverageComparison({ profile: candidate, draft: seeded })
+      .originalRoleCount,
+  ).toBe(profile.experiences.filter((role) => !role.isDraft).length);
+});

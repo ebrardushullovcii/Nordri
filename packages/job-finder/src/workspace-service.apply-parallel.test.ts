@@ -252,6 +252,13 @@ describe("parallel application preparation", () => {
       submittedJobs: 0,
     });
     expect(run.summary).toContain("processed 4 of 4");
+    const failedRecord = (await h.repository.listApplicationRecords()).find(
+      (record) => record.jobId === h.ids[1],
+    );
+    expect(failedRecord).toMatchObject({
+      lastAttemptState: "failed",
+      nextActionLabel: "Try again",
+    });
     expect(
       (await h.repository.listApplyJobResults({ runId })).filter(
         (result) => result.state === "awaiting_review",
@@ -273,6 +280,13 @@ describe("parallel application preparation", () => {
       (candidate) => candidate.id === runId,
     )!;
     expect(run.state).toBe("cancelled");
+    // A stopped job never reads as still in progress; Applications shows
+    // it as cancelled from its run result.
+    expect(
+      (await h.repository.listApplicationRecords())
+        .filter((record) => h.ids.includes(record.jobId))
+        .every((record) => record.lastAttemptState !== "in_progress"),
+    ).toBe(true);
     expect(run.completedAt).not.toBeNull();
     expect(
       (await h.repository.listApplyJobResults({ runId })).every(

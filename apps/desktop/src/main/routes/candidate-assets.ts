@@ -1,3 +1,4 @@
+import { chmod, copyFile, mkdtemp, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { BrowserWindow, dialog, shell } from "electron";
@@ -14,6 +15,7 @@ import {
   CandidateAssetRestoreInputSchema,
   CandidateAssetRestoreResultSchema,
   type CandidateAsset,
+  type ResumeSourceDocument,
 } from "@nordri/contracts";
 import { CandidateAssetLibraryError } from "../services/job-finder/candidate-asset-library";
 import type { CandidateAssetLibrary } from "../services/job-finder/candidate-asset-library";
@@ -22,6 +24,7 @@ import { getCandidateAssetLibrary } from "../services/job-finder/candidate-asset
 interface CandidateAssetRouteDependencies {
   library: CandidateAssetLibrary;
   selectFile: (event: IpcMainInvokeEvent) => Promise<string | null>;
+  getResumeSource?: () => Promise<ResumeSourceDocument>;
   /**
    * Told when a file the applications may attach becomes available, so an
    * application waiting on a file question carries on without another press.
@@ -112,17 +115,46 @@ export function registerCandidateAssetRouteHandlers(
     library: getCandidateAssetLibrary(),
     selectFile: selectCandidateAssetFile,
     onApplicationFileAvailable: continueApplicationsWaitingForFile,
+    getResumeSource: async () => {
+      const { getJobFinderWorkspaceService } =
+        await import("../services/job-finder/workspace-service");
+      return (
+        await (await getJobFinderWorkspaceService()).getWorkspaceSnapshot()
+      ).profile.baseResume;
+    },
   },
 ) {
   ipcMain.handle(
     "job-finder:candidate-assets:list",
     async (_event, payload) => {
       const input = CandidateAssetListInputSchema.parse(payload ?? {});
-      return runAssetOperation(async () =>
-        CandidateAssetListResultSchema.parse(
-          await dependencies.library.list(input),
-        ),
+      const result = await runAssetOperation(() =>
+        dependencies.library.list(input),
       );
+      if (!input.resumeSourceId)
+        return CandidateAssetListResultSchema.parse(result);
+      const source = await dependencies.getResumeSource?.();
+      let originalResumeFile = null;
+      if (source?.id === input.resumeSourceId && source.storagePath) {
+        try {
+          const info = await stat(source.storagePath);
+          if (info.isFile())
+            originalResumeFile = {
+              id: source.id,
+              fileName: source.fileName,
+              fileType:
+                path.extname(source.fileName).slice(1).toUpperCase() || "File",
+              byteSize: info.size,
+              importedAt: source.uploadedAt,
+            };
+        } catch {
+          /* The source was removed from disk. */
+        }
+      }
+      return CandidateAssetListResultSchema.parse({
+        ...result,
+        originalResumeFile,
+      });
     },
   );
 
@@ -171,7 +203,22 @@ export function registerCandidateAssetRouteHandlers(
           path.join(os.tmpdir(), "nordri-file-views"),
         );
       } catch {
-        return CandidateAssetOpenResultSchema.parse({ outcome: "not_found" });
+        const source = await dependencies.getResumeSource?.();
+        if (source?.id !== input.assetId || !source.storagePath) {
+          return CandidateAssetOpenResultSchema.parse({ outcome: "not_found" });
+        }
+        try {
+          const directory = await mkdtemp(
+            path.join(os.tmpdir(), "nordri-resume-view-"),
+          );
+          viewingPath = path.join(directory, path.basename(source.fileName));
+          await copyFile(source.storagePath, viewingPath);
+          // Same as Profile › Files: the person views a copy they cannot
+          // change by accident.
+          await chmod(viewingPath, 0o400);
+        } catch {
+          return CandidateAssetOpenResultSchema.parse({ outcome: "not_found" });
+        }
       }
       const failure = await shell.openPath(viewingPath);
       return CandidateAssetOpenResultSchema.parse({

@@ -10,6 +10,23 @@ import {
 } from "./matching-compensation";
 
 describe("compensation normalization and fit truth", () => {
+  test.each(["EUR 96,000 per year", "USD 99,000 per year"])(
+    "reads an explicit amount and period without a salary label: %s",
+    (salary) => {
+      expect(
+        reconcileSalaryTextWithListingBody(
+          null,
+          `We offer ${salary} for this role.`,
+        ),
+      ).toBe(salary);
+    },
+  );
+  test("does not treat a budget or revenue amount as annual salary", () => {
+    expect(
+      extractSalaryRangeFromListingBody("Manage a EUR 96,000 project budget."),
+    ).toBeNull();
+  });
+
   test("normalizes explicit USD hourly and yearly ranges", () => {
     expect(parseNormalizedCompensation("USD $50-$60/hr")).toMatchObject({
       currency: "USD",

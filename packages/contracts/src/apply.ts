@@ -102,6 +102,7 @@ export const ApplyJobStateSchema = z.enum(applyJobStateValues);
 export type ApplyJobState = z.infer<typeof ApplyJobStateSchema>;
 
 export const applyBlockerReasonValues = [
+  "application_closed",
   "resume_missing",
   "resume_stale",
   "auth_required",
@@ -872,6 +873,7 @@ const ApplicationPreparationStartedLocalDateSchema = z
  */
 export const ApplicationReviewAnswerSchema = z
   .object({
+    fieldKey: NonEmptyStringSchema.max(2_000).optional(),
     question: NonEmptyStringSchema.max(2_000),
     answer: NonEmptyStringSchema.max(12_000),
     source: NonEmptyStringSchema.max(240),
@@ -887,6 +889,7 @@ export type ApplicationReviewAnswer = z.infer<
 
 export const ApplicationReviewAttachmentSchema = z
   .object({
+    fieldKey: NonEmptyStringSchema.max(2_000).optional(),
     label: NonEmptyStringSchema.max(240),
     fileName: NonEmptyStringSchema.max(240),
     field: NonEmptyStringSchema.max(2_000),

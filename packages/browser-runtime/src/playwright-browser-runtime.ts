@@ -2993,8 +2993,21 @@ export function createBrowserAgentRuntime(
         agentOptions.signal,
       );
 
+      let releaseReservedTab: (() => void) | null = null;
       try {
+        if (usesEmbeddedBrowserHost) {
+          const context = await getContext();
+          releaseReservedTab = await reserveEmbeddedApplicationTab(
+            context,
+            agentOptions.signal,
+            undefined,
+            () => agentOptions.onWaitingForBrowserTab?.(),
+            hostTabCount,
+          );
+        }
         page = await getAgentRunPage(source, agentOptions, (resolvedPage) => {
+          releaseReservedTab?.();
+          releaseReservedTab = null;
           page = resolvedPage;
           releaseDiscoveryPageUse?.();
           releaseDiscoveryPageUse = usePage(resolvedPage);
@@ -3322,12 +3335,15 @@ export function createBrowserAgentRuntime(
             agentOptions.searchPreferences.locations,
             agentOptions.siteLabel,
           ),
-          warning: `Agent discovery failed: ${detail}`,
+          warning: /Close a browser tab before opening another/i.test(detail)
+            ? "The browser tab limit is reached. Close finished tabs, then run this search again."
+            : `Agent discovery failed: ${detail}`,
           inventoryCompleteness: "unknown",
           jobs: [],
           agentMetadata: null,
         });
       } finally {
+        releaseReservedTab?.();
         (releaseDiscoveryPageUse as (() => void) | null)?.();
         pageAbortBinding.dispose();
         if (page && !page.isClosed() && !agentOptions.signal?.aborted) {

@@ -317,6 +317,7 @@ export function mapApplicationBlockerToUserActionKind(
     case "external_redirect":
     case "unsupported_apply_path":
       return "external_redirect";
+    case "application_closed":
     case "application_page_unreachable":
       // Technical failure: never surfaced as a user-owned browser step.
       return "other";
@@ -331,13 +332,16 @@ export function mapApplicationBlockerToUserActionKind(
 }
 
 /**
- * True for runtime technical failures that are not the user's responsibility.
+ * Unreachable or closed pages have no browser step the person can resolve.
  * These blockers must never create a Needs-you user-action request.
  */
 export function isApplicationTechnicalFailureBlocker(
   blocker: ApplicationAttemptBlocker,
 ): boolean {
-  return blocker.code === "application_page_unreachable";
+  return (
+    blocker.code === "application_page_unreachable" ||
+    blocker.code === "application_closed"
+  );
 }
 
 export function isApplicationAuthenticationUserActionKind(

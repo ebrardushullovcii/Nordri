@@ -68,6 +68,7 @@ function stripInlineSkillCategory(line: string): string {
 
 function splitSkillLine(line: string): string[] {
   line = stripInlineSkillCategory(line);
+  line = line.replace(/([^(),;|]+)\(([^()]*)\)/g, "$1, $2");
   const rawEntries = line
     .split(/[,;]|\||[\u2022\u25cf\u25aa\u25e6\u2023]| {2,}/)
     .map(cleanLine)

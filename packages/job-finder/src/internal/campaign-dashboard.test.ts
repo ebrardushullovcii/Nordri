@@ -79,48 +79,63 @@ function normalizedPreferences(
 }
 
 describe("dashboard summary recommendations", () => {
-  test.each([false, true])("counts safeguard attention before recommending a search (paused: %s)", (paused) => {
-    const seed = createSeed();
-    const campaign = createCampaign({
-      id: "campaign_idle",
-      name: "Idle plan",
-      mode: "precision",
-      searchPreferences: seed.searchPreferences,
-      now: "2026-08-15T09:00:00.000Z",
-    });
+  test.each([false, true])(
+    "counts safeguard attention before recommending a search (paused: %s)",
+    (paused) => {
+      const seed = createSeed();
+      const campaign = createCampaign({
+        id: "campaign_idle",
+        name: "Idle plan",
+        mode: "precision",
+        searchPreferences: seed.searchPreferences,
+        now: "2026-08-15T09:00:00.000Z",
+      });
 
-    const summary = deriveDashboardSummary({
-      safeguards: JobFinderIntelligenceSafeguardsSchema.parse({ abnormalFailurePauses: paused ? [{
-        id: `automatic_discovery_failures:${campaign.id}`, windowStartedAt: "2026-08-15T09:00:00.000Z",
-        failuresInWindow: 3, sampleSize: 8, failureRatePercent: 37.5, failureRateThresholdPercent: 30,
-        paused: true, explanation: "Review failed searches.", recoveryGuidance: "Open Safeguards",
-      }] : [] }),
-      generatedAt: "2026-08-15T10:00:00.000Z",
-      campaigns: {
-        notifications: [],
-        activeCampaignId: campaign.id,
-        campaigns: [campaign],
-      },
-      savedJobs: [],
-      reviewQueue: [],
-      applicationRecords: [],
-      applyRuns: [],
-      userActionRequests: [],
-      discovery: seed.discovery,
-      searchPreferences: seed.searchPreferences,
-    });
+      const summary = deriveDashboardSummary({
+        safeguards: JobFinderIntelligenceSafeguardsSchema.parse({
+          abnormalFailurePauses: paused
+            ? [
+                {
+                  id: `automatic_discovery_failures:${campaign.id}`,
+                  windowStartedAt: "2026-08-15T09:00:00.000Z",
+                  failuresInWindow: 3,
+                  sampleSize: 8,
+                  failureRatePercent: 37.5,
+                  failureRateThresholdPercent: 30,
+                  paused: true,
+                  explanation: "Review failed searches.",
+                  recoveryGuidance: "Open Safeguards",
+                },
+              ]
+            : [],
+        }),
+        generatedAt: "2026-08-15T10:00:00.000Z",
+        campaigns: {
+          notifications: [],
+          activeCampaignId: campaign.id,
+          campaigns: [campaign],
+        },
+        savedJobs: [],
+        reviewQueue: [],
+        applicationRecords: [],
+        applyRuns: [],
+        userActionRequests: [],
+        discovery: seed.discovery,
+        searchPreferences: seed.searchPreferences,
+      });
 
-    expect(summary.needsYouCount).toBe(paused ? 1 : 0);
-    if (paused) {
-      expect(summary.recommendedNextAction.route).toBe("/job-finder/actions");
-      return;
-    }
-    expect(summary.recommendedNextAction.label).toBe("Find jobs");
-    expect(summary.recommendedNextAction.detail).toBe(
-      "Run the active search plan to collect relevant openings.",
-    );
-    expect(summary.recommendedNextAction.detail).not.toContain("campaign");
-  });
+      expect(summary.needsYouCount).toBe(paused ? 1 : 0);
+      if (paused) {
+        expect(summary.recommendedNextAction.route).toBe("/job-finder/actions");
+        return;
+      }
+      expect(summary.recommendedNextAction.label).toBe("Find jobs");
+      expect(summary.recommendedNextAction.detail).toBe(
+        "Run the active search plan to collect relevant openings.",
+      );
+      expect(summary.recommendedNextAction.detail).not.toContain("campaign");
+    },
+  );
 
   test("counts a never-verified source as healthy once its latest run completed", () => {
     const seed = createSeed();
@@ -435,7 +450,7 @@ describe("campaign workspace core", () => {
               durationMs: 60_000,
               outcome: "completed",
               browserCloseout: null,
-        report: null,
+              report: null,
               timing: null,
             },
           }),
@@ -549,7 +564,7 @@ describe("campaign workspace core", () => {
               durationMs: 60_000,
               outcome: "completed",
               browserCloseout: null,
-        report: null,
+              report: null,
               timing: null,
             },
           }),
@@ -666,7 +681,7 @@ describe("campaign workspace core", () => {
               durationMs: 60_000,
               outcome: "completed",
               browserCloseout: null,
-        report: null,
+              report: null,
               timing: null,
             },
           }),
@@ -704,9 +719,11 @@ describe("campaign workspace core", () => {
 
     const stored = (await repository.getCampaignState())?.campaigns[0];
     expect(stored?.jobIds).toEqual(["shared"]);
+    // "New" counts jobs new to this device; the plan keeping a job it
+    // already had elsewhere shows up as retained, not new.
     expect(stored?.latestDigest?.report).toMatchObject({
       duplicates: 1,
-      new: 1,
+      new: 0,
       retained: 1,
     });
   });
@@ -825,7 +842,7 @@ describe("campaign in-flight retention protection", () => {
       retained: 0,
     });
     expect(stored?.schedule.runFacts.lastRunSummary).toContain(
-      "0 found · 0 new · 0 kept",
+      "0 postings seen · 0 unique jobs · 0 new to you · 0 kept by this plan",
     );
     expect(stored?.jobIds).toHaveLength(15);
     expect(stored?.progress.jobsFound).toBe(15);

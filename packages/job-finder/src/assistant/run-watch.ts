@@ -215,9 +215,24 @@ export function readRunStatus(
           const item = snapshot.reviewQueue.find(
             (entry) => entry.jobId === jobId,
           );
+          const mode =
+            item?.resumeApplicationMode ??
+            snapshot.settings.resumeApplicationMode;
+          const draft = snapshot.resumeDrafts.find(
+            (entry) => entry.jobId === jobId,
+          );
           return {
             jobId,
             resume: item?.resumeReview.status ?? "unknown",
+            mode,
+            level:
+              mode === "original_resume"
+                ? "original"
+                : (item?.resumeTailoringMode ??
+                  snapshot.searchPreferences.tailoringMode),
+            revision: draft?.updatedAt ?? null,
+            approved:
+              mode !== "original_resume" && draft?.status === "approved",
             linesToDecide: item?.resumeLinesToDecide ?? 0,
           };
         }),

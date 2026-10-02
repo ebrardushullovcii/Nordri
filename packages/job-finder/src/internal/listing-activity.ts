@@ -1,4 +1,5 @@
 import type {
+  ApplicationAttempt,
   DiscoveryJobView,
   DiscoveryLedgerEntry,
   ListingActivity,
@@ -125,6 +126,7 @@ export function projectDiscoveryJobViews(input: {
   jobs: readonly SavedJob[];
   discoveryLedger: readonly DiscoveryLedgerEntry[];
   listingSignals: readonly ListingSignalRecord[];
+  applicationAttempts?: readonly ApplicationAttempt[];
 }): DiscoveryJobView[] {
   const jobIdentityIndex = createJobIdentityIndex(input.jobs, (job) => job);
   const candidateByJob = new Map<SavedJob, ActivityCandidate>();
@@ -180,6 +182,24 @@ export function projectDiscoveryJobViews(input: {
         explanation: signal.explanation,
         detail: signal.detail,
         confidence: signal.confidence,
+      }),
+    );
+  }
+
+  for (const attempt of input.applicationAttempts ?? []) {
+    if (attempt.blocker?.code !== "application_closed") continue;
+    const job = uniqueJobById.get(attempt.jobId);
+    if (!job) continue;
+    candidateByJob.set(
+      job,
+      newerActivity(candidateByJob.get(job), {
+        status: "closed",
+        observedAt: attempt.updatedAt,
+        signalId: attempt.id,
+        provenance: "browser",
+        confidence: 1,
+        explanation: attempt.summary,
+        detail: attempt.detail,
       }),
     );
   }

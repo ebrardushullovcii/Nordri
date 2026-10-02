@@ -529,7 +529,7 @@ describe("job search agent", () => {
     );
   });
 
-  test.each(["scan_cards", "extract_jobs"])(
+  test.each(["extract_jobs"])(
     "%s cannot attribute another same-host board's postings to a complete source feed",
     async (tool) => {
       const ownUrl = "https://jobs.example.test/maple/shared-id";
@@ -736,50 +736,6 @@ describe("job search agent", () => {
     for (const url of jobUrls) expect(extractionText).toContain(url);
     expect(extractionText).toContain("untrusted page evidence");
     expect(result.jobs).toEqual([]);
-  });
-
-  test("repairs a truncated detail title from the page's own heading before saving", async () => {
-    const pages = {
-      current: rawPage({
-        url: "https://jobs.example.test/jobs/4",
-        bodyText:
-          "Paper Orbit Studio Remote, Americas Posted 1d ago Frontend Engineer, Paper Interfaces About the role Build reliable software for the product team.",
-        headings: [
-          { level: 1, text: "Frontend Engineer, Paper Interfaces" },
-          { level: 2, text: "About the role" },
-        ],
-      }),
-    };
-    const detailExtractor: JobExtractor = {
-      extractJobsFromPage: vi.fn(() =>
-        Promise.resolve([
-          {
-            ...posting("Frontend Engineer,", "Paper Orbit Studio", "4"),
-            sourceJobId: "jobs_example_test_jobs_4",
-            canonicalUrl: "https://jobs.example.test/jobs/4",
-            location: "Remote, Americas",
-            description:
-              "About the role Build reliable software for the product team.",
-          },
-        ]),
-      ),
-    };
-
-    const result = await runJobSearchAgent({
-      hands: hands(pages),
-      config: config({
-        startingUrls: ["https://jobs.example.test/jobs/4"],
-      }),
-      llmClient: scripted([
-        { name: "extract_jobs", args: { pageType: "job_detail" } },
-        { name: "finish", args: { reason: "The detail page was read." } },
-      ]),
-      jobExtractor: detailExtractor,
-    });
-
-    expect(result.jobs).toHaveLength(1);
-    expect(result.jobs[0]?.title).toBe("Frontend Engineer, Paper Interfaces");
-    expect(result.jobs[0]?.sourceJobId).toBe("4");
   });
 
   test("does not repair a title from a lower related-job heading", async () => {
@@ -1355,7 +1311,7 @@ describe("what the person sees while it runs", () => {
     expect(describeStepForPerson("wait → Waited 2000ms.")).toBe(
       "Waiting for the page to settle.",
     );
-    expect(describeStepForPerson("scan_cards → Saved 12 new postings:")).toBe(
+    expect(describeStepForPerson("extract_jobs → Saved 12 new postings:")).toBe(
       "Saved 12 new postings.",
     );
     expect(describeStepForPerson("extract_jobs → Saved no new postings.")).toBe(

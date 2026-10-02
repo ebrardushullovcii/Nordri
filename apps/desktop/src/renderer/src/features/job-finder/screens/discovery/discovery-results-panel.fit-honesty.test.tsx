@@ -172,9 +172,7 @@ describe("Find jobs fit honesty", () => {
     // The claim now lives on the divider that heads this band, once, instead
     // of on every row underneath it.
     const heading = screen.getByTestId("discovery-results-group-unchecked");
-    expect(heading.textContent).toContain(
-      "Matches your role, not yet scored (1)",
-    );
+    expect(heading.textContent).toContain("Not yet assessed (1)");
     expect(screen.queryByTestId(`discovery-result-fit-${job.id}`)).toBeNull();
     expect(
       screen.queryByTestId(`discovery-result-fit-reason-${job.id}`),

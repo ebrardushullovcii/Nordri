@@ -115,7 +115,7 @@ export function ApplicationsReviewCard({
           {card.answers.map((answer) => (
             <div
               className="rounded-(--radius-field) border border-(--surface-panel-border) bg-background/40 px-3 py-3"
-              key={`${answer.question}:${answer.answer}`}
+              key={answer.fieldKey ?? `${answer.question}:${answer.answer}`}
             >
               <strong className="text-foreground">{answer.question}</strong>
               <p className="mt-1 whitespace-pre-wrap text-(length:--text-small) leading-6 text-foreground">
@@ -154,7 +154,10 @@ export function ApplicationsReviewCard({
             {card.attachments.map((attachment) => (
               <li
                 className="text-(length:--text-small) leading-6 text-foreground-soft"
-                key={attachment.fileName}
+                key={
+                  attachment.fieldKey ??
+                  `${attachment.field}:${attachment.fileName}`
+                }
               >
                 {attachment.label} — {attachment.fileName} ({attachment.field})
               </li>

@@ -888,7 +888,7 @@ describe("apply policy executor", () => {
     if (outcome.kind !== "suggestion")
       throw new Error("Expected a person question");
     expect(outcome.question?.prompt).toContain("legally authorized");
-    expect(outcome.note).toContain("did not match");
+    expect(outcome.note).toContain("names the country");
     expect(setToggle).not.toHaveBeenCalled();
   });
 
@@ -2514,5 +2514,139 @@ describe("a button that opens a new tab", () => {
         "https://jobs.employer.test/apply/123",
       );
     }
+  });
+});
+
+describe("Round 2 application recovery", () => {
+  test.each([true, false])(
+    "the model maps saved prose to an option only with a supported fact check (%s)",
+    async (supported) => {
+      const page = rawPage({
+        controls: [
+          rawControl({
+            index: 0,
+            tagName: "select",
+            label: "Do you need visa sponsorship in Germany?",
+            required: true,
+            options: ["Yes", "No"],
+          }),
+        ],
+      });
+      const { config, hands } = configFor(page);
+      config.sources.profile.answerBank.visaSponsorship =
+        "I will need employer sponsorship after my student permit ends.";
+      config.sources.posting.location = "Berlin, Germany";
+      const choose = vi.spyOn(hands, "chooseOption");
+      const check = vi.fn(() =>
+        Promise.resolve({
+          supported,
+          reason: "Permit conditions need clarification.",
+        }),
+      );
+      const outcome = await executeApplyProposal(
+        { tool: "select", ref: "c0", option: "Yes" },
+        observationOf(page).signature,
+        {
+          config,
+          now,
+          guardState: createApplyGuardState(),
+          checkWrittenAnswer: check,
+        },
+      );
+      expect(check).toHaveBeenCalledWith(
+        "Do you need visa sponsorship in Germany?",
+        "Yes",
+      );
+      expect(choose).toHaveBeenCalledTimes(supported ? 1 : 0);
+      expect(outcome.kind).toBe(supported ? "filled" : "suggestion");
+    },
+  );
+
+  test("an old upload must be replaced before advancing a retained form", async () => {
+    const page = rawPage({
+      controls: [
+        rawControl({
+          index: 0,
+          inputType: "file",
+          label: "Resume",
+          value: "C:\\fakepath\\original.docx",
+        }),
+      ],
+      actions: [
+        { index: 0, label: "Continue", visible: true, disabled: false },
+      ],
+    });
+    const { config, hands } = configFor(page);
+    hands.uploadFile = (_ref, file) => {
+      page.controls[0].value = file.name;
+      return Promise.resolve({ ok: true, observedValue: file.name });
+    };
+    config.sources.documents = [
+      {
+        id: "approved",
+        kind: "resume",
+        label: "Your CV",
+        fileName: "approved.pdf",
+        mimeType: "application/pdf",
+        loadBytes: () => Promise.resolve(new Uint8Array([1, 2, 3])),
+      },
+    ];
+    const click = vi.spyOn(hands, "clickElement");
+    expect(
+      await executeApplyProposal(
+        { tool: "click", ref: "a0" },
+        observationOf(page).signature,
+        { config, now, guardState: createApplyGuardState() },
+      ),
+    ).toMatchObject({ kind: "refused" });
+    expect(click).not.toHaveBeenCalled();
+    expect(
+      await executeApplyProposal(
+        { tool: "upload", ref: "c0", documentId: "approved" },
+        observationOf(page).signature,
+        { config, now, guardState: createApplyGuardState() },
+      ),
+    ).toMatchObject({
+      kind: "attached",
+      attachment: { fileName: "approved.pdf" },
+    });
+    expect((await hands.observe()).controls[0]?.value).toBe("approved.pdf");
+    expect(
+      await executeApplyProposal(
+        { tool: "click", ref: "a0" },
+        observationOf(page).signature,
+        { config, now, guardState: createApplyGuardState() },
+      ),
+    ).toMatchObject({ kind: "moved" });
+    expect(click).toHaveBeenCalledOnce();
+  });
+
+  test("an upload that retains another filename is not recorded as attached", async () => {
+    const page = rawPage({
+      controls: [rawControl({ index: 0, inputType: "file", label: "Resume" })],
+    });
+    const { config } = configFor(page, {
+      hands: {
+        uploadFile: () =>
+          Promise.resolve({ ok: true, observedValue: "original.docx" }),
+      },
+    });
+    config.sources.documents = [
+      {
+        id: "approved",
+        kind: "resume",
+        label: "Your CV",
+        fileName: "approved.pdf",
+        mimeType: "application/pdf",
+        loadBytes: () => Promise.resolve(new Uint8Array([1])),
+      },
+    ];
+    expect(
+      await executeApplyProposal(
+        { tool: "upload", ref: "c0", documentId: "approved" },
+        observationOf(page).signature,
+        { config, now, guardState: createApplyGuardState() },
+      ),
+    ).toMatchObject({ kind: "refused" });
   });
 });

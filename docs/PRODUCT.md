@@ -171,7 +171,7 @@ Current baseline:
 
 - desktop shell: `Electron`
 - renderer: `React`
-- local persistence: `SQLite`; desktop startup enables rotating database-only recovery snapshots on graceful close plus a separate pre-reset snapshot. These snapshots do not include generated resumes, Candidate Assets, application documents, or browser-profile files
+- local persistence: `SQLite`; desktop startup enables rotating database-only recovery snapshots on graceful close plus a temporary pre-reset snapshot; a successful reset removes all managed snapshots and recovery quarantines. These snapshots do not include generated resumes, Candidate Assets, application documents, or browser-profile files
 - browser runtime: managed sessions first
 - AI: provider abstraction with separate chat, vision, STT, and embedding roles
 - configured generative routing uses OpenCode Go: `muse-spark-1.3-contributor` through Responses with requested `xhigh` reasoning for text, tool, and image work, and `deepseek-v4.1-flash` through Chat Completions with `high` reasoning for aggressive resume tailoring only. Audio transcription remains local Whisper or an explicit audio-capable model. See ADR 0019 for routing and ADR 0009 for the contract-first agent boundary.

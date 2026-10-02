@@ -24,6 +24,7 @@ export function ApplicationsDetailPanelRecoverySections(props: {
   excludedQueueRecoveryEntries: QueueEntry[];
   isApplyPending: boolean;
   onStartApplyCopilot: (input: JobFinderExactApplicationTarget) => void;
+  onReviewResumePdf?: (jobId: string) => void;
   onStartAutoApplyQueue: (jobIds: string[]) => void;
   onOpenSafeguards?: () => void;
   onOpenNeedsYou?: () => void;
@@ -63,6 +64,7 @@ export function ApplicationsDetailPanelRecoverySections(props: {
     excludedQueueRecoveryEntries,
     isApplyPending,
     onStartApplyCopilot,
+    onReviewResumePdf,
     onStartAutoApplyQueue,
     onOpenSafeguards,
     onOpenNeedsYou,
@@ -96,6 +98,7 @@ export function ApplicationsDetailPanelRecoverySections(props: {
       excludedQueueRecoveryEntries={excludedQueueRecoveryEntries}
       isApplyPending={isApplyPending}
       onStartApplyCopilot={onStartApplyCopilot}
+      {...(onReviewResumePdf ? { onReviewResumePdf } : {})}
       onStartAutoApplyQueue={onStartAutoApplyQueue}
       {...(onOpenSafeguards ? { onOpenSafeguards } : {})}
       {...(onOpenNeedsYou ? { onOpenNeedsYou } : {})}

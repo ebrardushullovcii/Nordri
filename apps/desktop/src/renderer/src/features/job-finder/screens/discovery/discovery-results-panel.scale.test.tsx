@@ -247,15 +247,11 @@ describe("DiscoveryResultsPanel workspace scale", () => {
         ?.textContent,
     ).toContain("Fit is based on the title alone");
     const heading = screen.getByTestId("discovery-results-group-unchecked");
+    expect(heading.textContent).toContain("Not yet assessed (1)");
     expect(heading.textContent).toContain(
-      "Matches your role, not yet scored (1)",
+      "The full requirements have not been assessed. Check the role and level before applying.",
     );
-    expect(heading.textContent).toContain(
-      "Matched on the title alone; the full requirements have not been assessed.",
-    );
-    expect(row.textContent).toContain(
-      "Overall fit: title-only estimate",
-    );
+    expect(row.textContent).toContain("Overall fit: title-only estimate");
   });
 
   it("wraps unbroken result labels and exposes their full names", () => {

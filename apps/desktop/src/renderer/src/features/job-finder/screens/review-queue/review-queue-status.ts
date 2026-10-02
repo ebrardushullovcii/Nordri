@@ -26,6 +26,8 @@ export type TailoredDraftPreparationStatus =
 export interface TailoredDraftPreparationViewState {
   attemptedCount: number;
   completedCount: number;
+  fallbackCount?: number;
+  originalChoiceCount?: number;
   currentIndex: number | null;
   eligibleRemainingCount: number;
   failedCount: number;
@@ -37,6 +39,8 @@ export interface TailoredDraftPreparationViewState {
 
 export interface TailoredDraftPreparationProgress {
   completedCount: number;
+  fallbackCount?: number;
+  originalChoiceCount?: number;
   currentIndex: number;
   failedCount: number;
   totalCount: number;
@@ -45,6 +49,8 @@ export interface TailoredDraftPreparationProgress {
 export interface TailoredDraftPreparationResult {
   attemptedCount: number;
   completedCount: number;
+  fallbackCount?: number;
+  originalChoiceCount?: number;
   failedCount: number;
   failedJobIds: readonly string[];
   stopped: boolean;
@@ -355,16 +361,16 @@ export function getReviewQueueResumePolicyCaption(
   item: ReviewQueueItem,
   asset?: TailoredAsset | null,
 ): string {
-  // Nothing could be written for a job whose listing text was never captured,
-  // so the row must not promise a tailored resume it is not going to produce.
-  if (describeUntailorableListing(asset)) {
-    return "Original wording — the listing text was not captured";
-  }
-
   if (item.resumeApplicationMode === "original_resume") {
     return item.resumeReview.status === "original_resume"
       ? "Original resume, unchanged"
       : "Original resume, unchanged (import it in Profile)";
+  }
+
+  // Nothing could be written for a job whose listing text was never captured,
+  // so the row must not promise a tailored resume it is not going to produce.
+  if (describeUntailorableListing(asset)) {
+    return "Original wording — the listing text was not captured";
   }
 
   if (item.assetStatus === "generating" || item.assetStatus === "queued") {
@@ -547,7 +553,10 @@ export function countQueueStageReady(
 
 export async function prepareTailoredDraftBatch(
   queue: readonly ReviewQueueItem[],
-  onGenerateResume: (jobId: string) => Promise<boolean>,
+  // null: the job was not started because the batch was stopped first.
+  onGenerateResume: (
+    jobId: string,
+  ) => Promise<boolean | null | "written" | "fallback" | "original">,
   options: {
     onProgress?: (progress: TailoredDraftPreparationProgress) => void;
     shouldStop?: () => boolean;
@@ -556,12 +565,16 @@ export async function prepareTailoredDraftBatch(
   const candidates = getTailoredDraftPreparationCandidates(queue);
   let attemptedCount = 0;
   let completedCount = 0;
+  let fallbackCount = 0;
+  let originalChoiceCount = 0;
   const failedJobIds: string[] = [];
   let stopped = false;
 
   const reportProgress = () => {
     options.onProgress?.({
       completedCount,
+      ...(fallbackCount ? { fallbackCount } : {}),
+      ...(originalChoiceCount ? { originalChoiceCount } : {}),
       currentIndex: attemptedCount,
       failedCount: failedJobIds.length,
       totalCount: candidates.length,
@@ -576,12 +589,21 @@ export async function prepareTailoredDraftBatch(
       // Claim synchronously before awaiting so each job has exactly one owner.
       const item = candidates[attemptedCount++]!;
       reportProgress();
-      let succeeded = false;
+      let succeeded: boolean | null | "written" | "fallback" | "original" =
+        false;
       try {
         succeeded = await onGenerateResume(item.jobId);
       } catch {
         succeeded = false;
       }
+      if (succeeded === null) {
+        attemptedCount -= 1;
+        stopped = true;
+        reportProgress();
+        return;
+      }
+      if (succeeded === "fallback") fallbackCount += 1;
+      if (succeeded === "original") originalChoiceCount += 1;
       if (succeeded) completedCount += 1;
       else failedJobIds.push(item.jobId);
       reportProgress();
@@ -597,6 +619,8 @@ export async function prepareTailoredDraftBatch(
   return {
     attemptedCount,
     completedCount,
+    ...(fallbackCount ? { fallbackCount } : {}),
+    ...(originalChoiceCount ? { originalChoiceCount } : {}),
     failedCount: failedJobIds.length,
     failedJobIds: candidates
       .filter((item) => failedJobIds.includes(item.jobId))
@@ -632,7 +656,13 @@ export function getTailoredDraftPreparationResultMessage(
   const completedCount = Math.max(0, state.completedCount);
   const failedCount = Math.max(0, state.failedCount);
   const eligibleRemainingCount = Math.max(0, state.eligibleRemainingCount);
-  const completedDrafts = `${completedCount} resume${completedCount === 1 ? "" : "s"}`;
+  const fallbackCount = state.fallbackCount ?? 0;
+  const originalChoiceCount = state.originalChoiceCount ?? 0;
+  const writtenCount = Math.max(
+    0,
+    completedCount - fallbackCount - originalChoiceCount,
+  );
+  const completedDrafts = `${writtenCount} resume${writtenCount === 1 ? "" : "s"}${fallbackCount ? ` · ${fallbackCount} kept your original wording` : ""}${originalChoiceCount ? ` · ${originalChoiceCount} Original by choice` : ""}`;
   const remainderSentence =
     eligibleRemainingCount > 0
       ? ` ${formatEligibleRemainderSentence(eligibleRemainingCount)}`

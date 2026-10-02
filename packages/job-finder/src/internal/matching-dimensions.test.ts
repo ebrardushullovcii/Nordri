@@ -230,6 +230,7 @@ describe("match dimensions", () => {
       searchPreferences,
       posting: {
         ...base.posting,
+        title: "Software Engineer",
         seniority: null,
         employmentType: null,
       },

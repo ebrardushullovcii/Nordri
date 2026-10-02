@@ -203,6 +203,18 @@ function questionIdFor(
  * question, not two: "Phone — Phone" is what a saved answer then fails to
  * match on the next run.
  */
+/**
+ * A file field that names another file. An empty read-back is not evidence
+ * either way: some sites clear the field once they hold the file.
+ */
+export function fileFieldHoldsOtherFile(
+  value: string,
+  fileName: string,
+): boolean {
+  const shown = value.split(/[\\/]/u).at(-1)?.trim() ?? "";
+  return shown !== "" && !shown.includes(fileName) && !fileName.includes(shown);
+}
+
 export function questionPrompt(control: ApplyFormControl): string {
   const label = control.label.trim();
   const group = control.groupLabel.trim();
@@ -816,6 +828,16 @@ export async function executeApplyProposal(
         observation,
       };
     }
+    if (resolution.status === "map_choice") {
+      return {
+        kind: "suggestion",
+        answer: resolution.context,
+        note: `Saved context for "${questionPrompt(control)}": ${resolution.context.value}. Choices: ${control.options.join(", ")}.`,
+        question: null,
+        controlRef: control.ref,
+        observation,
+      };
+    }
     if (resolution.status === "write_free_text") {
       return {
         kind: "suggestion",
@@ -880,6 +902,41 @@ export async function executeApplyProposal(
         "That control is a security check. Only the person answers it; leave it exactly as it is and carry on with the rest of the form.",
       observation,
     };
+  }
+
+  // Validate attachment selection before leaving a form step. An earlier
+  // attempt may still hold a different resume on this retained page.
+  if (proposal.tool === "click" || proposal.tool === "submit_application") {
+    const action =
+      "ref" in proposal
+        ? observation.actions.find(
+            (candidate) => candidate.ref === proposal.ref,
+          )
+        : null;
+    if (
+      proposal.tool !== "click" ||
+      action?.kind === "advance" ||
+      action?.kind === "final"
+    ) {
+      const resume = config.sources.documents.find(
+        (document) => document.kind === "resume",
+      );
+      const staleUpload = observation.controls.find(
+        (control) =>
+          control.kind === "file" &&
+          control.questionKind === "resume" &&
+          control.answered &&
+          resume &&
+          fileFieldHoldsOtherFile(control.value, resume.fileName),
+      );
+      if (staleUpload && resume) {
+        return {
+          kind: "refused",
+          reason: `"${questionPrompt(staleUpload)}" still contains ${staleUpload.value.split(/[\\/]/u).at(-1)}. The selected resume is ${resume.fileName}.`,
+          observation,
+        };
+      }
+    }
   }
 
   switch (proposal.tool) {
@@ -1246,6 +1303,25 @@ export async function executeApplyProposal(
           suggestion: resolution.suggestion,
         });
       }
+      if (resolution.status === "map_choice") {
+        const option = matchOption(control.options, proposal.option);
+        const check =
+          option && deps.checkWrittenAnswer
+            ? await deps.checkWrittenAnswer(questionPrompt(control), option)
+            : null;
+        if (!check?.supported) {
+          return leaveUnansweredForPerson({
+            control,
+            observation,
+            config,
+            at,
+            reason:
+              check?.reason ??
+              "Your saved answer does not settle which choice to use.",
+            suggestion: resolution.context,
+          });
+        }
+      }
       const groundedOption =
         resolution.status === "answered"
           ? matchOption(control.options, resolution.answer.value)
@@ -1291,16 +1367,18 @@ export async function executeApplyProposal(
           label: questionPrompt(control),
           questionKind: control.questionKind,
           answer:
-            resolution.status === "answered" && usedGroundedAnswer
-              ? resolution.answer
-              : {
-                  value: option,
-                  kind: control.questionKind,
-                  sourceKind: "generated",
-                  sourceId: `chosen.${control.ref}`,
-                  provenanceLabel: "chosen from the options on the form",
-                  groundedIn: ["the options this form offered"],
-                },
+            resolution.status === "map_choice"
+              ? { ...resolution.context, value: option }
+              : resolution.status === "answered" && usedGroundedAnswer
+                ? resolution.answer
+                : {
+                    value: option,
+                    kind: control.questionKind,
+                    sourceKind: "generated",
+                    sourceId: `chosen.${control.ref}`,
+                    provenanceLabel: "chosen from the options on the form",
+                    groundedIn: ["the options this form offered"],
+                  },
           at,
         },
         observation: await config.hands.observe(),
@@ -1339,6 +1417,26 @@ export async function executeApplyProposal(
         });
       }
       if (control.kind === "radio" && proposal.checked) {
+        if (groundedRadioResolution?.status === "map_choice") {
+          const check = deps.checkWrittenAnswer
+            ? await deps.checkWrittenAnswer(
+                questionPrompt(control),
+                control.label || control.value,
+              )
+            : null;
+          if (!check?.supported) {
+            return leaveUnansweredForPerson({
+              control,
+              observation,
+              config,
+              at,
+              reason:
+                check?.reason ??
+                "Your saved answer does not settle which choice to use.",
+              suggestion: groundedRadioResolution.context,
+            });
+          }
+        }
         if (groundedRadioResolution?.status === "answered") {
           const groupControls = observation.controls.filter(
             (candidate) =>
@@ -1432,31 +1530,36 @@ export async function executeApplyProposal(
           answer:
             savedDeclarationSaysYes && savedDeclaration
               ? savedDeclaration
-              : groundedRadioResolution?.status === "answered"
-                ? groundedRadioResolution.answer
-                : {
-                    value:
-                      control.kind === "radio" && proposal.checked
-                        ? control.value || control.label
-                        : proposal.checked
-                          ? "Yes"
-                          : "No",
-                    kind: control.questionKind,
-                    sourceKind: control.attestationKind
-                      ? "profile"
-                      : "generated",
-                    sourceId: control.attestationKind
-                      ? `authority.attestation.${control.attestationKind}`
-                      : `chosen.${control.ref}`,
-                    provenanceLabel: control.attestationKind
-                      ? "a declaration you approved in advance"
-                      : "chosen on the form",
-                    groundedIn: [
-                      control.attestationKind
+              : groundedRadioResolution?.status === "map_choice"
+                ? {
+                    ...groundedRadioResolution.context,
+                    value: control.label || control.value,
+                  }
+                : groundedRadioResolution?.status === "answered"
+                  ? groundedRadioResolution.answer
+                  : {
+                      value:
+                        control.kind === "radio" && proposal.checked
+                          ? control.value || control.label
+                          : proposal.checked
+                            ? "Yes"
+                            : "No",
+                      kind: control.questionKind,
+                      sourceKind: control.attestationKind
+                        ? "profile"
+                        : "generated",
+                      sourceId: control.attestationKind
+                        ? `authority.attestation.${control.attestationKind}`
+                        : `chosen.${control.ref}`,
+                      provenanceLabel: control.attestationKind
                         ? "a declaration you approved in advance"
-                        : "the form",
-                    ],
-                  },
+                        : "chosen on the form",
+                      groundedIn: [
+                        control.attestationKind
+                          ? "a declaration you approved in advance"
+                          : "the form",
+                      ],
+                    },
           at,
         },
         observation: await config.hands.observe(),
@@ -1498,6 +1601,16 @@ export async function executeApplyProposal(
           if (!ownUpload.ok) {
             return { kind: "refused", reason: ownUpload.error, observation };
           }
+          if (
+            fileFieldHoldsOtherFile(ownUpload.observedValue, ownLetter.fileName)
+          ) {
+            return {
+              kind: "refused",
+              reason:
+                "The form did not keep the selected file. Nothing was recorded as attached.",
+              observation: await config.hands.observe(),
+            };
+          }
           afterWrite(deps, questionPrompt(control));
           const ownStop = await guardStop(deps, observation.url);
           if (ownStop) {
@@ -1506,6 +1619,9 @@ export async function executeApplyProposal(
           return {
             kind: "attached",
             attachment: {
+              ...(ownLetter.reviewText
+                ? { reviewText: ownLetter.reviewText }
+                : {}),
               documentId: ownLetter.id,
               fileName: ownLetter.fileName,
               label: ownLetter.label,
@@ -1583,6 +1699,19 @@ export async function executeApplyProposal(
         if (!letterUpload.ok) {
           return { kind: "refused", reason: letterUpload.error, observation };
         }
+        if (
+          fileFieldHoldsOtherFile(
+            letterUpload.observedValue,
+            letterFile.fileName,
+          )
+        ) {
+          return {
+            kind: "refused",
+            reason:
+              "The form did not keep the selected file. Nothing was recorded as attached.",
+            observation: await config.hands.observe(),
+          };
+        }
         afterWrite(deps, questionPrompt(control));
         const letterStop = await guardStop(deps, observation.url);
         if (letterStop) {
@@ -1591,6 +1720,10 @@ export async function executeApplyProposal(
         return {
           kind: "attached",
           attachment: {
+            reviewText: {
+              text: letter.letter.text,
+              groundedIn: letter.letter.groundedIn,
+            },
             documentId: letterFile.id,
             fileName: letterFile.fileName,
             label: letterFile.label,
@@ -1660,6 +1793,14 @@ export async function executeApplyProposal(
       if (!write.ok) {
         return { kind: "refused", reason: write.error, observation };
       }
+      if (fileFieldHoldsOtherFile(write.observedValue, document.fileName)) {
+        return {
+          kind: "refused",
+          reason:
+            "The form did not keep the selected file. Nothing was recorded as attached.",
+          observation: await config.hands.observe(),
+        };
+      }
       afterWrite(deps, questionPrompt(control));
       const stop = await guardStop(deps, observation.url);
       if (stop) {
@@ -1668,6 +1809,7 @@ export async function executeApplyProposal(
       return {
         kind: "attached",
         attachment: {
+          ...(document.reviewText ? { reviewText: document.reviewText } : {}),
           documentId: document.id,
           fileName: document.fileName,
           label: document.label,

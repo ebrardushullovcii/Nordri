@@ -13,6 +13,7 @@ import { describe, expect, test, vi } from "vitest";
 
 import {
   buildApplyReviewCard,
+  mergeApplyReviewCards,
   createApplyFormPreparer,
   resolveApplicationDocumentMimeType,
   resolveApplicationPreparationTarget,
@@ -532,6 +533,19 @@ describe("agent application preparation seam", () => {
     expect(result.detail).toContain("nothing was sent");
     expect(result.blocker).toBeNull();
     expect(result.replay.lastUrl).toBe(PAGE_URL);
+  });
+
+  test("preserves an observed closure as a terminal listing blocker", async () => {
+    const result = await runAgentApplicationPreparation({
+      session: session("This job is no longer accepting applications"),
+      executionInput: executionInput(),
+      llmClient: modelThatFinishes(),
+      startedAt: "2026-09-14T10:00:00.000Z",
+      siteLabel: "the careers site",
+      now: () => new Date("2026-09-14T10:05:00.000Z"),
+    });
+    expect(result.blocker?.code).toBe("application_closed");
+    expect(result.state).toBe("failed");
   });
 
   test("a sign-in wall the model reports becomes the record's blocker", async () => {
@@ -1365,4 +1379,119 @@ describe("toApplyDocuments", () => {
       ["document_asset_asset_portfolio", "portfolio"],
     ]);
   });
+});
+
+test("a handback adds answers while retaining contacts, generated text and exact attachments", () => {
+  const card = buildApplyReviewCard({
+    siteLabel: "Synthetic employer",
+    preparedAt: "2026-09-14T10:05:00.000Z",
+    result: {
+      outcome: "prepared",
+      reason: "Ready.",
+      steps: 1,
+      finalUrl: null,
+      filled: [],
+      attachments: [],
+      pauses: [],
+      notes: [],
+      timeline: [],
+      modelTurns: 0,
+      readyToSend: null,
+    },
+  });
+  const contact = {
+    question: "Email",
+    answer: "robin@example.test",
+    source: "your email address",
+    written: false,
+    groundedIn: [],
+  };
+  const written = {
+    question: "Why this job?",
+    answer: "I build dependable platforms.",
+    source: "this application",
+    written: true,
+    groundedIn: ["your profile"],
+  };
+  const previous = {
+    ...card,
+    answers: [contact, written],
+    attachments: [
+      { label: "Your CV", field: "Resume", fileName: "original.docx" },
+    ],
+    waitingOnYou: ["Authorization"],
+  };
+  const current = {
+    ...card,
+    answers: [
+      {
+        question: "Authorization",
+        answer: "No",
+        source: "your answer to this question",
+        written: false,
+        groundedIn: [],
+      },
+    ],
+    attachments: [
+      { label: "Your CV", field: "Resume", fileName: "approved.pdf" },
+    ],
+  };
+  const merged = mergeApplyReviewCards(previous, current);
+  expect(merged?.answers).toEqual([contact, written, current.answers[0]]);
+  expect(merged?.attachments).toEqual(current.attachments);
+  expect(merged?.waitingOnYou).toEqual([]);
+});
+
+test("continued observations preserve generated provenance and distinct equal-worded fields", () => {
+  const base = buildApplyReviewCard({
+    siteLabel: "Synthetic employer",
+    preparedAt: "2026-09-14T10:05:00.000Z",
+    result: {
+      outcome: "prepared",
+      reason: "Ready.",
+      steps: 1,
+      finalUrl: null,
+      filled: [],
+      attachments: [],
+      pauses: [],
+      notes: [],
+      timeline: [],
+      modelTurns: 0,
+      readyToSend: null,
+    },
+  });
+  const previous = {
+    ...base,
+    answers: [
+      {
+        fieldKey: "first",
+        question: "Description",
+        answer: "First role.",
+        written: true,
+        source: "this application",
+        groundedIn: ["your profile"],
+      },
+      {
+        fieldKey: "second",
+        question: "Description",
+        answer: "Second role.",
+        written: true,
+        source: "this application",
+        groundedIn: ["your profile"],
+      },
+    ],
+  };
+  const current = {
+    ...base,
+    answers: [
+      {
+        ...previous.answers[1]!,
+        written: false,
+        source: "the filled application form",
+      },
+    ],
+  };
+  expect(mergeApplyReviewCards(previous, current)?.answers).toEqual(
+    previous.answers,
+  );
 });

@@ -73,6 +73,21 @@ afterEach(() => {
 });
 
 describe("DiscoveryResultsPanel streaming progress count", () => {
+  it("shows distinct source references for otherwise identical rows", () => {
+    renderStreamingResults([
+      {
+        ...createJob("324107", "People Operations Manager"),
+        company: "Bonial",
+      },
+      {
+        ...createJob("487864", "People Operations Manager"),
+        company: "Bonial",
+      },
+    ]);
+    expect(screen.getByText(/Reference source-324107/)).toBeTruthy();
+    expect(screen.getByText(/Reference source-487864/)).toBeTruthy();
+  });
+
   it("reports the raw total only when nothing filters the list", () => {
     renderStreamingResults([
       createJob("alpha", "Engineer alpha"),

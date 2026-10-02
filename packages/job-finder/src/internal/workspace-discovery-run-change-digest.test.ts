@@ -3,10 +3,60 @@ import { DiscoveryRunRecordSchema } from "@nordri/contracts";
 
 import {
   buildDiscoveryRunReport,
+  applyDiscoveryRunRetentionCounts,
   completeTargetExecution,
 } from "./workspace-discovery-run-helpers";
 
 describe("discovery run change digest", () => {
+  it("freezes distinct jobs separately from postings and preserves new-to-device counts during retention", () => {
+    const run = DiscoveryRunRecordSchema.parse({
+      id: "duplicate-run",
+      state: "cancelled",
+      startedAt: "2026-07-31T10:00:00.000Z",
+      campaignId: "plan-one",
+      targetExecutions: [
+        {
+          targetId: "one",
+          state: "cancelled",
+          adapterKind: "auto",
+          encounteredJobIds: ["job-one", "job-two"],
+          jobsReviewed: 2,
+        },
+        {
+          targetId: "two",
+          state: "cancelled",
+          adapterKind: "auto",
+          encounteredJobIds: ["job-one", "job-two"],
+          jobsReviewed: 2,
+        },
+      ],
+      summary: { validJobsFound: 2, jobsStaged: 2, duplicatesMerged: 2 },
+    });
+    const report = buildDiscoveryRunReport(run, "2026-07-31T10:01:00.000Z");
+    expect(report).toMatchObject({
+      found: 4,
+      unique: 2,
+      new: 2,
+      saved: 2,
+      duplicates: 2,
+    });
+    const retained = applyDiscoveryRunRetentionCounts(
+      { ...run, summary: { ...run.summary, report } },
+      {
+        measuredAt: report.measuredAt,
+        retained: 1,
+        worthOpening: 1,
+        alreadyHere: 0,
+      },
+    );
+    expect(retained.summary.report).toMatchObject({
+      found: 4,
+      unique: 2,
+      new: 2,
+      retained: 1,
+    });
+  });
+
   it("aggregates source changes, health, warnings, and duration into the persisted summary", () => {
     const run = DiscoveryRunRecordSchema.parse({
       id: "run-change-digest",
@@ -127,9 +177,7 @@ describe("discovery run change digest", () => {
       expect.objectContaining({
         targetId: "source-one",
         health: "healthy",
-        warnings: [
-          "Stopped early after repeated listings; 50 jobs were kept.",
-        ],
+        warnings: ["Stopped early after repeated listings; 50 jobs were kept."],
       }),
     ]);
   });

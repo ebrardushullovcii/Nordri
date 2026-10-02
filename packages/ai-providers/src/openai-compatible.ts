@@ -595,6 +595,7 @@ export function createOpenAiCompatibleJobFinderAiClient(
       });
     },
     async assessJobFit(input) {
+      const { signal, ...assessmentInput } = input;
       const payload = await fetchModelJson(
         "assessJobFit",
         [
@@ -602,9 +603,14 @@ export function createOpenAiCompatibleJobFinderAiClient(
           "Return JSON only.",
           "Use a 0-100 score, 1-3 reasons, and up to 3 gaps.",
           "Keep explanations specific to the provided profile and job.",
+          "Include requirements for every explicit language and level, enrollment or availability window, education, portfolio, experience, and named tool in the full listing. Compare each with the profile; absence is missing or unknown, never support. A conflict needs explicit contradictory evidence. Use assessmentDate for availability windows.",
+          "Each requirement has id, category (skill, experience, seniority, location, work_mode, work_authorization, domain), label, importance (required, preferred, inferred), status (supported, partial, missing, unknown, conflict), jobEvidence (quote from the listing), resumeEvidence (array of {sourceKind: profile_skill, experience, project, or profile; sourceId: string or null; label; detail}), and explanation. Use skill for languages and tools, experience for education, enrollment, availability and portfolio. Keep required country restrictions separate from remote work mode.",
         ].join(" "),
-        input,
-        { conversationKey: modelConversationKeys.jobFit(input.job) },
+        assessmentInput,
+        {
+          conversationKey: modelConversationKeys.jobFit(input.job),
+          ...(signal ? { signal } : {}),
+        },
       );
       return JobFitAssessmentSchema.parse(payload);
     },
@@ -1512,6 +1518,7 @@ export function createJobFinderAiClientFromEnvironment(
       try {
         return await primaryClient.assessJobFit(input);
       } catch (error) {
+        if (input.signal?.aborted) throw error;
         logFallbackError("assessJobFit", error);
         return fallbackClient.assessJobFit(input);
       }
