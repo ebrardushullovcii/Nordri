@@ -816,7 +816,7 @@ describe("createJobFinderWorkspaceService", () => {
           currentLocation:
             "recently decided to return to hands-on development, where my career initially began and where my true passion lies. I",
           email: "elian.morava@example.test",
-          phone: "(+383) 44283970",
+          phone: "(+383) 44555010",
         }),
       ),
       documentManager: createDocumentManager(),
@@ -844,7 +844,7 @@ describe("createJobFinderWorkspaceService", () => {
             pageNumber: 1,
             text: [
               "Elian Morava",
-              "Date of birth: 04/07/1998 Nationality: Kosovar Phone number: (+383) 44283970 (Mobile) Email address:",
+              "Date of birth: 04/07/1998 Nationality: Kosovar Phone number: (+383) 44555010 (Mobile) Email address:",
               "elian.morava@example.test Website: https://www.linkedin.com/in/elian-morava-example/",
               "Address: Prishtina, Kosovo (Home)",
               "ABOUT ME",
@@ -871,7 +871,7 @@ describe("createJobFinderWorkspaceService", () => {
             id: "page_1_block_2",
             pageNumber: 1,
             readingOrder: 1,
-            text: "Date of birth: 04/07/1998 Nationality: Kosovar Phone number: (+383) 44283970 (Mobile) Email address:",
+            text: "Date of birth: 04/07/1998 Nationality: Kosovar Phone number: (+383) 44555010 (Mobile) Email address:",
             kind: "paragraph",
             sectionHint: "contact",
             bbox: null,
@@ -925,7 +925,7 @@ describe("createJobFinderWorkspaceService", () => {
         ],
         fullText: [
           "Elian Morava",
-          "Date of birth: 04/07/1998 Nationality: Kosovar Phone number: (+383) 44283970 (Mobile) Email address:",
+          "Date of birth: 04/07/1998 Nationality: Kosovar Phone number: (+383) 44555010 (Mobile) Email address:",
           "elian.morava@example.test Website: https://www.linkedin.com/in/elian-morava-example/",
           "Address: Prishtina, Kosovo (Home)",
           "ABOUT ME",

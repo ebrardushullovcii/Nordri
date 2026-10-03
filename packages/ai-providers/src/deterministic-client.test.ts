@@ -117,7 +117,7 @@ describe("deterministic ai client resume extraction", () => {
       resumeText: [
         "Jamie Rivers",
         "Staff Engineer, Acme Corp",
-        "Bachelor of Science, Riinvest College",
+        "Bachelor of Science, Arbana College",
         "PROFILE",
         "Hands-on product engineer focused on resilient systems.",
       ].join("\n"),
@@ -154,12 +154,12 @@ describe("deterministic ai client resume extraction", () => {
         "Soft Skills",
         "Leadership Communication Problem-solving Adaptability",
         "WORK EXPERIENCE",
-        " AUTOMATEDPROS – PRISHTINA, KOSOVO",
+        " NORTHLANE – PRISHTINA, KOSOVO",
         "REACT/NEXT.JS DEVELOPER – 07/2023 – CURRENT",
         "After deciding to return to my passion for development, I transitioned back into a hands-on developer role,",
         "contributing to two key projects.",
         "• Engineered a real-time restaurant order platform with React, Next.js, TailwindCSS & WebSockets.",
-        "BACHELOR'S DEGREE, COMPUTER SCIENCE Kolegji Riinvest (Riinvest College)",
+        "BACHELOR'S DEGREE, COMPUTER SCIENCE Kolegji Arbana (Arbana College)",
         "Mother tongue(s): ALBANIAN",
         "ENGLISH C2 C2 C2 C2 C2",
       ].join("\n"),
@@ -183,7 +183,7 @@ describe("deterministic ai client resume extraction", () => {
       ]),
     );
     expect(result.experiences[0]).toMatchObject({
-      companyName: "AUTOMATEDPROS",
+      companyName: "NORTHLANE",
       location: "Prishtina, Kosovo",
       title: "React/Next.js Developer",
       startDate: "07/2023",
@@ -199,7 +199,7 @@ describe("deterministic ai client resume extraction", () => {
     expect(result.experiences[0]?.skills).toEqual(
       expect.arrayContaining(["React", "Next.js", "TailwindCSS", "WebSockets"]),
     );
-    expect(result.education[0]?.schoolName).toContain("Kolegji Riinvest");
+    expect(result.education[0]?.schoolName).toContain("Kolegji Arbana");
     expect(result.education[0]?.degree).toBe("BACHELOR'S DEGREE");
     expect(result.timeZone).toBe("Europe/Belgrade");
     expect(result.salaryCurrency).toBe("EUR");

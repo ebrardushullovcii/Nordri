@@ -615,6 +615,8 @@ export interface JobFitJudgmentResult {
   locationReach: MatchLocationReach;
   reasons: string[];
   gaps: string[];
+  /** The main reason for the recommendation, in one sentence. */
+  summary?: string | null;
   listingClosed: boolean;
   listingClosedEvidence: string | null;
 }
@@ -658,6 +660,11 @@ export interface ResumeClaimCheckResult {
    * no fix was given.
    */
   fix: string | null;
+  /**
+   * A short note, addressed to the candidate, when the line is not finished
+   * resume writing (a keyword list, a fragment, filler, first-person prose).
+   */
+  style?: string | null;
 }
 
 export interface ExtractJobsFromPageInput {

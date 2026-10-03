@@ -637,18 +637,18 @@ describe("desktop resume quality benchmark", () => {
 
     expect(realCaseIds).toEqual([
       "real_resume_import_comprehensive_txt",
-      "real_ebrar",
-      "real_ebrar_new",
-      "real_aaron_murphy",
-      "real_paul_asselin",
-      "real_ryan_holstien",
+      "real_persona_lina_txt",
+      "real_persona_priya",
+      "real_persona_dev",
+      "real_persona_maya_docx",
+      "real_persona_roberto_md",
     ]);
   });
 
-  test("keeps every usable Ebrar work-history record visible in balanced tailoring", async () => {
+  test("keeps every usable work-history record of an imported career changer visible in balanced tailoring", async () => {
     const report = await runDesktopResumeQualityBenchmark({
       benchmarkVersion: "030-test-real-fixture-v1",
-      caseIds: ["real_ebrar_new"],
+      caseIds: ["real_persona_maya_docx"],
       templateIds: ["classic_ats"],
     });
 
@@ -667,16 +667,16 @@ describe("desktop resume quality benchmark", () => {
     }
 
     const fixture = defaultResumeQualityBenchmarkCases.find(
-      (entry) => entry.definition.id === "real_ebrar_new",
+      (entry) => entry.definition.id === "real_persona_maya_docx",
     );
     expect(fixture).toBeDefined();
     const state = await fixture!.buildState("classic_ats");
-    const technicalSupportRole = state.profile.experiences.find(
+    const summerCampRole = state.profile.experiences.find(
       (experience) =>
-        experience.title === "Technical Support Agent" &&
-        experience.companyName === "BIT BY BIT",
+        experience.title === "Summer Program Coordinator" &&
+        experience.companyName === "Ohio STEM Camps",
     );
-    expect(technicalSupportRole).toBeDefined();
+    expect(summerCampRole).toBeDefined();
     const coverage = deriveResumeCoveragePlan({
       profile: state.profile,
       searchPreferences: state.searchPreferences,
@@ -684,9 +684,7 @@ describe("desktop resume quality benchmark", () => {
     });
 
     expect(
-      coverage.find(
-        (entry) => entry.profileRecordId === technicalSupportRole!.id,
-      ),
+      coverage.find((entry) => entry.profileRecordId === summerCampRole!.id),
     ).toMatchObject({
       classification: "compact",
       careerFamilyFit: "weak",

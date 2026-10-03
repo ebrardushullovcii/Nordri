@@ -18,6 +18,7 @@ describe("batch fit judging", () => {
             locationReach: "in_area",
             reasons: ["Berlin, Germany is one of your places"],
             gaps: ["German C1 is required"],
+            summary: "A product design role in Berlin that asks for German C1.",
           },
         ],
       },
@@ -35,6 +36,7 @@ describe("batch fit judging", () => {
       locationReach: "in_area",
       reasons: ["Berlin, Germany is one of your places"],
       gaps: ["German C1 is required"],
+      summary: "A product design role in Berlin that asks for German C1.",
       listingClosed: false,
       listingClosedEvidence: null,
     });

@@ -384,15 +384,13 @@ describe("short employer names match on word boundaries", () => {
     const reply = await client.reviseCandidateProfile({
       profile: {
         ...createProfile(),
-        experiences: [
-          experienceWith("auto_1", "AUTOMATEDPROS", "Senior Engineer"),
-        ],
+        experiences: [experienceWith("auto_1", "NORTHLANE", "Senior Engineer")],
       },
       searchPreferences: createPreferences(),
       context: { surface: "profile", section: "experience" },
       relevantReviewItems: [],
       request:
-        "for automated pros i actually worked remote can you fix that for me",
+        "for north lane i actually worked remote can you fix that for me",
     });
 
     const upsert = reply.patchGroups

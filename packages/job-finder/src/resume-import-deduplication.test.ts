@@ -1636,7 +1636,7 @@ Preferred location: Remote worldwide or Berlin, Germany`;
       [],
       [
         {
-          companyName: "AUTOMATEDPROS",
+          companyName: "NORTHLANE",
           companyUrl: null,
           title: "Chief Experience Officer",
           employmentType: null,
@@ -1653,7 +1653,7 @@ Preferred location: Remote worldwide or Berlin, Germany`;
           ownershipScope: null,
         },
         {
-          companyName: "AUTOMATEDPROS",
+          companyName: "NORTHLANE",
           companyUrl: null,
           title: "Chief Experience Officer",
           employmentType: null,
@@ -1674,7 +1674,7 @@ Preferred location: Remote worldwide or Berlin, Germany`;
 
     expect(merged).toHaveLength(1);
     expect(merged[0]).toMatchObject({
-      companyName: "AUTOMATEDPROS",
+      companyName: "NORTHLANE",
       title: "Chief Experience Officer",
       startDate: "13/11/2021",
       endDate: "30/06/2023",

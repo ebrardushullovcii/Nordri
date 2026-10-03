@@ -17,32 +17,6 @@ import { matchesExcludedLocation } from "./matching";
 import { isExplicitSearchProbeDisproof } from "./source-instruction-evidence";
 import { normalizeText, uniqueStrings } from "./shared";
 
-const technicalRoleSignalPatterns = [
-  /\bsoftware\b/,
-  /\bdeveloper\b/,
-  /\bengineer\b/,
-  /\bfrontend\b/,
-  /\bbackend\b/,
-  /\bfull stack\b/,
-  /\bfullstack\b/,
-  /\bweb\b/,
-  /\bmobile\b/,
-  /\bdevops\b/,
-  /\bsdet\b/,
-  /\bqa automation\b/,
-  /\bplatform\b/,
-  /\bprogrammer\b/,
-  /\btypescript\b/,
-  /\bjavascript\b/,
-  /\breact\b/,
-  /\bnode\b/,
-  /\bdotnet\b/,
-  /\b(?:asp\s+)?net(?:\s+core|\s+framework)?\b/,
-  /\bcsharp\b/,
-  /\bpython\b/,
-  /\bjava\b/,
-] as const;
-
 type PublicApiFieldPath = readonly string[];
 type PublicApiFieldSelector = readonly PublicApiFieldPath[];
 type PublicApiResponseAdapter = {
@@ -365,20 +339,6 @@ const LISTING_ROUTE_KEYWORDS = [
   "karriere",
   "apliko",
 ];
-
-const GENERIC_KEYWORD_QUERY_PARAM_NAMES = [
-  "keywords",
-  "keyword",
-  "q",
-  "query",
-  "search",
-] as const;
-const GENERIC_LOCATION_QUERY_PARAM_NAMES = [
-  "location",
-  "loc",
-  "city",
-  "region",
-] as const;
 
 function parseOptionalString(value: unknown): { value: string } | null {
   return typeof value === "string" ? { value } : null;
@@ -709,7 +669,9 @@ function isBrokenOrTemplatedRoutePath(
     /(^|\/)404($|\/)/.test(pathname) ||
     routeText.includes("not-found") ||
     /(^|\/)\{[^/]+\}($|\/)/.test(pathname) ||
-    /(^|\/):[a-z0-9_-]+($|\/)/i.test(pathname)
+    /(^|\/):[a-z0-9_-]+($|\/)/i.test(pathname) ||
+    // A query placeholder ("?keywords=:keyword", "?q={query}") is a template.
+    /[?&][^=&]+=(?::|%3a|\{|%7b)/i.test(search)
   );
 }
 
@@ -789,33 +751,15 @@ function inferRouteKind(url: string): ReusableRouteKind {
   return "anchor";
 }
 
+/**
+ * The kind the model gave a route stands (ADR 0041); the address only fills in
+ * when nothing said what the route is.
+ */
 export function resolveRouteKindForReuse(
   url: string,
   preferredKind: ReusableRouteKind | null = null,
 ): ReusableRouteKind {
-  const inferredKind = inferRouteKind(url);
-
-  if (preferredKind === "detail" || inferredKind === "detail") {
-    return "detail";
-  }
-
-  if (preferredKind === "apply" || inferredKind === "apply") {
-    return "apply";
-  }
-
-  if (preferredKind === "search" || inferredKind === "search") {
-    return "search";
-  }
-
-  if (preferredKind === "collection" || inferredKind === "collection") {
-    return "collection";
-  }
-
-  if (inferredKind === "listing") {
-    return "listing";
-  }
-
-  return "anchor";
+  return preferredKind ?? inferRouteKind(url);
 }
 
 export function canonicalizeRouteForReuse(
@@ -1179,7 +1123,6 @@ export function inferSourceIntelligenceFromTarget(input: {
 export function buildDiscoveryStartingUrls(
   target: JobDiscoveryTarget,
   artifact: SourceInstructionArtifact | null,
-  searchPreferences?: JobSearchPreferences | null,
 ): string[] {
   if (!artifact) {
     return [target.startingUrl];
@@ -1191,11 +1134,6 @@ export function buildDiscoveryStartingUrls(
   const deniedRoutes = resolveDeniedDiscoveryRoutes(artifact, anchorUrl);
   const isDeniedRoute = (url: string | null) =>
     url != null && deniedRoutes.some((deniedRoute) => deniedRoute === url);
-  const synthesizedSearchRoute = buildEvidenceDrivenDiscoverySearchUrl(
-    target,
-    artifact,
-    searchPreferences,
-  );
   const overrideRoutes = (
     artifact.intelligence.overrides.extraStartingRoutes ?? []
   ).flatMap((route) => {
@@ -1256,28 +1194,22 @@ export function buildDiscoveryStartingUrls(
       ? [target.startingUrl]
       : [];
 
+  // The search agent types the person's search into the site itself; no
+  // rule picks a keyword for it (ADR 0041).
   const routes = uniqueStrings(
-    (synthesizedSearchRoute && !isDeniedRoute(synthesizedSearchRoute)
+    (preferredMethod === "careers_page"
       ? [
-          synthesizedSearchRoute,
+          ...overrideRoutes,
+          ...learnedStartingRoutes,
+          ...searchRoutes,
+          ...startingUrlRoute,
+        ]
+      : [
           ...overrideRoutes,
           ...searchRoutes,
           ...learnedStartingRoutes,
           ...startingUrlRoute,
         ]
-      : preferredMethod === "careers_page"
-        ? [
-            ...overrideRoutes,
-            ...learnedStartingRoutes,
-            ...searchRoutes,
-            ...startingUrlRoute,
-          ]
-        : [
-            ...overrideRoutes,
-            ...searchRoutes,
-            ...learnedStartingRoutes,
-            ...startingUrlRoute,
-          ]
     ).filter((value): value is string => Boolean(value)),
   );
 
@@ -1360,186 +1292,6 @@ function resolveDeniedDiscoveryRoutes(
   });
 
   return uniqueStrings([...deniedRouteOverrides, ...deniedRouteHints]);
-}
-
-export function buildEvidenceDrivenDiscoverySearchUrl(
-  target: JobDiscoveryTarget,
-  artifact: SourceInstructionArtifact | null,
-  searchPreferences?: JobSearchPreferences | null,
-): string | null {
-  const anchorUrl = tryParseUrl(target.startingUrl);
-  if (!anchorUrl) {
-    return null;
-  }
-
-  return buildGuidedDiscoverySearchUrl(anchorUrl, artifact, searchPreferences);
-}
-
-function deriveGenericSearchKeyword(
-  searchPreferences?: JobSearchPreferences | null,
-): string | null {
-  if (!searchPreferences) {
-    return null;
-  }
-
-  const technicalSearchIntent =
-    searchPreferences.targetRoles.some(matchesTechnicalRoleSignal) ||
-    searchPreferences.jobFamilies.some(matchesTechnicalRoleSignal);
-  if (technicalSearchIntent) {
-    return "software";
-  }
-
-  const explicitKeyword =
-    searchPreferences.targetRoles.find((value) => value.trim().length > 0) ??
-    searchPreferences.jobFamilies.find((value) => value.trim().length > 0) ??
-    null;
-  if (!explicitKeyword) {
-    return null;
-  }
-
-  const keywordTokens = normalizeText(explicitKeyword)
-    .split(/\s+/)
-    .filter(
-      (token) =>
-        token.length >= 4 &&
-        ![
-          "senior",
-          "junior",
-          "lead",
-          "staff",
-          "principal",
-          "remote",
-          "hybrid",
-        ].includes(token),
-    );
-
-  return keywordTokens[0] ?? null;
-}
-
-function buildGuidedDiscoverySearchUrl(
-  anchorUrl: URL,
-  artifact: SourceInstructionArtifact | null,
-  searchPreferences?: JobSearchPreferences | null,
-): string | null {
-  if (!artifact || !searchPreferences) {
-    return null;
-  }
-
-  const supportedQueryParams = collectGuidedSearchQueryParamNames(artifact);
-  const keywordParam = findGuidedSearchQueryParamName(
-    supportedQueryParams,
-    GENERIC_KEYWORD_QUERY_PARAM_NAMES,
-  );
-  const locationParam = findGuidedSearchQueryParamName(
-    supportedQueryParams,
-    GENERIC_LOCATION_QUERY_PARAM_NAMES,
-  );
-  const keyword = keywordParam
-    ? deriveGenericSearchKeyword(searchPreferences)
-    : null;
-  const location =
-    locationParam &&
-    (searchPreferences.locations.find((value) => value.trim().length > 0) ??
-      null);
-
-  if (!keywordParam && !locationParam) {
-    return null;
-  }
-
-  if (!keyword && !location) {
-    return null;
-  }
-
-  const searchUrl = selectGuidedSearchBaseUrl(anchorUrl, artifact);
-  if (keywordParam && keyword) {
-    searchUrl.searchParams.set(keywordParam, keyword);
-  }
-  if (locationParam && location) {
-    searchUrl.searchParams.set(locationParam, location);
-  }
-
-  return canonicalizeRouteForReuse(searchUrl.toString(), anchorUrl);
-}
-
-function collectGuidedSearchQueryParamNames(
-  artifact: SourceInstructionArtifact,
-): string[] {
-  const paramNames = new Set<string>();
-  const collectFromText = (value: string | null | undefined) => {
-    if (!value) {
-      return;
-    }
-
-    for (const match of value.matchAll(/[?&]([a-zA-Z][a-zA-Z0-9_-]*)=/g)) {
-      const paramName = match[1]?.trim().toLowerCase();
-      if (paramName) {
-        paramNames.add(paramName);
-      }
-    }
-  };
-  const collectFromUrl = (value: string) => {
-    const parsed = tryParseUrl(value);
-    if (!parsed) {
-      return;
-    }
-
-    for (const key of parsed.searchParams.keys()) {
-      const paramName = key.trim().toLowerCase();
-      if (paramName) {
-        paramNames.add(paramName);
-      }
-    }
-  };
-
-  collectFromText(artifact.notes);
-  for (const line of [
-    ...artifact.navigationGuidance,
-    ...artifact.searchGuidance,
-    ...artifact.warnings,
-  ]) {
-    collectFromText(line);
-  }
-
-  for (const route of artifact.intelligence.collection.searchRouteTemplates) {
-    collectFromUrl(route.url);
-  }
-
-  for (const route of artifact.intelligence.collection.startingRoutes) {
-    collectFromUrl(route.url);
-  }
-
-  return [...paramNames];
-}
-
-function findGuidedSearchQueryParamName(
-  supportedQueryParams: readonly string[],
-  preferredNames: readonly string[],
-): string | null {
-  return (
-    preferredNames.find((paramName) =>
-      supportedQueryParams.includes(paramName),
-    ) ?? null
-  );
-}
-
-function selectGuidedSearchBaseUrl(
-  anchorUrl: URL,
-  artifact: SourceInstructionArtifact,
-): URL {
-  for (const route of artifact.intelligence.collection.searchRouteTemplates) {
-    const normalizedRoute = canonicalizeRouteForReuse(route.url, anchorUrl);
-    if (!normalizedRoute) {
-      continue;
-    }
-
-    const parsed = tryParseUrl(normalizedRoute);
-    if (parsed) {
-      parsed.search = "";
-      return new URL(parsed.toString());
-    }
-  }
-
-  return new URL(anchorUrl.toString());
 }
 
 export function selectDiscoveryCollectionMethod(
@@ -2048,6 +1800,7 @@ export function applyDiscoveryTitleTriage(input: {
     return { outcome: "pass" as const, reason: null };
   }
   const why = (fallback: string) =>
+    judgment.summary ??
     judgment.gaps[0] ??
     judgment.roleExplanation ??
     judgment.preferencesExplanation ??
@@ -2081,12 +1834,5 @@ export function applyDiscoveryTitleTriage(input: {
     outcome: "pass" as const,
     reason: null,
   };
-}
-
-function matchesTechnicalRoleSignal(value: string): boolean {
-  const normalized = normalizeText(value);
-  return technicalRoleSignalPatterns.some((pattern) =>
-    pattern.test(normalized),
-  );
 }
 

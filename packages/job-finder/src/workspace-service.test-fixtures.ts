@@ -37,6 +37,34 @@ export function createSourceInstructionArtifact(
   return SourceInstructionArtifactSchema.parse(input);
 }
 
+/**
+ * The routes a source check's review recorded, as the artifact stores them
+ * (ADR 0041): each with the kind the model gave it.
+ */
+export function learnedRoutesIntelligence(
+  routes: ReadonlyArray<
+    readonly [
+      url: string,
+      kind: "anchor" | "listing" | "search" | "collection" | "detail" | "apply",
+    ]
+  >,
+) {
+  const startingRoutes = routes.map(([url, kind]) => ({
+    url,
+    kind,
+    label: "Route the review recorded",
+    confidence: 0.9,
+  }));
+  return {
+    collection: {
+      startingRoutes,
+      searchRouteTemplates: startingRoutes.filter(
+        (route) => route.kind === "search",
+      ),
+    },
+  };
+}
+
 export function toPhaseId(
   strategyLabel: string | null | undefined,
 ): SourceDebugPhase | null {

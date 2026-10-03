@@ -2249,7 +2249,23 @@ export function createPrimaryPageActions(
             resumeApplicationMode,
             resumeTailoringMode,
           );
-          return rewrite ? actions.regenerateResumeDraft(jobId) : snapshot;
+          if (!rewrite) return snapshot;
+          try {
+            return await actions.regenerateResumeDraft(jobId);
+          } catch (error) {
+            // A rewrite that failed changed nothing (ADR 0041), so the level
+            // goes back to the one the resume on screen was written at.
+            if (item) {
+              await actions
+                .setJobResumeApplicationMode(
+                  jobId,
+                  item.resumeApplicationMode,
+                  item.resumeTailoringMode,
+                )
+                .catch(() => undefined);
+            }
+            throw error;
+          }
         },
         () => setSelectedReviewJobId(jobId),
         rewrite

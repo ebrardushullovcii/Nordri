@@ -702,6 +702,8 @@ export const ResumeClaimCheckSchema = z.object({
    * when the line passed or no fix was given.
    */
   fix: z.string().nullable().default(null),
+  /** The checker's note when the line is not finished resume writing. */
+  style: z.string().nullable().optional(),
   /**
    * Fingerprint of the evidence and tailoring strength it was checked
    * against; a change to either re-checks.

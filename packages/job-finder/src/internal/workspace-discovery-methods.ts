@@ -797,7 +797,6 @@ function prioritizeDiscoveryTargets(
       WorkspaceServiceContext["repository"]["listSourceInstructionArtifacts"]
     >
   >,
-  searchPreferences: JobSearchPreferences,
 ): JobDiscoveryTarget[] {
   return [...targets]
     .map((target, index) => {
@@ -812,7 +811,6 @@ function prioritizeDiscoveryTargets(
       const startingUrls = buildDiscoveryStartingUrls(
         target,
         activeInstruction,
-        searchPreferences,
       );
 
       return {
@@ -1033,11 +1031,7 @@ async function collectTargetJobs(input: {
     activeInstruction,
   );
   const discoveryMethod = selectDiscoveryMethod(collectionMethod);
-  const startingUrls = buildDiscoveryStartingUrls(
-    target,
-    activeInstruction,
-    input.searchPreferences,
-  );
+  const startingUrls = buildDiscoveryStartingUrls(target, activeInstruction);
   const providerLabel = intelligence.provider?.label ?? "Unknown provider";
   const sourceIntelligenceProvider = getDiscoveryProviderKey({
     target,
@@ -1617,7 +1611,6 @@ export function createWorkspaceDiscoveryMethods(
         ? prioritizeDiscoveryTargets(
             selectedTargets,
             sourceInstructionArtifacts,
-            enrichedPreferences,
           )
         : selectedTargets;
     const runId = createUniqueId("discovery_run");

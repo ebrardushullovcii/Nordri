@@ -54,7 +54,7 @@ describe("buildDeterministicResumeProfileExtraction", () => {
           "A passionate software developer with 6+ years of full-stack experience building impactful solutions using React, Next.js,",
           "Node.js, .NET Core, SQL Server and AWS/Azure.",
           "WORK EXPERIENCE",
-          "AUTOMATEDPROS – PRISHTINA, KOSOVO",
+          "NORTHLANE – PRISHTINA, KOSOVO",
           "SENIOR FULL-STACK SOFTWARE ENGINEER – 07/2023 – Current",
         ].join("\n"),
       },
@@ -307,13 +307,13 @@ describe("buildDeterministicResumeProfileExtraction", () => {
         existingSearchPreferences: createPreferences(),
         resumeText: [
           "WORK EXPERIENCE",
-          "SENIOR FULL-STACK SOFTWARE ENGINEER – AUTOMATEDPROS – 01/07/2023 – Current – REMOTE, KOSOVO",
+          "SENIOR FULL-STACK SOFTWARE ENGINEER – NORTHLANE – 01/07/2023 – Current – REMOTE, KOSOVO",
           "• Engineered a real-time restaurant order platform with React and Next.js.",
-          "SENIOR FULL-STACK SOFTWARE ENGINEER (PART-TIME CONSULTANT) – INFOTECH L.L.C – 01/11/2021 – Current – REMOTE, KOSOVO",
+          "SENIOR FULL-STACK SOFTWARE ENGINEER (PART-TIME CONSULTANT) – BRIDGEWAY L.L.C – 01/11/2021 – Current – REMOTE, KOSOVO",
           "• Provide on-call architecture and performance triage.",
-          "CHIEF EXPERIENCE OFFICER – AUTOMATEDPROS – 01/11/2021 – 30/06/2023 – REMOTE, KOSOVO",
+          "CHIEF EXPERIENCE OFFICER – NORTHLANE – 01/11/2021 – 30/06/2023 – REMOTE, KOSOVO",
           "• Led and oversaw customer experience initiatives.",
-          "FULL-STACK SOFTWARE ENGINEER – CREA-KO – 01/12/2018 – 31/07/2019 – PRISHTINA, KOSOVO",
+          "FULL-STACK SOFTWARE ENGINEER – TERRA-NO – 01/12/2018 – 31/07/2019 – PRISHTINA, KOSOVO",
           "• Assisted in migrating a web-based ERP system from .NET Framework to .NET Core MVC.",
         ].join("\n"),
       },
@@ -327,25 +327,25 @@ describe("buildDeterministicResumeProfileExtraction", () => {
       expect.arrayContaining([
         expect.objectContaining({
           title: "Senior Full-Stack Software Engineer",
-          companyName: "AUTOMATEDPROS",
+          companyName: "NORTHLANE",
           startDate: "01/07/2023",
           isCurrent: true,
         }),
         expect.objectContaining({
           title: "Chief Experience Officer",
-          companyName: "AUTOMATEDPROS",
+          companyName: "NORTHLANE",
           startDate: "01/11/2021",
           endDate: "30/06/2023",
         }),
         expect.objectContaining({
           title: "Senior Full-Stack Software Engineer (Part-Time Consultant)",
-          companyName: "INFOTECH L.L.C",
+          companyName: "BRIDGEWAY L.L.C",
           startDate: "01/11/2021",
           isCurrent: true,
         }),
         expect.objectContaining({
           title: "Full-Stack Software Engineer",
-          companyName: "CREA-KO",
+          companyName: "TERRA-NO",
           startDate: "01/12/2018",
           endDate: "31/07/2019",
         }),
@@ -364,11 +364,11 @@ describe("buildDeterministicResumeProfileExtraction", () => {
           "ABOUT MYSELF",
           "A full-stack developer focused on production automation systems.",
           "WORK EXPERIENCE",
-          "SENIOR FULL-STACK SOFTWARE ENGINEER – AUTOMATEDPROS – 01/07/2023 – Current – REMOTE, KOSOVO",
+          "SENIOR FULL-STACK SOFTWARE ENGINEER – NORTHLANE – 01/07/2023 – Current – REMOTE, KOSOVO",
           "• Engineered a real-time restaurant order platform.",
           "Project Lead (React, Next.js) – QA Management System",
           "• Developed a QA Management System with React and Next.js.",
-          "SENIOR FULL-STACK SOFTWARE ENGINEER (PART-TIME CONSULTANT) – INFOTECH L.L.C – 01/11/2021 – Current – REMOTE, KOSOVO",
+          "SENIOR FULL-STACK SOFTWARE ENGINEER (PART-TIME CONSULTANT) – BRIDGEWAY L.L.C – 01/11/2021 – Current – REMOTE, KOSOVO",
           "• Provided on-call architecture and performance triage.",
         ].join("\n"),
       },
@@ -474,10 +474,10 @@ describe("buildDeterministicResumeProfileExtraction", () => {
         existingSearchPreferences: createPreferences(),
         resumeText: [
           "WORK EXPERIENCE",
-          ".NET DEVELOPER – CREA-KO – 01/2019 – 07/2019 – PRISHTINA, KOSOVO",
+          ".NET DEVELOPER – TERRA-NO – 01/2019 – 07/2019 – PRISHTINA, KOSOVO",
           "• Assisted in migrating a web-based ERP system from .NET Framework to .NET Core MVC, refactoring both front-end",
           "and back-end code to enhance performance, scalability, and alignment with the .NET Core MVC architecture.",
-          "TECHNICAL SUPPORT AGENT – BIT BY BIT – 06/2017 – 12/2017 – PRISHTINA, KOSOVO",
+          "TECHNICAL SUPPORT AGENT – BYTE BY BYTE – 06/2017 – 12/2017 – PRISHTINA, KOSOVO",
           "• Resolved IPTV incidents with a 92 % first-call resolution rate across 40+ tickets/day.",
         ].join("\n"),
       },
@@ -487,7 +487,7 @@ describe("buildDeterministicResumeProfileExtraction", () => {
 
     expect(extraction.experiences[0]).toMatchObject({
       title: ".NET Developer",
-      companyName: "CREA-KO",
+      companyName: "TERRA-NO",
       location: "Prishtina, Kosovo",
       startDate: "01/2019",
       endDate: "07/2019",
@@ -500,7 +500,7 @@ describe("buildDeterministicResumeProfileExtraction", () => {
     ).toContain("refactoring both front-end");
     expect(extraction.experiences[1]).toMatchObject({
       title: "Technical Support Agent",
-      companyName: "BIT BY BIT",
+      companyName: "BYTE BY BYTE",
       location: "Prishtina, Kosovo",
       startDate: "06/2017",
       endDate: "12/2017",
@@ -522,9 +522,7 @@ describe("buildDeterministicResumeProfileExtraction", () => {
     expect(extraction.currentLocation).toBe("Prishtina, Kosovo");
     expect(extraction.summary).toContain("6+ years of full-stack experience");
     expect(
-      extraction.experiences.some(
-        (entry) => entry.companyName === "AUTOMATEDPROS",
-      ),
+      extraction.experiences.some((entry) => entry.companyName === "NORTHLANE"),
     ).toBe(true);
   });
 
@@ -611,7 +609,7 @@ describe("buildDeterministicResumeProfileExtraction", () => {
         resumeText: [
           "EDUCATION AND TRAINING",
           "Prishtina, Kosovo",
-          "BACHELOR'S DEGREE, COMPUTER SCIENCE Kolegji Riinvest (Riinvest College)",
+          "BACHELOR'S DEGREE, COMPUTER SCIENCE Kolegji Arbana (Arbana College)",
         ].join("\n"),
       },
       "deterministic",
@@ -620,7 +618,7 @@ describe("buildDeterministicResumeProfileExtraction", () => {
     );
 
     expect(extraction.education[0]).toMatchObject({
-      schoolName: "Kolegji Riinvest (Riinvest College)",
+      schoolName: "Kolegji Arbana (Arbana College)",
       degree: "BACHELOR'S DEGREE",
       fieldOfStudy: "COMPUTER SCIENCE",
       location: "Prishtina, Kosovo",
@@ -715,20 +713,20 @@ describe("buildDeterministicResumeProfileExtraction", () => {
         existingSearchPreferences: createPreferences(),
         resumeText: [
           "WORK EXPERIENCE",
-          "AUTOMATEDPROS - PRISHTINA, KOSOVO",
+          "NORTHLANE - PRISHTINA, KOSOVO",
           "SENIOR FULL-STACK SOFTWARE ENGINEER - 07/2023 - Current",
           "• Built a centralized dashboard with ShadCN components for logging outcomes.",
           "CHIEF EXPERIENCE OFFICER - 11/2021 - 07/2023",
           "• Managed the delivery of product updates, ensuring QA testing coverage and that support teams were fully equipped.",
-          "INFOTECH L.L.C - PRISHTINA, KOSOVO.NET CONSULTANT - 01/2022 - Current",
+          "BRIDGEWAY L.L.C - PRISHTINA, KOSOVO.NET CONSULTANT - 01/2022 - Current",
           "• Authored quick-fix patches that restored business-critical services within 2 h of incident notification, maintaining 99.9 % uptime..NET DEVELOPER - 08/2019 - 01/2022",
           "• Supported and enhanced a comprehensive .NET desktop application for business management.",
-          "• Project Lead (.NET MVC) - Logistics & Delivery Web Solution: designed user registration, order placement, real-time tracking, responsive UI, and optimized database for high-volume order processing..NET DEVELOPER - CREA-KO - 01/2019 - 07/2019 - PRISHTINA, KOSOVO",
+          "• Project Lead (.NET MVC) - Logistics & Delivery Web Solution: designed user registration, order placement, real-time tracking, responsive UI, and optimized database for high-volume order processing..NET DEVELOPER - TERRA-NO - 01/2019 - 07/2019 - PRISHTINA, KOSOVO",
           "• Assisted in migrating a web-based ERP system from .NET Framework to .NET Core MVC.",
-          "BEAUTYQUE - PRISHTINA, KOSOVO",
+          "LUMIQUE - PRISHTINA, KOSOVO",
           "PROJECT MANAGER - 04/2018 - 12/2018",
           "DIGITAL MARKETING MANAGER - 12/2017 - 04/2018",
-          "TECHNICAL SUPPORT AGENT - BIT BY BIT - 06/2017 - 12/2017 - PRISHTINA, KOSOVO",
+          "TECHNICAL SUPPORT AGENT - BYTE BY BYTE - 06/2017 - 12/2017 - PRISHTINA, KOSOVO",
         ].join("\n"),
       },
       "deterministic",
@@ -751,7 +749,7 @@ describe("buildDeterministicResumeProfileExtraction", () => {
       expect.arrayContaining([
         expect.objectContaining({
           title: ".NET Consultant",
-          companyName: "INFOTECH L.L.C",
+          companyName: "BRIDGEWAY L.L.C",
           startDate: "01/2022",
           isCurrent: true,
         }),
@@ -762,7 +760,7 @@ describe("buildDeterministicResumeProfileExtraction", () => {
         }),
         expect.objectContaining({
           title: ".NET Developer",
-          companyName: "CREA-KO",
+          companyName: "TERRA-NO",
           startDate: "01/2019",
           endDate: "07/2019",
         }),
@@ -770,12 +768,12 @@ describe("buildDeterministicResumeProfileExtraction", () => {
     );
     expect(
       extraction.experiences.some(
-        (entry) => entry.companyName === "AUTOMATEDPROS - 01/",
+        (entry) => entry.companyName === "NORTHLANE - 01/",
       ),
     ).toBe(false);
     expect(
       extraction.experiences.some(
-        (entry) => entry.companyName === "INFOTECH L.L.C - 01/",
+        (entry) => entry.companyName === "BRIDGEWAY L.L.C - 01/",
       ),
     ).toBe(false);
     expect(
@@ -789,26 +787,26 @@ describe("buildDeterministicResumeProfileExtraction", () => {
     );
   });
 
-  test("repairs the real extracted Elian PDF text around INFOTECH and CREA-KO", () => {
+  test("repairs the real extracted Elian PDF text around BRIDGEWAY and TERRA-NO", () => {
     const extraction = buildDeterministicResumeProfileExtraction(
       {
         existingProfile: createProfile(),
         existingSearchPreferences: createPreferences(),
         resumeText: [
           "WORK EXPERIENCE",
-          "AUTOMATEDPROS – PRISHTINA, KOSOVO",
+          "NORTHLANE – PRISHTINA, KOSOVO",
           "SENIOR FULL-STACK SOFTWARE ENGINEER – 07/2023 – Current",
           "• Engineered a real-time restaurant order platform.",
           "• Integrated the platform with the company's project-management tool through REST APIs so failed tests automatically created and assigned tickets, eliminating manual triage and ensuring rapid resolution.",
           "CHIEF EXPERIENCE OFFICER – 11/2021 – 07/2023",
           "• Managed the delivery of product updates, ensuring QA testing coverage and that support teams were fully equipped with knowledge of new features before deployment.",
-          "INFOTECH L.L.C – PRISHTINA, KOSOVO.NET CONSULTANT – 01/2022 – Current",
+          "BRIDGEWAY L.L.C – PRISHTINA, KOSOVO.NET CONSULTANT – 01/2022 – Current",
           "• Provide on-call architecture and performance triage, cutting query response times by up to 60 % in critical workflows.",
           "• Authored quick-fix patches that restored business-critical services within 2 h of incident notification, maintaining 99.9 % uptime..NET DEVELOPER – 08/2019 – 01/2022",
           "• Supported and enhanced a comprehensive.NET desktop application for business management covering inventory, sales, tax documentation, POS, restaurant orders, car repair, and fuel-pump control.",
-          "• Project Lead (.NET MVC) – Logistics & Delivery Web Solution: designed user registration, order placement, real-time tracking, responsive UI, and optimized database for high-volume order processing..NET DEVELOPER – CREA-KO – 01/2019 – 07/2019 – PRISHTINA, KOSOVO",
+          "• Project Lead (.NET MVC) – Logistics & Delivery Web Solution: designed user registration, order placement, real-time tracking, responsive UI, and optimized database for high-volume order processing..NET DEVELOPER – TERRA-NO – 01/2019 – 07/2019 – PRISHTINA, KOSOVO",
           "• Assisted in migrating a web-based ERP system from.NET Framework to.NET Core MVC, refactoring both front-end and back-end code to enhance performance.",
-          "BEAUTYQUE – PRISHTINA, KOSOVO",
+          "LUMIQUE – PRISHTINA, KOSOVO",
           "PROJECT MANAGER – 04/2018 – 12/2018",
           "DIGITAL MARKETING MANAGER – 12/2017 – 04/2018",
         ].join("\n"),
@@ -832,14 +830,14 @@ describe("buildDeterministicResumeProfileExtraction", () => {
       expect.arrayContaining([
         expect.objectContaining({
           title: ".NET Consultant",
-          companyName: "INFOTECH L.L.C",
+          companyName: "BRIDGEWAY L.L.C",
           location: "Prishtina, Kosovo",
           startDate: "01/2022",
           isCurrent: true,
         }),
         expect.objectContaining({
           title: ".NET Developer",
-          companyName: "CREA-KO",
+          companyName: "TERRA-NO",
           location: "Prishtina, Kosovo",
           startDate: "01/2019",
           endDate: "07/2019",

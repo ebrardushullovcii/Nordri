@@ -56,12 +56,16 @@ export interface ParsedResumeEntryDateRange {
   hasUnparseableDateRange: boolean;
   isCurrent: boolean;
   startMonth: number | null;
+  /** The boundary names only a year, so it covers the whole year. */
+  startYearOnly: boolean;
+  endYearOnly: boolean;
 }
 
 interface ParsedDateSegment {
   isCurrent: boolean;
   month: number | null;
   unparseable: boolean;
+  yearOnly?: boolean;
 }
 
 function toMonthIndex(year: number, month: number): number {
@@ -224,6 +228,7 @@ function parseDateSegment(
       isCurrent: false,
       month: toMonthIndex(Number(yearOnly.groups.year), month),
       unparseable: false,
+      yearOnly: true,
     };
   }
 
@@ -268,6 +273,8 @@ export function parseResumeEntryDateRange(
       hasUnparseableDateRange: false,
       isCurrent: false,
       startMonth: null,
+      startYearOnly: false,
+      endYearOnly: false,
     };
   }
 
@@ -304,6 +311,8 @@ export function parseResumeEntryDateRange(
     hasUnparseableDateRange,
     isCurrent,
     startMonth,
+    startYearOnly: startSegment.yearOnly === true,
+    endYearOnly: !isCurrent && endSegment.yearOnly === true,
   };
 }
 
@@ -527,10 +536,17 @@ export function moveSectionEntry(input: {
   };
 }
 
+interface DateSpan {
+  start: number;
+  end: number;
+  startYearOnly: boolean;
+  endYearOnly: boolean;
+}
+
 function getEffectiveDateSpan(
   parsed: ParsedResumeEntryDateRange,
   now = new Date(),
-): { end: number; start: number } | null {
+): DateSpan | null {
   const start = parsed.startMonth ?? parsed.endMonth;
   const end = parsed.isCurrent
     ? getCurrentMonthIndex(now)
@@ -545,7 +561,12 @@ function getEffectiveDateSpan(
     return null;
   }
 
-  return { start: Math.min(start, end), end: Math.max(start, end) };
+  return {
+    start: Math.min(start, end),
+    end: Math.max(start, end),
+    startYearOnly: parsed.startYearOnly,
+    endYearOnly: parsed.endYearOnly,
+  };
 }
 
 /**
@@ -567,13 +588,16 @@ function getSpanOverlapMonths(
   return overlapEnd < overlapStart ? 0 : overlapEnd - overlapStart + 1;
 }
 
-function spansOverlapBeyondTolerance(
-  left: { end: number; start: number },
-  right: { end: number; start: number },
-): boolean {
-  return (
-    getSpanOverlapMonths(left, right) > RESUME_ENTRY_OVERLAP_TOLERANCE_MONTHS
-  );
+function spansOverlapBeyondTolerance(left: DateSpan, right: DateSpan): boolean {
+  // A year-only boundary covers its whole year: roles that meet in the same
+  // year ("2019 – 2023", then "2023 – Present") hand over within it.
+  const [earlier, later] =
+    left.start <= right.start ? [left, right] : [right, left];
+  const tolerance =
+    earlier.endYearOnly || later.startYearOnly
+      ? 12
+      : RESUME_ENTRY_OVERLAP_TOLERANCE_MONTHS;
+  return getSpanOverlapMonths(left, right) > tolerance;
 }
 
 export function buildResumeEntryDateQualityIssues(

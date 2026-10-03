@@ -208,7 +208,7 @@ export function buildResumeImportStageInstructions(
         "Valid target section: experience.",
         "Use target.key = 'record' and a stable recordId like experience_1, experience_2.",
         "Each value must be a structured object matching one resume experience record with exactly these keys: companyName, companyUrl, title, employmentType, location, workMode (array), startDate, endDate, isCurrent (boolean), summary, achievements (array of strings), skills (array), domainTags (array).",
-        "Write startDate and endDate as YYYY-MM; when the role is ongoing set isCurrent true and endDate null.",
+        "Write startDate and endDate as YYYY-MM, or as YYYY when the resume gives only the year; never add a month the resume does not state. When the role is ongoing set isCurrent true and endDate null.",
         "Put every bullet under that role into achievements as a separate complete sentence.",
         "Use the nearest explicit company marker or inline company segment when the resume shows one, and populate companyName separately from title.",
         "When a role header has no employer on the same line, take the employer from the nearest company marker, section heading, or employer line that governs that role, even if it sits a few lines away; leave companyName null only when the resume never names an employer for that role.",

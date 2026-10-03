@@ -686,6 +686,8 @@ export const FitJudgmentSchema = z.object({
   locationReach: MatchLocationReachSchema.default("unknown"),
   reasons: z.array(NonEmptyStringSchema).max(4).default([]),
   gaps: z.array(NonEmptyStringSchema).max(4).default([]),
+  /** The model's one sentence on the main reason for its recommendation. */
+  summary: NonEmptyStringSchema.max(320).nullable().optional(),
   /** The listing says it is closed, filled or no longer taking applications. */
   listingClosed: z.boolean().default(false),
   /** The listing's own words for that, as the model quoted them. */

@@ -1,0 +1,24 @@
+Lina Haddad
+Berlin, Germany
+lina.haddad@example.com | +49 151 5550 1234 | github.com/lina-haddad-example
+
+Education
+M.Sc. Data Science, Technische Universität Berlin, Berlin — expected graduation March 2027
+Thesis: Forecasting bike-sharing demand with weather data (Python, LightGBM)
+B.Sc. Statistics, American University of Beirut, Beirut, Lebanon — 2023
+Graduated with distinction
+
+Experience
+Working Student, Data Analytics — Mobilo GmbH, Berlin — Oct 2024 – present (20 h/week)
+* Build weekly KPI dashboards in Looker Studio for the operations team
+* Wrote SQL models in BigQuery that replaced 6 manual spreadsheets
+Research Assistant — TU Berlin, Chair of Machine Learning — Apr 2024 – Sep 2024
+* Cleaned and labeled 2 million sensor records; automated checks in pandas
+Intern, Business Intelligence — Byblos Retail Group, Beirut — Jun 2022 – Sep 2022
+* Built Power BI reports for 14 stores
+
+Skills
+Python (pandas, scikit-learn), SQL, BigQuery, Looker Studio, Power BI, statistics, A/B testing, English (fluent), Arabic (native), German (B1)
+
+Work authorization
+Lebanese citizen. German residence permit for study; I will need visa sponsorship (EU Blue Card) for full-time roles after graduation.

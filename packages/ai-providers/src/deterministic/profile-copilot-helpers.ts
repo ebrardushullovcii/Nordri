@@ -62,7 +62,7 @@ function escapeRegExpLiteral(value: string): string {
 /**
  * Matches a compacted name (see normalizeCompanyName) inside free text with
  * whole-word boundaries on both ends. Internal separators stay flexible so
- * "AutomatedPros" matches "automated pros" and "Meta, Inc." matches "meta inc",
+ * "NorthLane" matches "north lane" and "Meta, Inc." matches "meta inc",
  * but a short name can never match as a substring of a longer word: "Meta"
  * does not match "metadata" because there is no word boundary inside it.
  */

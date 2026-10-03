@@ -153,6 +153,7 @@ export async function withResumeClaimChecks(input: {
           reason: result.reason,
           evidenceIds: result.evidenceIds,
           fix: result.fix ?? null,
+          style: result.style ?? null,
           evidenceKey,
           checkedAt,
         };
@@ -166,11 +167,12 @@ export async function withResumeClaimChecks(input: {
 }
 
 /**
- * When a generated resume is kept, the lines its check did not pass are fixed
- * with the checker's own fix: rewritten to what the evidence backs, or hidden
- * when nothing in them can be kept (ADR 0041). Stretches count only outside
- * aggressive tailoring, where they are the person's to confirm. The rewrites
- * are checked once more; a line that still does not pass stays for the person.
+ * When a generated resume is kept, the lines its check did not pass, or noted
+ * as unfinished writing, are fixed with the checker's own fix: rewritten to
+ * what the evidence backs, or hidden when nothing in them can be kept (ADR
+ * 0041). Stretches count only outside aggressive tailoring, where they are the
+ * person's to confirm. The rewrites are checked once more; a line that still
+ * does not pass stays for the person.
  */
 export async function withResumeClaimFixes(
   input: Parameters<typeof withResumeClaimChecks>[0] & {
@@ -202,7 +204,11 @@ export async function withResumeClaimFixes(
     const failed =
       check.verdict === "unsupported" ||
       (check.verdict === "stretch" && !input.stretchesAreThePersons);
-    if (!failed || check.fix === claim.text.trim()) return null;
+    // A line that is not finished resume writing gets the same fix.
+    const unfinished = Boolean(check.style);
+    if ((!failed && !unfinished) || check.fix === claim.text.trim()) {
+      return null;
+    }
     changed = true;
     return check.fix;
   };

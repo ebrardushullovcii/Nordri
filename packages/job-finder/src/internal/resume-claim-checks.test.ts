@@ -218,6 +218,7 @@ describe("resume claim checks before a draft is kept (ADR 0041)", () => {
     function checker(
       verdicts: Record<string, "supported" | "stretch" | "unsupported">,
       fixes: Record<string, string>,
+      styles: Record<string, string> = {},
     ) {
       return vi.fn(
         (input: { claims: ReadonlyArray<{ id: string; text: string }> }) =>
@@ -228,6 +229,7 @@ describe("resume claim checks before a draft is kept (ADR 0041)", () => {
               reason: "Test verdict.",
               evidenceIds: [],
               fix: fixes[claim.text] ?? null,
+              style: styles[claim.text] ?? null,
             })),
           ),
       );
@@ -296,6 +298,19 @@ describe("resume claim checks before a draft is kept (ADR 0041)", () => {
             check.contentHash === resumeClaimContentHash(line.fixedInvented),
         )?.verdict,
       ).toBe("supported");
+    });
+
+    test("a supported line the checker notes as unfinished writing gets its fix", async () => {
+      const line = lines("style");
+      const checkResumeClaims = checker(
+        {},
+        { [line.invented]: line.fixedInvented },
+        { [line.invented]: "This reads as a fragment." },
+      );
+
+      const fixed = await generateAndFix(line, checkResumeClaims, true);
+
+      expect(fixed.sections[0]?.bullets[0]?.text).toBe(line.fixedInvented);
     });
 
     test("a stretch stays for the person in aggressive tailoring", async () => {

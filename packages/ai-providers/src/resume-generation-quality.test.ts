@@ -597,7 +597,7 @@ describe("resume generation quality", () => {
       experiences: [
         {
           id: "experience_technical_support",
-          companyName: "BIT BY BIT",
+          companyName: "BYTE BY BYTE",
           companyUrl: null,
           title: "Technical Support Agent",
           employmentType: "Full-time",

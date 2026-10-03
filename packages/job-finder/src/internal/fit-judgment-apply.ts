@@ -54,7 +54,10 @@ export function applyFitJudgment(
     reasons: judgment.reasons,
     gaps: judgment.gaps,
     recommendation: judgment.recommendation,
+    // The model's own reason for its verdict; the other fields only stand in
+    // for a verdict saved before it gave one.
     recommendationRationale:
+      judgment.summary ??
       (judgment.recommendation === "skip"
         ? (judgment.gaps[0] ?? judgment.roleExplanation)
         : (judgment.roleExplanation ?? judgment.reasons[0])) ??

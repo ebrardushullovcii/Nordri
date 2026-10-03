@@ -134,7 +134,7 @@ describe('deterministic ai client profile copilot core', () => {
         ...createProfile(),
         experiences: [{
           id: 'experience_1',
-          companyName: 'AUTOMATEDPROS',
+          companyName: 'NORTHLANE',
           companyUrl: null,
           title: 'Senior Full-Stack Software Engineer',
           employmentType: null,
@@ -158,18 +158,18 @@ describe('deterministic ai client profile copilot core', () => {
         id: 'review_experience_remote',
         step: 'background',
         target: { domain: 'experience', key: 'record', recordId: 'experience_1' },
-        label: 'Senior Full-Stack Software Engineer at AUTOMATEDPROS',
+        label: 'Senior Full-Stack Software Engineer at NORTHLANE',
         reason: 'Work-history records stay review-first so resume tailoring and fit scoring do not assume the wrong role details.',
         severity: 'critical',
         status: 'pending',
         proposedValue: null,
-        sourceSnippet: 'AUTOMATEDPROS - PRISHTINA, KOSOVO',
+        sourceSnippet: 'NORTHLANE - PRISHTINA, KOSOVO',
         sourceCandidateId: 'candidate_experience_1',
         sourceRunId: 'run_1',
         createdAt: '2026-04-14T00:50:00.000Z',
         resolvedAt: null,
       }],
-      request: 'for automated pros i actually worked remote can you fix that for me',
+      request: 'for north lane i actually worked remote can you fix that for me',
     })
 
     expect(reply.patchGroups).toHaveLength(1)
@@ -192,8 +192,8 @@ describe('deterministic ai client profile copilot core', () => {
       profile: {
         ...createProfile(),
         experiences: [{
-          id: 'experience_automatedpros',
-          companyName: 'AUTOMATEDPROS',
+          id: 'experience_northlane',
+          companyName: 'NORTHLANE',
           companyUrl: null,
           title: 'React/Next.js Developer',
           employmentType: null,
@@ -214,11 +214,11 @@ describe('deterministic ai client profile copilot core', () => {
       searchPreferences: createPreferences(),
       context: { surface: 'setup', step: 'background' },
       relevantReviewItems: [],
-      request: 'how long did i work on automatedpros ?',
+      request: 'how long did i work on northlane ?',
     })
 
     expect(reply.patchGroups).toEqual([])
-    expect(reply.content).toContain('AUTOMATEDPROS')
+    expect(reply.content).toContain('NORTHLANE')
     expect(reply.content).toContain('React/Next.js Developer')
     expect(reply.content.toLowerCase()).toContain('saved from')
   })

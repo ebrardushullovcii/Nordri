@@ -685,10 +685,10 @@ describe("openai-compatible chat and draft behavior", () => {
               experienceEntries: [
                 {
                   title: "Full-Stack Software Engineer",
-                  employer: "AUTOMATEDPROS",
+                  employer: "NORTHLANE",
                   location: "Remote, Kosovo",
                   dateRange: "Remote, Kosovo | Present",
-                  summary: "AUTOMATEDPROS Remote Kosovo Present",
+                  summary: "NORTHLANE Remote Kosovo Present",
                   bullets: ["React and WebSockets"],
                   profileRecordId: "experience_full_stack",
                 },
@@ -713,7 +713,7 @@ describe("openai-compatible chat and draft behavior", () => {
           experiences: [
             {
               id: "experience_full_stack",
-              companyName: "AUTOMATEDPROS",
+              companyName: "NORTHLANE",
               companyUrl: null,
               title: "Full-Stack Software Engineer",
               employmentType: null,

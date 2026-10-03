@@ -79,7 +79,7 @@ const bundle: ResumeDocumentBundle = {
       id: "b6",
       pageNumber: 1,
       readingOrder: 5,
-      text: "AUTOMATEDPROS – PRISHTINA, KOSOVO",
+      text: "NORTHLANE – PRISHTINA, KOSOVO",
       kind: "heading",
       sectionHint: "identity",
       bbox: null,
@@ -101,7 +101,7 @@ const bundle: ResumeDocumentBundle = {
       id: "b8",
       pageNumber: 2,
       readingOrder: 0,
-      text: "INFOTECH L.L.C – PRISHTINA, KOSOVO",
+      text: "BRIDGEWAY L.L.C – PRISHTINA, KOSOVO",
       kind: "heading",
       sectionHint: "identity",
       bbox: null,
@@ -123,7 +123,7 @@ const bundle: ResumeDocumentBundle = {
       id: "b10",
       pageNumber: 2,
       readingOrder: 2,
-      text: ".NET DEVELOPER – CREA-KO – 01/2019 – 07/2019 – PRISHTINA, KOSOVO",
+      text: ".NET DEVELOPER – TERRA-NO – 01/2019 – 07/2019 – PRISHTINA, KOSOVO",
       kind: "paragraph",
       sectionHint: "summary",
       bbox: null,
@@ -134,7 +134,7 @@ const bundle: ResumeDocumentBundle = {
       id: "b11",
       pageNumber: 3,
       readingOrder: 0,
-      text: "TECHNICAL SUPPORT AGENT – BIT BY BIT – 06/2017 – 12/2017 – PRISHTINA, KOSOVO",
+      text: "TECHNICAL SUPPORT AGENT – BYTE BY BYTE – 06/2017 – 12/2017 – PRISHTINA, KOSOVO",
       kind: "paragraph",
       sectionHint: "summary",
       bbox: null,
@@ -156,7 +156,7 @@ const bundle: ResumeDocumentBundle = {
       id: "b13",
       pageNumber: 3,
       readingOrder: 2,
-      text: "BACHELOR'S DEGREE, COMPUTER SCIENCE Kolegji Riinvest (Riinvest College)",
+      text: "BACHELOR'S DEGREE, COMPUTER SCIENCE Kolegji Arbana (Arbana College)",
       kind: "paragraph",
       sectionHint: "education",
       bbox: null,
@@ -193,14 +193,14 @@ describe("selectBlocksForResumeImportStage", () => {
     const selected = selectBlocksForResumeImportStage(bundle, "experience");
     const texts = selected.map((block) => block.text);
 
-    expect(texts).toContain("AUTOMATEDPROS – PRISHTINA, KOSOVO");
-    expect(texts).toContain("INFOTECH L.L.C – PRISHTINA, KOSOVO");
+    expect(texts).toContain("NORTHLANE – PRISHTINA, KOSOVO");
+    expect(texts).toContain("BRIDGEWAY L.L.C – PRISHTINA, KOSOVO");
     expect(texts).toContain(".NET CONSULTANT – 01/2022 – Current");
     expect(texts).toContain(
-      ".NET DEVELOPER – CREA-KO – 01/2019 – 07/2019 – PRISHTINA, KOSOVO",
+      ".NET DEVELOPER – TERRA-NO – 01/2019 – 07/2019 – PRISHTINA, KOSOVO",
     );
     expect(texts).toContain(
-      "TECHNICAL SUPPORT AGENT – BIT BY BIT – 06/2017 – 12/2017 – PRISHTINA, KOSOVO",
+      "TECHNICAL SUPPORT AGENT – BYTE BY BYTE – 06/2017 – 12/2017 – PRISHTINA, KOSOVO",
     );
     expect(texts).not.toContain("EDUCATION AND TRAINING");
   });
@@ -214,7 +214,7 @@ describe("selectBlocksForResumeImportStage", () => {
     expect(texts).toContain("EDUCATION AND TRAINING");
     expect(texts).toContain("LANGUAGE SKILLS");
     expect(texts).toContain("ENGLISH C2 C2 C2 C2 C2");
-    expect(texts).not.toContain("INFOTECH L.L.C – PRISHTINA, KOSOVO");
+    expect(texts).not.toContain("BRIDGEWAY L.L.C – PRISHTINA, KOSOVO");
   });
 
   test("adds confidence breakdowns during candidate sanitation", () => {

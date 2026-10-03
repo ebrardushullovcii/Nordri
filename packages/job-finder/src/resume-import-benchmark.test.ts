@@ -632,7 +632,7 @@ describe("resume import benchmark", () => {
           experienceRecords: [
             {
               title: "Senior Full-Stack Software Engineer",
-              companyName: "AUTOMATEDPROS",
+              companyName: "NORTHLANE",
             },
           ],
           educationRecords: [],
@@ -644,7 +644,7 @@ describe("resume import benchmark", () => {
         experiences: [
           {
             id: "experience_1",
-            companyName: "AUTOMATEDPROS",
+            companyName: "NORTHLANE",
             companyUrl: null,
             title: "Senior Full-Stack Software Engineer",
             employmentType: null,
@@ -663,7 +663,7 @@ describe("resume import benchmark", () => {
           },
           {
             id: "experience_2",
-            companyName: "INFOTECH L.L.C",
+            companyName: "BRIDGEWAY L.L.C",
             companyUrl: null,
             title: "Unexpected Extra Role",
             employmentType: null,
@@ -761,11 +761,11 @@ describe("resume import benchmark", () => {
           experienceRecords: [
             {
               title: "Senior Full-Stack Software Engineer",
-              companyName: "AUTOMATEDPROS",
+              companyName: "NORTHLANE",
             },
             {
               title: "Chief Experience Officer",
-              companyName: "AUTOMATEDPROS",
+              companyName: "NORTHLANE",
             },
           ],
           educationRecords: [],
@@ -777,7 +777,7 @@ describe("resume import benchmark", () => {
         experiences: [
           {
             id: "experience_1",
-            companyName: "AUTOMATEDPROS",
+            companyName: "NORTHLANE",
             companyUrl: null,
             title:
               "Senior Full-Stack Software Engineer / Chief Experience Officer",

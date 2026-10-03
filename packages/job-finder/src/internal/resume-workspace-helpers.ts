@@ -165,22 +165,6 @@ export function resolveResumeTemplateLabel(input: {
   );
 }
 
-function toTokenSet(value: string): Set<string> {
-  return new Set(tokenize(value));
-}
-
-function calculateTokenOverlap(left: string, right: string): number {
-  const leftTokens = [...toTokenSet(left)];
-  const rightTokens = toTokenSet(right);
-
-  if (leftTokens.length === 0 || rightTokens.size === 0) {
-    return 0;
-  }
-
-  const matched = leftTokens.filter((token) => rightTokens.has(token)).length;
-  return matched / Math.max(Math.min(leftTokens.length, rightTokens.size), 1);
-}
-
 /**
  * Whether this section is the draft's core-skills list. Read from the draft
  * rather than a label match so a renamed section still counts.
@@ -188,93 +172,6 @@ function calculateTokenOverlap(left: string, right: string): number {
 function isSkillsResumeSection(draft: ResumeDraft, sectionId: string): boolean {
   const section = draft.sections.find((entry) => entry.id === sectionId);
   return section?.kind === "skills" || section?.kind === "keywords";
-}
-
-function buildProfileSupportBank(
-  profile: CandidateProfile | undefined,
-): string[] {
-  if (!profile) {
-    return [];
-  }
-
-  return uniqueStrings(
-    [
-      profile.baseResume.textContent ?? "",
-      profile.summary ?? "",
-      profile.professionalSummary.fullSummary ?? "",
-      profile.professionalSummary.shortValueProposition ?? "",
-      profile.yearsExperience !== null && profile.yearsExperience > 0
-        ? `${profile.yearsExperience} years of experience`
-        : "",
-      profile.narrative.professionalStory ?? "",
-      profile.narrative.nextChapterSummary ?? "",
-      profile.narrative.careerTransitionSummary ?? "",
-      ...profile.narrative.differentiators,
-      ...profile.skills,
-      ...profile.skillGroups.coreSkills,
-      ...profile.skillGroups.tools,
-      ...profile.skillGroups.languagesAndFrameworks,
-      ...profile.experiences.flatMap((experience) => [
-        experience.title,
-        experience.companyName,
-        experience.summary,
-        ...experience.achievements,
-      ]),
-      ...profile.projects.flatMap((project) => [
-        project.name,
-        project.role,
-        project.summary,
-        project.outcome,
-        ...project.skills,
-      ]),
-      ...profile.education.flatMap((education) => [
-        education.schoolName,
-        education.degree,
-        education.fieldOfStudy,
-        education.summary,
-      ]),
-      ...profile.certifications.flatMap((certification) => [
-        certification.name,
-        certification.issuer,
-      ]),
-      ...profile.proofBank.flatMap((proof) => [
-        proof.title,
-        proof.claim,
-        proof.heroMetric,
-        proof.supportingContext,
-      ]),
-    ].filter((entry): entry is string => Boolean(entry && entry.trim())),
-  );
-}
-
-function isSupportedByProfile(
-  content: string,
-  profileSupportBank: readonly string[],
-): boolean {
-  const normalized = normalizeText(content);
-  if (!normalized) {
-    return false;
-  }
-
-  return profileSupportBank.some((entry) => {
-    const normalizedEntry = normalizeText(entry);
-    const entryTokenCount = tokenize(entry).length;
-    const contentTokenCount = tokenize(content).length;
-
-    if (!normalizedEntry) {
-      return false;
-    }
-
-    if (entryTokenCount <= 1 || contentTokenCount <= 1) {
-      return normalizedEntry === normalized;
-    }
-
-    return (
-      matchesWholePhrase(entry, content) ||
-      matchesWholePhrase(content, entry) ||
-      calculateTokenOverlap(content, entry) >= 0.72
-    );
-  });
 }
 
 function buildCandidateLanguageBank(
@@ -321,55 +218,6 @@ function isLanguageSection(
   );
 }
 
-function looksLikeKeywordStuffing(content: string): boolean {
-  const commaCount = (content.match(/,/g) ?? []).length;
-  const tokenCount = tokenize(content).length;
-  return (
-    commaCount >= 4 &&
-    tokenCount >= 8 &&
-    !/\b(led|built|designed|shipped|managed|improved|created|owned|delivered|launched|partnered|collaborated|standardized|reduced|increased|drove|implemented)\b/i.test(
-      content,
-    )
-  );
-}
-
-const resumeActionVerbs = new Set([
-  "achieved",
-  "architected",
-  "automated",
-  "built",
-  "collaborated",
-  "created",
-  "delivered",
-  "deployed",
-  "designed",
-  "developed",
-  "directed",
-  "drove",
-  "engineered",
-  "established",
-  "grew",
-  "implemented",
-  "improved",
-  "increased",
-  "launched",
-  "led",
-  "managed",
-  "mentored",
-  "migrated",
-  "modernized",
-  "optimized",
-  "owned",
-  "partnered",
-  "reduced",
-  "resolved",
-  "scaled",
-  "streamlined",
-  "supported",
-  "tested",
-  "transformed",
-  "validated",
-]);
 const nearDuplicateStopWords = new Set([
   "a",
   "an",
@@ -410,73 +258,6 @@ export function areNearDuplicateResumeLines(
     rightTokens.has(token),
   ).length;
   return sharedCount / smallestSize >= 0.8;
-}
-
-function looksLikeRepeatedProse(content: string): boolean {
-  if (/\b([a-z][a-z0-9'-]{2,})\s+\1\b/i.test(content)) {
-    return true;
-  }
-
-  const clauses = content
-    .split(/[.!?;]+/)
-    .map((clause) => normalizeText(clause))
-    .filter((clause) => tokenize(clause).length >= 3);
-  return new Set(clauses).size !== clauses.length;
-}
-
-function looksLikeExperienceBulletFragment(content: string): boolean {
-  const trimmed = content.trim();
-  const tokens = tokenize(trimmed);
-  if (!trimmed || tokens.length === 0) {
-    return true;
-  }
-
-  const firstLetter = trimmed.match(/[A-Za-z]/)?.[0] ?? null;
-  const startsWithLowercase = Boolean(
-    firstLetter && firstLetter === firstLetter.toLowerCase(),
-  );
-  const startsWithActionVerb = resumeActionVerbs.has(tokens[0] ?? "");
-  return (
-    startsWithLowercase ||
-    /[,;:]$/.test(trimmed) ||
-    (tokens.length <= 2 && !startsWithActionVerb) ||
-    (tokens.length <= 4 && !/[.!?)]$/.test(trimmed) && !startsWithActionVerb)
-  );
-}
-
-function looksLikeVagueFiller(content: string): boolean {
-  return (
-    /\b(results[- ]driven|detail[- ]oriented|hardworking|team player|fast[- ]paced|responsible for|go-getter|self-starter)\b/i.test(
-      content,
-    ) ||
-    /\b(?:did (?:a lot|lots)|helped (?:out|with) (?:different|many|some|various|a lot of|lots of)|worked on (?:different|many|some|various|a lot of|lots of)|handled (?:different|many|some|various|a lot of|lots of)|good at lots of|great at lots of|lots of (?:stuff|things)|various tasks|and more|really (?:good|great)|super (?:good|great))\b/i.test(
-      content,
-    ) ||
-    /\b(?:i|me|my|mine|myself)\b/i.test(content) ||
-    looksLikeRepeatedProse(content)
-  );
-}
-
-function isProfessionalExperienceSummaryText(
-  summary: string,
-  location: string | null,
-): boolean {
-  const normalized = normalizeText(summary);
-  const tokens = tokenize(summary);
-  const normalizedLocation = normalizeText(location ?? "");
-  return !(
-    looksLikeVagueFiller(summary) ||
-    /\b(?:career\s+(?:change|pivot|transition)|decid(?:ed|ing)\s+to|passion|pivot(?:ed|ing)?\s+(?:back\s+)?to|return(?:ed|ing)?\s+to|seeking\s+(?:a|my)\s+next)\b/i.test(
-      summary,
-    ) ||
-    Boolean(normalizedLocation && normalized === normalizedLocation) ||
-    (tokens.length <= 5 &&
-      /^(?:remote|hybrid|onsite|on\s+site)\b/i.test(summary)) ||
-    (tokens.length <= 5 && summary.includes(",") && !/[.!?]$/.test(summary)) ||
-    (tokens.length <= 5 &&
-      /[A-Z]/.test(summary) &&
-      summary === summary.toUpperCase())
-  );
 }
 
 interface ResumeClaimCandidateEvidence {
@@ -1069,7 +850,6 @@ export function sanitizeResumeDraft(input: {
   sourceSkills?: readonly string[];
 }): ResumeDraft {
   const isCompetency = buildResumeSkillContextFilter(input.job, input.profile);
-  const profileSupportBank = buildProfileSupportBank(input.profile);
   const candidateLanguageBank = buildCandidateLanguageBank(input.profile);
   const seenLines = new Set<string>();
 
@@ -1102,9 +882,6 @@ export function sanitizeResumeDraft(input: {
         (section.origin === "ai_generated" ||
           section.origin === "assistant_edited" ||
           section.origin === "deterministic_fallback");
-      if (canSuppressGeneratedSummary && looksLikeVagueFiller(section.text)) {
-        return profileSummaryFallback();
-      }
       if (canSuppressGeneratedSummary) {
         // A summary is the pitch. Generators copy "Position ended in a
         // company-wide reduction" from the imported resume into it, which a
@@ -1119,12 +896,6 @@ export function sanitizeResumeDraft(input: {
         }
       }
       if (seenLines.has(normalizedSectionText)) {
-        return null;
-      }
-      if (
-        looksLikeKeywordStuffing(section.text) &&
-        !isSupportedByProfile(section.text, profileSupportBank)
-      ) {
         return null;
       }
       seenLines.add(normalizedSectionText);
@@ -1177,9 +948,6 @@ export function sanitizeResumeDraft(input: {
           }
           // A skill the profile does not show stays: the model's fact check
           // says whether the person's evidence backs it (ADR 0041).
-        }
-        if (looksLikeKeywordStuffing(bullet.text)) {
-          return false;
         }
         seenLines.add(normalized);
         return true;
@@ -1443,35 +1211,6 @@ export function validateResumeDraft(input: {
       sectionId: args.sectionId,
       bulletId: args.bullet.id,
     });
-
-    if (looksLikeKeywordStuffing(args.bullet.text)) {
-      issues.push({
-        id: `issue_keyword_stuffing_${args.bullet.id}`,
-        severity: "warning",
-        category: "keyword_stuffing",
-        sectionId: args.sectionId,
-        entryId: args.entryId ?? null,
-        bulletId: args.bullet.id,
-        message:
-          "This line reads like keyword packing instead of resume content.",
-      });
-    }
-
-    const isFragment =
-      args.isExperience && looksLikeExperienceBulletFragment(args.bullet.text);
-    if (looksLikeVagueFiller(args.bullet.text) || isFragment) {
-      issues.push({
-        id: `issue_filler_${args.bullet.id}`,
-        severity: "info",
-        category: "vague_filler",
-        sectionId: args.sectionId,
-        entryId: args.entryId ?? null,
-        bulletId: args.bullet.id,
-        message: isFragment
-          ? "Rewrite this fragment as a complete, professional accomplishment statement."
-          : "Replace generic or repetitive filler with a grounded accomplishment or skill example.",
-      });
-    }
   }
 
   for (const section of includedSections) {
@@ -1495,21 +1234,6 @@ export function validateResumeDraft(input: {
         bulletId: null,
         message: `${section.label} is included but has no content yet.`,
       });
-    }
-
-    if (section.text) {
-      if (looksLikeVagueFiller(section.text)) {
-        issues.push({
-          id: `issue_filler_${section.id}`,
-          severity: "info",
-          category: "vague_filler",
-          sectionId: section.id,
-          entryId: null,
-          bulletId: null,
-          message:
-            "Replace generic or repetitive summary prose with grounded professional evidence.",
-        });
-      }
     }
 
     for (const bullet of includedBullets) {
@@ -1553,22 +1277,6 @@ export function validateResumeDraft(input: {
           });
         }
         seenEntryContent.push(entry.summary);
-
-        if (
-          entry.entryType === "experience" &&
-          !isProfessionalExperienceSummaryText(entry.summary, entry.location)
-        ) {
-          issues.push({
-            id: `issue_filler_entry_${entry.id}`,
-            severity: "info",
-            category: "vague_filler",
-            sectionId: section.id,
-            entryId: entry.id,
-            bulletId: null,
-            message:
-              "Rewrite this summary as concise, third-person professional evidence.",
-          });
-        }
       }
 
       for (const bullet of entry.bullets.filter((bullet) => bullet.included)) {
@@ -1747,8 +1455,31 @@ export function validateResumeDraft(input: {
     profile: input.profile,
     assessedAt: validatedAt,
   });
+  // The checker's note on a generated line that is not finished resume
+  // writing (a keyword list, a fragment, filler); no word rule decides it
+  // (ADR 0041). The person's own lines are theirs and get no note.
+  const styleNotes = new Map(
+    (input.draft.claimChecks ?? []).flatMap((check) =>
+      check.style ? [[check.contentHash, check.style] as const] : [],
+    ),
+  );
   for (const assessment of claimAssessments) {
     const generatedClaim = isGeneratedResumeClaimOrigin(assessment.claimOrigin);
+    const styleNote =
+      assessment.status !== "exact" && assessment.contentHash
+        ? styleNotes.get(assessment.contentHash)
+        : undefined;
+    if (generatedClaim && styleNote) {
+      issues.push({
+        id: `issue_style_${assessment.id}`,
+        severity: "info",
+        category: "vague_filler",
+        sectionId: assessment.sectionId,
+        entryId: assessment.entryId,
+        bulletId: assessment.bulletId,
+        message: styleNote,
+      });
+    }
     if (assessment.status === "confirm_needed") {
       issues.push({
         id: `issue_claim_confirmation_${assessment.id}`,

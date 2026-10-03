@@ -558,7 +558,6 @@ export async function runSourceDebugWorkflow(
           normalizedTarget,
           phaseStartingUrlArtifact,
           phase,
-          searchPreferences,
         );
         const currentRunHasDistinctRouteHint =
           currentRouteHintStartingUrls.some(
@@ -570,7 +569,6 @@ export async function runSourceDebugWorkflow(
                 normalizedTarget,
                 preservedRouteHintArtifact,
                 phase,
-                searchPreferences,
               )
             : [];
         const phaseStartingUrls = uniqueStrings(
@@ -1100,8 +1098,8 @@ export async function runSourceDebugWorkflow(
             jobsFound: successfulAttemptCount,
           });
           const finalReviewStartedAtMs = Date.now();
-          try {
-            return await reviewSourceInstructionArtifactWithAi({
+          const review = () =>
+            reviewSourceInstructionArtifactWithAi({
               aiClient: ctx.aiClient,
               target: normalizedTarget,
               run,
@@ -1117,6 +1115,13 @@ export async function runSourceDebugWorkflow(
               modelContextWindowTokens: modelContextWindowTokensSnapshot,
               signal: executionSignal,
             });
+          try {
+            // A review that fails for a passing reason is asked once more
+            // before the check's notes are kept as an unorganized draft.
+            return (
+              (await review()) ??
+              (executionSignal.aborted ? null : await review())
+            );
           } finally {
             finalReviewMs = Date.now() - finalReviewStartedAtMs;
           }

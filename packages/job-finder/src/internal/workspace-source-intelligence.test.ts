@@ -157,74 +157,6 @@ function createSearchPreferences(
   };
 }
 
-function createLearnedSearchRoutesArtifact(input: {
-  targetId: string;
-  searchRouteTemplateUrl: string;
-}) {
-  return createSourceInstructionArtifact({
-    id: `instruction_${input.targetId}_learned_search`,
-    targetId: input.targetId,
-    status: "draft",
-    createdAt: "2026-08-23T10:00:00.000Z",
-    updatedAt: "2026-08-23T10:01:00.000Z",
-    acceptedAt: null,
-    basedOnRunId: `debug_run_${input.targetId}_learned_search`,
-    basedOnAttemptIds: [`debug_attempt_${input.targetId}_learned_search`],
-    notes: null,
-    navigationGuidance: [
-      "Search accepts query parameters like ?keywords=engineer&location=remote.",
-    ],
-    searchGuidance: [],
-    detailGuidance: [],
-    applyGuidance: [],
-    warnings: [],
-    versionInfo: {
-      promptProfileVersion: "v1",
-      toolsetVersion: "v1",
-      adapterVersion: "v1",
-      appSchemaVersion: "v1",
-    },
-    verification: null,
-    intelligence: {
-      provider: null,
-      collection: {
-        preferredMethod: "listing_route",
-        rankedMethods: ["listing_route", "fallback_search"],
-        startingRoutes: [],
-        searchRouteTemplates: [
-          {
-            url: input.searchRouteTemplateUrl,
-            label: "Learned search route",
-            kind: "search",
-            confidence: 0.9,
-          },
-        ],
-        detailRoutePatterns: [],
-        listingMarkers: [],
-      },
-      apply: {
-        applyPath: "unknown",
-        authMarkers: [],
-        consentMarkers: [],
-        questionSurfaceHints: [],
-        resumeUploadHints: [],
-      },
-      reliability: {
-        selectorFingerprints: [],
-        stableControlNames: [],
-        failureFingerprints: [],
-        verifiedAt: null,
-        freshnessNotes: [],
-      },
-      overrides: {
-        forceMethod: null,
-        deniedRoutePatterns: [],
-        extraStartingRoutes: [],
-      },
-    },
-  });
-}
-
 test("keeps jobs outside soft preferences visible unless strict collection is enabled", () => {
   const seed = createSeed();
   const posting = createPosting({
@@ -1064,7 +996,7 @@ describe("collectPublicProviderJobs", () => {
     ]);
   });
 
-  test("prefers a concrete guided query url over generic learned routes when search preferences are available", () => {
+  test("starts from the learned routes; no search address is built from the person's goals (ADR 0041)", () => {
     const target = createSearchSurfaceTarget();
     const artifact = createSourceInstructionArtifact({
       id: "instruction_guided_query_first",
@@ -1151,15 +1083,7 @@ describe("collectPublicProviderJobs", () => {
       },
     });
 
-    const searchPreferences = createSearchPreferences({
-      targetRoles: ["Senior Full-Stack Software Engineer"],
-      locations: ["Prishtina, Kosovo"],
-    });
-
-    expect(
-      buildDiscoveryStartingUrls(target, artifact, searchPreferences),
-    ).toEqual([
-      "https://www.linkedin.com/jobs/search/?keywords=software&location=Prishtina%2C+Kosovo",
+    expect(buildDiscoveryStartingUrls(target, artifact)).toEqual([
       "https://www.linkedin.com/jobs/search/",
       "https://www.linkedin.com/jobs/collections/recommended/",
       "https://www.linkedin.com/jobs/",
@@ -1168,103 +1092,10 @@ describe("collectPublicProviderJobs", () => {
 
   test("falls back to only the configured starting url when no learned source guidance exists", () => {
     const target = createSearchSurfaceTarget();
-    const searchPreferences = createSearchPreferences({
-      targetRoles: ["Senior Full-Stack Software Engineer"],
-      locations: [],
-      workModes: ["remote"],
-    });
 
-    expect(buildDiscoveryStartingUrls(target, null, searchPreferences)).toEqual(
-      ["https://www.linkedin.com/jobs/"],
-    );
-  });
-
-  test("prefers a guided homepage query url when source-debug proves a generic q filter", () => {
-    const target = {
-      id: "kosovajob",
-      label: "KosovaJob",
-      startingUrl: "https://kosovajob.com/",
-      enabled: true,
-      adapterKind: "auto",
-      customInstructions: null,
-      instructionStatus: "draft",
-      validatedInstructionId: null,
-      draftInstructionId: null,
-      lastDebugRunId: null,
-      lastVerifiedAt: null,
-      staleReason: null,
-    } satisfies JobDiscoveryTarget;
-    const artifact = createSourceInstructionArtifact({
-      id: "instruction_kosovajob_query_first",
-      targetId: target.id,
-      status: "draft",
-      createdAt: "2026-04-23T18:00:00.000Z",
-      updatedAt: "2026-04-23T18:01:00.000Z",
-      acceptedAt: null,
-      basedOnRunId: "debug_run_kosovajob_query_first",
-      basedOnAttemptIds: ["debug_attempt_kosovajob_query_first"],
-      notes: "Prefer homepage query parameters over generic route guesses.",
-      navigationGuidance: [],
-      searchGuidance: [
-        "Homepage query parameters like ?q=software change results while /jobs returns 404.",
-      ],
-      detailGuidance: [],
-      applyGuidance: [],
-      warnings: [],
-      versionInfo: {
-        promptProfileVersion: "v1",
-        toolsetVersion: "v1",
-        adapterVersion: "v1",
-        appSchemaVersion: "v1",
-      },
-      verification: null,
-      intelligence: {
-        provider: null,
-        collection: {
-          preferredMethod: "listing_route",
-          rankedMethods: ["listing_route", "careers_page", "fallback_search"],
-          startingRoutes: [
-            {
-              url: "https://kosovajob.com/jobs",
-              label: "Observed route",
-              kind: "listing",
-              confidence: 0.84,
-            },
-          ],
-          searchRouteTemplates: [],
-          detailRoutePatterns: [],
-          listingMarkers: [],
-        },
-        apply: {
-          applyPath: "unknown",
-          authMarkers: [],
-          consentMarkers: [],
-          questionSurfaceHints: [],
-          resumeUploadHints: [],
-        },
-        reliability: {
-          selectorFingerprints: [],
-          stableControlNames: [],
-          failureFingerprints: [],
-          verifiedAt: null,
-          freshnessNotes: [],
-        },
-        overrides: {
-          forceMethod: null,
-          deniedRoutePatterns: [],
-          extraStartingRoutes: [],
-        },
-      },
-    });
-
-    const searchPreferences = createSearchPreferences({
-      targetRoles: ["Senior Full-Stack Software Engineer"],
-      locations: ["Prishtina, Kosovo"],
-    });
-
-    expect(
-      buildDiscoveryStartingUrls(target, artifact, searchPreferences),
-    ).toEqual(["https://kosovajob.com/?q=software", "https://kosovajob.com/"]);
+    expect(buildDiscoveryStartingUrls(target, null)).toEqual([
+      "https://www.linkedin.com/jobs/",
+    ]);
   });
 
   test("does not reuse search routes that the instruction guidance explicitly disproved", () => {
@@ -1507,134 +1338,6 @@ describe("collectPublicProviderJobs", () => {
     });
 
     expect(buildDiscoveryStartingUrls(target, artifact)).toEqual([]);
-  });
-
-  test("clears stale query params from guided search templates before building the final url", () => {
-    const target = createSearchSurfaceTarget();
-    const artifact = createSourceInstructionArtifact({
-      id: "instruction_guided_query_clears_stale_params",
-      targetId: target.id,
-      status: "draft",
-      createdAt: "2026-04-24T00:00:00.000Z",
-      updatedAt: "2026-04-24T00:01:00.000Z",
-      acceptedAt: null,
-      basedOnRunId: "debug_run_guided_query_clears_stale_params",
-      basedOnAttemptIds: ["debug_attempt_guided_query_clears_stale_params"],
-      notes: "Use a clean search template before setting query params.",
-      navigationGuidance: [],
-      searchGuidance: [],
-      detailGuidance: [],
-      applyGuidance: [],
-      warnings: [],
-      versionInfo: {
-        promptProfileVersion: "v1",
-        toolsetVersion: "v1",
-        adapterVersion: "v1",
-        appSchemaVersion: "v1",
-      },
-      verification: null,
-      intelligence: {
-        provider: {
-          key: "linkedin",
-          label: "LinkedIn Jobs",
-          confidence: 0.98,
-          apiAvailability: "not_supported",
-          publicApiUrlTemplate: null,
-          boardToken: null,
-          boardSlug: null,
-          providerIdentifier: "linkedin_jobs",
-        },
-        collection: {
-          preferredMethod: "listing_route",
-          rankedMethods: ["listing_route", "careers_page", "fallback_search"],
-          startingRoutes: [],
-          searchRouteTemplates: [
-            {
-              url: "https://www.linkedin.com/jobs/search/?keywords=placeholder&location=old",
-              label: "Templated search route",
-              kind: "search",
-              confidence: 0.95,
-            },
-          ],
-          detailRoutePatterns: [],
-          listingMarkers: [],
-        },
-        apply: {
-          applyPath: "unknown",
-          authMarkers: [],
-          consentMarkers: [],
-          questionSurfaceHints: [],
-          resumeUploadHints: [],
-        },
-        reliability: {
-          selectorFingerprints: [],
-          stableControlNames: [],
-          failureFingerprints: [],
-          verifiedAt: null,
-          freshnessNotes: [],
-        },
-        overrides: {
-          forceMethod: null,
-          deniedRoutePatterns: [],
-          extraStartingRoutes: [],
-        },
-      },
-    });
-
-    const searchPreferences = createSearchPreferences({
-      targetRoles: ["Senior Full-Stack Software Engineer"],
-      locations: ["Prishtina, Kosovo"],
-    });
-
-    expect(
-      buildDiscoveryStartingUrls(target, artifact, searchPreferences)[0],
-    ).toBe(
-      "https://www.linkedin.com/jobs/search/?keywords=software&location=Prishtina%2C+Kosovo",
-    );
-  });
-
-  test("builds guided queries only from each target's own learned evidence regardless of host", () => {
-    const linkedinTarget = createSearchSurfaceTarget();
-    const genericTarget = {
-      ...linkedinTarget,
-      id: "generic_jobs_hub",
-      label: "Generic Jobs Hub",
-      startingUrl: "https://jobs.example.com/hub/",
-    };
-    const searchPreferences = createSearchPreferences({
-      targetRoles: ["Senior Full-Stack Software Engineer"],
-      locations: [],
-      workModes: ["remote"],
-    });
-
-    expect(
-      buildDiscoveryStartingUrls(
-        linkedinTarget,
-        createLearnedSearchRoutesArtifact({
-          targetId: linkedinTarget.id,
-          searchRouteTemplateUrl: "https://www.linkedin.com/jobs/search/",
-        }),
-        searchPreferences,
-      ),
-    ).toEqual([
-      "https://www.linkedin.com/jobs/search/?keywords=software",
-      "https://www.linkedin.com/jobs/search/",
-      "https://www.linkedin.com/jobs/",
-    ]);
-    expect(
-      buildDiscoveryStartingUrls(
-        genericTarget,
-        createLearnedSearchRoutesArtifact({
-          targetId: genericTarget.id,
-          searchRouteTemplateUrl: "https://jobs.example.com/hub/search",
-        }),
-        searchPreferences,
-      ),
-    ).toEqual([
-      "https://jobs.example.com/hub/search?keywords=software",
-      "https://jobs.example.com/hub/search",
-      "https://jobs.example.com/hub/",
-    ]);
   });
 
   test("keeps discovery starting-url building free of board-specific host gates and query policy", () => {

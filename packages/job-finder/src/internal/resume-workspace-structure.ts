@@ -47,6 +47,18 @@ function joinCompact(
   return values.length > 0 ? values.join(separator) : null;
 }
 
+/** "BA (Hons) Graphic Design" already names its field; it is not repeated. */
+function formatDegreeLine(
+  degree: string | null | undefined,
+  fieldOfStudy: string | null | undefined,
+): string | null {
+  const field = fieldOfStudy?.trim() ?? "";
+  const named =
+    field.length > 0 &&
+    (degree ?? "").toLowerCase().includes(field.toLowerCase());
+  return joinCompact([degree, named ? null : field], ", ");
+}
+
 /**
  * Mirrors the canonical generated-class origin set used by resume claim
  * assessment: content produced by generation or assistant edits is
@@ -1178,7 +1190,7 @@ function buildDraftSectionsFromStructuredTailoredDraft(input: {
           : `education_entry_${index + 1}`,
         entryType: "education",
         title: entry.school,
-        subtitle: joinCompact([entry.degree, entry.fieldOfStudy], ", "),
+        subtitle: formatDegreeLine(entry.degree, entry.fieldOfStudy),
         location: entry.location,
         dateRange: selectCanonicalDateRange({
           profileDateRange,
@@ -1745,10 +1757,7 @@ export function seedResumeDraft(input: {
           id: `education_${education.id}`,
           entryType: "education",
           title: education.schoolName,
-          subtitle: joinCompact(
-            [education.degree, education.fieldOfStudy],
-            ", ",
-          ),
+          subtitle: formatDegreeLine(education.degree, education.fieldOfStudy),
           location: education.location,
           dateRange: formatDateRange(education.startDate, education.endDate),
           startDate: education.startDate,

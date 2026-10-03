@@ -25,6 +25,7 @@ import {
 function withClaimChecks(
   draft: ResumeDraft,
   verdicts: Readonly<Record<string, "supported" | "stretch" | "unsupported">>,
+  styles: Readonly<Record<string, string>> = {},
 ): ResumeDraft {
   return {
     ...draft,
@@ -34,6 +35,7 @@ function withClaimChecks(
       reason: "Test verdict.",
       evidenceIds: [],
       fix: null,
+      style: styles[text] ?? null,
       evidenceKey: null,
       checkedAt: "2026-08-17T10:00:00.000Z",
     })),
@@ -728,8 +730,12 @@ ${ownSentence}`,
     ]);
   });
 
-  test("validateResumeDraft flags keyword stuffing and vague filler when they remain in bullets", () => {
+  test("validateResumeDraft shows the checker's style note on a generated line (ADR 0041)", () => {
     const { profile, job } = getSeedContext();
+    const keywordList =
+      "React, TypeScript, Design Systems, Figma, Playwright, Accessibility, Testing";
+    const filler =
+      "Results-driven team player who thrives in fast-paced environments.";
     const draft = updateSection(
       createBaseDraft(),
       "section_experience",
@@ -737,28 +743,41 @@ ${ownSentence}`,
         ...section,
         entries: section.entries.map((entry) => ({
           ...entry,
-          bullets: createBullets("experience_validate", [
-            "React, TypeScript, Design Systems, Figma, Playwright, Accessibility, Testing",
-            "Results-driven team player who thrives in fast-paced environments.",
-          ]),
+          bullets: createBullets("experience_validate", [keywordList, filler]),
         })),
       }),
     );
 
-    const validation = validateResumeDraft({ draft, job, profile });
+    const validation = validateResumeDraft({
+      draft: withClaimChecks(
+        draft,
+        { [keywordList]: "supported", [filler]: "supported" },
+        {
+          [keywordList]:
+            "This reads as a list of tools, not something you did.",
+        },
+      ),
+      job,
+      profile,
+    });
 
     expect(validation.issues).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          category: "keyword_stuffing",
-          bulletId: "experience_validate_1",
-        }),
-        expect.objectContaining({
           category: "vague_filler",
-          bulletId: "experience_validate_2",
+          bulletId: "experience_validate_1",
+          message: "This reads as a list of tools, not something you did.",
         }),
       ]),
     );
+    // No word rule judges a line the checker did not note.
+    expect(
+      validation.issues.filter(
+        (issue) =>
+          issue.category === "vague_filler" &&
+          issue.bulletId === "experience_validate_2",
+      ),
+    ).toEqual([]);
   });
 
   test("validateResumeDraft flags duplicate bullets and duplicate entry summaries", () => {
@@ -1064,7 +1083,7 @@ ${ownSentence}`,
       id: "experience_net_migration",
       entryType: "experience",
       title: ".NET Developer",
-      subtitle: "CREA-KO",
+      subtitle: "TERRA-NO",
       bullets: [
         "Assisted in migrating a web-based ERP system from .NET Framework to .NET Core MVC, refactoring both front-end and back-end code to enhance performance, scalability, and alignment with the .NET Core MVC architecture.",
         "Refactored front-end and back-end code to align with .NET Core MVC architecture, improving the performance and scalability of the web application.",
@@ -1081,7 +1100,7 @@ ${ownSentence}`,
     ]);
   });
 
-  test("validateResumeDraft catches unsupported absolutes, teen-like filler, fragments, and near repetition", () => {
+  test("validateResumeDraft catches unchecked absolutes and near repetition", () => {
     const { profile, job } = getSeedContext();
     const draft = updateSection(
       createBaseDraft(),
@@ -1112,20 +1131,8 @@ ${ownSentence}`,
           bulletId: "claim_quality_tone_1",
         }),
         expect.objectContaining({
-          category: "vague_filler",
-          bulletId: "claim_quality_tone_2",
-        }),
-        expect.objectContaining({
-          category: "vague_filler",
-          bulletId: "claim_quality_tone_3",
-        }),
-        expect.objectContaining({
           category: "duplicate_bullet",
           bulletId: "claim_quality_tone_5",
-        }),
-        expect.objectContaining({
-          category: "vague_filler",
-          entryId: "experience_1",
         }),
       ]),
     );
@@ -1319,16 +1326,16 @@ ${ownSentence}`,
     );
   });
 
-  test("sanitizeResumeDraft suppresses unprofessional generated summaries without deleting grounded history", () => {
+  test("sanitizeResumeDraft leaves a generated summary's wording to the checker (ADR 0041)", () => {
     const { profile, job } = getSeedContext();
-    const unprofessionalSummary =
+    const casualSummary =
       "After deciding to return to my passion, I did a lot of different things and moved back into development.";
     const generatedDraft = updateSection(
       createBaseDraft(),
       "section_summary",
       (section) => ({
         ...section,
-        text: unprofessionalSummary,
+        text: casualSummary,
         origin: "ai_generated",
       }),
     );
@@ -1339,30 +1346,13 @@ ${ownSentence}`,
       profile,
     });
 
-    // The bad generated summary is replaced by the person's own profile
-    // summary, never dropped: an export with no summary at all is worse.
-    expect(getSection(sanitized, "section_summary")).toMatchObject({
-      text: profile.summary,
-    });
+    // No word rule swaps it out; the fact check notes it and fixes it when
+    // the resume is generated.
+    expect(getSection(sanitized, "section_summary").text).toBe(casualSummary);
     expect(getExperienceEntry(sanitized)).toMatchObject({
       profileRecordId: "experience_1",
       included: true,
     });
-
-    const userEditedDraft = updateSection(
-      generatedDraft,
-      "section_summary",
-      (section) => ({
-        ...section,
-        origin: "user_edited",
-      }),
-    );
-    expect(
-      getSection(
-        sanitizeResumeDraft({ draft: userEditedDraft, job, profile }),
-        "section_summary",
-      ).text,
-    ).toBe(unprofessionalSummary);
   });
 
   test("assesses every visible generated claim against candidate-only evidence", () => {

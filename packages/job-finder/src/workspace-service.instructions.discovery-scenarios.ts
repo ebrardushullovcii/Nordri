@@ -5,6 +5,7 @@ import {
   createAgentBrowserRuntime,
   createSeed,
   createSourceInstructionArtifact,
+  learnedRoutesIntelligence,
   createStrongSourceDebugFindingsByPhase,
   createWorkspaceServiceHarness,
 } from "./workspace-service.test-support";
@@ -187,6 +188,13 @@ describe("createJobFinderWorkspaceService", () => {
           appSchemaVersion: "v1",
         },
         verification: null,
+        intelligence: learnedRoutesIntelligence([
+          [
+            "https://www.linkedin.com/jobs/collections/recommended/",
+            "collection",
+          ],
+          ["https://www.linkedin.com/jobs/search/", "search"],
+        ]),
       }),
     ];
 
@@ -314,6 +322,13 @@ describe("createJobFinderWorkspaceService", () => {
           appSchemaVersion: "v1",
         },
         verification: null,
+        intelligence: learnedRoutesIntelligence([
+          ["https://example.com/careers/open-roles/", "collection"],
+          [
+            "https://example.com/careers/open-roles/search?team=product",
+            "search",
+          ],
+        ]),
       }),
     ];
 
@@ -513,6 +528,12 @@ describe("createJobFinderWorkspaceService", () => {
           appSchemaVersion: "v1",
         },
         verification: null,
+        intelligence: learnedRoutesIntelligence([
+          [
+            "https://www.linkedin.com/jobs/collections/recommended/",
+            "collection",
+          ],
+        ]),
       }),
     ];
 

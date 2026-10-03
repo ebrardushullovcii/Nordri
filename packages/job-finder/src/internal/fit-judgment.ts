@@ -45,6 +45,7 @@ export function toFitJudgment(
     locationReach: result.locationReach,
     reasons: result.reasons.slice(0, 4),
     gaps: result.gaps.slice(0, 4),
+    summary: result.summary ?? null,
     listingClosed: result.listingClosed,
     listingClosedEvidence: result.listingClosedEvidence,
   };

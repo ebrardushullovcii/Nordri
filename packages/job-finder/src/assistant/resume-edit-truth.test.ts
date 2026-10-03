@@ -24,7 +24,8 @@ describe("assistant resume edits report only what was saved", () => {
             targetBulletId: null,
             anchorBulletId: null,
             position: null,
-            newText: `${summary!.text ?? ""} I care about platform reliability.`,
+            // The checker drops how a job ended from a summary.
+            newText: `${summary!.text ?? ""} Position ended in a company-wide reduction.`,
             newIncluded: null,
             newLocked: null,
             newBullets: null,

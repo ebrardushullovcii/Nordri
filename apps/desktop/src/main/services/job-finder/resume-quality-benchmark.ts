@@ -1292,36 +1292,37 @@ const realFixtureQualityTargets: Record<
     keySkills: ['TypeScript', 'React', 'Accessibility', 'AWS'],
     summary: 'Build reliable, accessible workflow software for operations teams.',
   },
-  aaron_murphy_pdf: {
-    title: 'Staff Software Engineer',
-    company: 'Northstar Platform',
-    keySkills: ['Software Engineering', 'Platform', 'React', 'Node.js', 'AWS'],
-    summary: 'Lead product-platform engineering for a growing SaaS organization.',
+  persona_lina_txt: {
+    title: 'Junior Data Analyst',
+    company: 'Metro Mobility Analytics',
+    keySkills: ['SQL', 'Python', 'BigQuery', 'Looker Studio', 'A/B testing'],
+    summary: 'Turn operations data into weekly dashboards and experiment readouts.',
+    seniority: 'Junior',
+  },
+  persona_priya_pdf: {
+    title: 'Senior Product Designer',
+    company: 'Harbor Health',
+    keySkills: ['Figma', 'Design Systems', 'User Research', 'Accessibility', 'Prototyping'],
+    summary: 'Lead product design for patient-facing scheduling and onboarding flows.',
+  },
+  persona_dev_pdf: {
+    title: 'Staff Backend Engineer',
+    company: 'Ledgerline Payments',
+    keySkills: ['Go', 'Kafka', 'PostgreSQL', 'AWS', 'Distributed Systems'],
+    summary: 'Own high-throughput payment services from design through on-call.',
     seniority: 'Staff',
   },
-  ebrar_pdf: {
-    title: 'Senior Full-Stack Engineer',
-    company: 'Automated Systems Group',
-    keySkills: ['.NET', 'React', 'TypeScript', 'SQL', 'Azure'],
-    summary: 'Build and modernize full-stack web applications for business automation teams.',
+  persona_maya_docx: {
+    title: 'Instructional Designer',
+    company: 'Brightpath Learning',
+    keySkills: ['Instructional Design', 'Articulate Storyline', 'Canvas', 'Curriculum Development'],
+    summary: 'Design online courses and train facilitators for a growing learning platform.',
   },
-  ebrar_new_pdf: {
-    title: 'Senior Full-Stack Engineer',
-    company: 'Workflow Automation Labs',
-    keySkills: ['.NET', 'React', 'TypeScript', 'SQL', 'Docker'],
-    summary: 'Own full-stack automation products from API design through user-facing delivery.',
-  },
-  paul_asselin_pdf: {
-    title: 'Senior Software Engineer',
-    company: 'Mercury Product Cloud',
-    keySkills: ['Ruby', 'React', 'API Design', 'PostgreSQL', 'AWS'],
-    summary: 'Ship reliable financial-product software with strong backend and frontend ownership.',
-  },
-  ryan_holstien_pdf: {
-    title: 'Senior Platform Engineer',
-    company: 'DataHub Cloud',
-    keySkills: ['Java', 'Distributed Systems', 'AWS', 'Microservices', 'Kubernetes'],
-    summary: 'Design scalable platform services for high-volume data and marketplace products.',
+  persona_roberto_md: {
+    title: 'Supply Chain Manager',
+    company: 'Iberia Fulfilment',
+    keySkills: ['Warehouse Operations', 'Lean Six Sigma', 'Team Leadership', 'Last-Mile Delivery'],
+    summary: 'Run fulfilment and last-mile operations across two distribution centres.',
   },
 }
 

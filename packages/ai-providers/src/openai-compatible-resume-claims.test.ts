@@ -49,6 +49,7 @@ describe("resume claim checks", () => {
         id: "a",
         verdict: "supported",
         reason: "The dashboards are in the evidence.",
+        style: null,
         fix: null,
         evidenceIds: ["experience:1"],
       },
@@ -56,9 +57,31 @@ describe("resume claim checks", () => {
         id: "b",
         verdict: "unsupported",
         reason: "Not in evidence.",
+        style: null,
         fix: "",
         evidenceIds: [],
       },
+    ]);
+  });
+
+  test("keeps a style note, and a fix for a supported line that has one", () => {
+    expect(
+      normalizeResumeClaimChecks(
+        {
+          checks: [
+            {
+              id: "a",
+              verdict: "supported",
+              reason: "In evidence.",
+              style: "This reads as a fragment.",
+              fix: "Built SQL dashboards for the sales team.",
+            },
+          ],
+        },
+        input,
+      ).map((check) => [check.style, check.fix]),
+    ).toEqual([
+      ["This reads as a fragment.", "Built SQL dashboards for the sales team."],
     ]);
   });
 
