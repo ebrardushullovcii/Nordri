@@ -696,7 +696,16 @@ export const ResumeClaimCheckSchema = z.object({
   verdict: z.enum(["supported", "stretch", "unsupported"]),
   reason: z.string().default(""),
   evidenceIds: z.array(NonEmptyStringSchema).default([]),
-  /** Fingerprint of the evidence it was checked against; a change re-checks. */
+  /**
+   * The checker's fix for a line it did not pass: the line rewritten to claim
+   * only what the evidence backs, or "" when nothing in it can be kept. Null
+   * when the line passed or no fix was given.
+   */
+  fix: z.string().nullable().default(null),
+  /**
+   * Fingerprint of the evidence and tailoring strength it was checked
+   * against; a change to either re-checks.
+   */
   evidenceKey: NonEmptyStringSchema.nullable().default(null),
   checkedAt: IsoDateTimeSchema,
 });

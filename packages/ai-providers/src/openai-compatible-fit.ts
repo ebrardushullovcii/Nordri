@@ -141,7 +141,8 @@ export function normalizeJobFitJudgments(
   for (const entry of entries) {
     if (!entry || typeof entry !== "object") continue;
     const raw = entry as Record<string, unknown>;
-    const jobId = text(raw.jobId, 200);
+    // Models name the id key in a few ways; any of them identifies the job.
+    const jobId = text(raw.jobId ?? raw.job_id ?? raw.id, 200);
     if (!jobId || !askedJobIds.has(jobId) || results.has(jobId)) continue;
     const score =
       typeof raw.score === "number"

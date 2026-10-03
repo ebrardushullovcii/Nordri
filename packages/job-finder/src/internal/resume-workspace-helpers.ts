@@ -395,7 +395,10 @@ function meaningfulLineTokens(content: string): Set<string> {
   );
 }
 
-function areNearDuplicateResumeLines(left: string, right: string): boolean {
+export function areNearDuplicateResumeLines(
+  left: string,
+  right: string,
+): boolean {
   const leftTokens = meaningfulLineTokens(left);
   const rightTokens = meaningfulLineTokens(right);
   const smallestSize = Math.min(leftTokens.size, rightTokens.size);

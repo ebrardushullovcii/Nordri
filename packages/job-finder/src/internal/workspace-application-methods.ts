@@ -3726,12 +3726,16 @@ export function createWorkspaceApplicationMethods(
                 ? job.title
                 : undefined,
       });
-      const sanitizedResumeDraft = await sanitizeAndCheckResumeDraft(ctx, {
-        draft: resumeDraft,
-        job,
-        profile,
-        ...(strategyPolicy ? { sourceSkills: draft.coreSkills } : {}),
-      });
+      const sanitizedResumeDraft = await sanitizeAndCheckResumeDraft(
+        ctx,
+        {
+          draft: resumeDraft,
+          job,
+          profile,
+          ...(strategyPolicy ? { sourceSkills: draft.coreSkills } : {}),
+        },
+        { fixGeneratedLines: true },
+      );
       const previewSections = buildTailoredAssetBridge({
         draft: sanitizedResumeDraft,
         job,

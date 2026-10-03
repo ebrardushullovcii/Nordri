@@ -40,6 +40,23 @@ describe("batch fit judging", () => {
     });
   });
 
+  test("reads the job id under the key names models use", () => {
+    const judgments = normalizeJobFitJudgments(
+      {
+        judgments: [
+          { job_id: "job_1", score: 70, recommendation: "strong_fit" },
+          { id: "job_2", score: 40, recommendation: "skip" },
+        ],
+      },
+      new Set(["job_1", "job_2"]),
+    );
+
+    expect(judgments.map((judgment) => judgment.jobId)).toEqual([
+      "job_1",
+      "job_2",
+    ]);
+  });
+
   test("reads a closed listing with the words that say so", () => {
     const [judgment] = normalizeJobFitJudgments(
       {

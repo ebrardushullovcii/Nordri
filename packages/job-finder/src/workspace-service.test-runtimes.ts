@@ -164,12 +164,14 @@ export function createAiClient() {
 
 /**
  * A stand-in for the model's resume fact check (ADR 0041): each line gets the
- * verdict the test names for its exact text, and "supported" otherwise.
+ * verdict the test names for its exact text, and "supported" otherwise, plus
+ * the fix the test names for it, if any.
  */
 export function fakeResumeClaimCheck(
   verdicts: Readonly<
     Record<string, "supported" | "stretch" | "unsupported">
   > = {},
+  fixes: Readonly<Record<string, string>> = {},
 ): NonNullable<JobFinderAiClient["checkResumeClaims"]> {
   return (input) =>
     Promise.resolve(
@@ -178,6 +180,7 @@ export function fakeResumeClaimCheck(
         verdict: verdicts[claim.text.trim()] ?? "supported",
         reason: "Test verdict.",
         evidenceIds: [],
+        fix: fixes[claim.text.trim()] ?? null,
       })),
     );
 }

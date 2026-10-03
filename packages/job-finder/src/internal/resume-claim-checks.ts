@@ -12,6 +12,7 @@ import { fnv1a32 } from "@nordri/core";
 
 import { applyPatchToResumeDraft } from "./resume-workspace-patches";
 import {
+  areNearDuplicateResumeLines,
   buildResumeClaimDescriptors,
   buildResumeClaimEvidenceBank,
   buildPersonsOwnResumeClaimMatcher,
@@ -31,6 +32,9 @@ import {
  */
 
 const SESSION_CACHE_LIMIT = 4_000;
+type ResumeLine = Parameters<
+  ReturnType<typeof buildPersonsOwnResumeClaimMatcher>
+>[0];
 const sessionChecks = new Map<string, ResumeClaimCheck>();
 
 function remember(key: string, check: ResumeClaimCheck): void {
@@ -63,10 +67,14 @@ export async function withResumeClaimChecks(input: {
     id: entry.ref.id,
     text: entry.text,
   }));
+  const tailoringStrength = input.tailoringStrength ?? "balanced";
+  // What the verdicts depend on: the evidence and how far the person let the
+  // resume stretch. A change to either has the lines checked again.
   const evidenceKey = fnv1a32(
     JSON.stringify([
       evidence.map((entry) => entry.text),
       profile?.baseResume.textContent ?? "",
+      tailoringStrength,
     ]),
   );
   const stored = new Map(
@@ -103,11 +111,16 @@ export async function withResumeClaimChecks(input: {
       );
       const request = {
         ...(input.signal ? { signal: input.signal } : {}),
-        tailoringStrength: input.tailoringStrength ?? "balanced",
+        tailoringStrength,
         job: {
           title: input.job.title,
           company: input.job.company,
           description: input.job.description,
+          requirements: [
+            ...input.job.responsibilities,
+            ...input.job.minimumQualifications,
+            ...input.job.preferredQualifications,
+          ],
         },
         evidence,
         resumeText: profile?.baseResume.textContent ?? null,
@@ -139,6 +152,7 @@ export async function withResumeClaimChecks(input: {
           verdict: result.verdict,
           reason: result.reason,
           evidenceIds: result.evidenceIds,
+          fix: result.fix ?? null,
           evidenceKey,
           checkedAt,
         };
@@ -149,6 +163,121 @@ export async function withResumeClaimChecks(input: {
   }
 
   return { ...draft, claimChecks: [...kept.values()] };
+}
+
+/**
+ * When a generated resume is kept, the lines its check did not pass are fixed
+ * with the checker's own fix: rewritten to what the evidence backs, or hidden
+ * when nothing in them can be kept (ADR 0041). Stretches count only outside
+ * aggressive tailoring, where they are the person's to confirm. The rewrites
+ * are checked once more; a line that still does not pass stays for the person.
+ */
+export async function withResumeClaimFixes(
+  input: Parameters<typeof withResumeClaimChecks>[0] & {
+    stretchesAreThePersons: boolean;
+  },
+): Promise<ResumeDraft> {
+  const { draft } = input;
+  const checks = new Map(
+    (draft.claimChecks ?? []).map((check) => [check.contentHash, check]),
+  );
+  const isPersonsOwn = buildPersonsOwnResumeClaimMatcher({
+    draft,
+    profile: input.profile,
+  });
+  let changed = false;
+  // Every line on the resume now; a fix that repeats one hides its line.
+  const shown = buildResumeClaimDescriptors(draft).map((claim) => claim.text);
+  const repeatsAShownLine = (fix: string, original: string) =>
+    shown.some(
+      (line) =>
+        line !== original &&
+        (resumeClaimContentHash(line) === resumeClaimContentHash(fix) ||
+          areNearDuplicateResumeLines(line, fix)),
+    );
+  const fixFor = (claim: ResumeLine): string | null => {
+    if (isPersonsOwn(claim)) return null;
+    const check = checks.get(resumeClaimContentHash(claim.text));
+    if (!check || check.fix === null) return null;
+    const failed =
+      check.verdict === "unsupported" ||
+      (check.verdict === "stretch" && !input.stretchesAreThePersons);
+    if (!failed || check.fix === claim.text.trim()) return null;
+    changed = true;
+    return check.fix;
+  };
+  const fixBullets = <
+    T extends { text: string; origin: ResumeLine["origin"]; included: boolean },
+  >(
+    bullets: readonly T[],
+    field: "section_bullet" | "entry_bullet",
+    sectionId: string,
+  ): T[] =>
+    bullets.map((bullet) => {
+      if (!bullet.included) return bullet;
+      const fix = fixFor({
+        text: bullet.text,
+        origin: bullet.origin,
+        field,
+        sectionId,
+      });
+      if (fix === null) return bullet;
+      // A fix that repeats a line already on the resume hides this one instead.
+      if (!fix || repeatsAShownLine(fix, bullet.text)) {
+        return { ...bullet, included: false };
+      }
+      shown.push(fix);
+      return { ...bullet, text: fix };
+    });
+  // A summary has no "hide": only a rewrite replaces it.
+  const fixText = (
+    text: string | null,
+    origin: ResumeLine["origin"],
+    field: "section_text" | "entry_summary",
+    sectionId: string,
+  ): string | null => {
+    if (!text?.trim()) return text;
+    const fix = fixFor({ text, origin, field, sectionId });
+    return fix ? fix : text;
+  };
+
+  const fixed: ResumeDraft = {
+    ...draft,
+    sections: draft.sections.map((section) =>
+      !section.included
+        ? section
+        : {
+            ...section,
+            text: fixText(
+              section.text,
+              section.origin,
+              "section_text",
+              section.id,
+            ),
+            bullets: fixBullets(section.bullets, "section_bullet", section.id),
+            entries: section.entries.map((entry) =>
+              !entry.included
+                ? entry
+                : {
+                    ...entry,
+                    summary: fixText(
+                      entry.summary,
+                      entry.origin,
+                      "entry_summary",
+                      section.id,
+                    ),
+                    bullets: fixBullets(
+                      entry.bullets,
+                      "entry_bullet",
+                      section.id,
+                    ),
+                  },
+            ),
+          },
+    ),
+  };
+  if (!changed) return draft;
+  return withResumeClaimChecks({ ...input, draft: fixed });
 }
 
 /**

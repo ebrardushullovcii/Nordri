@@ -29,8 +29,14 @@ describe("resume claim checks", () => {
               verdict: "supported",
               reason: "The dashboards are in the evidence.",
               evidenceIds: ["experience:1", "made-up"],
+              fix: "A supported line needs no fix.",
             },
-            { id: "b", verdict: "unsupported", reason: "Not in evidence." },
+            {
+              id: "b",
+              verdict: "unsupported",
+              reason: "Not in evidence.",
+              fix: "",
+            },
             { id: "c", verdict: "supported", reason: "Not asked." },
             { id: "a", verdict: "unsupported", reason: "Duplicate." },
             { id: "b", verdict: "maybe" },
@@ -43,14 +49,33 @@ describe("resume claim checks", () => {
         id: "a",
         verdict: "supported",
         reason: "The dashboards are in the evidence.",
+        fix: null,
         evidenceIds: ["experience:1"],
       },
       {
         id: "b",
         verdict: "unsupported",
         reason: "Not in evidence.",
+        fix: "",
         evidenceIds: [],
       },
+    ]);
+  });
+
+  test("reads the claim id under the key names models use", () => {
+    expect(
+      normalizeResumeClaimChecks(
+        {
+          checks: [
+            { claim_id: "a", verdict: "supported", reason: "In evidence." },
+            { claim: "b", verdict: "unsupported", reason: "No.", fix: "" },
+          ],
+        },
+        input,
+      ).map((check) => [check.id, check.verdict, check.fix]),
+    ).toEqual([
+      ["a", "supported", null],
+      ["b", "unsupported", ""],
     ]);
   });
 

@@ -2,7 +2,10 @@ import { ResumeDraftSchema } from "@nordri/contracts";
 import { describe, expect, test, vi } from "vitest";
 
 import { createSeed } from "../workspace-service.test-support";
-import { withResumeClaimChecks } from "./resume-claim-checks";
+import {
+  withResumeClaimChecks,
+  withResumeClaimFixes,
+} from "./resume-claim-checks";
 import { resumeClaimContentHash } from "./resume-workspace-helpers";
 
 const at = "2026-10-03T10:00:00.000Z";
@@ -58,6 +61,7 @@ describe("resume claim checks before a draft is kept (ADR 0041)", () => {
             verdict: "stretch" as const,
             reason: "A small step past the evidence.",
             evidenceIds: [],
+            fix: null,
           })),
         ),
     );
@@ -152,6 +156,7 @@ describe("resume claim checks before a draft is kept (ADR 0041)", () => {
             verdict: "supported" as const,
             reason: "In the evidence.",
             evidenceIds: [],
+            fix: null,
           })),
         ),
     );
@@ -195,5 +200,168 @@ describe("resume claim checks before a draft is kept (ADR 0041)", () => {
       profile,
     });
     expect(checked.claimChecks).toEqual([]);
+  });
+
+  describe("fixing what the check did not pass", () => {
+    // Verdicts are remembered for the session, so each test words its own lines.
+    function lines(tag: string) {
+      return {
+        invented: `Cut cloud spend by 40% across twelve teams (${tag}).`,
+        fixedInvented: `Worked on cloud spend reviews (${tag}).`,
+        skill: `Kubernetes ${tag}`,
+        stretch: `Owned the platform roadmap (${tag}).`,
+        fixedStretch: `Contributed to the platform roadmap (${tag}).`,
+        theirs: `Wrote this line myself after the interview (${tag}).`,
+      };
+    }
+
+    function checker(
+      verdicts: Record<string, "supported" | "stretch" | "unsupported">,
+      fixes: Record<string, string>,
+    ) {
+      return vi.fn(
+        (input: { claims: ReadonlyArray<{ id: string; text: string }> }) =>
+          Promise.resolve(
+            input.claims.map((claim) => ({
+              id: claim.id,
+              verdict: verdicts[claim.text] ?? ("supported" as const),
+              reason: "Test verdict.",
+              evidenceIds: [],
+              fix: fixes[claim.text] ?? null,
+            })),
+          ),
+      );
+    }
+
+    async function generateAndFix(
+      line: ReturnType<typeof lines>,
+      checkResumeClaims: ReturnType<typeof checker>,
+      stretchesAreThePersons: boolean,
+    ) {
+      const { profile, job } = context();
+      const base = {
+        aiClient: { checkResumeClaims },
+        job,
+        profile,
+        now: () => at,
+      };
+      const checked = await withResumeClaimChecks({
+        ...base,
+        draft: draftWith([
+          { text: line.invented, origin: "ai_generated" },
+          { text: line.skill, origin: "ai_generated" },
+          { text: line.stretch, origin: "ai_generated" },
+          { text: line.theirs, origin: "user_edited" },
+        ]),
+      });
+      return withResumeClaimFixes({
+        ...base,
+        draft: checked,
+        stretchesAreThePersons,
+      });
+    }
+
+    test("rewrites or hides failed lines, checks the rewrites, keeps the person's lines", async () => {
+      const line = lines("fixes");
+      const checkResumeClaims = checker(
+        {
+          [line.invented]: "unsupported",
+          [line.skill]: "unsupported",
+          [line.stretch]: "stretch",
+        },
+        {
+          [line.invented]: line.fixedInvented,
+          [line.skill]: "",
+          [line.stretch]: line.fixedStretch,
+        },
+      );
+
+      const fixed = await generateAndFix(line, checkResumeClaims, false);
+      const bullets = fixed.sections[0]?.bullets ?? [];
+
+      expect(bullets.map((bullet) => [bullet.text, bullet.included])).toEqual([
+        [line.fixedInvented, true],
+        [line.skill, false],
+        [line.fixedStretch, true],
+        [line.theirs, true],
+      ]);
+      // The two rewrites were checked in a second call.
+      expect(checkResumeClaims).toHaveBeenCalledTimes(2);
+      expect(
+        checkResumeClaims.mock.calls[1]?.[0].claims.map((claim) => claim.text),
+      ).toEqual([line.fixedInvented, line.fixedStretch]);
+      expect(
+        fixed.claimChecks?.find(
+          (check) =>
+            check.contentHash === resumeClaimContentHash(line.fixedInvented),
+        )?.verdict,
+      ).toBe("supported");
+    });
+
+    test("a stretch stays for the person in aggressive tailoring", async () => {
+      const line = lines("aggressive");
+      const checkResumeClaims = checker(
+        { [line.stretch]: "stretch" },
+        { [line.stretch]: line.fixedStretch },
+      );
+
+      const fixed = await generateAndFix(line, checkResumeClaims, true);
+
+      expect(fixed.sections[0]?.bullets.map((bullet) => bullet.text)).toContain(
+        line.stretch,
+      );
+      expect(checkResumeClaims).toHaveBeenCalledOnce();
+    });
+
+    test("a fix that repeats a line already there hides the line", async () => {
+      const line = lines("duplicate");
+      const checkResumeClaims = checker(
+        { [line.invented]: "unsupported" },
+        { [line.invented]: line.theirs },
+      );
+
+      const fixed = await generateAndFix(line, checkResumeClaims, false);
+
+      expect(
+        fixed.sections[0]?.bullets.map((bullet) => [
+          bullet.text,
+          bullet.included,
+        ]),
+      ).toContainEqual([line.invented, false]);
+      expect(checkResumeClaims).toHaveBeenCalledOnce();
+    });
+
+    test("a fix that rewords a line already there hides the line too", async () => {
+      const line = lines("reworded");
+      const checkResumeClaims = checker(
+        { [line.invented]: "unsupported" },
+        {
+          [line.invented]:
+            "Wrote this same line myself after the interview (reworded).",
+        },
+      );
+
+      const fixed = await generateAndFix(line, checkResumeClaims, false);
+
+      expect(
+        fixed.sections[0]?.bullets.find(
+          (bullet) => bullet.text === line.invented,
+        )?.included,
+      ).toBe(false);
+    });
+
+    test("a rewrite that still fails is not fixed again", async () => {
+      const line = lines("again");
+      const worse = "Cut cloud spend by 30% across ten teams (again).";
+      const checkResumeClaims = checker(
+        { [line.invented]: "unsupported", [worse]: "unsupported" },
+        { [line.invented]: worse, [worse]: "Worked on cloud spend." },
+      );
+
+      const fixed = await generateAndFix(line, checkResumeClaims, false);
+
+      expect(fixed.sections[0]?.bullets[0]?.text).toBe(worse);
+      expect(checkResumeClaims).toHaveBeenCalledTimes(2);
+    });
   });
 });

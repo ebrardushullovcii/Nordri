@@ -21,7 +21,10 @@ import {
   seedResumeDraft,
   validateResumeDraft,
 } from "./resume-workspace-helpers";
-import { withResumeClaimChecks } from "./resume-claim-checks";
+import {
+  withResumeClaimChecks,
+  withResumeClaimFixes,
+} from "./resume-claim-checks";
 import { buildResumeDraftIdentity } from "./resume-workspace-structure";
 import { hasResumeAffectingProfileChange } from "./resume-workspace-staleness";
 import { resolveJobResumeApplicationMode } from "./job-resume-application-mode";
@@ -182,18 +185,33 @@ export async function resolveEffectiveResumeTailoringStrengthForJob(
 export async function sanitizeAndCheckResumeDraft(
   ctx: WorkspaceServiceContext,
   input: Parameters<typeof sanitizeResumeDraft>[0],
+  options: {
+    /** A freshly generated resume also gets the checker's fixes applied. */
+    fixGeneratedLines?: boolean;
+  } = {},
 ): Promise<ResumeDraft> {
   const sanitized = sanitizeResumeDraft(input);
-  return withResumeClaimChecks({
+  const tailoringStrength = await resolveEffectiveResumeTailoringStrengthForJob(
+    ctx,
+    input.job.id,
+  );
+  const checkInput = {
     aiClient: ctx.aiClient,
-    draft: sanitized,
     job: input.job,
     profile: input.profile,
-    tailoringStrength: await resolveEffectiveResumeTailoringStrengthForJob(
-      ctx,
-      input.job.id,
-    ),
+    tailoringStrength,
+  };
+  const checked = await withResumeClaimChecks({
+    ...checkInput,
+    draft: sanitized,
   });
+  return options.fixGeneratedLines
+    ? withResumeClaimFixes({
+        ...checkInput,
+        draft: checked,
+        stretchesAreThePersons: tailoringStrength === "aggressive",
+      })
+    : checked;
 }
 
 function countVisibleEntries(draft: ResumeDraft): number {

@@ -33,6 +33,7 @@ function withClaimChecks(
       verdict,
       reason: "Test verdict.",
       evidenceIds: [],
+      fix: null,
       evidenceKey: null,
       checkedAt: "2026-08-17T10:00:00.000Z",
     })),

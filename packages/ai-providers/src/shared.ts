@@ -633,7 +633,13 @@ export interface ResumeClaimCheckInput {
   signal?: AbortSignal;
   /** How far the person allowed the resume to stretch. */
   tailoringStrength: string;
-  job: { title: string; company: string; description: string };
+  job: {
+    title: string;
+    company: string;
+    description: string;
+    /** The posting's duties and qualifications, as listed. */
+    requirements?: ReadonlyArray<string>;
+  };
   /** The candidate's evidence, each entry with an id the verdict can cite. */
   evidence: ReadonlyArray<{ id: string; text: string }>;
   resumeText: string | null;
@@ -646,6 +652,12 @@ export interface ResumeClaimCheckResult {
   verdict: "supported" | "stretch" | "unsupported";
   reason: string;
   evidenceIds: string[];
+  /**
+   * For a stretch or an unsupported line: the line rewritten to claim only
+   * what the evidence backs, or "" when nothing in it can be kept. Null when
+   * no fix was given.
+   */
+  fix: string | null;
 }
 
 export interface ExtractJobsFromPageInput {

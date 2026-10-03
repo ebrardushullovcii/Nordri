@@ -286,6 +286,54 @@ describe("aggressive resume review routing", () => {
     expect(workspace.effectiveTailoringStrength).toBe("aggressive");
   });
 
+  test("a kept resume gets the checker's fixes for lines it rejected", async () => {
+    const seed = createSeed();
+    const invented =
+      "Led a forty-person platform team through two acquisitions.";
+    const fixedSummary = "Builds design systems and frontend platforms.";
+    const baseAiClient = createAiClient();
+    const { workspaceService } = createWorkspaceServiceHarness({
+      seed,
+      aiClient: {
+        ...baseAiClient,
+        checkResumeClaims: fakeResumeClaimCheck(
+          { [invented]: "unsupported", Terraform: "unsupported" },
+          { [invented]: fixedSummary, Terraform: "" },
+        ),
+        createResumeDraft(input) {
+          return Promise.resolve(
+            completeTailoredResumeDraft(
+              {
+                summary: invented,
+                coreSkills: [...seed.profile.skills, "Terraform"],
+              },
+              input,
+            ),
+          );
+        },
+      },
+    });
+
+    await workspaceService.generateResume("job_ready");
+    const workspace = await workspaceService.getResumeWorkspace("job_ready");
+    const sections = workspace.draft.sections;
+
+    expect(sections.find((section) => section.kind === "summary")?.text).toBe(
+      fixedSummary,
+    );
+    expect(
+      sections
+        .filter((section) => section.kind === "skills")
+        .flatMap((section) => section.bullets)
+        .find((bullet) => bullet.text === "Terraform"),
+    ).toMatchObject({ included: false });
+    expect(
+      workspace.validation?.claimAssessments.filter(
+        (claim) => claim.status === "unsupported",
+      ),
+    ).toEqual([]);
+  });
+
   test("generation preview returns blocking model repairs separately from person confirmations", async () => {
     const seed = createSeed();
     seed.savedJobs = seed.savedJobs.map((job) =>
