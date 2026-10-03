@@ -14,6 +14,7 @@ import {
   CandidateProfileSchema,
   type JobPosting,
   JobPostingSchema,
+  ResumeQualityBenchmarkMetricsSchema,
   ResumeQualityBenchmarkReportSchema,
   ResumeQualityBenchmarkRequestSchema,
   SavedJobSchema,
@@ -81,12 +82,8 @@ function matchesWholePhrase(candidate: string, phrase: string): boolean {
     return false
   }
 
-  const desiredTokens = normalizedPhrase.split(' ').filter(Boolean)
-  if (desiredTokens.length === 1) {
-    return new Set(normalizedCandidate.split(' ').filter(Boolean)).has(desiredTokens[0] ?? '')
-  }
-
-  return new RegExp(`(^|\\s)${escapeRegex(normalizedPhrase)}($|\\s)`).test(normalizedCandidate)
+  // The plural counts too: "workflow platforms" covers "Workflow platform".
+  return new RegExp(`(^|\\s)${escapeRegex(normalizedPhrase)}(?:e?s)?($|\\s)`).test(normalizedCandidate)
 }
 
 function firstNonEmptyValue(values: readonly (string | null | undefined)[]): string | null {
@@ -436,7 +433,24 @@ export function calculateProfessionalExperienceSummaryRate(
   )
 }
 
-export function passesResumeQualityAcceptance(metrics: ResumeQualityBenchmarkMetrics): boolean {
+export function passesResumeQualityAcceptance(
+  metrics: ResumeQualityBenchmarkMetrics,
+  options: { expectsThinOutput?: boolean } = {},
+): boolean {
+  // A profile too thin for a full resume passes when the resume is flagged as
+  // thin instead of padded: its keywords cannot all be covered, and the thin
+  // flag is the issue it is expected to raise.
+  if (options.expectsThinOutput) {
+    return (
+      metrics.groundedVisibleSkillRate === 1 &&
+      metrics.fragmentFreeExperienceBulletRate === 1 &&
+      metrics.bleedFreeCaseRate === 1 &&
+      metrics.duplicateIssueFreeRate === 1 &&
+      metrics.thinOutputFreeRate === 0 &&
+      metrics.pageTargetPassRate === 1 &&
+      metrics.atsRenderPassRate === 1
+    )
+  }
   return (
     metrics.groundedVisibleSkillRate === 1 &&
     metrics.workHistoryRepresentationRate === 1 &&
@@ -1479,6 +1493,11 @@ function sortProfileForResumeCoverage(profile: JobFinderRepositoryState['profile
   })
 }
 
+// Inside Electron the benchmark exports a PDF, as the app does, so the page
+// count is measured and the page-target gate means something. Plain Node (the
+// unit tests) has no print window and exports HTML; the gate stays unmeasured.
+const BENCHMARK_RESUME_FORMAT = process.versions.electron ? 'pdf' : 'html'
+
 function buildStateForCase(input: {
   templateId: ResumeTemplateId
   profile: JobFinderRepositoryState['profile']
@@ -1499,7 +1518,7 @@ function buildStateForCase(input: {
     settings: {
       ...state.settings,
       resumeTemplateId: input.templateId,
-      resumeFormat: 'html',
+      resumeFormat: BENCHMARK_RESUME_FORMAT,
       fontPreset: input.templateId === 'compact_exec' ? 'space_grotesk_display' : 'inter_requisite',
       keepSessionAlive: false,
     },
@@ -1862,6 +1881,17 @@ function aggregateMetrics(results: readonly ResumeQualityBenchmarkCaseResult[]):
   }
 }
 
+/** An error's message followed by the messages of what caused it. */
+function describeErrorChain(error: unknown): string {
+  const messages: string[] = []
+  let current: unknown = error
+  while (current instanceof Error && messages.length < 4) {
+    messages.push(current.message)
+    current = current.cause
+  }
+  return messages.length > 0 ? messages.join(' <- ') : String(error)
+}
+
 async function persistHtmlArtifact(input: {
   sourcePath: string
   persistArtifactsDirectory: string | null
@@ -1953,7 +1983,26 @@ export async function runDesktopResumeQualityBenchmark(
             }
 
             const generationStartedAt = performance.now()
-            await workspaceService.generateResume(jobId)
+            try {
+              await workspaceService.generateResume(jobId)
+            } catch (error) {
+              // A resume the AI could not write is a failed case, not a stopped run.
+              results.push({
+                caseId: fixture.definition.id,
+                label: fixture.definition.label,
+                templateId,
+                passed: false,
+                visibleSkills: [],
+                issueCategories: [],
+                issueCount: 0,
+                generationDurationMs: performance.now() - generationStartedAt,
+                generationDiagnostics: buildGenerationDiagnostics(undefined),
+                metrics: ResumeQualityBenchmarkMetricsSchema.parse({}),
+                htmlArtifactRelativePath: null,
+                notes: [`Generation failed: ${describeErrorChain(error)}`],
+              })
+              continue
+            }
             const generationDurationMs = performance.now() - generationStartedAt
             const workspace = await workspaceService.getResumeWorkspace(jobId)
             const asset = workspace.tailoredAsset
@@ -1964,9 +2013,11 @@ export async function runDesktopResumeQualityBenchmark(
               )
             }
 
-            const html = asset.storagePath.endsWith('.html') ? await readFile(asset.storagePath, 'utf8') : ''
+            // A PDF export writes the HTML it printed beside the PDF.
+            const htmlPath = asset.storagePath.replace(/\.pdf$/i, '.html')
+            const html = htmlPath.endsWith('.html') ? await readFile(htmlPath, 'utf8').catch(() => '') : ''
             const htmlArtifactRelativePath = await persistHtmlArtifact({
-              sourcePath: asset.storagePath,
+              sourcePath: htmlPath,
               persistArtifactsDirectory: request.persistArtifactsDirectory,
               caseId: fixture.definition.id,
               templateId,
@@ -1982,7 +2033,9 @@ export async function runDesktopResumeQualityBenchmark(
               new Set((workspace.validation?.issues ?? []).map((issue) => issue.category)),
             )
 
-            const passed = passesResumeQualityAcceptance(metrics)
+            const passed = passesResumeQualityAcceptance(metrics, {
+              expectsThinOutput: fixture.definition.tags.includes('abstention'),
+            })
 
             const templateName = asset.templateName?.trim() ?? ''
             const pageCountMeasured = (workspace.validation?.pageCount ?? null) !== null

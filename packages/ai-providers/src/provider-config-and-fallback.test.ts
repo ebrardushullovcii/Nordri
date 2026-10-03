@@ -6,7 +6,6 @@ import {
   createOpenAiCompatibleJobFinderAiClient,
 } from "./index";
 import { NO_AI_PROVIDER_REASON } from "./openai-compatible";
-import { ResumeGenerationStrategyPolicySchema } from "./shared";
 import {
   createEnvironment,
   createJobPosting,
@@ -170,13 +169,16 @@ describe("ai provider config and fallback behavior", () => {
         NORDRI_AI_MODEL: "ordinary-model",
       });
 
-      await client.tailorResume({
-        profile: createProfile(),
-        searchPreferences: createPreferences(),
-        settings: createSettings(),
-        job: createJobPosting(),
-        resumeText: "Resume text",
-      });
+      // The canned reply is no usable draft; this test reads only the request.
+      await client
+        .tailorResume({
+          profile: createProfile(),
+          searchPreferences: createPreferences(),
+          settings: createSettings(),
+          job: createJobPosting(),
+          resumeText: "Resume text",
+        })
+        .catch(() => undefined);
 
       const balancedBody = JSON.parse(balancedCapture.getCapturedBody()) as {
         model?: string;
@@ -197,16 +199,18 @@ describe("ai provider config and fallback behavior", () => {
         NORDRI_AI_AGGRESSIVE_REASONING_EFFORT: "high",
       });
 
-      await client.tailorResume({
-        profile: createProfile(),
-        searchPreferences: {
-          ...createPreferences(),
-          tailoringMode: "aggressive",
-        },
-        settings: createSettings(),
-        job: createJobPosting(),
-        resumeText: "Resume text",
-      });
+      await client
+        .tailorResume({
+          profile: createProfile(),
+          searchPreferences: {
+            ...createPreferences(),
+            tailoringMode: "aggressive",
+          },
+          settings: createSettings(),
+          job: createJobPosting(),
+          resumeText: "Resume text",
+        })
+        .catch(() => undefined);
 
       const aggressiveBody = JSON.parse(
         aggressiveCapture.getCapturedBody(),
@@ -686,70 +690,7 @@ describe("ai provider config and fallback behavior", () => {
     }
   });
 
-  test("does not add listing-only skills on provider failure when a conservative strategy is selected", async () => {
-    const errorSpy = vi
-      .spyOn(console, "error")
-      .mockImplementation(() => undefined);
-    const restoreFetch = mockRejectedFetch(new Error("upstream draft failure"));
-
-    try {
-      const client =
-        createJobFinderAiClientFromEnvironment(createEnvironment());
-      const result = await client.createResumeDraft({
-        profile: createProfile(),
-        searchPreferences: {
-          ...createPreferences(),
-          tailoringMode: "aggressive",
-        },
-        strategy: ResumeGenerationStrategyPolicySchema.parse({
-          strategyId: "strategy_keep_facts",
-          strategyName: "Keep every fact",
-          roleFamily: "Frontend Engineering",
-          baseResumeDocumentId: "resume_1",
-          templateId: "classic_ats",
-          headlinePolicy: "per_job_tailored",
-          skillsPolicy: "role_family_expanded",
-          coveragePolicy: "full_tailoring",
-          tailoringStrength: "conservative",
-          evidenceBoundaries: {
-            allowExactClaims: true,
-            allowParaphrasedClaims: true,
-            maxEvidenceRefsPerBullet: 8,
-            requireVerifierPass: true,
-          },
-          effectiveSource: "selection",
-          effectiveReason: "The user selected this strategy for the posting.",
-          recommendationSource: "none",
-          recommendationReason: null,
-          selectionSource: "user",
-          selectionReason: "Keep every fact for this job.",
-        }),
-        settings: createSettings(),
-        job: {
-          ...createJobPosting(),
-          description: [
-            "Own the payments reconciliation service end to end.",
-            "Design ledger invariants, instrument settlement dashboards,",
-            "run incident response, and mentor two backend engineers.",
-            Array.from({ length: 40 }, (_, index) => `duty ${index}`).join(" "),
-          ].join(" "),
-          keySkills: ["TypeScript"],
-          minimumQualifications: ["Hands-on experience with Terraform."],
-        },
-        resumeText: "Resume text",
-      });
-
-      expect(result.coreSkills).not.toEqual(
-        expect.arrayContaining(["Terraform"]),
-      );
-      expect(result.notes.join(" ")).not.toMatch(/job-listing skill/i);
-    } finally {
-      restoreFetch();
-      errorSpy.mockRestore();
-    }
-  });
-
-  test("records a timeout reason when the primary draft call times out", async () => {
+  test("a timed-out draft call says so and writes nothing (ADR 0041)", async () => {
     const errorSpy = vi
       .spyOn(console, "error")
       .mockImplementation(() => undefined);
@@ -761,31 +702,28 @@ describe("ai provider config and fallback behavior", () => {
       const client =
         createJobFinderAiClientFromEnvironment(createEnvironment());
 
-      const result = await client.createResumeDraft({
-        profile: createProfile(),
-        searchPreferences: createPreferences(),
-        settings: createSettings(),
-        // A real listing body: card-only postings skip the model on purpose
-        // (see the card-only test), so the timeout path needs text to tailor.
-        job: {
-          ...createJobPosting(),
-          description: [
-            "Own the payments reconciliation service end to end.",
-            "Design ledger invariants, instrument settlement dashboards,",
-            "run incident response, and mentor two backend engineers.",
-            Array.from({ length: 40 }, (_, index) => `duty ${index}`).join(" "),
-          ].join(" "),
-        },
-        resumeText: "Resume text",
-      });
-
-      expect(result.generationProvenance).toEqual({
-        method: "deterministic",
-        reason: "provider_timeout",
-        detail: "Model request timed out after 60s",
-      });
-      expect(result.notes).toContain(
-        "Primary AI draft creation failed: Model request timed out after 60s",
+      await expect(
+        client.createResumeDraft({
+          profile: createProfile(),
+          searchPreferences: createPreferences(),
+          settings: createSettings(),
+          // A real listing body: card-only postings skip the model on purpose
+          // (see the card-only test), so the timeout path needs text to tailor.
+          job: {
+            ...createJobPosting(),
+            description: [
+              "Own the payments reconciliation service end to end.",
+              "Design ledger invariants, instrument settlement dashboards,",
+              "run incident response, and mentor two backend engineers.",
+              Array.from({ length: 40 }, (_, index) => `duty ${index}`).join(
+                " ",
+              ),
+            ].join(" "),
+          },
+          resumeText: "Resume text",
+        }),
+      ).rejects.toThrow(
+        "The AI could not write this resume in time, so nothing was changed. Try again.",
       );
     } finally {
       restoreFetch();
@@ -858,7 +796,7 @@ describe("ai provider config and fallback behavior", () => {
     });
   });
 
-  test("falls back from tailoring with logged error details and merged notes", async () => {
+  test("a failed tailoring call says so, logs why and writes nothing (ADR 0041)", async () => {
     const errorSpy = vi
       .spyOn(console, "error")
       .mockImplementation(() => undefined);
@@ -870,25 +808,17 @@ describe("ai provider config and fallback behavior", () => {
       const client =
         createJobFinderAiClientFromEnvironment(createEnvironment());
 
-      const result = await client.tailorResume({
-        profile: createProfile(),
-        searchPreferences: createPreferences(),
-        settings: createSettings(),
-        job: createJobPosting(),
-        resumeText: "Resume text",
-      });
-
-      expect(result.notes).toContain(
-        "Fell back to the deterministic resume tailorer after the model call failed.",
+      await expect(
+        client.tailorResume({
+          profile: createProfile(),
+          searchPreferences: createPreferences(),
+          settings: createSettings(),
+          job: createJobPosting(),
+          resumeText: "Resume text",
+        }),
+      ).rejects.toThrow(
+        "The AI could not write this resume, so nothing was changed. Try again.",
       );
-      expect(result.notes).toContain(
-        "Primary AI tailoring failed: upstream tailoring failure",
-      );
-      expect(result.generationProvenance).toEqual({
-        method: "deterministic",
-        reason: "provider_failed",
-        detail: "upstream tailoring failure",
-      });
       expect(errorSpy).toHaveBeenCalledWith(
         "[AI Provider] tailorResume failed. upstream tailoring failure",
       );

@@ -942,15 +942,18 @@ const RESUME_ASSISTANT_UNAVAILABLE_REPLY =
 const RESUME_EDIT_PLACEHOLDER_CONTENT =
   /^I am reviewing the requested résumé change against the saved evidence\.?$/u;
 
-function buildProviderFailureProvenance(error: unknown) {
-  const detail = summarizeError(error);
-  return {
-    method: "deterministic" as const,
-    reason: /timed out after \d+s/i.test(detail)
-      ? ("provider_timeout" as const)
-      : ("provider_failed" as const),
-    detail,
-  };
+/**
+ * A resume the AI could not write is a failure, not a built-in draft in its
+ * place (ADR 0041): the job keeps the resume it had and the person is told.
+ */
+function resumeWritingFailed(error: unknown): Error {
+  const timedOut = /timed out/i.test(summarizeError(error));
+  return new Error(
+    timedOut
+      ? "The AI could not write this resume in time, so nothing was changed. Try again."
+      : "The AI could not write this resume, so nothing was changed. Try again.",
+    { cause: error },
+  );
 }
 
 /** Why a stage used the built-in reader when no model is available at all. */
@@ -1334,20 +1337,7 @@ export function createJobFinderAiClientFromEnvironment(
         };
       } catch (error) {
         logFallbackError("createResumeDraft", error);
-        // Empty model output still goes through completeTailoredResumeDraft,
-        // which is what adds listing-asked skills in aggressive mode. A thrown
-        // request must take the same path or a timeout would drop the skills
-        // the screening pass is supposed to see.
-        const completed = completeTailoredResumeDraft({}, input);
-        return {
-          ...completed,
-          generationProvenance: buildProviderFailureProvenance(error),
-          notes: uniqueStrings([
-            ...completed.notes,
-            "Fell back to the deterministic resume draft creator after the model call failed.",
-            `${providerLabel} draft creation failed: ${summarizeError(error)}`,
-          ]),
-        };
+        throw resumeWritingFailed(error);
       }
     },
     async reviseResumeDraft(input) {
@@ -1460,22 +1450,11 @@ export function createJobFinderAiClientFromEnvironment(
     },
     async tailorResume(input) {
       const modelClient = selectResumeGenerationClient(input);
-      const providerLabel =
-        modelClient === aggressiveClient ? "Aggressive AI" : "Primary AI";
       try {
         return await modelClient.tailorResume(input);
       } catch (error) {
         logFallbackError("tailorResume", error);
-        const completed = completeTailoredResumeDraft({}, input);
-        return {
-          ...completed,
-          generationProvenance: buildProviderFailureProvenance(error),
-          notes: uniqueStrings([
-            ...completed.notes,
-            "Fell back to the deterministic resume tailorer after the model call failed.",
-            `${providerLabel} tailoring failed: ${summarizeError(error)}`,
-          ]),
-        };
+        throw resumeWritingFailed(error);
       }
     },
     async assessJobFit(input) {

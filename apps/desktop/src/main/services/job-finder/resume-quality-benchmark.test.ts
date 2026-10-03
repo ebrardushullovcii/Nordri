@@ -102,6 +102,32 @@ describe("desktop resume quality benchmark", () => {
     expect(looksAtsSafeFromStructure(structuralHtml)).toBe(true);
   });
 
+  test("a thin profile passes when its resume is flagged thin instead of padded", () => {
+    const thin = {
+      ...buildCompleteMetrics(),
+      thinOutputFreeRate: 0,
+      keywordCoverageRate: 0.5,
+      issueFreeCaseRate: 0,
+    };
+
+    expect(passesResumeQualityAcceptance(thin)).toBe(false);
+    expect(
+      passesResumeQualityAcceptance(thin, { expectsThinOutput: true }),
+    ).toBe(true);
+    // Padding a thin profile out to a full resume fails the case.
+    expect(
+      passesResumeQualityAcceptance(buildCompleteMetrics(), {
+        expectsThinOutput: true,
+      }),
+    ).toBe(false);
+    expect(
+      passesResumeQualityAcceptance(
+        { ...thin, groundedVisibleSkillRate: 0 },
+        { expectsThinOutput: true },
+      ),
+    ).toBe(false);
+  });
+
   test("computes supported keyword coverage as a ratio instead of an existential match", () => {
     const job = {
       keySkills: ["Figma", "Design Systems"],
@@ -128,6 +154,13 @@ describe("desktop resume quality benchmark", () => {
     expect(
       calculateKeywordCoverageRate(
         "Owns the workflow platform with Figma and Design Systems expertise.",
+        job,
+      ),
+    ).toBe(1);
+    // A plural covers the keyword.
+    expect(
+      calculateKeywordCoverageRate(
+        "Builds workflow platforms and design systems in Figma.",
         job,
       ),
     ).toBe(1);

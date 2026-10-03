@@ -57,6 +57,42 @@ describe("tailored resume generation failure durability", () => {
     expect(queueItem?.assetStatus).toBe("failed");
   });
 
+  test("a failed regenerate leaves the job's existing resume as it was (ADR 0041)", async () => {
+    let failing = false;
+    const baseAiClient = createAiClient();
+    const { repository, workspaceService } = createWorkspaceServiceHarness({
+      aiClient: {
+        ...baseAiClient,
+        createResumeDraft(input) {
+          return failing
+            ? Promise.reject(new Error(GENERATION_ERROR))
+            : baseAiClient.createResumeDraft(input);
+        },
+      },
+    });
+    await workspaceService.generateResume("job_ready");
+    const before = {
+      asset: (await repository.listTailoredAssets()).find(
+        (asset) => asset.jobId === "job_ready",
+      ),
+      draft: await repository.getResumeDraftByJobId("job_ready"),
+    };
+
+    failing = true;
+    await expect(workspaceService.generateResume("job_ready")).rejects.toThrow(
+      /Provider request failed/,
+    );
+
+    expect(
+      (await repository.listTailoredAssets()).find(
+        (asset) => asset.jobId === "job_ready",
+      ),
+    ).toEqual(before.asset);
+    expect(await repository.getResumeDraftByJobId("job_ready")).toEqual(
+      before.draft,
+    );
+  });
+
   test("does not record a failed asset when a newer edit superseded the generation", async () => {
     const repository = createInMemoryJobFinderRepository(createSeed());
     const baseAiClient = createAiClient();

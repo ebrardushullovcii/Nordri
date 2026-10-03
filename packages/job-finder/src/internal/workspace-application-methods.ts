@@ -3656,6 +3656,10 @@ export function createWorkspaceApplicationMethods(
               (issue) =>
                 issue.severity === "error" &&
                 !issue.id.startsWith("issue_claim_confirmation_") &&
+                // A profile too thin for a full resume needs the person's
+                // evidence; the writer cannot add it, so it does not hold the
+                // writer back. It still waits for the person's review.
+                !issue.id.startsWith("issue_thin_fallback_") &&
                 !(
                   issue.id.startsWith("issue_claim_grounding_") &&
                   personConfirmationAssessmentIds.has(
@@ -3935,23 +3939,15 @@ export function createWorkspaceApplicationMethods(
 
       return ctx.getWorkspaceSnapshot();
     } catch (error) {
-      // A stale-revision/concurrency rejection means a newer edit already owns
-      // this draft: persisting a failed asset here would overwrite that newer
-      // canonical state with false failure truth. Only when the snapshotted
-      // draft is still the persisted one is this a genuine provider/render/
-      // persistence failure worth recording. A profile change during the run
-      // is recorded too, so the job shows a retryable failure instead of
-      // silently dropping back to "No resume yet".
+      // A failed run changes nothing (ADR 0041): a job that already had a
+      // resume keeps it as it was, ready or approved, and the error tells the
+      // person. Only a job with no resume yet records the failure, so it shows
+      // a retryable failure instead of silently dropping back to "No resume
+      // yet". A draft that appeared during the run belongs to a newer edit and
+      // is not marked failed either.
       try {
         const latestDraft = await ctx.repository.getResumeDraftByJobId(jobId);
-        const supersededByNewerEdit =
-          existingDraft === null
-            ? latestDraft !== null
-            : latestDraft !== null &&
-              (latestDraft.updatedAt !== existingDraft.updatedAt ||
-                buildResumeDraftStateHash(latestDraft) !==
-                  buildResumeDraftStateHash(existingDraft));
-        if (!supersededByNewerEdit) {
+        if (existingDraft === null && latestDraft === null) {
           await ctx.repository.upsertTailoredAsset(
             buildFailedTailoredAsset({
               jobId,
