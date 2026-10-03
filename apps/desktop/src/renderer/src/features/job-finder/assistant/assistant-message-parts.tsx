@@ -192,14 +192,11 @@ function ProposalPart(props: {
         Suggested: {part.summary}
       </span>
       <ul className="grid gap-1 text-[12px] text-muted-foreground">
-        {part.items.slice(0, 8).map((item) => (
-          <li className="line-clamp-2" key={item.id}>
-            {item.label}
+        {part.items.map((item) => (
+          <li className="whitespace-pre-wrap" key={item.id}>
+            {item.detail ? `${item.label}\n${item.detail}` : item.label}
           </li>
         ))}
-        {part.items.length > 8 ? (
-          <li>and {part.items.length - 8} more</li>
-        ) : null}
       </ul>
       {part.status === "pending" ? (
         <div className="flex gap-2">

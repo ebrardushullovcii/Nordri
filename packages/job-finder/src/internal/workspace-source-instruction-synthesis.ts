@@ -8,52 +8,62 @@ import {
 } from "@nordri/contracts";
 import {
   collectAttemptInstructionGuidance,
-  evaluateSourceInstructionQuality,
   filterSourceDebugWarnings,
-  filterSourceInstructionLines,
-  isExplicitSearchProbeDisproof,
-  isPositiveReusableSearchSignal,
-  isVisibilityOnlySearchSignal,
-  reconcileApplyGuidance,
-  reconcileFinalSourceInstructionGuidance,
-  reconcileMixedAccessGuidance,
-  reconcileVisibleControlEvidence,
   type SourceInstructionReviewOverride,
 } from "./source-instructions";
 import { normalizeText, uniqueStrings } from "./shared";
 import { buildSourceInstructionVersionInfo } from "./workspace-helpers";
 import { buildSourceIntelligenceArtifact } from "./workspace-source-intelligence";
 
-const APPLY_LINE_PATTERN =
-  /^apply note:|\bapply\b|\bapplication\b|\beasy apply\b/iu;
-const DETAIL_LINE_PATTERN =
-  /\b(detail page|detail pages|job detail|job details|job page|job pages|canonical url|canonical urls|stable url|stable identity|posting page|posting pages|opens the posting|full description)\b/iu;
-const SEARCH_LINE_PATTERN =
-  /^(reliable control|filter note):|\b(search|filter|filters|keyword|keywords|location|industry|category|sort|pagination|paginate|next page|load more|infinite scroll|show all|collection|collections|result set|results)\b/iu;
-
 /**
- * Files one learning run's lines by what they are about.
- *
- * Apply first, because "apply" is the most specific word; then job pages;
- * then anything about search, filters, sorting, or paging; the rest is how
- * to get to the jobs at all.
+ * Files the check's own notes by the field the agent wrote them in. The
+ * labels are the ones the source check put on its finish fields; nothing here
+ * reads what a line says (ADR 0041). The final review re-files them.
  */
-function splitLearningGuidance(lines: readonly string[]): {
+function fileCheckNotes(lines: readonly string[]): {
   navigation: string[];
   search: string[];
   detail: string[];
   apply: string[];
 } {
-  const split = { navigation: [] as string[], search: [] as string[], detail: [] as string[], apply: [] as string[] };
+  const filed = {
+    navigation: [] as string[],
+    search: [] as string[],
+    detail: [] as string[],
+    apply: [] as string[],
+  };
   for (const line of lines) {
-    if (APPLY_LINE_PATTERN.test(line)) split.apply.push(line);
-    else if (DETAIL_LINE_PATTERN.test(line)) split.detail.push(line);
-    else if (SEARCH_LINE_PATTERN.test(line)) split.search.push(line);
-    else split.navigation.push(line);
+    if (/^(?:reliable control|filter note):/iu.test(line)) {
+      filed.search.push(line);
+    } else if (/^apply note:/iu.test(line)) {
+      filed.apply.push(line);
+    } else {
+      filed.navigation.push(line);
+    }
   }
-  return split;
+  return filed;
 }
 
+function cleanLines(lines: readonly string[]): string[] {
+  const seen = new Set<string>();
+  return lines
+    .map((line) => line.replace(/\s+/gu, " ").trim())
+    .filter((line) => {
+      const key = normalizeText(line);
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
+/**
+ * The instruction a source check leaves for future searches on its site.
+ *
+ * The model's final review organizes the check's notes: what to keep, what
+ * contradicts what, which category a line belongs to, and whether a future
+ * search can rely on them (ADR 0041). Its lists and its call stand. Without that review
+ * the check's own notes are kept as a draft.
+ */
 export function synthesizeSourceInstructionArtifact(
   target: JobDiscoveryTarget,
   run: SourceDebugRunRecord,
@@ -63,15 +73,6 @@ export function synthesizeSourceInstructionArtifact(
   reviewOverride?: SourceInstructionReviewOverride | null,
   currentArtifact?: SourceInstructionArtifact | null,
 ): SourceInstructionArtifact {
-  const byPhase = new Map(attempts.map((attempt) => [attempt.phase, attempt]));
-  // One learning run now covers access, structure, search, detail, and apply
-  // (ADR 0023). Its attempt stands in wherever an older separate phase is
-  // absent; each guidance kind still takes only its own tagged lines.
-  const structureAttempt = byPhase.get("site_structure_mapping");
-  const accessAttempt = byPhase.get("access_auth_probe") ?? structureAttempt;
-  const searchAttempt = byPhase.get("search_filter_probe") ?? structureAttempt;
-  const detailAttempt = byPhase.get("job_detail_validation") ?? structureAttempt;
-  const applyAttempt = byPhase.get("apply_path_validation") ?? structureAttempt;
   const hasPartialTimeoutEvidence = attempts.some(
     (attempt) => attempt.completionMode === "timed_out_with_partial_evidence",
   );
@@ -82,136 +83,31 @@ export function synthesizeSourceInstructionArtifact(
       attempt.completionMode === "interrupted" ||
       attempt.completionMode === "stalled",
   );
-  const draftWarnings = filterSourceDebugWarnings(
-    attempts.flatMap((attempt) => [attempt.blockerSummary]),
+  const checkNotes = fileCheckNotes(
+    uniqueStrings(attempts.flatMap(collectAttemptInstructionGuidance)),
   );
-  const usedGuidance = new Set<string>();
-  const takeUniqueGuidance = (lines: readonly string[]) =>
-    lines.filter((line) => {
-      const key = normalizeText(line);
-
-      if (usedGuidance.has(key)) {
-        return false;
-      }
-
-      usedGuidance.add(key);
-      return true;
-    });
-  // With one learning run, what a line is about decides where it files,
-  // not which phase said it. With the older separate phases, the phase
-  // still decides, as before.
-  const learningOnly =
-    structureAttempt !== undefined &&
-    !byPhase.has("search_filter_probe") &&
-    !byPhase.has("job_detail_validation") &&
-    !byPhase.has("apply_path_validation");
-  const learningLines = learningOnly
-    ? splitLearningGuidance(
-        uniqueStrings([
-          ...collectAttemptInstructionGuidance(accessAttempt),
-          ...collectAttemptInstructionGuidance(structureAttempt),
-        ]),
-      )
-    : null;
-  const rawNavigationGuidance = takeUniqueGuidance(
-    learningLines
-      ? learningLines.navigation
-      : uniqueStrings([
-          ...collectAttemptInstructionGuidance(accessAttempt),
-          ...collectAttemptInstructionGuidance(structureAttempt),
-        ]),
+  const pick = (
+    reviewed: string[] | null | undefined,
+    draft: readonly string[],
+  ): string[] => cleanLines(reviewOverride ? (reviewed ?? draft) : draft);
+  const navigationGuidance = pick(
+    reviewOverride?.navigationGuidance,
+    checkNotes.navigation,
   );
-  const rawSearchGuidance = takeUniqueGuidance(
-    learningLines
-      ? learningLines.search
-      : uniqueStrings([...collectAttemptInstructionGuidance(searchAttempt)]),
+  const searchGuidance = pick(
+    reviewOverride?.searchGuidance,
+    checkNotes.search,
   );
-  const rawDetailGuidance = takeUniqueGuidance(
-    learningLines
-      ? learningLines.detail
-      : uniqueStrings([...collectAttemptInstructionGuidance(detailAttempt)]),
+  const detailGuidance = pick(
+    reviewOverride?.detailGuidance,
+    checkNotes.detail,
   );
-  const rawApplyGuidance = takeUniqueGuidance(
-    reconcileApplyGuidance(
-      learningLines
-        ? learningLines.apply
-        : uniqueStrings([...collectAttemptInstructionGuidance(applyAttempt)]),
-    ),
-  );
-  const visibleControlReconciledGuidance = reconcileVisibleControlEvidence({
-    attempts,
-    navigationGuidance: rawNavigationGuidance,
-    searchGuidance: rawSearchGuidance,
-    detailGuidance: rawDetailGuidance,
-    applyGuidance: rawApplyGuidance,
-  });
-  const reconciledGuidance = reconcileMixedAccessGuidance({
-    navigationGuidance: visibleControlReconciledGuidance.navigationGuidance,
-    searchGuidance: visibleControlReconciledGuidance.searchGuidance,
-    detailGuidance: visibleControlReconciledGuidance.detailGuidance,
-    applyGuidance: visibleControlReconciledGuidance.applyGuidance,
-  });
-  const finalReconciledGuidance = reconcileFinalSourceInstructionGuidance({
-    navigationGuidance: reconciledGuidance.navigationGuidance,
-    searchGuidance: reconciledGuidance.searchGuidance,
-    detailGuidance: reconciledGuidance.detailGuidance,
-    applyGuidance: reconciledGuidance.applyGuidance,
-  });
-  const reviewedGuidance = reconcileFinalSourceInstructionGuidance({
-    navigationGuidance:
-      reviewOverride && reviewOverride.navigationGuidance !== null
-        ? filterSourceInstructionLines(reviewOverride.navigationGuidance)
-        : finalReconciledGuidance.navigationGuidance,
-    searchGuidance:
-      reviewOverride && reviewOverride.searchGuidance !== null
-        ? filterSourceInstructionLines(reviewOverride.searchGuidance)
-        : finalReconciledGuidance.searchGuidance,
-    detailGuidance:
-      reviewOverride && reviewOverride.detailGuidance !== null
-        ? filterSourceInstructionLines(reviewOverride.detailGuidance)
-        : finalReconciledGuidance.detailGuidance,
-    applyGuidance:
-      reviewOverride && reviewOverride.applyGuidance !== null
-        ? filterSourceInstructionLines(reviewOverride.applyGuidance)
-        : finalReconciledGuidance.applyGuidance,
-  });
-  const navigationGuidance = reviewedGuidance.navigationGuidance;
-  const searchGuidance = reviewedGuidance.searchGuidance;
-  const detailGuidance = reviewedGuidance.detailGuidance;
-  const applyGuidance = reviewedGuidance.applyGuidance;
-  const hasPositiveReusableSearchGuidance = searchGuidance.some(
-    isPositiveReusableSearchSignal,
-  );
-  const hasExplicitSearchDisproof = searchGuidance.some(
-    isExplicitSearchProbeDisproof,
-  );
-  const hasVisibilityOnlySearchSignals = searchGuidance.some(
-    isVisibilityOnlySearchSignal,
-  );
-  const hasConclusiveSearchDisproof =
-    hasExplicitSearchDisproof && !hasVisibilityOnlySearchSignals;
-  const hasSearchGuidanceWithoutPositiveProof =
-    searchGuidance.length > 0 &&
-    !hasPositiveReusableSearchGuidance &&
-    !hasConclusiveSearchDisproof;
-  const hasOnlyVisibilitySearchGuidance =
-    searchGuidance.length > 0 &&
-    !hasPositiveReusableSearchGuidance &&
-    !hasConclusiveSearchDisproof &&
-    searchGuidance.every(
-      (line) =>
-        isVisibilityOnlySearchSignal(line) ||
-        isExplicitSearchProbeDisproof(line),
-    );
-  const quality = evaluateSourceInstructionQuality({
-    navigationGuidance,
-    searchGuidance,
-    detailGuidance,
-    applyGuidance,
-  });
+  const applyGuidance = pick(reviewOverride?.applyGuidance, checkNotes.apply);
   const warnings = uniqueStrings([
-    ...filterSourceDebugWarnings(reviewOverride?.warnings ?? []),
-    ...draftWarnings,
+    ...cleanLines(reviewOverride?.warnings ?? []),
+    ...filterSourceDebugWarnings(
+      attempts.flatMap((attempt) => [attempt.blockerSummary]),
+    ),
     ...(hasPartialTimeoutEvidence
       ? [
           "The check ran out of time before it could finish its report, so this guidance is partial. Check the source again to complete it.",
@@ -222,28 +118,16 @@ export function synthesizeSourceInstructionArtifact(
           "The check ended before it could report what it learned, so this guidance is a draft. Check the source again to complete it.",
         ]
       : []),
-    ...(hasSearchGuidanceWithoutPositiveProof
-      ? [
-          "The check saw search and filter controls but did not confirm that any of them changes the results.",
-        ]
-      : []),
-    ...(hasOnlyVisibilitySearchGuidance
-      ? [
-          "The check saw search and filter controls but did not confirm that any of them changes the results.",
-        ]
-      : []),
-    ...reconciledGuidance.warnings,
-    ...quality.qualityWarnings,
   ]);
-  const hasPromotionBlocker =
-    hasPartialTimeoutEvidence ||
-    hasUnstructuredFailure ||
-    hasSearchGuidanceWithoutPositiveProof ||
-    hasOnlyVisibilitySearchGuidance;
+  const hasGuidance =
+    navigationGuidance.length + searchGuidance.length + detailGuidance.length >
+    0;
   const status =
     verification?.outcome === "passed" &&
-    quality.qualifiesForValidation &&
-    !hasPromotionBlocker
+    reviewOverride?.ready === true &&
+    hasGuidance &&
+    !hasPartialTimeoutEvidence &&
+    !hasUnstructuredFailure
       ? "validated"
       : warnings.some((warning) =>
             warning.toLowerCase().includes("unsupported"),

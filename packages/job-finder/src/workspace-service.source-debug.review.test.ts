@@ -217,7 +217,7 @@ describe("createJobFinderWorkspaceService", () => {
     expect(reviewCallCount).toBe(0);
   });
 
-  test("final source-instruction reviewer is told to write future-run instructions and noisy extraction counts are filtered out", async () => {
+  test("final source-instruction reviewer is told to write future-run instructions, and its lines stand as returned", async () => {
     const repository = createInMemoryJobFinderRepository({
       ...createSeed(),
       savedJobs: [],
@@ -239,16 +239,14 @@ describe("createJobFinderWorkspaceService", () => {
         reviewPrompts.push(extractLatestUserPrompt(messages));
         return Promise.resolve({
           content: JSON.stringify({
+            ready: true,
             navigationGuidance: [
-              "0 or 1 jobs extracted from the current page.",
               "Use the show all collection route before broader search.",
             ],
             searchGuidance: [
-              "Only 2 jobs found during this run.",
               "Use the visible location filter to narrow the listings by city.",
             ],
             detailGuidance: [
-              "Job extraction consistently returned 0 despite visible job cards - tool limitation.",
               "Open same-host detail pages as the canonical source of job data.",
             ],
             applyGuidance: [
@@ -323,9 +321,6 @@ describe("createJobFinderWorkspaceService", () => {
     expect(learnedLines).toContain("show all collection route");
     expect(learnedLines).toContain("visible location filter");
     expect(learnedLines).toContain("same-host detail pages");
-    expect(learnedLines).not.toContain("0 or 1 jobs extracted");
-    expect(learnedLines).not.toContain("only 2 jobs found");
-    expect(learnedLines).not.toContain("tool limitation");
     expect(latestArtifact?.intelligence?.collection).toBeDefined();
     expect(latestArtifact?.intelligence?.collection?.preferredMethod).toBe("listing_route");
   });

@@ -1,9 +1,11 @@
 import type {
   CandidateProfile,
+  FitJudgment,
   JobPosting,
   JobSearchPreferences,
   MatchAssessment,
 } from "@nordri/contracts";
+import { applyFitJudgment, readCarriedJudgment } from "./fit-judgment-apply";
 import {
   createMatchAssessmentPostingInput,
   type MatchAssessmentPostingInput,
@@ -41,8 +43,12 @@ import {
  * Revision 12 (scorer version 13): explicit summary language evidence and
  * customer implementation requirements now participate in assessment.
  */
-export const MATCH_ASSESSMENT_SCORER_VERSION = 13;
-const MATCH_ASSESSMENT_LOGIC_REVISION = 12;
+// Revision 13: country codes, discipline and title-level evidence, and model
+// requirement comparisons replace scores written by the previous logic.
+// Revision 14 (scorer version 15): the model decides fit (ADR 0041). Rule
+// scores written before are retired; a stored model verdict is kept.
+export const MATCH_ASSESSMENT_SCORER_VERSION = 15;
+const MATCH_ASSESSMENT_LOGIC_REVISION = 14;
 
 function stableSerialize(value: unknown): string {
   if (value === null || typeof value !== "object") {
@@ -92,6 +98,15 @@ export function createMatchAssessmentPostingFingerprint(
   );
 }
 
+function assessmentCacheKey(
+  postingFingerprint: string,
+  judgment: FitJudgment | null | undefined,
+): string {
+  return judgment
+    ? `${postingFingerprint}|${judgment.source}|${judgment.judgedAt}`
+    : postingFingerprint;
+}
+
 export type MatchAssessmentCalculator = (
   profile: CandidateProfile,
   searchPreferences: JobSearchPreferences,
@@ -110,23 +125,36 @@ export function createMatchAssessmentSession(input: {
   const cache = new Map<string, MatchAssessment>();
   let computationCount = 0;
 
-  const assess = (posting: JobPosting): MatchAssessment => {
+  /**
+   * Scores a posting. A job the model already judged keeps that verdict
+   * (ADR 0041), even when the listing or the goals changed since; the next
+   * judging pass replaces a stale verdict, and until then it beats a rule
+   * guess.
+   */
+  const assess = (
+    posting: JobPosting,
+    carried: FitJudgment | null = readCarriedJudgment(posting),
+  ): MatchAssessment => {
     const postingInput = createMatchAssessmentPostingInput(posting);
     const postingFingerprint =
       createMatchAssessmentPostingFingerprint(postingInput);
-    const cached = cache.get(postingFingerprint);
+    const cacheKey = assessmentCacheKey(postingFingerprint, carried);
+    const cached = cache.get(cacheKey);
     if (cached) {
       return cached;
     }
 
     computationCount += 1;
-    const assessment = {
+    const calculated = {
       ...input.calculate(input.profile, input.searchPreferences, postingInput),
       scorerVersion: MATCH_ASSESSMENT_SCORER_VERSION,
       contextFingerprint,
       postingFingerprint,
     };
-    cache.set(postingFingerprint, assessment);
+    const assessment = carried
+      ? applyFitJudgment(calculated, carried)
+      : calculated;
+    cache.set(cacheKey, assessment);
     return assessment;
   };
 
@@ -142,16 +170,35 @@ export function createMatchAssessmentSession(input: {
       persistedAssessment.contextFingerprint === contextFingerprint &&
       persistedAssessment.postingFingerprint === postingFingerprint
     ) {
-      cache.set(postingFingerprint, persistedAssessment);
+      cache.set(
+        assessmentCacheKey(postingFingerprint, persistedAssessment.judgment),
+        persistedAssessment,
+      );
       return persistedAssessment;
     }
 
-    return assess(posting);
+    return assess(posting, persistedAssessment?.judgment ?? null);
+  };
+
+  const remember = (
+    posting: JobPosting,
+    assessment: MatchAssessment,
+  ): MatchAssessment => {
+    const postingFingerprint = createMatchAssessmentPostingFingerprint(posting);
+    const bound = {
+      ...assessment,
+      scorerVersion: MATCH_ASSESSMENT_SCORER_VERSION,
+      contextFingerprint,
+      postingFingerprint,
+    };
+    cache.set(assessmentCacheKey(postingFingerprint, bound.judgment), bound);
+    return bound;
   };
 
   return {
     assess,
     assessPersisted,
+    remember,
     contextFingerprint,
     getComputationCount: () => computationCount,
   };

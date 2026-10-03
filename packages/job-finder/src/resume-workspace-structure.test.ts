@@ -819,7 +819,7 @@ describe("buildResumeRenderDocument", () => {
           ...seed.profile.experiences[0]!,
           id: "experience_full_stack",
           title: "Full-Stack Software Engineer",
-          companyName: "INFOTECH L.L.C",
+          companyName: "BRIDGEWAY L.L.C",
           location: "Hybrid, Kosovo",
           startDate: "2019-08",
           endDate: "2021-10",
@@ -848,7 +848,7 @@ describe("buildResumeRenderDocument", () => {
         experienceEntries: [
           {
             title: "Full-Stack Software Engineer",
-            employer: "INFOTECH L.L.C",
+            employer: "BRIDGEWAY L.L.C",
             location: "Hybrid, Kosovo",
             dateRange: "Hybrid, Kosovo",
             summary: null,
@@ -952,6 +952,7 @@ describe("buildResumeRenderDocument", () => {
       ?.entries.find((entry) => entry.profileRecordId === "cert_aws");
 
     expect(education).toMatchObject({
+      subtitle: "MA, Design Products",
       dateRange: "Sep 2012 – Jun 2014",
       startDate: "2012-09",
       endDate: "2014-06",
@@ -972,7 +973,7 @@ describe("buildResumeRenderDocument", () => {
           ...seed.profile.experiences[0]!,
           id: "experience_operations_system",
           title: "Operations Systems Engineer",
-          companyName: "AUTOMATEDPROS",
+          companyName: "NORTHLANE",
           location: "Remote, Kosovo",
           startDate: "01/07/2023",
           endDate: null,
@@ -1005,7 +1006,7 @@ describe("buildResumeRenderDocument", () => {
             employer: "Generated Employer Name",
             location: "Generated Location",
             dateRange: "Remote, Kosovo | Present",
-            summary: "AUTOMATEDPROS Remote Kosovo Present",
+            summary: "NORTHLANE Remote Kosovo Present",
             bullets: ["React and WebSockets"],
             profileRecordId: "experience_operations_system",
           },
@@ -1029,7 +1030,7 @@ describe("buildResumeRenderDocument", () => {
 
     expect(entry?.dateRange).toBe("Jul 2023 – Present");
     expect(entry?.title).toBe("Operations Systems Engineer");
-    expect(entry?.subtitle).toBe("AUTOMATEDPROS");
+    expect(entry?.subtitle).toBe("NORTHLANE");
     expect(entry?.location).toBe("Remote, Kosovo");
     expect(entry?.startDate).toBe("01/07/2023");
     expect(entry?.endDate).toBeNull();
@@ -1463,4 +1464,152 @@ describe("buildResumeDraftFromTailoredDraft work-history acknowledgment carry-fo
 
     expect(draft.workHistoryReviewAcknowledgments).toEqual([]);
   });
+});
+
+test("education graduation-only dates keep unknown starts empty", () => {
+  const seed = createSeed();
+  const education = {
+    ...seed.profile.education[0]!,
+    id: "student",
+    schoolName: "Example University",
+    degree: "MSc",
+    startDate: null,
+    endDate: "2027-03",
+    summary: "Expected graduation March 2027",
+    isDraft: false,
+  };
+  const draft = buildResumeDraftFromTailoredDraft({
+    job: seed.savedJobs[0]!,
+    templateId: seed.settings.resumeTemplateId,
+    createdAt: "2026-10-02T10:00:00.000Z",
+    generationMethod: "ai",
+    profile: { ...seed.profile, education: [education] },
+    draft: {
+      label: "Tailored Resume",
+      summary: "",
+      experienceHighlights: [],
+      coreSkills: [],
+      targetedKeywords: [],
+      experienceEntries: [],
+      projectEntries: [],
+      educationEntries: [
+        {
+          school: education.schoolName,
+          degree: education.degree,
+          fieldOfStudy: null,
+          location: null,
+          dateRange: "March 2027",
+          summary: education.summary,
+          profileRecordId: education.id,
+        },
+      ],
+      certificationEntries: [],
+      coverageMetadata: [],
+      additionalSkills: [],
+      languages: [],
+      fullText: "",
+      compatibilityScore: 80,
+      notes: [],
+    },
+  });
+  const entry = draft.sections.find((section) => section.kind === "education")
+    ?.entries[0];
+  expect(entry?.startDate).toBeNull();
+  expect(entry?.endDate).toBe("2027-03");
+  expect(entry?.summary).toBe("Expected graduation March 2027");
+});
+
+test("generated old achievement wording is replaced by the saved edit before rendering", () => {
+  const seed = createSeed();
+  const edited =
+    "Redesigned pension-app onboarding, lifting activation 23% in eight weeks.";
+  const old =
+    "Redesigned onboarding for a pensions app; activation up 23% in eight weeks.";
+  const experience = {
+    ...seed.profile.experiences[0]!,
+    id: "designer",
+    summary: old,
+    achievements: [edited],
+  };
+  const profile = { ...seed.profile, experiences: [experience] };
+  const draft = buildResumeDraftFromTailoredDraft({
+    job: seed.savedJobs[0]!,
+    templateId: seed.settings.resumeTemplateId,
+    createdAt: "2026-10-02T10:00:00.000Z",
+    generationMethod: "ai",
+    profile,
+    draft: {
+      label: "Tailored Resume",
+      summary: "",
+      experienceHighlights: [],
+      coreSkills: [],
+      targetedKeywords: [],
+      experienceEntries: [
+        {
+          title: experience.title,
+          employer: experience.companyName,
+          location: null,
+          dateRange: null,
+          summary: null,
+          bullets: [old],
+          profileRecordId: experience.id,
+        },
+      ],
+      projectEntries: [],
+      educationEntries: [],
+      certificationEntries: [],
+      coverageMetadata: [],
+      additionalSkills: [],
+      languages: [],
+      fullText: "",
+      compatibilityScore: 80,
+      notes: [],
+    },
+  });
+  const entry = draft.sections.find((section) => section.kind === "experience")
+    ?.entries[0];
+  expect(entry?.bullets.map((bullet) => bullet.text)).toEqual([edited]);
+});
+
+test("a degree that already names its field does not repeat it", () => {
+  const seed = createSeed();
+  const draft = buildResumeDraftFromTailoredDraft({
+    job: seed.savedJobs[0]!,
+    templateId: seed.settings.resumeTemplateId,
+    createdAt: "2026-03-20T10:04:00.000Z",
+    generationMethod: "ai",
+    profile: seed.profile,
+    draft: {
+      label: "Tailored Resume",
+      summary: "Grounded design summary.",
+      experienceHighlights: [],
+      coreSkills: ["Figma"],
+      targetedKeywords: [],
+      experienceEntries: [],
+      projectEntries: [],
+      educationEntries: [
+        {
+          school: "Central Saint Martins",
+          degree: "BA (Hons) Graphic Communication Design",
+          fieldOfStudy: "Graphic Communication Design",
+          location: null,
+          dateRange: "2015",
+          summary: null,
+          profileRecordId: null,
+        },
+      ],
+      certificationEntries: [],
+      coverageMetadata: [],
+      additionalSkills: [],
+      languages: [],
+      fullText: "Grounded design summary.",
+      compatibilityScore: 80,
+      notes: [],
+    },
+  });
+
+  expect(
+    draft.sections.find((section) => section.kind === "education")?.entries[0]
+      ?.subtitle,
+  ).toBe("BA (Hons) Graphic Communication Design");
 });

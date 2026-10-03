@@ -2206,4 +2206,35 @@ describe("ResumeWorkspaceScreen", () => {
     // floating panel at every width. These four sizes are the ones the gate
     // captures.
   });
+  it("hides an entry in the draft being saved and can show it again", () => {
+    const workspace = buildWorkspace();
+    const experience = workspace.draft.sections.find(
+      (section) => section.kind === "experience",
+    )!;
+    const entry = experience.entries[0]!;
+    const onSaveDraft = vi.fn();
+    const onApplyPatch = vi.fn();
+    renderScreen({ workspace, onSaveDraft, onApplyPatch });
+    openEditorSection(experience.id);
+    fireEvent.click(
+      screen.getByRole("button", { name: `Hide ${entry.title}` }),
+    );
+    expect(
+      screen.getByRole("button", { name: `Show ${entry.title}` }),
+    ).toBeTruthy();
+    fireEvent.click(screen.getAllByRole("button", { name: "Save draft" })[0]!);
+    const saved = onSaveDraft.mock.calls[0]?.[0] as ResumeDraft;
+    expect(
+      saved.sections
+        .find((section) => section.id === experience.id)
+        ?.entries.find((item) => item.id === entry.id)?.included,
+    ).toBe(false);
+    expect(onApplyPatch).not.toHaveBeenCalled();
+    fireEvent.click(
+      screen.getByRole("button", { name: `Show ${entry.title}` }),
+    );
+    expect(
+      screen.getByRole("button", { name: `Hide ${entry.title}` }),
+    ).toBeTruthy();
+  });
 });

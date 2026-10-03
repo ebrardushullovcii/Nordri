@@ -9,10 +9,7 @@ import {
   AssistantCheckpointSchema,
   type AssistantCheckpoint,
 } from "@nordri/contracts";
-import type {
-  AssistantRepository,
-  AssistantTranscriptItem,
-} from "@nordri/db";
+import type { AssistantRepository, AssistantTranscriptItem } from "@nordri/db";
 import { z } from "zod";
 
 /**
@@ -204,6 +201,7 @@ export interface AssembleOptions {
   repository: AssistantRepository;
   conversationId: string;
   systemPrompt: string;
+  currentContext?: string;
   turnMessages: readonly AgentLoopMessage[];
   contextWindowTokens: number;
   maxOutputTokens: number;
@@ -240,13 +238,14 @@ function compose(
   tail: readonly AssistantTranscriptItem[],
   turnMessages: readonly AgentLoopMessage[],
   pinned: string | null = null,
+  currentContext?: string,
 ): AgentLoopMessage[] {
   const history = tail
     .map(toModelMessage)
     .filter((message): message is AgentLoopMessage => message !== null);
   // A stored tail must start at a person message so no tool result is orphaned.
   const start = history.findIndex((message) => message.role === "user");
-  return [
+  const messages: AgentLoopMessage[] = [
     { role: "system", content: systemPrompt },
     ...(checkpoint
       ? [
@@ -261,6 +260,16 @@ function compose(
     ...(start > 0 ? history.slice(start) : start === 0 ? history : []),
     ...turnMessages,
   ];
+  if (currentContext) {
+    const at = messages.findLastIndex((message) => message.role === "user");
+    const message = messages[at];
+    if (message)
+      messages[at] = {
+        ...message,
+        content: `${message.content.replace(/<context>[\s\S]*?<\/context>/gu, "").trim()}\n${currentContext}`,
+      };
+  }
+  return messages;
 }
 
 export async function assembleModelInput(
@@ -305,6 +314,7 @@ export async function assembleModelInput(
           tail,
           turnMessages,
           checkpoint ? pinnedForMeasure : null,
+          options.currentContext,
         ),
       ),
     );
@@ -448,6 +458,7 @@ export async function assembleModelInput(
     tail,
     turnMessages,
     checkpoint ? await pinned() : null,
+    options.currentContext,
   );
 }
 

@@ -23,9 +23,15 @@ function scoredAssessment(
     gaps: [],
     recommendation: "review_before_applying",
     recommendationRationale: "test",
-    // One decided, non-location requirement is what earns a printable
-    // percentage, so this row's band is decided by the score rather than by
-    // the withheld-score path.
+    // The model's verdict is what earns a printable percentage (ADR 0041),
+    // so this row's band is decided by the score rather than by the
+    // withheld-score path.
+    judgment: {
+      source: "batch",
+      judgedAt: "2026-10-02T10:00:00.000Z",
+      score: overrides.score ?? 24,
+      recommendation: overrides.recommendation ?? "review_before_applying",
+    },
     requirements: [
       {
         id: "req_paid_media",

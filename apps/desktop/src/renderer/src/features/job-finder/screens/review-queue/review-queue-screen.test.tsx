@@ -678,13 +678,13 @@ describe("ReviewQueueScreen job details honesty", () => {
     // The withheld rule now names what was actually checked instead of
     // printing a percentage the app has not earned.
     expect(screen.getByTestId("review-queue-fit-score").textContent).toBe(
-      "Title-only estimate",
+      "Not judged yet",
     );
     // Once beside the score, once inside the breakdown that would otherwise
     // read as five contradictions of it.
     expect(
       screen.getAllByText(
-        "Fit is based on the title alone. Review the listing details before applying.",
+        "The AI judges each job against your profile and goals after a search. Choose Read and assess listing to judge this one now.",
       ),
     ).toHaveLength(2);
     expect(
@@ -756,11 +756,10 @@ describe("ReviewQueueScreen job details honesty", () => {
     });
 
     expect(screen.getByTestId("review-queue-fit-score").textContent).toBe(
-      "Title-only estimate",
+      "Not judged yet",
     );
-    expect(screen.queryByText(/54% fit/)).toBeNull();
-    // The number is not destroyed: it stays inside the breakdown, qualified.
-    expect(screen.getByText("Title-only estimate: 54%")).toBeTruthy();
+    // No number anywhere until the model has judged the job (ADR 0041).
+    expect(screen.queryByText(/54%/)).toBeNull();
   });
 
   it("keeps real listing text and a plain score when evidence was checked", () => {
@@ -777,6 +776,12 @@ describe("ReviewQueueScreen job details honesty", () => {
         ...job,
         matchAssessment: {
           ...job.matchAssessment,
+          judgment: {
+            source: "batch",
+            judgedAt: "2026-10-02T10:00:00.000Z",
+            score: 64,
+            recommendation: "review_before_applying",
+          },
           requirements: [
             {
               id: "req_1",

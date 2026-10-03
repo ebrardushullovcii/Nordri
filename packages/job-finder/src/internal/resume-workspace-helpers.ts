@@ -1,15 +1,13 @@
 import {
+  resumeFactIsCovered,
+  resumeSentences,
+} from "./resume-content-comparison";
+import {
   buildCandidateSkillBank,
   buildResumeSkillContextFilter,
-  classifyResumeClaimGrounding,
-  collectListingRequestedSkills,
-  extractYearsOfExperienceNumbers,
-  isInjectableListingSkillName,
   isSpokenLanguageResumeChrome,
-  listingTextContainsTerm,
   looksLikeSpokenLanguageSkillEntry,
   skillsAreEquivalent,
-  type ResumeClaimGroundingResult,
   type ResumeGenerationEvidenceItem,
   type TailoredResumeDraft,
 } from "@nordri/ai-providers";
@@ -167,55 +165,6 @@ export function resolveResumeTemplateLabel(input: {
   );
 }
 
-function toTokenSet(value: string): Set<string> {
-  return new Set(tokenize(value));
-}
-
-function calculateTokenOverlap(left: string, right: string): number {
-  const leftTokens = [...toTokenSet(left)];
-  const rightTokens = toTokenSet(right);
-
-  if (leftTokens.length === 0 || rightTokens.size === 0) {
-    return 0;
-  }
-
-  const matched = leftTokens.filter((token) => rightTokens.has(token)).length;
-  return matched / Math.max(Math.min(leftTokens.length, rightTokens.size), 1);
-}
-
-function buildJobPhraseBank(job: SavedJob): string[] {
-  return uniqueStrings([
-    job.summary ?? "",
-    ...job.responsibilities,
-    ...job.minimumQualifications,
-    ...job.preferredQualifications,
-    ...job.description
-      .split(/[\n.;!?]+/)
-      .map((entry) => entry.trim())
-      .filter((entry) => tokenize(entry).length >= 5)
-      .slice(0, 12),
-  ]).filter((entry) => tokenize(entry).length >= 5);
-}
-
-/**
- * Compact listing text for the aggressive claim relaxation. The relaxation
- * bounds added technologies to ones the listing itself names, so this text —
- * not the classifier's judgment — is what a listing-anchored term must come
- * from.
- */
-function buildVerifierJobListingText(job: SavedJob): string {
-  return [
-    job.summary ?? "",
-    job.description,
-    ...job.responsibilities,
-    ...job.minimumQualifications,
-    ...job.preferredQualifications,
-    ...job.keySkills,
-  ]
-    .filter((entry) => entry.trim())
-    .join("\n");
-}
-
 /**
  * Whether this section is the draft's core-skills list. Read from the draft
  * rather than a label match so a renamed section still counts.
@@ -223,114 +172,6 @@ function buildVerifierJobListingText(job: SavedJob): string {
 function isSkillsResumeSection(draft: ResumeDraft, sectionId: string): boolean {
   const section = draft.sections.find((entry) => entry.id === sectionId);
   return section?.kind === "skills" || section?.kind === "keywords";
-}
-
-function buildProfileSupportBank(
-  profile: CandidateProfile | undefined,
-): string[] {
-  if (!profile) {
-    return [];
-  }
-
-  return uniqueStrings(
-    [
-      profile.baseResume.textContent ?? "",
-      profile.summary ?? "",
-      profile.professionalSummary.fullSummary ?? "",
-      profile.professionalSummary.shortValueProposition ?? "",
-      profile.yearsExperience > 0
-        ? `${profile.yearsExperience} years of experience`
-        : "",
-      profile.narrative.professionalStory ?? "",
-      profile.narrative.nextChapterSummary ?? "",
-      profile.narrative.careerTransitionSummary ?? "",
-      ...profile.narrative.differentiators,
-      ...profile.skills,
-      ...profile.skillGroups.coreSkills,
-      ...profile.skillGroups.tools,
-      ...profile.skillGroups.languagesAndFrameworks,
-      ...profile.experiences.flatMap((experience) => [
-        experience.title,
-        experience.companyName,
-        experience.summary,
-        ...experience.achievements,
-      ]),
-      ...profile.projects.flatMap((project) => [
-        project.name,
-        project.role,
-        project.summary,
-        project.outcome,
-        ...project.skills,
-      ]),
-      ...profile.education.flatMap((education) => [
-        education.schoolName,
-        education.degree,
-        education.fieldOfStudy,
-        education.summary,
-      ]),
-      ...profile.certifications.flatMap((certification) => [
-        certification.name,
-        certification.issuer,
-      ]),
-      ...profile.proofBank.flatMap((proof) => [
-        proof.title,
-        proof.claim,
-        proof.heroMetric,
-        proof.supportingContext,
-      ]),
-    ].filter((entry): entry is string => Boolean(entry && entry.trim())),
-  );
-}
-
-function isSupportedByProfile(
-  content: string,
-  profileSupportBank: readonly string[],
-): boolean {
-  const normalized = normalizeText(content);
-  if (!normalized) {
-    return false;
-  }
-
-  return profileSupportBank.some((entry) => {
-    const normalizedEntry = normalizeText(entry);
-    const entryTokenCount = tokenize(entry).length;
-    const contentTokenCount = tokenize(content).length;
-
-    if (!normalizedEntry) {
-      return false;
-    }
-
-    if (entryTokenCount <= 1 || contentTokenCount <= 1) {
-      return normalizedEntry === normalized;
-    }
-
-    return (
-      matchesWholePhrase(entry, content) ||
-      matchesWholePhrase(content, entry) ||
-      calculateTokenOverlap(content, entry) >= 0.72
-    );
-  });
-}
-
-function isGroundedVisibleSkill(
-  content: string,
-  candidateSkillBank: readonly string[],
-): boolean {
-  const normalized = normalizeText(content);
-  const contentTokens = tokenize(content);
-
-  if (!normalized || contentTokens.length === 0 || contentTokens.length > 6) {
-    return false;
-  }
-
-  return candidateSkillBank.some((skill) => {
-    // The claim must itself be a saved skill name, including common aliases
-    // such as Postgres/PostgreSQL. A listing sentence that merely mentions
-    // React is not a grounded skill.
-    return (
-      skillsAreEquivalent(skill, content) || matchesWholePhrase(skill, content)
-    );
-  });
 }
 
 function buildCandidateLanguageBank(
@@ -377,112 +218,6 @@ function isLanguageSection(
   );
 }
 
-function isShortJobTermBleed(
-  content: string,
-  job: SavedJob,
-  profileSupportBank: readonly string[],
-): boolean {
-  const normalizedContent = normalizeText(content);
-
-  if (!normalizedContent || tokenize(content).length > 4) {
-    return false;
-  }
-
-  if (isSupportedByProfile(content, profileSupportBank)) {
-    return false;
-  }
-
-  const shortJobTerms = uniqueStrings(
-    [
-      job.company,
-      job.title,
-      job.team ?? "",
-      job.department ?? "",
-      job.atsProvider ?? "",
-      ...job.benefits,
-      ...job.screeningHints.remoteGeographies,
-    ].filter(Boolean),
-  );
-
-  return shortJobTerms.some(
-    (term) => normalizeText(term) && normalizeText(term) === normalizedContent,
-  );
-}
-
-function isJobDescriptionBleed(
-  content: string,
-  jobPhraseBank: readonly string[],
-  profileSupportBank: readonly string[],
-): boolean {
-  const tokenCount = tokenize(content).length;
-  if (tokenCount < 5) {
-    return false;
-  }
-
-  const copiedPhrase = jobPhraseBank.find((phrase) => {
-    const normalizedPhrase = normalizeText(phrase);
-    const normalizedContent = normalizeText(content);
-    return (
-      normalizedPhrase === normalizedContent ||
-      normalizedContent.includes(normalizedPhrase) ||
-      calculateTokenOverlap(content, phrase) >= 0.92
-    );
-  });
-
-  return (
-    Boolean(copiedPhrase) && !isSupportedByProfile(content, profileSupportBank)
-  );
-}
-
-function looksLikeKeywordStuffing(content: string): boolean {
-  const commaCount = (content.match(/,/g) ?? []).length;
-  const tokenCount = tokenize(content).length;
-  return (
-    commaCount >= 4 &&
-    tokenCount >= 8 &&
-    !/\b(led|built|designed|shipped|managed|improved|created|owned|delivered|launched|partnered|collaborated|standardized|reduced|increased|drove|implemented)\b/i.test(
-      content,
-    )
-  );
-}
-
-const resumeActionVerbs = new Set([
-  "achieved",
-  "architected",
-  "automated",
-  "built",
-  "collaborated",
-  "created",
-  "delivered",
-  "deployed",
-  "designed",
-  "developed",
-  "directed",
-  "drove",
-  "engineered",
-  "established",
-  "grew",
-  "implemented",
-  "improved",
-  "increased",
-  "launched",
-  "led",
-  "managed",
-  "mentored",
-  "migrated",
-  "modernized",
-  "optimized",
-  "owned",
-  "partnered",
-  "reduced",
-  "resolved",
-  "scaled",
-  "streamlined",
-  "supported",
-  "tested",
-  "transformed",
-  "validated",
-]);
 const nearDuplicateStopWords = new Set([
   "a",
   "an",
@@ -499,107 +234,6 @@ const nearDuplicateStopWords = new Set([
   "to",
   "with",
 ]);
-const numberWordValues: Record<string, string> = {
-  one: "1",
-  two: "2",
-  three: "3",
-  four: "4",
-  five: "5",
-  six: "6",
-  seven: "7",
-  eight: "8",
-  nine: "9",
-  ten: "10",
-};
-const quantifiedClaimPattern = new RegExp(
-  String.raw`(?:[$€£]\s*(?:\d+(?:[.,]\d+)?)\s*(?:k|m|b|thousand|million|billion)?|(?:\d+(?:[.,]\d+)?|one|two|three|four|five|six|seven|eight|nine|ten)\s*(?:%|percent|x|times|k|m|b|thousand|million|billion|users?|customers?|clients?|teams?|engineers?|employees?|people|projects?|products?|services?|systems?|applications?|apps?|markets?|countries?|regions?|sites?|workflows?|releases?|deployments?|incidents?|bugs?|defects?|tickets?|hours?|days?|weeks?|months?|years?|quarters?))`,
-  "gi",
-);
-
-function normalizeQuantifiedClaim(value: string): string {
-  return normalizeText(
-    value
-      .replace(/[$]/g, " usd ")
-      .replace(/[€]/g, " eur ")
-      .replace(/[£]/g, " gbp ")
-      .replace(/%/g, " percent ")
-      .replace(
-        /\b(one|two|three|four|five|six|seven|eight|nine|ten)\b/gi,
-        (word) => numberWordValues[word.toLowerCase()] ?? word,
-      )
-      .replace(/\bk\b/gi, "thousand")
-      .replace(/\bm\b/gi, "million")
-      .replace(/\bb\b/gi, "billion"),
-  );
-}
-
-function extractQuantifiedClaims(content: string): string[] {
-  return [
-    ...content.matchAll(
-      new RegExp(quantifiedClaimPattern.source, quantifiedClaimPattern.flags),
-    ),
-  ]
-    .map((match) => normalizeQuantifiedClaim(match[0]))
-    .filter(Boolean);
-}
-
-function hasUnsupportedQuantifiedClaim(
-  content: string,
-  profileSupportBank: readonly string[],
-): boolean {
-  const claims = extractQuantifiedClaims(content);
-  if (claims.length === 0) {
-    return false;
-  }
-
-  return claims.some(
-    (claim) =>
-      !profileSupportBank.some(
-        (evidence) =>
-          (extractQuantifiedClaims(evidence).includes(claim) &&
-            calculateTokenOverlap(content, evidence) >= 0.35) ||
-          hasAdjacentYearsOfExperienceEvidence(claim, evidence),
-      ),
-  );
-}
-
-/**
- * The years-of-experience rounding the aggressive generation gate may admit:
- * a claimed "N years" is anchored by an evidenced "N-1 years" from the
- * candidate's own profile. The years unit itself is the anchor, so no token
- * overlap with the rounded claim is required; every other quantified claim
- * still needs verbatim evidence with relevant overlap. Bounded to exactly
- * one year — the generation gate never admits more, and this keeps the
- * verifier from re-rejecting accepted rounded claims.
- */
-function hasAdjacentYearsOfExperienceEvidence(
-  claim: string,
-  evidence: string,
-): boolean {
-  const claimYears = parseYearsOfExperienceClaimValue(claim);
-  if (claimYears === null) {
-    return false;
-  }
-  return extractYearsOfExperienceNumbers(evidence).some(
-    (years) => claimYears === years + 1,
-  );
-}
-
-function parseYearsOfExperienceClaimValue(claim: string): number | null {
-  const match = /^(\d+) years?$/.exec(claim);
-  return match ? Number.parseInt(match[1] ?? "", 10) : null;
-}
-
-function looksLikeUnsupportedAbsoluteClaim(
-  content: string,
-  profileSupportBank: readonly string[],
-): boolean {
-  return (
-    /\b(?:best[- ]in[- ]class|industry[- ]leading|world[- ]class|unmatched|unprecedented|revolutionized|single[- ]handedly|eliminated all|zero (?:bugs|defects|downtime|incidents)|guaranteed)\b/i.test(
-      content,
-    ) && !isSupportedByProfile(content, profileSupportBank)
-  );
-}
 
 function meaningfulLineTokens(content: string): Set<string> {
   return new Set(
@@ -609,7 +243,10 @@ function meaningfulLineTokens(content: string): Set<string> {
   );
 }
 
-function areNearDuplicateResumeLines(left: string, right: string): boolean {
+export function areNearDuplicateResumeLines(
+  left: string,
+  right: string,
+): boolean {
   const leftTokens = meaningfulLineTokens(left);
   const rightTokens = meaningfulLineTokens(right);
   const smallestSize = Math.min(leftTokens.size, rightTokens.size);
@@ -621,73 +258,6 @@ function areNearDuplicateResumeLines(left: string, right: string): boolean {
     rightTokens.has(token),
   ).length;
   return sharedCount / smallestSize >= 0.8;
-}
-
-function looksLikeRepeatedProse(content: string): boolean {
-  if (/\b([a-z][a-z0-9'-]{2,})\s+\1\b/i.test(content)) {
-    return true;
-  }
-
-  const clauses = content
-    .split(/[.!?;]+/)
-    .map((clause) => normalizeText(clause))
-    .filter((clause) => tokenize(clause).length >= 3);
-  return new Set(clauses).size !== clauses.length;
-}
-
-function looksLikeExperienceBulletFragment(content: string): boolean {
-  const trimmed = content.trim();
-  const tokens = tokenize(trimmed);
-  if (!trimmed || tokens.length === 0) {
-    return true;
-  }
-
-  const firstLetter = trimmed.match(/[A-Za-z]/)?.[0] ?? null;
-  const startsWithLowercase = Boolean(
-    firstLetter && firstLetter === firstLetter.toLowerCase(),
-  );
-  const startsWithActionVerb = resumeActionVerbs.has(tokens[0] ?? "");
-  return (
-    startsWithLowercase ||
-    /[,;:]$/.test(trimmed) ||
-    (tokens.length <= 2 && !startsWithActionVerb) ||
-    (tokens.length <= 4 && !/[.!?)]$/.test(trimmed) && !startsWithActionVerb)
-  );
-}
-
-function looksLikeVagueFiller(content: string): boolean {
-  return (
-    /\b(results[- ]driven|detail[- ]oriented|hardworking|team player|fast[- ]paced|responsible for|go-getter|self-starter)\b/i.test(
-      content,
-    ) ||
-    /\b(?:did (?:a lot|lots)|helped (?:out|with) (?:different|many|some|various|a lot of|lots of)|worked on (?:different|many|some|various|a lot of|lots of)|handled (?:different|many|some|various|a lot of|lots of)|good at lots of|great at lots of|lots of (?:stuff|things)|various tasks|and more|really (?:good|great)|super (?:good|great))\b/i.test(
-      content,
-    ) ||
-    /\b(?:i|me|my|mine|myself)\b/i.test(content) ||
-    looksLikeRepeatedProse(content)
-  );
-}
-
-function isProfessionalExperienceSummaryText(
-  summary: string,
-  location: string | null,
-): boolean {
-  const normalized = normalizeText(summary);
-  const tokens = tokenize(summary);
-  const normalizedLocation = normalizeText(location ?? "");
-  return !(
-    looksLikeVagueFiller(summary) ||
-    /\b(?:career\s+(?:change|pivot|transition)|decid(?:ed|ing)\s+to|passion|pivot(?:ed|ing)?\s+(?:back\s+)?to|return(?:ed|ing)?\s+to|seeking\s+(?:a|my)\s+next)\b/i.test(
-      summary,
-    ) ||
-    Boolean(normalizedLocation && normalized === normalizedLocation) ||
-    (tokens.length <= 5 &&
-      /^(?:remote|hybrid|onsite|on\s+site)\b/i.test(summary)) ||
-    (tokens.length <= 5 && summary.includes(",") && !/[.!?]$/.test(summary)) ||
-    (tokens.length <= 5 &&
-      /[A-Z]/.test(summary) &&
-      summary === summary.toUpperCase())
-  );
 }
 
 interface ResumeClaimCandidateEvidence {
@@ -702,7 +272,7 @@ interface ResumeClaimCandidateEvidence {
   profileRecordId: string | null;
 }
 
-interface ResumeClaimDescriptor {
+export interface ResumeClaimDescriptor {
   field: ResumeClaimAssessment["field"];
   sectionId: string;
   entryId: string | null;
@@ -711,7 +281,7 @@ interface ResumeClaimDescriptor {
   origin: ResumeDraft["sections"][number]["origin"];
 }
 
-function buildResumeClaimDescriptors(
+export function buildResumeClaimDescriptors(
   draft: ResumeDraft,
 ): ResumeClaimDescriptor[] {
   return draft.sections
@@ -868,7 +438,7 @@ function splitCandidateEvidence(
     .slice(0, 500);
 }
 
-function buildResumeClaimEvidenceBank(
+export function buildResumeClaimEvidenceBank(
   profile: CandidateProfile | undefined,
 ): ResumeClaimCandidateEvidence[] {
   if (!profile) {
@@ -921,7 +491,7 @@ function buildResumeClaimEvidenceBank(
   add(
     "profile",
     "profile:years-experience",
-    profile.yearsExperience > 0
+    profile.yearsExperience !== null && profile.yearsExperience > 0
       ? `${profile.yearsExperience} years of professional experience`
       : null,
   );
@@ -954,7 +524,9 @@ function buildResumeClaimEvidenceBank(
   for (const [index, skill] of profile.skills.entries()) {
     add("profile", `profile:skill:${index + 1}`, skill, 1);
   }
-  for (const experience of profile.experiences) {
+  for (const experience of profile.experiences.filter(
+    (record) => !record.isDraft,
+  )) {
     add(
       "profile",
       `experience:${experience.id}:summary`,
@@ -1045,25 +617,6 @@ function buildResumeClaimEvidenceBank(
   return evidence;
 }
 
-/**
- * Claim-grounding gap types that assert the claim invents or misappropriates
- * candidate facts (metrics, named technologies, job-only language, absolute
- * claims, leadership/credential claims, or fail-closed elaborations). They
- * block regardless of claim origin. Remaining classifier gaps are style or
- * vacuum signals (voice, length bounds, missing content) and never upgrade a
- * user-authored claim to unsupported on their own.
- */
-const resumeClaimIntegrityGapTypes: ReadonlySet<string> = new Set([
-  "fabricated_metric",
-  "unknown_named_word",
-  "job_only_term",
-  "unsupported_absolute_claim",
-  "unevidenced_leadership_claim",
-  "unevidenced_credential_claim",
-  "unsafe_elaboration",
-  "inference_not_allowed",
-]);
-
 function isGeneratedResumeClaimOrigin(
   origin: ResumeDraft["sections"][number]["origin"],
 ): boolean {
@@ -1094,204 +647,108 @@ function claimTextIsVerbatimInSupport(
   );
 }
 
-function resolveResumeClaimAssessmentStatus(input: {
-  verdict: ReturnType<typeof classifyResumeClaimGrounding>["verdict"];
-  gaps: readonly { type: string }[];
-  relaxations: ResumeClaimGroundingResult["relaxations"];
-  hasSupportEvidence: boolean;
-  supportText: string;
-  claimText: string;
-  generatedClaim: boolean;
-}): ResumeClaimAssessment["status"] {
-  if (input.gaps.some((gap) => resumeClaimIntegrityGapTypes.has(gap.type))) {
-    return "unsupported";
-  }
+/**
+ * Whether a resume line is the person's own without asking anyone: a line
+ * they wrote, a line that repeats their saved records or the resume they
+ * imported word for word, or a skill already on their profile. These need no
+ * fact check. Built once per draft.
+ */
+export function buildPersonsOwnResumeClaimMatcher(input: {
+  draft: ResumeDraft;
+  profile: CandidateProfile | undefined;
+}): (
+  claim: Pick<ResumeClaimDescriptor, "text" | "origin" | "field" | "sectionId">,
+) => boolean {
+  const importedResumeText = input.profile?.baseResume.textContent ?? "";
+  const evidenceTexts = buildResumeClaimEvidenceBank(input.profile).map(
+    (entry) => entry.text,
+  );
+  const skillBank = buildCandidateSkillBank(input.profile);
+  const isVerbatim = (text: string) =>
+    claimTextIsVerbatimInSupport(text, importedResumeText) ||
+    evidenceTexts.some((support) =>
+      claimTextIsVerbatimInSupport(text, support),
+    );
+  return (claim) => {
+    if (!isGeneratedResumeClaimOrigin(claim.origin)) return true;
+    // Long enough that a single shared word cannot pass as the whole line.
+    if (claim.text.trim().length >= 16 && isVerbatim(claim.text)) {
+      return true;
+    }
+    // A project line joins the person's own sentences and their skill list
+    // for it; each part is checked against their saved records on its own.
+    const sentences = splitCandidateEvidence(claim.text, 1);
+    if (
+      sentences.length > 1 &&
+      sentences.every((sentence) => {
+        const listed = /^technologies:\s*(.+?)\.?$/iu.exec(sentence)?.[1];
+        return listed
+          ? listed
+              .split(",")
+              .map((skill) => skill.trim())
+              .every((skill) =>
+                skillBank.some((saved) => skillsAreEquivalent(saved, skill)),
+              )
+          : sentence.length >= 16 && isVerbatim(sentence);
+      })
+    ) {
+      return true;
+    }
+    const section = input.draft.sections.find(
+      (candidate) => candidate.id === claim.sectionId,
+    );
+    return (
+      claim.field === "section_bullet" &&
+      isSkillsResumeSection(input.draft, claim.sectionId) &&
+      !isLanguageSection(section ?? { kind: "skills", label: "" }) &&
+      !looksLikeSpokenLanguageSkillEntry(claim.text) &&
+      skillBank.some((skill) => skillsAreEquivalent(skill, claim.text))
+    );
+  };
+}
 
-  // Aggressive-tailoring relaxations (years of experience rounded up to the
-  // job's requirement, technologies named by the job listing) are
-  // user-confirmation states, never silent acceptances: the generation gate
-  // admits them only flagged inferred and counted in the draft notes, and
-  // export stays blocked until the candidate explicitly confirms each one.
-  // User-authored prose keeps the informational review status.
-  if (input.relaxations.length > 0) {
-    return input.generatedClaim ? "confirm_needed" : "review";
-  }
-
-  if (input.verdict === "weakly_supported") {
-    // Weak support is a human-confirmation state for generated claims and an
-    // informational review state for genuine user-authored prose.
-    return input.generatedClaim ? "confirm_needed" : "review";
-  }
-
-  if (input.verdict === "exact") {
-    return "exact";
-  }
-
-  if (input.verdict === "covered" || input.verdict === "elaborated") {
-    return "paraphrase";
-  }
-
-  // Verdict "unsupported" driven only by style/vacuum gaps (first-person
-  // voice, length bounds, no relevant evidence). Legacy behavior is preserved:
-  // generated claims without any relevant candidate evidence stay unsupported,
-  // everything else lands in review where the shared blocking predicate keeps
-  // gating generated claims while user-authored prose stays informational.
-  if (!input.hasSupportEvidence) {
-    return input.generatedClaim ? "unsupported" : "review";
-  }
-
-  if (claimTextIsVerbatimInSupport(input.claimText, input.supportText)) {
-    return "exact";
-  }
-
-  return "review";
+export function resumeClaimContentHash(text: string): string {
+  return fnv1a32(normalizeText(text));
 }
 
 /**
- * Relevance union for the canonical grounding classifier: every bank entry
- * with whole-phrase containment or at least 0.25 token overlap with the
- * claim. The classifier then selects its own bounded support union from this
- * pool, so generation-accepted claims (whose cited evidence is highly
- * relevant) re-assess against a superset of the evidence that authorized
- * them and keep their accepted verdict.
+ * How each resume line stands against the person's evidence (ADR 0041).
+ *
+ * The model's fact check decides for generated lines; its verdicts are kept
+ * on the draft by the line's content hash, so a reworded line is checked
+ * again. A line the model has not checked yet asks for the person's look
+ * ("review"); no rule guesses in its place. The person's own lines stand.
  */
-function buildRelevantResumeClaimSupport(
-  claimText: string,
-  evidenceBank: readonly ResumeClaimCandidateEvidence[],
-): ResumeClaimCandidateEvidence[] {
-  const ranked = evidenceBank
-    .map((evidence) => ({
-      evidence,
-      overlap: calculateTokenOverlap(claimText, evidence.text),
-      exact:
-        normalizeText(claimText) === normalizeText(evidence.text) ||
-        matchesWholePhrase(evidence.text, claimText) ||
-        (!evidence.ref.sourceId.startsWith("profile:target-role:") &&
-          matchesWholePhrase(claimText, evidence.text)),
-    }))
-    .filter((entry) => entry.exact || entry.overlap >= 0.25)
-    .sort(
-      (left, right) =>
-        Number(right.exact) - Number(left.exact) ||
-        right.overlap - left.overlap,
-    );
-
-  return ranked.map((entry) => entry.evidence);
-}
-
 function assessResumeClaims(input: {
   draft: ResumeDraft;
-  job: SavedJob;
   profile: CandidateProfile | undefined;
   assessedAt: string;
-  jobPhraseBank: readonly string[];
-  profileSupportBank: readonly string[];
 }): ResumeClaimAssessment[] {
-  const evidenceBank = buildResumeClaimEvidenceBank(input.profile);
   const evidenceRefById = new Map(
-    evidenceBank.map((entry) => [entry.ref.id, entry.ref] as const),
+    buildResumeClaimEvidenceBank(input.profile).map(
+      (entry) => [entry.ref.id, entry.ref] as const,
+    ),
   );
-  const jobListingText = buildVerifierJobListingText(input.job);
-  // The person's own imported document. A line lifted verbatim out of it was
-  // written by them, not by the product, so the verifier has no standing to
-  // call it unsupported — it was flagging the candidate's own sentences back
-  // at them.
-  const importedResumeText = input.profile?.baseResume.textContent ?? "";
-  const candidateSkillBank = buildCandidateSkillBank(input.profile);
+  const checks = new Map(
+    (input.draft.claimChecks ?? []).map(
+      (check) => [check.contentHash, check] as const,
+    ),
+  );
+
+  const isPersonsOwn = buildPersonsOwnResumeClaimMatcher(input);
 
   return buildResumeClaimDescriptors(input.draft).map((claim) => {
-    const support = buildRelevantResumeClaimSupport(claim.text, evidenceBank);
-    // Inference and aggressive claim relaxation stay enabled to match the
-    // most permissive legitimate generation posture: conservative
-    // generations only emit fully covered wording (unaffected by these
-    // flags), aggressive generations emit safe elaborations and may emit
-    // relaxed claims (years rounded up to the job's requirement, technologies
-    // named by the listing) that must not flip to unsupported after
-    // acceptance — they surface as confirm_needed so the user owns them.
-    // Hard integrity gaps fire mode-independently either way.
-    const grounding = classifyResumeClaimGrounding({
-      text: claim.text,
-      evidence: support.map((entry) => ({
-        id: entry.ref.id,
-        text: entry.text,
-        scope: entry.classifierScope,
-        profileRecordId: entry.profileRecordId,
-      })),
-      jobCompany: input.job.company,
-      jobSkills: collectListingRequestedSkills(input.job),
-      jobListingText,
-      allowReasonableInference: true,
-      allowAggressiveClaimRelaxation: true,
-    });
-    const legacyIntegrityOverride =
-      hasUnsupportedQuantifiedClaim(claim.text, input.profileSupportBank) ||
-      looksLikeUnsupportedAbsoluteClaim(claim.text, input.profileSupportBank) ||
-      isJobDescriptionBleed(
-        claim.text,
-        input.jobPhraseBank,
-        input.profileSupportBank,
-      ) ||
-      isShortJobTermBleed(claim.text, input.job, input.profileSupportBank);
-    const generatedClaim = isGeneratedResumeClaimOrigin(claim.origin);
-    // A skill the product added because the target listing asked for it.
-    //
-    // ADR 0018 allows exactly this and promises the candidate confirms each
-    // one. The draft note said so while the skill itself sat in Core Skills
-    // with no control at all, because an "unsupported" verdict is not
-    // confirmable — so the promise had nothing to attach to. A
-    // listing-anchored skill is a confirmation the person owns, not a
-    // verdict the product gets to make on their behalf.
-    const isSkillsSectionClaim =
-      claim.field === "section_bullet" &&
-      isSkillsResumeSection(input.draft, claim.sectionId) &&
-      !isLanguageSection(
-        input.draft.sections.find(
-          (section) => section.id === claim.sectionId,
-        ) ?? {
-          kind: "skills",
-          label: "",
-        },
-      );
-    const isProfileGroundedSkill =
-      isSkillsSectionClaim &&
-      !looksLikeSpokenLanguageSkillEntry(claim.text) &&
-      candidateSkillBank.some((skill) =>
-        skillsAreEquivalent(skill, claim.text),
-      );
-    const isListingAnchoredSkillAddition =
-      generatedClaim &&
-      isSkillsSectionClaim &&
-      !isProfileGroundedSkill &&
-      claimTextIsVerbatimInSupport(claim.text, jobListingText);
-    // Long enough that a single shared word cannot pass as the whole line.
-    const isCandidateOwnVerbatimLine =
-      claim.text.trim().length >= 16 &&
-      claimTextIsVerbatimInSupport(claim.text, importedResumeText);
-    const baseStatus = legacyIntegrityOverride
-      ? ("unsupported" as const)
-      : resolveResumeClaimAssessmentStatus({
-          verdict: grounding.verdict,
-          gaps: grounding.gaps,
-          relaxations: grounding.relaxations,
-          hasSupportEvidence: grounding.supportEvidenceIds.length > 0,
-          supportText: support
-            .filter((entry) =>
-              grounding.supportEvidenceIds.includes(entry.ref.id),
-            )
-            .map((entry) => entry.text)
-            .join(" "),
-          claimText: claim.text,
-          generatedClaim,
-        });
-    // Only a skill the evidence cannot support becomes a confirmation: one
-    // the person demonstrably has keeps its own grounded verdict.
-    const status = isCandidateOwnVerbatimLine
-      ? ("exact" as const)
-      : isProfileGroundedSkill
-        ? ("exact" as const)
-        : baseStatus === "unsupported" && isListingAnchoredSkillAddition
-          ? ("confirm_needed" as const)
-          : baseStatus;
+    const contentHash = resumeClaimContentHash(claim.text);
+    const check = checks.get(contentHash) ?? null;
+    const status: ResumeClaimAssessment["status"] = isPersonsOwn(claim)
+      ? "exact"
+      : !check
+        ? "review"
+        : check.verdict === "supported"
+          ? "paraphrase"
+          : check.verdict === "stretch"
+            ? "confirm_needed"
+            : "unsupported";
     const locator = [
       claim.field,
       claim.sectionId,
@@ -1307,17 +764,18 @@ function assessResumeClaims(input: {
       bulletId: claim.bulletId,
       claimText: claim.text,
       claimOrigin: claim.origin,
-      contentHash: fnv1a32(normalizeText(claim.text)),
+      contentHash,
       status,
-      evidenceRefs: grounding.supportEvidenceIds.flatMap((supportId) => {
-        const ref = evidenceRefById.get(supportId);
+      evidenceRefs: (check?.evidenceIds ?? []).flatMap((evidenceId) => {
+        const ref = evidenceRefById.get(evidenceId);
         return ref ? [ref] : [];
       }),
-      verifier: "deterministic_candidate_evidence_v2",
+      verifier: "model_fact_check_v1",
       assessedAt: input.assessedAt,
     };
   });
 }
+
 function hasVisibleEntryContent(input: {
   title?: string | null;
   subtitle?: string | null;
@@ -1358,18 +816,15 @@ function removeBulletDuplicatesFromSummary(
   summary: string,
   bullets: readonly { included: boolean; text: string }[],
 ): string | null {
-  const visibleBulletLines = new Set(
-    bullets
-      .filter((bullet) => bullet.included)
-      .map((bullet) => normalizeVisibleResumeText(bullet.text))
-      .filter(Boolean),
-  );
+  const visibleBulletLines = bullets
+    .filter((bullet) => bullet.included)
+    .map((bullet) => bullet.text);
   const sentences = summary
     .split(/(?<=[.!?])\s+(?=[A-Z])/u)
     .map((sentence) => sentence.trim())
     .filter(Boolean);
   const uniqueSentences = sentences.filter(
-    (sentence) => !visibleBulletLines.has(normalizeVisibleResumeText(sentence)),
+    (sentence) => !resumeFactIsCovered(sentence, visibleBulletLines),
   );
 
   return uniqueSentences.length > 0 ? uniqueSentences.join(" ") : null;
@@ -1395,13 +850,6 @@ export function sanitizeResumeDraft(input: {
   sourceSkills?: readonly string[];
 }): ResumeDraft {
   const isCompetency = buildResumeSkillContextFilter(input.job, input.profile);
-  const jobPhraseBank = buildJobPhraseBank(input.job);
-  const profileSupportBank = buildProfileSupportBank(input.profile);
-  const listingText = buildVerifierJobListingText(input.job);
-  const candidateSkillBank = uniqueStrings([
-    ...buildCandidateSkillBank(input.profile),
-    ...(input.sourceSkills ?? []),
-  ]);
   const candidateLanguageBank = buildCandidateLanguageBank(input.profile);
   const seenLines = new Set<string>();
 
@@ -1434,14 +882,6 @@ export function sanitizeResumeDraft(input: {
         (section.origin === "ai_generated" ||
           section.origin === "assistant_edited" ||
           section.origin === "deterministic_fallback");
-      if (
-        canSuppressGeneratedSummary &&
-        (looksLikeVagueFiller(section.text) ||
-          hasUnsupportedQuantifiedClaim(section.text, profileSupportBank) ||
-          looksLikeUnsupportedAbsoluteClaim(section.text, profileSupportBank))
-      ) {
-        return profileSummaryFallback();
-      }
       if (canSuppressGeneratedSummary) {
         // A summary is the pitch. Generators copy "Position ended in a
         // company-wide reduction" from the imported resume into it, which a
@@ -1456,17 +896,6 @@ export function sanitizeResumeDraft(input: {
         }
       }
       if (seenLines.has(normalizedSectionText)) {
-        return null;
-      }
-      if (
-        isJobDescriptionBleed(section.text, jobPhraseBank, profileSupportBank)
-      ) {
-        return null;
-      }
-      if (
-        looksLikeKeywordStuffing(section.text) &&
-        !isSupportedByProfile(section.text, profileSupportBank)
-      ) {
         return null;
       }
       seenLines.add(normalizedSectionText);
@@ -1516,36 +945,26 @@ export function sanitizeResumeDraft(input: {
             }
           } else if (looksLikeSpokenLanguageSkillEntry(bullet.text)) {
             return false;
-          } else if (
-            !isGroundedVisibleSkill(bullet.text, candidateSkillBank) &&
-            // Aggressive tailoring may add the job's own requested
-            // technologies to the skills section; the bound is a skill-shaped
-            // listing term, never a responsibility sentence that happens to
-            // appear in the posting.
-            !(
-              listingTextContainsTerm(listingText, bullet.text) &&
-              isInjectableListingSkillName(bullet.text)
-            )
-          ) {
-            return false;
           }
-        }
-        if (
-          isJobDescriptionBleed(bullet.text, jobPhraseBank, profileSupportBank)
-        ) {
-          return false;
-        }
-        if (isShortJobTermBleed(bullet.text, input.job, profileSupportBank)) {
-          return false;
-        }
-        if (looksLikeKeywordStuffing(bullet.text)) {
-          return false;
+          // A skill the profile does not show stays: the model's fact check
+          // says whether the person's evidence backs it (ADR 0041).
         }
         seenLines.add(normalized);
         return true;
       });
 
     const nextEntries = section.entries
+      .filter(
+        (entry) =>
+          !input.profile?.experiences.some(
+            (record) =>
+              record.isDraft &&
+              (entry.profileRecordId
+                ? entry.profileRecordId === record.id
+                : entry.title === record.title &&
+                  entry.subtitle === record.companyName),
+          ),
+      )
       .map((entry) => {
         if (entry.locked) {
           if (entry.summary) {
@@ -1569,15 +988,6 @@ export function sanitizeResumeDraft(input: {
           }
           const normalized = normalizeVisibleResumeText(deduplicatedSummary);
           if (seenLines.has(normalized)) {
-            return null;
-          }
-          if (
-            isJobDescriptionBleed(
-              deduplicatedSummary,
-              jobPhraseBank,
-              profileSupportBank,
-            )
-          ) {
             return null;
           }
           seenLines.add(normalized);
@@ -1727,8 +1137,6 @@ export function validateResumeDraft(input: {
   const includedSections = input.draft.sections.filter(
     (section) => section.included,
   );
-  const jobPhraseBank = buildJobPhraseBank(input.job);
-  const profileSupportBank = buildProfileSupportBank(input.profile);
   const includedLineCount = buildPreviewSectionsFromResumeDraft(
     input.draft,
   ).flatMap((section) => section.lines).length;
@@ -1803,91 +1211,6 @@ export function validateResumeDraft(input: {
       sectionId: args.sectionId,
       bulletId: args.bullet.id,
     });
-
-    if (
-      isJobDescriptionBleed(args.bullet.text, jobPhraseBank, profileSupportBank)
-    ) {
-      issues.push({
-        id: `issue_job_bleed_${args.bullet.id}`,
-        severity: "error",
-        category: "job_description_bleed",
-        sectionId: args.sectionId,
-        entryId: args.entryId ?? null,
-        bulletId: args.bullet.id,
-        message:
-          "This bullet reads like copied job-description language instead of grounded candidate evidence.",
-      });
-    }
-
-    if (isShortJobTermBleed(args.bullet.text, input.job, profileSupportBank)) {
-      issues.push({
-        id: `issue_short_job_bleed_${args.bullet.id}`,
-        severity: "error",
-        category: "job_description_bleed",
-        sectionId: args.sectionId,
-        entryId: args.entryId ?? null,
-        bulletId: args.bullet.id,
-        message:
-          "This bullet uses short job-only language that is not grounded in the candidate profile.",
-      });
-    }
-
-    if (looksLikeKeywordStuffing(args.bullet.text)) {
-      issues.push({
-        id: `issue_keyword_stuffing_${args.bullet.id}`,
-        severity: "warning",
-        category: "keyword_stuffing",
-        sectionId: args.sectionId,
-        entryId: args.entryId ?? null,
-        bulletId: args.bullet.id,
-        message:
-          "This line reads like keyword packing instead of resume content.",
-      });
-    }
-
-    if (hasUnsupportedQuantifiedClaim(args.bullet.text, profileSupportBank)) {
-      issues.push({
-        id: `issue_metric_${args.bullet.id}`,
-        severity: "error",
-        category: "invented_metric",
-        sectionId: args.sectionId,
-        entryId: args.entryId ?? null,
-        bulletId: args.bullet.id,
-        message:
-          "This quantified claim is not supported by the canonical resume or profile evidence.",
-      });
-    }
-
-    if (
-      looksLikeUnsupportedAbsoluteClaim(args.bullet.text, profileSupportBank)
-    ) {
-      issues.push({
-        id: `issue_claim_${args.bullet.id}`,
-        severity: "error",
-        category: "unsupported_claim",
-        sectionId: args.sectionId,
-        entryId: args.entryId ?? null,
-        bulletId: args.bullet.id,
-        message:
-          "This absolute claim is not supported by the canonical resume or profile evidence.",
-      });
-    }
-
-    const isFragment =
-      args.isExperience && looksLikeExperienceBulletFragment(args.bullet.text);
-    if (looksLikeVagueFiller(args.bullet.text) || isFragment) {
-      issues.push({
-        id: `issue_filler_${args.bullet.id}`,
-        severity: "info",
-        category: "vague_filler",
-        sectionId: args.sectionId,
-        entryId: args.entryId ?? null,
-        bulletId: args.bullet.id,
-        message: isFragment
-          ? "Rewrite this fragment as a complete, professional accomplishment statement."
-          : "Replace generic or repetitive filler with a grounded accomplishment or skill example.",
-      });
-    }
   }
 
   for (const section of includedSections) {
@@ -1911,47 +1234,6 @@ export function validateResumeDraft(input: {
         bulletId: null,
         message: `${section.label} is included but has no content yet.`,
       });
-    }
-
-    if (section.text) {
-      if (hasUnsupportedQuantifiedClaim(section.text, profileSupportBank)) {
-        issues.push({
-          id: `issue_metric_${section.id}`,
-          severity: "error",
-          category: "invented_metric",
-          sectionId: section.id,
-          entryId: null,
-          bulletId: null,
-          message:
-            "This quantified claim is not supported by the canonical resume or profile evidence.",
-        });
-      }
-
-      if (looksLikeUnsupportedAbsoluteClaim(section.text, profileSupportBank)) {
-        issues.push({
-          id: `issue_claim_${section.id}`,
-          severity: "error",
-          category: "unsupported_claim",
-          sectionId: section.id,
-          entryId: null,
-          bulletId: null,
-          message:
-            "This absolute claim is not supported by the canonical resume or profile evidence.",
-        });
-      }
-
-      if (looksLikeVagueFiller(section.text)) {
-        issues.push({
-          id: `issue_filler_${section.id}`,
-          severity: "info",
-          category: "vague_filler",
-          sectionId: section.id,
-          entryId: null,
-          bulletId: null,
-          message:
-            "Replace generic or repetitive summary prose with grounded professional evidence.",
-        });
-      }
     }
 
     for (const bullet of includedBullets) {
@@ -1995,68 +1277,6 @@ export function validateResumeDraft(input: {
           });
         }
         seenEntryContent.push(entry.summary);
-
-        if (
-          isJobDescriptionBleed(
-            entry.summary,
-            jobPhraseBank,
-            profileSupportBank,
-          )
-        ) {
-          issues.push({
-            id: `issue_job_bleed_entry_${entry.id}`,
-            severity: "error",
-            category: "job_description_bleed",
-            sectionId: section.id,
-            entryId: entry.id,
-            bulletId: null,
-            message: `${section.label} includes summary text that reads like copied job-description language.`,
-          });
-        }
-
-        if (hasUnsupportedQuantifiedClaim(entry.summary, profileSupportBank)) {
-          issues.push({
-            id: `issue_metric_entry_${entry.id}`,
-            severity: "error",
-            category: "invented_metric",
-            sectionId: section.id,
-            entryId: entry.id,
-            bulletId: null,
-            message:
-              "This quantified claim is not supported by the canonical resume or profile evidence.",
-          });
-        }
-
-        if (
-          looksLikeUnsupportedAbsoluteClaim(entry.summary, profileSupportBank)
-        ) {
-          issues.push({
-            id: `issue_claim_entry_${entry.id}`,
-            severity: "error",
-            category: "unsupported_claim",
-            sectionId: section.id,
-            entryId: entry.id,
-            bulletId: null,
-            message:
-              "This absolute claim is not supported by the canonical resume or profile evidence.",
-          });
-        }
-
-        if (
-          entry.entryType === "experience" &&
-          !isProfessionalExperienceSummaryText(entry.summary, entry.location)
-        ) {
-          issues.push({
-            id: `issue_filler_entry_${entry.id}`,
-            severity: "info",
-            category: "vague_filler",
-            sectionId: section.id,
-            entryId: entry.id,
-            bulletId: null,
-            message:
-              "Rewrite this summary as concise, third-person professional evidence.",
-          });
-        }
       }
 
       for (const bullet of entry.bullets.filter((bullet) => bullet.included)) {
@@ -2090,7 +1310,9 @@ export function validateResumeDraft(input: {
         .map((entry) => entry.profileRecordId),
     );
 
-    for (const experience of input.profile.experiences) {
+    for (const experience of input.profile.experiences.filter(
+      (record) => !record.isDraft,
+    )) {
       const isCanonicalRole = Boolean(
         experience.companyName ||
         experience.title ||
@@ -2230,14 +1452,34 @@ export function validateResumeDraft(input: {
 
   const claimAssessments = assessResumeClaims({
     draft: input.draft,
-    job: input.job,
     profile: input.profile,
     assessedAt: validatedAt,
-    jobPhraseBank,
-    profileSupportBank,
   });
+  // The checker's note on a generated line that is not finished resume
+  // writing (a keyword list, a fragment, filler); no word rule decides it
+  // (ADR 0041). The person's own lines are theirs and get no note.
+  const styleNotes = new Map(
+    (input.draft.claimChecks ?? []).flatMap((check) =>
+      check.style ? [[check.contentHash, check.style] as const] : [],
+    ),
+  );
   for (const assessment of claimAssessments) {
     const generatedClaim = isGeneratedResumeClaimOrigin(assessment.claimOrigin);
+    const styleNote =
+      assessment.status !== "exact" && assessment.contentHash
+        ? styleNotes.get(assessment.contentHash)
+        : undefined;
+    if (generatedClaim && styleNote) {
+      issues.push({
+        id: `issue_style_${assessment.id}`,
+        severity: "info",
+        category: "vague_filler",
+        sectionId: assessment.sectionId,
+        entryId: assessment.entryId,
+        bulletId: assessment.bulletId,
+        message: styleNote,
+      });
+    }
     if (assessment.status === "confirm_needed") {
       issues.push({
         id: `issue_claim_confirmation_${assessment.id}`,
@@ -2268,11 +1510,12 @@ export function validateResumeDraft(input: {
     );
     if (input.strategy && assessment.claimOrigin === "ai_generated") {
       const boundary = input.strategy.evidenceBoundaries;
+      // The reference cap bounds the generator's own citations (it is in
+      // its prompt); the fact check's citations are not the writer's to trim.
       const boundaryViolation =
         (assessment.status === "exact" && !boundary.allowExactClaims) ||
         (assessment.status === "paraphrase" &&
-          !boundary.allowParaphrasedClaims) ||
-        assessment.evidenceRefs.length > boundary.maxEvidenceRefsPerBullet;
+          !boundary.allowParaphrasedClaims);
       if (boundaryViolation) {
         issues.push({
           id: `issue_strategy_evidence_boundary_${assessment.id}`,
@@ -2299,9 +1542,12 @@ export function validateResumeDraft(input: {
       sectionId: assessment.sectionId,
       entryId: assessment.entryId,
       bulletId: assessment.bulletId,
-      message: generatedClaim
-        ? "Your saved evidence does not back this generated claim. Rewrite it, or approve it as accurate if you can stand behind it."
-        : "Your saved evidence does not back this line you wrote. Edit it, or approve it as accurate if you can stand behind it.",
+      message:
+        assessment.status === "review"
+          ? "The AI has not checked this generated line against your saved evidence yet. Read it, and approve it as accurate if you can stand behind it."
+          : generatedClaim
+            ? "Your saved evidence does not back this generated claim. Rewrite it, or approve it as accurate if you can stand behind it."
+            : "Your saved evidence does not back this line you wrote. Edit it, or approve it as accurate if you can stand behind it.",
       // Name the exact flagged sentence so the blocker surface can quote it and
       // offer a one-click restore of the text it replaced.
       flaggedText: assessment.claimText,
@@ -2552,6 +1798,12 @@ export function evaluateResumeProposalGrounding(input: {
   profile?: CandidateProfile;
   evaluatedAt: string;
   strategy?: Pick<ResumeGenerationStrategyPolicy, "evidenceBoundaries"> | null;
+  /**
+   * The model's verdicts on the edited draft's lines (ADR 0041), from
+   * evaluateCheckedResumeProposalGrounding. Without them, new generated
+   * lines read as not yet checked.
+   */
+  candidateClaimChecks?: ResumeDraft["claimChecks"];
 }): {
   accepted: boolean;
   approvalBlockers: ResumeProposalApprovalBlocker[];
@@ -2574,6 +1826,12 @@ export function evaluateResumeProposalGrounding(input: {
     job: input.job,
     ...(input.profile ? { profile: input.profile } : {}),
   });
+  if (input.candidateClaimChecks) {
+    candidateDraft = {
+      ...candidateDraft,
+      claimChecks: input.candidateClaimChecks,
+    };
+  }
 
   const gate = evaluateResumeProposalExportGate({
     baselineDraft: input.baselineDraft,
@@ -2645,11 +1903,10 @@ export function buildResumeProposalReplyContent(input: {
     // is one of its tools), so its note usually says why it kept the wording:
     // the person stated the fact themselves. A note that still calls the edit
     // grounded contradicts the gate and is left out.
-    const blockedNote = /\bgrounded\b|\b(?:is|are|fully) (?:supported|backed)\b/iu.test(
-      note,
-    )
-      ? ""
-      : note;
+    const blockedNote =
+      /\bgrounded\b|\b(?:is|are|fully) (?:supported|backed)\b/iu.test(note)
+        ? ""
+        : note;
     return `I prepared ${input.changeCount} resume edit${plural}${scope}, but ${unsupportedCount === 1 ? "1 of them would block approval" : `${unsupportedCount} of them would block approval`}: your saved evidence does not back the new wording. Nothing changed yet. If it is true, accept it and approve it as accurate in the resume checks; otherwise ask me to reword it from your saved evidence.${blockedNote}`;
   }
 
@@ -2719,6 +1976,7 @@ export function buildResumeCoverageComparison(input: {
   const roles = input.profile.experiences
     .filter(
       (experience) =>
+        !experience.isDraft &&
         Boolean(experience.id) &&
         Boolean(experience.title?.trim()) &&
         Boolean(experience.companyName?.trim()),
@@ -2729,9 +1987,9 @@ export function buildResumeCoverageComparison(input: {
       const metadata = coverageByRecordId.get(experience.id) ?? null;
       const isVisible = Boolean(experienceSection?.included && entry?.included);
       const originalClaims = uniqueStrings(
-        [experience.summary, ...experience.achievements].filter(
-          (value): value is string => Boolean(value?.trim()),
-        ),
+        [experience.summary, ...experience.achievements]
+          .filter((value): value is string => Boolean(value?.trim()))
+          .flatMap(resumeSentences),
       );
       const tailoredClaims =
         entry && isVisible
@@ -2744,9 +2002,8 @@ export function buildResumeCoverageComparison(input: {
               ].filter((value): value is string => Boolean(value?.trim())),
             )
           : [];
-      const removedClaimText = compareResumeTextSets(
-        originalClaims,
-        tailoredClaims,
+      const removedClaimText = originalClaims.filter(
+        (claim) => !resumeFactIsCovered(claim, tailoredClaims),
       );
       const addedClaimText = compareResumeTextSets(
         tailoredClaims,
@@ -2771,10 +2028,7 @@ export function buildResumeCoverageComparison(input: {
       }));
       const reordered = match ? match.index !== originalIndex : false;
       const retainedClaimCount = originalClaims.filter((claim) =>
-        tailoredClaims.some(
-          (tailoredClaim) =>
-            normalizeText(tailoredClaim) === normalizeText(claim),
-        ),
+        resumeFactIsCovered(claim, tailoredClaims),
       ).length;
       const status = !entry
         ? ("missing" as const)

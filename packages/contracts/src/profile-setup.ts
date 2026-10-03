@@ -348,10 +348,7 @@ export function createFreshStartCandidateProfile(): CandidateProfile {
       uploadedAt: new Date(0).toISOString(),
       extractionStatus: "needs_text",
     },
-    // No experience has been recorded yet; the schema requires a number, so
-    // the seed supplies the neutral zero rather than omitting the field and
-    // failing the entire first-run bootstrap.
-    yearsExperience: 0,
+    yearsExperience: null,
   });
 }
 

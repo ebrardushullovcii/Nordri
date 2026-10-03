@@ -1,0 +1,19 @@
+Lina Example
+Data Analyst
+lina@example.test
+Experience
+Student Analytics Assistant
+Example Analytics Lab
+October 2024 - Present
+- Analyzed synthetic survey responses.
+Research Assistant
+Example Research Lab
+June 2023 - September 2024
+- Built a fictional reporting dashboard.
+Education
+M.Sc. in Data Science, TU Berlin, 2026
+B.Sc. in Statistics, American University of Beirut, 2024
+Skills
+Python (pandas, scikit-learn), SQL
+Languages
+English (fluent), Arabic (native), German (B1)

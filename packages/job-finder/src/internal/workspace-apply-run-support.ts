@@ -1,3 +1,4 @@
+import { inferQuestionKind } from "@nordri/browser-agent";
 import {
   ApplicationAnswerRecordSchema,
   ApplicationRecordSchema,
@@ -101,6 +102,12 @@ export function reconcileApplyRunAfterConfirmedSubmission(input: {
   const remainsRunning =
     input.run.state === "running" &&
     pendingResults.some((result) => result?.state !== "awaiting_review");
+  const safetyPaused =
+    input.run.state === "paused_for_user_review" &&
+    pendingResults.some(
+      (result) =>
+        result?.state === "planned" && !result.applicationPreparationStartedAt,
+    );
   const completed = pendingJobs === 0 && blockedJobs === 0;
   const state = completed
     ? "completed"
@@ -127,12 +134,18 @@ export function reconcileApplyRunAfterConfirmedSubmission(input: {
     currentJobId,
     updatedAt: input.submittedAt,
     completedAt: completed ? input.submittedAt : null,
-    summary: completed
-      ? input.submittedSummary
-      : `${input.submittedSummary}; ${pendingJobs + blockedJobs} ${pendingJobs + blockedJobs === 1 ? "application is" : "applications are"} still waiting for review.`,
-    detail: completed
-      ? input.submittedDetail
-      : "The confirmed application is recorded. The remaining prepared applications keep their own review state.",
+    summary: safetyPaused
+      ? input.run.summary
+      : completed
+        ? input.submittedSummary
+        : `${input.submittedSummary}; ${pendingJobs + blockedJobs} ${pendingJobs + blockedJobs === 1 ? "application is" : "applications are"} still waiting for review.`,
+    detail: safetyPaused
+      ? input.run.detail
+      : completed
+        ? input.submittedDetail
+        : submittedJobs > 0
+          ? "The confirmed application is recorded. The remaining applications keep their own review state."
+          : "Nothing was confirmed sent. The remaining applications keep their own review state.",
     pendingJobs,
     submittedJobs,
     skippedJobs,
@@ -524,6 +537,8 @@ export function mapExecutionResultToApplyBlockerReason(
   }
 
   switch (blocker.code) {
+    case "application_closed":
+      return "application_closed";
     case "missing_resume":
       return "resume_missing";
     case "requires_manual_review":
@@ -608,6 +623,7 @@ export function buildApplicationPrivacyReceipt(input: {
   generatedAt: string;
   runId: string;
   resultId: string;
+  reviewCard?: ApplicationReviewCard | null;
 }): ApplicationPrivacyReceipt {
   const executionResult = enforcePrepareOnlyExecutionResult(
     input.executionResult,
@@ -619,6 +635,18 @@ export function buildApplicationPrivacyReceipt(input: {
     (entry) => ({ ...entry, artifactRefId: null }),
   );
 
+  const attachedResume = input.reviewCard?.attachments.find(
+    (attachment) =>
+      inferQuestionKind({
+        kind: "file",
+        label: attachment.field,
+        groupLabel: "",
+        placeholder: "",
+      }) === "resume",
+  );
+  const matchesSelectedResume =
+    !attachedResume ||
+    attachedResume.fileName === input.resumeArtifact.fileName;
   return ApplicationPrivacyReceiptSchema.parse({
     generatedAt: input.generatedAt,
     lineage: {
@@ -633,10 +661,14 @@ export function buildApplicationPrivacyReceipt(input: {
     },
     resume: {
       source: input.resumeArtifact.source,
-      sourceDocumentId: input.resumeArtifact.sourceDocumentId,
-      exportArtifactId: input.resumeArtifact.exportArtifactId,
-      fileName: input.resumeArtifact.fileName,
-      sha256: input.resumeArtifact.sha256,
+      sourceDocumentId: matchesSelectedResume
+        ? input.resumeArtifact.sourceDocumentId
+        : null,
+      exportArtifactId: matchesSelectedResume
+        ? input.resumeArtifact.exportArtifactId
+        : null,
+      fileName: attachedResume?.fileName ?? input.resumeArtifact.fileName,
+      sha256: matchesSelectedResume ? input.resumeArtifact.sha256 : null,
     },
     stayedLocal: [
       "profile_data",
@@ -956,6 +988,7 @@ export function buildApplyCopilotArtifacts(input: {
     generatedAt: input.detectedAt,
     runId,
     resultId,
+    reviewCard: input.reviewCard ?? null,
   });
   const result = ApplyJobResultSchema.parse({
     id: resultId,

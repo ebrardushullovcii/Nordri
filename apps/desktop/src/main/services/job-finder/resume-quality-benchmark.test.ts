@@ -102,6 +102,32 @@ describe("desktop resume quality benchmark", () => {
     expect(looksAtsSafeFromStructure(structuralHtml)).toBe(true);
   });
 
+  test("a thin profile passes when its resume is flagged thin instead of padded", () => {
+    const thin = {
+      ...buildCompleteMetrics(),
+      thinOutputFreeRate: 0,
+      keywordCoverageRate: 0.5,
+      issueFreeCaseRate: 0,
+    };
+
+    expect(passesResumeQualityAcceptance(thin)).toBe(false);
+    expect(
+      passesResumeQualityAcceptance(thin, { expectsThinOutput: true }),
+    ).toBe(true);
+    // Padding a thin profile out to a full resume fails the case.
+    expect(
+      passesResumeQualityAcceptance(buildCompleteMetrics(), {
+        expectsThinOutput: true,
+      }),
+    ).toBe(false);
+    expect(
+      passesResumeQualityAcceptance(
+        { ...thin, groundedVisibleSkillRate: 0 },
+        { expectsThinOutput: true },
+      ),
+    ).toBe(false);
+  });
+
   test("computes supported keyword coverage as a ratio instead of an existential match", () => {
     const job = {
       keySkills: ["Figma", "Design Systems"],
@@ -128,6 +154,13 @@ describe("desktop resume quality benchmark", () => {
     expect(
       calculateKeywordCoverageRate(
         "Owns the workflow platform with Figma and Design Systems expertise.",
+        job,
+      ),
+    ).toBe(1);
+    // A plural covers the keyword.
+    expect(
+      calculateKeywordCoverageRate(
+        "Builds workflow platforms and design systems in Figma.",
         job,
       ),
     ).toBe(1);
@@ -491,7 +524,14 @@ describe("desktop resume quality benchmark", () => {
         (entry) => entry.definition.canary,
       ).length * 8,
     );
-    expect(report.aggregate.groundedVisibleSkillRate).toBe(1);
+    // The contamination case injects skills the person does not have; no
+    // rule strips them any more (ADR 0041), so only the other cases are fully
+    // grounded.
+    for (const result of report.cases) {
+      if (result.caseId !== "contamination_guard") {
+        expect(result.metrics.groundedVisibleSkillRate).toBe(1);
+      }
+    }
     expect(report.aggregate.workHistoryRepresentationRate).toBe(1);
     expect(report.aggregate.visibleWorkHistoryCoverageRate).toBe(1);
     expect(report.aggregate.fragmentFreeExperienceBulletRate).toBe(1);
@@ -513,23 +553,6 @@ describe("desktop resume quality benchmark", () => {
       report.cases.every((entry) => entry.generationDiagnostics === null),
     ).toBe(true);
     expect(report.notes).toEqual([]);
-  }, 10_000);
-
-  test("keeps contamination guard cases free of visible skill bleed after sanitation", async () => {
-    const report = await runDesktopResumeQualityBenchmark({
-      benchmarkVersion: "023-test-benchmark-v1",
-      caseIds: ["contamination_guard"],
-    });
-
-    expect(report.cases).toHaveLength(8);
-    for (const result of report.cases) {
-      expect(result.visibleSkills).toEqual(expect.arrayContaining(["Figma"]));
-      expect(result.visibleSkills).not.toContain("Signal Systems");
-      expect(result.visibleSkills).not.toContain("Greenhouse");
-      expect(result.visibleSkills).not.toContain("Remote-first collaboration");
-      expect(result.metrics.groundedVisibleSkillRate).toBe(1);
-      expect(result.metrics.bleedFreeCaseRate).toBe(1);
-    }
   }, 10_000);
 
   test("keeps thin profile cases ATS-safe while retaining the thin-output fail-closed gate", async () => {
@@ -594,8 +617,9 @@ describe("desktop resume quality benchmark", () => {
 
     expect(report.cases).toHaveLength(16);
 
+    // Without a model in this run, composed lines are not fact-checked and
+    // wait for the person (ADR 0041), so issue-free is not asserted here.
     for (const result of report.cases) {
-      expect(result.metrics.issueFreeCaseRate).toBe(1);
       expect(result.metrics.atsRenderPassRate).toBe(1);
       expect(result.metrics.groundedVisibleSkillRate).toBe(1);
       expect(result.visibleSkills.length).toBeGreaterThan(0);
@@ -613,18 +637,18 @@ describe("desktop resume quality benchmark", () => {
 
     expect(realCaseIds).toEqual([
       "real_resume_import_comprehensive_txt",
-      "real_ebrar",
-      "real_ebrar_new",
-      "real_aaron_murphy",
-      "real_paul_asselin",
-      "real_ryan_holstien",
+      "real_persona_lina_txt",
+      "real_persona_priya",
+      "real_persona_dev",
+      "real_persona_maya_docx",
+      "real_persona_roberto_md",
     ]);
   });
 
-  test("keeps every usable Ebrar work-history record visible in balanced tailoring", async () => {
+  test("keeps every usable work-history record of an imported career changer visible in balanced tailoring", async () => {
     const report = await runDesktopResumeQualityBenchmark({
       benchmarkVersion: "030-test-real-fixture-v1",
-      caseIds: ["real_ebrar_new"],
+      caseIds: ["real_persona_maya_docx"],
       templateIds: ["classic_ats"],
     });
 
@@ -639,21 +663,20 @@ describe("desktop resume quality benchmark", () => {
       expect(result.metrics.fragmentFreeExperienceBulletRate).toBe(1);
       expect(result.metrics.professionalExperienceSummaryRate).toBe(1);
       expect(result.metrics.atsRenderPassRate).toBe(1);
-      expect(result.metrics.bleedFreeCaseRate).toBe(1);
       expect(result.issueCategories).not.toContain("thin_output");
     }
 
     const fixture = defaultResumeQualityBenchmarkCases.find(
-      (entry) => entry.definition.id === "real_ebrar_new",
+      (entry) => entry.definition.id === "real_persona_maya_docx",
     );
     expect(fixture).toBeDefined();
     const state = await fixture!.buildState("classic_ats");
-    const technicalSupportRole = state.profile.experiences.find(
+    const summerCampRole = state.profile.experiences.find(
       (experience) =>
-        experience.title === "Technical Support Agent" &&
-        experience.companyName === "BIT BY BIT",
+        experience.title === "Summer Program Coordinator" &&
+        experience.companyName === "Ohio STEM Camps",
     );
-    expect(technicalSupportRole).toBeDefined();
+    expect(summerCampRole).toBeDefined();
     const coverage = deriveResumeCoveragePlan({
       profile: state.profile,
       searchPreferences: state.searchPreferences,
@@ -661,9 +684,7 @@ describe("desktop resume quality benchmark", () => {
     });
 
     expect(
-      coverage.find(
-        (entry) => entry.profileRecordId === technicalSupportRole!.id,
-      ),
+      coverage.find((entry) => entry.profileRecordId === summerCampRole!.id),
     ).toMatchObject({
       classification: "compact",
       careerFamilyFit: "weak",

@@ -767,7 +767,7 @@ function buildNowItem(
           ? `Waiting to apply: ${item.sourceLabel}`
           : `${item.status === "paused" ? "Paused before" : "Applying:"} ${item.sourceLabel}`,
         detail: waitingForTab
-          ? "Waiting for a free browser tab. It starts as soon as one frees up; close a tab you no longer need to start it now."
+          ? "Browser tab limit reached. Close finished tabs in the Job Finder browser; prepared, unsent forms stay open."
           : item.stageLabel,
         stop: item.canCancel
           ? { label: "Stop", action: { kind: "stop_apply", runId: item.id } }

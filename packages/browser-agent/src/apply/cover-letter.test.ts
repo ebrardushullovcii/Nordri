@@ -188,3 +188,54 @@ describe("the letter one application sends", () => {
     expect(looksLikeUsableLetter("Too short.")).toBe(false);
   });
 });
+
+test("letter request supplies current date and role dates, and asks for posting-specific examples", () => {
+  const profile = sources("Research and accessible prototyping.").profile;
+  profile.experiences = [
+    {
+      id: "warehouse",
+      companyName: "Example logistics",
+      title: "Warehouse manager",
+      startDate: "2019-01",
+      isCurrent: true,
+      endDate: null,
+      isDraft: false,
+      summary: null,
+      achievements: [],
+      skills: [],
+      domainTags: [],
+      companyUrl: null,
+      employmentType: null,
+      location: null,
+      workMode: [],
+      peopleManagementScope: null,
+      ownershipScope: null,
+    },
+  ];
+  const request = buildCoverLetterRequest({
+    sources: {
+      profile,
+      resumeText: null,
+      posting: {
+        title: "Designer",
+        company: "Example",
+        location: "Remote",
+        description: "Research and accessible prototyping.",
+      },
+      reusableAnswers: [],
+      documents: [],
+    },
+    preference: {
+      length: "short",
+      tone: "plain_professional",
+      language: null,
+      sample: null,
+    },
+    today: "2026-10-02",
+  });
+  expect(request.prompt).toContain("Today: 2026-10-02");
+  expect(request.prompt).toContain('"startDate": "2019-01"');
+  expect(request.prompt).toContain('"isCurrent": true');
+  expect(request.prompt).toContain("two or three supported examples");
+  expect(request.prompt).toContain("omit the duration");
+});

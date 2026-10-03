@@ -63,6 +63,7 @@ export const DesktopBrowserCommandSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("take_control") }).strict(),
   z.object({ type: z.literal("resume") }).strict(),
   z.object({ type: z.literal("new_tab") }).strict(),
+  z.object({ type: z.literal("close_finished_tabs") }).strict(),
   z
     .object({ type: z.literal("select_tab"), tabId: BrowserTabIdSchema })
     .strict(),

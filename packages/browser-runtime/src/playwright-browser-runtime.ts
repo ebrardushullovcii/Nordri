@@ -1242,12 +1242,6 @@ export async function reserveEmbeddedApplicationTab(
   }
 }
 
-async function getPrimaryPageIfReady(context: BrowserContext): Promise<Page> {
-  const currentPages = context.pages();
-  const liveHttpPage = selectLiveHttpPage(currentPages);
-  return liveHttpPage ?? getPrimaryPage(context);
-}
-
 /** Binds Stop to the currently resolved page, including during navigation. */
 export function createDiscoveryPageAbortBinding(signal?: AbortSignal): {
   dispose: () => void;
@@ -2993,8 +2987,21 @@ export function createBrowserAgentRuntime(
         agentOptions.signal,
       );
 
+      let releaseReservedTab: (() => void) | null = null;
       try {
+        if (usesEmbeddedBrowserHost) {
+          const context = await getContext();
+          releaseReservedTab = await reserveEmbeddedApplicationTab(
+            context,
+            agentOptions.signal,
+            undefined,
+            () => agentOptions.onWaitingForBrowserTab?.(),
+            hostTabCount,
+          );
+        }
         page = await getAgentRunPage(source, agentOptions, (resolvedPage) => {
+          releaseReservedTab?.();
+          releaseReservedTab = null;
           page = resolvedPage;
           releaseDiscoveryPageUse?.();
           releaseDiscoveryPageUse = usePage(resolvedPage);
@@ -3076,9 +3083,6 @@ export function createBrowserAgentRuntime(
             workModes: agentOptions.searchPreferences.workModes ?? [],
           },
           startingUrls: agentOptions.startingUrls,
-          ...(agentOptions.agentHints?.widenReviewBudget
-            ? { weakSameHostBoard: true }
-            : {}),
           navigationPolicy: {
             allowedHostnames: agentOptions.navigationHostnames,
             allowSubdomains: true,
@@ -3103,86 +3107,7 @@ export function createBrowserAgentRuntime(
             ...(agentOptions.taskPacket
               ? { taskPacket: agentOptions.taskPacket }
               : {}),
-            ...(agentOptions.experimental ? { experimental: true } : {}),
           },
-          resolveLivePage: async () => {
-            const context = await getContext();
-            return currentSessionState.status === "ready"
-              ? getPrimaryPageIfReady(context)
-              : getReadyPage(source);
-          },
-          ...(agentOptions.captureVisualSnapshots || agentOptions.taskPacket
-            ? {
-                visualAnalysis: {
-                  enabled: true,
-                  captureSnapshot: (request, snapshotPage) =>
-                    captureVisualSnapshotForPage(
-                      snapshotPage ?? page!,
-                      request,
-                    ),
-                  analyzeSnapshot: ({ snapshot, context }) =>
-                    aiClient?.analyzeBrowserVisualSnapshot
-                      ? aiClient.analyzeBrowserVisualSnapshot({
-                          snapshot,
-                          context,
-                        })
-                      : Promise.reject(
-                          new Error(
-                            "AI client does not support browser visual analysis.",
-                          ),
-                        ),
-                  persistScreenshots: Boolean(agentOptions.taskPacket),
-                },
-              }
-            : {}),
-          ...(agentOptions.compaction
-            ? { compaction: agentOptions.compaction }
-            : {}),
-          compactionCapability: {
-            tokenEstimator: ({ messages, maxOutputTokens }) => {
-              const estimatedInputTokens = messages.reduce((sum, message) => {
-                const messageContent = message.content ?? "";
-                const contentTokens = Math.ceil(messageContent.length / 4);
-                if (message.role === "assistant" && message.toolCalls) {
-                  return (
-                    sum +
-                    contentTokens +
-                    Math.ceil(JSON.stringify(message.toolCalls).length / 4)
-                  );
-                }
-                if (message.role === "tool") {
-                  return (
-                    sum +
-                    contentTokens +
-                    Math.ceil((message.toolCallId ?? "").length / 4)
-                  );
-                }
-                return sum + contentTokens;
-              }, 0);
-
-              return {
-                estimatedInputTokens,
-                estimatedTotalTokens:
-                  estimatedInputTokens + Math.max(0, maxOutputTokens),
-              };
-            },
-            modelContextWindowTokens:
-              agentOptions.modelContextWindowTokens ??
-              aiClient?.getStatus().modelContextWindowTokens ??
-              null,
-            compactionWorkflowKey:
-              agentOptions.compactionHints?.workflowKey ??
-              (agentOptions.taskPacket
-                ? "source_debug_worker"
-                : "browser_agent_live_discovery"),
-          },
-          ...(agentOptions.relevantUrlSubstrings
-            ? {
-                extractionContext: {
-                  relevantUrlSubstrings: agentOptions.relevantUrlSubstrings,
-                },
-              }
-            : {}),
         };
 
         const result = await runJobSearchAgent({
@@ -3216,6 +3141,7 @@ export function createBrowserAgentRuntime(
               return jobs.map((job) => ({
                 sourceJobId: job.sourceJobId,
                 canonicalUrl: job.canonicalUrl,
+                applicationUrl: job.applicationUrl,
                 title: job.title,
                 company: job.company,
                 location: job.location,
@@ -3322,12 +3248,15 @@ export function createBrowserAgentRuntime(
             agentOptions.searchPreferences.locations,
             agentOptions.siteLabel,
           ),
-          warning: `Agent discovery failed: ${detail}`,
+          warning: /Close a browser tab before opening another/i.test(detail)
+            ? "The browser tab limit is reached. Close finished tabs, then run this search again."
+            : `Agent discovery failed: ${detail}`,
           inventoryCompleteness: "unknown",
           jobs: [],
           agentMetadata: null,
         });
       } finally {
+        releaseReservedTab?.();
         (releaseDiscoveryPageUse as (() => void) | null)?.();
         pageAbortBinding.dispose();
         if (page && !page.isClosed() && !agentOptions.signal?.aborted) {

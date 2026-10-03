@@ -150,6 +150,7 @@ export function ApplicationsDetailPanelRecoveryActionsSection(props: {
   excludedQueueRecoveryEntries: QueueEntry[];
   isApplyPending: boolean;
   onStartApplyCopilot: (input: JobFinderExactApplicationTarget) => void;
+  onReviewResumePdf?: (jobId: string) => void;
   onStartAutoApplyQueue: (jobIds: string[]) => void;
   onOpenSafeguards?: () => void;
   /** Takes the person to the Needs you step that holds the answer control. */
@@ -216,6 +217,7 @@ export function ApplicationsDetailPanelRecoveryActionsSection(props: {
     excludedQueueRecoveryEntries,
     isApplyPending,
     onStartApplyCopilot,
+    onReviewResumePdf,
     onStartAutoApplyQueue,
     onOpenSafeguards,
     onOpenNeedsYou,
@@ -267,6 +269,7 @@ export function ApplicationsDetailPanelRecoveryActionsSection(props: {
   // "Filling this application now" only for a job that is being filled in:
   // one waiting its turn or held by the person's pause says so above.
   const showPreparingState =
+    primaryAction !== "close_finished_tabs" &&
     presentation.state === "preparing" &&
     (isApplyPending ||
       resolvePlannedApplyStanding(
@@ -439,6 +442,18 @@ export function ApplicationsDetailPanelRecoveryActionsSection(props: {
       ),
     });
   };
+  const rejectedFormat =
+    presentation.state === "reattach_resume" &&
+    onReviewResumePdf !== undefined &&
+    /rejected|not accepted|unsupported|upload a nonempty|file (?:type|format)/iu.test(
+      [
+        visibleApplyResult?.summary,
+        visibleApplyResult?.detail,
+        visibleApplyResult?.blockerSummary,
+      ]
+        .filter(Boolean)
+        .join(" "),
+    );
   const startFreshRun = () =>
     onStartApplyCopilot({
       jobId: selectedRecordJobId,
@@ -516,6 +531,21 @@ export function ApplicationsDetailPanelRecoveryActionsSection(props: {
               data-testid="applications-recovery-primary-action"
               role="group"
             >
+              {primaryAction === "close_finished_tabs" ? (
+                <Button
+                  className={RECOVERY_PRIMARY_ACTION_CLASS_NAME}
+                  data-testid="applications-recovery-primary-action-button"
+                  onClick={() =>
+                    void window.nordri?.browser?.command({
+                      type: "close_finished_tabs",
+                    })
+                  }
+                  type="button"
+                  variant="primary"
+                >
+                  {presentation.primaryActionLabel}
+                </Button>
+              ) : null}
               {primaryAction === "open_safeguards" && onOpenSafeguards ? (
                 <Button
                   className={RECOVERY_PRIMARY_ACTION_CLASS_NAME}
@@ -592,11 +622,15 @@ export function ApplicationsDetailPanelRecoveryActionsSection(props: {
                   className={RECOVERY_PRIMARY_ACTION_CLASS_NAME}
                   data-testid="applications-recovery-primary-action-button"
                   disabled={isDailyCapacityExhausted}
-                  onClick={startFreshRun}
+                  onClick={
+                    rejectedFormat
+                      ? () => onReviewResumePdf?.(selectedRecordJobId)
+                      : startFreshRun
+                  }
                   type="button"
                   variant="primary"
                 >
-                  {TRY_AGAIN_ACTION}
+                  {rejectedFormat ? "Review a PDF" : TRY_AGAIN_ACTION}
                 </Button>
               ) : null}
               {showConfirmFinishedAction ? (
@@ -807,6 +841,7 @@ export function ApplicationsDetailPanelRecoveryActionsSection(props: {
               selectedRun
                 ? {
                     runState: selectedRun.state,
+                    stopReason: selectedRun.detail,
                     selectedJobCount: selectedQueueOutcomeEntries.length,
                     blockedJobCount: selectedQueueOutcomeEntries.filter(
                       (entry) => entry.runResult?.state === "blocked",

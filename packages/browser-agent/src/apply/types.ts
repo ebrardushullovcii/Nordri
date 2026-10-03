@@ -48,8 +48,6 @@ export interface ApplyFormControl {
   dateInputType?: "date" | "month";
   label: string;
   groupLabel: string;
-  /** Row order on the live form; visible numbering can have gaps after removal. */
-  workHistoryIndex?: number;
   /** Stable identity shared by controls that belong to one choice group. */
   choiceGroupKey?: string;
   placeholder: string;
@@ -70,11 +68,6 @@ export interface ApplyFormControl {
   answerControlType: ApplicationQuestionControlType;
   /** Set when the control asks the person to declare something themselves. */
   attestationKind: ApplicationAttestationKind | null;
-  /**
-   * The calling code a picker beside this field is already showing, when there
-   * is one, so a phone number is not written out with the code twice.
-   */
-  selectedCallingCode?: string | null;
   /** True when the control already carries an answer. */
   answered: boolean;
 }
@@ -209,6 +202,7 @@ export interface ApplyDocument {
   label: string;
   kind: CandidateAssetKind;
   loadBytes: () => Promise<Uint8Array>;
+  reviewText?: { text: string; groundedIn: string[] };
 }
 
 /**
@@ -363,6 +357,7 @@ export interface ApplyPause {
 }
 
 export interface ApplyFilledControl {
+  fieldKey?: string;
   ref: string;
   label: string;
   questionKind: ApplicationQuestionKind;
@@ -371,11 +366,13 @@ export interface ApplyFilledControl {
 }
 
 export interface ApplyAttachedDocument {
+  fieldKey?: string;
   documentId: string;
   fileName: string;
   label: string;
   controlLabel: string;
   at: string;
+  reviewText?: { text: string; groundedIn: string[] };
 }
 
 export type ApplyAgentOutcome =
@@ -394,6 +391,8 @@ export interface ApplyAgentResult {
   finalUrl: string | null;
   filled: ApplyFilledControl[];
   attachments: ApplyAttachedDocument[];
+  reviewFilled?: ApplyFilledControl[];
+  reviewAttachments?: ApplyAttachedDocument[];
   pauses: ApplyPause[];
   /** Plain-sentence trail of what happened, oldest first. */
   notes: string[];
@@ -406,8 +405,6 @@ export interface ApplyAgentResult {
    * checks passed. Null whenever the application is not ready to go.
    */
   readyToSend: { actionRef: string; actionLabel: string } | null;
-  /** An observed omission to show in readiness, without vetoing an optional form row. */
-  structuredExperienceGap?: string | null;
 }
 
 /**
@@ -430,7 +427,6 @@ export type ApplyProposal =
   | { tool: "scroll"; direction: "down" | "up" | "top" | "bottom" }
   | { tool: "wait"; milliseconds: number }
   | { tool: "go_back" }
-  | { tool: "suggest_answer"; ref: string }
   | { tool: "submit_application"; ref: string }
   | {
       tool: "finish";
@@ -441,6 +437,12 @@ export type ApplyProposal =
 
 export interface ApplyAgentConfig {
   hands: ApplyPageHands;
+  /**
+   * The model classifies each page's questions (ADR 0041): which ask about
+   * pay and which are declarations. Off in scripted tests, where the keyword
+   * classification on the observation stands.
+   */
+  modelQuestionClassification?: boolean;
   /** The guard and worker checks for this page. Absent only in tests. */
   safety?: ApplySafetyHooks;
   /** Writes and renders the letter this application sends, when it needs one. */

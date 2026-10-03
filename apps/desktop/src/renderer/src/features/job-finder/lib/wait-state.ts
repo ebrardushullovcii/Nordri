@@ -19,6 +19,12 @@
 export const RESUME_OPERATION_LONG_RUNNING_MS = 30_000;
 
 /**
+ * A tailored draft says "Usually 40-70 seconds", so it is only late once that
+ * stated range has passed.
+ */
+export const RESUME_DRAFT_LONG_RUNNING_MS = 70_000;
+
+/**
  * The Assistant's own escalation threshold. A measured reply takes 24-27s, so a
  * 30s threshold fired only after the wait was already over and the recovery
  * copy never appeared when it would have helped. This sits below the typical

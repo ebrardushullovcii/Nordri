@@ -222,31 +222,32 @@ describe("contracts resume import schemas", () => {
     } = await import("./index");
 
     const benchmarkCase = ResumeImportBenchmarkCaseSchema.parse({
-      id: "ebrar_pdf",
-      label: "Ebrar PDF",
-      resumePath: "docs/resume-tests/Ebrar.pdf",
+      id: "persona_priya_pdf",
+      label: "Priya, product designer (pdf)",
+      resumePath:
+        "apps/desktop/test-fixtures/job-finder/resume-import-personas/priya-raman.pdf",
       canary: true,
       tags: ["pdf", "multi-page"],
       expected: {
         literalFields: {
-          fullName: "Ebrar Dushullovci",
-          currentLocation: "Prishtina, Kosovo",
+          fullName: "Priya Raman",
+          currentLocation: "London, UK",
         },
-        summaryContains: ["6+ years of full-stack experience"],
+        summaryContains: ["8 years"],
         experienceRecords: [
           {
-            title: "Senior Full-Stack Software Engineer",
-            companyName: "AUTOMATEDPROS",
+            title: "Freelance Product Designer",
+            companyName: "Raman Studio",
           },
           {
-            title: ".NET Consultant",
-            companyName: "INFOTECH L.L.C",
+            title: "Senior Product Designer",
+            companyName: "Penny Bank",
           },
         ],
         educationRecords: [
           {
-            schoolName: "Kolegji Riinvest (Riinvest College)",
-            degree: "BACHELOR'S DEGREE",
+            schoolName: "Central Saint Martins",
+            degree: "BA (Hons) Graphic Communication Design",
           },
         ],
       },

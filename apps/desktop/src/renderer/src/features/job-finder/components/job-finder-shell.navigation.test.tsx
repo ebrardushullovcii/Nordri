@@ -2275,7 +2275,22 @@ describe("JobFinderShell compact nav responsive contract", () => {
     const keycaps = [...dialog.querySelectorAll("kbd")].map(
       (cap) => cap.textContent,
     );
-    expect(keycaps).toEqual(["⌘", "K", "/", "⌘", "B", "⌘", "I", "?"]);
+    expect(keycaps).toEqual([
+      "⌘",
+      "K",
+      "/",
+      "⌘",
+      "B",
+      "⌘",
+      "I",
+      "?",
+      "⌘",
+      "=",
+      "⌘",
+      "-",
+      "⌘",
+      "0",
+    ]);
     expect(within(dialog).getAllByText("/")).toHaveLength(1);
     expect(shortcutText).not.toContain(
       "Anywhere in Job Finder; Outside text fields",
@@ -2886,10 +2901,7 @@ describe("JobFinderShell responsive shell contract", () => {
     expect(trigger.dataset.state).toBe("open");
     const menu = getModuleSwitchMenu(brandSwitch);
     const jobFinderOption = getModuleOption(brandSwitch, "job-finder");
-    const liveAssistantOption = getModuleOption(
-      brandSwitch,
-      "live-assistant",
-    );
+    const liveAssistantOption = getModuleOption(brandSwitch, "live-assistant");
     expect(document.activeElement).toBe(jobFinderOption);
 
     // Job Finder is current: checked and named for where the user already is.

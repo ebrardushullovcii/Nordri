@@ -293,7 +293,7 @@ export const AssistantMessagePartSchema = z.discriminatedUnion("type", [
             .object({
               id: IdSchema,
               label: NonEmptyStringSchema.max(400),
-              detail: z.string().max(2000).nullable().default(null),
+              detail: z.string().max(100_000).nullable().default(null),
             })
             .strict(),
         )
@@ -586,6 +586,7 @@ export const AssistantProposalSchema = z
           .object({
             id: IdSchema,
             label: NonEmptyStringSchema.max(400),
+            detail: z.string().max(100_000).nullable().optional(),
             payload: z.unknown(),
           })
           .strict(),
@@ -1101,8 +1102,27 @@ export type AssistantMentionSearchResult = z.infer<
   typeof AssistantMentionSearchResultSchema
 >;
 
+/** Transient resume work owned by the UI; never resumed after restart. */
+export const AssistantResumeBatchStateSchema = z
+  .object({
+    id: IdSchema,
+    jobIds: z.array(IdSchema).max(30),
+    activeJobIds: z.array(IdSchema).max(2),
+    completedJobIds: z.array(IdSchema).max(30),
+    done: z.boolean(),
+    stopRequested: z.boolean(),
+  })
+  .strict();
+export type AssistantResumeBatchState = z.infer<
+  typeof AssistantResumeBatchStateSchema
+>;
+
 /** The typed preload bridge the sidebar uses (`window.nordri.assistant`). */
 export interface DesktopAssistantBridge {
+  syncResumeBatch(
+    state: AssistantResumeBatchState,
+  ): Promise<AssistantResumeBatchState>;
+  onResumeBatchStop(listener: (batchId: string) => void): () => void;
   getStatus(): Promise<AssistantStatus>;
   listConversations(): Promise<AssistantConversationList>;
   createConversation(): Promise<AssistantConversation>;

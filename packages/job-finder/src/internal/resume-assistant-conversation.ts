@@ -1,3 +1,4 @@
+import type { JobFinderAiClient } from "@nordri/ai-providers";
 import type {
   ResumeAssistantConversationTurn,
   ResumeProposalCheckResult,
@@ -11,10 +12,8 @@ import {
   type ResumeDraftPatch,
   type SavedJob,
 } from "@nordri/contracts";
-import {
-  evaluateResumeProposalGrounding,
-  sanitizeResumeDraft,
-} from "./resume-workspace-helpers";
+import { sanitizeResumeDraft } from "./resume-workspace-helpers";
+import { evaluateCheckedResumeProposalGrounding } from "./resume-claim-checks";
 import { applyPatchToResumeDraft } from "./resume-workspace-patches";
 
 /** Turns the Resume Studio Assistant sees before the new request. */
@@ -69,12 +68,13 @@ export function buildRecentResumeAssistantConversation(
  * the Assistant's agent reads. It is the same evaluation the service applies
  * to the finished reply, so what the agent repairs is what the card reports.
  */
-export function checkResumeAssistantProposal(input: {
+export async function checkResumeAssistantProposal(input: {
+  aiClient: Pick<JobFinderAiClient, "checkResumeClaims">;
   baselineDraft: ResumeDraft;
   patches: readonly ResumeDraftPatch[];
   job: SavedJob;
   profile: CandidateProfile;
-}): ResumeProposalCheckResult {
+}): Promise<ResumeProposalCheckResult> {
   const patches = input.patches.map((patch) => ({
     ...patch,
     draftId: input.baselineDraft.id,
@@ -87,13 +87,16 @@ export function checkResumeAssistantProposal(input: {
       job: input.job,
       profile: input.profile,
     });
-    const gate = evaluateResumeProposalGrounding({
-      baselineDraft: input.baselineDraft,
-      patches,
-      job: input.job,
-      profile: input.profile,
-      evaluatedAt: new Date().toISOString(),
-    });
+    const gate = await evaluateCheckedResumeProposalGrounding(
+      { aiClient: input.aiClient },
+      {
+        baselineDraft: input.baselineDraft,
+        patches,
+        job: input.job,
+        profile: input.profile,
+        evaluatedAt: new Date().toISOString(),
+      },
+    );
     return {
       applyError: null,
       findings: gate.approvalBlockers.map((blocker) => ({
@@ -110,7 +113,9 @@ export function checkResumeAssistantProposal(input: {
   } catch (error) {
     return {
       applyError:
-        error instanceof Error ? error.message : "A change could not be applied.",
+        error instanceof Error
+          ? error.message
+          : "A change could not be applied.",
       findings: [],
     };
   }
@@ -123,12 +128,20 @@ function visibleResumeSignature(draft: ResumeDraft): string {
       section.id,
       section.included,
       section.text ?? null,
-      section.bullets.map((bullet) => [bullet.id, bullet.text, bullet.included]),
+      section.bullets.map((bullet) => [
+        bullet.id,
+        bullet.text,
+        bullet.included,
+      ]),
       section.entries.map((entry) => [
         entry.id,
         entry.included,
         entry.summary ?? null,
-        entry.bullets.map((bullet) => [bullet.id, bullet.text, bullet.included]),
+        entry.bullets.map((bullet) => [
+          bullet.id,
+          bullet.text,
+          bullet.included,
+        ]),
       ]),
     ]),
   );
@@ -159,7 +172,11 @@ export function findResumeAssistantPatchesDroppedOnSave(input: {
     try {
       changed = applyPatchToResumeDraft({
         draft: input.baselineDraft,
-        patch: { ...patch, draftId: input.baselineDraft.id, origin: "assistant" },
+        patch: {
+          ...patch,
+          draftId: input.baselineDraft.id,
+          origin: "assistant",
+        },
         updatedAt: new Date().toISOString(),
       });
     } catch {
@@ -193,7 +210,12 @@ export function findResumeAssistantPatchesDroppedOnSave(input: {
 export function listResumeLinesToConfirm(input: {
   draft: Pick<ResumeDraft, "id" | "claimConfirmations">;
   claimAssessments: readonly ResumeClaimAssessment[];
-}): { text: string; sectionId: string; entryId: string | null; bulletId: string | null }[] {
+}): {
+  text: string;
+  sectionId: string;
+  entryId: string | null;
+  bulletId: string | null;
+}[] {
   return input.claimAssessments
     .filter((assessment) =>
       isBlockingResumeClaimAssessment({ assessment, draft: input.draft }),

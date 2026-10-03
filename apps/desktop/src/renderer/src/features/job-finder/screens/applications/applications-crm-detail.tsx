@@ -10,6 +10,19 @@ import type {
   CandidateAsset,
   RecordOutcomeInput,
 } from "@nordri/contracts";
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from "@renderer/components/ui/select";
+import { deviceTimeZone } from "../../lib/job-finder-timestamp-format";
+import {
+  trackerTimeToIso,
+  trackerTimeZones,
+  formatTrackerMoment,
+} from "./applications-tracker-time";
 import { Button } from "@renderer/components/ui/button";
 
 import {
@@ -72,19 +85,7 @@ function applicationCrmEventCopyForView(
   };
 }
 
-/** A reminder or interview time with its zone named. */
-function formatTrackerMoment(value: string): string {
-  return new Date(value).toLocaleString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-    timeZoneName: "short",
-  });
-}
-
-/** Dates here are entered and shown in this device's time zone; say which. */
+/** Reminders use this device's time zone; name it beside the field. */
 const DEVICE_TIME_ZONE_LABEL =
   new Intl.DateTimeFormat(undefined, { timeZoneName: "short" })
     .formatToParts(new Date())
@@ -127,6 +128,9 @@ export function ApplicationsCrmDetail(props: {
   const [reminderAt, setReminderAt] = useState("");
   const [interviewTitle, setInterviewTitle] = useState("");
   const [interviewAt, setInterviewAt] = useState("");
+  const [interviewTimeZone, setInterviewTimeZone] = useState(deviceTimeZone);
+  const timeZones = useMemo(trackerTimeZones, []);
+  const [timeZoneOpen, setTimeZoneOpen] = useState(false);
   const [contactName, setContactName] = useState("");
   const [contactEmail, setContactEmail] = useState("");
   const [offerAmount, setOfferAmount] = useState(
@@ -686,11 +690,17 @@ export function ApplicationsCrmDetail(props: {
         </summary>
         <div className="mt-3 grid gap-4">
           <form
-            className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(12rem,0.75fr)_auto] sm:items-end"
+            className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(12rem,0.75fr)_minmax(10rem,0.6fr)_auto] sm:items-end"
             onSubmit={(event) => {
               event.preventDefault();
-              const startsAt = toIso(interviewAt);
-              if (!interviewTitle.trim() || !startsAt) return;
+              const startsAt = trackerTimeToIso(interviewAt, interviewTimeZone);
+              if (!startsAt) {
+                setError(
+                  "This time does not exist in that time zone. Choose another time.",
+                );
+                return;
+              }
+              if (!interviewTitle.trim()) return;
               const now = new Date().toISOString();
               void mutate({
                 type: "upsert_interview",
@@ -699,8 +709,7 @@ export function ApplicationsCrmDetail(props: {
                   title: interviewTitle.trim(),
                   startsAt,
                   endsAt: null,
-                  timeZone:
-                    Intl.DateTimeFormat().resolvedOptions().timeZone || null,
+                  timeZone: interviewTimeZone,
                   location: null,
                   meetingUrl: null,
                   contactIds: [],
@@ -733,7 +742,7 @@ export function ApplicationsCrmDetail(props: {
                   aria-hidden="true"
                   className="font-normal text-foreground-muted"
                 >
-                  ({DEVICE_TIME_ZONE_LABEL})
+                  ({interviewTimeZone})
                 </span>
               </span>
               <input
@@ -745,6 +754,29 @@ export function ApplicationsCrmDetail(props: {
                 type="datetime-local"
                 value={interviewAt}
               />
+            </label>
+            <label className="grid gap-1.5 text-sm font-medium text-foreground">
+              Time zone
+              <Select
+                open={timeZoneOpen}
+                onOpenChange={setTimeZoneOpen}
+                value={interviewTimeZone}
+                onValueChange={setInterviewTimeZone}
+                disabled={pending}
+              >
+                <SelectTrigger aria-label="Interview time zone">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {(timeZoneOpen ? timeZones : [interviewTimeZone]).map(
+                    (zone) => (
+                      <SelectItem key={zone} value={zone}>
+                        {zone}
+                      </SelectItem>
+                    ),
+                  )}
+                </SelectContent>
+              </Select>
             </label>
             <Button
               disabled={pending || !interviewTitle.trim() || !interviewAt}
@@ -771,7 +803,8 @@ export function ApplicationsCrmDetail(props: {
                         className="mt-0.5 block text-xs text-muted-foreground"
                         dateTime={entry.startsAt}
                       >
-                        Starts {formatTrackerMoment(entry.startsAt)}
+                        Starts{" "}
+                        {formatTrackerMoment(entry.startsAt, entry.timeZone)}
                       </time>
                     </div>
                     <StatusBadge

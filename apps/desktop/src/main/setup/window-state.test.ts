@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
+  bindMainWindowStatePersistence,
   getMainWindowDisplayMode,
   getMainWindowStateFilePath,
   loadMainWindowState,
@@ -228,4 +229,26 @@ describe("main window state", () => {
       } as never),
     ).toBe("normal");
   });
+});
+
+test("saves the current menu zoom on close and loads it for the next window", () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "nordri-window-zoom-"));
+  process.env.NORDRI_USER_DATA_DIR = directory;
+  const handlers = new Map<string, () => void>();
+  try {
+    bindMainWindowStatePersistence({
+      getBounds: () => ({ x: 0, y: 0, width: 1100, height: 800 }),
+      isMaximized: () => false,
+      isFullScreen: () => false,
+      webContents: { getZoomFactor: () => 1.44 },
+      on: (event: string, handler: () => void) => handlers.set(event, handler),
+    } as unknown as Parameters<typeof bindMainWindowStatePersistence>[0]);
+    handlers.get("close")?.();
+    expect(loadMainWindowState()?.zoomFactor).toBe(1.44);
+  } finally {
+    if (originalUserDataDirectory === undefined)
+      delete process.env.NORDRI_USER_DATA_DIR;
+    else process.env.NORDRI_USER_DATA_DIR = originalUserDataDirectory;
+    rmSync(directory, { recursive: true, force: true });
+  }
 });

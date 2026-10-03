@@ -7,23 +7,12 @@ import {
 import {
   buildDeterministicStructuredResumeDraft,
   composeDeterministicFullText,
-  filterGroundedVisibleSkills,
   isSpokenLanguageResumeChrome,
-  orderSkillsByJobRelevance,
   uniqueStrings,
   VISIBLE_ADDITIONAL_SKILL_LIMIT,
   VISIBLE_CORE_SKILL_LIMIT,
 } from "./deterministic";
-import {
-  buildResumeGenerationEvidenceCatalog,
-  collectListingRequestedSkills,
-  isInjectableListingSkillName,
-  listingTextContainsTerm,
-  mergeAggressiveVisibleSkills,
-  parseEvidenceLinkedText,
-  selectResumeRewrite,
-  type ResumeGenerationEvidenceItem,
-} from "./resume-generation-grounding";
+import { parseEvidenceLinkedText } from "./resume-generation-grounding";
 
 // Keep this set in sync with the reference-only identifier fields on the
 // structured draft payloads validated through TailoredResumeDraftSchema and the
@@ -133,27 +122,9 @@ interface ResumeGenerationQualityAccumulator {
   acceptedInferredRewriteCount: number;
 }
 
+/** What one draft completion counts while it keeps the model's lines. */
 interface ResumeRewriteContext {
-  evidenceCatalog: readonly ResumeGenerationEvidenceItem[];
-  jobCompany: string;
-  jobSkills: readonly string[];
-  /**
-   * Compact text of the target job listing. Only consumed by the aggressive
-   * claim relaxation (rounded-up years, listing-anchored technologies), which
-   * bounds added technologies to ones the listing itself names.
-   */
-  jobListingText: string;
   quality: ResumeGenerationQualityAccumulator;
-  allowReasonableInference: boolean;
-  allowExactClaims: boolean;
-  allowParaphrasedClaims: boolean;
-  /**
-   * Keep a rewrite the verifier could not match to saved evidence, as long
-   * as it states no number, and flag it for the person's review. The
-   * evidence check is advice here, not a gate (ADR 0023).
-   */
-  allowUnverifiedRewrites: boolean;
-  maxEvidenceRefsPerBullet: number;
 }
 
 function normalizeComparableText(value: string | null | undefined): string {
@@ -299,6 +270,12 @@ function findCanonicalProse(
   );
 }
 
+/**
+ * The model's line stands as written (ADR 0041). Whether the person's
+ * evidence backs it is the fact check's call, made when the draft is
+ * previewed and validated; no overlap rule swaps it for the saved wording
+ * here. A line the model left out keeps the saved wording.
+ */
 function selectGroundedResumeText(input: {
   generated: unknown;
   companionEvidenceRefs?: unknown;
@@ -321,51 +298,15 @@ function selectGroundedResumeText(input: {
     input.generated,
     input.companionEvidenceRefs,
   );
-  const isCanonical = parsedGenerated
-    ? Boolean(findCanonicalProse(parsedGenerated.text, candidates))
-    : false;
-  const selection = selectResumeRewrite({
-    generated: input.generated,
-    companionEvidenceRefs: input.companionEvidenceRefs,
-    canonicalCandidates: candidates,
-    evidenceCatalog: input.rewriteContext.evidenceCatalog,
-    allowedScope: input.allowedScope,
-    jobCompany: input.rewriteContext.jobCompany,
-    jobSkills: input.rewriteContext.jobSkills,
-    jobListingText: input.rewriteContext.jobListingText,
-    allowReasonableInference: input.rewriteContext.allowReasonableInference,
-    allowExactClaims: input.rewriteContext.allowExactClaims,
-    allowParaphrasedClaims: input.rewriteContext.allowParaphrasedClaims,
-    maxEvidenceRefsPerBullet: input.rewriteContext.maxEvidenceRefsPerBullet,
-  });
-
-  const unverified =
-    !selection &&
-    parsedGenerated !== null &&
-    !isCanonical &&
-    isAcceptableUnverifiedRewrite(parsedGenerated, input.rewriteContext);
-  if (parsedGenerated && !isCanonical) {
+  const generatedText = parsedGenerated?.text.trim() ?? "";
+  if (generatedText && !findCanonicalProse(generatedText, candidates)) {
     input.rewriteContext.quality.proposedRewriteCount += 1;
-    if (selection?.kind === "grounded_rewrite") {
-      input.rewriteContext.quality.acceptedRewriteCount += 1;
-      input.rewriteContext.quality.acceptedRewriteCharacters +=
-        selection.text.length;
-      if (selection.inferred) {
-        input.rewriteContext.quality.acceptedInferredRewriteCount += 1;
-      }
-    } else if (unverified) {
-      input.rewriteContext.quality.acceptedRewriteCount += 1;
-      input.rewriteContext.quality.unverifiedRewriteCount += 1;
-      input.rewriteContext.quality.acceptedRewriteCharacters +=
-        parsedGenerated.text.length;
-    } else {
-      input.rewriteContext.quality.rejectedRewriteCount += 1;
-    }
+    input.rewriteContext.quality.acceptedRewriteCount += 1;
+    input.rewriteContext.quality.acceptedRewriteCharacters +=
+      generatedText.length;
   }
-
   return (
-    selection?.text ??
-    (unverified && parsedGenerated ? parsedGenerated.text.trim() : null) ??
+    (generatedText || null) ??
     normalizeNullableString(input.fallback) ??
     normalizeNullableString(input.canonical)
   );
@@ -377,7 +318,7 @@ function selectGroundedResumeBullets(
   fallbackBullets: readonly string[],
   canonicalBullets: readonly string[],
   rewriteContext: ResumeRewriteContext,
-  allowedScope:
+  _allowedScope:
     | {
         scope: "experience" | "project";
         profileRecordId: string;
@@ -393,73 +334,29 @@ function selectGroundedResumeBullets(
   const evidenceRefMatrix = Array.isArray(generatedBulletEvidenceRefs)
     ? generatedBulletEvidenceRefs
     : [];
-  const replacedCanonicalText = new Set<string>();
   const selectedBullets = uniqueStrings(
     bulletValues.flatMap((generatedBullet, index) => {
       const parsedGenerated = parseEvidenceLinkedText(
         generatedBullet,
         evidenceRefMatrix[index],
       );
-      if (!parsedGenerated) {
-        return [];
-      }
-
-      const isCanonical = Boolean(
-        findCanonicalProse(parsedGenerated.text, canonicalCandidates),
-      );
-      const selection = selectResumeRewrite({
-        generated: generatedBullet,
-        companionEvidenceRefs: evidenceRefMatrix[index],
-        canonicalCandidates,
-        evidenceCatalog: rewriteContext.evidenceCatalog,
-        allowedScope,
-        jobCompany: rewriteContext.jobCompany,
-        jobSkills: rewriteContext.jobSkills,
-        jobListingText: rewriteContext.jobListingText,
-        allowReasonableInference: rewriteContext.allowReasonableInference,
-        allowExactClaims: rewriteContext.allowExactClaims,
-        allowParaphrasedClaims: rewriteContext.allowParaphrasedClaims,
-        maxEvidenceRefsPerBullet: rewriteContext.maxEvidenceRefsPerBullet,
-      });
-
-      const unverified =
-        !selection &&
-        !isCanonical &&
-        isAcceptableUnverifiedRewrite(parsedGenerated, rewriteContext);
-      if (!isCanonical) {
+      const text = parsedGenerated?.text.trim() ?? "";
+      if (!text) return [];
+      if (!findCanonicalProse(text, canonicalCandidates)) {
         rewriteContext.quality.proposedRewriteCount += 1;
-        if (selection?.kind === "grounded_rewrite") {
-          rewriteContext.quality.acceptedRewriteCount += 1;
-          rewriteContext.quality.acceptedRewriteCharacters +=
-            selection.text.length;
-          if (selection.inferred) {
-            rewriteContext.quality.acceptedInferredRewriteCount += 1;
-          }
-          selection.referencedEvidenceText.forEach((text) => {
-            replacedCanonicalText.add(normalizeComparableText(text));
-          });
-        } else if (unverified) {
-          rewriteContext.quality.acceptedRewriteCount += 1;
-          rewriteContext.quality.unverifiedRewriteCount += 1;
-          rewriteContext.quality.acceptedRewriteCharacters +=
-            parsedGenerated.text.length;
-        } else {
-          rewriteContext.quality.rejectedRewriteCount += 1;
-        }
+        rewriteContext.quality.acceptedRewriteCount += 1;
+        rewriteContext.quality.acceptedRewriteCharacters += text.length;
       }
-
-      if (selection) return [selection.text];
-      return unverified ? [parsedGenerated.text.trim()] : [];
+      return [text];
     }),
   );
-  const remainingFallbackBullets = fallbackBullets.filter(
-    (bullet) => !replacedCanonicalText.has(normalizeComparableText(bullet)),
-  );
-
-  return uniqueStrings([...selectedBullets, ...remainingFallbackBullets]).slice(
-    0,
-    maxBullets,
-  );
+  // The model wrote this entry's bullets; the saved ones fill in only when it
+  // wrote none.
+  return (
+    selectedBullets.length > 0
+      ? selectedBullets
+      : uniqueStrings(fallbackBullets)
+  ).slice(0, maxBullets);
 }
 
 function selectCanonicalStringList(
@@ -806,32 +703,12 @@ export function summarizeError(error: unknown): string {
 export function logFallbackError(operation: string, error: unknown): void {
   try {
     console.error(
-      `[AI Provider] ${operation} failed; falling back to deterministic client. ${summarizeError(error)}`,
+      `[AI Provider] ${operation} failed. ${summarizeError(error)}`,
     );
   } catch {
-    // Logging must never interrupt the deterministic fallback path. This can
-    // happen when a detached desktop process outlives its original stdio pipe.
+    // Logging must never interrupt the caller. This can happen when a
+    // detached desktop process outlives its original stdio pipe.
   }
-}
-
-function buildJobListingTextForRelaxation(job: {
-  summary: string | null;
-  description: string;
-  responsibilities: readonly string[];
-  minimumQualifications: readonly string[];
-  preferredQualifications: readonly string[];
-  keySkills: readonly string[];
-}): string {
-  return [
-    job.summary,
-    job.description,
-    ...job.responsibilities,
-    ...job.minimumQualifications,
-    ...job.preferredQualifications,
-    ...job.keySkills,
-  ]
-    .filter((entry): entry is string => Boolean(entry?.trim()))
-    .join("\n");
 }
 
 export function completeTailoredResumeDraft(
@@ -884,31 +761,7 @@ export function completeTailoredResumeDraft(
     fallbackInput.job,
     fallbackInput.profile,
   );
-  const listingRequestedSkills = collectListingRequestedSkills(
-    fallbackInput.job,
-  );
-  const rewriteContext: ResumeRewriteContext = {
-    evidenceCatalog: buildResumeGenerationEvidenceCatalog(fallbackInput),
-    jobCompany: fallbackInput.job.company,
-    jobSkills: listingRequestedSkills,
-    jobListingText: buildJobListingTextForRelaxation(fallbackInput.job),
-    quality,
-    allowReasonableInference:
-      (fallbackInput.strategy?.tailoringStrength ??
-        fallbackInput.searchPreferences.tailoringMode) === "aggressive",
-    allowExactClaims:
-      fallbackInput.strategy?.evidenceBoundaries.allowExactClaims ?? true,
-    allowParaphrasedClaims:
-      fallbackInput.strategy?.evidenceBoundaries.allowParaphrasedClaims ?? true,
-    // Aggressive tailoring is the mode the person chose for heavy rewriting
-    // and reviews line by line; there the evidence check advises. Balanced
-    // tailoring keeps it as the gate.
-    allowUnverifiedRewrites:
-      (fallbackInput.strategy?.tailoringStrength ??
-        fallbackInput.searchPreferences.tailoringMode) === "aggressive",
-    maxEvidenceRefsPerBullet:
-      fallbackInput.strategy?.evidenceBoundaries.maxEvidenceRefsPerBullet ?? 8,
-  };
+  const rewriteContext: ResumeRewriteContext = { quality };
   const label = fallback.label;
   const summary =
     selectGroundedResumeText({
@@ -929,69 +782,29 @@ export function completeTailoredResumeDraft(
   );
   const coreSkills =
     sanitizedCoreSkills.length > 0 ? sanitizedCoreSkills : fallback.coreSkills;
-  const groundedCoreSkills = fallbackInput.strategy
+  // The model's skill lists stand (ADR 0041); a saved strategy can still
+  // limit them to the skills it chose. Whether the person's evidence backs a
+  // skill the profile does not show is the fact check's call: in aggressive
+  // tailoring such a skill becomes a line to confirm.
+  const strategyCoreSkills = fallbackInput.strategy
     ? coreSkills.filter((skill) =>
         fallback.coreSkills.some(
           (allowedSkill) => allowedSkill.toLowerCase() === skill.toLowerCase(),
         ),
       )
-    : filterGroundedVisibleSkills(
-        fallbackInput.profile,
-        orderSkillsByJobRelevance(coreSkills, fallbackInput.job),
-        VISIBLE_CORE_SKILL_LIMIT,
-      );
-  // Aggressive tailoring also adds the job's requested technologies to the
-  // skills section — the strongest screening signal for landing the first
-  // interview — even when the profile never recorded them. The bound stays
-  // the listing itself: structured key skills, skill/tool keyword signals,
-  // and technologies named in qualification or skill-prompt prose, never a
-  // technology invented from nowhere. Listing-asked skills keep reserved
-  // visible slots so a full grounded list cannot drop them. Every added
-  // skill is named in a note so the candidate confirms each one.
-  const isAggressiveTailoring =
-    (fallbackInput.strategy?.tailoringStrength ??
-      fallbackInput.searchPreferences.tailoringMode) === "aggressive";
-  const groundedAdditionalCandidates = filterGroundedVisibleSkills(
-    fallbackInput.profile,
-    fallbackInput.strategy
-      ? sanitizedAdditionalSkills.filter((skill) =>
-          fallback.additionalSkills.some(
-            (allowedSkill) =>
-              allowedSkill.toLowerCase() === skill.toLowerCase(),
-          ),
-        )
-      : sanitizedAdditionalSkills.length > 0
-        ? orderSkillsByJobRelevance(
-            sanitizedAdditionalSkills,
-            fallbackInput.job,
-          )
-        : fallback.additionalSkills,
-    VISIBLE_ADDITIONAL_SKILL_LIMIT + VISIBLE_CORE_SKILL_LIMIT,
-  );
-  const aggressiveSkills = isAggressiveTailoring
-    ? mergeAggressiveVisibleSkills({
-        groundedCoreSkills: orderSkillsByJobRelevance(
-          uniqueStrings(groundedCoreSkills),
-          fallbackInput.job,
+    : coreSkills;
+  const finalCoreSkills = uniqueStrings(strategyCoreSkills)
+    .filter(isCompetency)
+    .slice(0, VISIBLE_CORE_SKILL_LIMIT);
+  const additionalCandidates = fallbackInput.strategy
+    ? sanitizedAdditionalSkills.filter((skill) =>
+        fallback.additionalSkills.some(
+          (allowedSkill) => allowedSkill.toLowerCase() === skill.toLowerCase(),
         ),
-        groundedAdditionalSkills: groundedAdditionalCandidates,
-        listingSkills: uniqueStrings([
-          ...listingRequestedSkills,
-          ...coreSkills.filter(
-            (skill) =>
-              isCompetency(skill) &&
-              listingTextContainsTerm(rewriteContext.jobListingText, skill) &&
-              isInjectableListingSkillName(skill),
-          ),
-        ]),
-        coreLimit: VISIBLE_CORE_SKILL_LIMIT,
-        additionalLimit: VISIBLE_ADDITIONAL_SKILL_LIMIT,
-      })
-    : null;
-  const addedListingSkills = aggressiveSkills?.addedListingSkills ?? [];
-  const finalCoreSkills = (
-    aggressiveSkills?.coreSkills ?? groundedCoreSkills
-  ).filter(isCompetency);
+      )
+    : sanitizedAdditionalSkills.length > 0
+      ? sanitizedAdditionalSkills
+      : fallback.additionalSkills;
   const targetedKeywords = fallbackInput.strategy
     ? selectCanonicalStringList(
         sanitizedTargetedKeywords.filter((keyword) =>
@@ -1006,23 +819,16 @@ export function completeTailoredResumeDraft(
         sanitizedTargetedKeywords,
         fallback.targetedKeywords,
       );
-  const groundedAdditionalSkills = (
-    aggressiveSkills?.additionalSkills ??
-    groundedAdditionalCandidates.filter(
+  const groundedAdditionalSkills = uniqueStrings(additionalCandidates)
+    .filter(
       (skill) =>
         !finalCoreSkills.some(
           (coreSkill) => coreSkill.toLowerCase() === skill.toLowerCase(),
         ),
     )
-  )
     .filter(isCompetency)
     .slice(0, VISIBLE_ADDITIONAL_SKILL_LIMIT);
   const notes = [...fallback.notes];
-  if (addedListingSkills.length > 0) {
-    notes.push(
-      `Aggressive tailoring added ${addedListingSkills.length} job-listing ${addedListingSkills.length === 1 ? "skill" : "skills"} to your skills: ${addedListingSkills.join(", ")}. These are the technologies the job asked for — confirm each is one you can back in the interview before approving.`,
-    );
-  }
   const canonicalExperienceEvidenceByRecordId = new Map(
     fallbackInput.profile.experiences.map((experience) => [
       experience.id,
@@ -1049,16 +855,7 @@ export function completeTailoredResumeDraft(
           rewriteContext,
         )
       : fallback.projectEntries;
-  if (quality.acceptedInferredRewriteCount > 0) {
-    notes.push(
-      `${quality.acceptedInferredRewriteCount} AI-inferred ${quality.acceptedInferredRewriteCount === 1 ? "line" : "lines"} came from aggressive tailoring. These lines are small, deliberate stretches of your saved evidence with one purpose: clearing the job's screening and earning you the first interview. They stay bounded to what your evidence implies you can actually do — evidenced years may round up by at most one toward the job's stated ask, technologies the job asks for may be added when your saved experience makes them credible — including technologies named only in qualifications — and the job's requested technologies also join your skills section. Proving each claim happens in the interview, and that is yours alone: review every inferred line and only approve ones you can stand behind.`,
-    );
-  }
-  const generationProvenance = describeModelDraftProvenance(
-    quality,
-    notes,
-    addedListingSkills,
-  );
+  const generationProvenance = describeModelDraftProvenance(quality, notes);
   const languages = fallback.languages.filter(
     (language) => !isSpokenLanguageResumeChrome(language),
   );
@@ -1106,83 +903,20 @@ export function completeTailoredResumeDraft(
   });
 }
 
-/**
- * A rewrite worth keeping on the model's word alone: plain wording with no
- * figure in it. Numbers, years, and percentages are the claims a wrong
- * rewrite does harm with, so those still need a matched line of evidence.
- */
-function isAcceptableUnverifiedRewrite(
-  parsed: { text: string; evidenceRefs: readonly string[] },
-  context: Pick<ResumeRewriteContext, "allowUnverifiedRewrites">,
-): boolean {
-  const trimmed = parsed.text.trim();
-  return (
-    context.allowUnverifiedRewrites &&
-    // A rewrite that cites evidence and fails the check claimed support it
-    // does not have; that stays rejected. Only wording offered as wording
-    // is kept on the model's word.
-    parsed.evidenceRefs.length === 0 &&
-    trimmed.length > 0 &&
-    trimmed.length <= 600 &&
-    !/\d/u.test(trimmed)
-  );
-}
-
 const DETERMINISTIC_TAILORER_NOTE =
   "Used the built-in deterministic resume tailorer.";
-
-/**
- * The model answered, so the draft is no longer a plain deterministic draft
- * even when every proposal was rejected. Record what actually happened: an
- * `ai` draft when the completed model task proposed a grounded rewrite,
- * shaped the structure while rejected wording stayed out, or deliberately
- * kept an already-strong draft unchanged. The note list is rewritten in place
- * so the human-readable trail matches the structured provenance.
- */
-function describeUnconfirmedListingSkills(
-  addedListingSkills: readonly string[],
-): string {
-  if (addedListingSkills.length === 0) {
-    return "";
-  }
-  const count = addedListingSkills.length;
-  return ` ${count} ${count === 1 ? "skill" : "skills"} the job asked for (${addedListingSkills.join(", ")}) ${count === 1 ? "is" : "are"} in the draft as a proposal only: confirm or remove ${count === 1 ? "it" : "them"} before approving.`;
-}
 
 function describeModelDraftProvenance(
   quality: ResumeGenerationQualityAccumulator,
   notes: string[],
-  addedListingSkills: readonly string[] = [],
 ): TailoredResumeGenerationProvenance {
-  const proposed = quality.proposedRewriteCount;
   const accepted = quality.acceptedRewriteCount;
   if (accepted > 0) {
     const deterministicNoteIndex = notes.indexOf(DETERMINISTIC_TAILORER_NOTE);
     if (deterministicNoteIndex >= 0) {
       notes.splice(deterministicNoteIndex, 1);
     }
-    const unverified = quality.unverifiedRewriteCount;
-    const verified = accepted - unverified;
-    const detail =
-      `Created with AI: ${accepted} of ${proposed} proposed ${proposed === 1 ? "rewrite" : "rewrites"} kept${verified > 0 ? `, ${verified} matched to saved evidence` : ""}${unverified > 0 ? `, ${unverified} in the model's own wording without a matched line of evidence; read ${unverified === 1 ? "that one" : "those"} before approving` : ""}; the rest keeps grounded resume wording.` +
-      describeUnconfirmedListingSkills(addedListingSkills);
-    notes.unshift(detail);
-    return { method: "ai", reason: null, detail };
-  }
-
-  // The model answered and shaped the draft even when every rewrite it
-  // proposed was held back: which roles lead, what is emphasised, which
-  // skills surface. That is not "the built-in generator", and saying so sent
-  // people looking for a setting that does not exist. What is true is that
-  // the wording stayed theirs, and why.
-  if (proposed > 0) {
-    const deterministicNoteIndex = notes.indexOf(DETERMINISTIC_TAILORER_NOTE);
-    if (deterministicNoteIndex >= 0) {
-      notes.splice(deterministicNoteIndex, 1);
-    }
-    const detail =
-      `Created with AI, keeping your own wording: it proposed ${proposed} ${proposed === 1 ? "rewrite" : "rewrites"}, none matched your saved evidence closely enough to use, so the sentences come from your profile and the structure and emphasis from the model.` +
-      describeUnconfirmedListingSkills(addedListingSkills);
+    const detail = `Created with AI: ${accepted} ${accepted === 1 ? "line" : "lines"} in the model's own wording, each checked against your saved evidence; a line your evidence does not back is listed for you to fix or confirm.`;
     notes.unshift(detail);
     return { method: "ai", reason: null, detail };
   }
@@ -1191,8 +925,7 @@ function describeModelDraftProvenance(
     notes.splice(deterministicNoteIndex, 1);
   }
   const detail =
-    "AI completed the review without proposing wording changes, so your wording stayed unchanged." +
-    describeUnconfirmedListingSkills(addedListingSkills);
+    "AI completed the review without proposing wording changes, so your wording stayed unchanged.";
   notes.unshift(detail);
   return { method: "ai", reason: null, detail };
 }

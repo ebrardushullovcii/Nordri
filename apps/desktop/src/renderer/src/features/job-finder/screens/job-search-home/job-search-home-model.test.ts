@@ -153,6 +153,12 @@ function withJobs(
       discoveryMethod: "browser_agent",
       matchAssessment: {
         score: index < count ? 70 : 10,
+        judgment: {
+          source: "batch",
+          judgedAt: "2026-10-02T10:00:00.000Z",
+          score: index < count ? 70 : 10,
+          recommendation: "review_before_applying",
+        },
         recommendation: index < count ? "apply" : "consider",
         dimensions: {
           roleSuitability: { state: "exact" },
@@ -539,7 +545,8 @@ describe("buildJobSearchHomeModel · while something runs", () => {
     expect(model.now[0]).toMatchObject({
       title: "Waiting to apply: Employer · Job 0",
     });
-    expect(model.now[0]?.detail).toContain("Waiting for a free browser tab");
+    expect(model.now[0]?.detail).toContain("Browser tab limit reached");
+    expect(model.now[0]?.detail).toContain("prepared, unsent forms stay open");
   });
 
   it("reports a paused workspace before anything else", () => {
@@ -1071,6 +1078,36 @@ describe("buildJobSearchHomeModel · shortlist and applications", () => {
     expect(sendFirst.next.detail).toBe(
       "1 was not sent: your permission to send changed. Send all 2 tries again.",
     );
+  });
+
+  it("does not recommend retrying a listing the application observed closed", () => {
+    const ws = withJobs(workspace(), 1);
+    ws.applicationRecords = [
+      {
+        id: "record-0",
+        jobId: "job_0",
+        title: "Job 0",
+        company: "Employer",
+        status: "shortlisted",
+        lastAttemptState: "failed",
+        automationMode: "prepare_only",
+        questionSummary: { total: 0, answered: 0 },
+        lastUpdatedAt: "2026-08-15T11:00:00.000Z",
+      },
+    ] as unknown as JobFinderWorkspaceSnapshot["applicationRecords"];
+    ws.applyJobResults = [
+      {
+        id: "result-0",
+        runId: "apply-1",
+        jobId: "job_0",
+        applicationRecordId: "record-0",
+        state: "failed",
+        blockerReason: "application_closed",
+        summary: "This job is no longer taking applications.",
+        updatedAt: "2026-08-15T11:00:00.000Z",
+      },
+    ] as unknown as JobFinderWorkspaceSnapshot["applyJobResults"];
+    expect(build(ws).next.id).not.toBe("retry");
   });
 
   it("offers to try failed applications again with the jobs Applications would retry", () => {

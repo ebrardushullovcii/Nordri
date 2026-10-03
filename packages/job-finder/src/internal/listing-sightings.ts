@@ -281,7 +281,17 @@ export function attributeLegacySighting(
   provenance: readonly SavedJobDiscoveryProvenance[],
   job: Pick<
     SavedJob,
-    "canonicalUrl" | "applicationUrl" | "sourceJobId" | "applyPath"
+    | "canonicalUrl"
+    | "applicationUrl"
+    | "sourceJobId"
+    | "applyPath"
+    | "title"
+    | "company"
+    | "location"
+    | "salaryText"
+    | "seniority"
+    | "description"
+    | "summary"
   >,
 ): SavedJobDiscoveryProvenance[] {
   if (provenance.some((entry) => entry.listingUrl === job.canonicalUrl)) {
@@ -295,6 +305,15 @@ export function attributeLegacySighting(
     entry === legacy
       ? {
           ...entry,
+          listingFacts: {
+            title: job.title,
+            company: job.company,
+            location: job.location,
+            salaryText: job.salaryText,
+            seniority: job.seniority,
+            description: job.description,
+            summary: job.summary,
+          },
           listingUrl: job.canonicalUrl,
           applicationUrl: job.applicationUrl,
           sourceJobId: job.sourceJobId,

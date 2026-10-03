@@ -604,9 +604,9 @@ describe("profile editor application identity defaults", () => {
           key: "record",
           recordId: "experience_candidate_1",
         },
-        label: "React Developer at AUTOMATEDPROS",
+        label: "React Developer at NORTHLANE",
         value: {
-          companyName: "AUTOMATEDPROS",
+          companyName: "NORTHLANE",
           companyUrl: null,
           title: "React Developer",
           employmentType: null,
@@ -622,8 +622,8 @@ describe("profile editor application identity defaults", () => {
           peopleManagementScope: null,
           ownershipScope: null,
         },
-        valuePreview: "AUTOMATEDPROS | React Developer",
-        evidenceText: "AUTOMATEDPROS – React Developer",
+        valuePreview: "NORTHLANE | React Developer",
+        evidenceText: "NORTHLANE – React Developer",
         confidence: 0.82,
         resolution: "needs_review",
         resolutionReason: null,
@@ -647,9 +647,9 @@ describe("profile editor application identity defaults", () => {
           key: "record",
           recordId: "experience_candidate_2",
         },
-        label: "React Developer at AUTOMATEDPROS",
+        label: "React Developer at NORTHLANE",
         value: {
-          companyName: "AUTOMATEDPROS",
+          companyName: "NORTHLANE",
           companyUrl: null,
           title: "React Developer",
           employmentType: null,
@@ -665,8 +665,8 @@ describe("profile editor application identity defaults", () => {
           peopleManagementScope: null,
           ownershipScope: null,
         },
-        valuePreview: "AUTOMATEDPROS | React Developer",
-        evidenceText: "AUTOMATEDPROS – React Developer",
+        valuePreview: "NORTHLANE | React Developer",
+        evidenceText: "NORTHLANE – React Developer",
         confidence: 0.82,
         resolution: "needs_review",
         resolutionReason: null,
@@ -681,7 +681,7 @@ describe("profile editor application identity defaults", () => {
     expect(result.validationMessage).toBeUndefined();
     expect(result.payload?.experiences).toHaveLength(1);
     expect(result.payload?.experiences[0]).toMatchObject({
-      companyName: "AUTOMATEDPROS",
+      companyName: "NORTHLANE",
       title: "React Developer",
       workMode: ["hybrid"],
     });

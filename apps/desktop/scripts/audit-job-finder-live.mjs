@@ -9,7 +9,10 @@ import { _electron as electron } from "playwright";
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
 const desktopDir = path.resolve(currentDir, "..");
 const repoDir = path.resolve(desktopDir, "../..");
-const resumePath = path.join(repoDir, "docs", "resume-tests", "Ebrar.pdf");
+const resumePath = path.join(
+  repoDir,
+  "apps/desktop/test-fixtures/job-finder/resume-import-personas/dev-castellano.pdf",
+);
 const outputDir = path.join(
   desktopDir,
   "test-artifacts",
@@ -19,14 +22,13 @@ const outputDir = path.join(
 const reportPath = path.join(outputDir, "live-discovery-audit-report.json");
 
 const targetRoles = [
-  "Senior Full-Stack Software Engineer",
+  "Senior Backend Engineer",
+  "Staff Backend Engineer",
   "Senior Software Engineer",
   "Software Engineer",
-  "Full Stack Engineer",
-  "Frontend Engineer",
   "Backend Engineer",
-  ".NET Developer",
-  "Electron Engineer",
+  "Platform Engineer",
+  "Payments Engineer",
 ];
 
 const targets = [

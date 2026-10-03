@@ -1,0 +1,214 @@
+.replica {
+  --accent: #386348;
+}
+.theme-1,
+.theme-6,
+.theme-11 {
+  --accent: #245c8b;
+}
+.theme-2,
+.theme-7,
+.theme-12 {
+  --accent: #7b4b78;
+}
+.theme-3,
+.theme-8,
+.theme-13 {
+  --accent: #99491f;
+}
+.theme-4,
+.theme-9,
+.theme-14 {
+  --accent: #286d72;
+}
+.replica main {
+  max-width: 1060px;
+}
+.replica .job {
+  align-items: flex-start;
+}
+.replica .job > .company {
+  min-width: 150px;
+  max-width: 180px;
+}
+.replica .tags span {
+  font-size: 0.8rem;
+  background: #edf1f5;
+  padding: 0.2rem 0.4rem;
+  border-radius: 10px;
+}
+.sponsored {
+  color: #785313;
+}
+.initials {
+  border: 1px solid #aaa;
+  border-radius: 50%;
+  padding: 1rem;
+  margin-right: 1rem;
+}
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  max-width: none;
+  align-items: end;
+}
+.filters input,
+.filters select {
+  display: block;
+  padding: 0.6rem;
+  max-width: 200px;
+  font: inherit;
+}
+.editorial {
+  margin: 1.5rem 0;
+  padding: 1rem;
+  background: #f6f2ec;
+}
+.replica nav {
+  margin-top: 1.5rem;
+  line-height: 2.4;
+}
+.replica nav a {
+  padding: 0.5rem;
+}
+.replica nav [aria-current] {
+  color: white;
+  background: var(--accent);
+}
+.replica [data-load-more] {
+  margin-top: 1rem;
+}
+.replica .field label {
+  display: block;
+}
+.replica .field .error {
+  font-weight: 400;
+}
+.replica .error:empty {
+  display: none;
+}
+.replica [aria-invalid="true"] {
+  border: 2px solid #a42121;
+}
+.replica .formatting {
+  margin: 0.5rem 0;
+}
+.replica .formatting button {
+  font-size: 0.85rem;
+}
+.replica .upload input {
+  display: block;
+  margin: 0.7rem 0;
+  max-width: 100%;
+}
+.replica .upload span {
+  margin-left: 0;
+  display: block;
+}
+.replica .combobox {
+  position: relative;
+}
+.replica [role="listbox"] {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  border: 1px solid #8995a3;
+  background: white;
+  max-height: 240px;
+  overflow: auto;
+}
+.replica [role="option"] {
+  padding: 0.6rem;
+  cursor: pointer;
+}
+.replica [role="option"]:hover,
+.replica [role="option"].active {
+  background: #e5eef5;
+}
+.replica [data-review] {
+  max-height: 480px;
+  overflow: auto;
+  background: #f6f8fa;
+  padding: 1rem;
+}
+.replica iframe {
+  border: 1px solid #bbc5ce;
+  width: 100%;
+  height: 1000px;
+}
+.replica [data-timeout] {
+  border: 2px solid #a65d00;
+  padding: 1rem;
+  background: #fff7db;
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+.cookie-banner {
+  position: fixed;
+  z-index: 20;
+  padding: 1.2rem;
+  background: #202936;
+  color: white;
+  box-shadow: 0 4px 24px #0004;
+  max-height: 75vh;
+  overflow: auto;
+}
+.cookie-banner h2 {
+  margin: 0;
+}
+.replica[data-cookie-style="0"] .cookie-banner {
+  bottom: 0;
+  left: 0;
+  right: 0;
+}
+.replica[data-cookie-style="1"] .cookie-banner {
+  bottom: 1rem;
+  right: 1rem;
+  width: min(380px, 92vw);
+  border-radius: 12px;
+}
+.replica[data-cookie-style="2"] .cookie-banner {
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(550px, 92vw);
+  box-shadow: 0 0 0 100vmax #0006;
+}
+.replica .cookie-banner button {
+  margin: 0.3rem 0;
+  background: #e4edf4;
+  color: #202936;
+}
+.replica[data-replica="atlas"] #jobs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.replica[data-replica="atlas"] .job {
+  display: block;
+  border: 1px solid #dde2e8;
+  margin: 0.5rem;
+}
+.replica[data-replica="ripple"] .job {
+  border-left: 4px solid var(--accent);
+  margin: 1rem 0;
+  background: #f6f9fc;
+}
+.replica[data-replica="folio"] main {
+  border-top: 8px solid var(--accent);
+}
+.replica[data-replica="framehire"] iframe main {
+  margin: 0;
+}
+@media (max-width: 650px) {
+  .replica[data-replica="atlas"] #jobs {
+    grid-template-columns: 1fr;
+  }
+  .replica .job {
+    display: block;
+  }
+  .replica .job > .company {
+    max-width: none;
+  }
+}

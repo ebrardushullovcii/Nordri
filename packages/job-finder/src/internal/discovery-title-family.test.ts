@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { MatchAssessment, SavedJob } from "@nordri/contracts";
 import { createSavedJob } from "../workspace-service.test-fixtures";
-import {
-  TITLE_MATCHES_TARGET_ROLES_REASON,
-  TITLE_MISSES_TARGET_ROLES_GAPS,
-} from "../discovery-ordering";
 import { getDiscoveryResultGroup } from "../discovery-result-bands";
 import {
   isTargetTitleFamily,
@@ -73,61 +69,37 @@ function titleOnlyJob(matchAssessment: MatchAssessment): SavedJob {
 }
 
 describe("resolveTitleFamilyMatch", () => {
-  it("prefers the recorded verdict when the scorer wrote one", () => {
+  it("reads the model's recorded role verdict", () => {
+    expect(
+      resolveTitleFamilyMatch(assessment({ titleFamilyMatch: "same_family" })),
+    ).toBe("same_family");
+    expect(
+      resolveTitleFamilyMatch(assessment({ titleFamilyMatch: "unrelated" })),
+    ).toBe("unrelated");
+  });
+
+  it("reads the same verdict from the role dimension", () => {
     expect(
       resolveTitleFamilyMatch(
         assessment({
-          titleFamilyMatch: "same_family",
-          gaps: [TITLE_MISSES_TARGET_ROLES_GAPS[0]!],
+          dimensions: {
+            roleSuitability: { state: "adjacent" },
+          } as MatchAssessment["dimensions"],
         }),
       ),
-    ).toBe("same_family");
-  });
-
-  it("reads an exact title hit from the scorer's own reason", () => {
-    expect(
-      resolveTitleFamilyMatch(
-        assessment({ reasons: [TITLE_MATCHES_TARGET_ROLES_REASON] }),
-      ),
-    ).toBe("same_family");
-  });
-
-  it("separates an adjacent title from one outside the saved families", () => {
-    expect(
-      resolveTitleFamilyMatch(
-        assessment({ gaps: [TITLE_MISSES_TARGET_ROLES_GAPS[2]!] }),
-      ),
     ).toBe("adjacent");
-    expect(
-      resolveTitleFamilyMatch(
-        assessment({ gaps: [TITLE_MISSES_TARGET_ROLES_GAPS[0]!] }),
-      ),
-    ).toBe("unrelated");
-    expect(
-      resolveTitleFamilyMatch(
-        assessment({ gaps: [TITLE_MISSES_TARGET_ROLES_GAPS[1]!] }),
-      ),
-    ).toBe("unrelated");
   });
 
-  it("reports null rather than 'unrelated' when the question was never asked", () => {
+  it("reports null rather than 'unrelated' when the model has not judged it", () => {
     expect(resolveTitleFamilyMatch(assessment())).toBeNull();
     expect(isTargetTitleFamily(assessment())).toBe(false);
   });
 });
 
-describe("banding a title-family match whose score is withheld", () => {
-  it("keeps an adjacent title in the main results instead of burying it", () => {
-    const job = titleOnlyJob(
-      assessment({ gaps: [TITLE_MISSES_TARGET_ROLES_GAPS[2]!] }),
+describe("banding a job the model has not judged", () => {
+  it("keeps it in the main results as not checked yet, never buried", () => {
+    expect(getDiscoveryResultGroup(titleOnlyJob(assessment()))).toBe(
+      "unchecked",
     );
-    expect(getDiscoveryResultGroup(job)).toBe("unchecked");
-  });
-
-  it("still demotes a title the scorer placed outside the saved families", () => {
-    const job = titleOnlyJob(
-      assessment({ gaps: [TITLE_MISSES_TARGET_ROLES_GAPS[0]!] }),
-    );
-    expect(getDiscoveryResultGroup(job)).toBe("weaker");
   });
 });

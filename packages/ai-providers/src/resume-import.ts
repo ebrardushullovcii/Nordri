@@ -180,7 +180,13 @@ const stageTargetSections: Record<
   ResumeImportExtractionStage,
   readonly ResumeImportTargetSection[]
 > = {
-  identity_summary: ["identity", "contact", "location", "search_preferences"],
+  identity_summary: [
+    "identity",
+    "contact",
+    "location",
+    "search_preferences",
+    "work_eligibility",
+  ],
   experience: ["experience"],
   background: [
     "education",

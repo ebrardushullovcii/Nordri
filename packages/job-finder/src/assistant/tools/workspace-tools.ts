@@ -1,3 +1,4 @@
+import { readAssistantWorkState, runningSearchState } from "../work-state";
 import {
   AssistantTaskPlanStepSchema,
   NonEmptyStringSchema,
@@ -30,13 +31,14 @@ export const getWorkspaceSummaryTool = defineTool({
   name: "get_workspace_summary",
   group: "workspace",
   description:
-    "Where the job search stands: enabled job-source IDs and URLs, whether a search can start and its missing requirements, profile readiness, jobs found and shortlisted, applications and their states, running work, Needs you count, the active search plan and the saved apply mode. A resume is not required for searching.",
+    "Where the job search stands: enabled job-source IDs and URLs, whether a search can start and its missing requirements, profile readiness, jobs found and shortlisted, applications and their states, running work, Needs you count, the selected search plan, the plan and sources of the running search, and the saved apply mode. A resume is not required for searching.",
   parameters: json.object({}),
   input: z.object({}).passthrough(),
   label: () => "Reading your workspace",
   effect: "read",
-  async execute(_input, { service }) {
+  async execute(_input, { service, ports }) {
     const snapshot = await service.getWorkspaceSnapshot();
+    const work = readAssistantWorkState(ports, snapshot);
     const applications = snapshot.applicationRecords;
     const byStatus = new Map<string, number>();
     for (const record of applications) {
@@ -61,6 +63,14 @@ export const getWorkspaceSummaryTool = defineTool({
             : searchReadiness.missingRequirements.join(" ")
       }`,
       data: {
+        ...work,
+        searchPlanCapabilities: {
+          namedPlans: true,
+          recurringSchedules: true,
+          assistantCanCreate: false,
+          manageWith: "open_in_app",
+          screen: "search_plans",
+        },
         profile: {
           setup: snapshot.profileSetupState.status,
           name: snapshot.profile.fullName,
@@ -81,6 +91,7 @@ export const getWorkspaceSummaryTool = defineTool({
         search: {
           state: snapshot.discoveryRunState,
           activeRunId: snapshot.activeDiscoveryRun?.id ?? null,
+          running: runningSearchState(snapshot),
           ...searchReadiness,
           enabledSources: searchReadiness.enabledSources.slice(0, 40),
         },
@@ -92,7 +103,7 @@ export const getWorkspaceSummaryTool = defineTool({
             dueSoon: agenda.filter((item) => !item.overdue).length,
           };
         })(),
-        activeSearchPlan: campaign
+        selectedSearchPlan: campaign
           ? { id: campaign.id, name: campaign.name }
           : null,
         applyMode:
@@ -677,7 +688,7 @@ export const openInAppTool = defineTool({
   name: "open_in_app",
   group: "workspace",
   description:
-    "Opens a screen or a record in the app for the person. Only when they ask to see it; the sidebar never moves them by itself.",
+    "Opens a screen or a record in the app for the person. When asked to create or schedule a search plan, open search_plans in the same reply and explain that named plans and recurring schedules exist there, but your tools cannot create or schedule them directly. Otherwise open screens only when asked to see them.",
   parameters: json.object({
     screen: json.enumOf(Object.keys(APP_ROUTES)),
     jobId: json.string("Opens that job (its resume when resume is true)."),

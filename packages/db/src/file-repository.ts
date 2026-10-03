@@ -75,10 +75,12 @@ import {
   createWorkspaceCloseDatabaseBackup,
   createWorkspaceResetDatabaseBackup,
   getWorkspaceDatabaseBackupPaths,
+  removeWorkspaceDatabaseBackups,
   reconcileWorkspaceBackupRotation,
 } from "./file-repository-backup";
 import {
   recoverWorkspaceDatabase,
+  removeWorkspaceRecoveryArtifacts,
   type RestoredSnapshotRevalidator,
   type WorkspaceDatabaseRecoveryResult,
 } from "./file-repository-recovery";
@@ -791,7 +793,13 @@ export async function createFileJobFinderRepository(
         }
       }
       writeState(database, nextState);
-      return secureDatabaseFile(options.filePath);
+      // Rebuild the file so the deleted rows do not linger in free pages,
+      // then fold the WAL back in and empty it: it holds the old pages too.
+      database.exec("VACUUM");
+      database.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+      await secureDatabaseFile(options.filePath);
+      await removeWorkspaceDatabaseBackups(options.filePath);
+      await removeWorkspaceRecoveryArtifacts(options.filePath);
     },
     getProfile() {
       return Promise.resolve(

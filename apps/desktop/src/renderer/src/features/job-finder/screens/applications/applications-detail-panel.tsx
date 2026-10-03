@@ -1,3 +1,4 @@
+import { isSameSiteApplicationActive } from "../actions/actions-screen";
 import {
   inferApplicationCrmStageForView,
   trackedHiringStageBadge,
@@ -152,6 +153,7 @@ interface ApplicationsDetailPanelProps {
   onRevokeApplyRunApproval: (input: JobFinderApplyRunActionInput) => void;
   onSelectApplyRun: (runId: string) => void;
   onStartApplyCopilot: (input: JobFinderExactApplicationTarget) => void;
+  onReviewResumePdf?: (jobId: string) => void;
   onStartAutoApplyQueue: (jobIds: string[]) => void;
   /** The mode chosen in Settings; decides what a finished fill means. */
   applyMode?: ApplyMode;
@@ -210,6 +212,7 @@ export function ApplicationsDetailPanel({
   onResolveApplyConsentRequest,
   onSelectApplyRun,
   onStartApplyCopilot,
+  onReviewResumePdf,
   onStartAutoApplyQueue,
   onOpenSafeguards,
   onOpenNeedsYou,
@@ -254,12 +257,22 @@ export function ApplicationsDetailPanel({
           run: answerRun,
         })
       : null;
+  const selectedRecordJob = selectedRecord
+    ? (discoveryJobs.find((job) => job.id === selectedRecord.jobId) ?? null)
+    : null;
   const answerStep: ApplicationAnswerStep | null =
     answerRequest && onPerformUserAction && pendingQuestions.length > 0
       ? {
           request: answerRequest,
           questions: pendingQuestions,
           isPending: isUserActionPending?.(answerRequest.id) ?? false,
+          waitingForTurn: selectedRecordJob
+            ? isSameSiteApplicationActive(
+                selectedRecordJob,
+                applyJobResults,
+                new Map(discoveryJobs.map((job) => [job.id, job])),
+              )
+            : false,
           onCommand: onPerformUserAction,
         }
       : null;
@@ -371,9 +384,6 @@ export function ApplicationsDetailPanel({
       ? getApplicationStagePresentation(selectedRecord)
       : null;
   const selectedStage = selectedHiringStage ?? selectedApplyStage;
-  const selectedRecordJob = selectedRecord
-    ? (discoveryJobs.find((job) => job.id === selectedRecord.jobId) ?? null)
-    : null;
   // Prepare-only runs never reach a "submitted" status, so the tracker stage
   // the user records by hand is the path that actually enables this.
   const canPrepareInterview = selectedRecord
@@ -428,6 +438,7 @@ export function ApplicationsDetailPanel({
       excludedQueueRecoveryEntries={excludedQueueRecoveryEntries}
       isApplyPending={isApplyPending}
       onStartApplyCopilot={onStartApplyCopilot}
+      {...(onReviewResumePdf ? { onReviewResumePdf } : {})}
       onStartAutoApplyQueue={onStartAutoApplyQueue}
       {...(onOpenSafeguards ? { onOpenSafeguards } : {})}
       {...(onOpenNeedsYou ? { onOpenNeedsYou } : {})}

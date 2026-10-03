@@ -1,3 +1,4 @@
+import type { JudgeJobFitsInput } from "@nordri/ai-providers";
 import type { BrowserSessionRuntime } from "@nordri/browser-runtime";
 import {
   JobPostingSchema,
@@ -13,6 +14,33 @@ import {
   createSourceInstructionArtifact,
   createWorkspaceServiceHarness,
 } from "./workspace-service.test-support";
+
+/**
+ * Stands in for the model judging jobs before "Best matches only" keeps them
+ * (ADR 0041): a title it accepts is a fit; anything else is another role.
+ */
+function judgeByTitle(fits: (title: string) => boolean) {
+  return (input: JudgeJobFitsInput) =>
+    Promise.resolve(
+      input.jobs.map(({ jobId, posting }) => {
+        const fit = fits(posting.title);
+        return {
+          jobId,
+          score: fit ? 80 : 15,
+          recommendation: fit ? ("strong_fit" as const) : ("skip" as const),
+          role: fit ? ("exact" as const) : ("conflict" as const),
+          roleExplanation: null,
+          preferences: "aligned" as const,
+          preferencesExplanation: null,
+          locationReach: "in_area" as const,
+          reasons: [],
+          gaps: [],
+          listingClosed: false,
+          listingClosedEvidence: null,
+        };
+      }),
+    );
+}
 
 function createDiscoveryOnlySeed() {
   return {
@@ -64,17 +92,14 @@ describe("createJobFinderWorkspaceService", () => {
     const refreshed = snapshot.discoveryJobs.find(
       (job) => job.id === existingJob.id,
     );
-    const workMode = refreshed?.matchAssessment.requirements.find(
-      (requirement) => requirement.category === "work_mode",
-    );
-
     expect(refreshed?.matchAssessment.reasons).not.toContain(
       "stale assessment sentinel",
     );
-    expect(workMode).toMatchObject({
-      status: "unknown",
-      jobEvidence: "Remote",
-    });
+    // No model has judged it under the new goals yet, so it says so rather
+    // than carrying a rule verdict (ADR 0041).
+    expect(refreshed?.matchAssessment.recommendationRationale).toMatch(
+      /^Not judged yet/u,
+    );
   });
 
   test("starts independent public provider inventories concurrently", async () => {
@@ -179,9 +204,9 @@ describe("createJobFinderWorkspaceService", () => {
         job.canonicalUrl.includes("linkedin_signal_ready"),
       ),
     ).toBe(true);
-    expect(
-      snapshot.discoveryJobs[0]?.matchAssessment.reasons.length,
-    ).toBeGreaterThan(0);
+    expect(snapshot.discoveryJobs[0]?.matchAssessment.judgment ?? null).toBe(
+      null,
+    );
   });
 
   test("runDiscovery uses the non-agent browser runtime path even when agent discovery is available", async () => {
@@ -544,7 +569,11 @@ describe("createJobFinderWorkspaceService", () => {
     const { workspaceService } = createWorkspaceServiceHarness({
       seed,
       browserRuntime,
-      aiClient: createAgentAiClient(),
+      // The model judged both outside the saved full-stack specialization.
+      aiClient: {
+        ...createAgentAiClient(),
+        judgeJobFits: judgeByTitle(() => false),
+      },
     });
     const streamedEvents: DiscoveryActivityEvent[] = [];
 
@@ -1144,7 +1173,7 @@ describe("createJobFinderWorkspaceService", () => {
     ]);
   });
 
-  test("agent discovery merge uses deterministic fit scoring without model fit calls", async () => {
+  test("agent discovery makes no single-listing fit calls", async () => {
     const browserRuntime = createAgentBrowserRuntime([
       {
         source: "target_site",
@@ -1199,8 +1228,8 @@ describe("createJobFinderWorkspaceService", () => {
     );
 
     expect(assessJobFitCalls).toBe(0);
-    expect(snapshot.discoveryJobs[0]?.matchAssessment.score).toBeGreaterThan(
-      12,
+    expect(snapshot.discoveryJobs[0]?.matchAssessment.reasons).not.toContain(
+      "Should not be used",
     );
   });
 
@@ -1382,7 +1411,12 @@ describe("createJobFinderWorkspaceService", () => {
     const { workspaceService } = createWorkspaceServiceHarness({
       seed,
       browserRuntime,
-      aiClient: createAiClient(),
+      aiClient: {
+        ...createAiClient(),
+        judgeJobFits: judgeByTitle((title) =>
+          title.startsWith("Principal Designer"),
+        ),
+      },
     });
 
     const snapshot = await workspaceService.runAgentDiscovery(

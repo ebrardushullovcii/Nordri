@@ -1,4 +1,10 @@
-import { describe, expect, it, vi } from "vitest";
+import {
+  clearUiResumeBatch,
+  stopUiResumeBatch,
+  syncUiResumeBatch,
+} from "../../../main/services/assistant/ui-resume-batch";
+import type { AssistantResumeBatchState } from "@nordri/contracts";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MutableRefObject, SetStateAction } from "react";
 import type {
   ActionState,
@@ -18,6 +24,21 @@ import { buildJobFinderTaskCenterModel } from "@renderer/features/job-finder/com
 import { createJobFinderSaveCoordinator } from "./job-finder-save-state";
 import { runJobFinderApplicationBrowserHandoff } from "./job-finder-page-routes";
 import { formatJobFinderBrowserHandoffFailedStatus } from "@renderer/features/job-finder/lib/job-finder-browser-handoff-copy";
+
+beforeEach(() => {
+  clearUiResumeBatch();
+  vi.stubGlobal("window", {
+    nordri: {
+      assistant: {
+        syncResumeBatch: (state: AssistantResumeBatchState) =>
+          Promise.resolve(syncUiResumeBatch(state)),
+      },
+    },
+  });
+});
+async function flushBatchDispatch() {
+  for (let count = 0; count < 12; count += 1) await Promise.resolve();
+}
 
 function createIdleTailoredDraftPreparation(): TailoredDraftPreparationViewState {
   return {
@@ -432,6 +453,39 @@ function createBatchWorkspace(
 }
 
 describe("buildJobFinderPageContext tailored draft batch", () => {
+  it("stops a UI-started queue through the assistant's main-process stop flag", async () => {
+    const resolvers: (() => void)[] = [];
+    const generateResume = vi
+      .fn<JobFinderShellActions["generateResume"]>()
+      .mockImplementation(
+        () =>
+          new Promise((resolve) =>
+            resolvers.push(() => resolve({} as JobFinderWorkspaceSnapshot)),
+          ),
+      );
+    const run = buildContext({
+      actions: { generateResume },
+      workspace: createBatchWorkspace([
+        createReviewQueueItem("one"),
+        createReviewQueueItem("two"),
+        createReviewQueueItem("three"),
+        createReviewQueueItem("four"),
+      ]),
+    });
+    run.context.onPrepareTailoredDrafts();
+    await vi.waitFor(() => expect(generateResume).toHaveBeenCalledTimes(2));
+    expect(stopUiResumeBatch()?.activeJobIds).toEqual(["one", "two"]);
+    resolvers.forEach((resolve) => resolve());
+    await vi.waitFor(() =>
+      expect(run.getTailoredDraftPreparation().status).toBe("stopped"),
+    );
+    expect(generateResume.mock.calls.map(([id]) => id)).toEqual(["one", "two"]);
+    expect(run.getTailoredDraftPreparation()).toMatchObject({
+      completedCount: 2,
+      failedCount: 0,
+    });
+  });
+
   it("limits generation and remaining counts to selected eligible jobs in the original campaign", async () => {
     let finish: (() => void) | undefined;
     const generateResume = vi
@@ -459,6 +513,7 @@ describe("buildJobFinderPageContext tailored draft batch", () => {
       "ready",
       "outside-campaign",
     ]);
+    await flushBatchDispatch();
     expect(generateResume.mock.calls).toEqual([["two"]]);
     latestWorkspaceRef.current = {
       ...workspace,
@@ -478,6 +533,7 @@ describe("buildJobFinderPageContext tailored draft batch", () => {
       eligibleRemainingCount: 0,
     });
     context.onPrepareTailoredDrafts([]);
+    await flushBatchDispatch();
     expect(generateResume).toHaveBeenCalledTimes(1);
   });
 
@@ -555,6 +611,7 @@ describe("buildJobFinderPageContext tailored draft batch", () => {
     });
 
     context.onPrepareTailoredDrafts();
+    await flushBatchDispatch();
 
     expect(generateResume).toHaveBeenCalledTimes(2);
     expect(getPendingActionState()).toEqual({
@@ -613,10 +670,12 @@ describe("buildJobFinderPageContext tailored draft batch", () => {
     });
 
     first.context.onPrepareTailoredDrafts();
+    await flushBatchDispatch();
     expect(generateResume).toHaveBeenCalledTimes(2);
 
     first.context.onPrepareTailoredDrafts();
     rebuilt.context.onPrepareTailoredDrafts();
+    await flushBatchDispatch();
     expect(generateResume).toHaveBeenCalledTimes(2);
 
     resolveFirst?.();
@@ -688,6 +747,7 @@ describe("buildJobFinderPageContext tailored draft batch", () => {
       });
 
     context.onPrepareTailoredDrafts();
+    await flushBatchDispatch();
     expect(generateResume).toHaveBeenCalledTimes(2);
 
     context.onStopTailoredDraftPreparation();
@@ -731,6 +791,7 @@ describe("buildJobFinderPageContext tailored draft batch", () => {
     const started = buildContext({ actions: { generateResume }, workspace });
 
     started.context.onPrepareTailoredDrafts();
+    await flushBatchDispatch();
     expect(generateResume).toHaveBeenCalledTimes(2);
 
     // A remount builds a controller with its own refs, all back to false. The
@@ -782,6 +843,7 @@ describe("buildJobFinderPageContext tailored draft batch", () => {
     });
 
     reviewQueueRoute.context.onPrepareTailoredDrafts();
+    await flushBatchDispatch();
     expect(generateResume).toHaveBeenCalledTimes(2);
 
     // Away from Shortlisted, the task center still reports the active batch
@@ -921,7 +983,7 @@ describe("buildJobFinderPageContext tailored draft batch", () => {
     expect(batchMessage).toMatch(/2 more jobs still need a resume/);
   });
 
-  it("treats a start with no eligible jobs as a deterministic no-op", () => {
+  it("treats a start with no eligible jobs as a deterministic no-op", async () => {
     const generateResume = vi
       .fn<JobFinderShellActions["generateResume"]>()
       .mockResolvedValue({} as JobFinderWorkspaceSnapshot);
@@ -934,6 +996,7 @@ describe("buildJobFinderPageContext tailored draft batch", () => {
       });
 
     context.onPrepareTailoredDrafts();
+    await flushBatchDispatch();
     context.onStopTailoredDraftPreparation();
 
     expect(generateResume).not.toHaveBeenCalled();
@@ -971,6 +1034,7 @@ describe("buildJobFinderPageContext tailored draft batch", () => {
       tailoredDraftPreparationDisposedRef: disposedRef,
     });
     mounted.context.onPrepareTailoredDrafts();
+    await flushBatchDispatch();
     expect(generateResume).toHaveBeenCalledTimes(2);
 
     disposedRef.current = true;
@@ -993,17 +1057,18 @@ describe("buildJobFinderPageContext tailored draft batch", () => {
   });
 
   it("blocks a replacement-controller start while a disposed run is parked and releases the global guard once it stops", async () => {
-    let resolveParked: (() => void) | undefined;
+    const parked: (() => void)[] = [];
+    const resolveParked = () => parked.forEach((resolve) => resolve());
     let hasParkedFirstCall = false;
     const generateResume = vi
       .fn<JobFinderShellActions["generateResume"]>()
       .mockImplementation((jobId: string) => {
-        if (jobId === "job_1" && !hasParkedFirstCall) {
+        if (["job_1", "job_2"].includes(jobId) && !hasParkedFirstCall) {
           return new Promise<JobFinderWorkspaceSnapshot>((resolve) => {
-            resolveParked = () => {
+            parked.push(() => {
               hasParkedFirstCall = true;
               resolve({} as JobFinderWorkspaceSnapshot);
-            };
+            });
           });
         }
         return Promise.resolve({} as JobFinderWorkspaceSnapshot);
@@ -1025,6 +1090,7 @@ describe("buildJobFinderPageContext tailored draft batch", () => {
       tailoredDraftPreparationDisposedRef: firstDisposedRef,
     });
     mounted.context.onPrepareTailoredDrafts();
+    await flushBatchDispatch();
     expect(generateResume).toHaveBeenCalledTimes(2);
     expect(firstRunRef.current).toBe(true);
 
@@ -1048,6 +1114,7 @@ describe("buildJobFinderPageContext tailored draft batch", () => {
     });
 
     remounted.context.onPrepareTailoredDrafts();
+    await flushBatchDispatch();
     expect(generateResume).toHaveBeenCalledTimes(2);
     expect(remountedRunRef.current).toBe(false);
     expect(remounted.getTailoredDraftPreparation().status).toBe("idle");
@@ -1065,6 +1132,7 @@ describe("buildJobFinderPageContext tailored draft batch", () => {
 
     // Guard released by the stopped orphan: the fresh controller runs again.
     remounted.context.onPrepareTailoredDrafts();
+    await flushBatchDispatch();
     expect(remountedRunRef.current).toBe(true);
     await vi.waitFor(() =>
       expect(remounted.getTailoredDraftPreparation().status).toBe("completed"),
@@ -1108,6 +1176,7 @@ describe("buildJobFinderPageContext tailored draft batch", () => {
     });
 
     run.context.onPrepareTailoredDrafts();
+    await flushBatchDispatch();
     expect(run.getTailoredDraftPreparation()).toMatchObject({
       status: "running",
       eligibleRemainingCount: 0,

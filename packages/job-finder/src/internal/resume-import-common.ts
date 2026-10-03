@@ -254,15 +254,52 @@ function splitLongNarrativeBlob(entry: string): string[] {
   return sentences.length >= 3 ? sentences : [trimmed];
 }
 
-function splitListString(value: string): string[] {
-  if (!value.includes(",")) {
-    return value ? [value] : [];
-  }
+export function stripImportFormatting(value: string): string {
+  return value
+    .replace(/(\*\*|__|~~)(.+?)\1/g, "$2")
+    .replace(/(?<!\w)([*_])([^\n]+?)\1(?!\w)/g, "$2")
+    .replace(/^\s*#{1,6}\s+/gm, "")
+    .replace(/`([^`]+)`/g, "$1")
+    .trim();
+}
 
-  const parts = value
-    .split(",")
-    .map((entry) => entry.trim())
+export function cleanImportedValue(value: unknown): unknown {
+  if (typeof value === "string") return stripImportFormatting(value);
+  if (Array.isArray(value)) return value.map(cleanImportedValue);
+  if (isObject(value))
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [
+        key,
+        cleanImportedValue(entry),
+      ]),
+    );
+  return value;
+}
+
+export function splitImportedSkills(value: string): string[] {
+  return splitListString(value)
+    .flatMap((entry) => {
+      const match = entry.match(/^([^()]+)\(([^()]*)\)$/);
+      return match
+        ? [match[1]?.trim() ?? "", ...splitListString(match[2] ?? "")]
+        : [entry];
+    })
     .filter(Boolean);
+}
 
-  return parts.length > 0 ? parts : [];
+function splitListString(value: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index];
+    if (char === "(") depth += 1;
+    if (char === ")") depth = Math.max(0, depth - 1);
+    if (depth === 0 && /[,;|•]/.test(char ?? "")) {
+      parts.push(value.slice(start, index).trim());
+      start = index + 1;
+    }
+  }
+  parts.push(value.slice(start).trim());
+  return parts.filter(Boolean);
 }

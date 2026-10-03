@@ -24,6 +24,11 @@ export interface SourceInstructionReviewOverride {
   applyGuidance: string[] | null;
   warnings: string[] | null;
   intelligence: SourceIntelligenceArtifact | null;
+  /**
+   * The review's own call on whether a future search can rely on this
+   * guidance (ADR 0041). Null when it did not say.
+   */
+  ready?: boolean | null;
 }
 
 export interface SourceInstructionFinalReviewPhaseContext {
@@ -133,5 +138,6 @@ export function parseSourceInstructionReviewOverride(
     applyGuidance: readReviewOverrideStringArray(payload, "applyGuidance"),
     warnings: readReviewOverrideStringArray(payload, "warnings"),
     intelligence,
+    ready: typeof payload.ready === "boolean" ? payload.ready : null,
   };
 }

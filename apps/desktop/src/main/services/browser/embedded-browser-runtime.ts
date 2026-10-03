@@ -64,26 +64,39 @@ export function withEmbeddedBrowserActivity(
       });
     return session;
   };
-  const flagResult = (result: ApplyExecutionResult): ApplyExecutionResult => {
+  const flagResult = (
+    result: ApplyExecutionResult,
+    tabId?: string | null,
+    siteLabel?: string,
+  ): ApplyExecutionResult => {
     const code = result.blocker?.code;
     if (code === "site_login_required")
-      browser.requestAttention({
-        kind: "sign_in",
-        title: "Sign in to continue",
-        detail:
-          "This application needs you to sign in. Your password stays with you; Job Finder carries on by itself once you're in.",
-      });
+      browser.requestAttention(
+        {
+          kind: "sign_in",
+          title: siteLabel
+            ? `Sign in to continue: ${siteLabel}`.slice(0, 160)
+            : "Sign in to continue",
+          detail:
+            "This application needs you to sign in. Your password stays with you; Job Finder carries on by itself once you're in.",
+        },
+        tabId,
+      );
     else if (code === "requires_manual_review" && result.blocker?.summary)
-      browser.requestAttention({
-        kind: "challenge",
-        title: "This page needs a human",
-        detail: result.blocker.summary,
-      });
+      browser.requestAttention(
+        {
+          kind: "challenge",
+          title: "This page needs a human",
+          detail: result.blocker.summary,
+        },
+        tabId,
+      );
     return result;
   };
   const attachParkedTab = (
     result: DiscoveryRunResult,
     claimedTabIds: readonly string[] = [],
+    siteLabel = result.querySummary,
   ): DiscoveryRunResult => {
     const parked = result.agentMetadata?.parkedTab;
     if (!parked) return result;
@@ -112,8 +125,8 @@ export function withEmbeddedBrowserActivity(
           : "challenge",
       title:
         result.agentMetadata?.accessBlockerReason === "auth_required"
-          ? "Sign in to continue"
-          : "This page needs a human",
+          ? `Sign in to continue: ${siteLabel}`.slice(0, 160)
+          : `This page needs you: ${siteLabel}`.slice(0, 160),
       detail:
         result.warning?.slice(0, 500) ??
         "Finish the step in this browser tab; Job Finder carries on with this source by itself.",
@@ -266,7 +279,7 @@ export function withEmbeddedBrowserActivity(
       browser.runAutomation(
         "Preparing application",
         options?.signal,
-        (signal, updateActivity, claimPage) =>
+        (signal, updateActivity, claimPage, claimedTabs) =>
           runtime
             .executeApplicationFlow(
               source,
@@ -283,7 +296,12 @@ export function withEmbeddedBrowserActivity(
               },
               { ...options, signal, onAutomationPage: claimPage },
             )
-            .then(flagResult),
+            .then(async (result) => {
+              const tabs = await claimedTabs();
+              if (result.state === "failed" || result.state === "submitted")
+                browser.markFinishedTabs(tabs);
+              return flagResult(result, tabs.at(-1) ?? null, input.job.company);
+            }),
         { owner: input.applicationPageBindingKey ?? null },
       ),
     ...(runtime.runAgentDiscovery
@@ -310,23 +328,26 @@ export function withEmbeddedBrowserActivity(
                       : protectedPage;
                   },
                 );
-                return flagAfter(
-                  source,
-                  runtime.runAgentDiscovery!(source, {
-                    ...options,
-                    protectedPages,
-                    signal,
-                    onAutomationPage: claimPage,
-                  }).then(async (result) =>
-                    attachParkedTab(
-                      result,
-                      result.agentMetadata?.parkedTab
-                        ? await claimedTabs()
-                        : [],
-                    ),
+                return runtime.runAgentDiscovery!(source, {
+                  ...options,
+                  protectedPages,
+                  signal,
+                  onAutomationPage: claimPage,
+                  onWaitingForBrowserTab: () => {
+                    _updateActivity(
+                      "Browser tab limit reached · Waiting for a free tab",
+                    );
+                    options.onWaitingForBrowserTab?.();
+                  },
+                }).then(async (result) =>
+                  attachParkedTab(
+                    result,
+                    result.agentMetadata?.parkedTab ? await claimedTabs() : [],
+                    options.siteLabel ?? result.querySummary,
                   ),
                 );
               },
+              { cleanupOnFinish: true },
             ),
         } satisfies Partial<BrowserSessionRuntime>)
       : {}),

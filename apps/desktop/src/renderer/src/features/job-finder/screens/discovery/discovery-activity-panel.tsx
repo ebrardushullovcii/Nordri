@@ -554,7 +554,9 @@ export function DiscoveryHistoryModal(props: {
                     Outcome
                   </p>
                   <p className="mt-2 text-[0.95rem] font-semibold text-(--text-headline)">
-                    {formatOutcomeLabel(selectedRun.summary.outcome)}
+                    {selectedRun.runPhase === "interrupted"
+                      ? "Interrupted"
+                      : formatOutcomeLabel(selectedRun.summary.outcome)}
                   </p>
                 </div>
                 <div>
@@ -567,20 +569,21 @@ export function DiscoveryHistoryModal(props: {
                 </div>
                 <div>
                   <p className="text-[0.72rem] uppercase tracking-(--tracking-label) text-foreground-muted">
-                    Saved
+                    New to you
                   </p>
                   <p className="mt-2 text-[0.95rem] font-semibold text-(--text-headline)">
-                    {selectedRun.summary.validJobsFound}
+                    {getDiscoveryRunReportCounts(selectedRun).new ??
+                      selectedRun.summary.validJobsFound}
                     {selectedRun.summary.duplicatesMerged > 0 ? (
                       <span className="ml-2 text-[0.78rem] font-normal text-foreground-muted">
-                        {`${selectedRun.summary.duplicatesMerged} already known`}
+                        {`${selectedRun.summary.duplicatesMerged} duplicates merged`}
                       </span>
                     ) : null}
                   </p>
                 </div>
                 <div>
                   <p className="text-[0.72rem] uppercase tracking-(--tracking-label) text-foreground-muted">
-                    Saved / held for review
+                    Saved directly / held for review
                   </p>
                   <p className="mt-2 text-[0.95rem] font-semibold text-(--text-headline)">
                     {selectedRun.summary.jobsPersisted} /{" "}
@@ -642,7 +645,11 @@ export function DiscoveryHistoryModal(props: {
                     const changeCounts: ReadonlyArray<[string, number]> = [
                       // Listings seen for the first time, before the plan's
                       // "jobs to retain" limit; can exceed the saved count.
-                      ["New listings seen", selectedRun.summary.changeDigest.new],
+                      [
+                        "New to you",
+                        getDiscoveryRunReportCounts(selectedRun).new ??
+                          selectedRun.summary.validJobsFound,
+                      ],
                       ["Unchanged", selectedRun.summary.changeDigest.unchanged],
                       ["Changed", selectedRun.summary.changeDigest.changed],
                       [
@@ -700,19 +707,23 @@ export function DiscoveryHistoryModal(props: {
                       Source health
                     </h3>
                     <p className="text-[0.82rem] leading-5 text-foreground-soft">
-                      By source: {sourceHealth
+                      By source:{" "}
+                      {sourceHealth
                         .map((source) => {
                           const label =
                             targetLabels.get(source.targetId) ??
                             "Configured source";
                           const execution = selectedRun.targetExecutions.find(
-                            (candidate) => candidate.targetId === source.targetId,
+                            (candidate) =>
+                              candidate.targetId === source.targetId,
                           );
                           const contributed =
-                            (execution?.jobsPersisted ?? 0) + (execution?.jobsStaged ?? 0);
+                            (execution?.jobsPersisted ?? 0) +
+                            (execution?.jobsStaged ?? 0);
                           return `${label} — ${contributed} ${contributed === 1 ? "job" : "jobs"}`;
                         })
-                        .join("; ")}.
+                        .join("; ")}
+                      .
                     </p>
                     <div className="grid gap-2 md:grid-cols-2">
                       {sourceHealth.map((source) => {
@@ -787,9 +798,10 @@ export function DiscoveryHistoryModal(props: {
                                     : ""}
                                 </p>
                                 <p className="mt-1 text-[0.82rem] text-foreground-soft">
-                                  Contributed {contributed} new job{contributed === 1 ? "" : "s"} to this run
+                                  Contributed {contributed} new job
+                                  {contributed === 1 ? "" : "s"} to this run
                                   {alreadySaved > 0
-                                    ? `; ${alreadySaved} ${alreadySaved === 1 ? "was" : "were"} already saved`
+                                    ? `; ${execution?.duplicatesMerged ?? 0} duplicates merged · ${execution?.jobsSkippedByLedger ?? 0} seen before`
                                     : ""}
                                   .
                                 </p>

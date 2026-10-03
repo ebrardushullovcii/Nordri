@@ -103,6 +103,29 @@ const administrativeAreaByPostalCode = new Map(
   administrativeAreas.map((area) => [area.postalCode, area] as const),
 );
 
+// Intl supplies country names for every supported region, rather than a
+// selected list of countries. Postal areas remain contextual: DE after
+// a region is Germany; a postal area beside an explicit US country stays Delaware.
+const regionNames = new Intl.DisplayNames(["en"], {
+  type: "region",
+  fallback: "none",
+});
+const countryNamesByAlias = new Map<string, string>();
+for (let first = 65; first <= 90; first += 1) {
+  for (let second = 65; second <= 90; second += 1) {
+    const code = String.fromCharCode(first, second);
+    const name = regionNames.of(code);
+    if (name && name !== code) {
+      countryNamesByAlias.set(normalizeText(code), name);
+      countryNamesByAlias.set(normalizeText(name), name);
+    }
+  }
+}
+
+export function resolveCountryName(value: string): string | null {
+  return countryNamesByAlias.get(normalizeText(value)) ?? null;
+}
+
 export function canonicalizeLocationAliases(value: string): string {
   // This is a location field, not prose. Country abbreviations name the same
   // place as the full country and must survive strict filtering identically.
@@ -110,21 +133,33 @@ export function canonicalizeLocationAliases(value: string): string {
     /\b(?:usa|u\.s\.a\.?|us|u\.s\.?|united states of america)\b/giu,
     "United States",
   );
-  const trimmed = countryNormalized.trim();
-  const exactPostalArea = administrativeAreaByPostalCode.get(
-    trimmed.toUpperCase(),
+  const parts = countryNormalized.split(/(,\s*)/u);
+  const hasExplicitNorthAmericanCountry = /\b(?:United States|Canada)\b/iu.test(
+    countryNormalized,
   );
-  if (exactPostalArea) {
-    return exactPostalArea.name;
-  }
-
-  return countryNormalized.replace(
-    /(^|,\s*)([A-Z]{2})(?=\s*(?:[,;/|]|\bor\b|$))/giu,
-    (match, prefix: string, postalCode: string) => {
-      const area = administrativeAreaByPostalCode.get(postalCode.toUpperCase());
-      return area ? `${prefix}${area.name}` : match;
-    },
-  );
+  return parts
+    .map((part, index) => {
+      if (index % 2 === 1) return part;
+      const trimmed = part.trim();
+      const area = administrativeAreaByPostalCode.get(trimmed.toUpperCase());
+      const country = resolveCountryName(trimmed);
+      // A two-letter area directly after a city keeps its established meaning,
+      // unless the preceding region makes the final code a country qualifier.
+      const isPostalArea =
+        area &&
+        (hasExplicitNorthAmericanCountry ||
+          (parts.length === 3 && index === 2) ||
+          !country);
+      return isPostalArea ? area.name : (country ?? part);
+    })
+    .join("")
+    .replace(
+      /(^|,\s*)([A-Z]{2})(?=\s*(?:[,;/|]|\bor\b|$))/giu,
+      (match, prefix: string, code: string) => {
+        const area = administrativeAreaByPostalCode.get(code.toUpperCase());
+        return area ? `${prefix}${area.name}` : match;
+      },
+    );
 }
 
 export function inferAdministrativeAreaCountry(

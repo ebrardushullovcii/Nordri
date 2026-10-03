@@ -5,6 +5,7 @@ import type {
   JobFinderWorkspaceSnapshot,
   ResumeAssistantMessage,
   ResumeDraft,
+  ResumeSourceDocument,
   ResumeDraftPatch,
   ResumeTemplateDefinition,
 } from "@nordri/contracts";
@@ -78,8 +79,12 @@ export interface ResumeWorkspaceScreenProps {
    * the saved level, then sends the Assistant request it could not act on.
    */
   originalResumeRoute?: {
+    source?: ResumeSourceDocument;
     levelLabel: string;
-    onWriteEditableResume: (jobId: string, pendingRequest: string | null) => void;
+    onWriteEditableResume: (
+      jobId: string,
+      pendingRequest: string | null,
+    ) => void;
   } | null;
   onApplyPatch: (
     patch: ResumeDraftPatch,

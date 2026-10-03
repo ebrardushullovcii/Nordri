@@ -1,3 +1,4 @@
+import { resumeFactIsCovered } from "./resume-content-comparison";
 import {
   filterCandidateFacingResumeKeywords,
   type TailoredResumeDraft,
@@ -44,6 +45,18 @@ function joinCompact(
     Boolean(value && value.trim()),
   );
   return values.length > 0 ? values.join(separator) : null;
+}
+
+/** "BA (Hons) Graphic Design" already names its field; it is not repeated. */
+function formatDegreeLine(
+  degree: string | null | undefined,
+  fieldOfStudy: string | null | undefined,
+): string | null {
+  const field = fieldOfStudy?.trim() ?? "";
+  const named =
+    field.length > 0 &&
+    (degree ?? "").toLowerCase().includes(field.toLowerCase());
+  return joinCompact([degree, named ? null : field], ", ");
 }
 
 /**
@@ -819,9 +832,16 @@ function mergeEntryBullets(
   profileBullets: readonly string[],
   maxBullets = 3,
 ): string[] {
-  const normalizedTailoredBullets = tailoredBullets.flatMap(
-    splitResumeDetailLine,
-  );
+  const normalizedTailoredBullets = tailoredBullets
+    .flatMap(splitResumeDetailLine)
+    .map(
+      (line) =>
+        profileBullets.find(
+          (saved) =>
+            resumeFactIsCovered(saved, [line]) &&
+            resumeFactIsCovered(line, [saved]),
+        ) ?? line,
+    );
   const normalizedProfileBullets = profileBullets.flatMap(
     splitResumeDetailLine,
   );
@@ -1170,14 +1190,20 @@ function buildDraftSectionsFromStructuredTailoredDraft(input: {
           : `education_entry_${index + 1}`,
         entryType: "education",
         title: entry.school,
-        subtitle: joinCompact([entry.degree, entry.fieldOfStudy], ", "),
+        subtitle: formatDegreeLine(entry.degree, entry.fieldOfStudy),
         location: entry.location,
         dateRange: selectCanonicalDateRange({
           profileDateRange,
           generatedDateRange: entry.dateRange,
         }),
-        startDate: profileEducation?.startDate ?? parsedDates.startDate,
-        endDate: profileEducation?.endDate ?? parsedDates.endDate,
+        startDate: profileEducation
+          ? profileEducation.startDate
+          : parsedDates.endDate || parsedDates.isCurrent
+            ? parsedDates.startDate
+            : null,
+        endDate: profileEducation
+          ? profileEducation.endDate
+          : (parsedDates.endDate ?? parsedDates.startDate),
         isCurrent: parsedDates.isCurrent,
         summary: entry.summary,
         updatedAt: createdAt,
@@ -1673,29 +1699,31 @@ export function seedResumeDraft(input: {
       ),
   );
   const experienceEntries = orderEntriesNewestFirst(
-    input.profile.experiences.map((experience, index) =>
-      createEntry({
-        id: `experience_${experience.id}`,
-        entryType: "experience",
-        title: experience.title,
-        subtitle: experience.companyName,
-        location: experience.location,
-        dateRange: formatDateRange(
-          experience.startDate,
-          experience.endDate,
-          experience.isCurrent,
-        ),
-        startDate: experience.startDate,
-        endDate: experience.endDate,
-        isCurrent: experience.isCurrent,
-        summary: experience.summary,
-        bullets: experience.achievements,
-        updatedAt: now,
-        origin: "imported",
-        sortOrder: index,
-        profileRecordId: experience.id,
-      }),
-    ),
+    input.profile.experiences
+      .filter((record) => !record.isDraft)
+      .map((experience, index) =>
+        createEntry({
+          id: `experience_${experience.id}`,
+          entryType: "experience",
+          title: experience.title,
+          subtitle: experience.companyName,
+          location: experience.location,
+          dateRange: formatDateRange(
+            experience.startDate,
+            experience.endDate,
+            experience.isCurrent,
+          ),
+          startDate: experience.startDate,
+          endDate: experience.endDate,
+          isCurrent: experience.isCurrent,
+          summary: experience.summary,
+          bullets: experience.achievements,
+          updatedAt: now,
+          origin: "imported",
+          sortOrder: index,
+          profileRecordId: experience.id,
+        }),
+      ),
   );
   const projectEntries = orderEntriesNewestFirst(
     input.profile.projects.map((project, index) =>
@@ -1722,50 +1750,54 @@ export function seedResumeDraft(input: {
     ),
   );
   const educationEntries = orderEntriesNewestFirst(
-    input.profile.education.map((education, index) =>
-      createEntry({
-        id: `education_${education.id}`,
-        entryType: "education",
-        title: education.schoolName,
-        subtitle: joinCompact([education.degree, education.fieldOfStudy], ", "),
-        location: education.location,
-        dateRange: formatDateRange(education.startDate, education.endDate),
-        startDate: education.startDate,
-        endDate: education.endDate,
-        isCurrent: false,
-        summary: education.summary,
-        updatedAt: now,
-        origin: "imported",
-        sortOrder: index,
-        profileRecordId: education.id,
-      }),
-    ),
+    input.profile.education
+      .filter((record) => !record.isDraft)
+      .map((education, index) =>
+        createEntry({
+          id: `education_${education.id}`,
+          entryType: "education",
+          title: education.schoolName,
+          subtitle: formatDegreeLine(education.degree, education.fieldOfStudy),
+          location: education.location,
+          dateRange: formatDateRange(education.startDate, education.endDate),
+          startDate: education.startDate,
+          endDate: education.endDate,
+          isCurrent: false,
+          summary: education.summary,
+          updatedAt: now,
+          origin: "imported",
+          sortOrder: index,
+          profileRecordId: education.id,
+        }),
+      ),
   );
   const certificationEntries = orderEntriesNewestFirst(
-    input.profile.certifications.map((certification, index) =>
-      createEntry({
-        id: `certification_${index + 1}`,
-        entryType: "certification",
-        title: certification.name,
-        subtitle: certification.issuer,
-        dateRange: formatDateRange(
-          certification.issueDate,
-          certification.expiryDate,
-        ),
-        startDate: certification.issueDate,
-        endDate: certification.expiryDate,
-        isCurrent: false,
-        updatedAt: now,
-        origin: "imported",
-        sortOrder: index,
-        profileRecordId: certification.id,
-      }),
-    ),
+    input.profile.certifications
+      .filter((record) => !record.isDraft)
+      .map((certification, index) =>
+        createEntry({
+          id: `certification_${index + 1}`,
+          entryType: "certification",
+          title: certification.name,
+          subtitle: certification.issuer,
+          dateRange: formatDateRange(
+            certification.issueDate,
+            certification.expiryDate,
+          ),
+          startDate: certification.issueDate,
+          endDate: certification.expiryDate,
+          isCurrent: false,
+          updatedAt: now,
+          origin: "imported",
+          sortOrder: index,
+          profileRecordId: certification.id,
+        }),
+      ),
   );
   const summaryText =
     input.profile.professionalSummary.fullSummary ??
     input.profile.summary ??
-    `${input.profile.headline} targeting ${input.job.title} opportunities.`;
+    null;
 
   return ResumeDraftSchema.parse(
     normalizeResumeDraftEntryOrdering({

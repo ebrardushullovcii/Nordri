@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom";
 import type {
   BrowserSessionState,
   JobFinderSearchRequest,
@@ -431,6 +432,12 @@ export function DiscoverySearchBar(props: {
         <SlidersHorizontal aria-hidden="true" className="size-3.5 shrink-0" />
         Roles, places & sources
       </button>
+      <Link
+        className="inline-flex min-h-7 shrink-0 items-center rounded-(--radius-small) px-2 text-xs text-foreground-muted underline-offset-2 outline-none transition-colors hover:text-foreground hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/30"
+        to="/job-finder/campaigns"
+      >
+        Search plans
+      </Link>
       {browserChipLabel === null ? null : (
         <button
           className="inline-flex min-h-7 shrink-0 items-center rounded-(--radius-small) px-2 text-xs text-foreground-muted underline-offset-2 outline-none transition-colors hover:text-foreground hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/30"

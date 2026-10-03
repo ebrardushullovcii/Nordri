@@ -1,3 +1,5 @@
+import { StatusBadge } from "../../components/status-badge";
+import { fitRecommendationCopy } from "../../lib/match-assessment-presentation";
 import { Check, ChevronDown, Pencil } from "lucide-react";
 import { useCallback, useRef } from "react";
 import type {
@@ -303,7 +305,10 @@ export function ReviewQueueMissionPanel({
   // A draft that kept the original wording because the listing body was never
   // captured is presented as the original-resume path, whatever the job's
   // saved choice says.
-  const untailorableListing = describeUntailorableListing(selectedAsset);
+  const untailorableListing =
+    selectedItem?.resumeApplicationMode === "original_resume"
+      ? null
+      : describeUntailorableListing(selectedAsset);
   const untailorableListingReasonId = "resume-choice-untailorable-listing";
   const resumeChoiceFieldset = selectedItem ? (
     <div className="grid gap-2">
@@ -517,6 +522,16 @@ export function ReviewQueueMissionPanel({
           className="flex min-w-0 flex-wrap items-center gap-2"
           data-testid="application-action-row"
         >
+          {selectedJob.matchAssessment.recommendation === "skip" ? (
+            <StatusBadge tone={fitRecommendationCopy.skip.tone}>
+              {fitRecommendationCopy.skip.label}
+            </StatusBadge>
+          ) : null}
+          {selectedJob.matchAssessment.recommendation === "skip" ? (
+            <span className="text-(length:--text-small) text-foreground-soft">
+              {selectedJob.matchAssessment.recommendationRationale}
+            </span>
+          ) : null}
           {existingApplication ? (
             <Button
               className="h-11 w-fit max-w-full justify-start px-5 text-sm font-semibold normal-case tracking-normal"

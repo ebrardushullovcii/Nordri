@@ -467,6 +467,7 @@ describe("resume import while the deferred visual scan runs", () => {
           // Any setup save or refresh while the visual scan reconciles goes
           // through a snapshot read.
           const snapshot = await workspaceService.getWorkspaceSnapshot();
+          expect(snapshot.resumeImportActive).toBe(true);
           seenDuringVisionStage.push(
             `${snapshot.latestResumeImportRun?.status}:${snapshot.latestResumeImportRun?.errorMessage ?? ""}`,
           );
@@ -495,6 +496,11 @@ describe("resume import while the deferred visual scan runs", () => {
     const run = await base.getLatestResumeImportRun();
     expect(run?.status).not.toBe("failed");
     expect(run?.errorMessage).toBeNull();
+    await vi.waitFor(async () =>
+      expect(
+        (await workspaceService.getWorkspaceSnapshot()).resumeImportActive,
+      ).toBe(false),
+    );
   });
 
   test("a visual scan that fails midway leaves the text import applied, not stopped", async () => {

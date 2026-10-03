@@ -1375,12 +1375,6 @@ export async function runBrowserAgentSystemCase(input: {
             },
           }
         : { siteLabel: "Example Careers" },
-      compaction: {
-        messageCountFallbackThreshold: 8,
-        preserveRecentMessages: 4,
-        minimumPreserveRecentMessages: 2,
-        maxToolPayloadChars: 4_000,
-      },
     };
     const runWorker = () =>
       withQuietAgentConsole(() =>

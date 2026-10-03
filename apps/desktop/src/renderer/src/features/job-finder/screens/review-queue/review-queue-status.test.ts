@@ -546,8 +546,8 @@ describe("safe application presentation labels", () => {
         resumeReview: {
           status: "original_resume",
           sourceDocumentId: "resume_original",
-          fileName: "Ebrar.pdf",
-          filePath: "/tmp/Ebrar.pdf",
+          fileName: "Elian.pdf",
+          filePath: "/tmp/Elian.pdf",
         },
       }),
     );
@@ -899,4 +899,27 @@ describe("a shortlist that is all on the original resume", () => {
       "Every job here uses your original resume, so there is nothing to write.",
     );
   });
+});
+
+it("counts written, fallback and Original choices separately", async () => {
+  const result = await prepareTailoredDraftBatch(
+    [createItem("written"), createItem("fallback"), createItem("original")],
+    (id) => Promise.resolve(id as "written" | "fallback" | "original"),
+  );
+  expect(result).toMatchObject({
+    completedCount: 3,
+    fallbackCount: 1,
+    originalChoiceCount: 1,
+    failedCount: 0,
+  });
+  expect(
+    getTailoredDraftPreparationResultMessage({
+      ...result,
+      currentIndex: null,
+      eligibleRemainingCount: 0,
+      status: "completed",
+    }),
+  ).toBe(
+    "Wrote 1 resume · 1 kept your original wording · 1 Original by choice. Nothing was sent.",
+  );
 });

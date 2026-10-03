@@ -97,8 +97,8 @@ const deterministicTestTimestamp = "2026-03-20T10:00:00.000Z";
  * Database-only recovery snapshots written next to the live workspace
  * database. Graceful shutdown rotates `<workspace>.backup` (prior generation
  * preserved as `.backup.prev`); destructive resets snapshot into the
- * dedicated `<workspace>.reset-backup`, which close rotation can never
- * overwrite with post-reset state.
+ * dedicated `<workspace>.reset-backup` while they run. A successful reset
+ * deletes every snapshot, because the person asked for permanent deletion.
  *
  * Scope limitation: these snapshots recover the SQLite database only. They
  * do NOT include generated resume documents, candidate assets, application
@@ -369,9 +369,7 @@ export function createDesktopJobFinderAiClient(
   env: NodeJS.ProcessEnv = process.env,
 ) {
   const desktopTestApiEnabled = isDesktopTestApiEnabled(env);
-  const forceLiveAiDuringTestApi = isEnabled(
-    env.NORDRI_TEST_API_USE_LIVE_AI,
-  );
+  const forceLiveAiDuringTestApi = isEnabled(env.NORDRI_TEST_API_USE_LIVE_AI);
 
   if (desktopTestApiEnabled && !forceLiveAiDuringTestApi) {
     return createDeterministicJobFinderAiClient(
@@ -400,9 +398,7 @@ export function createDesktopResumeVisionProvider(
   env: NodeJS.ProcessEnv = process.env,
 ) {
   const desktopTestApiEnabled = isDesktopTestApiEnabled(env);
-  const forceLiveAiDuringTestApi = isEnabled(
-    env.NORDRI_TEST_API_USE_LIVE_AI,
-  );
+  const forceLiveAiDuringTestApi = isEnabled(env.NORDRI_TEST_API_USE_LIVE_AI);
 
   if (desktopTestApiEnabled && !forceLiveAiDuringTestApi) {
     return createDeterministicResumeVisionProvider(

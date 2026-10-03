@@ -33,6 +33,7 @@ export type FailureKind =
   | "site_blocked"
   | "assistant_unavailable"
   | "invalid_details"
+  | "unusable_resume"
   | "paused"
   | "unknown";
 
@@ -60,6 +61,8 @@ export const FAILURE_SENTENCES = {
   paused:
     "Background work is paused, so nothing new can start. Press Resume background work on the Job Finder Home screen, then try again.",
   unknown: "Something went wrong and this did not finish. Try again.",
+  unusable_resume:
+    "No resume details were found in this file. Choose another file.",
 } as const satisfies Record<FailureKind, string>;
 
 /**
@@ -226,6 +229,7 @@ const KIND_PATTERNS: readonly (readonly [
   ["offline", OFFLINE_PATTERNS],
   ["not_found", NOT_FOUND_PATTERNS],
   ["assistant_unavailable", ASSISTANT_UNAVAILABLE_PATTERNS],
+  ["unusable_resume", [/No resume details were found in this file/i]],
   ["invalid_details", INVALID_DETAILS_PATTERNS],
 ];
 

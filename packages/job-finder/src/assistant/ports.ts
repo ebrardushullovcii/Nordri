@@ -2,6 +2,7 @@ import type {
   ApplicationAutomationMode,
   ApplyRawPageHands,
   CandidateAsset,
+  AssistantResumeBatchState,
   JobFinderSearchRequest,
 } from "@nordri/contracts";
 
@@ -13,6 +14,11 @@ import type {
  * IPC routes call, so the assistant and the buttons take one path.
  */
 export interface AssistantHostPorts {
+  /** Includes reading the file before the domain import run is stored. */
+  isResumeImportActive?(): boolean;
+  /** The UI-owned queue uses this same stop flag before dispatching a draft. */
+  readResumeBatch?(): AssistantResumeBatchState | null;
+  stopResumeBatch?(): AssistantResumeBatchState | null;
   /** Starts a search as Find jobs does and returns once the run exists. */
   startSearch(input: {
     searchRequest: JobFinderSearchRequest;

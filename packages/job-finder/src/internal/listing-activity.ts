@@ -1,4 +1,5 @@
 import type {
+  ApplicationAttempt,
   DiscoveryJobView,
   DiscoveryLedgerEntry,
   ListingActivity,
@@ -11,48 +12,25 @@ import { createJobIdentityIndex } from "./job-identity";
 type ActivityCandidate = Exclude<ListingActivity, { status: "unknown" }>;
 
 /**
- * Phrases a listing uses to say it is over.
- *
- * One list, shared with discovery title triage, so a phrase added for either
- * surface closes the listing everywhere. Matching stays on whole phrases
- * rather than on a board name or a URL shape: nothing here is specific to any
- * one job site.
+ * The listing's own words saying it is over, as the model read them when it
+ * judged the job (ADR 0041), or null when it did not say so. An empty string
+ * means closed without a quote.
  */
-export const CLOSED_LISTING_BODY_PATTERN =
-  /\b(?:no longer accepting applications|no longer accepting candidates|not accepting (?:new )?applications|closed to new applicants|no longer available|no longer active|this (?:job|position|role|listing|vacancy|opening) (?:(?:has been|was) (?:filled|closed|removed|archived|expired)|is now (?:filled|closed|removed|archived|expired)|is (?:closed|removed|archived|expired|no longer open))|(?:this )?(?:position|role|vacancy|opening) (?:has been|was|is now) filled|(?:job|position|listing|vacancy|opening) has (?:closed|expired|ended)|applications? (?:are|is|have) (?:now )?closed|this posting (?:has expired|is closed|is no longer active)|hiring for this (?:job|role|position) has (?:closed|ended)|we are no longer hiring for this|we have filled this)\b/iu;
-
-const CONDITIONAL_CLOSURE_PREFIX_PATTERN =
-  /\b(?:after|before|if|once|until|when)\b[^.!?]*$/iu;
-
-/**
- * The captured listing text, in the order a closure sentence usually appears.
- * Only text the app actually stored is read; nothing is fetched here.
- */
-function listingText(job: SavedJob): string {
-  return [job.summary, job.description, job.title]
-    .filter((value): value is string => Boolean(value))
-    .join(" ");
-}
-
-/** The closure phrase the listing itself used, or null. */
-export function findClosedListingPhrase(job: SavedJob): string | null {
-  for (const sentence of listingText(job).split(/(?<=[.!?])\s+|\r?\n+/u)) {
-    const match = CLOSED_LISTING_BODY_PATTERN.exec(sentence);
-    if (
-      match &&
-      !CONDITIONAL_CLOSURE_PREFIX_PATTERN.test(sentence.slice(0, match.index))
-    ) {
-      return match[0];
-    }
+export function findClosedListingPhrase(job: {
+  matchAssessment?: SavedJob["matchAssessment"] | null;
+}): string | null {
+  const judgment = job.matchAssessment?.judgment;
+  if (!judgment?.listingClosed) {
+    return null;
   }
-  return null;
+  return judgment.listingClosedEvidence ?? "";
 }
 
 function closedByOwnTextCandidate(
   job: SavedJob,
 ): ActivityCandidate | undefined {
   const phrase = findClosedListingPhrase(job);
-  if (!phrase) {
+  if (phrase === null) {
     return undefined;
   }
 
@@ -65,7 +43,7 @@ function closedByOwnTextCandidate(
     signalId: `listing-text:${job.id}`,
     provenance: "system",
     explanation: "The listing's own text says it is no longer open.",
-    detail: `The page says "${phrase}".`,
+    detail: phrase ? `The page says "${phrase}".` : "The page says so.",
     confidence: 1,
   };
 }
@@ -125,6 +103,7 @@ export function projectDiscoveryJobViews(input: {
   jobs: readonly SavedJob[];
   discoveryLedger: readonly DiscoveryLedgerEntry[];
   listingSignals: readonly ListingSignalRecord[];
+  applicationAttempts?: readonly ApplicationAttempt[];
 }): DiscoveryJobView[] {
   const jobIdentityIndex = createJobIdentityIndex(input.jobs, (job) => job);
   const candidateByJob = new Map<SavedJob, ActivityCandidate>();
@@ -180,6 +159,24 @@ export function projectDiscoveryJobViews(input: {
         explanation: signal.explanation,
         detail: signal.detail,
         confidence: signal.confidence,
+      }),
+    );
+  }
+
+  for (const attempt of input.applicationAttempts ?? []) {
+    if (attempt.blocker?.code !== "application_closed") continue;
+    const job = uniqueJobById.get(attempt.jobId);
+    if (!job) continue;
+    candidateByJob.set(
+      job,
+      newerActivity(candidateByJob.get(job), {
+        status: "closed",
+        observedAt: attempt.updatedAt,
+        signalId: attempt.id,
+        provenance: "browser",
+        confidence: 1,
+        explanation: attempt.summary,
+        detail: attempt.detail,
       }),
     );
   }

@@ -379,6 +379,7 @@ export function DiscoveryScreen(props: {
   onOpenApplication?: (recordId: string) => void;
   /** Opens a job's original listing page in the Job Finder browser. */
   onOpenListing?: (url: string) => void;
+  onAssessJobListing?: (jobId: string) => Promise<void>;
   onQueueJob: (jobId: string) => void | Promise<JobFinderQueuedJobOutcome>;
   onRunAgentDiscovery:
     | ((searchRequest?: JobFinderSearchRequest) => void)
@@ -431,6 +432,7 @@ export function DiscoveryScreen(props: {
     onOpenApplication,
     onOpenListing,
     onQueueJob,
+    onAssessJobListing,
     onRunAgentDiscovery,
     onSelectJob,
     recentRuns,
@@ -782,6 +784,25 @@ export function DiscoveryScreen(props: {
   const inspectedJobQueueFeedback = inspectedJob
     ? (queueOutcomesByJobId.get(inspectedJob.id) ?? null)
     : null;
+  const detailPanelRef = useRef<HTMLDivElement>(null);
+  const requestedDetailJobRef = useRef<string | null>(null);
+  const revealSelectedDetail = useCallback(() => {
+    const twoPane =
+      window.matchMedia?.("(min-width: 1280px)").matches ??
+      window.innerWidth >= 1280;
+    if (!twoPane) {
+      detailPanelRef.current
+        ?.querySelector<HTMLElement>("section")
+        // jsdom and some embedded views have no scrollIntoView.
+        ?.scrollIntoView?.({ block: "start" });
+    }
+  }, []);
+  useLayoutEffect(() => {
+    if (requestedDetailJobRef.current === inspectedJob?.id) {
+      requestedDetailJobRef.current = null;
+      revealSelectedDetail();
+    }
+  }, [inspectedJob?.id, revealSelectedDetail]);
   const hasInspectableJob = inspectedJob !== null;
   const selectedJobCompanyId =
     inspectedJob && (companies ?? []).length > 0
@@ -1195,7 +1216,11 @@ export function DiscoveryScreen(props: {
           }
           onShowAlsoFound={() => setShowAlsoFound(true)}
           onToggleAlsoFound={() => setShowAlsoFound((current) => !current)}
-          onSelectJob={onSelectJob}
+          onSelectJob={(jobId) => {
+            requestedDetailJobRef.current = jobId;
+            onSelectJob(jobId);
+            if (jobId === inspectedJob?.id) revealSelectedDetail();
+          }}
           onShortlistJobs={(jobIds) => {
             for (const jobId of jobIds) {
               handleQueueJob(jobId);
@@ -1207,7 +1232,7 @@ export function DiscoveryScreen(props: {
         />
       </div>
       {hasInspectableJob ? (
-        <div className="min-h-0 min-w-0">
+        <div className="min-h-0 min-w-0" ref={detailPanelRef}>
           <DiscoveryDetailPanel
             applicationRecords={applicationRecords}
             reviewQueue={reviewQueue}
@@ -1220,6 +1245,22 @@ export function DiscoveryScreen(props: {
             {...(onOpenCompany ? { onOpenCompany } : {})}
             onOpenApplication={onOpenApplication ?? (() => undefined)}
             {...(onOpenListing ? { onOpenListing } : {})}
+            {...(onAssessJobListing ? { onAssessJobListing } : {})}
+            onBackToResults={() => {
+              const row = Array.from(
+                document.querySelectorAll<HTMLElement>(
+                  "[data-collection-item-id]",
+                ),
+              ).find(
+                (element) =>
+                  element.dataset.collectionItemId === inspectedJob?.id,
+              );
+              row?.scrollIntoView?.({ block: "center" });
+              (row instanceof HTMLButtonElement
+                ? row
+                : row?.querySelector<HTMLElement>("button")
+              )?.focus({ preventScroll: true });
+            }}
             onQueueJob={handleQueueJob}
             queueFeedback={inspectedJobQueueFeedback}
             selectedJob={inspectedJob}

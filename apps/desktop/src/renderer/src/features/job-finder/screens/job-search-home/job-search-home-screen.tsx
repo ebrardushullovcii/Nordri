@@ -111,13 +111,16 @@ export function listCurrentUnreadNotifications(
       steps.length > 0 &&
       steps.every(
         ({ request }) =>
-          request.state === "resolved" || request.state === "skipped",
+          request.state === "resolved" ||
+          request.state === "skipped" ||
+          request.state === "cancelled",
       ) &&
       steps.some(
         ({ request }) =>
-          request.state === "resolved" &&
-          Boolean(request.resolvedAt) &&
-          request.resolvedAt! >= notification.createdAt,
+          (request.state === "resolved" ||
+            request.state === "skipped" ||
+            request.state === "cancelled") &&
+          request.updatedAt >= notification.createdAt,
       )
     );
   };
@@ -174,8 +177,7 @@ export function JobSearchHomeScreen(props: JobSearchHomeScreenProps) {
   const [dismissedActionState, setDismissedActionState] =
     useState<ActionState | null>(null);
   const actionMessage =
-    props.actionState?.message &&
-    props.actionState !== dismissedActionState
+    props.actionState?.message && props.actionState !== dismissedActionState
       ? props.actionState.message
       : null;
   const tasks = buildJobFinderTaskCenterModel({
@@ -531,9 +533,7 @@ export function JobSearchHomeScreen(props: JobSearchHomeScreenProps) {
               </Button>
             ) : null}
             <Button
-              onClick={() =>
-                setDismissedActionState(props.actionState ?? null)
-              }
+              onClick={() => setDismissedActionState(props.actionState ?? null)}
               size="sm"
               type="button"
               variant="ghost"

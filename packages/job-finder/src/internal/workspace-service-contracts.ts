@@ -368,6 +368,7 @@ export interface JobFinderWorkspaceService {
     signal?: AbortSignal,
     onProgress?: (event: SourceDebugProgressEvent) => void,
   ): Promise<JobFinderWorkspaceSnapshot>;
+  assessJobListing(jobId: string): Promise<JobFinderWorkspaceSnapshot>;
   queueJobForReview(jobId: string): Promise<JobFinderWorkspaceSnapshot>;
   setJobResumeApplicationMode(
     jobId: string,

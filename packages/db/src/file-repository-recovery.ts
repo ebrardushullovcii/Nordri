@@ -1,5 +1,5 @@
 import { existsSync, readdirSync } from "node:fs";
-import { chmod, copyFile, rename, rm, stat } from "node:fs/promises";
+import { chmod, copyFile, readdir, rename, rm, stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 
@@ -440,6 +440,34 @@ export function listWorkspaceQuarantineArtifacts(
         ? 1
         : 0,
   );
+}
+
+/** Permanent reset removes recovery copies too, including interrupted probes. */
+export async function removeWorkspaceRecoveryArtifacts(
+  filePath: string,
+): Promise<void> {
+  const databaseBasename = basename(filePath);
+  const directory = dirname(filePath);
+  const entries = await readdir(directory, { withFileTypes: true });
+  const temporaryTail =
+    /^\.(?:recovery-integrity-|recovery-validate-(?:backup|backup-prev)-|restore-)[A-Za-z0-9._-]+\.tmp(?:-wal|-shm)?$/u;
+  for (const entry of entries) {
+    if (!entry.isFile()) continue;
+    const tail = entry.name.slice(databaseBasename.length);
+    const isTemporary =
+      entry.name.startsWith(databaseBasename) && temporaryTail.test(tail);
+    const quarantine = quarantineTailPattern.exec(entry.name);
+    const stem = quarantine ? entry.name.slice(0, quarantine.index) : null;
+    const isQuarantine =
+      stem !== null &&
+      [
+        databaseBasename,
+        `${databaseBasename}-wal`,
+        `${databaseBasename}-shm`,
+      ].includes(stem);
+    if (isTemporary || isQuarantine)
+      await rm(join(directory, entry.name), { force: true });
+  }
 }
 
 function invalidCandidateStatus(

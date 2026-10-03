@@ -50,6 +50,7 @@ async function world(count = 5) {
   } as unknown as AssistantTurnSession;
   const ports = {
     publishWorkspaceUpdate: vi.fn(),
+    stopResumeBatch: () => null,
   } as unknown as AssistantHostPorts;
   const generate = vi
     .spyOn(service, "generateResume")
@@ -218,7 +219,7 @@ describe("sidebar resume batches", () => {
     expect(final.completedJobIds).toEqual([ctx.ids[1], ctx.ids[3]]);
   });
 
-  it("the cancellation tool names active drafts and affects only its conversation", async () => {
+  it("the cancellation tool names active drafts and stops all conversations and the UI queue", async () => {
     const ctx = await world(4);
     const gate = hold();
     ctx.generate.mockImplementation(async () => {
@@ -238,11 +239,23 @@ describe("sidebar resume batches", () => {
       other,
     );
     await vi.waitFor(() => expect(ctx.generate).toHaveBeenCalledTimes(4));
+    ctx.ports.stopResumeBatch = () => ({
+      id: "ui_batch",
+      jobIds: ["ui_1", "ui_2", "ui_3"],
+      activeJobIds: ["ui_1", "ui_2"],
+      completedJobIds: [],
+      stopRequested: true,
+      done: false,
+    });
     const result = await cancelResumesTool.execute({}, ctx);
-    expect(result.data).toEqual({ stoppedBatches: 1, activeDrafts: 2 });
-    expect(result.summary).toContain("2 active drafts will finish");
+    expect(result.data).toEqual({
+      stoppedBatches: 3,
+      activeDrafts: 6,
+      uncheckedWork: [],
+    });
+    expect(result.summary).toContain("6 active drafts will finish");
     expect(readBackgroundBatch(ctx.runs[0]!.id)?.cancelled).toBe(true);
-    expect(readBackgroundBatch(ctx.runs[1]!.id)?.cancelled).toBe(false);
+    expect(readBackgroundBatch(ctx.runs[1]!.id)?.cancelled).toBe(true);
     gate.resolve();
     await Promise.all(ctx.runs.map(finished));
   });

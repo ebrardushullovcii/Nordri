@@ -13,6 +13,8 @@
  *   run needs, so a broken site cannot hold it forever
  * - it trims a long conversation so a run that takes hundreds of steps keeps
  *   fitting, and says what it trimmed
+ * - it shortens old tool answers (mostly page views the model has since moved
+ *   past), so each turn sends the current page rather than every page so far
  *
  * Deciding where to go, what to press, when the goal is met, and what to tell
  * the person is the model's. See ADR 0023.
@@ -157,6 +159,12 @@ export interface AgentLoopOptions {
   describeStall?: () => string | null;
   /** Rough size at which older turns are trimmed. */
   compactionMaxChars?: number;
+  /**
+   * Tool answers older than the most recent few are cut to this many
+   * characters. A page view is out of date once the model has acted again;
+   * it can always look at the page anew. Null keeps every answer whole.
+   */
+  staleToolResultChars?: number | null;
   /** Output cap for one model turn. Omit to use the provider default. */
   modelMaxOutputTokens?: number;
   signal?: AbortSignal;
@@ -199,6 +207,16 @@ const DEFAULT_MODEL_TURN_TIMEOUT_MS = 240_000;
 const DEFAULT_TOOL_TIMEOUT_MS = 90_000;
 const DEFAULT_COMPACTION_MAX_CHARS = 360_000;
 const COMPACTION_KEEP_RECENT = 14;
+const DEFAULT_STALE_TOOL_RESULT_CHARS = 700;
+/** Tool answers kept whole, counted from the newest. */
+const STALE_TOOL_RESULT_KEEP_RECENT = 4;
+/**
+ * Old answers are shortened a few at a time, so the conversation's start
+ * stays the same for several turns and the provider's prompt cache holds.
+ */
+const STALE_TOOL_RESULT_BATCH = 4;
+const STALE_TOOL_RESULT_NOTE =
+  "[Older answer shortened to save room. Look again for the page as it is now.]";
 
 const RETRYABLE_MODEL_HTTP_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
 
@@ -283,6 +301,47 @@ function compactMessages(
   ];
 }
 
+/**
+ * Cuts tool answers older than the most recent few down to their opening
+ * lines, which say what the step did and where it landed. Answers already
+ * short enough, and the opening messages, stay as they are.
+ */
+function shortenStaleToolResults(
+  messages: AgentLoopMessage[],
+  openingCount: number,
+  maxChars: number,
+): AgentLoopMessage[] {
+  const stale: number[] = [];
+  let seen = 0;
+  for (let index = messages.length - 1; index >= openingCount; index -= 1) {
+    const message = messages[index];
+    if (message?.role !== "tool") continue;
+    seen += 1;
+    if (
+      seen > STALE_TOOL_RESULT_KEEP_RECENT &&
+      message.content.length > maxChars + STALE_TOOL_RESULT_NOTE.length + 2
+    ) {
+      stale.push(index);
+    }
+  }
+  if (stale.length < STALE_TOOL_RESULT_BATCH) {
+    return messages;
+  }
+  const next = [...messages];
+  for (const index of stale) {
+    const message = next[index];
+    if (message?.role !== "tool") continue;
+    const head = message.content.slice(0, maxChars);
+    const lineEnd = head.lastIndexOf("\n");
+    const cut = lineEnd > maxChars / 2 ? head.slice(0, lineEnd) : head;
+    next[index] = {
+      ...message,
+      content: `${cut.trimEnd()}\n${STALE_TOOL_RESULT_NOTE}`,
+    };
+  }
+  return next;
+}
+
 export async function runAgentLoop(
   options: AgentLoopOptions,
 ): Promise<AgentLoopResult> {
@@ -315,6 +374,10 @@ export async function runAgentLoop(
   );
   const compactionMaxChars =
     options.compactionMaxChars ?? DEFAULT_COMPACTION_MAX_CHARS;
+  const staleToolResultChars =
+    options.staleToolResultChars === undefined
+      ? DEFAULT_STALE_TOOL_RESULT_CHARS
+      : options.staleToolResultChars;
 
   let messages: AgentLoopMessage[] = [...options.messages];
   const openingCount = messages.length;
@@ -704,6 +767,13 @@ export async function runAgentLoop(
     }
     if (ended) {
       return ended;
+    }
+    if (staleToolResultChars !== null) {
+      messages = shortenStaleToolResults(
+        messages,
+        openingCount,
+        staleToolResultChars,
+      );
     }
     messages = compactMessages(
       messages,

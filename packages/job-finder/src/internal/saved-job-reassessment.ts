@@ -1,6 +1,5 @@
 import type { MatchAssessment, SavedJob } from "@nordri/contracts";
 
-import { correctRemoteOnlyLocationAlignment } from "./discovery-location-alignment";
 import { withSavedJobSearchBehavior } from "./job-search-behavior";
 import { createMatchAssessmentSession } from "./match-assessment-session";
 import { createMatchAssessment } from "./matching";
@@ -48,11 +47,7 @@ export async function reassessSavedJobs(
     calculate: createMatchAssessment,
   });
   const reassess = <T extends SavedJob>(job: T): T => {
-    const next = correctRemoteOnlyLocationAlignment(
-      job,
-      session.assessPersisted(job, job.matchAssessment),
-      preferences,
-    );
+    const next = session.assessPersisted(job, job.matchAssessment);
     return sameAssessment(next, job.matchAssessment)
       ? job
       : { ...job, matchAssessment: next };

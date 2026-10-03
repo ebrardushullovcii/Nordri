@@ -92,15 +92,29 @@ describe("discovery restart recovery", () => {
     expect(recoveredSnapshot.activeDiscoveryRun).toBeNull();
     expect(recoveredRun).toMatchObject({
       state: "failed",
+      runPhase: "interrupted",
       summary: {
         targetsPlanned: 2,
-        targetsCompleted: 2,
+        targetsCompleted: 1,
         validJobsFound: 1,
         jobsPersisted: 1,
         outcome: "failed",
       },
     });
     expect(recoveredRun?.completedAt).not.toBeNull();
+    const recoveredCampaign = recoveredSnapshot.campaigns.find(
+      (campaign) => campaign.id === recoveredRun?.campaignId,
+    );
+    expect(recoveredCampaign?.latestDigest?.discoveryRunId).toBe(
+      interruptedRun.id,
+    );
+    expect(
+      recoveredCampaign?.history.some(
+        (entry) =>
+          entry.discoveryRunId === interruptedRun.id &&
+          entry.summary.startsWith("Interrupted:"),
+      ),
+    ).toBe(true);
     expect(
       recoveredRun?.targetExecutions.find(
         (execution) => execution.targetId === "target_completed",

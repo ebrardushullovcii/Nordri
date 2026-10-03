@@ -3,6 +3,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import {
   MAIN_WINDOW_CONTENT_SECURITY_POLICY,
+  buildMainWindowMenuTemplate,
   STARTUP_ZOOM_MAX_FACTOR,
   STARTUP_ZOOM_MIN_FACTOR,
   STARTUP_WINDOW_MIN_DIMENSION_PX,
@@ -204,6 +205,10 @@ vi.mock("electron", () => ({
   },
   app: { getPath: () => "/fake-nordri-user-data", isPackaged: false },
   dialog: {},
+  Menu: {
+    buildFromTemplate: vi.fn((template: unknown) => template),
+    setApplicationMenu: vi.fn(),
+  },
   screen: {
     getAllDisplays: () => [electronMock.display],
     getPrimaryDisplay: () => electronMock.display,
@@ -829,4 +834,39 @@ describe("createMainWindow zoom wiring order", () => {
     for (const listener of finishLoadListeners) listener();
     expect(instance.currentZoomFactor()).toBe(1);
   });
+});
+
+test("View lists the zoom shortcuts the window already handles", () => {
+  const view = buildMainWindowMenuTemplate("darwin").find(
+    (item) => item.label === "View",
+  );
+  const submenu = Array.isArray(view?.submenu) ? view.submenu : [];
+  expect(
+    submenu.map(({ label, accelerator, registerAccelerator }) => ({
+      label,
+      accelerator,
+      registerAccelerator,
+    })),
+  ).toEqual([
+    {
+      label: "Zoom In",
+      accelerator: "CommandOrControl+=",
+      registerAccelerator: false,
+    },
+    {
+      label: "Zoom Out",
+      accelerator: "CommandOrControl+-",
+      registerAccelerator: false,
+    },
+    {
+      label: "Actual Size",
+      accelerator: "CommandOrControl+0",
+      registerAccelerator: false,
+    },
+  ]);
+  expect(
+    buildMainWindowMenuTemplate("darwin").some(
+      (item) => item.role === "windowMenu",
+    ),
+  ).toBe(false);
 });

@@ -402,10 +402,12 @@ export function ResumeWorkspaceEditorPanel(
             showGeneratedMarkers={Boolean(props.showGeneratedLineMarkers)}
             onChange={props.onSectionChange}
             onPatch={(patch, revisionReason) =>
-              props.runWithSavedDraft(
-                () => props.onApplyPatch(patch, revisionReason),
-                "Saved your draft before applying this update.",
-              )
+              patch.origin === "user" && patch.operation === "toggle_include"
+                ? props.onApplyPatch(patch, revisionReason)
+                : props.runWithSavedDraft(
+                    () => props.onApplyPatch(patch, revisionReason),
+                    "Saved your draft before applying this update.",
+                  )
             }
             onSelectEntry={props.onSelectEntry}
             onSelectSection={props.onSelectSection}

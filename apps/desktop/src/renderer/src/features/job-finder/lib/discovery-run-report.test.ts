@@ -43,9 +43,7 @@ function createFinishedRun(
   } as unknown as DiscoveryRunRecord;
 }
 
-function createWorkspace(
-  run: DiscoveryRunRecord,
-): JobFinderWorkspaceSnapshot {
+function createWorkspace(run: DiscoveryRunRecord): JobFinderWorkspaceSnapshot {
   return {
     activeDiscoveryRun: null,
     applicationRecords: [],
@@ -60,6 +58,49 @@ function createWorkspace(
 }
 
 describe("frozen discovery run report", () => {
+  test("names all count populations and lets newer interrupted work replace stale live activity", () => {
+    const run = createFinishedRun({
+      version: 1,
+      measuredAt: "2026-07-31T10:07:00.000Z",
+      found: 20,
+      unique: 10,
+      new: 10,
+      saved: 10,
+      retained: 7,
+      worthOpening: 3,
+      duplicates: 10,
+    });
+    run.state = "failed";
+    run.runPhase = "interrupted";
+    const counts = getDiscoveryRunReportCounts(run);
+    expect(formatDiscoveryRunReportLabel(counts)).toBe(
+      "20 postings seen · 10 unique jobs · 10 new to you · 7 kept by this plan · 10 duplicates merged",
+    );
+    const workspace = createWorkspace(run);
+    workspace.recentDiscoveryRuns.push({
+      ...run,
+      id: "older-run",
+      startedAt: "2026-07-31T09:00:00.000Z",
+      state: "completed",
+      runPhase: "complete",
+    });
+    const model = buildJobFinderTaskCenterModel({
+      workspace,
+      isDiscoveryPending: false,
+      liveDiscoveryEvents: [
+        { runId: "older-run", timestamp: "2026-07-31T09:07:00.000Z" },
+      ],
+      now: Date.parse("2026-07-31T10:10:00.000Z"),
+    } as unknown as Parameters<typeof buildJobFinderTaskCenterModel>[0]);
+    expect(model.items.find((item) => item.kind === "discovery")).toMatchObject(
+      {
+        id: run.id,
+        status: "interrupted",
+        stageLabel: "Search interrupted",
+      },
+    );
+  });
+
   test("every surface reads the same numbers for one run", () => {
     const run = createFinishedRun({
       version: 1,

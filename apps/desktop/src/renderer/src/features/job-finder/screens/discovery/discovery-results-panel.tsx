@@ -660,6 +660,21 @@ export function DiscoveryResultsPanel({
       ),
     [discoveryTargets, jobs],
   );
+  const indistinguishableJobIds = useMemo(() => {
+    const groups = new Map<string, string[]>();
+    for (const job of jobs) {
+      const key = [
+        job.title,
+        job.company,
+        job.location,
+        sourceLabelsByJobId.get(job.id),
+      ].join("\u0000");
+      const ids = groups.get(key) ?? [];
+      ids.push(job.id);
+      groups.set(key, ids);
+    }
+    return new Set([...groups.values()].filter((ids) => ids.length > 1).flat());
+  }, [jobs, sourceLabelsByJobId]);
   const recommendationOptions = useMemo(
     () =>
       fitRecommendationValues.filter((value) =>
@@ -904,8 +919,9 @@ export function DiscoveryResultsPanel({
   );
   // The list for the assistant (ADR 0037): ticked rows are the selection,
   // the page is what is displayed, and the filtered, sorted set is "all".
-  useAssistantContextSource("discovery-list", () =>
-    ({
+  useAssistantContextSource(
+    "discovery-list",
+    () => ({
       list: buildListContext({
         listKind: "jobs",
         checkedIds: bulkSelectedJobIds,
@@ -1195,167 +1211,171 @@ export function DiscoveryResultsPanel({
             data-testid="discovery-results-toolbar"
           >
             {hasFilterGroups ? (
-            <details className="group relative min-w-0 [&[open]]:w-full [&[open]]:order-last">
-              {/* `--control-border` rather than the inert
+              <details className="group relative min-w-0 [&[open]]:w-full [&[open]]:order-last">
+                {/* `--control-border` rather than the inert
                   `--surface-panel-border`: this border is the disclosure's
                   entire boundary, so it has to read as a control beside the
                   sort field. */}
-              <summary
-                className={cn(
-                  DISCOVERY_RESULTS_TOOLBAR_CONTROL_CLASS,
-                  "flex w-fit cursor-pointer list-none items-center gap-2 whitespace-nowrap border border-(--control-border) px-3 text-foreground-soft outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/30 [&::-webkit-details-marker]:hidden",
-                )}
-              >
-                Filters
-                {activeFilterCount > 0 ? (
-                  <span
-                    aria-label={`${activeFilterCount} active ${activeFilterCount === 1 ? "filter" : "filters"}`}
-                    className="rounded-full bg-accent px-1.5 py-0.5 tabular-nums text-accent-foreground"
-                  >
-                    {activeFilterCount}
-                  </span>
-                ) : null}
-              </summary>
-              {/* Columns follow the groups actually shown: a lone Source group
+                <summary
+                  className={cn(
+                    DISCOVERY_RESULTS_TOOLBAR_CONTROL_CLASS,
+                    "flex w-fit cursor-pointer list-none items-center gap-2 whitespace-nowrap border border-(--control-border) px-3 text-foreground-soft outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/30 [&::-webkit-details-marker]:hidden",
+                  )}
+                >
+                  Filters
+                  {activeFilterCount > 0 ? (
+                    <span
+                      aria-label={`${activeFilterCount} active ${activeFilterCount === 1 ? "filter" : "filters"}`}
+                      className="rounded-full bg-accent px-1.5 py-0.5 tabular-nums text-accent-foreground"
+                    >
+                      {activeFilterCount}
+                    </span>
+                  ) : null}
+                </summary>
+                {/* Columns follow the groups actually shown: a lone Source group
                   used to get a quarter of the row and broke source addresses
                   mid-word. */}
-              <div
-                className="mt-2 grid grid-cols-[repeat(auto-fit,minmax(15rem,1fr))] gap-3 rounded-(--radius-field) border border-(--surface-panel-border) bg-(--surface-panel-raised) p-3"
-                data-testid="discovery-results-filter-groups"
-              >
-                {filterGroups.recommendation ? (
-                <fieldset className="min-w-0">
-                  <legend className="mb-2 text-xs font-semibold text-foreground">
-                    Fit
-                  </legend>
-                  <div className="grid gap-2">
-                    {recommendationOptions.map((recommendation) => (
-                      <label
-                        className="flex min-w-0 items-start gap-2 text-xs leading-6 text-foreground-soft"
-                        key={recommendation}
+                <div
+                  className="mt-2 grid grid-cols-[repeat(auto-fit,minmax(15rem,1fr))] gap-3 rounded-(--radius-field) border border-(--surface-panel-border) bg-(--surface-panel-raised) p-3"
+                  data-testid="discovery-results-filter-groups"
+                >
+                  {filterGroups.recommendation ? (
+                    <fieldset className="min-w-0">
+                      <legend className="mb-2 text-xs font-semibold text-foreground">
+                        Fit
+                      </legend>
+                      <div className="grid gap-2">
+                        {recommendationOptions.map((recommendation) => (
+                          <label
+                            className="flex min-w-0 items-start gap-2 text-xs leading-6 text-foreground-soft"
+                            key={recommendation}
+                          >
+                            <input
+                              checked={recommendationFilters.has(
+                                recommendation,
+                              )}
+                              className="size-6 shrink-0 accent-current"
+                              onChange={() => {
+                                setRecommendationFilters((current) =>
+                                  toggleFilterValue(current, recommendation),
+                                );
+                                moveToPage(0);
+                              }}
+                              type="checkbox"
+                            />
+                            <span className="min-w-0 break-words">
+                              {fitRecommendationCopy[recommendation].label}
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+                    </fieldset>
+                  ) : null}
+                  {filterGroups.source ? (
+                    <fieldset className="min-w-0">
+                      <legend className="mb-2 text-xs font-semibold text-foreground">
+                        Source
+                      </legend>
+                      <div className="grid max-h-32 gap-2 overflow-y-auto">
+                        {sourceOptions.map((source) => (
+                          <label
+                            className="flex min-w-0 items-start gap-2 text-xs leading-6 text-foreground-soft"
+                            key={source}
+                            title={source}
+                          >
+                            <input
+                              checked={sourceFilters.has(source)}
+                              className="size-6 shrink-0 accent-current"
+                              onChange={() => {
+                                setSourceFilters((current) =>
+                                  toggleFilterValue(current, source),
+                                );
+                                moveToPage(0);
+                              }}
+                              type="checkbox"
+                            />
+                            <span className="min-w-0 break-words">
+                              {source}
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+                    </fieldset>
+                  ) : null}
+                  {filterGroups.workMode ? (
+                    <fieldset className="min-w-0">
+                      <legend className="mb-2 text-xs font-semibold text-foreground">
+                        Work mode
+                      </legend>
+                      <div className="grid gap-2">
+                        {workModeOptions.map((workMode) => (
+                          <label
+                            className="flex min-w-0 items-start gap-2 text-xs leading-6 text-foreground-soft"
+                            key={workMode}
+                          >
+                            <input
+                              checked={workModeFilters.has(workMode)}
+                              className="size-6 shrink-0 accent-current"
+                              onChange={() => {
+                                setWorkModeFilters((current) =>
+                                  toggleFilterValue(current, workMode),
+                                );
+                                moveToPage(0);
+                              }}
+                              type="checkbox"
+                            />
+                            <span className="min-w-0 break-words">
+                              {workMode === WORK_MODE_UNSPECIFIED_FILTER
+                                ? workMode
+                                : formatWorkModeLabel(workMode as WorkMode)}
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+                    </fieldset>
+                  ) : null}
+                  {filterGroups.activity ? (
+                    <fieldset className="min-w-0">
+                      <legend className="mb-2 text-xs font-semibold text-foreground">
+                        Listing status
+                      </legend>
+                      <div className="grid gap-2">
+                        {activityOptions.map((status) => (
+                          <label
+                            className="flex min-w-0 items-start gap-2 text-xs leading-6 text-foreground-soft"
+                            key={status}
+                          >
+                            <input
+                              checked={activityFilters.has(status)}
+                              className="size-6 shrink-0 accent-current"
+                              onChange={() => {
+                                setActivityFilters((current) =>
+                                  toggleFilterValue(current, status),
+                                );
+                                moveToPage(0);
+                              }}
+                              type="checkbox"
+                            />
+                            <span>{formatStatusLabel(status)}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </fieldset>
+                  ) : null}
+                  {activeFilterCount > 0 ? (
+                    <div className="sm:col-span-2 xl:col-span-4">
+                      <Button
+                        onClick={clearFilters}
+                        size="xs"
+                        type="button"
+                        variant="ghost"
                       >
-                        <input
-                          checked={recommendationFilters.has(recommendation)}
-                          className="size-6 shrink-0 accent-current"
-                          onChange={() => {
-                            setRecommendationFilters((current) =>
-                              toggleFilterValue(current, recommendation),
-                            );
-                            moveToPage(0);
-                          }}
-                          type="checkbox"
-                        />
-                        <span className="min-w-0 break-words">
-                          {fitRecommendationCopy[recommendation].label}
-                        </span>
-                      </label>
-                    ))}
-                  </div>
-                </fieldset>
-                ) : null}
-                {filterGroups.source ? (
-                <fieldset className="min-w-0">
-                  <legend className="mb-2 text-xs font-semibold text-foreground">
-                    Source
-                  </legend>
-                  <div className="grid max-h-32 gap-2 overflow-y-auto">
-                    {sourceOptions.map((source) => (
-                      <label
-                        className="flex min-w-0 items-start gap-2 text-xs leading-6 text-foreground-soft"
-                        key={source}
-                        title={source}
-                      >
-                        <input
-                          checked={sourceFilters.has(source)}
-                          className="size-6 shrink-0 accent-current"
-                          onChange={() => {
-                            setSourceFilters((current) =>
-                              toggleFilterValue(current, source),
-                            );
-                            moveToPage(0);
-                          }}
-                          type="checkbox"
-                        />
-                        <span className="min-w-0 break-words">{source}</span>
-                      </label>
-                    ))}
-                  </div>
-                </fieldset>
-                ) : null}
-                {filterGroups.workMode ? (
-                <fieldset className="min-w-0">
-                  <legend className="mb-2 text-xs font-semibold text-foreground">
-                    Work mode
-                  </legend>
-                  <div className="grid gap-2">
-                    {workModeOptions.map((workMode) => (
-                      <label
-                        className="flex min-w-0 items-start gap-2 text-xs leading-6 text-foreground-soft"
-                        key={workMode}
-                      >
-                        <input
-                          checked={workModeFilters.has(workMode)}
-                          className="size-6 shrink-0 accent-current"
-                          onChange={() => {
-                            setWorkModeFilters((current) =>
-                              toggleFilterValue(current, workMode),
-                            );
-                            moveToPage(0);
-                          }}
-                          type="checkbox"
-                        />
-                        <span className="min-w-0 break-words">
-                          {workMode === WORK_MODE_UNSPECIFIED_FILTER
-                            ? workMode
-                            : formatWorkModeLabel(workMode as WorkMode)}
-                        </span>
-                      </label>
-                    ))}
-                  </div>
-                </fieldset>
-                ) : null}
-                {filterGroups.activity ? (
-                <fieldset className="min-w-0">
-                  <legend className="mb-2 text-xs font-semibold text-foreground">
-                    Listing status
-                  </legend>
-                  <div className="grid gap-2">
-                    {activityOptions.map((status) => (
-                      <label
-                        className="flex min-w-0 items-start gap-2 text-xs leading-6 text-foreground-soft"
-                        key={status}
-                      >
-                        <input
-                          checked={activityFilters.has(status)}
-                          className="size-6 shrink-0 accent-current"
-                          onChange={() => {
-                            setActivityFilters((current) =>
-                              toggleFilterValue(current, status),
-                            );
-                            moveToPage(0);
-                          }}
-                          type="checkbox"
-                        />
-                        <span>{formatStatusLabel(status)}</span>
-                      </label>
-                    ))}
-                  </div>
-                </fieldset>
-                ) : null}
-                {activeFilterCount > 0 ? (
-                  <div className="sm:col-span-2 xl:col-span-4">
-                    <Button
-                      onClick={clearFilters}
-                      size="xs"
-                      type="button"
-                      variant="ghost"
-                    >
-                      Clear filters
-                    </Button>
-                  </div>
-                ) : null}
-              </div>
-            </details>
+                        Clear filters
+                      </Button>
+                    </div>
+                  ) : null}
+                </div>
+              </details>
             ) : (
               <span />
             )}
@@ -1763,7 +1783,7 @@ export function DiscoveryResultsPanel({
                 // title-only row banded as a mismatch keeps it too: no divider
                 // above it says the title was all that was read.
                 const isCoveredByUncheckedBand =
-                  assessment.isTitleOnly &&
+                  assessment.isNotJudged &&
                   // An unbound assessment is title-only by evidence depth but
                   // presents as "Fit not assessed", which is a different claim
                   // from the one the divider makes; it keeps its own verdict.
@@ -1773,12 +1793,18 @@ export function DiscoveryResultsPanel({
                 // score is withheld, otherwise the hard-conflict reason. Rows
                 // whose score stands on its own evidence stay quiet.
                 const rowReason =
-                  assessment.withheldReason ??
                   (job.matchAssessment.recommendation === "skip"
                     ? scrubJobAbsencePlaceholders(
                         job.matchAssessment.recommendationRationale ?? "",
                       ) || null
                     : null) ??
+                  (job.matchAssessment.dimensions?.roleSuitability?.state !==
+                    undefined &&
+                  job.matchAssessment.dimensions.roleSuitability.state !==
+                    "exact"
+                    ? job.matchAssessment.gaps[0]
+                    : null) ??
+                  assessment.withheldReason ??
                   // Rows that share a printed percentage state the one
                   // strongest fact behind their place, so the order between
                   // equal numbers is something the person can read.
@@ -1817,9 +1843,9 @@ export function DiscoveryResultsPanel({
                     job.latestMatchAssessmentAudit?.inputChanges.some(
                       (change) => change.code === "listing_evidence_changed",
                     ) &&
-                      job.latestMatchAssessmentAudit.outputChanges.some(
-                        (change) => change.code === "score_changed",
-                      ),
+                    job.latestMatchAssessmentAudit.outputChanges.some(
+                      (change) => change.code === "score_changed",
+                    ),
                   );
 
                 return (
@@ -1865,8 +1891,8 @@ export function DiscoveryResultsPanel({
                       data-collection-item-id={job.id}
                       onClick={(event) => {
                         if (wasRescoredAfterRead) {
-                          setAcknowledgedRescoreJobIds(
-                            (current) => new Set(current).add(job.id),
+                          setAcknowledgedRescoreJobIds((current) =>
+                            new Set(current).add(job.id),
                           );
                         }
                         onSelectJob(job.id);
@@ -1997,6 +2023,9 @@ export function DiscoveryResultsPanel({
                                 title={employerLocationLine || undefined}
                               >
                                 {employerLocationLine || "Employer not listed"}
+                                {indistinguishableJobIds.has(job.id)
+                                  ? ` · Reference ${job.sourceJobId}`
+                                  : ""}
                               </span>
                               <span
                                 aria-hidden="true"

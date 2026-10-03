@@ -377,11 +377,11 @@ describe("resume import identity and revision safety", () => {
     // pdf text extraction merges a two-column header into one line and wraps
     // the summary so its last words land on their own line. The identity
     // check used to reject the first and accept "at scale." as the name.
-    expect(extractIdentityNameFromLine("Aaron Murphy Tampa, FL")).toBe(
-      "Aaron Murphy",
+    expect(extractIdentityNameFromLine("Owen Mercer Tampa, FL")).toBe(
+      "Owen Mercer",
     );
-    expect(extractIdentityNameFromLine("Aaron Murphy | Tampa, FL")).toBe(
-      "Aaron Murphy",
+    expect(extractIdentityNameFromLine("Owen Mercer | Tampa, FL")).toBe(
+      "Owen Mercer",
     );
     expect(extractIdentityNameFromLine("at scale.")).toBeNull();
     expect(extractIdentityNameFromLine("and reliability")).toBeNull();

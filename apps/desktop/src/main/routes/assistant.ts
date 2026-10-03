@@ -18,10 +18,16 @@ import {
   AssistantSendMessageInputSchema,
   AssistantSendMessageResultSchema,
   AssistantStatusSchema,
+  AssistantResumeBatchStateSchema,
   AssistantUndoChangeInputSchema,
   AssistantUndoChangeResultSchema,
   type CandidateAssetKind,
 } from "@nordri/contracts";
+
+import {
+  clearUiResumeBatch,
+  syncUiResumeBatch,
+} from "../services/assistant/ui-resume-batch";
 
 import { getAssistantHost } from "../services/assistant/assistant-service";
 import { getCandidateAssetLibrary } from "../services/job-finder/candidate-asset-library-instance";
@@ -52,6 +58,30 @@ export function inferAssetKind(fileName: string): CandidateAssetKind {
 }
 
 export function registerAssistantRouteHandlers(ipcMain: IpcMain): void {
+  const queueOwners = new WeakSet<object>();
+  let queueOwnerId: number | null = null;
+  ipcMain.handle(
+    "job-finder:assistant:sync-resume-batch",
+    (event, payload: unknown) => {
+      assertAppWindow(event);
+      queueOwnerId = event.sender.id;
+      if (!queueOwners.has(event.sender)) {
+        queueOwners.add(event.sender);
+        const clearOwnedQueue = () => {
+          if (queueOwnerId === event.sender.id) {
+            clearUiResumeBatch();
+            queueOwnerId = null;
+          }
+        };
+        event.sender.on("destroyed", clearOwnedQueue);
+        event.sender.on("render-process-gone", clearOwnedQueue);
+        event.sender.on("did-finish-load", clearOwnedQueue);
+      }
+      return AssistantResumeBatchStateSchema.parse(
+        syncUiResumeBatch(AssistantResumeBatchStateSchema.parse(payload)),
+      );
+    },
+  );
   ipcMain.handle("job-finder:assistant:get-status", async () => {
     const host = await getAssistantHost();
     return AssistantStatusSchema.parse(host.getStatus());

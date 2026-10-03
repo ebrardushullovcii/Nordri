@@ -668,6 +668,19 @@ function findExperienceHeaderStart(
   const twoBack = cleanLine(lines[dateLineIndex - 2] ?? "");
   const threeBack = cleanLine(lines[dateLineIndex - 3] ?? "");
 
+  // A short role line followed by an employer and its city is a dated
+  // record even when the occupation is outside the parser's vocabulary.
+  if (
+    previous.split(",").length >= 3 &&
+    twoBack &&
+    twoBack.length <= 80 &&
+    !isBulletLine(twoBack) &&
+    !dateRangePattern.test(twoBack) &&
+    !isLocationOnlyLine(twoBack) &&
+    !/[.!?;:]$/.test(twoBack)
+  )
+    return dateLineIndex - 2;
+
   if (
     looksLikeStandaloneLocationHeader(previous) &&
     ((looksLikeRoleTitle(twoBack) && looksLikeCompanyHeader(threeBack)) ||
@@ -719,6 +732,18 @@ function parseStackedExperienceHeader(
   dateLine: string,
 ) {
   const normalizedHeaderLines = headerLines.map(cleanLine).filter(Boolean);
+  if (
+    normalizedHeaderLines.length === 2 &&
+    (normalizedHeaderLines[1]?.split(",").length ?? 0) >= 3
+  ) {
+    const employer = parseCompanyAndLocation(normalizedHeaderLines[1] ?? "");
+    if (employer.companyName && employer.location)
+      return parseExperienceHeader(
+        normalizedHeaderLines[0] ?? "",
+        dateLine,
+        employer,
+      );
+  }
   const trailingLocation = looksLikeStandaloneLocationHeader(
     normalizedHeaderLines.at(-1) ?? "",
   )

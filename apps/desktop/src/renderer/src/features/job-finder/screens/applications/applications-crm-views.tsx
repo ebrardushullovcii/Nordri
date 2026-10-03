@@ -1,3 +1,4 @@
+import { formatTrackerMoment as formatCalendarMoment } from "./applications-tracker-time";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
   ApplicationCrmStage,
@@ -117,21 +118,6 @@ const emptyStateCopy: Record<
       "Upcoming reminders, interviews, and offer deadlines will appear on the application calendar.",
   },
 };
-
-/**
- * A date and time in this device's time zone, with the zone named so an
- * interview set up across borders reads unambiguously.
- */
-function formatCalendarMoment(value: string): string {
-  return new Date(value).toLocaleString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-    timeZoneName: "short",
-  });
-}
 
 function startOfLocalDay(time: number, daysAhead = 0): number {
   const date = new Date(time);
@@ -848,7 +834,10 @@ export function ApplicationsCrmViews(props: {
                         {/* The zone is named so a time set up across
                             borders reads unambiguously (N-014). */}
                         {interview
-                          ? formatCalendarMoment(interview.startsAt)
+                          ? formatCalendarMoment(
+                              interview.startsAt,
+                              interview.timeZone,
+                            )
                           : "—"}
                       </td>
                     ) : null}
@@ -1053,7 +1042,10 @@ export function ApplicationsCrmViews(props: {
                             className="text-sm font-semibold text-foreground"
                             dateTime={entry.startsAt}
                           >
-                            {formatCalendarMoment(entry.startsAt)}
+                            {formatCalendarMoment(
+                              entry.startsAt,
+                              entry.timeZone,
+                            )}
                           </time>
                           <div className="min-w-0">
                             <strong className="block break-words text-sm text-foreground">

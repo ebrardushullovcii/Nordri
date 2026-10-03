@@ -465,304 +465,6 @@ describe("job extraction with openai-compatible client", () => {
     }
   });
 
-  test("recovers sparse weak-target search results by deriving company from same-host urls and preserving visible snippets", async () => {
-    const restoreFetch = mockJsonFetch({
-      choices: [
-        {
-          message: {
-            content: JSON.stringify({
-              jobs: [
-                {
-                  title:
-                    "Category Manager, Fashion, Sports & Outdoor (E-Commerce) Prishtinë 11 ditë",
-                  company: "",
-                  location: "",
-                  canonicalUrl:
-                    "https://kosovajob.com/shopaz/category-manager-fashion-sports-outdoor-e-commerce",
-                  description: "Visible homepage job snippet.",
-                  applyPath: "unknown",
-                  easyApplyEligible: false,
-                  workMode: [],
-                  keySkills: [],
-                },
-              ],
-            }),
-          },
-        },
-      ],
-    });
-
-    try {
-      const client =
-        createJobFinderAiClientFromEnvironment(createEnvironment());
-
-      const jobs = await client.extractJobsFromPage({
-        pageText: "Homepage job listings on Kosovajob",
-        pageUrl: "https://kosovajob.com/",
-        pageType: "search_results",
-        maxJobs: 5,
-      });
-
-      expect(jobs).toHaveLength(1);
-      expect(jobs[0]).toMatchObject({
-        sourceJobId:
-          "kosovajob_com_shopaz_category_manager_fashion_sports_outdoor_e_commerce",
-        canonicalUrl:
-          "https://kosovajob.com/shopaz/category-manager-fashion-sports-outdoor-e-commerce",
-        title: "Category Manager, Fashion, Sports & Outdoor (E-Commerce)",
-        company: "Shopaz",
-        location: "Prishtinë",
-        postedAt: null,
-        postedAtText: "11 ditë",
-        description: "Visible homepage job snippet.",
-      });
-    } finally {
-      restoreFetch();
-    }
-  });
-
-  test("skips locale-style path prefixes before inferring a company from the canonical url", async () => {
-    const restoreFetch = mockJsonFetch({
-      choices: [
-        {
-          message: {
-            content: JSON.stringify({
-              jobs: [
-                {
-                  title: "Product Designer",
-                  company: "",
-                  location: "Remote",
-                  canonicalUrl:
-                    "https://jobs.example.com/en/acme/product-designer",
-                  description: "Design product experiences.",
-                  applyPath: "unknown",
-                  easyApplyEligible: false,
-                  workMode: [],
-                  keySkills: [],
-                },
-              ],
-            }),
-          },
-        },
-      ],
-    });
-
-    try {
-      const client =
-        createJobFinderAiClientFromEnvironment(createEnvironment());
-
-      const jobs = await client.extractJobsFromPage({
-        pageText: "Product Designer role",
-        pageUrl: "https://jobs.example.com/search",
-        pageType: "search_results",
-        maxJobs: 5,
-      });
-
-      expect(jobs).toHaveLength(1);
-      expect(jobs[0]).toMatchObject({
-        company: "Acme",
-      });
-    } finally {
-      restoreFetch();
-    }
-  });
-
-  test("extracts a trailing location even when preceding tokens are role-like", async () => {
-    const restoreFetch = mockJsonFetch({
-      choices: [
-        {
-          message: {
-            content: JSON.stringify({
-              jobs: [
-                {
-                  title: "Platform Engineer Architect Prishtine",
-                  company: "Acme",
-                  location: "",
-                  canonicalUrl:
-                    "https://jobs.example.com/platform-engineer-architect-prishtine",
-                  description: "Design platform systems.",
-                  applyPath: "unknown",
-                  easyApplyEligible: false,
-                  workMode: [],
-                  keySkills: [],
-                },
-              ],
-            }),
-          },
-        },
-      ],
-    });
-
-    try {
-      const client =
-        createJobFinderAiClientFromEnvironment(createEnvironment());
-
-      const jobs = await client.extractJobsFromPage({
-        pageText: "Platform Engineer Architect role",
-        pageUrl: "https://jobs.example.com/search",
-        pageType: "search_results",
-        maxJobs: 5,
-      });
-
-      expect(jobs).toHaveLength(1);
-      expect(jobs[0]).toMatchObject({
-        title: "Platform Engineer Architect",
-        location: "Prishtine",
-      });
-    } finally {
-      restoreFetch();
-    }
-  });
-
-  test("uses normalized title and inferred company in search-result description fallback", async () => {
-    const restoreFetch = mockJsonFetch({
-      choices: [
-        {
-          message: {
-            content: JSON.stringify({
-              jobs: [
-                {
-                  title:
-                    "Category Manager, Fashion, Sports & Outdoor (E-Commerce) Prishtinë 11 ditë",
-                  company: "",
-                  location: "",
-                  canonicalUrl:
-                    "https://kosovajob.com/shopaz/category-manager-fashion-sports-outdoor-e-commerce",
-                  description: "",
-                  summary: "",
-                  applyPath: "unknown",
-                  easyApplyEligible: false,
-                  workMode: [],
-                  keySkills: [],
-                },
-              ],
-            }),
-          },
-        },
-      ],
-    });
-
-    try {
-      const client =
-        createJobFinderAiClientFromEnvironment(createEnvironment());
-
-      const jobs = await client.extractJobsFromPage({
-        pageText: "Homepage job listings on Kosovajob",
-        pageUrl: "https://kosovajob.com/",
-        pageType: "search_results",
-        maxJobs: 5,
-      });
-
-      expect(jobs).toHaveLength(1);
-      expect(jobs[0]).toMatchObject({
-        title: "Category Manager, Fashion, Sports & Outdoor (E-Commerce)",
-        company: "Shopaz",
-        location: "Prishtinë",
-        postedAtText: "11 ditë",
-        description:
-          "Category Manager, Fashion, Sports & Outdoor (E-Commerce) opportunity at Shopaz",
-      });
-    } finally {
-      restoreFetch();
-    }
-  });
-
-  test("rejects title-at-company rows instead of persisting the inferred company as location", async () => {
-    const restoreFetch = mockJsonFetch({
-      choices: [
-        {
-          message: {
-            content: JSON.stringify({
-              jobs: [
-                {
-                  title: "Backend Engineer at Signal Systems",
-                  company: "",
-                  location: "",
-                  canonicalUrl: "https://jobs.example.com/backend-engineer",
-                  description: "Build backend systems.",
-                  applyPath: "unknown",
-                  easyApplyEligible: false,
-                  workMode: [],
-                  keySkills: ["Node.js"],
-                },
-              ],
-            }),
-          },
-        },
-      ],
-    });
-
-    try {
-      const warnSpy = vi
-        .spyOn(console, "warn")
-        .mockImplementation(() => undefined);
-      const client =
-        createJobFinderAiClientFromEnvironment(createEnvironment());
-
-      const jobs = await client.extractJobsFromPage({
-        pageText: "Backend Engineer role",
-        pageUrl: "https://jobs.example.com/search",
-        pageType: "search_results",
-        maxJobs: 5,
-      });
-
-      expect(jobs).toEqual([]);
-      expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining("Top invalid fields: location(1)"),
-      );
-    } finally {
-      vi.restoreAllMocks();
-      restoreFetch();
-    }
-  });
-
-  test("repairs reversed company-at-title search results before validation", async () => {
-    const restoreFetch = mockJsonFetch({
-      choices: [
-        {
-          message: {
-            content: JSON.stringify({
-              jobs: [
-                {
-                  title:
-                    "Crossing Hurdles EMEA Remote at Software Engineer Fullstack",
-                  company: "Crossing Hurdles EMEA Remote",
-                  location: "Remote",
-                  canonicalUrl:
-                    "https://www.linkedin.com/jobs/view/software-engineer-fullstack",
-                  description: "Build distributed product systems.",
-                  applyPath: "unknown",
-                  easyApplyEligible: false,
-                  workMode: ["remote"],
-                  keySkills: ["TypeScript"],
-                },
-              ],
-            }),
-          },
-        },
-      ],
-    });
-
-    try {
-      const client =
-        createJobFinderAiClientFromEnvironment(createEnvironment());
-
-      const jobs = await client.extractJobsFromPage({
-        pageText: "LinkedIn search results",
-        pageUrl: "https://www.linkedin.com/jobs/search/",
-        pageType: "search_results",
-        maxJobs: 5,
-      });
-
-      expect(jobs[0]).toMatchObject({
-        title: "Software Engineer Fullstack",
-        company: "Crossing Hurdles EMEA Remote",
-      });
-    } finally {
-      restoreFetch();
-    }
-  });
-
   test("limits job-detail extraction results to one job", async () => {
     const restoreFetch = mockJsonFetch({
       choices: [
@@ -819,7 +521,7 @@ describe("job extraction with openai-compatible client", () => {
     }
   });
 
-  test("falls back when extracted jobs payload omits the top-level jobs array", async () => {
+  test("reports a failed read when the extracted jobs payload omits the top-level jobs array", async () => {
     const errorSpy = vi
       .spyOn(console, "error")
       .mockImplementation(() => undefined);
@@ -837,19 +539,17 @@ describe("job extraction with openai-compatible client", () => {
       const client =
         createJobFinderAiClientFromEnvironment(createEnvironment());
 
-      const jobs = await client.extractJobsFromPage({
-        pageText: "Frontend Engineer role at Acme",
-        pageUrl: "https://jobs.example.com/search",
-        pageType: "search_results",
-        maxJobs: 5,
-      });
-
-      expect(jobs).toEqual([]);
-      expect(errorSpy).toHaveBeenCalled();
+      // A failed read is reported, never passed off as a page with no jobs.
+      await expect(
+        client.extractJobsFromPage({
+          pageText: "Frontend Engineer role at Acme",
+          pageUrl: "https://jobs.example.com/search",
+          pageType: "search_results",
+          maxJobs: 5,
+        }),
+      ).rejects.toThrow("Expected a top-level jobs array");
       expect(errorSpy).toHaveBeenCalledWith(
-        expect.stringContaining(
-          "[AI Provider] extractJobsFromPage failed; falling back to deterministic client",
-        ),
+        expect.stringContaining("[AI Provider] extractJobsFromPage failed."),
       );
       expect(errorSpy).toHaveBeenCalledWith(
         expect.stringContaining("Expected a top-level jobs array"),
@@ -974,7 +674,7 @@ describe("job extraction with openai-compatible client", () => {
     }
   });
 
-  test("reports search-results extraction timeouts clearly before falling back", async () => {
+  test("reports search-results extraction timeouts clearly", async () => {
     vi.useFakeTimers();
     const errorSpy = vi
       .spyOn(console, "error")
@@ -1011,16 +711,16 @@ describe("job extraction with openai-compatible client", () => {
         maxJobs: 5,
       });
 
+      const rejected = expect(extractionPromise).rejects.toThrow(
+        "Model request timed out",
+      );
       // 240s is the total budget for search-results extraction; the idle
       // clock retries once inside it before the total deadline ends the run.
       await vi.advanceTimersByTimeAsync(240_001);
 
-      await expect(extractionPromise).resolves.toEqual([]);
-      expect(errorSpy).toHaveBeenCalled();
+      await rejected;
       expect(errorSpy).toHaveBeenCalledWith(
-        expect.stringContaining(
-          "[AI Provider] extractJobsFromPage failed; falling back",
-        ),
+        expect.stringContaining("[AI Provider] extractJobsFromPage failed."),
       );
       expect(errorSpy).toHaveBeenCalledWith(
         expect.stringContaining("Model request timed out"),

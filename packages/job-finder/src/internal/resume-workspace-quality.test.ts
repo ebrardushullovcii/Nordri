@@ -7,7 +7,6 @@ import {
   resumeClaimOwnershipStatement,
 } from "@nordri/contracts";
 import { fnv1a32 } from "@nordri/core";
-import { ResumeGenerationStrategyPolicySchema } from "@nordri/ai-providers";
 import {
   buildResumeCoverageComparison,
   buildResumeDraftContentHash,
@@ -18,8 +17,30 @@ import {
   hasBlockingResumeClaimAssessment,
   sanitizeResumeDraft,
   seedResumeDraft,
+  resumeClaimContentHash,
   validateResumeDraft,
 } from "./resume-workspace-helpers";
+
+/** The model's verdicts on named lines, kept on the draft (ADR 0041). */
+function withClaimChecks(
+  draft: ResumeDraft,
+  verdicts: Readonly<Record<string, "supported" | "stretch" | "unsupported">>,
+  styles: Readonly<Record<string, string>> = {},
+): ResumeDraft {
+  return {
+    ...draft,
+    claimChecks: Object.entries(verdicts).map(([text, verdict]) => ({
+      contentHash: resumeClaimContentHash(text),
+      verdict,
+      reason: "Test verdict.",
+      evidenceIds: [],
+      fix: null,
+      style: styles[text] ?? null,
+      evidenceKey: null,
+      checkedAt: "2026-08-17T10:00:00.000Z",
+    })),
+  };
+}
 import { createEntry } from "./resume-workspace-primitives";
 import { normalizeText } from "./shared";
 import { createSeed } from "../workspace-service.test-support";
@@ -264,126 +285,13 @@ ${ownSentence}`,
       withoutOwnResume.claimAssessments.find(
         (assessment) => assessment.bulletId === "bullet_own_verbatim",
       ),
-    ).toMatchObject({ status: "unsupported" });
+      // Not the person's own words and not yet checked by the model.
+    ).toMatchObject({ status: "review" });
     expect(
       withOwnResume.claimAssessments.find(
         (assessment) => assessment.bulletId === "bullet_own_verbatim",
       ),
     ).toMatchObject({ status: "exact" });
-  });
-
-  test("enforces selected strategy evidence boundaries while still rejecting unsupported claims", () => {
-    const { profile, job } = getSeedContext();
-    const draft = ResumeDraftSchema.parse({
-      id: "resume_draft_strategy_boundary",
-      jobId: job.id,
-      status: "draft",
-      templateId: "classic_ats",
-      generationMethod: "ai",
-      sections: [
-        {
-          id: "section_experience",
-          kind: "experience",
-          label: "Experience",
-          origin: "ai_generated",
-          sortOrder: 0,
-          entries: [
-            {
-              id: "entry_strategy_boundary",
-              entryType: "experience",
-              title: "Senior systems designer",
-              subtitle: "Signal Systems",
-              origin: "ai_generated",
-              sortOrder: 0,
-              profileRecordId: "experience_1",
-              bullets: [
-                {
-                  id: "bullet_exact_boundary",
-                  text: "Led design-system rollout across core surfaces.",
-                  origin: "ai_generated",
-                  updatedAt: "2026-08-17T10:00:00.000Z",
-                },
-                {
-                  id: "bullet_unsupported_boundary",
-                  text: "Architected a quantum operating model for global logistics teams.",
-                  origin: "ai_generated",
-                  updatedAt: "2026-08-17T10:00:00.000Z",
-                },
-              ],
-              updatedAt: "2026-08-17T10:00:00.000Z",
-            },
-          ],
-          updatedAt: "2026-08-17T10:00:00.000Z",
-        },
-      ],
-      createdAt: "2026-08-17T10:00:00.000Z",
-      updatedAt: "2026-08-17T10:00:00.000Z",
-    });
-    const strategy = ResumeGenerationStrategyPolicySchema.parse({
-      strategyId: "strategy_strict_evidence",
-      strategyName: "Strict evidence",
-      roleFamily: "Product Design",
-      baseResumeDocumentId: profile.baseResume.id,
-      templateId: "classic_ats",
-      headlinePolicy: "fixed",
-      skillsPolicy: "base_only",
-      coveragePolicy: "base_omissions",
-      tailoringStrength: "conservative",
-      evidenceBoundaries: {
-        allowExactClaims: false,
-        allowParaphrasedClaims: false,
-        maxEvidenceRefsPerBullet: 3,
-        requireVerifierPass: true,
-      },
-      effectiveSource: "selection",
-      effectiveReason: "The user selected strict evidence handling.",
-      recommendationSource: "none",
-      recommendationReason: null,
-      selectionSource: "user",
-      selectionReason: "The user selected this strategy.",
-    });
-
-    const validation = validateResumeDraft({
-      draft,
-      job,
-      profile,
-      strategy,
-      validatedAt: "2026-08-17T10:00:00.000Z",
-    });
-    const exactClaim = validation.claimAssessments.find(
-      (assessment) => assessment.bulletId === "bullet_exact_boundary",
-    );
-    const unsupportedClaim = validation.claimAssessments.find(
-      (assessment) => assessment.bulletId === "bullet_unsupported_boundary",
-    );
-
-    expect(exactClaim).toMatchObject({
-      claimOrigin: "ai_generated",
-      status: "exact",
-    });
-    expect(
-      validation.issues.some(
-        (issue) =>
-          issue.id.startsWith("issue_strategy_evidence_boundary_") &&
-          issue.bulletId === "bullet_exact_boundary" &&
-          issue.category === "unsupported_claim" &&
-          issue.severity === "error",
-      ),
-    ).toBe(true);
-    expect(unsupportedClaim).toMatchObject({
-      claimOrigin: "ai_generated",
-      status: "unsupported",
-      evidenceRefs: [],
-    });
-    expect(validation.issues).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          bulletId: "bullet_unsupported_boundary",
-          category: "unsupported_claim",
-          severity: "error",
-        }),
-      ]),
-    );
   });
 
   test("sanitizeResumeDraft drops how-the-job-ended sentences from a generated summary", () => {
@@ -402,29 +310,6 @@ ${ownSentence}`,
     expect(getSection(sanitized, "section_summary").text).toBe(
       "Product designer focused on reliable workflow software.",
     );
-  });
-
-  test("sanitizeResumeDraft removes visible company and job-only skill bleed", () => {
-    const { profile, job } = getSeedContext();
-    const draft = updateSection(
-      createBaseDraft(),
-      "section_skills",
-      (section) => ({
-        ...section,
-        bullets: createBullets("skill_bullet", [
-          "Figma",
-          "Signal Systems",
-          "Remote-first collaboration",
-        ]),
-      }),
-    );
-
-    const sanitized = sanitizeResumeDraft({ draft, job, profile });
-    const visibleSkills = getSection(sanitized, "section_skills").bullets.map(
-      (bullet) => bullet.text,
-    );
-
-    expect(visibleSkills).toEqual(["Figma"]);
   });
 
   test("sanitization keeps a place-like skill the person locked", () => {
@@ -518,7 +403,9 @@ ${ownSentence}`,
       validation.claimAssessments.find(
         (claim) => claim.bulletId === bullets[1]?.id,
       ),
-    ).toMatchObject({ status: "confirm_needed" });
+      // A listing skill the profile does not show waits for the model's
+      // fact check (ADR 0041).
+    ).toMatchObject({ status: "review" });
   });
 
   test("sanitizeResumeDraft keeps job-listing technologies in the skills section", () => {
@@ -546,42 +433,6 @@ ${ownSentence}`,
     );
 
     expect(visibleSkills).toEqual(["Kubernetes", "Figma"]);
-  });
-
-  test("validateResumeDraft maps a job-listing skill bullet to confirm_needed", () => {
-    const { profile, job } = getSeedContext();
-    const listingJob = {
-      ...job,
-      keySkills: [...job.keySkills, "Kubernetes"],
-      description: `${job.description} Kubernetes required.`,
-    };
-    const draft = updateSection(
-      createBaseDraft(),
-      "section_skills",
-      (section) => ({
-        ...section,
-        bullets: createBullets("skill_bullet", ["Kubernetes"]),
-      }),
-    );
-
-    const validation = validateResumeDraft({
-      draft,
-      job: listingJob,
-      profile,
-    });
-
-    expect(
-      validation.claimAssessments.find(
-        (assessment) => assessment.bulletId === "skill_bullet_1",
-      ),
-    ).toMatchObject({ status: "confirm_needed" });
-    // The same skill without the job ever asking for it stays unsupported.
-    const unsupported = validateResumeDraft({ draft, job, profile });
-    expect(
-      unsupported.claimAssessments.find(
-        (assessment) => assessment.bulletId === "skill_bullet_1",
-      ),
-    ).toMatchObject({ status: "unsupported" });
   });
 
   test("validateResumeDraft does not ask to confirm a listing skill the profile already has under an alias", () => {
@@ -704,102 +555,6 @@ ${ownSentence}`,
     );
 
     expect(visibleSkills).toEqual(["Terraform", "Figma"]);
-  });
-
-  test("sanitizeResumeDraft drops listing responsibility sentences from the skills section", () => {
-    const { profile, job } = getSeedContext();
-    const profileWithReact = {
-      ...profile,
-      skills: [...profile.skills, "React", "Next.js", "TypeScript"],
-    };
-    const listingJob = {
-      ...job,
-      responsibilities: [
-        ...job.responsibilities,
-        "Own React and Next.js storefronts used by kitchen and floor staff.",
-      ],
-    };
-    const draft = updateSection(
-      createBaseDraft(),
-      "section_skills",
-      (section) => ({
-        ...section,
-        bullets: createBullets("skill_bullet", [
-          "Terraform",
-          "TypeScript services",
-          "Own React and Next.js storefronts used by kitchen and floor staff.",
-        ]),
-      }),
-    );
-
-    const sanitized = sanitizeResumeDraft({
-      draft,
-      job: listingJob,
-      profile: profileWithReact,
-    });
-    const visibleSkills = getSection(sanitized, "section_skills").bullets.map(
-      (bullet) => bullet.text,
-    );
-
-    expect(visibleSkills).not.toContain(
-      "Own React and Next.js storefronts used by kitchen and floor staff.",
-    );
-    expect(visibleSkills).not.toContain("TypeScript services");
-  });
-
-  test("validateResumeDraft maps a qualification-only listing skill to confirm_needed", () => {
-    const { profile, job } = getSeedContext();
-    const listingJob = {
-      ...job,
-      keySkills: job.keySkills,
-      minimumQualifications: [
-        ...job.minimumQualifications,
-        "Hands-on experience with Terraform.",
-      ],
-    };
-    const draft = updateSection(
-      createBaseDraft(),
-      "section_skills",
-      (section) => ({
-        ...section,
-        bullets: createBullets("skill_bullet", ["Terraform"]),
-      }),
-    );
-
-    const validation = validateResumeDraft({
-      draft,
-      job: listingJob,
-      profile,
-    });
-
-    expect(
-      validation.claimAssessments.find(
-        (assessment) => assessment.bulletId === "skill_bullet_1",
-      ),
-    ).toMatchObject({ status: "confirm_needed" });
-  });
-
-  test("validateResumeDraft flags short job-only skill bleed that remains in a draft", () => {
-    const { profile, job } = getSeedContext();
-    const draft = updateSection(
-      createBaseDraft(),
-      "section_skills",
-      (section) => ({
-        ...section,
-        bullets: createBullets("skill_bullet", ["Remote-first collaboration"]),
-      }),
-    );
-
-    const validation = validateResumeDraft({ draft, job, profile });
-
-    expect(validation.issues).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          category: "job_description_bleed",
-          bulletId: "skill_bullet_1",
-        }),
-      ]),
-    );
   });
 
   test("sanitizeResumeDraft keeps grounded spoken languages visible", () => {
@@ -944,49 +699,6 @@ ${ownSentence}`,
     expect(getSection(sanitized, "section_summary").included).toBe(true);
   });
 
-  test("sanitizeResumeDraft removes copied job-description summary prose and copied section bullets", () => {
-    const { profile, job } = getSeedContext();
-    const copiedSummary = job.description;
-    const copiedResponsibility =
-      job.responsibilities[0] ?? "Own the design system roadmap.";
-    const draftWithSummaryBleed = updateSection(
-      updateSection(createBaseDraft(), "section_summary", (section) => ({
-        ...section,
-        text: copiedSummary,
-      })),
-      "section_experience",
-      (section) => ({
-        ...section,
-        bullets: createBullets("experience_section_bleed", [
-          copiedResponsibility,
-        ]),
-        entries: section.entries.map((entry) => ({
-          ...entry,
-          bullets: createBullets("experience_quality", [
-            copiedResponsibility,
-            "React, TypeScript, Design Systems, Figma, Playwright, Accessibility, Testing",
-            "Improved workflow QA handoff across release reviews.",
-          ]),
-        })),
-      }),
-    );
-
-    const sanitized = sanitizeResumeDraft({
-      draft: draftWithSummaryBleed,
-      job,
-      profile,
-    });
-    const summarySection = getSection(sanitized, "section_summary");
-    const experienceEntry = getExperienceEntry(sanitized);
-
-    expect(summarySection.text).toBeNull();
-    expect(summarySection.included).toBe(false);
-    expect(getSection(sanitized, "section_experience").bullets).toEqual([]);
-    expect(experienceEntry.bullets.map((bullet) => bullet.text)).toEqual([
-      "Improved workflow QA handoff across release reviews.",
-    ]);
-  });
-
   test("sanitizeResumeDraft removes summary sentences that repeat visible experience bullets", () => {
     const { profile, job } = getSeedContext();
     const draft = updateSection(
@@ -1018,44 +730,12 @@ ${ownSentence}`,
     ]);
   });
 
-  test("validateResumeDraft flags copied job-description section bullets without false grounding from short profile tokens", () => {
+  test("validateResumeDraft shows the checker's style note on a generated line (ADR 0041)", () => {
     const { profile, job } = getSeedContext();
-    const copiedResponsibility =
-      job.responsibilities[0] ?? "Own the design system roadmap.";
-    const draft = updateSection(
-      createBaseDraft(),
-      "section_experience",
-      (section) => ({
-        ...section,
-        bullets: createBullets("experience_section_validate", [
-          copiedResponsibility,
-        ]),
-      }),
-    );
-
-    const validation = validateResumeDraft({ draft, job, profile });
-
-    expect(validation.issues).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          category: "job_description_bleed",
-          bulletId: "experience_section_validate_1",
-        }),
-      ]),
-    );
-  });
-
-  test("validateResumeDraft maps rounded-up years and listing technologies to confirm_needed instead of unsupported", () => {
-    const { profile, job } = getSeedContext();
-    const listingJob = {
-      ...job,
-      keySkills: [...job.keySkills, "Framer"],
-      description: `${job.description} Strong Framer prototyping and 11 years of professional experience required.`,
-      minimumQualifications: [
-        ...job.minimumQualifications,
-        "11 years of professional experience.",
-      ],
-    };
+    const keywordList =
+      "React, TypeScript, Design Systems, Figma, Playwright, Accessibility, Testing";
+    const filler =
+      "Results-driven team player who thrives in fast-paced environments.";
     const draft = updateSection(
       createBaseDraft(),
       "section_experience",
@@ -1063,202 +743,41 @@ ${ownSentence}`,
         ...section,
         entries: section.entries.map((entry) => ({
           ...entry,
-          bullets: createBullets("experience_relaxed", [
-            // 10 evidenced years rounded up by exactly one.
-            "Designed resilient workflow tools across 11 years of professional experience.",
-            // A listing technology the evidenced product-design stack implies.
-            "Prototyped resilient workflow systems in Framer for product teams.",
-          ]),
+          bullets: createBullets("experience_validate", [keywordList, filler]),
         })),
       }),
     );
 
     const validation = validateResumeDraft({
-      draft,
-      job: listingJob,
-      profile,
-    });
-
-    const roundedYears = validation.claimAssessments.find(
-      (assessment) => assessment.bulletId === "experience_relaxed_1",
-    );
-    const listingTerm = validation.claimAssessments.find(
-      (assessment) => assessment.bulletId === "experience_relaxed_2",
-    );
-
-    expect(roundedYears).toMatchObject({ status: "confirm_needed" });
-    expect(listingTerm).toMatchObject({ status: "confirm_needed" });
-    expect(validation.issues).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          category: "claim_confirmation_needed",
-          bulletId: "experience_relaxed_1",
-        }),
-        expect.objectContaining({
-          category: "claim_confirmation_needed",
-          bulletId: "experience_relaxed_2",
-        }),
-      ]),
-    );
-    // Both stay export-blocking until the user confirms them.
-    expect(hasBlockingResumeClaimAssessment({ validation, draft })).toBe(true);
-  });
-
-  test("validateResumeDraft maps a single bullet that both rounds years and names a listing technology to confirm_needed", () => {
-    const { profile, job } = getSeedContext();
-    const listingJob = {
-      ...job,
-      keySkills: [...job.keySkills, "Framer"],
-      description: `${job.description} Strong Framer prototyping and 11 years of professional experience required.`,
-      minimumQualifications: [
-        ...job.minimumQualifications,
-        "11 years of professional experience.",
-      ],
-    };
-    const draft = updateSection(
-      createBaseDraft(),
-      "section_experience",
-      (section) => ({
-        ...section,
-        entries: section.entries.map((entry) => ({
-          ...entry,
-          bullets: createBullets("experience_combined", [
-            "Designed resilient workflow tools in Framer across 11 years of professional experience.",
-          ]),
-        })),
-      }),
-    );
-
-    const validation = validateResumeDraft({
-      draft,
-      job: listingJob,
-      profile,
-    });
-    const combined = validation.claimAssessments.find(
-      (assessment) => assessment.bulletId === "experience_combined_1",
-    );
-
-    expect(combined).toMatchObject({ status: "confirm_needed" });
-    expect(validation.issues).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          category: "claim_confirmation_needed",
-          bulletId: "experience_combined_1",
-        }),
-      ]),
-    );
-    expect(hasBlockingResumeClaimAssessment({ validation, draft })).toBe(true);
-  });
-
-  test("validateResumeDraft keeps an unevidenced credential the listing asks for unsupported", () => {
-    const { profile, job } = getSeedContext();
-    const listingJob = {
-      ...job,
-      preferredQualifications: [
-        ...job.preferredQualifications,
-        "AWS Certified Solutions Architect preferred.",
-      ],
-    };
-    const draft = updateSection(
-      createBaseDraft(),
-      "section_experience",
-      (section) => ({
-        ...section,
-        entries: section.entries.map((entry) => ({
-          ...entry,
-          bullets: createBullets("experience_credential", [
-            "AWS Certified Solutions Architect.",
-          ]),
-        })),
-      }),
-    );
-
-    const validation = validateResumeDraft({
-      draft,
-      job: listingJob,
-      profile,
-    });
-    const credential = validation.claimAssessments.find(
-      (assessment) => assessment.bulletId === "experience_credential_1",
-    );
-
-    expect(credential).toMatchObject({ status: "unsupported" });
-    expect(credential?.status).not.toBe("confirm_needed");
-    expect(hasBlockingResumeClaimAssessment({ validation, draft })).toBe(true);
-  });
-
-  test("validateResumeDraft keeps years beyond one rounding and technologies absent from the listing unsupported", () => {
-    const { profile, job } = getSeedContext();
-    const draft = updateSection(
-      createBaseDraft(),
-      "section_experience",
-      (section) => ({
-        ...section,
-        entries: section.entries.map((entry) => ({
-          ...entry,
-          bullets: createBullets("experience_unrelaxed", [
-            // Two years past the evidenced 10 is not a rounding.
-            "Designed resilient workflow tools across 12 years of professional experience.",
-            // A technology neither the evidence nor the listing mentions.
-            "Prototyped resilient workflow systems in Framer for product teams.",
-          ]),
-        })),
-      }),
-    );
-
-    const validation = validateResumeDraft({ draft, job, profile });
-
-    expect(
-      validation.claimAssessments.find(
-        (assessment) => assessment.bulletId === "experience_unrelaxed_1",
+      draft: withClaimChecks(
+        draft,
+        { [keywordList]: "supported", [filler]: "supported" },
+        {
+          [keywordList]:
+            "This reads as a list of tools, not something you did.",
+        },
       ),
-    ).toMatchObject({ status: "unsupported" });
-    expect(
-      validation.claimAssessments.find(
-        (assessment) => assessment.bulletId === "experience_unrelaxed_2",
-      ),
-    ).toMatchObject({ status: "unsupported" });
-    expect(validation.issues).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          category: "invented_metric",
-          bulletId: "experience_unrelaxed_1",
-        }),
-      ]),
-    );
-  });
-
-  test("validateResumeDraft flags keyword stuffing and vague filler when they remain in bullets", () => {
-    const { profile, job } = getSeedContext();
-    const draft = updateSection(
-      createBaseDraft(),
-      "section_experience",
-      (section) => ({
-        ...section,
-        entries: section.entries.map((entry) => ({
-          ...entry,
-          bullets: createBullets("experience_validate", [
-            "React, TypeScript, Design Systems, Figma, Playwright, Accessibility, Testing",
-            "Results-driven team player who thrives in fast-paced environments.",
-          ]),
-        })),
-      }),
-    );
-
-    const validation = validateResumeDraft({ draft, job, profile });
+      job,
+      profile,
+    });
 
     expect(validation.issues).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({
-          category: "keyword_stuffing",
-          bulletId: "experience_validate_1",
-        }),
         expect.objectContaining({
           category: "vague_filler",
-          bulletId: "experience_validate_2",
+          bulletId: "experience_validate_1",
+          message: "This reads as a list of tools, not something you did.",
         }),
       ]),
     );
+    // No word rule judges a line the checker did not note.
+    expect(
+      validation.issues.filter(
+        (issue) =>
+          issue.category === "vague_filler" &&
+          issue.bulletId === "experience_validate_2",
+      ),
+    ).toEqual([]);
   });
 
   test("validateResumeDraft flags duplicate bullets and duplicate entry summaries", () => {
@@ -1564,7 +1083,7 @@ ${ownSentence}`,
       id: "experience_net_migration",
       entryType: "experience",
       title: ".NET Developer",
-      subtitle: "CREA-KO",
+      subtitle: "TERRA-NO",
       bullets: [
         "Assisted in migrating a web-based ERP system from .NET Framework to .NET Core MVC, refactoring both front-end and back-end code to enhance performance, scalability, and alignment with the .NET Core MVC architecture.",
         "Refactored front-end and back-end code to align with .NET Core MVC architecture, improving the performance and scalability of the web application.",
@@ -1581,34 +1100,7 @@ ${ownSentence}`,
     ]);
   });
 
-  test("validateResumeDraft rejects unsupported metrics while preserving canonical quantified evidence", () => {
-    const { profile, job } = getSeedContext();
-    const draft = updateSection(
-      createBaseDraft(),
-      "section_experience",
-      (section) => ({
-        ...section,
-        entries: section.entries.map((entry) => ({
-          ...entry,
-          bullets: createBullets("claim_quality_metric", [
-            "Increased adoption to 95% across three teams.",
-            "Adoption reached 80% of core product surfaces within two quarters.",
-          ]),
-        })),
-      }),
-    );
-
-    const validation = validateResumeDraft({ draft, job, profile });
-    const metricIssues = validation.issues.filter(
-      (issue) => issue.category === "invented_metric",
-    );
-
-    expect(metricIssues.map((issue) => issue.bulletId)).toEqual([
-      "claim_quality_metric_1",
-    ]);
-  });
-
-  test("validateResumeDraft catches unsupported absolutes, teen-like filler, fragments, and near repetition", () => {
+  test("validateResumeDraft catches unchecked absolutes and near repetition", () => {
     const { profile, job } = getSeedContext();
     const draft = updateSection(
       createBaseDraft(),
@@ -1639,20 +1131,8 @@ ${ownSentence}`,
           bulletId: "claim_quality_tone_1",
         }),
         expect.objectContaining({
-          category: "vague_filler",
-          bulletId: "claim_quality_tone_2",
-        }),
-        expect.objectContaining({
-          category: "vague_filler",
-          bulletId: "claim_quality_tone_3",
-        }),
-        expect.objectContaining({
           category: "duplicate_bullet",
           bulletId: "claim_quality_tone_5",
-        }),
-        expect.objectContaining({
-          category: "vague_filler",
-          entryId: "experience_1",
         }),
       ]),
     );
@@ -1846,16 +1326,16 @@ ${ownSentence}`,
     );
   });
 
-  test("sanitizeResumeDraft suppresses unprofessional generated summaries without deleting grounded history", () => {
+  test("sanitizeResumeDraft leaves a generated summary's wording to the checker (ADR 0041)", () => {
     const { profile, job } = getSeedContext();
-    const unprofessionalSummary =
+    const casualSummary =
       "After deciding to return to my passion, I did a lot of different things and moved back into development.";
     const generatedDraft = updateSection(
       createBaseDraft(),
       "section_summary",
       (section) => ({
         ...section,
-        text: unprofessionalSummary,
+        text: casualSummary,
         origin: "ai_generated",
       }),
     );
@@ -1866,69 +1346,13 @@ ${ownSentence}`,
       profile,
     });
 
-    // The bad generated summary is replaced by the person's own profile
-    // summary, never dropped: an export with no summary at all is worse.
-    expect(getSection(sanitized, "section_summary")).toMatchObject({
-      text: profile.summary,
-    });
+    // No word rule swaps it out; the fact check notes it and fixes it when
+    // the resume is generated.
+    expect(getSection(sanitized, "section_summary").text).toBe(casualSummary);
     expect(getExperienceEntry(sanitized)).toMatchObject({
       profileRecordId: "experience_1",
       included: true,
     });
-
-    const userEditedDraft = updateSection(
-      generatedDraft,
-      "section_summary",
-      (section) => ({
-        ...section,
-        origin: "user_edited",
-      }),
-    );
-    expect(
-      getSection(
-        sanitizeResumeDraft({ draft: userEditedDraft, job, profile }),
-        "section_summary",
-      ).text,
-    ).toBe(unprofessionalSummary);
-  });
-
-  test("grounds a concise summary in short candidate skill and role evidence without accepting a new technology", () => {
-    const { profile, job } = getSeedContext();
-    const candidate = {
-      ...profile,
-      headline: "Senior Product Engineer",
-      summary:
-        "Product engineer focused on reliable workflow software and accessible frontend systems.",
-      skills: ["React", "TypeScript", "Accessibility"],
-      baseResume: {
-        ...profile.baseResume,
-        textContent:
-          "Frontend Engineer\nDelivered customer-facing React applications.\nBuilt TypeScript workflow tools for operations teams.",
-      },
-    };
-    const assess = (text: string) =>
-      validateResumeDraft({
-        draft: updateSection(
-          createBaseDraft(),
-          "section_summary",
-          (section) => ({ ...section, text, origin: "ai_generated" }),
-        ),
-        job,
-        profile: candidate,
-      }).claimAssessments.find(
-        (claim) => claim.sectionId === "section_summary",
-      );
-
-    expect(
-      assess(
-        "Frontend engineer building workflow software and accessible interfaces with React and TypeScript.",
-      )?.status,
-    ).toBe("paraphrase");
-    expect(
-      assess(
-        "Frontend engineer building workflow software and accessible interfaces with Kubernetes.",
-      )?.status,
-    ).toBe("unsupported");
   });
 
   test("assesses every visible generated claim against candidate-only evidence", () => {
@@ -1961,7 +1385,10 @@ ${ownSentence}`,
     );
 
     const validation = validateResumeDraft({
-      draft,
+      draft: withClaimChecks(draft, {
+        "Architected a quantum operating model for global logistics teams.":
+          "unsupported",
+      }),
       job,
       profile: groundedProfile,
     });
@@ -1972,17 +1399,13 @@ ${ownSentence}`,
       (assessment) => assessment.bulletId === "claim_grounding_2",
     );
 
+    // A generated line that repeats the person's records is theirs; the
+    // model's fact check decides the rest (ADR 0041).
     expect(grounded).toMatchObject({
       claimOrigin: "ai_generated",
       status: "exact",
-      verifier: "deterministic_candidate_evidence_v2",
+      verifier: "model_fact_check_v1",
     });
-    expect(grounded?.evidenceRefs.length).toBeGreaterThan(0);
-    expect(grounded?.evidenceRefs.map((ref) => ref.sourceKind)).toEqual(
-      expect.arrayContaining([
-        expect.stringMatching(/^(resume|profile|proof|user)$/),
-      ]),
-    );
     expect(unsupported).toMatchObject({
       claimOrigin: "ai_generated",
       status: "unsupported",
@@ -1993,7 +1416,7 @@ ${ownSentence}`,
     );
   });
 
-  test("does not auto-support user edits and invalidates hashes when claim text changes", () => {
+  test("keeps the person's own lines and invalidates hashes when claim text changes", () => {
     const { profile, job } = getSeedContext();
     const userEditedDraft = updateSection(
       createBaseDraft(),
@@ -2029,9 +1452,11 @@ ${ownSentence}`,
         assessment.sectionId === "section_summary",
     );
 
+    // A line the person wrote is theirs (ADR 0041); a rewording still
+    // changes its hash.
     expect(beforeClaim).toMatchObject({
       claimOrigin: "user_edited",
-      status: "review",
+      status: "exact",
     });
     expect(beforeClaim?.contentHash).not.toBe(afterClaim?.contentHash);
     expect(before.draftContentHash).not.toBe(after.draftContentHash);
@@ -2046,47 +1471,11 @@ ${ownSentence}`,
     );
   });
 
-  test("gives a listing-asked skill the person cannot evidence a confirmation of its own", () => {
-    // ADR 0018 lets aggressive tailoring name a technology the listing asks
-    // for, and promises the candidate confirms each one. The headline said
-    // "none could be verified" while the skill sat in Core Skills with no
-    // control at all, because an unsupported verdict is not confirmable.
+  test("maps the model's verdicts to statuses and gates confirmations by locator and hash", () => {
     const { profile, job } = getSeedContext();
-    const listingSkill = job.keySkills[0];
-    expect(typeof listingSkill).toBe("string");
-    const draft = updateSection(
-      createBaseDraft(),
-      "section_skills",
-      (section) => ({
-        ...section,
-        bullets: createBullets("skill_bullet", [
-          listingSkill!,
-          "Cobol mainframe migration",
-        ]),
-      }),
-    );
-
-    const validation = validateResumeDraft({ draft, job, profile });
-    const listingSkillClaim = validation.claimAssessments.find(
-      (assessment) => assessment.bulletId === "skill_bullet_1",
-    );
-    const inventedSkillClaim = validation.claimAssessments.find(
-      (assessment) => assessment.bulletId === "skill_bullet_2",
-    );
-
-    // The listing asked for it, so it becomes the candidate's call.
-    expect(listingSkillClaim?.status).not.toBe("unsupported");
-    // A skill neither the evidence nor the listing mentions stays refused.
-    expect(inventedSkillClaim?.status).toBe("unsupported");
-  });
-
-  test("maps classifier verdicts to statuses and gates confirmations by locator and hash", () => {
-    const { profile, job } = getSeedContext();
-    // Every other generated claim in this fixture must be fully grounded so
-    // the single weak-supported bullet below is the only confirmation-gated
-    // row: confirming one row can never clear a second unconfirmed weak row,
-    // so the gate would stay closed after its confirmation. The summary text
-    // is verbatim stored-profile evidence, which classifies as exact.
+    // The model calls one line a stretch and the other supported; the
+    // summary repeats the person's own words. The stretch is the only
+    // confirmation-gated row.
     const groundedDraft = updateSection(
       createBaseDraft(),
       "section_summary",
@@ -2103,17 +1492,24 @@ ${ownSentence}`,
         entries: section.entries.map((entry) => ({
           ...entry,
           bullets: createBullets("grounding_confirm", [
-            // Shares only one meaningful token with candidate evidence: weak
-            // support that a generated claim must confirm before export.
             "Championed resilient delivery improvements across organizations.",
-            // Multi-anchor paraphrase of grounded achievements: accepted.
             "Delivered the design system rollout across core product surfaces.",
           ]),
         })),
       }),
     );
 
-    const validation = validateResumeDraft({ draft, job, profile });
+    const checkedDraft = withClaimChecks(draft, {
+      "Championed resilient delivery improvements across organizations.":
+        "stretch",
+      "Delivered the design system rollout across core product surfaces.":
+        "supported",
+    });
+    const validation = validateResumeDraft({
+      draft: checkedDraft,
+      job,
+      profile,
+    });
     const weakClaim = validation.claimAssessments.find(
       (assessment) => assessment.bulletId === "grounding_confirm_1",
     );
@@ -2124,7 +1520,7 @@ ${ownSentence}`,
     expect(weakClaim).toMatchObject({
       claimOrigin: "ai_generated",
       status: "confirm_needed",
-      verifier: "deterministic_candidate_evidence_v2",
+      verifier: "model_fact_check_v1",
     });
     expect(
       validation.issues.some(
@@ -2138,7 +1534,6 @@ ${ownSentence}`,
       claimOrigin: "ai_generated",
       status: "paraphrase",
     });
-    expect(paraphraseClaim?.evidenceRefs.length).toBeGreaterThan(0);
     expect(hasBlockingResumeClaimAssessment({ validation, draft })).toBe(true);
 
     const confirmation = ResumeClaimConfirmationSchema.parse({
@@ -2279,4 +1674,105 @@ ${ownSentence}`,
       }),
     ).toBe(true);
   });
+});
+
+test("edited achievements replace old adjacent summary wording once", () => {
+  const { profile, job } = getSeedContext();
+  const edited =
+    "Redesigned pension-app onboarding, lifting activation 23% in eight weeks.";
+  const old =
+    "Redesigned onboarding for a pensions app; activation up 23% in eight weeks.";
+  const draft = updateSection(
+    createBaseDraft(),
+    "section_experience",
+    (section) => ({
+      ...section,
+      entries: section.entries.map((entry) => ({
+        ...entry,
+        summary: old,
+        bullets: createBullets("edited", [edited]),
+      })),
+    }),
+  );
+  const result = sanitizeResumeDraft({ draft, profile, job });
+  expect(getExperienceEntry(result).summary).toBeNull();
+  expect(
+    getExperienceEntry(result).bullets.map((bullet) => bullet.text),
+  ).toEqual([edited]);
+});
+
+test("comparison preserves sentences split into bullets and offers only missing facts", () => {
+  const { profile } = getSeedContext();
+  const facts = [
+    "Built research dashboards for the payments team.",
+    "Designed accessible prototypes for customer onboarding.",
+    "Reduced review time 23% across eight weeks.",
+  ];
+  const role = {
+    ...profile.experiences[0]!,
+    id: "experience_1",
+    summary: facts.join(" "),
+    achievements: [],
+  };
+  const draft = updateSection(
+    createBaseDraft(),
+    "section_experience",
+    (section) => ({
+      ...section,
+      entries: section.entries.map((entry) => ({
+        ...entry,
+        summary: null,
+        bullets: createBullets("facts", facts),
+      })),
+    }),
+  );
+  expect(
+    buildResumeCoverageComparison({
+      profile: { ...profile, experiences: [role] },
+      draft,
+    }).removedClaimCount,
+  ).toBe(0);
+  const missing = updateSection(draft, "section_experience", (section) => ({
+    ...section,
+    entries: section.entries.map((entry) => ({
+      ...entry,
+      bullets: entry.bullets.slice(0, 2),
+    })),
+  }));
+  expect(
+    buildResumeCoverageComparison({
+      profile: { ...profile, experiences: [role] },
+      draft: missing,
+    }).roles[0]?.removedClaims,
+  ).toEqual([{ field: "bullet", text: facts[2], restorable: true }]);
+});
+
+test("unconfirmed import roles are excluded from seed, preview and comparison", () => {
+  const { profile, job } = getSeedContext();
+  const candidate = {
+    ...profile,
+    experiences: [
+      ...profile.experiences,
+      {
+        ...profile.experiences[0]!,
+        id: "unconfirmed",
+        title: "/",
+        isDraft: true,
+      },
+    ],
+  };
+  const seeded = seedResumeDraft({
+    profile: candidate,
+    job,
+    templateId: "classic_ats",
+  });
+  expect(
+    seeded.sections
+      .flatMap((section) => section.entries)
+      .some((entry) => entry.profileRecordId === "unconfirmed"),
+  ).toBe(false);
+  expect(
+    buildResumeCoverageComparison({ profile: candidate, draft: seeded })
+      .originalRoleCount,
+  ).toBe(profile.experiences.filter((role) => !role.isDraft).length);
 });

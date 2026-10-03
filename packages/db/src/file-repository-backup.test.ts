@@ -11,10 +11,11 @@ import { existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { SavedJobSchema } from "@nordri/contracts";
+import { ApplicationRecordSchema, SavedJobSchema } from "@nordri/contracts";
 
 import { createFileJobFinderRepository } from "./index";
 import {
+  createWorkspaceResetDatabaseBackup,
   getWorkspaceDatabaseBackupPaths,
   reconcileWorkspaceBackupRotation,
 } from "./file-repository-backup";
@@ -170,94 +171,110 @@ describe("automatic workspace database backup", () => {
     }
   });
 
-  test("snapshots the pre-reset state before a destructive reset", async () => {
-    const repository = await createFileJobFinderRepository({
+  test("reset removes every managed copy of the old workspace across restart", async () => {
+    const oldSeed = createSeed();
+    oldSeed.profile.email = "deleted-person@example.test";
+    oldSeed.profile.baseResume.textContent = "Synthetic deleted resume text";
+    oldSeed.applicationRecords = [
+      ApplicationRecordSchema.parse({
+        id: "deleted_application",
+        jobId: "job_before_reset",
+        title: "Synthetic role",
+        company: "Synthetic company",
+        status: "submitted",
+        lastActionLabel: "Applied",
+        nextActionLabel: null,
+        lastUpdatedAt: "2026-10-02T10:00:00.000Z",
+      }),
+    ];
+    const first = await createFileJobFinderRepository({
       filePath: workspace.filePath,
-      seed: createSeed(),
-      automaticBackup: { beforeReset: true },
+      seed: oldSeed,
+      automaticBackup: { onClose: true, beforeReset: true },
     });
-    await repository.commitSavedJobDelta({
+    await first.commitSavedJobDelta({
       upserts: [createBackupFixtureJob("job_before_reset")],
     });
-    const preResetJobIds = (await repository.listSavedJobs()).map(
-      (job) => job.id,
-    );
-
-    await repository.reset(createSeed());
-
-    expect(existsSync(workspace.resetBackupPath)).toBe(true);
-
-    const restored = openSnapshot(workspace.resetBackupPath);
-    try {
-      expect(new Set(listSavedJobIds(restored))).toEqual(
-        new Set(preResetJobIds),
-      );
-      expect(listSavedJobIds(restored)).toContain("job_before_reset");
-    } finally {
-      restored.close();
+    await first.close();
+    const second = await createFileJobFinderRepository({
+      filePath: workspace.filePath,
+      seed: oldSeed,
+      automaticBackup: { onClose: true, beforeReset: true },
+    });
+    await second.close();
+    const managedPaths = Object.values({
+      ...getWorkspaceDatabaseBackupPaths(workspace.filePath),
+    });
+    // Include leftovers from interrupted recovery and reset snapshot writes.
+    const recoveryPaths = [
+      `${workspace.filePath}.quarantine-2026-10-02T10-00-00-000Z-test`,
+      `${workspace.filePath}-wal.quarantine-2026-10-02T10-00-00-000Z-test`,
+      `${workspace.filePath}.restore-test.tmp`,
+      `${workspace.filePath}.recovery-validate-backup-test.tmp`,
+      `${workspace.filePath}.recovery-integrity-test.tmp-wal`,
+    ];
+    for (const copyPath of [
+      ...managedPaths.filter((p) => !existsSync(p)),
+      ...recoveryPaths,
+    ]) {
+      await writeFile(copyPath, await readFile(workspace.closeBackupPath));
     }
-
-    const postResetJobIds = (await repository.listSavedJobs()).map(
-      (job) => job.id,
-    );
-    expect(postResetJobIds).not.toContain("job_before_reset");
-
-    await repository.close();
-  });
-
-  test("close after reset keeps the valuable pre-reset snapshot intact", async () => {
-    // Combined-hooks regression for the desktop wiring
-    // `{ onClose: true, beforeReset: true }`: the graceful-close rotation
-    // uses `<filePath>.backup` and must never overwrite the dedicated
-    // pre-reset destination with post-reset state.
-    //
-    // Scope note under test: these snapshots are database-only. A reset
-    // rewrites only the workspace database contents, so recovery from these
-    // snapshots covers persisted repository state alone; generated resume
-    // documents and candidate assets are stored outside this database and
-    // intentionally carry no full-workspace restore claim here.
     const repository = await createFileJobFinderRepository({
+      filePath: workspace.filePath,
+      seed: oldSeed,
+      automaticBackup: { onClose: true, beforeReset: true },
+    });
+    await repository.reset(createSeed());
+    for (const copyPath of [...managedPaths, ...recoveryPaths])
+      expect(existsSync(copyPath)).toBe(false);
+    // Deleted rows must not survive as free pages in the live database file
+    // or as old frames in its WAL.
+    for (const livePath of [workspace.filePath, `${workspace.filePath}-wal`]) {
+      if (!existsSync(livePath)) continue;
+      const liveBytes = await readFile(livePath);
+      expect(
+        liveBytes.includes(Buffer.from("deleted-person@example.test")),
+      ).toBe(false);
+      expect(
+        liveBytes.includes(Buffer.from("Synthetic deleted resume text")),
+      ).toBe(false);
+    }
+    await repository.close();
+    const reopened = await createFileJobFinderRepository({
       filePath: workspace.filePath,
       seed: createSeed(),
       automaticBackup: { onClose: true, beforeReset: true },
     });
-    await repository.commitSavedJobDelta({
-      upserts: [createBackupFixtureJob("job_valuable_pre_reset")],
-    });
-    const preResetJobIds = (await repository.listSavedJobs()).map(
-      (job) => job.id,
+    expect((await reopened.listSavedJobs()).map((job) => job.id)).not.toContain(
+      "job_before_reset",
     );
-
-    await repository.reset(createSeed());
-    await repository.close();
-
-    // The destructive reset happened; the live database no longer holds the
-    // valuable job.
-    expect(existsSync(workspace.resetBackupPath)).toBe(true);
-
-    // The pre-reset snapshot survived the subsequent close untouched.
-    const resetSnapshot = openSnapshot(workspace.resetBackupPath);
-    try {
-      expect(new Set(listSavedJobIds(resetSnapshot))).toEqual(
-        new Set(preResetJobIds),
+    expect((await reopened.getProfile()).email).not.toBe(
+      "deleted-person@example.test",
+    );
+    expect(await reopened.listApplicationRecords()).toHaveLength(0);
+    await reopened.close();
+    for (const snapshotPath of [
+      workspace.closeBackupPath,
+      workspace.closeBackupPreviousPath,
+    ]) {
+      const snapshot = openSnapshot(snapshotPath);
+      try {
+        expect(
+          listValues(snapshot, "application_records", ApplicationRecordSchema),
+        ).toHaveLength(0);
+        expect(listSavedJobIds(snapshot)).not.toContain("job_before_reset");
+      } finally {
+        snapshot.close();
+      }
+      const bytes = await readFile(snapshotPath);
+      expect(bytes.includes(Buffer.from("deleted-person@example.test"))).toBe(
+        false,
       );
-      expect(listSavedJobIds(resetSnapshot)).toContain(
-        "job_valuable_pre_reset",
+      expect(bytes.includes(Buffer.from("Synthetic deleted resume text"))).toBe(
+        false,
       );
-    } finally {
-      resetSnapshot.close();
     }
-
-    // The close snapshot reflects post-reset state in its own destination.
-    expect(existsSync(workspace.closeBackupPath)).toBe(true);
-    const closeSnapshot = openSnapshot(workspace.closeBackupPath);
-    try {
-      expect(listSavedJobIds(closeSnapshot)).not.toContain(
-        "job_valuable_pre_reset",
-      );
-    } finally {
-      closeSnapshot.close();
-    }
+    expect(existsSync(workspace.resetBackupPath)).toBe(false);
   });
 
   test("still closes the database cleanly when the backup fails", async () => {
@@ -553,11 +570,19 @@ describe("workspace backup rotation reconciliation", () => {
     await repository.commitSavedJobDelta({
       upserts: [createBackupFixtureJob("job_reconcile_reset_promote")],
     });
-    await repository.reset(createSeed());
     // Closed before the reconciliation so the workspace file carries no open
     // handle: Windows refuses to remove a locked file, which stranded the
     // temporary directory in cleanup.
     await repository.close();
+    const raw = new DatabaseSync(workspace.filePath);
+    try {
+      await createWorkspaceResetDatabaseBackup({
+        database: raw,
+        filePath: workspace.filePath,
+      });
+    } finally {
+      raw.close();
+    }
     // Interrupted between VACUUM INTO and the final reset-snapshot rename.
     await rename(workspace.resetBackupPath, workspace.resetTemporaryPath);
 
@@ -609,8 +634,16 @@ describe("workspace backup rotation reconciliation", () => {
     await repository.commitSavedJobDelta({
       upserts: [createBackupFixtureJob("job_reconcile_reset_stale")],
     });
-    await repository.reset(createSeed());
     await repository.close();
+    const raw = new DatabaseSync(workspace.filePath);
+    try {
+      await createWorkspaceResetDatabaseBackup({
+        database: raw,
+        filePath: workspace.filePath,
+      });
+    } finally {
+      raw.close();
+    }
     await writeFile(workspace.resetTemporaryPath, "stale-reset-tmp");
     const resetBackupBefore = await readSnapshotBytes(
       workspace.resetBackupPath,

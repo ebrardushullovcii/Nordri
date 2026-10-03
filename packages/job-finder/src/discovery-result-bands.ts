@@ -5,7 +5,6 @@ import type {
 } from "@nordri/contracts";
 
 import {
-  assessmentTitleMissesTargetRoles,
   isProvisionalMatchAssessment,
 } from "./discovery-ordering";
 import { isTargetTitleFamily } from "./internal/discovery-title-family";
@@ -51,13 +50,13 @@ export const DISCOVERY_CLEAR_MISMATCH_SCORE_FLOOR = 35;
  */
 export const DISCOVERY_WEAKER_MATCH_SCORE_FLOOR = 50;
 
-export const FIT_TITLE_ONLY_REASON =
-  "Fit is based on the title alone. Review the listing details before applying.";
+export const FIT_NOT_JUDGED_REASON =
+  "The AI judges each job against your profile and goals after a search. Choose Read and assess listing to judge this one now.";
 
 export interface FitEvidenceDepth {
-  /** Nothing beyond the listing title/card was checkable. */
-  isTitleOnly: boolean;
-  /** One-line explanation for a title-only score. */
+  /** The model has not judged this job yet (ADR 0041). */
+  isNotJudged: boolean;
+  /** One-line explanation for a job without a verdict. */
   reason: string;
   verifiedDimensionCount: number;
 }
@@ -109,8 +108,10 @@ export function getFitEvidenceDepth(
   const verifiedDimensionCount = verifiedChecks.filter(Boolean).length;
 
   return {
-    isTitleOnly: verifiedDimensionCount === 0,
-    reason: FIT_TITLE_ONLY_REASON,
+    // Only the model's verdict earns a number (ADR 0041); a job it has not
+    // judged yet shows none, whatever else was read.
+    isNotJudged: !assessment.judgment,
+    reason: FIT_NOT_JUDGED_REASON,
     verifiedDimensionCount,
   };
 }
@@ -134,7 +135,7 @@ export function isMatchScoreWithheld(
   );
   const isProvisional =
     isProvisionalMatchAssessment(job) || !hasAssessmentBinding;
-  return isProvisional || getFitEvidenceDepth(job.matchAssessment).isTitleOnly;
+  return isProvisional || getFitEvidenceDepth(job.matchAssessment).isNotJudged;
 }
 
 export type DiscoveryResultGroupId =
@@ -207,23 +208,8 @@ export function getDiscoveryResultGroup(
   }
 
   if (isMatchScoreWithheld(job)) {
-    // "Title matches · not yet checked" has to mean the title matched. A
-    // card-only listing whose title never matched a target role ("Full-Stack
-    // Designer" for a software-engineer search) has been checked as far as it
-    // can be, and what was checked did not fit: it belongs with the weaker
-    // matches, still one click away, not in the leading unchecked band.
-    //
-    // The test is the title FAMILY, not the absence of an exact hit. A role
-    // in the same occupational family as a saved target — "Executive
-    // Assistant I" against a saved "Executive Assistant" — is a result the
-    // person asked for, and burying it under "Also found · Weaker matches"
-    // for the single reason that its listing text was never captured hid
-    // exactly the jobs the search was run to find. Only a title the scorer
-    // positively placed outside the saved families is demoted here.
-    return isTargetTitleFamily(job.matchAssessment) ||
-      !assessmentTitleMissesTargetRoles(job.matchAssessment)
-      ? "unchecked"
-      : "weaker";
+    // No verdict yet, so no judgement for or against it (ADR 0041).
+    return "unchecked";
   }
 
   return job.matchAssessment.score < DISCOVERY_WEAKER_MATCH_SCORE_FLOOR

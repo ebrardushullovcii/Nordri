@@ -33,7 +33,7 @@ import {
   scrubJobAbsencePlaceholdersList,
 } from "../../lib/job-employer-location-display";
 import { getMatchAssessmentPresentation } from "../../lib/match-assessment-presentation";
-import { RESUME_OPERATION_LONG_RUNNING_MS } from "./review-queue-progress";
+import { RESUME_DRAFT_LONG_RUNNING_MS } from "@renderer/features/job-finder/lib/wait-state";
 import type { JobFinderAutoApplyQueueStartOutcome } from "../../lib/job-finder-types";
 import { useStableCallback } from "../../hooks/use-stable-callback";
 import { ReviewQueueListPanel } from "./review-queue-list-panel";
@@ -246,7 +246,7 @@ export function ReviewQueueScreen(props: {
       },
       Math.max(
         0,
-        RESUME_OPERATION_LONG_RUNNING_MS -
+        RESUME_DRAFT_LONG_RUNNING_MS -
           (operationStartedAt === undefined
             ? 0
             : Date.now() - operationStartedAt),

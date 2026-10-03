@@ -2,7 +2,7 @@ import { describe, expect, test } from "vitest";
 import type { ListingHtmlFetcher } from "./index";
 import { createWorkspaceServiceHarness } from "./workspace-service.test-harness";
 
-const RECORD_PAGE = (title: string, company: string) =>
+const RECORD_PAGE = (title: string | null, company: string) =>
   `<html><head><script type="application/ld+json">${JSON.stringify({
     "@context": "https://schema.org",
     "@type": "JobPosting",
@@ -32,10 +32,9 @@ describe("listing detail enrichment inside a discovery run", () => {
     const fetched: string[] = [];
     const fetchListingHtml: ListingHtmlFetcher = (url) => {
       fetched.push(url);
-      const id = url.split("/").pop() ?? "job";
       return Promise.resolve({
         status: 200,
-        html: RECORD_PAGE(`Role ${id}`, "Signal Systems"),
+        html: RECORD_PAGE(null, "Signal Systems"),
         finalUrl: url,
       });
     };
@@ -135,7 +134,7 @@ describe("listing detail enrichment inside a discovery run", () => {
           ? { status: 429, html: "", finalUrl: url, retryAfterMs: 0 }
           : {
               status: 200,
-              html: RECORD_PAGE("Senior Product Designer", "Signal Systems"),
+              html: RECORD_PAGE(null, "Signal Systems"),
               finalUrl: url,
             },
       );

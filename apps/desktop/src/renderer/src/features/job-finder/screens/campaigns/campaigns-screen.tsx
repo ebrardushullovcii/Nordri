@@ -228,6 +228,10 @@ export function describePlanRunFailure(
   const run = (runs ?? []).find(
     (candidate) => candidate.id === digest?.discoveryRunId,
   );
+  if (digest?.outcome === "interrupted")
+    return "This search was interrupted when the app closed.";
+  if (digest?.outcome === "stopped" || run?.state === "cancelled")
+    return "This search was stopped before all sources finished.";
   return describeDiscoveryRunFailureReason(run ?? null);
 }
 
@@ -329,7 +333,15 @@ function describeLastRun(
    * for a run whose counts were on screen. A run with a report ran.
    */
   report?: DiscoveryRunReportCounts | null,
+  run?: DiscoveryRunRecord | null,
+  digest?: CampaignDigest | null,
 ): string {
+  const stopped = digest?.outcome === "stopped" || run?.state === "cancelled";
+  const interrupted =
+    digest?.outcome === "interrupted" || run?.runPhase === "interrupted";
+  if (stopped || interrupted) {
+    return `${interrupted ? "Interrupted" : "Stopped"} · ${formatPlanCardDateTime(run?.completedAt ?? run?.startedAt ?? digest?.generatedAt ?? null) ?? "unknown time"}`;
+  }
   const facts = schedule.runFacts;
   const runIsWitnessedByItsReport = report
     ? hasDiscoveryRunReportCounts(report)
@@ -2086,6 +2098,15 @@ export function CampaignsScreen(props: {
                               props.discoveryRuns,
                               campaign.latestDigest,
                             ),
+                            props.discoveryRuns?.find(
+                              (run) =>
+                                run.id ===
+                                campaign.latestDigest?.discoveryRunId,
+                            ) ??
+                              props.discoveryRuns?.find(
+                                (run) => run.campaignId === campaign.id,
+                              ),
+                            campaign.latestDigest,
                           )}
                         </dd>
                       </div>

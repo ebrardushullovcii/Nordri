@@ -36,8 +36,8 @@ export function fitLabel(job: SavedJob | DiscoveryJobView): string {
     job.matchAssessment.postingFingerprint,
   ].every((value) => typeof value === "string" && value.trim().length > 0);
   if (isProvisionalMatchAssessment(job) || !bound) return "Fit not assessed";
-  if (getFitEvidenceDepth(job.matchAssessment).isTitleOnly)
-    return "Title-only estimate";
+  if (getFitEvidenceDepth(job.matchAssessment).isNotJudged)
+    return "Not judged yet";
   return job.matchAssessment.scoreIsUpperBound
     ? `Up to ${job.matchAssessment.score}% fit`
     : `${job.matchAssessment.score}% fit`;

@@ -320,17 +320,17 @@ describe("getQueueStateExplanation", () => {
     );
   });
 
-  it("says a stop-rule pause will not continue and needs a fresh Prepare remaining jobs run", () => {
+  it("says a stop-rule pause needs an explicit retry", () => {
     const explanation = getQueueStateExplanation({
       ...baseInput,
       runState: "paused_for_user_review",
     });
 
-    expect(explanation).toContain("one of your safety limits was reached");
+    expect(explanation).toContain("A safety limit paused this run.");
     expect(explanation).toContain("will not carry on by itself");
-    expect(explanation).toContain("Review the prepared sample in Safeguards");
+    expect(explanation).toContain("Open Safeguards to see the limit");
     expect(explanation).toContain(
-      "Use Prepare remaining jobs to finish the ones it did not get to",
+      "press Try again on an unstarted job when the limit allows it",
     );
     // Unlike the consent pause, there is nothing to resolve to resume.
     expect(explanation).not.toContain("Needs you");

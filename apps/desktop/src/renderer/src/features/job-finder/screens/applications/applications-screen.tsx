@@ -1,3 +1,5 @@
+import { isSameSiteApplicationActive } from "../actions/actions-screen";
+import { formatElapsedMinutes } from "./applications-recovery-state";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type {
   ApplicationCrmBulkStageMutationInput,
@@ -82,6 +84,8 @@ const OUTCOME_STATUSES = new Set<string>([
 
 export function ApplicationsScreen(props: {
   actionMessage?: string | null;
+  searchPlanName?: string | undefined;
+  hasOtherPlanApplications?: boolean;
   applicationAttempts: readonly ApplicationAttempt[];
   applicationRecords: readonly ApplicationRecord[];
   applyRuns: JobFinderWorkspaceSnapshot["applyRuns"];
@@ -134,6 +138,7 @@ export function ApplicationsScreen(props: {
     applicationAutomationMode?: ApplicationAutomationMode,
   ) => void;
   onStartApplyCopilot: (input: JobFinderExactApplicationTarget) => void;
+  onReviewResumePdf?: (jobId: string) => void;
   onOpenCompany?: (companyId: string) => void;
   /**
    * The workspace's most recently updated run. Not used to pick a record's
@@ -224,6 +229,7 @@ export function ApplicationsScreen(props: {
     onRevokeApplyRunApproval,
     onStartAutoApplyQueue,
     onStartApplyCopilot,
+    onReviewResumePdf,
     onSelectRecord,
     selectedAttempt,
     selectedRecord,
@@ -281,6 +287,11 @@ export function ApplicationsScreen(props: {
   // The words for a job whose application is being filled in right now, so
   // the list never shows a stale "prepare when you are ready" beside a
   // running preparation.
+  const [progressNow, setProgressNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setProgressNow(Date.now()), 30_000);
+    return () => clearInterval(timer);
+  }, []);
   const liveRunLinesByJobId = useMemo(() => {
     const runningRunIds = new Set(
       applyRuns.filter((run) => run.state === "running").map((run) => run.id),
@@ -289,8 +300,12 @@ export function ApplicationsScreen(props: {
     for (const result of applyJobResults) {
       if (!runningRunIds.has(result.runId)) continue;
       // Started but held until the browser has a free tab: say that.
+      const elapsed = formatElapsedMinutes(result.startedAt, progressNow);
       if (result.summary === WAITING_FOR_BROWSER_TAB_SUMMARY) {
-        lines.set(result.jobId, `${WAITING_FOR_BROWSER_TAB_SUMMARY}.`);
+        lines.set(
+          result.jobId,
+          `${WAITING_FOR_BROWSER_TAB_SUMMARY}${elapsed ? ` (${elapsed})` : ""}.`,
+        );
         continue;
       }
       if (result.state === "planned") {
@@ -298,15 +313,42 @@ export function ApplicationsScreen(props: {
           result.jobId,
           props.activityControl?.paused
             ? "Paused before this application. It carries on when you resume."
-            : "Waiting its turn in this run.",
+            : `Waiting its turn${elapsed ? ` (${elapsed})` : ""}.`,
         );
         continue;
       }
       if (result.state !== "filling" && result.state !== "submitting") continue;
-      lines.set(result.jobId, result.summary?.trim() || "Filling in the form.");
+      lines.set(
+        result.jobId,
+        `Filling in${elapsed ? ` (${elapsed})` : ""}${result.detail?.trim() ? ` · ${result.detail.trim()}` : ""}`,
+      );
+    }
+    const jobsById = new Map(discoveryJobs.map((job) => [job.id, job]));
+    for (const request of userActionRequests ?? []) {
+      if (
+        request.kind !== "manual_answer" ||
+        request.state !== "verifying" ||
+        request.scope.type !== "application"
+      )
+        continue;
+      const job = jobsById.get(request.scope.jobId);
+      const waiting =
+        job && isSameSiteApplicationActive(job, applyJobResults, jobsById);
+      const elapsed = formatElapsedMinutes(request.updatedAt, progressNow);
+      lines.set(
+        request.scope.jobId,
+        `${waiting ? "Waiting its turn" : "Inserting your answer"}${elapsed ? ` (${elapsed})` : ""}.`,
+      );
     }
     return lines;
-  }, [applyJobResults, applyRuns, props.activityControl?.paused]);
+  }, [
+    applyJobResults,
+    applyRuns,
+    props.activityControl?.paused,
+    progressNow,
+    userActionRequests,
+    discoveryJobs,
+  ]);
   const applyMode: ApplyMode = props.applyMode ?? "fill_only";
   // The newest run result per record, so each row reads one of the five
   // apply states from what the run recorded.
@@ -315,15 +357,25 @@ export function ApplicationsScreen(props: {
       string,
       JobFinderWorkspaceSnapshot["applyJobResults"][number]
     >();
+    const runsById = new Map(applyRuns.map((run) => [run.id, run]));
     for (const result of applyJobResults) {
       if (!result.applicationRecordId) continue;
       const current = latest.get(result.applicationRecordId);
-      if (!current || current.updatedAt < result.updatedAt) {
+      const currentStart = current
+        ? (runsById.get(current.runId)?.createdAt ?? current.startedAt)
+        : "";
+      const resultStart =
+        runsById.get(result.runId)?.createdAt ?? result.startedAt;
+      if (
+        !current ||
+        currentStart < resultStart ||
+        (current.runId === result.runId && current.updatedAt < result.updatedAt)
+      ) {
         latest.set(result.applicationRecordId, result);
       }
     }
     return latest;
-  }, [applyJobResults]);
+  }, [applyJobResults, applyRuns]);
   // What each result's run is doing: a planned job waits its turn, is held
   // by the person's pause, or was left behind by a batch that stopped.
   const readApplyRunContext = useMemo(
@@ -334,6 +386,54 @@ export function ApplicationsScreen(props: {
         activityControl: props.activityControl ?? null,
       }),
     [applyJobResults, applyRuns, props.activityControl],
+  );
+  // Retained records can predate terminal-result synchronization. Tracker uses
+  // the same newest attempt as Preparation without rewriting saved history.
+  const crmApplicationRecords = useMemo(
+    () =>
+      applicationRecords.map((record) => {
+        const result = latestApplyResultByRecordId.get(record.id);
+        if (!result) return record;
+        const state = resolveApplyStatePresentation({
+          mode: applyMode,
+          result,
+          run: readApplyRunContext(result),
+          recordCrm: record.crm,
+          recordLastActionLabel: record.lastActionLabel,
+          pendingQuestionCount: Math.max(
+            0,
+            record.questionSummary.total - record.questionSummary.answered,
+          ),
+          recordFailure:
+            record.lastAttemptState === "failed"
+              ? {
+                  lastActionLabel: record.lastActionLabel,
+                  lastUpdatedAt: record.lastUpdatedAt,
+                }
+              : null,
+        });
+        const lastAttemptState: ApplicationRecord["lastAttemptState"] =
+          state.cancelledByPerson
+            ? "cancelled"
+            : state.kind === "could_not_apply"
+              ? "failed"
+              : state.kind === "filling_in"
+                ? "in_progress"
+                : state.kind === "ready_to_send"
+                  ? "ready"
+                  : state.kind === "needs_you"
+                    ? "paused"
+                    : record.lastAttemptState;
+        return lastAttemptState === record.lastAttemptState
+          ? record
+          : { ...record, lastAttemptState };
+      }),
+    [
+      applicationRecords,
+      latestApplyResultByRecordId,
+      readApplyRunContext,
+      applyMode,
+    ],
   );
   // Bulk retry: every application whose last run ended where a fresh run
   // could differ. One control, so a batch that failed on a bad network night
@@ -427,29 +527,25 @@ export function ApplicationsScreen(props: {
       ) as Record<ApplicationsViewFilter, number>,
     [applicationRecords, latestApplyResultByRecordId, readApplyRunContext],
   );
-  const latestFinishedAutomaticRun = useMemo(
+  const latestAutomaticRun = useMemo(
     () =>
       [...applyRuns]
-        .filter(
-          (run) =>
-            run.mode !== "copilot" &&
-            ["completed", "failed", "cancelled"].includes(run.state),
-        )
+        .filter((run) => run.mode !== "copilot")
         .sort(
           (left, right) =>
-            new Date(right.updatedAt).getTime() -
-            new Date(left.updatedAt).getTime(),
+            new Date(right.createdAt).getTime() -
+            new Date(left.createdAt).getTime(),
         )[0] ?? null,
     [applyRuns],
   );
-  const latestFinishedAutomaticResults = useMemo(
+  const latestAutomaticResults = useMemo(
     () =>
-      latestFinishedAutomaticRun
+      latestAutomaticRun
         ? applyJobResults.filter(
-            (result) => result.runId === latestFinishedAutomaticRun.id,
+            (result) => result.runId === latestAutomaticRun.id,
           )
         : [],
-    [applyJobResults, latestFinishedAutomaticRun],
+    [applyJobResults, latestAutomaticRun],
   );
   // One owner for "needs you": the run summary counts this run's share of the
   // population the header badge totals, rather than its own blocked/failed
@@ -457,23 +553,53 @@ export function ApplicationsScreen(props: {
   // unresolved" for the same five jobs.
   const latestRunAttentionCount = useMemo(
     () =>
-      latestFinishedAutomaticRun
+      latestAutomaticRun
         ? countApplyRunItemsNeedingYou({
-            applicationRecords,
-            applyJobResults,
-            requests: userActionRequests ?? [],
-            runId: latestFinishedAutomaticRun.id,
-            runJobIds: new Set(latestFinishedAutomaticRun.jobIds),
+            applicationRecords: applicationRecords.filter((record) =>
+              latestAutomaticResults.some(
+                (result) => result.applicationRecordId === record.id,
+              ),
+            ),
+            applyJobResults: latestAutomaticResults,
+            requests: (userActionRequests ?? []).filter(
+              (request) =>
+                request.scope.type === "application" &&
+                request.scope.runId === latestAutomaticRun.id,
+            ),
+            runId: latestAutomaticRun.id,
+            runJobIds: new Set(latestAutomaticRun.jobIds),
           })
         : 0,
     [
       applicationRecords,
       applyJobResults,
-      latestFinishedAutomaticRun,
+      latestAutomaticRun,
+      latestAutomaticResults,
       userActionRequests,
     ],
   );
-  const latestRunSkippedCount = latestFinishedAutomaticResults.filter(
+  const latestRunQueuedCount =
+    latestAutomaticRun?.state === "running"
+      ? latestAutomaticResults.filter((result) => result.state === "planned")
+          .length
+      : 0;
+  const latestRunNotStartedCount =
+    latestAutomaticRun?.state !== "running"
+      ? latestAutomaticResults.filter((result) => result.state === "planned")
+          .length
+      : 0;
+  const latestRunInProgressCount =
+    latestAutomaticRun?.state === "running"
+      ? latestAutomaticResults.filter((result) =>
+          ["filling", "question_capture", "submitting"].includes(result.state),
+        ).length
+      : 0;
+  const latestRunFinishedCount = latestAutomaticResults.filter((result) =>
+    ["awaiting_review", "submitted", "failed", "cancelled"].includes(
+      result.state,
+    ),
+  ).length;
+  const latestRunSkippedCount = latestAutomaticResults.filter(
     (result) => result.state === "skipped",
   ).length;
   const filteredApplicationRecords = useMemo(
@@ -517,6 +643,30 @@ export function ApplicationsScreen(props: {
       readApplyRunContext,
     ],
   );
+  const [explicitlyHiddenRecordId, setExplicitlyHiddenRecordId] = useState<
+    string | null
+  >(null);
+  const handleFilterChange = (filter: ApplicationsViewFilter) => {
+    const result = selectedRecord
+      ? latestApplyResultByRecordId.get(selectedRecord.id)
+      : null;
+    const state = result
+      ? resolveApplyStatePresentation({
+          mode: applyMode,
+          result,
+          run: readApplyRunContext(result),
+          recordCrm: selectedRecord?.crm,
+          recordLastActionLabel: selectedRecord?.lastActionLabel ?? null,
+        }).kind
+      : undefined;
+    setExplicitlyHiddenRecordId(
+      selectedRecord &&
+        !matchesApplicationsFilter(selectedRecord, filter, state)
+        ? selectedRecord.id
+        : null,
+    );
+    setActiveFilter(filter);
+  };
   const isSelectedRecordHiddenByFilter =
     selectedRecord !== null &&
     filteredApplicationRecords.length > 0 &&
@@ -524,14 +674,12 @@ export function ApplicationsScreen(props: {
       (record) => record.id === selectedRecord.id,
     );
   const shouldPreserveHiddenSelection =
-    workspaceView === "workflow" && isSelectedRecordHiddenByFilter;
+    workspaceView === "workflow" &&
+    isSelectedRecordHiddenByFilter &&
+    explicitlyHiddenRecordId === selectedRecord?.id;
   const effectiveSelectedRecord = shouldPreserveHiddenSelection
     ? null
-    : (filteredApplicationRecords.find(
-        (record) => record.id === selectedRecord?.id,
-      ) ??
-      filteredApplicationRecords[0] ??
-      null);
+    : (selectedRecord ?? filteredApplicationRecords[0] ?? null);
   // The applications list as the person sees it, for the assistant (ADR 0037).
   useAssistantContextSource("applications", () => ({
     focus: effectiveSelectedRecord
@@ -874,15 +1022,34 @@ export function ApplicationsScreen(props: {
               event. It now appears only while it still asks something of the
               user; once nothing needs attention the same run is history and
               lives in the record's own run history. */}
-          {latestFinishedAutomaticRun && latestRunAttentionCount > 0 ? (
+          {latestAutomaticRun && latestRunAttentionCount > 0 ? (
             <section className="flex flex-wrap items-center justify-between gap-4 rounded-(--radius-field) border border-(--surface-panel-border) bg-(--surface-panel-tint) px-4 py-3">
               <div className="min-w-0">
                 <p className="label-mono-xs">Latest automatic run</p>
                 <p className="mt-1 text-(length:--text-small) leading-6 text-foreground-soft">
-                  {latestFinishedAutomaticRun.totalJobs} job
-                  {latestFinishedAutomaticRun.totalJobs === 1 ? "" : "s"} ·{" "}
-                  {latestRunAttentionCount} need attention ·{" "}
-                  {latestRunSkippedCount} skipped
+                  {latestAutomaticRun.totalJobs} job
+                  {latestAutomaticRun.totalJobs === 1 ? "" : "s"} ·{" "}
+                  {latestRunAttentionCount} need attention
+                  {[
+                    latestRunQueuedCount
+                      ? `${latestRunQueuedCount} queued`
+                      : null,
+                    latestRunInProgressCount
+                      ? `${latestRunInProgressCount} in progress`
+                      : null,
+                    latestRunNotStartedCount
+                      ? `${latestRunNotStartedCount} not started`
+                      : null,
+                    latestRunFinishedCount
+                      ? `${latestRunFinishedCount} finished`
+                      : null,
+                    latestRunSkippedCount
+                      ? `${latestRunSkippedCount} skipped`
+                      : null,
+                  ]
+                    .filter(Boolean)
+                    .map((label) => ` · ${label}`)
+                    .join("")}
                 </p>
               </div>
               <StatusBadge tone="critical">
@@ -1017,7 +1184,7 @@ export function ApplicationsScreen(props: {
             onSelectRecord={onSelectRecord}
             onViewChange={setCrmView}
             onVisibleRecordIdsChange={handleCrmVisibleRecordIdsChange}
-            records={applicationRecords}
+            records={crmApplicationRecords}
             discoveryJobs={discoveryJobs}
             selectedRecordId={effectiveSelectedRecord?.id ?? null}
             view={crmView}
@@ -1031,11 +1198,13 @@ export function ApplicationsScreen(props: {
             applicationRecords={filteredApplicationRecords}
             filterCounts={filterCounts}
             hasAnyApplications={applicationRecords.length > 0}
+            searchPlanName={props.searchPlanName}
+            hasOtherPlanApplications={props.hasOtherPlanApplications}
             liveRunLinesByJobId={liveRunLinesByJobId}
             latestApplyResultByRecordId={latestApplyResultByRecordId}
             readApplyRunContext={readApplyRunContext}
             applyMode={applyMode}
-            onFilterChange={setActiveFilter}
+            onFilterChange={handleFilterChange}
             onSelectRecord={selectRecordAndRevealDetails}
             selectedRecord={effectiveSelectedRecord}
             discoveryJobs={discoveryJobs}
@@ -1072,7 +1241,11 @@ export function ApplicationsScreen(props: {
                   props.getRecordedOutcomes?.(effectiveSelectedRecord.id) ?? []
                 }
                 outcomeCampaignId={props.outcomeCampaignId ?? null}
-                record={effectiveSelectedRecord}
+                record={
+                  crmApplicationRecords.find(
+                    (record) => record.id === effectiveSelectedRecord.id,
+                  ) ?? effectiveSelectedRecord
+                }
                 relatedJobCanonicalUrl={
                   discoveryJobs.find(
                     (job) => job.id === effectiveSelectedRecord.jobId,
@@ -1172,6 +1345,7 @@ export function ApplicationsScreen(props: {
             applyMode={applyMode}
             onSelectApplyRun={handleSelectApplyRun}
             onStartApplyCopilot={onStartApplyCopilot}
+            {...(onReviewResumePdf ? { onReviewResumePdf } : {})}
             applicationAttempts={applicationAttempts}
             {...(props.onOpenNeedsYou
               ? { onOpenNeedsYou: props.onOpenNeedsYou }

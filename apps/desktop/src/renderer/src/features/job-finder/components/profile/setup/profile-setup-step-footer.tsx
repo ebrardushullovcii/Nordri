@@ -225,7 +225,7 @@ export function ProfileSetupStepFooter(props: {
                   // Not "on this step": an import lands on Job targets while
                   // the detail it filled in (a summary) sits on Basics.
                   "Imported details are not saved yet."
-                : "Unsaved changes on this step."
+                : "Unsaved setup changes."
               : "No unsaved changes."}
           </p>
           <p

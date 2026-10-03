@@ -124,7 +124,7 @@ describe("DiscoveryDetailPanel listing capture copy", () => {
     });
   });
 
-  it("explains a refused detail read as a title-only estimate", () => {
+  it("explains a refused detail read as a not judged yet", () => {
     const blockedJob = {
       ...baseSelectedJob,
       description: "Headway Featured Full-Time United States of America",
@@ -1611,7 +1611,7 @@ describe("job inspector fit honesty", () => {
     );
 
     expect(screen.getByTestId("discovery-detail-fit-score").textContent).toBe(
-      "Title-only estimate",
+      "Not judged yet",
     );
     expect(screen.queryByText(/^54% fit$/)).toBeNull();
   });
@@ -1769,5 +1769,39 @@ describe("listFlaggedKeywordTerms", () => {
         ["TypeScript", "SQL"],
       ),
     ).toEqual(["Kubernetes", "Fintech"]);
+  });
+});
+
+describe("requested listing assessment", () => {
+  afterEach(cleanup);
+  it("exposes read and assess, reports failure, and returns to results", async () => {
+    const onAssessJobListing = vi
+      .fn()
+      .mockRejectedValue(new Error("Read failed"));
+    const onBackToResults = vi.fn();
+    render(
+      <MemoryRouter>
+        <DiscoveryDetailPanel
+          discoveryTargets={[]}
+          isJobPending={() => false}
+          onDismissJob={vi.fn()}
+          onQueueJob={vi.fn()}
+          selectedJob={baseSelectedJob}
+          onAssessJobListing={onAssessJobListing}
+          onBackToResults={onBackToResults}
+        />
+      </MemoryRouter>,
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Read and assess listing" }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByText("Could not assess this listing. Try again."),
+      ).toBeTruthy(),
+    );
+    expect(onAssessJobListing).toHaveBeenCalledWith(baseSelectedJob.id);
+    fireEvent.click(screen.getByRole("button", { name: "Back to results" }));
+    expect(onBackToResults).toHaveBeenCalledOnce();
   });
 });

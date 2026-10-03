@@ -11,7 +11,6 @@ import {
   type SourceInstructionVersionInfo,
 } from "@nordri/contracts";
 
-import { evaluateSourceInstructionQuality } from "./source-instructions";
 import { uniqueStrings } from "./shared";
 import {
   collectPublicProviderJobs,
@@ -107,12 +106,6 @@ export async function runPublicProviderSourceCheck(input: {
   const applyGuidance = [
     "Use the provider-supplied application URL as the safe apply entry and stop before any final submission.",
   ];
-  const quality = evaluateSourceInstructionQuality({
-    navigationGuidance,
-    searchGuidance,
-    detailGuidance,
-    applyGuidance,
-  });
   const verification = SourceInstructionVerificationSchema.parse({
     id: `source_instruction_verification_${input.runId}`,
     replayRunId: input.runId,
@@ -122,7 +115,8 @@ export async function runPublicProviderSourceCheck(input: {
     reason: null,
     versionInfo: input.versionInfo,
   });
-  const status = quality.qualifiesForValidation ? "validated" : "draft";
+  // The provider's own API returned the jobs: the route is proven.
+  const status = "validated";
   const evidenceRefs = [
     SourceDebugEvidenceRefSchema.parse({
       id: `${attemptId}_provider_api`,
@@ -211,7 +205,7 @@ export async function runPublicProviderSourceCheck(input: {
     searchGuidance,
     detailGuidance,
     applyGuidance,
-    warnings: quality.qualityWarnings,
+    warnings: [],
     intelligence: {
       ...intelligence,
       collection: {

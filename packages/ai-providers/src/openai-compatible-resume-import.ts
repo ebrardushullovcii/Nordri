@@ -190,9 +190,12 @@ export function buildResumeImportStageInstructions(
   switch (stage) {
     case "identity_summary":
       return [
-        "Return only identity, contact, location, and search-preference candidates.",
-        "Valid target sections: identity, contact, location, search_preferences.",
-        "Use keys such as fullName, firstName, lastName, middleName, headline, summary, currentLocation, timeZone, yearsExperience, email, phone, portfolioUrl, linkedinUrl, githubUrl, personalWebsiteUrl, targetRoles, locations, workModes, salaryCurrency.",
+        "Return only identity, contact, location, search-preference and work-eligibility candidates.",
+        "Valid target sections: identity, contact, location, search_preferences, work_eligibility.",
+        "Use keys such as fullName, firstName, lastName, middleName, headline, summary, currentLocation, timeZone, yearsExperience, email, phone, portfolioUrl, linkedinUrl, githubUrl, personalWebsiteUrl, targetRoles, locations, workModes, employmentTypes, compensation, salaryCurrency.",
+        "Read the whole resume, not only its header: a work authorization or work preferences line can sit anywhere.",
+        'When the resume states work authorization outright, return work_eligibility.authorizedWorkCountries (an array of the countries or regions named, such as "European Union") and work_eligibility.requiresVisaSponsorship (true or false). Never infer either from where the person lives, studied or worked. A permit limited to study, training or an internship is not authorization to work there; record it nowhere in authorizedWorkCountries.',
+        'When the resume states the employment type it wants, return search_preferences.employmentTypes using "Full-time", "Part-time", "Contract", "Temporary" or "Internship". When it states a minimum pay, return search_preferences.compensation as {"minimum": number, "maximum": number or null, "interval": "year", "month", "week", "day" or "hour", "currency": a three-letter code or null, "currencyStatus": "explicit" when a currency code or unambiguous symbol is written, otherwise "needs_clarification"}; a bare "$" is not a currency.',
         "Return search_preferences.workModes only when the header, contact line, or summary literally says remote, hybrid, onsite, or flexible; the value is an array of those lowercase words and nothing else.",
         "Prefer literal values from the document over inferred rewrites.",
         "Never use a section heading like ABOUT ME, SKILLS, or WORK EXPERIENCE as a person name.",
@@ -205,7 +208,7 @@ export function buildResumeImportStageInstructions(
         "Valid target section: experience.",
         "Use target.key = 'record' and a stable recordId like experience_1, experience_2.",
         "Each value must be a structured object matching one resume experience record with exactly these keys: companyName, companyUrl, title, employmentType, location, workMode (array), startDate, endDate, isCurrent (boolean), summary, achievements (array of strings), skills (array), domainTags (array).",
-        "Write startDate and endDate as YYYY-MM; when the role is ongoing set isCurrent true and endDate null.",
+        "Write startDate and endDate as YYYY-MM, or as YYYY when the resume gives only the year; never add a month the resume does not state. When the role is ongoing set isCurrent true and endDate null.",
         "Put every bullet under that role into achievements as a separate complete sentence.",
         "Use the nearest explicit company marker or inline company segment when the resume shows one, and populate companyName separately from title.",
         "When a role header has no employer on the same line, take the employer from the nearest company marker, section heading, or employer line that governs that role, even if it sits a few lines away; leave companyName null only when the resume never names an employer for that role.",

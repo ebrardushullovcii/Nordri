@@ -14,7 +14,6 @@ import type {
   SourceInstructionReviewOverride,
 } from "./source-instruction-types";
 import { parseSourceInstructionReviewOverride } from "./source-instruction-types";
-import { extractJsonObjectString } from "./source-instruction-quality";
 import { compactSourceInstructionReviewPhaseContexts } from "./shared-agent-handoff-compaction";
 import { SOURCE_DEBUG_PHASES } from "./workspace-defaults";
 
@@ -44,6 +43,7 @@ function resolveSourceInstructionReviewCompactionPolicy(input: {
 }
 
 const SOURCE_INSTRUCTION_REVIEW_RESPONSE_SHAPE = {
+  ready: false,
   navigationGuidance: [],
   searchGuidance: [],
   detailGuidance: [],
@@ -210,7 +210,7 @@ export function buildSourceInstructionFinalReviewPrompt(input: {
           intelligence: input.instructionUnderReview.intelligence,
         }
       : null,
-    heuristicInstruction: {
+    checkNotes: {
       navigationGuidance: input.heuristicInstruction.navigationGuidance,
       searchGuidance: input.heuristicInstruction.searchGuidance,
       detailGuidance: input.heuristicInstruction.detailGuidance,
@@ -233,6 +233,9 @@ export function buildSourceInstructionFinalReviewPrompt(input: {
     "If a line would not change how a future discovery run behaves, drop it.",
     "Keep uncertainty only when it still matters after reconciling the later evidence.",
     "Do not invent routes, controls, or outcomes that are not supported by the evidence.",
+    "checkNotes are the check's own notes, roughly filed by the field it wrote them in. File each line you keep in the category it is about: navigation (how to reach the jobs), search (search, filters, sorting, paging), detail (job pages and their addresses), apply (how applying works).",
+    "When the evidence shows search or filter controls but never shows one changing the results, say so in warnings.",
+    "ready: true only when the evidence proves a future run can reach and read this site's jobs by following these lines; false when a key step is unproven or the run ended early.",
     "Keep the output concise and operator-facing.",
     "If handoffCompaction.mode is summary_first, do not ask for the missing raw transcript lines; use the typed summaries, confirmed facts, blocker notes, attempted actions, phase evidence, and compaction evidence as the authoritative handoff.",
     "Return JSON only with this shape:",
@@ -359,4 +362,26 @@ export async function reviewSourceInstructionArtifactWithAi(input: {
     );
     return null;
   }
+}
+
+function extractJsonObjectString(rawContent: string): string {
+  const trimmed = rawContent.trim();
+
+  if (!trimmed) {
+    throw new Error("Model review returned empty content.");
+  }
+
+  const fencedMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fencedMatch?.[1]) {
+    return fencedMatch[1].trim();
+  }
+
+  const firstBraceIndex = trimmed.indexOf("{");
+  const lastBraceIndex = trimmed.lastIndexOf("}");
+
+  if (firstBraceIndex >= 0 && lastBraceIndex > firstBraceIndex) {
+    return trimmed.slice(firstBraceIndex, lastBraceIndex + 1);
+  }
+
+  return trimmed;
 }

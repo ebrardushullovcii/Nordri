@@ -404,6 +404,12 @@ describe("getDiscoveryResultVisibility", () => {
           contextFingerprint: "context",
           postingFingerprint: "posting",
           dimensions: { roleSuitability: { state: "exact" } },
+          judgment: {
+            source: "batch",
+            judgedAt: "2026-10-02T10:00:00.000Z",
+            score: job.matchAssessment.score,
+            recommendation: job.matchAssessment.recommendation,
+          },
         },
       }) as unknown as SavedJob;
     const strong = bind(createSavedJob("strong", "strong_fit", 80));

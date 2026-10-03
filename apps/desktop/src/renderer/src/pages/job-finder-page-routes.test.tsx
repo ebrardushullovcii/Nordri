@@ -170,6 +170,15 @@ describe("selectOutcomeAnalyticsScope", () => {
 });
 
 describe("selectCampaignApplicationsScope", () => {
+  it("shows saved applications across plans when all plans are requested", () => {
+    const saved = applicationWorkspace("campaign_2");
+    expect(
+      selectCampaignApplicationsScope(saved, true).applicationRecords,
+    ).toEqual(saved.applicationRecords);
+    expect(selectCampaignApplicationsScope(saved, true).applyRuns).toEqual(
+      saved.applyRuns,
+    );
+  });
   function applicationWorkspace(activeCampaignId: string) {
     return {
       activeCampaignId,

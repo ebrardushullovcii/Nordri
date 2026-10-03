@@ -527,6 +527,7 @@ describe("runAgentLoop", () => {
       tools: [chatty, finishTool],
       subjectLabel: "the site",
       compactionMaxChars: 60_000,
+      staleToolResultChars: null,
     });
     expect(result.ending).toBe("finished");
     expect(result.messages[0]).toEqual(opening[0]);
@@ -538,6 +539,40 @@ describe("runAgentLoop", () => {
     );
     expect(trimmed).toBeDefined();
     expect(result.messages.length).toBeLessThan(40);
+  });
+
+  test("old tool answers are cut to their opening lines and the recent ones stay whole", async () => {
+    let looks = 0;
+    const look = tool("look", () => {
+      looks += 1;
+      return Promise.resolve({
+        kind: "ok",
+        content: `Page ${looks}\n${"x".repeat(3_000)}`,
+        progress: true,
+      });
+    });
+    const turns: AgentLoopToolCall[][] = Array.from({ length: 8 }, () => [
+      call("look"),
+    ]);
+    turns.push([call("finish", { reason: "Done" })]);
+    const result = await runAgentLoop({
+      messages: opening,
+      model: scripted(turns),
+      tools: [look, finishTool],
+      subjectLabel: "the site",
+    });
+    const answers = result.messages.filter(
+      (message) =>
+        message.role === "tool" && message.content.startsWith("Page"),
+    );
+    expect(answers).toHaveLength(8);
+    const [oldest] = answers;
+    expect(oldest?.content.startsWith("Page 1")).toBe(true);
+    expect(oldest?.content).toContain("Older answer shortened");
+    expect(oldest?.content.length).toBeLessThan(900);
+    for (const recent of answers.slice(-4)) {
+      expect(recent.content.length).toBeGreaterThan(3_000);
+    }
   });
 
   test("a tool that hangs is given up after its deadline and the run carries on", async () => {

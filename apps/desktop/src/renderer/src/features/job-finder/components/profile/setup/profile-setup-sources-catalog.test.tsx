@@ -603,6 +603,45 @@ describe("ProfileSetupTargetingStep guided source catalog", () => {
     expect(getDiscoveryReady()).toBe(true);
   });
 
+  it("splits a multiline clipboard paste into nine separately enabled sources", () => {
+    render(<SetupCatalogHarness targets={[]} />);
+    const urls = Array.from(
+      { length: 9 },
+      (_, index) => `https://source-${index}.example.test/jobs`,
+    );
+    const input = screen.getByLabelText("Careers or job-board URL");
+    fireEvent.paste(input, {
+      clipboardData: { getData: () => urls.join("\n") },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add and turn on" }));
+    expect(screen.getByText("9 sources")).toBeTruthy();
+    expect(screen.getByText(/Added 9 sources and turned them on/)).toBeTruthy();
+    const cards = Array.from(
+      document.querySelectorAll("[data-profile-setup-source-card]"),
+    );
+    expect(cards).toHaveLength(9);
+    for (const [index, url] of urls.entries())
+      expect(cards[index]?.textContent).toContain(new URL(url).host);
+    expect(screen.getByText("9 of 9 sources enabled for search")).toBeTruthy();
+  });
+
+  it("rejects a multiline paste containing an invalid address", () => {
+    render(<SetupCatalogHarness targets={[]} />);
+    fireEvent.paste(screen.getByLabelText("Careers or job-board URL"), {
+      clipboardData: {
+        getData: () => "https://valid.example.test/jobs\nhttps://",
+      },
+    });
+    expect(
+      screen
+        .getByRole("button", { name: "Add and turn on" })
+        .hasAttribute("disabled"),
+    ).toBe(true);
+    expect(
+      document.querySelectorAll("[data-profile-setup-source-card]"),
+    ).toHaveLength(0);
+  });
+
   it("explains unsupported guidance and blocks enabling sources without valid URLs", () => {
     render(
       <SetupCatalogHarness

@@ -1,3 +1,4 @@
+import type { JudgeJobFitsInput } from "@nordri/ai-providers";
 import {
   DiscoveryAgentMetadataSchema,
   type DiscoveryActivityEvent,
@@ -5,6 +6,7 @@ import {
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import {
+  createAiClient,
   createSeed,
   createAgentBrowserRuntime,
   createWorkspaceServiceHarness,
@@ -302,9 +304,37 @@ describe("progressive public API discovery", () => {
           }),
       );
       runtime.runAgentDiscovery = agent;
+      const base = createAiClient();
       const { workspaceService } = createWorkspaceServiceHarness({
         seed,
         browserRuntime: runtime,
+        // The model judges a support role against a saved designer role as
+        // another occupation, so Best matches only does not keep it.
+        aiClient: {
+          ...base,
+          judgeJobFits: (input: JudgeJobFitsInput) =>
+            Promise.resolve(
+              input.jobs.map(({ jobId, posting }) => {
+                const fit = posting.title.includes("Designer");
+                return {
+                  jobId,
+                  score: fit ? 85 : 10,
+                  recommendation: fit
+                    ? ("strong_fit" as const)
+                    : ("skip" as const),
+                  role: fit ? ("exact" as const) : ("conflict" as const),
+                  roleExplanation: null,
+                  preferences: "aligned" as const,
+                  preferencesExplanation: null,
+                  locationReach: "in_area" as const,
+                  reasons: [],
+                  gaps: [],
+                  listingClosed: false,
+                  listingClosedEvidence: null,
+                };
+              }),
+            ),
+        },
       });
       const snapshot = await workspaceService.runAgentDiscovery(
         undefined,

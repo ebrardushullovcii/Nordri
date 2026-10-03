@@ -26,6 +26,14 @@ function formatReceiptDestination(origin: string, safePath: string): string {
     : normalizedOrigin;
 }
 
+function formatReceiptDataCategory(
+  category: ApplicationPrivacyReceipt["stayedLocal"][number],
+): string {
+  return category === "resume_content"
+    ? "Resume text"
+    : formatStatusLabel(category);
+}
+
 function ReceiptGroup(props: {
   icon: typeof Monitor;
   label: string;
@@ -115,14 +123,11 @@ export function ApplicationsDetailPanelPrivacyReceiptSection(props: {
               {heading}
             </h3>
             <p className="text-(length:--text-small) leading-6 text-foreground-soft">
-              {/* The generated artifact basename is an epoch-prefixed internal
-                  name, not something the user chose or can act on. It stays
-                  inside the expanded details. */}
               {formatReceiptDestination(
                 receipt.destination.origin,
                 receipt.destination.safePath,
               )}{" "}
-              · Your approved resume (
+              · Resume: {receipt.resume.fileName} (
               {describeReceiptResumeFileType(receipt.resume.fileName)})
             </p>
           </div>
@@ -263,10 +268,10 @@ export function ApplicationsDetailPanelPrivacyReceiptSection(props: {
         ) : null}
 
         <div className="grid gap-2 sm:grid-cols-2">
-          <ReceiptGroup icon={Monitor} label="Stayed local">
+          <ReceiptGroup icon={Monitor} label="Stored on this device">
             {receipt.stayedLocal.length > 0
-              ? receipt.stayedLocal.map(formatStatusLabel).join(", ")
-              : "No local-only data was recorded for this preparation."}
+              ? receipt.stayedLocal.map(formatReceiptDataCategory).join(", ")
+              : "No local data was recorded for this preparation."}
           </ReceiptGroup>
 
           <ReceiptGroup icon={Send} label="Sent to a model">
@@ -274,7 +279,7 @@ export function ApplicationsDetailPanelPrivacyReceiptSection(props: {
               ? receipt.modelUse
                   .map(
                     (entry) =>
-                      `${formatStatusLabel(entry.purpose)} via ${entry.providerLabel}`,
+                      `${entry.dataCategories.map(formatReceiptDataCategory).join(", ")} for ${formatStatusLabel(entry.purpose)} via ${entry.providerLabel}`,
                   )
                   .join(", ")
               : "Nothing was sent to a model during application preparation."}

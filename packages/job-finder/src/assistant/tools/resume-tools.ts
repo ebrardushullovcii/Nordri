@@ -1,3 +1,5 @@
+import { resumeProposalPreview } from "../proposal-preview";
+import type { AssistantHostPorts } from "../ports";
 import {
   NonEmptyStringSchema,
   ResumeDraftPatchOperationSchema,
@@ -17,7 +19,7 @@ import {
   json,
   type AssistantToolContext,
 } from "../tool-kit";
-import { findJob, RESUME_ROUTE, plural } from "./format";
+import { findJob, RESUME_ROUTE, plural, pausedByPersonMessage } from "./format";
 
 const Id = NonEmptyStringSchema.max(200);
 const OWNERSHIP_STATEMENT = "I confirm this content is accurate and my own.";
@@ -138,7 +140,10 @@ export const readResumeTool = defineTool({
           company: workspace.job.company,
         },
         mode: resumeMode(workspace, originalDefault),
-        level: workspace.effectiveTailoringStrength,
+        level:
+          resumeMode(workspace, originalDefault) === "original"
+            ? "original"
+            : workspace.effectiveTailoringStrength,
         pageCount: workspace.validation?.pageCount ?? null,
         draft: compactDraft(workspace.draft, input.sectionId ?? null),
         issues: issues.slice(0, 30),
@@ -150,7 +155,11 @@ export const readResumeTool = defineTool({
                 "Unsupported lines cannot be kept as written. Rewrite them from the profile's evidence or remove them with edit_resume, or, if the person confirms the fact, add it to the profile first with edit_profile and then regenerate that section.",
             }
           : {}),
-        approved: workspace.draft.status === "approved",
+        approved:
+          resumeMode(workspace, originalDefault) === "editable" &&
+          workspace.draft.status === "approved",
+        approvedExportId: workspace.draft.approvedExportId,
+        approvalRevision: workspace.draft.updatedAt,
         ...(unsaved
           ? {
               unsavedInEditor:
@@ -309,13 +318,14 @@ export const editResumeTool = defineTool({
     const at = session.now();
     const patches = input.edits.map((edit) => toPatch(edit, at));
     if (input.mode === "suggest") {
+      const workspace = await service.getResumeWorkspace(input.jobId);
       const { proposal, part } = await session.createProposal({
         kind: "resume_patches",
         targetId: input.jobId,
         summary: input.summary,
         items: input.edits.map((edit, index) => ({
           id: `item_${index + 1}`,
-          label: `${edit.operation.replaceAll("_", " ")}${edit.text ? `: ${edit.text.slice(0, 200)}` : ""}`,
+          ...resumeProposalPreview(patches[index]!, workspace.draft),
           payload: patches[index],
         })),
         baseRevision: input.revision ?? null,
@@ -421,13 +431,14 @@ export const reviseResumeTool = defineTool({
     }
     const blockers = result.approvalBlockers.map((blocker) => blocker.message);
     if (input.mode === "suggest") {
+      const workspace = await service.getResumeWorkspace(input.jobId);
       const { proposal, part } = await session.createProposal({
         kind: "resume_patches",
         targetId: input.jobId,
         summary: input.brief.slice(0, 300),
         items: result.patches.map((patch, index) => ({
           id: `item_${index + 1}`,
-          label: `${patch.operation.replaceAll("_", " ")}${patch.newText ? `: ${patch.newText.slice(0, 200)}` : ""}`,
+          ...resumeProposalPreview(patch, workspace.draft),
           payload: patch,
         })),
         baseRevision: result.baseDraftUpdatedAt,
@@ -534,6 +545,11 @@ export const generateResumesTool = defineTool({
   async execute(input, { service, session, ports }) {
     session.assertCurrent();
     const snapshot = await service.getWorkspaceSnapshot();
+    const paused = pausedByPersonMessage(
+      snapshot.activityControl,
+      "resume writing",
+    );
+    if (paused) throw new AssistantToolError("refused", paused);
     const skipped: ResumeBatchSkip[] = [];
     const jobIds = [...new Set(input.jobIds)].filter((jobId) => {
       const reason = resumeBatchSkipReason(snapshot, jobId, input.regenerate);
@@ -584,6 +600,7 @@ export const generateResumesTool = defineTool({
           // Earlier drafts may take minutes; dispatch under the latest saved
           // settings and application standing rather than the initial snapshot.
           const current = await service.getWorkspaceSnapshot();
+          if (current.activityControl.paused) batch.cancelled = true;
           if (batch.cancelled) return;
           const reason = resumeBatchSkipReason(
             current,
@@ -692,33 +709,52 @@ export function cancelBackgroundBatch(id: string): void {
   if (batch) batch.cancelled = true;
 }
 
+export function listBackgroundResumeBatches() {
+  return [...backgroundBatches.entries()]
+    .filter(([, batch]) => !batch.done)
+    .map(([id, batch]) => ({
+      id,
+      jobIds: batch.jobIds,
+      activeJobIds: [...batch.activeJobIds],
+      completedJobIds: batch.completedJobIds,
+      done: batch.done,
+      stopRequested: batch.cancelled,
+    }));
+}
+
+export function stopResumeWork(ports: AssistantHostPorts) {
+  const batches = [...backgroundBatches.values()].filter(
+    (batch) => !batch.done,
+  );
+  for (const batch of batches) batch.cancelled = true;
+  const uiBatch = ports.stopResumeBatch?.() ?? null;
+  const active =
+    batches.reduce((count, batch) => count + batch.activeJobIds.size, 0) +
+    (uiBatch?.activeJobIds.length ?? 0);
+  return {
+    summary: `No further resume jobs will start. Completed drafts are kept.${active ? ` ${plural(active, "active draft")} will finish.` : ""}${!ports.stopResumeBatch ? " The UI resume queue could not be checked or stopped." : ""}`,
+    data: {
+      stoppedBatches: batches.length + (uiBatch ? 1 : 0),
+      activeDrafts: active,
+      uncheckedWork: ports.stopResumeBatch ? [] : ["UI resume queue"],
+    },
+  };
+}
+
 export const cancelResumesTool = defineTool({
   name: "cancel_resumes",
   group: "resume",
   description:
-    "Stops this conversation's resume batches from starting more jobs. Completed drafts are kept and active drafts finish. Reports how many drafts still finish; does not stop searches or applications.",
+    "Stops all resume batches, including batches started from the UI, from starting more jobs. Completed drafts are kept and active drafts finish. Reports any work it could not stop; does not stop searches or applications.",
   parameters: json.object({}),
   input: z.object({}).passthrough(),
   label: () => "Stopping new resume drafts",
   effect: "local_write",
   execute(_input, { session, ports }) {
     session.assertCurrent();
-    const batches = [...backgroundBatches.values()].filter(
-      (batch) => batch.conversationId === session.conversationId && !batch.done,
-    );
-    for (const batch of batches) batch.cancelled = true;
-    const active = batches.reduce(
-      (count, batch) => count + batch.activeJobIds.size,
-      0,
-    );
+    const result = stopResumeWork(ports);
     ports.publishWorkspaceUpdate();
-    return Promise.resolve({
-      summary:
-        batches.length === 0
-          ? "No resume batch is running in this conversation."
-          : `No further resume jobs will start. Completed drafts are kept.${active ? ` ${plural(active, "active draft")} will finish.` : ""}`,
-      data: { stoppedBatches: batches.length, activeDrafts: active },
-    });
+    return Promise.resolve(result);
   },
 });
 

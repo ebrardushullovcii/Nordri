@@ -270,7 +270,8 @@ afterEach(() => {
 
 describe("importResumeFromSourcePath", () => {
   test("skips local image generation when scripted comparison disables vision", async () => {
-    const { importResumeFromSourcePath } = await import("./import-resume");
+    const { importResumeFromSourcePath, isDesktopResumeImportActive } =
+      await import("./import-resume");
     const { directory, filePath } = await createTempResumeFile();
     const targetDirectory = path.join(directory, "target");
     const bundle = createTestBundle("Jamie Rivers\nStaff Frontend Engineer");
@@ -284,6 +285,7 @@ describe("importResumeFromSourcePath", () => {
     };
     const progressEvents: ResumeImportProgressEvent[] = [];
     const onProgress = (event: ResumeImportProgressEvent) => {
+      expect(isDesktopResumeImportActive()).toBe(true);
       progressEvents.push(event);
     };
 
@@ -303,6 +305,7 @@ describe("importResumeFromSourcePath", () => {
         onProgress,
       });
 
+      expect(isDesktopResumeImportActive()).toBe(false);
       expect(mockGenerateResumeVisionImages).not.toHaveBeenCalled();
       expect(workspaceService.runResumeImport).toHaveBeenCalledWith(
         expect.objectContaining({ visionArtifact: null }),

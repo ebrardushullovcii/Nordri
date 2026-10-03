@@ -55,8 +55,11 @@ export function createApplySystemPrompt(config: ApplyAgentConfig): string {
     "You work in one tab. When something you press wants a new tab, Job Finder opens that address in this tab and tells you; carry on from there. If a step fails in the browser you are told what happened and shown the page again — look, and try another way. A button that does nothing, a page that will not load, a link that leads somewhere else: those are things to notice, try around once or twice, and then report exactly, not reasons to keep pressing the same thing.",
     "",
     "What is not yours to decide:",
-    "- Answers about this person come from their own profile, resume and saved answers. Call suggest_answer and use what it gives you. If it has nothing and the question wants prose, write from those candidate facts. The posting describes the employer and role; it is not evidence of the person's skills, experience, achievements, or qualifications. You may explain interest in the advertised work, but never turn a job requirement into a claim that the person has done it. Leave unsupported candidate claims out.",
-    "- A choice question the resume plainly answers (years of experience from the dated roles, highest education from the education section, a language the profile lists) is yours to pick: choose the option the evidence supports and say what you based it on. Hand a question back only when nothing on file answers it.",
+    "- Answers about this person come only from their facts (given to you after these instructions) and the resume going out with this application. Job Finder checks every answer against those facts before it is entered and tells you which went in. The posting describes the employer and role; it is not evidence of the person's skills, experience, achievements, or qualifications. You may explain interest in the advertised work, but never turn a job requirement into a claim that the person has done it. Leave unsupported candidate claims out.",
+    "- A question the facts plainly answer is yours to answer, in the form's own terms: years of experience from the dated roles, highest education from the education section, a language the profile lists, a yes or no their work eligibility settles. A question the facts do not answer is left empty; when you finish, Job Finder hands it to the person with the form. Never guess.",
+    "- Fill a page in one step: fill_fields takes every field you can answer at once (text, dropdowns, radio choices), then shows you the form. Use set_checkbox for checkboxes and upload for files.",
+    "- When the form has rows for work history or education, enter each of the person's roles and schools from their facts, adding rows with the form's own button as needed; an attached resume does not fill those rows.",
+    "- When a phone field has its own country-code picker, choose the code there and type the number without it.",
     writtenAnswerSentence,
     coverLetterSentence,
     continuationSentence,
@@ -101,10 +104,33 @@ export function createApplyUserPrompt(config: ApplyAgentConfig): string {
       : null,
     "",
     "Start by inspecting the form. Work through the fields that still need an answer, move between steps when the form has several, and finish when there is nothing left to fill in.",
-    "Each turn costs time: fill every field you can already answer in that turn by calling the fill tools one after another, and look at the page again only after the batch. A field that already shows the right value is done; do not type it again.",
+    "Each turn costs time: fill every field you can already answer in one fill_fields call, and look at the page again only after the batch. A field that already shows the right value is done; do not type it again.",
   ]
     .filter((line): line is string => line !== null)
     .join("\n");
+}
+
+/** What a field holds now, so the model can see its own answers took. */
+function describeAnswered(
+  control: ApplyFormObservation["controls"][number],
+): string {
+  if (!control.answered) return "empty";
+  if (control.credentialRole === "password" || control.kind === "file") {
+    return "already answered";
+  }
+  const shown =
+    control.kind === "checkbox"
+      ? control.checked
+        ? "ticked"
+        : ""
+      : control.kind === "radio"
+        ? control.checked
+          ? "chosen"
+          : ""
+        : (control.selectedOptionLabel || control.value).trim();
+  return shown
+    ? `answered: ${JSON.stringify(shown.length > 80 ? `${shown.slice(0, 80)}…` : shown)}`
+    : "already answered";
 }
 
 function describeControl(
@@ -118,7 +144,7 @@ function describeControl(
     `${control.ref} [${control.kind}]`,
     question || control.placeholder || "(no label)",
     control.required ? "required" : "optional",
-    control.answered ? "already answered" : "empty",
+    describeAnswered(control),
   ];
   if (control.options.length > 0) {
     // A country list is 240 entries long. Sending all of them costs the person
@@ -129,12 +155,6 @@ function describeControl(
     parts.push(
       `choices: ${shown.join(" | ")}${remaining > 0 ? ` | +${remaining} more` : ""}`,
     );
-  }
-  if (
-    (control.kind === "text" || control.kind === "long_text") &&
-    control.options.length === 0
-  ) {
-    parts.push("needs text you write: send it in freeTextAnswer");
   }
   if (control.attestationKind) {
     parts.push(

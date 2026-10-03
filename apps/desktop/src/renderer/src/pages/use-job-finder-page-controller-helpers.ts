@@ -4,11 +4,13 @@ import type { JobFinderWorkspaceSnapshot } from "@nordri/contracts";
 
 type SelectedState = string | null;
 
-export function useResettableSelection(initialValue: SelectedState) {
+export function useApplicationSelection(initialValue: SelectedState) {
   const [value, setValue] = useState<SelectedState>(initialValue);
 
   useEffect(() => {
-    setValue(initialValue);
+    // Restore the initial selection after hydration, then keep the current
+    // application while background work updates the service suggestion.
+    setValue((current) => current ?? initialValue);
   }, [initialValue]);
 
   return [value, setValue] as const;

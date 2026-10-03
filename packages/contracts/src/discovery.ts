@@ -661,6 +661,40 @@ export const TitleFamilyMatchSchema = z.enum(titleFamilyMatchValues);
  */
 export type TitleFamilyMatch = z.infer<typeof TitleFamilyMatchSchema>;
 
+/**
+ * The model's verdict on how one listing fits the person (ADR 0041). The
+ * model reads the listing and the person's goals and decides; the scorer
+ * builds the assessment from this verdict instead of its own title, place and
+ * keyword rules. `batch` verdicts come from the search's per-page judging of
+ * many jobs at once; `full` comes from reading and assessing one listing.
+ * The fingerprints record what the verdict was made from, so a later change
+ * to the profile or the listing can be judged again.
+ */
+export const FitJudgmentSchema = z.object({
+  source: z.enum(["batch", "full"]),
+  judgedAt: IsoDateTimeSchema,
+  contextFingerprint: NonEmptyStringSchema.nullable().default(null),
+  postingFingerprint: NonEmptyStringSchema.nullable().default(null),
+  score: z.number().int().min(0).max(100),
+  recommendation: FitRecommendationSchema,
+  role: RoleSuitabilityStateSchema.default("unknown"),
+  roleExplanation: NonEmptyStringSchema.max(320).nullable().default(null),
+  preferences: PreferenceAlignmentStateSchema.default("unknown"),
+  preferencesExplanation: NonEmptyStringSchema.max(320)
+    .nullable()
+    .default(null),
+  locationReach: MatchLocationReachSchema.default("unknown"),
+  reasons: z.array(NonEmptyStringSchema).max(4).default([]),
+  gaps: z.array(NonEmptyStringSchema).max(4).default([]),
+  /** The model's one sentence on the main reason for its recommendation. */
+  summary: NonEmptyStringSchema.max(320).nullable().optional(),
+  /** The listing says it is closed, filled or no longer taking applications. */
+  listingClosed: z.boolean().default(false),
+  /** The listing's own words for that, as the model quoted them. */
+  listingClosedEvidence: NonEmptyStringSchema.max(240).nullable().default(null),
+});
+export type FitJudgment = z.infer<typeof FitJudgmentSchema>;
+
 export const MatchAssessmentSchema = z.object({
   scorerVersion: z.number().int().positive().default(1),
   contextFingerprint: NonEmptyStringSchema.nullable().default(null),
@@ -689,6 +723,9 @@ export const MatchAssessmentSchema = z.object({
     "Review the listing and resume evidence before applying.",
   ),
   requirements: z.array(JobRequirementAssessmentSchema).default([]),
+  requirementsSource: z.enum(["model", "deterministic"]).optional(),
+  /** The model's verdict this assessment was built from; absent until judged. */
+  judgment: FitJudgmentSchema.nullable().optional(),
 });
 export type MatchAssessment = z.infer<typeof MatchAssessmentSchema>;
 
@@ -950,6 +987,13 @@ export const ListingDetailFetchSchema = z.object({
   outcome: ListingDetailFetchOutcomeSchema,
   method: z.enum(["json_ld", "page_text"]).nullable().default(null),
   detail: NonEmptyStringSchema.nullable().default(null),
+  /** The linked vacancy names a different role from the saved posting. */
+  identityConflict: z
+    .object({
+      expectedTitle: NonEmptyStringSchema,
+      observedTitle: NonEmptyStringSchema,
+    })
+    .optional(),
   /** A server-requested earliest retry time after rate limiting. */
   retryAfterAt: IsoDateTimeSchema.nullable().optional(),
 });
@@ -1276,6 +1320,16 @@ export const SavedJobDiscoveryProvenanceSchema = z.object({
   // built from exactly one of these sightings (ADR 0030), so each keeps its own
   // listing and application link instead of the latest one overwriting the job.
   // Optional: provenance written before these fields existed stays valid.
+  /** Display facts from this posting, kept together when its route wins. */
+  listingFacts: JobPostingSchema.pick({
+    title: true,
+    company: true,
+    location: true,
+    salaryText: true,
+    seniority: true,
+    description: true,
+    summary: true,
+  }).optional(),
   /** The listing page this source linked to. */
   listingUrl: NonEmptyStringSchema.nullable().optional(),
   /** The application link this source's collection carried. */
@@ -1684,6 +1738,7 @@ export type ApplicationQuestionStatus = z.infer<
 export const applicationBlockerCodeValues = [
   "missing_candidate_answer",
   "requires_manual_review",
+  "application_closed",
   "unsupported_apply_path",
   "missing_resume",
   "missing_consent",

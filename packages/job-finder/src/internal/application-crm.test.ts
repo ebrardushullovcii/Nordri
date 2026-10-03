@@ -1588,3 +1588,30 @@ describe("application CRM service", () => {
     ]);
   });
 });
+
+describe("terminal preparation activity", () => {
+  test.each(["failed", "cancelled"] as const)(
+    "keeps %s out of preparation and approval stages",
+    (lastAttemptState) => {
+      const stopped = record({
+        status: "approved",
+        lastAttemptState,
+        crm: {
+          stage: "ready_for_approval",
+          stageSource: "activity",
+          stageChangedAt: "2026-10-02T09:00:00.000Z",
+        },
+      });
+      expect(getApplicationCrmData(stopped).stage).toBe(lastAttemptState);
+      const manual = record({
+        ...stopped,
+        crm: {
+          stage: "interview",
+          stageSource: "user",
+          stageChangedAt: "2026-10-02T09:00:00.000Z",
+        },
+      });
+      expect(getApplicationCrmData(manual).stage).toBe("interview");
+    },
+  );
+});

@@ -23,6 +23,7 @@ import {
   isFinishBlockingReviewItem,
   isReviewableSuggestionItem,
   buildProfileSetupReadinessPresentation,
+  isReadinessCoveredSetupReviewItem,
   isProfileSetupMissingFieldReviewItem,
   isOptionalPendingReviewItem,
   isProfileSetupPathStepComplete,
@@ -1250,4 +1251,48 @@ describe("buildDraftAwareSetupReviewItems", () => {
     expect(display?.status).toBe("edited");
     expect(display?.statusSource).toBe("draft");
   });
+});
+
+it("counts missing identity and eligibility once even with missing-field review items", () => {
+  const items = [
+    { domain: "identity" as const, key: "firstName" },
+    { domain: "identity" as const, key: "lastName" },
+    { domain: "identity" as const, key: "contactPath" },
+    { domain: "work_eligibility" as const, key: "authorizedWorkCountries" },
+    { domain: "work_eligibility" as const, key: "requiresVisaSponsorship" },
+  ].map((target) => ({
+    status: "pending" as const,
+    severity: "critical" as const,
+    target: { ...target, recordId: null },
+    proposedValue: null,
+    sourceCandidateId: null,
+    sourceRunId: null,
+    sourceSnippet: null,
+  }));
+  const presentation = buildProfileSetupReadinessPresentation({
+    readiness: {
+      hasCoreIdentity: false,
+      hasContactPath: false,
+      hasMeaningfulBackground: false,
+      hasEligibilityPreferences: false,
+      hasWorkModePreference: false,
+      hasDiscoverySource: false,
+      hasWorkEligibilityAnswers: false,
+    },
+    reviewItems: items,
+  });
+  expect(presentation.blockers.map((blocker) => blocker.id)).toEqual([
+    "identity_contact",
+    "discovery_source",
+    "work_eligibility_answers",
+  ]);
+  expect(presentation.remainingBlockerCount).toBe(3);
+  expect(items.every(isReadinessCoveredSetupReviewItem)).toBe(true);
+  expect(
+    isReadinessCoveredSetupReviewItem({
+      ...items[0]!,
+      proposedValue: "Conflicting imported name",
+      sourceCandidateId: "candidate_name",
+    }),
+  ).toBe(false);
 });

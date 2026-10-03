@@ -110,7 +110,11 @@ describe("ResumeWorkspaceStudioShell", () => {
         onReviewBlockingIssues={vi.fn()}
         onSaveDraft={vi.fn()}
         onSetMobileStudioTab={vi.fn()}
-        originalResume={{ levelLabel: "Tailored", onWriteEditableResume }}
+        originalResume={{
+          levelLabel: "Tailored",
+          onWriteEditableResume,
+          filePanel: <div>Actual attachment</div>,
+        }}
         previewPane={<div>Preview</div>}
         selectedTemplateApprovalEligible
         studioStatusMessage="Ready"
@@ -121,14 +125,17 @@ describe("ResumeWorkspaceStudioShell", () => {
     expect(
       document.querySelector("[data-resume-studio-original-notice]")
         ?.textContent,
-    ).toContain(
-      "This job sends your original file unchanged, so edits here are not used.",
-    );
+    ).toContain("This job sends your original file, shown below, unchanged.");
     expect(screen.queryByRole("button", { name: /Approve resume/ })).toBeNull();
     fireEvent.click(
       screen.getByRole("button", { name: /Write an editable Tailored resume/ }),
     );
     expect(onWriteEditableResume).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("Actual attachment")).toBeTruthy();
+    expect(screen.queryByText("Preview", { selector: "div" })).toBeNull();
+    expect(screen.queryByText("Templates")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Save draft" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Download PDF" })).toBeNull();
   });
 
   it("keeps saying the editable resume is being written until it is done, never offering approval of the old draft", () => {

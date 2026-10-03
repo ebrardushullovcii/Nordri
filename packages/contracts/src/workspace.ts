@@ -1426,6 +1426,7 @@ export const JobFinderWorkspaceSnapshotSchema = z.object({
     .array(SourceInstructionArtifactSchema)
     .default([]),
   latestResumeImportRun: ResumeImportRunSchema.nullable().default(null),
+  resumeImportActive: z.boolean().default(false),
   latestResumeImportReviewCandidates: z
     .array(ResumeImportFieldCandidateSummarySchema)
     .default([]),
@@ -1517,6 +1518,12 @@ export type WorkspaceRevision = z.infer<typeof WorkspaceRevisionSchema>;
 export const JobFinderWorkspaceEntityMutationSchema = z.discriminatedUnion(
   "type",
   [
+    z
+      .object({
+        type: z.literal("assess_job_listing"),
+        jobId: NonEmptyStringSchema,
+      })
+      .strict(),
     z
       .object({
         type: z.literal("queue_job_for_review"),

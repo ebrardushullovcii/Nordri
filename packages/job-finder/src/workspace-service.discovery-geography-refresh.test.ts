@@ -1,13 +1,53 @@
 import { afterEach, expect, test, vi } from "vitest";
+import type { JudgeJobFitsInput } from "@nordri/ai-providers";
 import { JobDiscoveryTargetSchema } from "@nordri/contracts";
 import {
+  createAiClient,
   createSeed,
   createWorkspaceServiceHarness,
 } from "./workspace-service.test-support";
 
+/**
+ * Stands in for the model: a remote job reaches the person only while they
+ * count remote jobs as any location; Berlin is in their area either way.
+ */
+function placeJudge() {
+  return vi.fn((input: JudgeJobFitsInput) => {
+    const remoteCounts =
+      input.searchPreferences.discovery.remoteCountsAsAnyLocation !== false;
+    return Promise.resolve(
+      input.jobs.map(({ jobId, posting }) => {
+        const inArea = posting.location === "Berlin, Germany";
+        const reach = inArea
+          ? ("in_area" as const)
+          : remoteCounts && posting.location.startsWith("Remote")
+            ? ("remote_preferred" as const)
+            : ("outside_area" as const);
+        return {
+          jobId,
+          score: reach === "outside_area" ? 30 : 80,
+          recommendation:
+            reach === "outside_area"
+              ? ("review_before_applying" as const)
+              : ("strong_fit" as const),
+          role: "exact" as const,
+          roleExplanation: null,
+          preferences: "aligned" as const,
+          preferencesExplanation: null,
+          locationReach: reach,
+          reasons: [],
+          gaps: [],
+          listingClosed: false,
+          listingClosedEvidence: null,
+        };
+      }),
+    );
+  });
+}
+
 afterEach(() => vi.restoreAllMocks());
 
-test("changing remote geography revalidates existing feed jobs without duplicating them", async () => {
+test("changing remote geography has the model judge existing feed jobs again without duplicating them", async () => {
   const seed = createSeed();
   seed.savedJobs = [];
   seed.discovery.pendingDiscoveryJobs = [];
@@ -46,8 +86,10 @@ test("changing remote geography revalidates existing feed jobs without duplicati
   vi.spyOn(globalThis, "fetch").mockImplementation(() =>
     Promise.resolve(Response.json({ jobs: rows })),
   );
+  const judgeJobFits = placeJudge();
   const { workspaceService, repository } = createWorkspaceServiceHarness({
     seed,
+    aiClient: { ...createAiClient(), judgeJobFits },
   });
   const setRemote = async (remoteCountsAsAnyLocation: boolean) => {
     const w = await workspaceService.getWorkspaceSnapshot();
@@ -71,9 +113,14 @@ test("changing remote geography revalidates existing feed jobs without duplicati
     before.map((job) => job.id).sort(),
   );
   expect(repeat.recentDiscoveryRuns[0]?.summary.jobsPersisted).toBe(0);
+  // The changed goal made every verdict stale, so the model was asked again.
+  expect(judgeJobFits).toHaveBeenCalledTimes(2);
   for (const location of ["Remote, Europe", "Remote, Worldwide"]) {
-    expect(byLocation(after, location).matchAssessment.score).toBeLessThan(
-      byLocation(before, location).matchAssessment.score,
+    expect(byLocation(before, location).matchAssessment.locationReach).toBe(
+      "remote_preferred",
+    );
+    expect(byLocation(after, location).matchAssessment.locationReach).toBe(
+      "outside_area",
     );
   }
   expect(byLocation(after, "Berlin, Germany").matchAssessment.score).toBe(

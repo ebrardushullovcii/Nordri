@@ -17,11 +17,11 @@ describe("withEmbeddedBrowserActivity", () => {
   test("keeps form values out of the visible progress label", () => {
     expect(
       describeApplicationPreparationProgress(
-        'suggest_answer → "Phone": +1 555 0100 from your profile',
+        'fill_fields → Filled in "Phone". +1 555 0100 from your profile',
       ),
-    ).toBe("Checking a form answer");
+    ).toBe("Filling in form fields");
     expect(
-      describeApplicationPreparationProgress('fill_text → filled "Full name"'),
+      describeApplicationPreparationProgress('type → Filled in "Full name"'),
     ).toBe("Filling a text field");
   });
 
@@ -252,7 +252,7 @@ describe("withEmbeddedBrowserActivity", () => {
       "tab_verification",
       expect.objectContaining({
         kind: "challenge",
-        title: "This page needs a human",
+        title: "This page needs you: Example Jobs",
       }),
     );
     expect(requestAttention).not.toHaveBeenCalled();

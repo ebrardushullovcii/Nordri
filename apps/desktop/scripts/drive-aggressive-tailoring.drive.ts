@@ -8,7 +8,10 @@ import { test } from "vitest";
 
 const desktopDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = path.resolve(desktopDir, "../..");
-const resumePath = path.join(repoRoot, "docs", "resume-tests", "Ebrar new.pdf");
+const resumePath = path.join(
+  repoRoot,
+  "apps/desktop/test-fixtures/job-finder/resume-import-personas/dev-castellano.pdf",
+);
 const outputDir = path.join(
   desktopDir,
   "test-artifacts",

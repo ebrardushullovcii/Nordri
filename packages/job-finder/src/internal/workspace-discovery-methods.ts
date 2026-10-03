@@ -10,6 +10,7 @@ import {
   type DiscoveryLedgerEntry,
   type DiscoveryRunRecord,
   type DiscoveryRunResult,
+  type FitJudgment,
   type DiscoveryRunScope,
   type DiscoveryTargetExecution,
   type JobDiscoveryTarget,
@@ -62,7 +63,7 @@ import {
   compareMatchScores,
 } from "./match-assessment-ranking";
 import {
-  buildDiscoveryInstructionGuidance,
+  buildInstructionGuidance,
   enrichSearchPreferencesFromProfile,
   getActiveDiscoveryTargets,
   resolveActiveSourceInstructionArtifact,
@@ -114,8 +115,14 @@ import { createUniqueId, normalizeText, uniqueStrings } from "./shared";
 import { createJobIdentityIndex } from "./job-identity";
 import { assessJobPostingDetailQuality } from "./job-posting-detail-quality";
 import {
+  jobNeedsFitJudgment,
+  judgeJobFitsInBatches,
+  readCarriedJudgment,
+} from "./fit-judgment";
+import {
   LISTING_DETAIL_READS_PER_RUN,
   describeListingDetailEnrichment,
+  createModelListingPageReader,
   enrichSavedJobListingDetails,
   jobNeedsListingDetail,
   readSightingApplyRoutes,
@@ -124,10 +131,7 @@ import {
   countDiscoveryListingCapture,
   describeDiscoveryListingCapture,
 } from "./discovery-listing-capture";
-import {
-  correctRemoteOnlyLocationAlignment,
-  describeRemoteOnlySourceMismatch,
-} from "./discovery-location-alignment";
+import { describeRemoteOnlySourceMismatch } from "./discovery-location-alignment";
 import {
   findSiteFurnitureSalaryTexts,
   isSalaryTextStatedInBody,
@@ -210,6 +214,8 @@ export function resolveListingLocation(
 }
 
 const DISCOVERY_ACTIVITY_SAMPLE_LIMIT = 3;
+/** Five model calls at most: twenty jobs judged per call. */
+const FIT_JUDGMENTS_PER_RUN = 100;
 const PUBLIC_API_PREFETCH_CONCURRENCY = 8;
 /**
  * How many sources one search works on at the same time. Each gets its own
@@ -791,7 +797,6 @@ function prioritizeDiscoveryTargets(
       WorkspaceServiceContext["repository"]["listSourceInstructionArtifacts"]
     >
   >,
-  searchPreferences: JobSearchPreferences,
 ): JobDiscoveryTarget[] {
   return [...targets]
     .map((target, index) => {
@@ -806,7 +811,6 @@ function prioritizeDiscoveryTargets(
       const startingUrls = buildDiscoveryStartingUrls(
         target,
         activeInstruction,
-        searchPreferences,
       );
 
       return {
@@ -880,6 +884,7 @@ function createPostingWithTriage(
   posting: JobPosting,
   searchPreferences: JobSearchPreferences,
   profile: CandidateProfile,
+  judgment: FitJudgment | null,
 ): {
   posting: JobPosting;
   triageReason: string | null;
@@ -888,6 +893,7 @@ function createPostingWithTriage(
     posting,
     searchPreferences,
     profile,
+    judgment,
   });
 
   return {
@@ -1025,11 +1031,7 @@ async function collectTargetJobs(input: {
     activeInstruction,
   );
   const discoveryMethod = selectDiscoveryMethod(collectionMethod);
-  const startingUrls = buildDiscoveryStartingUrls(
-    target,
-    activeInstruction,
-    input.searchPreferences,
-  );
+  const startingUrls = buildDiscoveryStartingUrls(target, activeInstruction);
   const providerLabel = intelligence.provider?.label ?? "Unknown provider";
   const sourceIntelligenceProvider = getDiscoveryProviderKey({
     target,
@@ -1172,7 +1174,7 @@ async function collectTargetJobs(input: {
     }
   })();
   const adapter = discoveryAdapters[adapterKind];
-  const instructionLines = buildDiscoveryInstructionGuidance(activeInstruction);
+  const instructionLines = buildInstructionGuidance(activeInstruction);
 
   if (input.useAgentRuntime && ctx.browserRuntime.runAgentDiscovery) {
     const resumeCheckpoint = input.activeRun.targetExecutions.find(
@@ -1210,20 +1212,32 @@ async function collectTargetJobs(input: {
         input.onAgentCheckpoint(target.id, checkpoint),
       startingUrls,
       protectedPages: [...input.protectedPages.values()],
-      agentHints: {
-        widenReviewBudget: adapter.kind === "target_site",
-      },
       siteLabel: target.label,
       navigationHostnames: targetUrl ? [targetUrl.hostname] : [],
       siteInstructions: [...adapter.siteInstructions, ...instructionLines],
       toolUsageNotes: adapter.toolUsageNotes,
-      compactionHints: {
-        workflowKey: "browser_agent_live_discovery",
-      },
       relevantUrlSubstrings: adapter.relevantUrlSubstrings,
-      experimental: adapter.experimental,
       aiClient: ctx.aiClient,
       ...(input.signal ? { signal: input.signal } : {}),
+      onWaitingForBrowserTab: () => {
+        input.emitActivity(
+          createDiscoveryEvent({
+            runId: input.activeRun.id,
+            timestamp: new Date().toISOString(),
+            kind: "progress",
+            stage: "navigation",
+            targetId: target.id,
+            adapterKind: target.adapterKind,
+            message: `${target.label}: browser tab limit reached. Waiting for a free tab; close finished tabs to continue.`,
+            url: null,
+            jobsFound: null,
+            jobsPersisted: input.activeRun.summary.jobsPersisted,
+            jobsStaged: input.activeRun.summary.jobsStaged,
+            duplicatesMerged: input.activeRun.summary.duplicatesMerged,
+            invalidSkipped: input.activeRun.summary.invalidSkipped,
+          }),
+        );
+      },
       onProgress: (progress) => {
         const summary = summarizeProgressAction(
           progress,
@@ -1430,11 +1444,13 @@ export function createWorkspaceDiscoveryMethods(
       searchPreferences: enrichedPreferences,
       calculate: createMatchAssessment,
     });
+    // Verdicts the model gave during this run, so a job judged to choose
+    // which ones a result limit keeps is not judged again (ADR 0041).
+    const runJudgments = new Map<string, FitJudgment>();
     const assessDiscoveryPosting = (posting: JobPosting) =>
-      correctRemoteOnlyLocationAlignment(
+      assessmentSession.assess(
         posting,
-        assessmentSession.assess(posting),
-        enrichedPreferences,
+        runJudgments.get(toSavedJobId(posting)) ?? readCarriedJudgment(posting),
       );
     const selectedTargets = selectTargets(enrichedPreferences, options);
 
@@ -1489,10 +1505,9 @@ export function createWorkspaceDiscoveryMethods(
     // persisted assessment; any relevant change misses safely and recomputes.
     let workingSavedJobs = startingSavedJobs.map((job) => ({
       ...job,
-      matchAssessment: correctRemoteOnlyLocationAlignment(
+      matchAssessment: assessmentSession.assessPersisted(
         job,
-        assessmentSession.assessPersisted(job, job.matchAssessment),
-        enrichedPreferences,
+        job.matchAssessment,
       ),
     }));
     const savedJobsAtLastCommitById = new Map(
@@ -1501,10 +1516,9 @@ export function createWorkspaceDiscoveryMethods(
     let workingPendingJobs = startingDiscovery.pendingDiscoveryJobs.map(
       (job) => ({
         ...job,
-        matchAssessment: correctRemoteOnlyLocationAlignment(
+        matchAssessment: assessmentSession.assessPersisted(
           job,
-          assessmentSession.assessPersisted(job, job.matchAssessment),
-          enrichedPreferences,
+          job.matchAssessment,
         ),
       }),
     );
@@ -1597,7 +1611,6 @@ export function createWorkspaceDiscoveryMethods(
         ? prioritizeDiscoveryTargets(
             selectedTargets,
             sourceInstructionArtifacts,
-            enrichedPreferences,
           )
         : selectedTargets;
     const runId = createUniqueId("discovery_run");
@@ -1953,7 +1966,12 @@ export function createWorkspaceDiscoveryMethods(
 
             const posting = JobPostingSchema.parse(rawPosting);
             const { posting: triagedPosting, triageReason } =
-              createPostingWithTriage(posting, enrichedPreferences, profile);
+              createPostingWithTriage(
+                posting,
+                enrichedPreferences,
+                profile,
+                runJudgments.get(toSavedJobId(posting)) ?? null,
+              );
 
             if (triagedPosting.titleTriageOutcome !== "pass") {
               phaseSkippedByTitleTriage += 1;
@@ -2179,6 +2197,54 @@ export function createWorkspaceDiscoveryMethods(
           return { budgetedPostings, mergeResult, jobsPersisted, jobsStaged };
         };
 
+        // Two settings decide which new jobs are kept: a result limit keeps
+        // only some, and "Best matches only" keeps only what fits. The model
+        // judges the jobs first so both rest on its verdict rather than on
+        // recency or title words (ADR 0041); the verdicts are reused after
+        // the search, not asked for again.
+        const judgeBeforeKeeping = async (
+          postings: readonly JobPosting[],
+        ): Promise<void> => {
+          const remainingBudget = Math.max(
+            0,
+            discoveryBudget.retentionJobCount - checkpointState.budgetedCount,
+          );
+          const limitMustChoose =
+            runJobBudget != null && postings.length > remainingBudget;
+          const keepsOnlyFits =
+            enrichedPreferences.discovery.collectOnlyHardCriteriaMatches ===
+            true;
+          if (
+            (!limitMustChoose && !keepsOnlyFits) ||
+            postings.length === 0 ||
+            !ctx.aiClient.judgeJobFits ||
+            executionSignal.aborted
+          ) {
+            return;
+          }
+          const unjudged = postings
+            .map((posting) => ({ ...posting, id: toSavedJobId(posting) }))
+            .filter((posting) => !runJudgments.has(posting.id))
+            .slice(0, FIT_JUDGMENTS_PER_RUN);
+          try {
+            const judgments = await judgeJobFitsInBatches({
+              aiClient: ctx.aiClient,
+              profile,
+              searchPreferences: enrichedPreferences,
+              jobs: unjudged,
+              contextFingerprint: assessmentSession.contextFingerprint,
+              signal: executionSignal,
+            });
+            for (const [jobId, judgment] of judgments) {
+              runJudgments.set(jobId, judgment);
+            }
+          } catch (error) {
+            if (executionSignal.aborted) throw error;
+            // Unjudged jobs fall back to the newest first, and are judged
+            // after the search.
+          }
+        };
+
         // Jobs a running search keeps join its plan as they are saved, so
         // Find jobs shows them while the search goes on, and a run that fails
         // or times out still leaves what it kept reviewable. The end of the
@@ -2337,6 +2403,8 @@ export function createWorkspaceDiscoveryMethods(
             checkpointState.persistedCheckpointRevision = checkpoint.revision;
             return;
           }
+
+          await judgeBeforeKeeping(newRawPostings);
 
           // Rollback snapshot for the speculative incremental attempt. The
           // working containers are replaced immutably by merges, so restoring
@@ -2694,6 +2762,7 @@ export function createWorkspaceDiscoveryMethods(
         const remainingRawPostings = collectedJobs.filter(
           isUnprocessedOrMateriallyChangedPosting,
         );
+        await judgeBeforeKeeping(remainingRawPostings);
         const triageOutcome =
           runTriageAndLedgerForPostings(remainingRawPostings);
         const knownJobIndex = triageOutcome.knownJobIndex;
@@ -2701,8 +2770,8 @@ export function createWorkspaceDiscoveryMethods(
 
         // No low-yield rescue: a job the triage skipped stays skipped. Under
         // Best matches only the person asked for exactly that drop, and in the
-        // other two modes the triage skips only closed listings, talent pools,
-        // sign-in pages and excluded places.
+        // other two modes the triage skips only blocked companies and excluded
+        // places.
         const { budgetedPostings, mergeResult, jobsPersisted, jobsStaged } =
           mergeAndAccountPostings(
             triagedPostings,
@@ -3068,6 +3137,9 @@ export function createWorkspaceDiscoveryMethods(
           const enrichment = await enrichSavedJobListingDetails({
             jobs: enrichmentCandidates,
             fetchHtml: fetchListingHtml,
+            readPage: createModelListingPageReader(ctx.aiClient),
+            // Re-scoring keeps a job's model verdict; the judging stage below
+            // asks the model about jobs whose listing changed.
             assess: assessDiscoveryPosting,
             signal: executionSignal,
           });
@@ -3188,7 +3260,7 @@ export function createWorkspaceDiscoveryMethods(
               ...routed,
               matchAssessment: assessDiscoveryPosting(routed),
             });
-            switchedCount += 1;
+            if (routed.canonicalUrl !== job.canonicalUrl) switchedCount += 1;
           }
           if (next !== originalById.get(job.id)) {
             reroutedById.set(job.id, next);
@@ -3221,6 +3293,79 @@ export function createWorkspaceDiscoveryMethods(
               } found on more than one source.`,
             ),
           );
+        }
+      }
+
+      // The model judges how the jobs fit the person (ADR 0041): many jobs
+      // per call, only those never judged or judged before the profile, the
+      // goals or the listing changed, this run's jobs first. A job it does
+      // not answer for keeps the rule score until the next search.
+      if (!executionSignal.aborted && ctx.aiClient.judgeJobFits) {
+        const toJudge = mergeSavedJobs(workingSavedJobs, workingPendingJobs)
+          .filter((job) =>
+            jobNeedsFitJudgment(job, assessmentSession.contextFingerprint),
+          )
+          .sort(
+            (left, right) =>
+              Number(runRetainedJobIds.has(right.id)) -
+              Number(runRetainedJobIds.has(left.id)),
+          )
+          .slice(0, FIT_JUDGMENTS_PER_RUN);
+        if (toJudge.length > 0) {
+          emitActivity(
+            readEvent(
+              `Judging how ${toJudge.length} ${
+                toJudge.length === 1 ? "job fits" : "jobs fit"
+              } your profile and goals`,
+            ),
+          );
+          try {
+            const judgments = await judgeJobFitsInBatches({
+              aiClient: ctx.aiClient,
+              profile,
+              searchPreferences: enrichedPreferences,
+              jobs: toJudge,
+              contextFingerprint: assessmentSession.contextFingerprint,
+              signal: executionSignal,
+            });
+            if (judgments.size > 0) {
+              const pendingJobIds = new Set(
+                workingPendingJobs.map((job) => job.id),
+              );
+              const applyJudgment = <T extends SavedJob>(job: T): T => {
+                const judgment = judgments.get(job.id);
+                if (!judgment) return job;
+                if (pendingJobIds.has(job.id)) {
+                  touchedPendingJobIds.add(job.id);
+                } else {
+                  touchedSavedJobIds.add(job.id);
+                }
+                return {
+                  ...job,
+                  matchAssessment: assessmentSession.assess(job, judgment),
+                };
+              };
+              workingSavedJobs = workingSavedJobs.map(applyJudgment);
+              workingPendingJobs = workingPendingJobs.map(applyJudgment);
+              await persistWorkingSavedJobs();
+            }
+            emitActivity(
+              readEvent(
+                judgments.size === toJudge.length
+                  ? `Judged ${judgments.size} ${judgments.size === 1 ? "job" : "jobs"} against your profile and goals`
+                  : `Judged ${judgments.size} of ${toJudge.length} jobs; the rest are judged on the next search`,
+              ),
+            );
+          } catch (error) {
+            if (executionSignal.aborted) {
+              throw error;
+            }
+            emitActivity(
+              readEvent(
+                `Jobs could not be judged this time: ${describeUnknownThrowable(error)}`,
+              ),
+            );
+          }
         }
       }
 

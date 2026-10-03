@@ -32,7 +32,6 @@ import type {
   ApplicationQuestionKind,
   BrowserAgentRunCheckpoint,
   SourceDebugPhase,
-  SharedAgentCompactionPolicy,
   SavedJob,
 } from "@nordri/contracts";
 import type { Page } from "playwright";
@@ -406,6 +405,8 @@ export interface BrowserApplicationExecutionOptions {
 }
 
 export interface AgentDiscoveryOptions {
+  /** Capacity waits happen before page navigation and do not fail a source. */
+  onWaitingForBrowserTab?: () => void;
   /** No person-specified result cap; retain every suitable posting found. */
   retainAllFound?: boolean;
   /** Public feed postings available for the model to inspect and select. */
@@ -443,9 +444,6 @@ export interface AgentDiscoveryOptions {
    * ends unless the run was stopped for the person.
    */
   dedicatedPage?: boolean;
-  agentHints?: {
-    widenReviewBudget?: boolean;
-  };
   siteLabel: string;
   navigationHostnames: string[];
   siteInstructions?: string[];
@@ -461,15 +459,9 @@ export interface AgentDiscoveryOptions {
     manualPrerequisiteState?: string | null;
     strategyLabel?: string | null;
   };
-  compaction?: Partial<SharedAgentCompactionPolicy>;
-  modelContextWindowTokens?: number | null;
-  compactionHints?: {
-    workflowKey?: string;
-  };
+  /** URL fragments that mark an already-open tab as a usable starting page. */
   relevantUrlSubstrings?: string[];
-  experimental?: boolean;
   skipSessionValidation?: boolean;
-  captureVisualSnapshots?: boolean;
   aiClient?: JobFinderAiClient;
   onProgress?: (progress: AgentDiscoveryProgress) => void;
   onAutomationPage?: AutomationPageListener;

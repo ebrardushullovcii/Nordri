@@ -300,6 +300,7 @@ export interface JobFinderShellActions {
   undoProfileRevision: (
     revisionId: string,
   ) => Promise<JobFinderWorkspaceSnapshot>;
+  assessJobListing: (jobId: string) => Promise<JobFinderWorkspaceSnapshot>;
   queueJobForReview: (jobId: string) => Promise<JobFinderWorkspaceSnapshot>;
   setJobResumeApplicationMode: (
     jobId: string,

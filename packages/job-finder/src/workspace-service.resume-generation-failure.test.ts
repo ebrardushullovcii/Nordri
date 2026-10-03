@@ -3,6 +3,7 @@ import type { JobFinderAiClient } from "@nordri/ai-providers";
 import { createInMemoryJobFinderRepository } from "@nordri/db";
 
 import { createJobFinderWorkspaceService } from "./index";
+import { buildResumeRenderDocument } from "./internal/resume-workspace-structure";
 import { createSeed } from "./workspace-service.test-fixtures";
 import {
   createAiClient,
@@ -54,6 +55,42 @@ describe("tailored resume generation failure durability", () => {
       await workspaceService.getWorkspaceSnapshot()
     ).reviewQueue.find((item) => item.jobId === "job_ready");
     expect(queueItem?.assetStatus).toBe("failed");
+  });
+
+  test("a failed regenerate leaves the job's existing resume as it was (ADR 0041)", async () => {
+    let failing = false;
+    const baseAiClient = createAiClient();
+    const { repository, workspaceService } = createWorkspaceServiceHarness({
+      aiClient: {
+        ...baseAiClient,
+        createResumeDraft(input) {
+          return failing
+            ? Promise.reject(new Error(GENERATION_ERROR))
+            : baseAiClient.createResumeDraft(input);
+        },
+      },
+    });
+    await workspaceService.generateResume("job_ready");
+    const before = {
+      asset: (await repository.listTailoredAssets()).find(
+        (asset) => asset.jobId === "job_ready",
+      ),
+      draft: await repository.getResumeDraftByJobId("job_ready"),
+    };
+
+    failing = true;
+    await expect(workspaceService.generateResume("job_ready")).rejects.toThrow(
+      /Provider request failed/,
+    );
+
+    expect(
+      (await repository.listTailoredAssets()).find(
+        (asset) => asset.jobId === "job_ready",
+      ),
+    ).toEqual(before.asset);
+    expect(await repository.getResumeDraftByJobId("job_ready")).toEqual(
+      before.draft,
+    );
   });
 
   test("does not record a failed asset when a newer edit superseded the generation", async () => {
@@ -222,4 +259,88 @@ describe("tailored resume generation failure durability", () => {
       failedAt: null,
     });
   });
+});
+
+test("generation sees only confirmed profile records and renders no import draft role", async () => {
+  const seed = createSeed();
+  seed.profile.experiences.push({
+    ...seed.profile.experiences[0]!,
+    id: "import_draft",
+    title: "/",
+    isDraft: true,
+  });
+  const base = createAiClient();
+  const harness = createWorkspaceServiceHarness({
+    seed,
+    aiClient: {
+      ...base,
+      async createResumeDraft(input) {
+        expect(input.profile.experiences.some((role) => role.isDraft)).toBe(
+          false,
+        );
+        return base.createResumeDraft(input);
+      },
+    },
+  });
+  await harness.workspaceService.generateResume("job_ready");
+  const workspace =
+    await harness.workspaceService.getResumeWorkspace("job_ready");
+  expect(
+    workspace?.draft.sections
+      .flatMap((section) => section.entries)
+      .some((entry) => entry.profileRecordId === "import_draft"),
+  ).toBe(false);
+});
+
+test("a saved hidden role stays out of preview and rendering after reload and can be restored", async () => {
+  const { workspaceService } = createWorkspaceServiceHarness();
+  const workspace = await workspaceService.getResumeWorkspace("job_ready");
+  const section = workspace.draft.sections.find(
+    (item) => item.kind === "experience",
+  )!;
+  const role = section.entries.find((entry) => entry.included)!;
+  const hidden = {
+    ...workspace.draft,
+    sections: workspace.draft.sections.map((item) =>
+      item.id === section.id
+        ? {
+            ...item,
+            entries: item.entries.map((entry) =>
+              entry.id === role.id
+                ? { ...entry, included: false, origin: "user_edited" as const }
+                : entry,
+            ),
+          }
+        : item,
+    ),
+  };
+  await workspaceService.saveResumeDraft(hidden);
+  const reloaded = await workspaceService.getResumeWorkspace("job_ready");
+  expect(
+    reloaded.draft.sections
+      .find((item) => item.id === section.id)
+      ?.entries.find((entry) => entry.id === role.id)?.included,
+  ).toBe(false);
+  const text = buildResumeRenderDocument(createSeed().profile, reloaded.draft)
+    .sections.flatMap((item) => item.entries)
+    .map((entry) => entry.title);
+  expect(text).not.toContain(role.title);
+  await workspaceService.saveResumeDraft({
+    ...reloaded.draft,
+    sections: reloaded.draft.sections.map((item) =>
+      item.id === section.id
+        ? {
+            ...item,
+            entries: item.entries.map((entry) =>
+              entry.id === role.id ? { ...entry, included: true } : entry,
+            ),
+          }
+        : item,
+    ),
+  });
+  expect(
+    (await workspaceService.getResumeWorkspace("job_ready")).draft.sections
+      .find((item) => item.id === section.id)
+      ?.entries.find((entry) => entry.id === role.id)?.included,
+  ).toBe(true);
 });

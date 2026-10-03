@@ -8,6 +8,7 @@ import {
   DeleteJobSearchCampaignInputSchema,
   describeDiscoveryRunFailureReason,
   DiscoveryRunReportSchema,
+  formatDiscoveryAccounting,
   DiscoveryRunRecordSchema,
   JobSearchCampaignCollectionSchema,
   JobSearchCampaignSchema,
@@ -96,7 +97,6 @@ const IN_FLIGHT_JOB_STATUSES = new Set<ApplicationStatus>([
   "offer",
 ]);
 
-
 const LEGACY_PRECISION_RETAINED_JOBS = 15;
 const LIFTED_RETAINED_JOBS = 1_000;
 function compareRetentionPriority(left: SavedJob, right: SavedJob): number {
@@ -175,10 +175,24 @@ export function describeCampaignRunSummary(
   // three zeros that read as "the search found nothing", which is a different
   // and wrong story; the reason replaces them.
   const failureReason = describeDiscoveryRunFailureReason(run);
+  if (run.runPhase === "interrupted") {
+    return `Interrupted: ${formatDiscoveryAccounting(report)}. Jobs saved before the interruption remain available.`;
+  }
   if (failureReason !== null) {
     return sources.planned === 0
       ? `Run failed: ${failureReason}`
       : `${sources.completed} of ${sources.planned} sources completed${failedLabel}. Run failed: ${failureReason}`;
+  }
+  if (report.unique != null) {
+    const outcome =
+      run.state === "cancelled"
+        ? "Stopped"
+        : run.state === "failed"
+          ? "Failed"
+          : run.state === "running"
+            ? "So far"
+            : "Found";
+    return `${sources.completed} of ${sources.planned} sources completed${failedLabel}. ${outcome}: ${formatDiscoveryAccounting(report)}.`;
   }
   return `${sources.completed} of ${sources.planned} sources completed${failedLabel}. Discovery ${run.state}: ${count(report.found)} found · ${count(
     report.new,
@@ -435,7 +449,10 @@ export async function commitCampaignRunTerminal(input: {
       .filter(
         (job) =>
           allowedByRules.has(job.id) &&
+          // A job the model has not judged yet was not measured, so the
+          // plan's minimum fit does not drop it (ADR 0041).
           (campaign.minimumFitScore === null ||
+            !job.matchAssessment.judgment ||
             job.matchAssessment.score >= campaign.minimumFitScore),
       )
       .sort(compareRetentionPriority)
@@ -478,7 +495,6 @@ export async function commitCampaignRunTerminal(input: {
     // stood.
     const retentionCounts = {
       measuredAt,
-      new: newToPlanJobIds.size,
       alreadyHere: alreadyInPlanJobIds.size,
       retained: retainedRunJobs.length,
       worthOpening: countDiscoveryStrongMatches(retainedRunJobs),
@@ -486,7 +502,6 @@ export async function commitCampaignRunTerminal(input: {
     const runReport = DiscoveryRunReportSchema.parse({
       ...(latestRun.summary.report ??
         buildDiscoveryRunReport(latestRun, measuredAt)),
-      new: retentionCounts.new,
       alreadyHere: retentionCounts.alreadyHere,
       retained: retentionCounts.retained,
       worthOpening: retentionCounts.worthOpening,

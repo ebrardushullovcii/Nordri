@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { MemoryRouter } from "react-router-dom";
 import type {
   BrowserSessionState,
   JobDiscoveryTarget,
@@ -98,6 +99,7 @@ function renderBar(
       searchPreferences={preferences()}
       {...overrides}
     />,
+    { wrapper: MemoryRouter },
   );
   return { onOpenBrowserSession, onRunAgentDiscovery, onToggleSetup };
 }
@@ -263,7 +265,9 @@ describe("DiscoverySearchBar", () => {
         discovery: { historyLimit: 5, targets: [target(), second] },
       }),
     };
-    const view = render(<DiscoverySearchBar {...props} />);
+    const view = render(<DiscoverySearchBar {...props} />, {
+      wrapper: MemoryRouter,
+    });
     fireEvent.click(screen.getByRole("button", { name: "All sources" }));
     fireEvent.click(screen.getByLabelText("Example Careers"));
     view.rerender(
@@ -301,7 +305,9 @@ describe("DiscoverySearchBar", () => {
         discovery: { historyLimit: 5, targets: [target(), second] },
       }),
     };
-    const view = render(<DiscoverySearchBar {...props} />);
+    const view = render(<DiscoverySearchBar {...props} />, {
+      wrapper: MemoryRouter,
+    });
     fireEvent.click(screen.getByRole("button", { name: "All sources" }));
     fireEvent.click(screen.getByLabelText("Example Careers"));
     fireEvent.click(screen.getByLabelText("Wellfound"));
@@ -380,4 +386,11 @@ describe("DiscoverySearchBar plan chip", () => {
     expect(screen.queryByLabelText("Search plan")).toBeNull();
     expect(screen.queryByTestId("discovery-search-plan")).toBeNull();
   });
+});
+
+it("links directly to Search plans beside search controls", () => {
+  renderBar();
+  expect(
+    screen.getByRole("link", { name: "Search plans" }).getAttribute("href"),
+  ).toBe("/job-finder/campaigns");
 });

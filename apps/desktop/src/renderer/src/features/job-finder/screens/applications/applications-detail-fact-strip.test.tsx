@@ -500,6 +500,23 @@ describe("ApplicationsDetailFactStrip", () => {
     expect(screen.queryByText("Attempt failed")).toBeNull();
   });
 
+  it("does not reuse a queued-run activity sentence after failure", () => {
+    renderStrip({
+      record: {
+        ...baseRecord,
+        lastAttemptState: "failed",
+        lastActionLabel: "Applying to the remaining 5 jobs.",
+      },
+      visibleApplyResult: {
+        ...baseApplyResult,
+        state: "failed",
+        summary: "Could not apply",
+        detail: "Profile changed",
+      },
+    });
+    expect(screen.queryByText("Applying to the remaining 5 jobs.")).toBeNull();
+    expect(screen.getByText("Could not apply")).toBeTruthy();
+  });
   it("never repeats company, stage, or the full run id inside the fact region", () => {
     const { container } = renderStrip();
 

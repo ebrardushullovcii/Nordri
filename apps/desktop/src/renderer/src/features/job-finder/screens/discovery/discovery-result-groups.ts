@@ -121,17 +121,9 @@ const groupCopy: Record<
     label: "Matches",
   },
   unchecked: {
-    // Deliberately not "open one to check its details": when a run reads only
-    // the listing cards, the inspector holds nothing the row does not already
-    // show, so that would send the user somewhere that cannot answer them.
-    // Kept to a short caption so it labels the band instead of restating the
-    // run-level warning that names the source on the same screen.
     description:
-      "Matched on the title alone; the full requirements have not been assessed.",
-    // Leads with what is true and wanted — this role is what you asked for —
-    // and keeps the caveat second. "Title matches · not yet checked" read as
-    // a demotion of the very jobs the search was run to find.
-    label: "Matches your role, not yet scored",
+      "The full requirements have not been assessed. Check the role and level before applying.",
+    label: "Not yet assessed",
   },
   // Both of the bands below are the two halves of the one pool the reveal
   // control calls "weaker matches". They stay separate bands — "scored below

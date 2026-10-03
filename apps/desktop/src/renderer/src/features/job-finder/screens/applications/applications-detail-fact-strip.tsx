@@ -189,7 +189,9 @@ export function ApplicationsDetailFactStrip(props: {
     (visibleApplyResult?.detail === selectedRecord.lastActionLabel ||
       visibleApplyResult?.summary === selectedRecord.lastActionLabel);
   const latestActivityContent =
-    isResolvedAwaitingReview || plannedStanding !== null
+    isResolvedAwaitingReview ||
+    plannedStanding !== null ||
+    ["failed", "cancelled", "skipped"].includes(visibleApplyResult?.state ?? "")
       ? null
       : visibleRunIsActive
         ? getCustomerFacingApplyText(visibleApplyResult.detail)

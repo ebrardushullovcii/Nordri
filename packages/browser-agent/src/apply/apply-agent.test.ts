@@ -165,13 +165,47 @@ function config(
   };
 }
 
+/**
+ * The fact check's answer when a scripted model is asked to check answers:
+ * every answer supported. It does not use up a scripted turn.
+ */
+function supportedChecks(
+  messages: Parameters<LLMClient["chatWithTools"]>[0],
+  definitions: Parameters<LLMClient["chatWithTools"]>[1],
+): ReturnType<LLMClient["chatWithTools"]> | null {
+  if (definitions[0]?.function.name !== "report_answer_checks") return null;
+  const asked = JSON.parse(String(messages[1]?.content ?? "{}")) as {
+    answers?: unknown[];
+  };
+  return Promise.resolve({
+    toolCalls: [
+      {
+        id: "check",
+        type: "function" as const,
+        function: {
+          name: "report_answer_checks",
+          arguments: JSON.stringify({
+            checks: (asked.answers ?? []).map((_, index) => ({
+              index,
+              supported: true,
+              reason: "Supported by the applicant facts.",
+            })),
+          }),
+        },
+      },
+    ],
+  });
+}
+
 function repeatingModel(
   name: string,
   args: Record<string, unknown>,
 ): LLMClient {
   let calls = 0;
   return {
-    chatWithTools: () => {
+    chatWithTools: (messages, definitions) => {
+      const check = supportedChecks(messages, definitions);
+      if (check) return check;
       calls += 1;
       return Promise.resolve({
         toolCalls: [
@@ -191,7 +225,9 @@ function scriptedModel(
 ): LLMClient {
   let calls = 0;
   return {
-    chatWithTools: () => {
+    chatWithTools: (messages, definitions) => {
+      const check = supportedChecks(messages, definitions);
+      if (check) return check;
       const turn = turns[Math.min(calls, turns.length - 1)];
       calls += 1;
       return Promise.resolve({
@@ -209,7 +245,9 @@ function scriptedModel(
 
 test("prose instructions separate candidate evidence from job requirements", () => {
   const prompt = createApplySystemPrompt(config(page()));
-  expect(prompt).toContain("write from those candidate facts");
+  expect(prompt).toContain(
+    "Answers about this person come only from their facts",
+  );
   expect(prompt).toContain(
     "never turn a job requirement into a claim that the person has done it",
   );
@@ -241,6 +279,7 @@ test("a retained form receives current exact answers and only named corrections 
 describe("written answer fact check recovery", () => {
   const input = () => ({
     sources: config(page()).sources,
+    payDisclosed: false,
     question: "Why do you want to work here?",
     answer: "I like the advertised work.",
   });
@@ -248,8 +287,8 @@ describe("written answer fact check recovery", () => {
     id: "check",
     type: "function" as const,
     function: {
-      name: "report_answer_check",
-      arguments: JSON.stringify(args),
+      name: "report_answer_checks",
+      arguments: JSON.stringify({ checks: [{ index: 0, ...args }] }),
     },
   });
 
@@ -277,7 +316,7 @@ describe("written answer fact check recovery", () => {
       ),
     ).toBe(true);
     expect(lastCall?.[1].length).toBeGreaterThan(0);
-    expect(lastCall?.[2]?.maxOutputTokens).toBe(1200);
+    expect(lastCall?.[2]?.maxOutputTokens).toBe(900);
   });
 
   test("refuses to enter an answer when both fact reports are unusable", async () => {
@@ -305,6 +344,36 @@ describe("written answer fact check recovery", () => {
       reason: "Only ordinary motivation.",
     });
     expect(client.chatWithTools).toHaveBeenCalledTimes(1);
+  });
+
+  test("gives the independent choice check the saved profile prose as applicant context", async () => {
+    const request = input();
+    request.sources.profile.answerBank.visaSponsorship =
+      "I will need employer sponsorship after my student permit ends.";
+    const client: LLMClient = {
+      chatWithTools: vi.fn().mockResolvedValue({
+        toolCalls: [
+          call({ supported: true, reason: "The saved answer supports Yes." }),
+        ],
+      }),
+    };
+    await checkWrittenApplicationAnswer({
+      ...request,
+      client,
+      question: "Do you need visa sponsorship in Germany?",
+      answer: "Yes",
+    });
+    const content = vi
+      .mocked(client.chatWithTools)
+      .mock.calls[0]?.[0].find((message) => message.role === "user")?.content;
+    const facts: unknown = JSON.parse(content ?? "{}");
+    expect(facts).toMatchObject({
+      applicant: {
+        answers: {
+          visaSponsorship: request.sources.profile.answerBank.visaSponsorship,
+        },
+      },
+    });
   });
 });
 
@@ -357,7 +426,7 @@ test.each([false, true])(
     const model: LLMClient = {
       chatWithTools: (messages, definitions) => {
         const checking =
-          definitions[0]?.function.name === "report_answer_check";
+          definitions[0]?.function.name === "report_answer_checks";
         if (checking) {
           checks += 1;
           expect(messages).toHaveLength(2);
@@ -371,11 +440,16 @@ test.each([false, true])(
         }
         const call = checking
           ? {
-              name: "report_answer_check",
+              name: "report_answer_checks",
               args: {
-                supported: false,
-                reason:
-                  "Applicant facts do not mention AI coding assistant use.",
+                checks: [
+                  {
+                    index: 0,
+                    supported: false,
+                    reason:
+                      "Applicant facts do not mention AI coding assistant use.",
+                  },
+                ],
               },
             }
           : writerTurn++ === 0
@@ -737,7 +811,8 @@ describe("apply agent run endings", () => {
     expect(
       seen.some(
         (entry) =>
-          entry.includes("Fill it with") && entry.includes("Robin Ashford"),
+          entry.includes("Full name") &&
+          entry.includes("Fill it now if the person's facts answer it"),
       ),
     ).toBe(true);
     expect(result.outcome).toBe("stuck");
@@ -784,13 +859,30 @@ describe("apply agent run endings", () => {
   });
 
   test("does not call a form ready while a visible required answer is empty", async () => {
+    const seen: string[] = [];
+    const model = repeatingModel("finish", {
+      reason: "The form is ready for review",
+    });
     const result = await runApplyAgent(
       config(page({ controls: [{ ...nameControl(), value: "" }] })),
-      repeatingModel("finish", { reason: "The form is ready for review" }),
+      {
+        chatWithTools: (messages, definitions, options) => {
+          seen.push(JSON.stringify(messages.at(-1) ?? null));
+          return model.chatWithTools(messages, definitions, options);
+        },
+      },
     );
 
-    expect(result.outcome).toBe("stuck");
-    expect(result.reason).toContain("stopped responding");
+    // Asked once to fill it; then the empty field is handed to the person.
+    expect(
+      seen.some((entry) => entry.includes("is required and still empty")),
+    ).toBe(true);
+    expect(result.outcome).toBe("paused");
+    expect(
+      result.pauses
+        .flatMap((pause) => pause.questions ?? [])
+        .map((question) => question.prompt),
+    ).toEqual(["Full name"]);
   });
 
   test("does not call a native select ready while only its placeholder is displayed", async () => {
@@ -884,7 +976,8 @@ describe("apply agent run endings", () => {
     );
 
     expect(result.filled).toHaveLength(1);
-    expect(result.outcome).toBe("stuck");
+    // The field the site cleared is not called done: it goes to the person.
+    expect(result.outcome).toBe("paused");
   });
 
   test("keeps a hidden required file input unfinished until its supplied document is attached", async () => {
@@ -1158,7 +1251,7 @@ describe("apply agent run endings", () => {
         }),
       ),
       scriptedModel([
-        { name: "suggest_answer", args: { ref: "f0" } },
+        { name: "observe", args: {} },
         {
           name: "finish",
           args: { reason: "The site requires a password", needsPerson: true },
@@ -1628,7 +1721,7 @@ describe("answers and structured history on a retained form", () => {
     );
     await runApplyAgent(input, { chatWithTools });
     const facts = chatWithTools.mock.calls[0][0].find((message) =>
-      message.content?.includes('"savedApplicationFacts"'),
+      message.content?.startsWith("The person's facts"),
     );
     expect(facts?.content).toContain('"startDate":"January 2014"');
     expect(facts?.content).toContain('"isCurrent":true');
@@ -1745,43 +1838,6 @@ describe("answers and structured history on a retained form", () => {
     expect(result.outcome).toBe("prepared");
   });
 
-  test("gives the gap fact once and preserves a second finish's own report", async () => {
-    const source = experiencePage();
-    source.stepLabel = null;
-    source.actions = [
-      { index: 0, label: "Add", visible: true, disabled: false },
-    ];
-    const modelReason =
-      "The employer accepts the attached resume; I left its optional rows empty.";
-    const chatWithTools = vi.fn(
-      scriptedModel([
-        { name: "finish", args: { reason: "Resume attached" } },
-        { name: "finish", args: { reason: modelReason } },
-      ]).chatWithTools,
-    );
-    const result = await runApplyAgent(withExperience(source), {
-      chatWithTools,
-    });
-    expect(result.outcome).toBe("prepared");
-    expect(result.reason).toBe(
-      `${modelReason} ${result.structuredExperienceGap}`,
-    );
-    expect(result.readyToSend).toBeNull();
-    expect(
-      result.notes.filter((note) => note === result.structuredExperienceGap),
-    ).toHaveLength(1);
-    expect(
-      chatWithTools.mock.calls
-        .at(-1)![0]
-        .filter(
-          (message) =>
-            message.role === "tool" &&
-            message.content === result.structuredExperienceGap,
-        ),
-    ).toHaveLength(1);
-    expect(result.modelTurns).toBe(2);
-  });
-
   test("a second multi-step finish keeps the model's reason", async () => {
     const source = page({ stepLabel: "Step 3 of 4" });
     const modelReason = "I stopped on the saved questions page as requested.";
@@ -1806,64 +1862,6 @@ describe("answers and structured history on a retained form", () => {
         ),
     ).toHaveLength(1);
   });
-
-  test.each(["finish", "submit_application"] as const)(
-    "a final action after a gap fact from %s proceeds with the gap note",
-    async (firstTool) => {
-      const source = experiencePage();
-      source.stepLabel = "Step 4 of 4";
-      source.actions = [
-        {
-          index: 0,
-          label: "Submit application",
-          visible: true,
-          disabled: false,
-        },
-        { index: 1, label: "Add", visible: true, disabled: false },
-      ];
-      const input = withExperience(source);
-      input.authority = {
-        ...input.authority,
-        mode: "autonomous_submit",
-        submitAuthorized: true,
-        allowedOrigins: ["https://apply.example.test"],
-      };
-      const modelReason =
-        "The optional employment rows remain empty; the employer accepts the resume.";
-      const chatWithTools = vi.fn(
-        scriptedModel([
-          {
-            name: firstTool,
-            args:
-              firstTool === "finish"
-                ? { reason: "Resume attached" }
-                : { ref: "a0" },
-          },
-          { name: "submit_application", args: { ref: "a0" } },
-          { name: "finish", args: { reason: modelReason } },
-        ]).chatWithTools,
-      );
-      const result = await runApplyAgent(input, { chatWithTools });
-      expect(result.outcome).toBe("ready_to_send");
-      expect(result.readyToSend).toEqual({
-        actionRef: "a0",
-        actionLabel: "Submit application",
-      });
-      expect(result.reason).toBe(
-        `${modelReason} ${result.structuredExperienceGap}`,
-      );
-      expect(result.notes).toContain(result.structuredExperienceGap);
-      expect(
-        chatWithTools.mock.calls
-          .at(-1)![0]
-          .filter(
-            (message) =>
-              message.role === "tool" &&
-              message.content === result.structuredExperienceGap,
-          ),
-      ).toHaveLength(1);
-    },
-  );
 
   test("adds and fills a known role using the approved month before continuing to Review", async () => {
     const source = experiencePage();
@@ -1930,4 +1928,348 @@ describe("answers and structured history on a retained form", () => {
     expect(filled).toEqual(["Engineer", "Signal Systems", "2014-01"]);
     expect(result.outcome).toBe("prepared");
   });
+});
+
+test.each(["Yes", "No"])(
+  "the review retains contacts across steps and records the selected radio (%s)",
+  async (answer) => {
+    const source = page({
+      actions: [{ index: 0, label: "Next", visible: true, disabled: false }],
+      stepLabel: "Step 1 of 2",
+    });
+    const runConfig = config(source);
+    runConfig.sources.reusableAnswers = [
+      {
+        id: "one_use",
+        kind: "other",
+        roleFamilies: [],
+        proofEntryIds: [],
+        question: "Are you legally authorized to work in Germany?",
+        answer,
+        label: "Authorization",
+      },
+    ];
+    runConfig.hands.clickElement = () => {
+      source.controls = [
+        {
+          ...workAuthorizationRadio(0, "Yes"),
+          groupLabel: "Are you legally authorized to work in Germany?",
+        },
+        {
+          ...workAuthorizationRadio(1, "No"),
+          groupLabel: "Are you legally authorized to work in Germany?",
+        },
+      ];
+      source.stepLabel = "Step 2 of 2";
+      source.actions = [];
+      return Promise.resolve({ ok: true, observedValue: "next" });
+    };
+    runConfig.hands.setToggle = (ref, checked) => {
+      source.controls[ref === "c0" ? 0 : 1].checked = checked;
+      return Promise.resolve({ ok: true, observedValue: "checked" });
+    };
+    const result = await runApplyAgent(
+      runConfig,
+      scriptedModel([
+        { name: "click", args: { ref: "a0" } },
+        {
+          name: "set_checkbox",
+          args: { ref: answer === "Yes" ? "c0" : "c1", checked: true },
+        },
+        { name: "finish", args: { reason: "Ready for review." } },
+      ]),
+    );
+    expect(
+      result.reviewFilled?.find((entry) => entry.label === "Full name")?.answer
+        .value,
+    ).toBe("Robin Ashford");
+    expect(
+      result.reviewFilled?.find(
+        (entry) =>
+          entry.label === "Are you legally authorized to work in Germany?",
+      )?.answer,
+    ).toMatchObject({
+      value: answer,
+      provenanceLabel: "your answer to this question",
+    });
+  },
+);
+
+test("whenever there is room cannot finish with an empty optional cover-letter upload", async () => {
+  const source = page({
+    controls: [
+      {
+        ...nameControl(),
+        inputType: "file",
+        label: "Cover letter",
+        value: "",
+        required: false,
+      },
+    ],
+    actions: [],
+  });
+  const runConfig = config(source, {
+    writing: {
+      coverLetterPolicy: "when_possible",
+      writtenAnswerLength: "short",
+      preApprovedDeclarations: [],
+    },
+  });
+  let provided = 0;
+  runConfig.letters = {
+    preference: {
+      tone: "plain_professional",
+      length: "standard",
+      language: null,
+      sample: null,
+    },
+    provide: () => {
+      provided += 1;
+      return Promise.resolve({
+        ok: true,
+        text: "Dear Hiring Team, I am applying for this role. My experience building dependable platforms and internal tools would support your team. I would welcome the opportunity to discuss the role and learn more about your priorities. Thank you for your consideration.",
+        document: {
+          id: "letter",
+          kind: "cover_letter",
+          label: "Cover letter",
+          fileName: "letter.pdf",
+          mimeType: "application/pdf",
+          loadBytes: () => Promise.resolve(new Uint8Array([1])),
+        },
+      });
+    },
+  };
+  runConfig.hands.uploadFile = (_ref, file) => {
+    source.controls[0].value = file.name;
+    return Promise.resolve({ ok: true, observedValue: file.name });
+  };
+  const result = await runApplyAgent(
+    runConfig,
+    scriptedModel([
+      { name: "finish", args: { reason: "Done." } },
+      { name: "upload", args: { ref: "c0", documentId: "letter" } },
+      { name: "finish", args: { reason: "Done." } },
+    ]),
+  );
+  expect(provided).toBe(1);
+  expect(result.reviewAttachments).toHaveLength(1);
+  expect(result.reviewAttachments?.[0]?.fileName).toBe("letter.pdf");
+  expect(result.reviewAttachments?.[0]?.reviewText?.text).toContain(
+    "Dear Hiring Team",
+  );
+  expect(result.outcome).toBe("prepared");
+});
+
+test("a retry replaces the retained original before handing back missing files", async () => {
+  const source = page({
+    controls: [
+      {
+        ...nameControl(),
+        inputType: "file",
+        label: "Resume",
+        value: "original.docx",
+      },
+      {
+        ...nameControl(),
+        index: 1,
+        inputType: "file",
+        label: "Transcript",
+        value: "",
+      },
+    ],
+    actions: [],
+  });
+  const runConfig = config(source);
+  runConfig.sources.documents = [
+    {
+      id: "approved-resume",
+      kind: "resume",
+      label: "Your CV",
+      fileName: "approved.pdf",
+      mimeType: "application/pdf",
+      loadBytes: () => Promise.resolve(new Uint8Array([1, 2, 3])),
+    },
+  ];
+  runConfig.hands.uploadFile = (_ref, file) => {
+    source.controls[0].value = file.name;
+    return Promise.resolve({ ok: true, observedValue: file.name });
+  };
+  const result = await runApplyAgent(
+    runConfig,
+    scriptedModel([
+      {
+        name: "finish",
+        args: {
+          reason: "The transcript needs the person.",
+          needsPerson: true,
+          stuck: true,
+        },
+      },
+      { name: "upload", args: { ref: "c0", documentId: "approved-resume" } },
+      {
+        name: "finish",
+        args: { reason: "The transcript needs the person.", needsPerson: true },
+      },
+    ]),
+  );
+  expect(source.controls[0].value).toBe("approved.pdf");
+  expect(
+    result.reviewAttachments?.map((attachment) => attachment.fileName),
+  ).toEqual(["approved.pdf"]);
+  expect(result.outcome).toBe("paused");
+  expect(
+    result.pauses
+      .flatMap((pause) => pause.questions ?? [])
+      .map((question) => question.prompt),
+  ).toContain("Transcript");
+});
+
+test("an optional letter the run cannot attach is noted, never a stop", async () => {
+  const source = page({
+    controls: [
+      {
+        ...nameControl(),
+        inputType: "file",
+        label: "Cover letter",
+        value: "",
+        required: false,
+      },
+    ],
+    actions: [],
+  });
+  const result = await runApplyAgent(
+    config(source, {
+      writing: {
+        coverLetterPolicy: "when_possible",
+        writtenAnswerLength: "short",
+        preApprovedDeclarations: [],
+      },
+    }),
+    scriptedModel([
+      { name: "finish", args: { reason: "Done." } },
+      { name: "finish", args: { reason: "Done." } },
+    ]),
+  );
+  expect(result.outcome).not.toBe("paused");
+  expect(result.pauses).toHaveLength(0);
+  expect(result.notes.join(" ")).toContain(
+    'Left "Cover letter" empty: Job Finder could not attach a letter there.',
+  );
+});
+
+test("fill_fields fills a page in one step with one fact check for the answers that need it", async () => {
+  const text = (index: number, label: string): RawApplyControl => ({
+    ...nameControl(),
+    index,
+    id: `f${index}`,
+    name: `f${index}`,
+    label,
+    value: "",
+  });
+  const source = page({
+    controls: [
+      text(0, "Full name"),
+      text(1, "Why do you want this role?"),
+      {
+        ...text(2, "Country"),
+        tagName: "select",
+        inputType: "select-one",
+        options: ["Germany", "United Kingdom"],
+      },
+    ],
+  });
+  const written = new Map<string, string>();
+  const base = hands(source);
+  const answered = (ref: string, value: string) => {
+    written.set(ref, value);
+    const index = Number(ref.slice(1));
+    source.controls = source.controls.map((control) =>
+      control.index === index
+        ? {
+            ...control,
+            value,
+            selectedOptionLabel: control.options.length ? value : "",
+          }
+        : control,
+    );
+    return Promise.resolve({ ok: true as const, observedValue: value });
+  };
+  let checkCalls = 0;
+  let checkedAnswers: unknown[] = [];
+  let turns = 0;
+  const model: LLMClient = {
+    chatWithTools: (messages, definitions) => {
+      if (definitions[0]?.function.name === "report_answer_checks") {
+        checkCalls += 1;
+        checkedAnswers = (
+          JSON.parse(String(messages[1]?.content)) as { answers: unknown[] }
+        ).answers;
+        return Promise.resolve({
+          toolCalls: [
+            {
+              id: "check",
+              type: "function" as const,
+              function: {
+                name: "report_answer_checks",
+                arguments: JSON.stringify({
+                  checks: checkedAnswers.map((_, index) => ({
+                    index,
+                    supported: true,
+                    reason: "Supported.",
+                  })),
+                }),
+              },
+            },
+          ],
+        });
+      }
+      turns += 1;
+      const call =
+        turns === 1
+          ? {
+              name: "fill_fields",
+              args: {
+                fields: [
+                  { ref: "c0", value: "Robin Ashford" },
+                  {
+                    ref: "c1",
+                    value: "I want to keep building dependable internal tools.",
+                  },
+                  { ref: "c2", value: "united kingdom" },
+                ],
+              },
+            }
+          : { name: "finish", args: { reason: "Filled in." } };
+      return Promise.resolve({
+        toolCalls: [
+          {
+            id: `call_${turns}`,
+            type: "function" as const,
+            function: { name: call.name, arguments: JSON.stringify(call.args) },
+          },
+        ],
+      });
+    },
+  };
+
+  const result = await runApplyAgent(
+    config(source, {
+      hands: { ...base, fillText: answered, chooseOption: answered },
+    }),
+    model,
+  );
+
+  expect(turns).toBe(2);
+  // The stored name needs no check; the prose and the country are checked
+  // together in one call.
+  expect(checkCalls).toBe(1);
+  expect(checkedAnswers).toHaveLength(2);
+  expect(written.get("c0")).toBe("Robin Ashford");
+  expect(written.get("c2")).toBe("United Kingdom");
+  expect(result.filled.map((entry) => entry.label)).toEqual([
+    "Full name",
+    "Why do you want this role?",
+    "Country",
+  ]);
+  expect(result.outcome).toBe("prepared");
 });

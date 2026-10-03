@@ -2023,6 +2023,31 @@ describe("a finished run reports one set of numbers", () => {
       },
     }) as unknown as JobSearchCampaign;
 
+  it.each(["stopped", "interrupted"] as const)(
+    "names %s work on a plan without its run record",
+    (outcome) => {
+      const plan = planWithDigest("two", "Example plan");
+      plan.latestDigest!.outcome = outcome;
+      render(
+        <CampaignsScreen
+          activeCampaignId="one"
+          campaigns={[plan]}
+          discoveryRuns={[]}
+          onSaveCampaign={vi.fn()}
+          onSelectCampaign={vi.fn()}
+          pending={false}
+        />,
+      );
+      expect(
+        screen.getByText(
+          new RegExp(`^${outcome === "stopped" ? "Stopped" : "Interrupted"} ·`),
+        ),
+      ).toBeTruthy();
+      fireEvent.click(screen.getByText("What the last run found"));
+      expect(screen.queryByText("No source problems in this run.")).toBeNull();
+    },
+  );
+
   it("prints the run's own counts on a plan the screen holds no run record for", () => {
     render(
       <CampaignsScreen

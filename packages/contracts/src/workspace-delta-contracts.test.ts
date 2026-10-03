@@ -14,6 +14,21 @@ function emptySlice() {
 }
 
 describe("workspace delta contracts", () => {
+  it("accepts a listing assessment for an exact job and rejects unknown payload fields", () => {
+    const input = {
+      baseRevision: 4,
+      mutation: { type: "assess_job_listing", jobId: "job-1" },
+    };
+    expect(JobFinderWorkspaceEntityMutationInputSchema.parse(input)).toEqual(
+      input,
+    );
+    expect(
+      JobFinderWorkspaceEntityMutationInputSchema.safeParse({
+        ...input,
+        mutation: { ...input.mutation, url: "https://unrelated.example" },
+      }).success,
+    ).toBe(false);
+  });
   it("parses the bounded entity mutation commands with their base revision", () => {
     expect(
       JobFinderWorkspaceEntityMutationInputSchema.parse({

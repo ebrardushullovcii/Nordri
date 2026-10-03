@@ -1,6 +1,7 @@
 import type { Event, Input, WebContents } from "electron";
 import { describe, expect, test, vi } from "vitest";
 import {
+  applyMainWindowZoomCommand,
   bindMainWindowZoomShortcuts,
   getMainWindowZoomCommand,
   getNextMainWindowZoomFactor,
@@ -28,6 +29,23 @@ function createInput(overrides: Partial<Input> = {}): Input {
 }
 
 describe("main window zoom shortcuts", () => {
+  test("menu clicks step the zoom like the keyboard", () => {
+    let factor = 1;
+    const target = {
+      getZoomFactor: () => factor,
+      setZoomFactor: (next: number) => {
+        factor = next;
+      },
+    };
+    applyMainWindowZoomCommand(target, "in");
+    expect(factor).toBe(1.1);
+    applyMainWindowZoomCommand(target, "out");
+    applyMainWindowZoomCommand(target, "out");
+    expect(factor).toBe(0.9);
+    applyMainWindowZoomCommand(target, "reset");
+    expect(factor).toBe(MAIN_WINDOW_DEFAULT_ZOOM_FACTOR);
+  });
+
   test.each(["darwin", "win32", "linux"] as const)(
     "routes embedded-view keys to the shell on %s",
     (platform) => {
@@ -271,6 +289,12 @@ describe("main window zoom shortcuts", () => {
         // right before did-finish-load; nothing in the app caused this write.
         zoomFactor = factor;
       },
+      startMainNavigation() {
+        listeners.get("did-start-navigation")?.({
+          isMainFrame: true,
+          isSameDocument: false,
+        });
+      },
       finishLoad() {
         listeners.get("did-finish-load")?.();
       },
@@ -285,6 +309,19 @@ describe("main window zoom shortcuts", () => {
       zoomFactor: () => zoomFactor,
     };
   }
+
+  test("keeps restored zoom and menu changes through a full reload", () => {
+    const harness = createLoadLifecycleHarness();
+    bindMainWindowZoomShortcuts(harness.webContents, "win32", {
+      initialZoomFactor: 1.44,
+    });
+    expect(harness.zoomFactor()).toBe(1.44);
+    harness.webContents.setZoomFactor(1.728);
+    harness.startMainNavigation();
+    harness.applyCommitTimeHostZoom(1);
+    harness.finishLoad();
+    expect(harness.zoomFactor()).toBe(1.728);
+  });
 
   test("beats persisted Chromium host zoom by re-asserting after every completed load", () => {
     const harness = createLoadLifecycleHarness();

@@ -214,11 +214,14 @@ describe("an application the person moved on in the tracker", () => {
         },
       ]),
     ).toEqual({ label: "Panel interview", tone: "positive" });
-    expect(trackedHiringStageBadge(tracked({ customStageId: null }))).toEqual(
-      { label: APPLICATION_CRM_STAGE_LABELS.interview, tone: "positive" },
-    );
+    expect(trackedHiringStageBadge(tracked({ customStageId: null }))).toEqual({
+      label: APPLICATION_CRM_STAGE_LABELS.interview,
+      tone: "positive",
+    });
     expect(
-      trackedHiringStageBadge(tracked({ stage: "preparing", customStageId: null })),
+      trackedHiringStageBadge(
+        tracked({ stage: "preparing", customStageId: null }),
+      ),
     ).toBeNull();
   });
 
@@ -241,12 +244,39 @@ describe("an application the person moved on in the tracker", () => {
         updatedAt: "2026-08-13T10:00:00.000Z",
       },
     ];
-    expect(
-      nextTrackerStepLabel(tracked({ reminders, interviews }), NOW),
-    ).toBe("Send a thank-you note (overdue)");
+    expect(nextTrackerStepLabel(tracked({ reminders, interviews }), NOW)).toBe(
+      "Send a thank-you note (overdue)",
+    );
     expect(nextTrackerStepLabel(tracked({ interviews }), NOW)).toMatch(
       /^Panel interview, /u,
     );
     expect(nextTrackerStepLabel(tracked(), NOW)).toBeNull();
   });
+});
+
+describe("terminal preparation activity", () => {
+  test.each(["failed", "cancelled"] as const)(
+    "keeps %s out of preparation and approval stages",
+    (lastAttemptState) => {
+      const stopped = record({
+        status: "approved",
+        lastAttemptState,
+        crm: {
+          stage: "ready_for_approval",
+          stageSource: "activity",
+          stageChangedAt: "2026-10-02T09:00:00.000Z",
+        },
+      });
+      expect(applicationCrmDataForView(stopped).stage).toBe(lastAttemptState);
+      const manual = record({
+        ...stopped,
+        crm: {
+          stage: "interview",
+          stageSource: "user",
+          stageChangedAt: "2026-10-02T09:00:00.000Z",
+        },
+      });
+      expect(applicationCrmDataForView(manual).stage).toBe("interview");
+    },
+  );
 });

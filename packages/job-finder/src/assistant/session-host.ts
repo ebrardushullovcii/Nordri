@@ -1,3 +1,4 @@
+import { readAssistantWorkState } from "./work-state";
 import { buildChangePreview } from "./change-diff";
 import { createHash, randomUUID } from "node:crypto";
 
@@ -716,10 +717,24 @@ export class AssistantSessionHost {
         },
         takeSteering: () => this.takeSteering(live),
         assembleMessages: async (turnMessages) => {
+          const current = await this.service.getWorkspaceSnapshot();
+          const currentContext = buildContextBlock({
+            context: live.sourceMessage?.context ?? null,
+            resultSets: live.sourceMessage
+              ? await this.resultSetsFor(live.sourceMessage)
+              : [],
+            snapshot: current,
+            work: readAssistantWorkState(this.ports, current),
+            plan: await session.plans.active(),
+            grants: await session.grants.list(),
+            pendingQuestions: [],
+            now: this.now(),
+          });
           const messages = await assembleModelInput({
             repository: this.repository,
             conversationId,
             systemPrompt,
+            currentContext,
             turnMessages,
             contextWindowTokens: handle.capabilities.contextWindowTokens,
             maxOutputTokens: handle.capabilities.maxOutputTokens,
@@ -874,6 +889,7 @@ export class AssistantSessionHost {
         context: live.sourceMessage?.context ?? null,
         resultSets,
         snapshot,
+        work: readAssistantWorkState(this.ports, snapshot),
         plan,
         grants: await this.repository.listGrants(conversationId),
         pendingQuestions: [],
@@ -915,6 +931,7 @@ export class AssistantSessionHost {
           context: message.context,
           resultSets,
           snapshot,
+          work: readAssistantWorkState(this.ports, snapshot),
           plan: null,
           grants: [],
           pendingQuestions: [],
@@ -1434,7 +1451,7 @@ export class AssistantSessionHost {
           items: proposal.items.map((item) => ({
             id: item.id,
             label: item.label,
-            detail: null,
+            detail: item.detail ?? null,
           })),
           source: {
             store: "assistant",

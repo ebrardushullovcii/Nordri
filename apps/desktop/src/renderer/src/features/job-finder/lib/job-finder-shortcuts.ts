@@ -157,7 +157,7 @@ export type JobFinderShortcutKeycaps = readonly string[];
 
 export interface JobFinderShortcutHelpEntry {
   combos: readonly JobFinderShortcutKeycaps[];
-  id: JobFinderShortcutId;
+  id: JobFinderShortcutId | "zoom-in" | "zoom-out" | "actual-size";
   /** Stable row key; an id can appear once per distinct scope. */
   rowId: string;
   label: string;
@@ -195,5 +195,29 @@ export function buildJobFinderShortcutHelp(
       scope: shortcut.scope,
     });
   }
-  return [...entries.values()];
+  const modifier = platform === "darwin" ? "⌘" : "Ctrl";
+  return [
+    ...entries.values(),
+    {
+      id: "zoom-in",
+      rowId: "zoom-in",
+      label: "Zoom In",
+      scope: "Anywhere in the app",
+      combos: [[modifier, "="]],
+    },
+    {
+      id: "zoom-out",
+      rowId: "zoom-out",
+      label: "Zoom Out",
+      scope: "Anywhere in the app",
+      combos: [[modifier, "-"]],
+    },
+    {
+      id: "actual-size",
+      rowId: "actual-size",
+      label: "Actual Size",
+      scope: "Anywhere in the app",
+      combos: [[modifier, "0"]],
+    },
+  ];
 }

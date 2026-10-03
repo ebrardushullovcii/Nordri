@@ -703,6 +703,42 @@ describe("ApplicationsCrmDetail", () => {
     });
   });
 
+  test("saves an interview entered in the recruiter's zone", async () => {
+    stubCandidateAssets();
+    const onMutate = vi.fn<
+      (command: ApplicationCrmMutationInput) => Promise<void>
+    >(() => Promise.resolve());
+    const record = buildCrmRecord({ id: "application_zoned" });
+    renderDetail(record, onMutate);
+    openSection("Interviews and contacts");
+    fireEvent.change(screen.getByLabelText("Interview"), {
+      target: { value: "Recruiter call" },
+    });
+    fireEvent.change(screen.getByLabelText("Starts"), {
+      target: { value: "2026-10-05T09:00" },
+    });
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: vi.fn(),
+    });
+    fireEvent.keyDown(
+      screen.getByRole("combobox", { name: "Interview time zone" }),
+      { key: "ArrowDown" },
+    );
+    fireEvent.click(
+      await screen.findByRole("option", { name: "America/New_York" }),
+    );
+    fireEvent.submit(screen.getByLabelText("Starts").closest("form")!);
+    await waitFor(() => expect(onMutate).toHaveBeenCalled());
+    const mutation = onMutate.mock.calls[0]?.[0];
+    expect(mutation?.mutation).toMatchObject({
+      type: "upsert_interview",
+      interview: {
+        startsAt: "2026-10-05T13:00:00.000Z",
+        timeZone: "America/New_York",
+      },
+    });
+  });
   test("marks a first-time offer active without inventing a deadline", () => {
     stubCandidateAssets();
     const onMutate = vi.fn(() => Promise.resolve());
@@ -983,18 +1019,14 @@ describe("ApplicationsCrmDetail", () => {
     fireEvent.change(note, {
       target: { value: "Recruiter requested a portfolio." },
     });
-    fireEvent.click(
-      screen.getByRole("button", { name: "Add note" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Add note" }));
     await waitFor(() =>
       expect(screen.getByRole("alert").textContent).toContain(
         "changed elsewhere",
       ),
     );
     expect(note.value).toBe("Recruiter requested a portfolio.");
-    fireEvent.click(
-      screen.getByRole("button", { name: "Add note" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Add note" }));
     await waitFor(() => expect(note.value).toBe(""));
     expect(onMutate).toHaveBeenCalledTimes(2);
     expect(onMutate.mock.calls[1]?.[0].mutation).toMatchObject({

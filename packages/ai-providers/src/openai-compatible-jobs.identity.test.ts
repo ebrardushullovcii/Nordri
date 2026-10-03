@@ -58,4 +58,38 @@ describe("posting URL identity", () => {
     expect(jobs.map((job) => job.canonicalUrl)).toEqual(urls);
     expect(new Set(jobs.map((job) => job.sourceJobId)).size).toBe(2);
   });
+
+  test("keeps a posting's apply link apart from its own page", () => {
+    const prompt = buildJobsExtractionPrompt({
+      pageHostLabel: "careers.example.test",
+      pageType: "job_detail",
+      effectiveMaxJobs: 1,
+    });
+    expect(prompt).toContain(
+      "Never use an apply, sign-in or share link as canonicalUrl",
+    );
+    const [job] = normalizeExtractedJobs({
+      payload: {
+        jobs: [
+          {
+            canonicalUrl: "https://careers.example.test/jobs/112",
+            applicationUrl: "/apply/112",
+            title: "Data Analyst",
+            company: "Northwind",
+            location: "Berlin, Germany",
+            description: "Analyse data.",
+            workMode: [],
+            applyPath: "unknown",
+            easyApplyEligible: false,
+          },
+        ],
+      },
+      pageHostLabel: "careers.example.test",
+      pageUrl: "https://careers.example.test/jobs/112",
+      pageType: "job_detail",
+      effectiveMaxJobs: 1,
+    });
+    expect(job?.canonicalUrl).toBe("https://careers.example.test/jobs/112");
+    expect(job?.applicationUrl).toBe("https://careers.example.test/apply/112");
+  });
 });

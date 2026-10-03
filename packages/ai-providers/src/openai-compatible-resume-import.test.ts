@@ -27,13 +27,13 @@ const documentBundle: ResumeDocumentBundle = {
   warnings: [],
   languageHints: [],
   pages: [],
-  fullText: "Ebrar Dushullovci\nAddress: Prishtina, Kosovo",
+  fullText: "Elian Morava\nAddress: Prishtina, Kosovo",
   blocks: [
     {
       id: "block_1",
       pageNumber: 1,
       readingOrder: 0,
-      text: "Ebrar Dushullovci",
+      text: "Elian Morava",
       kind: "paragraph",
       sectionHint: "identity",
       bbox: null,
@@ -80,8 +80,8 @@ describe("extractOpenAiCompatibleResumeImportStage", () => {
             {
               target: "identity:fullName",
               label: "Full name",
-              value: "Ebrar Dushullovci",
-              evidenceText: "Ebrar Dushullovci",
+              value: "Elian Morava",
+              evidenceText: "Elian Morava",
               sourceBlockIds: "block_1",
               confidence: "0.98",
               notes: "literal top line",
@@ -107,7 +107,7 @@ describe("extractOpenAiCompatibleResumeImportStage", () => {
     expect(result.candidates[0]).toMatchObject({
       target: { section: "identity", key: "fullName", recordId: null },
       label: "Full name",
-      value: "Ebrar Dushullovci",
+      value: "Elian Morava",
       sourceBlockIds: ["block_1"],
       confidence: 0.98,
       notes: ["literal top line"],

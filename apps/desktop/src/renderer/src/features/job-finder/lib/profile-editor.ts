@@ -319,7 +319,7 @@ export function createProfileEditorValues(
       secondaryEmail: profile.secondaryEmail ?? "",
       summary: profile.summary ?? "",
       timeZone: profile.timeZone ?? "",
-      yearsExperience: String(profile.yearsExperience),
+      yearsExperience: profile.yearsExperience?.toString() ?? "",
     },
     eligibility: {
       authorizedWorkCountries: joinListInput(
@@ -562,7 +562,10 @@ export function buildProfilePayload(
   const parsedYearsExperience = parseRequiredNonNegativeInteger(
     values.identity.yearsExperience,
   );
-  if (parsedYearsExperience === null) {
+  if (
+    parsedYearsExperience === null &&
+    values.identity.yearsExperience.trim() !== ""
+  ) {
     return {
       validationMessage:
         "Years of experience must be a whole number greater than or equal to 0.",

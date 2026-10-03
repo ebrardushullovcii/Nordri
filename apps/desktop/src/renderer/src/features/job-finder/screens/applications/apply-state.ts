@@ -180,6 +180,17 @@ export function resolveApplyStatePresentation(input: {
     };
   }
 
+  if (result?.blockerReason === "application_closed") {
+    return {
+      kind: "could_not_apply",
+      title: "Listing closed",
+      sentence: reason,
+      action: "none",
+      actionLabel: null,
+      questionsLeftLabel: null,
+    };
+  }
+
   const plannedStanding = resolvePlannedApplyStanding(result, input.run);
   if (plannedStanding === "not_started") {
     return {
@@ -207,7 +218,7 @@ export function resolveApplyStatePresentation(input: {
     return {
       kind: "filling_in",
       title: "Waiting its turn",
-      sentence: null,
+      sentence: formatElapsedMinutes(result?.startedAt, now),
       action: "none",
       actionLabel: null,
       questionsLeftLabel: null,
@@ -220,7 +231,7 @@ export function resolveApplyStatePresentation(input: {
     if (result?.summary === WAITING_FOR_BROWSER_TAB_SUMMARY) {
       return {
         kind: "filling_in",
-        title: "Waiting for a browser tab",
+        title: `Waiting for a browser tab${formatElapsedMinutes(result?.startedAt, now) ? ` (${formatElapsedMinutes(result?.startedAt, now)})` : ""}`,
         sentence: result.detail ?? null,
         action: "none",
         actionLabel: null,
@@ -231,7 +242,7 @@ export function resolveApplyStatePresentation(input: {
     return {
       kind: "filling_in",
       title: elapsed ? `Filling in (${elapsed})` : "Filling in",
-      sentence: null,
+      sentence: result?.detail ?? null,
       action: "none",
       actionLabel: null,
       questionsLeftLabel: null,

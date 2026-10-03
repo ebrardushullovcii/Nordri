@@ -105,9 +105,27 @@ export async function retryInterruptedResumeImport(
   });
 }
 
+let activeDesktopImports = 0;
+
+export function isDesktopResumeImportActive(): boolean {
+  return activeDesktopImports > 0;
+}
+
 export async function importResumeFromSourcePath(
   sourcePath: string,
   options: ImportResumeFromSourcePathOptions = {},
+) {
+  activeDesktopImports += 1;
+  try {
+    return await importResumeFile(sourcePath, options);
+  } finally {
+    activeDesktopImports -= 1;
+  }
+}
+
+async function importResumeFile(
+  sourcePath: string,
+  options: ImportResumeFromSourcePathOptions,
 ) {
   const targetDirectory = getJobFinderDocumentsDirectory();
   const jobFinderWorkspaceService = await getJobFinderWorkspaceService();

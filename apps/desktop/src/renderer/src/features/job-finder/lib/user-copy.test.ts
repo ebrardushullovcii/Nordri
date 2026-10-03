@@ -198,7 +198,7 @@ const RULES: readonly Rule[] = [
   {
     id: "internalVocabulary",
     description:
-      "trade jargon or an internal term on a user surface — four testers scored this 4 out of 10 across three runs; say the plain thing instead (\"reads reliably on job sites\", \"file fingerprint\", \"the role you are looking for\")",
+      'trade jargon or an internal term on a user surface — four testers scored this 4 out of 10 across three runs; say the plain thing instead ("reads reliably on job sites", "file fingerprint", "the role you are looking for")',
     exempt: [],
     find: (source) =>
       findMatches(stripComments(source), INTERNAL_VOCABULARY_PATTERN),
@@ -534,6 +534,18 @@ describe("failure copy", () => {
     expect(copy).not.toContain("job-finder:");
   });
 
+  it("explains an unusable resume and asks for another file", () => {
+    const failure = describeFailure(
+      new Error(
+        "Error invoking remote method 'job-finder:import': Error: No resume details were found in this file. Choose another file.",
+      ),
+      { action: "import your resume" },
+    );
+    expect(failure.kind).toBe("unusable_resume");
+    expect(failure.sentence).toBe(
+      "No resume details were found in this file. Choose another file.",
+    );
+  });
   it("classifies a busy failure rather than naming the run", () => {
     expect(
       getJobFinderErrorMessage(

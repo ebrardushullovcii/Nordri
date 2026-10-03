@@ -2,6 +2,7 @@ import {
   JobPostingSchema,
   SourceIntelligenceArtifactSchema,
   type CandidateProfile,
+  type FitJudgment,
   type SourceIntelligenceArtifact,
   type JobDiscoveryCollectionMethod,
   type JobDiscoveryMethod,
@@ -12,118 +13,9 @@ import {
   type SourceDebugWorkerAttempt,
   type SourceInstructionArtifact,
 } from "@nordri/contracts";
-import {
-  assessLocationCompatibility,
-  getBroadLocationCompatibility,
-  matchesExcludedLocation,
-  matchesTitlePreference,
-  readLocationMatchOptions,
-} from "./matching";
+import { matchesExcludedLocation } from "./matching";
 import { isExplicitSearchProbeDisproof } from "./source-instruction-evidence";
 import { normalizeText, uniqueStrings } from "./shared";
-import { CLOSED_LISTING_BODY_PATTERN } from "./listing-activity";
-
-const technicalRoleSignalPatterns = [
-  /\bsoftware\b/,
-  /\bdeveloper\b/,
-  /\bengineer\b/,
-  /\bfrontend\b/,
-  /\bbackend\b/,
-  /\bfull stack\b/,
-  /\bfullstack\b/,
-  /\bweb\b/,
-  /\bmobile\b/,
-  /\bdevops\b/,
-  /\bsdet\b/,
-  /\bqa automation\b/,
-  /\bplatform\b/,
-  /\bprogrammer\b/,
-  /\btypescript\b/,
-  /\bjavascript\b/,
-  /\breact\b/,
-  /\bnode\b/,
-  /\bdotnet\b/,
-  /\b(?:asp\s+)?net(?:\s+core|\s+framework)?\b/,
-  /\bcsharp\b/,
-  /\bpython\b/,
-  /\bjava\b/,
-] as const;
-
-const adjacentTechnicalRoleSignalPatterns = [
-  /\bsoftware\b/,
-  /\bdeveloper\b/,
-  /\bengineer\b/,
-  /\bfrontend\b/,
-  /\bbackend\b/,
-  /\bfull stack\b/,
-  /\bfullstack\b/,
-  /\bweb\b/,
-  /\bmobile\b/,
-  /\bplatform\b/,
-  /\bapplication\b/,
-  /\bqa\b/,
-  /\bsdet\b/,
-  /\bdevops\b/,
-  /\bsre\b/,
-  /\bsite reliability\b/,
-  /\bcloud\b/,
-  /\bdata\b/,
-  /\bmachine learning\b/,
-  /\bai\b/,
-  /\binfrastructure\b/,
-  /\bwordpress\b/,
-  /\bapi\b/,
-  /\bintegration\b/,
-  /\bintegrations\b/,
-  /\b(?:asp\s+)?net(?:\s+core|\s+framework)?\b/,
-] as const;
-
-type TechnicalRoleFamily =
-  | "software"
-  | "frontend"
-  | "backend"
-  | "fullstack"
-  | "platform"
-  | "mobile"
-  | "desktop"
-  | "data_ai"
-  | "qa";
-
-const technicalRoleFamilyPatterns: Record<
-  TechnicalRoleFamily,
-  readonly RegExp[]
-> = {
-  software: [/\bsoftware\b/, /\bdeveloper\b/, /\bprogrammer\b/],
-  frontend: [/\bfrontend\b/, /\bfront end\b/, /\breact\b/, /\bui engineer\b/],
-  backend: [/\bbackend\b/, /\bback end\b/, /\bapi engineer\b/],
-  fullstack: [/\bfull stack\b/, /\bfullstack\b/],
-  platform: [
-    /\bplatform\b/,
-    /\bdevops\b/,
-    /\bsre\b/,
-    /\bsite reliability\b/,
-    /\binfrastructure engineer\b/,
-  ],
-  mobile: [/\bmobile\b/, /\breact native\b/, /\bios engineer\b/, /\bandroid\b/],
-  desktop: [/\belectron\b/, /\bdesktop\b/],
-  data_ai: [
-    /\bdata engineer\b/,
-    /\bdata scientist\b/,
-    /\bmachine learning\b/,
-    /\bai engineer\b/,
-  ],
-  qa: [/\bqa\b/, /\bsdet\b/, /\btest automation\b/],
-};
-
-const productEngineeringFamilies = new Set<TechnicalRoleFamily>([
-  "software",
-  "frontend",
-  "backend",
-  "fullstack",
-  "platform",
-  "mobile",
-  "desktop",
-]);
 
 type PublicApiFieldPath = readonly string[];
 type PublicApiFieldSelector = readonly PublicApiFieldPath[];
@@ -447,20 +339,6 @@ const LISTING_ROUTE_KEYWORDS = [
   "karriere",
   "apliko",
 ];
-
-const GENERIC_KEYWORD_QUERY_PARAM_NAMES = [
-  "keywords",
-  "keyword",
-  "q",
-  "query",
-  "search",
-] as const;
-const GENERIC_LOCATION_QUERY_PARAM_NAMES = [
-  "location",
-  "loc",
-  "city",
-  "region",
-] as const;
 
 function parseOptionalString(value: unknown): { value: string } | null {
   return typeof value === "string" ? { value } : null;
@@ -791,7 +669,9 @@ function isBrokenOrTemplatedRoutePath(
     /(^|\/)404($|\/)/.test(pathname) ||
     routeText.includes("not-found") ||
     /(^|\/)\{[^/]+\}($|\/)/.test(pathname) ||
-    /(^|\/):[a-z0-9_-]+($|\/)/i.test(pathname)
+    /(^|\/):[a-z0-9_-]+($|\/)/i.test(pathname) ||
+    // A query placeholder ("?keywords=:keyword", "?q={query}") is a template.
+    /[?&][^=&]+=(?::|%3a|\{|%7b)/i.test(search)
   );
 }
 
@@ -871,33 +751,15 @@ function inferRouteKind(url: string): ReusableRouteKind {
   return "anchor";
 }
 
+/**
+ * The kind the model gave a route stands (ADR 0041); the address only fills in
+ * when nothing said what the route is.
+ */
 export function resolveRouteKindForReuse(
   url: string,
   preferredKind: ReusableRouteKind | null = null,
 ): ReusableRouteKind {
-  const inferredKind = inferRouteKind(url);
-
-  if (preferredKind === "detail" || inferredKind === "detail") {
-    return "detail";
-  }
-
-  if (preferredKind === "apply" || inferredKind === "apply") {
-    return "apply";
-  }
-
-  if (preferredKind === "search" || inferredKind === "search") {
-    return "search";
-  }
-
-  if (preferredKind === "collection" || inferredKind === "collection") {
-    return "collection";
-  }
-
-  if (inferredKind === "listing") {
-    return "listing";
-  }
-
-  return "anchor";
+  return preferredKind ?? inferRouteKind(url);
 }
 
 export function canonicalizeRouteForReuse(
@@ -1261,7 +1123,6 @@ export function inferSourceIntelligenceFromTarget(input: {
 export function buildDiscoveryStartingUrls(
   target: JobDiscoveryTarget,
   artifact: SourceInstructionArtifact | null,
-  searchPreferences?: JobSearchPreferences | null,
 ): string[] {
   if (!artifact) {
     return [target.startingUrl];
@@ -1273,11 +1134,6 @@ export function buildDiscoveryStartingUrls(
   const deniedRoutes = resolveDeniedDiscoveryRoutes(artifact, anchorUrl);
   const isDeniedRoute = (url: string | null) =>
     url != null && deniedRoutes.some((deniedRoute) => deniedRoute === url);
-  const synthesizedSearchRoute = buildEvidenceDrivenDiscoverySearchUrl(
-    target,
-    artifact,
-    searchPreferences,
-  );
   const overrideRoutes = (
     artifact.intelligence.overrides.extraStartingRoutes ?? []
   ).flatMap((route) => {
@@ -1338,28 +1194,22 @@ export function buildDiscoveryStartingUrls(
       ? [target.startingUrl]
       : [];
 
+  // The search agent types the person's search into the site itself; no
+  // rule picks a keyword for it (ADR 0041).
   const routes = uniqueStrings(
-    (synthesizedSearchRoute && !isDeniedRoute(synthesizedSearchRoute)
+    (preferredMethod === "careers_page"
       ? [
-          synthesizedSearchRoute,
+          ...overrideRoutes,
+          ...learnedStartingRoutes,
+          ...searchRoutes,
+          ...startingUrlRoute,
+        ]
+      : [
           ...overrideRoutes,
           ...searchRoutes,
           ...learnedStartingRoutes,
           ...startingUrlRoute,
         ]
-      : preferredMethod === "careers_page"
-        ? [
-            ...overrideRoutes,
-            ...learnedStartingRoutes,
-            ...searchRoutes,
-            ...startingUrlRoute,
-          ]
-        : [
-            ...overrideRoutes,
-            ...searchRoutes,
-            ...learnedStartingRoutes,
-            ...startingUrlRoute,
-          ]
     ).filter((value): value is string => Boolean(value)),
   );
 
@@ -1442,186 +1292,6 @@ function resolveDeniedDiscoveryRoutes(
   });
 
   return uniqueStrings([...deniedRouteOverrides, ...deniedRouteHints]);
-}
-
-export function buildEvidenceDrivenDiscoverySearchUrl(
-  target: JobDiscoveryTarget,
-  artifact: SourceInstructionArtifact | null,
-  searchPreferences?: JobSearchPreferences | null,
-): string | null {
-  const anchorUrl = tryParseUrl(target.startingUrl);
-  if (!anchorUrl) {
-    return null;
-  }
-
-  return buildGuidedDiscoverySearchUrl(anchorUrl, artifact, searchPreferences);
-}
-
-function deriveGenericSearchKeyword(
-  searchPreferences?: JobSearchPreferences | null,
-): string | null {
-  if (!searchPreferences) {
-    return null;
-  }
-
-  const technicalSearchIntent =
-    searchPreferences.targetRoles.some(matchesTechnicalRoleSignal) ||
-    searchPreferences.jobFamilies.some(matchesTechnicalRoleSignal);
-  if (technicalSearchIntent) {
-    return "software";
-  }
-
-  const explicitKeyword =
-    searchPreferences.targetRoles.find((value) => value.trim().length > 0) ??
-    searchPreferences.jobFamilies.find((value) => value.trim().length > 0) ??
-    null;
-  if (!explicitKeyword) {
-    return null;
-  }
-
-  const keywordTokens = normalizeText(explicitKeyword)
-    .split(/\s+/)
-    .filter(
-      (token) =>
-        token.length >= 4 &&
-        ![
-          "senior",
-          "junior",
-          "lead",
-          "staff",
-          "principal",
-          "remote",
-          "hybrid",
-        ].includes(token),
-    );
-
-  return keywordTokens[0] ?? null;
-}
-
-function buildGuidedDiscoverySearchUrl(
-  anchorUrl: URL,
-  artifact: SourceInstructionArtifact | null,
-  searchPreferences?: JobSearchPreferences | null,
-): string | null {
-  if (!artifact || !searchPreferences) {
-    return null;
-  }
-
-  const supportedQueryParams = collectGuidedSearchQueryParamNames(artifact);
-  const keywordParam = findGuidedSearchQueryParamName(
-    supportedQueryParams,
-    GENERIC_KEYWORD_QUERY_PARAM_NAMES,
-  );
-  const locationParam = findGuidedSearchQueryParamName(
-    supportedQueryParams,
-    GENERIC_LOCATION_QUERY_PARAM_NAMES,
-  );
-  const keyword = keywordParam
-    ? deriveGenericSearchKeyword(searchPreferences)
-    : null;
-  const location =
-    locationParam &&
-    (searchPreferences.locations.find((value) => value.trim().length > 0) ??
-      null);
-
-  if (!keywordParam && !locationParam) {
-    return null;
-  }
-
-  if (!keyword && !location) {
-    return null;
-  }
-
-  const searchUrl = selectGuidedSearchBaseUrl(anchorUrl, artifact);
-  if (keywordParam && keyword) {
-    searchUrl.searchParams.set(keywordParam, keyword);
-  }
-  if (locationParam && location) {
-    searchUrl.searchParams.set(locationParam, location);
-  }
-
-  return canonicalizeRouteForReuse(searchUrl.toString(), anchorUrl);
-}
-
-function collectGuidedSearchQueryParamNames(
-  artifact: SourceInstructionArtifact,
-): string[] {
-  const paramNames = new Set<string>();
-  const collectFromText = (value: string | null | undefined) => {
-    if (!value) {
-      return;
-    }
-
-    for (const match of value.matchAll(/[?&]([a-zA-Z][a-zA-Z0-9_-]*)=/g)) {
-      const paramName = match[1]?.trim().toLowerCase();
-      if (paramName) {
-        paramNames.add(paramName);
-      }
-    }
-  };
-  const collectFromUrl = (value: string) => {
-    const parsed = tryParseUrl(value);
-    if (!parsed) {
-      return;
-    }
-
-    for (const key of parsed.searchParams.keys()) {
-      const paramName = key.trim().toLowerCase();
-      if (paramName) {
-        paramNames.add(paramName);
-      }
-    }
-  };
-
-  collectFromText(artifact.notes);
-  for (const line of [
-    ...artifact.navigationGuidance,
-    ...artifact.searchGuidance,
-    ...artifact.warnings,
-  ]) {
-    collectFromText(line);
-  }
-
-  for (const route of artifact.intelligence.collection.searchRouteTemplates) {
-    collectFromUrl(route.url);
-  }
-
-  for (const route of artifact.intelligence.collection.startingRoutes) {
-    collectFromUrl(route.url);
-  }
-
-  return [...paramNames];
-}
-
-function findGuidedSearchQueryParamName(
-  supportedQueryParams: readonly string[],
-  preferredNames: readonly string[],
-): string | null {
-  return (
-    preferredNames.find((paramName) =>
-      supportedQueryParams.includes(paramName),
-    ) ?? null
-  );
-}
-
-function selectGuidedSearchBaseUrl(
-  anchorUrl: URL,
-  artifact: SourceInstructionArtifact,
-): URL {
-  for (const route of artifact.intelligence.collection.searchRouteTemplates) {
-    const normalizedRoute = canonicalizeRouteForReuse(route.url, anchorUrl);
-    if (!normalizedRoute) {
-      continue;
-    }
-
-    const parsed = tryParseUrl(normalizedRoute);
-    if (parsed) {
-      parsed.search = "";
-      return new URL(parsed.toString());
-    }
-  }
-
-  return new URL(anchorUrl.toString());
 }
 
 export function selectDiscoveryCollectionMethod(
@@ -2078,24 +1748,15 @@ export async function collectPublicProviderJobs(input: {
   }
 }
 
-const ACCOUNT_WALL_BODY_PATTERN =
-  /\b(?:sign in to (?:continue|view|see|apply|access)|log in to (?:continue|view|see|apply)|join now|welcome back|create (?:an|your|a free) account|get notified about new [^.\n]{0,80}\bjobs\b|by clicking (?:continue|agree|join)|forgot password|new to [a-z]+\? join now)\b/iu;
-
 export function applyDiscoveryTitleTriage(input: {
   posting: JobPosting;
   searchPreferences: JobSearchPreferences;
   profile: CandidateProfile | null | undefined;
+  /** The model's verdict on this posting, when it judged it before keeping. */
+  judgment?: FitJudgment | null;
 }) {
-  const { posting, profile, searchPreferences } = input;
+  const { posting, searchPreferences } = input;
   const normalizedCompany = normalizeText(posting.company);
-  const postingEvidenceText = buildPostingEvidenceText(posting);
-  const allowsPollutedTitleEvidence =
-    posting.providerKey === null &&
-    /\bdismiss\b.{0,160}\bjob\b/iu.test(postingEvidenceText);
-  const isGenericTalentPool =
-    /^(?:keep me in mind!?|general application|open application|join (?:our )?talent (?:pool|network)|talent (?:pool|network)|future opportunities|submit (?:your )?resume|expression of interest)$/iu.test(
-      posting.title.trim(),
-    );
 
   if (
     searchPreferences.companyBlacklist.some(
@@ -2121,44 +1782,9 @@ export function applyDiscoveryTitleTriage(input: {
     };
   }
 
-  if (isGenericTalentPool) {
-    return {
-      outcome: "skip_title" as const,
-      reason:
-        "This is a general talent-pool invitation rather than a specific open role.",
-    };
-  }
-
-  if (
-    CLOSED_LISTING_BODY_PATTERN.test(
-      `${posting.summary ?? ""} ${posting.description}`,
-    )
-  ) {
-    return {
-      outcome: "skip_title" as const,
-      reason:
-        "The listing says it is closed or no longer accepting applications.",
-    };
-  }
-
-  // A sign-in or account wall captured as a "job": the body is the site's
-  // login prompt, not a role. Boards show these behind generic titles
-  // ("Customer Service") and they outscore real jobs on title match alone.
-  const listingBody = `${posting.summary ?? ""} ${posting.description}`;
-  if (
-    listingBody.length < 900 &&
-    ACCOUNT_WALL_BODY_PATTERN.test(listingBody) &&
-    !/\b(?:responsibilit|requirement|qualification|salary|you will|we are looking)/iu.test(
-      listingBody,
-    )
-  ) {
-    return {
-      outcome: "skip_title" as const,
-      reason:
-        "This page asks you to sign in or create an account; it is not a job listing.",
-    };
-  }
-
+  // Talent pools, closed listings and sign-in pages are not filtered here by
+  // phrase lists: the model reading the page skips them, and the model
+  // judging fit marks any that arrive as skip (ADR 0041).
   if (searchPreferences.discovery.collectOnlyHardCriteriaMatches !== true) {
     return {
       outcome: "pass" as const,
@@ -2166,55 +1792,41 @@ export function applyDiscoveryTitleTriage(input: {
     };
   }
 
-  if (
-    searchPreferences.targetRoles.length > 0 &&
-    !matchesTitlePreference(posting.title, searchPreferences.targetRoles) &&
-    !(
-      allowsPollutedTitleEvidence &&
-      matchesTitlePreference(postingEvidenceText, searchPreferences.targetRoles)
-    )
-  ) {
+  // "Best matches only" keeps what the model judged a fit (ADR 0041): a job
+  // whose role, place or other goals it judged wrong, or that it would skip,
+  // is not kept. A job it has not judged is kept rather than guessed about.
+  const judgment = input.judgment;
+  if (!judgment) {
+    return { outcome: "pass" as const, reason: null };
+  }
+  const why = (fallback: string) =>
+    judgment.summary ??
+    judgment.gaps[0] ??
+    judgment.roleExplanation ??
+    judgment.preferencesExplanation ??
+    fallback;
+  if (judgment.role === "conflict") {
     return {
       outcome: "skip_title" as const,
-      reason: "Title is outside the current target roles.",
+      reason: why("The model judged this role outside the work you want."),
     };
   }
-
-  const locationOptions = readLocationMatchOptions(searchPreferences);
-  if (
-    searchPreferences.locations.length > 0 &&
-    assessLocationCompatibility(
-      posting.location,
-      searchPreferences.locations,
-      locationOptions,
-    ) === "incompatible" &&
-    // The remote-friendly allowance is the "remote counts as any location"
-    // rule; with that setting off, a remote posting must fit a saved place.
-    !(
-      locationOptions.remoteCountsAsAnyLocation !== false &&
-      matchesRemoteFriendlyTechnicalLocationFallback({
-        posting,
-        postingEvidenceText,
-        profile,
-        searchPreferences,
-      })
-    )
-  ) {
+  if (judgment.locationReach === "outside_area") {
     return {
       outcome: "skip_location" as const,
-      reason: "Location is outside the preferred search areas.",
+      reason: why("The model judged this job outside your places."),
     };
   }
-
-  if (
-    searchPreferences.workModes.length > 0 &&
-    !searchPreferences.workModes.includes("flexible") &&
-    posting.workMode.length > 0 &&
-    !posting.workMode.some((mode) => searchPreferences.workModes.includes(mode))
-  ) {
+  if (judgment.preferences === "conflict") {
     return {
       outcome: "skip_work_mode" as const,
-      reason: "Work mode is outside the preferred operating model.",
+      reason: why("The model judged this job against your saved goals."),
+    };
+  }
+  if (judgment.recommendation === "skip") {
+    return {
+      outcome: "skip_title" as const,
+      reason: why("The model judged this job not worth applying to."),
     };
   }
 
@@ -2224,161 +1836,3 @@ export function applyDiscoveryTitleTriage(input: {
   };
 }
 
-function buildPostingEvidenceText(posting: JobPosting): string {
-  return uniqueStrings([
-    posting.title,
-    posting.company,
-    ...posting.keySkills,
-    ...(posting.summary ? [posting.summary] : []),
-    posting.description,
-    ...posting.responsibilities,
-    ...posting.minimumQualifications,
-    ...posting.preferredQualifications,
-  ]).join(" ");
-}
-
-function matchesTechnicalRoleSignal(value: string): boolean {
-  const normalized = normalizeText(value);
-  return technicalRoleSignalPatterns.some((pattern) =>
-    pattern.test(normalized),
-  );
-}
-
-function matchesAdjacentTechnicalRoleSignal(value: string): boolean {
-  const normalized = normalizeText(value);
-  return adjacentTechnicalRoleSignalPatterns.some((pattern) =>
-    pattern.test(normalized),
-  );
-}
-
-function collectTechnicalRoleFamilies(value: string): Set<TechnicalRoleFamily> {
-  const normalized = normalizeText(value);
-  return new Set(
-    (
-      Object.entries(technicalRoleFamilyPatterns) as Array<
-        [TechnicalRoleFamily, readonly RegExp[]]
-      >
-    ).flatMap(([family, patterns]) =>
-      patterns.some((pattern) => pattern.test(normalized)) ? [family] : [],
-    ),
-  );
-}
-
-function hasCompatibleTechnicalRoleFamily(
-  candidate: string,
-  targetRoles: readonly string[],
-): boolean {
-  const candidateFamilies = collectTechnicalRoleFamilies(candidate);
-  const targetFamilies = new Set(
-    targetRoles.flatMap((role) => [...collectTechnicalRoleFamilies(role)]),
-  );
-
-  if ([...candidateFamilies].some((family) => targetFamilies.has(family))) {
-    return true;
-  }
-
-  return (
-    [...candidateFamilies].some((family) =>
-      productEngineeringFamilies.has(family),
-    ) &&
-    [...targetFamilies].some((family) => productEngineeringFamilies.has(family))
-  );
-}
-
-function hasTechnicalTargetRolePreference(
-  searchPreferences: JobSearchPreferences,
-): boolean {
-  return searchPreferences.targetRoles.some(matchesTechnicalRoleSignal);
-}
-
-function matchesTechnicalRoleFallback(input: {
-  posting: JobPosting;
-  postingEvidenceText?: string;
-  searchPreferences: JobSearchPreferences;
-  profile: CandidateProfile | null | undefined;
-}): boolean {
-  const { posting, searchPreferences } = input;
-  if (!hasTechnicalTargetRolePreference(searchPreferences)) {
-    return false;
-  }
-
-  const postingEvidenceText =
-    input.postingEvidenceText ?? buildPostingEvidenceText(posting);
-  if (matchesAdjacentTechnicalRoleSignal(posting.title)) {
-    return hasCompatibleTechnicalRoleFamily(
-      posting.title,
-      searchPreferences.targetRoles,
-    );
-  }
-
-  return Boolean(
-    posting.providerKey === null &&
-    /\bdismiss\b.{0,160}\bjob\b/iu.test(postingEvidenceText) &&
-    matchesAdjacentTechnicalRoleSignal(postingEvidenceText) &&
-    hasCompatibleTechnicalRoleFamily(
-      postingEvidenceText,
-      searchPreferences.targetRoles,
-    ),
-  );
-}
-
-function matchesRemoteFriendlyTechnicalLocationFallback(input: {
-  posting: JobPosting;
-  postingEvidenceText?: string;
-  profile?: CandidateProfile | null | undefined;
-  searchPreferences: JobSearchPreferences;
-}): boolean {
-  const { posting, searchPreferences } = input;
-  if (!hasTechnicalTargetRolePreference(searchPreferences)) {
-    return false;
-  }
-
-  const postingEvidenceText =
-    input.postingEvidenceText ?? buildPostingEvidenceText(posting);
-  if (
-    !matchesTechnicalRoleFallback({
-      posting,
-      postingEvidenceText,
-      profile: input.profile,
-      searchPreferences,
-    })
-  ) {
-    return false;
-  }
-
-  if (
-    searchPreferences.workModes.length > 0 &&
-    !searchPreferences.workModes.includes("flexible") &&
-    !searchPreferences.workModes.includes("remote") &&
-    !searchPreferences.workModes.includes("hybrid")
-  ) {
-    return false;
-  }
-
-  const normalizedLocation = normalizeText(posting.location);
-  const locationLooksRemote =
-    posting.workMode.includes("remote") ||
-    posting.workMode.includes("hybrid") ||
-    /\bremote\b|\bhybrid\b|\bworldwide\b|\banywhere\b|\bemea\b|\beurope\b/.test(
-      normalizedLocation,
-    );
-
-  if (locationLooksRemote) {
-    return (
-      getBroadLocationCompatibility(
-        posting.location,
-        searchPreferences.locations,
-      ) !== false
-    );
-  }
-
-  if (!normalizedLocation) {
-    return true;
-  }
-
-  if (posting.workMode.length === 0) {
-    return true;
-  }
-
-  return !posting.workMode.every((mode) => mode === "onsite");
-}
