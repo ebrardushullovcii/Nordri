@@ -628,6 +628,26 @@ export interface JudgeJobFitsInput {
   jobs: ReadonlyArray<{ jobId: string; posting: JobPosting }>;
 }
 
+/** Resume lines the model checks against the candidate's evidence. */
+export interface ResumeClaimCheckInput {
+  signal?: AbortSignal;
+  /** How far the person allowed the resume to stretch. */
+  tailoringStrength: string;
+  job: { title: string; company: string; description: string };
+  /** The candidate's evidence, each entry with an id the verdict can cite. */
+  evidence: ReadonlyArray<{ id: string; text: string }>;
+  resumeText: string | null;
+  /** At most one batch; callers split larger sets. */
+  claims: ReadonlyArray<{ id: string; section: string; text: string }>;
+}
+
+export interface ResumeClaimCheckResult {
+  id: string;
+  verdict: "supported" | "stretch" | "unsupported";
+  reason: string;
+  evidenceIds: string[];
+}
+
 export interface ExtractJobsFromPageInput {
   pageText: string;
   pageUrl: string;
@@ -705,6 +725,13 @@ export interface JobFinderAiClient {
    * empty answer leaves those jobs unjudged.
    */
   judgeJobFits?(input: JudgeJobFitsInput): Promise<JobFitJudgmentResult[]>;
+  /**
+   * Checks resume lines against the candidate's evidence, many per call.
+   * Absent on clients without a model; unchecked lines go to the person.
+   */
+  checkResumeClaims?(
+    input: ResumeClaimCheckInput,
+  ): Promise<ResumeClaimCheckResult[]>;
   extractJobsFromPage(input: ExtractJobsFromPageInput): Promise<JobPosting[]>;
   analyzeBrowserVisualSnapshot?(
     input: BrowserVisualAnalysisInput,

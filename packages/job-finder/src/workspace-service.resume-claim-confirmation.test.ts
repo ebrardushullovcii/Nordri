@@ -8,22 +8,34 @@ import {
   resumeClaimOwnershipStatement,
 } from "@nordri/contracts";
 import { describe, expect, test } from "vitest";
-import { createAiClient } from "./workspace-service.test-runtimes";
+import {
+  createAiClient,
+  fakeResumeClaimCheck,
+} from "./workspace-service.test-runtimes";
 import {
   createWorkspaceServiceHarness,
   createSeed,
 } from "./workspace-service.test-support";
 import type { JobFinderWorkspaceService } from "./internal/workspace-service-contracts";
 
-// Weak candidate-only support: shares too few tokens with the stored evidence
-// to paraphrase, but avoids every hard integrity gap, so the v2 verifier maps
-// this generated claim to confirm_needed.
+// The model's fact check calls this generated claim a stretch, so the person
+// confirms it (ADR 0041).
 const WEAK_CLAIM_TEXT =
   "Championed resilient delivery improvements across organizations.";
-// A quantified metric that appears nowhere in the candidate evidence: a hard
-// integrity gap the product names, which only the person can approve.
+// A metric the candidate evidence does not show: the fact check calls it
+// unsupported, and only the person can approve it.
 const UNSUPPORTED_CLAIM_TEXT =
   "Increased revenue by 340% within one quarter through delivery improvements.";
+// Listing-asked technologies the profile does not show are stretches too.
+const CLAIM_VERDICTS = {
+  [WEAK_CLAIM_TEXT]: "stretch",
+  [UNSUPPORTED_CLAIM_TEXT]: "unsupported",
+  Terraform: "stretch",
+  Kubernetes: "stretch",
+  // A reworded stretch is checked again and is still a stretch.
+  "Championed resilient delivery improvements across several organizations.":
+    "stretch",
+} as const;
 
 function createClaimHarness(input: { bullets: readonly string[] }) {
   const seed = createSeed();
@@ -33,6 +45,7 @@ function createClaimHarness(input: { bullets: readonly string[] }) {
     seed,
     aiClient: {
       ...baseAiClient,
+      checkResumeClaims: fakeResumeClaimCheck(CLAIM_VERDICTS),
       async createResumeDraft(draftInput) {
         const base = await baseAiClient.createResumeDraft(draftInput);
 
@@ -630,6 +643,7 @@ describe("resume claim confirmation commands", () => {
       seed,
       aiClient: {
         ...baseAiClient,
+        checkResumeClaims: fakeResumeClaimCheck(CLAIM_VERDICTS),
         async createResumeDraft(draftInput) {
           const base = await baseAiClient.createResumeDraft(draftInput);
           return {
@@ -733,6 +747,7 @@ describe("resume claim confirmation commands", () => {
       seed,
       aiClient: {
         ...baseAiClient,
+        checkResumeClaims: fakeResumeClaimCheck(CLAIM_VERDICTS),
         async createResumeDraft(draftInput) {
           const base = await baseAiClient.createResumeDraft(draftInput);
           return {

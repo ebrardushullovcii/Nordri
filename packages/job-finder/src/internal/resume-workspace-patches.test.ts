@@ -351,7 +351,7 @@ describe("resume workspace patch generated-claim provenance", () => {
     expect(userBullet.lastGeneratedContentHash ?? null).toBeNull();
   });
 
-  test("a normalization-only patch cannot escape confirm_needed gating", () => {
+  test("a normalization-only patch cannot escape the generated-line gate", () => {
     const { profile, job } = (() => {
       const seed = createSeed();
       const job = seed.savedJobs.find((entry) => entry.id === "job_ready");
@@ -396,7 +396,8 @@ describe("resume workspace patch generated-claim provenance", () => {
       (assessment) => assessment.bulletId === "experience_1_bullet_1",
     );
     expect(rewrittenAssessment?.claimOrigin).toBe("ai_generated");
-    expect(rewrittenAssessment?.status).toBe("confirm_needed");
+    // Not checked by the model yet: a generated line waits for the person.
+    expect(rewrittenAssessment?.status).toBe("review");
     expect(
       hasBlockingResumeClaimAssessment({
         validation: afterValidation,

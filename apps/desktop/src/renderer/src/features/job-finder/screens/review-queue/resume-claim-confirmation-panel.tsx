@@ -7,6 +7,7 @@ import type {
 } from "@nordri/contracts";
 import {
   isBlockingResumeClaimAssessment,
+  isCurrentResumeClaimVerifier,
   isResumeClaimAssessmentApprovable,
   isResumeSkillClaimAssessment,
   resumeClaimOwnershipStatement,
@@ -70,7 +71,7 @@ export function listDecidableClaimAssessments(
   return claimAssessments.filter(
     (assessment) =>
       assessment.status === "confirm_needed" &&
-      assessment.verifier === "deterministic_candidate_evidence_v2",
+      isCurrentResumeClaimVerifier(assessment.verifier),
   );
 }
 

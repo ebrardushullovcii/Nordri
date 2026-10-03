@@ -71,6 +71,11 @@ import {
   normalizeJobFitJudgments,
 } from "./openai-compatible-fit";
 import {
+  buildResumeClaimCheckPayload,
+  buildResumeClaimCheckPrompt,
+  normalizeResumeClaimChecks,
+} from "./openai-compatible-resume-claims";
+import {
   buildJobsExtractionPrompt,
   normalizeExtractedJobs,
 } from "./openai-compatible-jobs";
@@ -162,7 +167,7 @@ function buildResumeRewriteProposalPrompt(
         `Strategy provenance: ${strategy.effectiveSource}; reason: ${strategy.effectiveReason}`,
         `Use the ${strategy.headlinePolicy} headline policy, ${strategy.skillsPolicy} skills policy, and ${strategy.coveragePolicy} coverage policy.`,
         `The selected base resume document is ${strategy.baseResumeDocumentId}; do not invent facts outside the supplied grounding evidence.`,
-        `Evidence boundaries: exact claims ${strategy.evidenceBoundaries.allowExactClaims ? "allowed" : "not allowed"}; paraphrased claims ${strategy.evidenceBoundaries.allowParaphrasedClaims ? "allowed" : "not allowed"}; at most ${strategy.evidenceBoundaries.maxEvidenceRefsPerBullet} evidence references per bullet. The deterministic verifier remains authoritative before approval.`,
+        `Evidence boundaries: exact claims ${strategy.evidenceBoundaries.allowExactClaims ? "allowed" : "not allowed"}; paraphrased claims ${strategy.evidenceBoundaries.allowParaphrasedClaims ? "allowed" : "not allowed"}; at most ${strategy.evidenceBoundaries.maxEvidenceRefsPerBullet} evidence references per bullet. Each line is fact-checked against the candidate's evidence before approval.`,
       ]
     : [];
 
@@ -637,6 +642,22 @@ export function createOpenAiCompatibleJobFinderAiClient(
         payload,
         new Set(rest.jobs.map((job) => job.jobId)),
       );
+    },
+    async checkResumeClaims(input) {
+      const { signal, ...rest } = input;
+      if (rest.claims.length === 0) {
+        return [];
+      }
+      const payload = await fetchModelJson(
+        "checkResumeClaims",
+        buildResumeClaimCheckPrompt(),
+        buildResumeClaimCheckPayload(rest),
+        {
+          ...(signal ? { signal } : {}),
+          reasoningEffort: agentReasoningEffort,
+        },
+      );
+      return normalizeResumeClaimChecks(payload, rest);
     },
     async extractJobsFromPage(input) {
       const maxJobs = Math.max(0, Math.floor(input.maxJobs));
@@ -1466,6 +1487,13 @@ export function createJobFinderAiClientFromEnvironment(
         logFallbackError("assessJobFit", error);
         return null;
       }
+    },
+    // A failed check leaves the lines unchecked for the person to look at;
+    // no rule stands in for the model's verdict (ADR 0041).
+    checkResumeClaims(input) {
+      return primaryClient.checkResumeClaims
+        ? primaryClient.checkResumeClaims(input)
+        : Promise.resolve([]);
     },
     async judgeJobFits(input) {
       if (!primaryClient.judgeJobFits) {

@@ -4,10 +4,7 @@ import {
   createOpenAiCompatibleJobFinderAiClient,
   createJobFinderAiClientFromEnvironment,
 } from "./index";
-import type {
-  CandidateProfile,
-  ProfileCopilotRelevantReviewItem,
-} from "@nordri/contracts";
+import type { ProfileCopilotRelevantReviewItem } from "@nordri/contracts";
 import { ProfileCopilotUnfinishedError } from "./openai-compatible";
 import { ResumeGenerationStrategyPolicySchema } from "./shared";
 import {
@@ -161,7 +158,7 @@ describe("openai-compatible chat and draft behavior", () => {
     }
   });
 
-  test("rejects fabricated model claims and records outside canonical resume evidence", async () => {
+  test("keeps the model's wording for the fact check and drops records the person does not have", async () => {
     const fabricatedSummary =
       "Fabricated executive summary claiming fifty million dollars in growth.";
     const fabricatedHighlight = "Invented a forty-million-dollar turnaround.";
@@ -298,39 +295,25 @@ describe("openai-compatible chat and draft behavior", () => {
       const deterministicFallback =
         buildDeterministicStructuredResumeDraft(input);
 
+      // The model's lines stand; the fact check, not a rule, decides whether
+      // the person's evidence backs them (ADR 0041). Records the person does
+      // not have (a project, school, certificate or language that is not on
+      // their profile) never enter the draft.
       expect(result).toMatchObject({
-        label: deterministicFallback.label,
-        summary: deterministicFallback.summary,
-        experienceHighlights: deterministicFallback.experienceHighlights,
+        summary: fabricatedSummary,
+        experienceHighlights: [fabricatedHighlight],
         targetedKeywords: deterministicFallback.targetedKeywords,
         projectEntries: deterministicFallback.projectEntries,
         educationEntries: deterministicFallback.educationEntries,
         certificationEntries: deterministicFallback.certificationEntries,
         languages: deterministicFallback.languages,
-        // The model answered and every rewrite was held back, so the wording
-        // is the person's own. That is still a draft the model shaped, and the
-        // note says so instead of pointing at a "built-in generator".
-        notes: [
-          "Created with AI, keeping your own wording: it proposed 2 rewrites, none matched your saved evidence closely enough to use, so the sentences come from your profile and the structure and emphasis from the model.",
-          ...deterministicFallback.notes.filter(
-            (note) =>
-              note !== "Used the built-in deterministic resume tailorer.",
-          ),
-        ],
-        generationProvenance: {
-          method: "ai",
-          reason: null,
-        },
+        generationProvenance: { method: "ai", reason: null },
         compatibilityScore: 91,
       });
-      expect(result.coreSkills).toContain("React");
-      expect(result.additionalSkills).toContain("TypeScript");
-      expect([...result.coreSkills, ...result.additionalSkills]).not.toContain(
-        "ImaginarySkill",
+      expect(result.coreSkills).toEqual(
+        expect.arrayContaining(["React", "ImaginarySkill"]),
       );
-      for (const fabricatedClaim of [
-        fabricatedSummary,
-        fabricatedHighlight,
+      for (const fabricatedRecord of [
         fabricatedProject,
         fabricatedSchool,
         fabricatedCertification,
@@ -338,7 +321,7 @@ describe("openai-compatible chat and draft behavior", () => {
         fabricatedKeyword,
         fabricatedNote,
       ]) {
-        expect(result.fullText).not.toContain(fabricatedClaim);
+        expect(result.fullText).not.toContain(fabricatedRecord);
       }
     } finally {
       restoreFetch();
@@ -427,112 +410,6 @@ describe("openai-compatible chat and draft behavior", () => {
       expect(result.fullText).toContain(
         deterministicFallback.experienceEntries[0]?.dateRange ?? "",
       );
-    } finally {
-      restoreFetch();
-    }
-  });
-
-  test("filters fabricated model role prose while preserving canonical bullet selection order", async () => {
-    const canonicalSummary =
-      "Directed platform reliability for customer-facing workflow systems.";
-    const canonicalBullets = [
-      "Improved production uptime from 99.5% to 99.9%.",
-      "Reduced median API latency by 30% after profiling critical requests.",
-    ];
-    const fabricatedSummary =
-      "Transformed the enterprise through visionary, best-in-class leadership.";
-    const vagueBullet =
-      "Worked hard across strategic priorities to deliver exceptional results.";
-    const restoreFetch = mockJsonFetch({
-      choices: [
-        {
-          message: {
-            content: JSON.stringify({
-              label: "Tailored Resume",
-              summary: "Tailored summary",
-              experienceEntries: [
-                {
-                  title: "Platform Engineer",
-                  employer: "Acme Labs",
-                  summary: fabricatedSummary,
-                  bullets: [
-                    canonicalBullets[1],
-                    vagueBullet,
-                    canonicalBullets[0],
-                  ],
-                  profileRecordId: "experience_platform",
-                },
-              ],
-            }),
-          },
-        },
-      ],
-    });
-
-    try {
-      const client = createOpenAiCompatibleJobFinderAiClient({
-        apiKey: "test-key",
-        baseUrl: "https://example.com/v1",
-        model: "test-model",
-      });
-      const input = {
-        profile: {
-          ...createProfile(),
-          skills: ["TypeScript", "Node.js"],
-          proofBank: [],
-          experiences: [
-            {
-              id: "experience_platform",
-              companyName: "Acme Labs",
-              companyUrl: null,
-              title: "Platform Engineer",
-              employmentType: null,
-              location: "Remote",
-              workMode: ["remote" as const],
-              startDate: "2022-01",
-              endDate: null,
-              isCurrent: true,
-              isDraft: false,
-              summary: canonicalSummary,
-              achievements: canonicalBullets,
-              skills: ["TypeScript", "Node.js"],
-              domainTags: ["platform reliability"],
-              peopleManagementScope: null,
-              ownershipScope: null,
-            },
-          ],
-        },
-        searchPreferences: createPreferences(),
-        settings: createSettings(),
-        job: {
-          ...createJobPosting(),
-          title: "Platform Engineer",
-          keySkills: ["TypeScript", "Node.js"],
-        },
-        resumeText: "Resume text",
-        evidence: {
-          summary: [],
-          candidateSummary: [],
-          experience: [],
-          skills: ["TypeScript", "Node.js"],
-          keywords: ["TypeScript", "Node.js"],
-        },
-        researchContext: {
-          companyNotes: [],
-          domainVocabulary: [],
-          priorityThemes: [],
-        },
-      } satisfies Parameters<typeof client.createResumeDraft>[0];
-
-      const result = await client.createResumeDraft(input);
-
-      expect(result.experienceEntries[0]).toMatchObject({
-        profileRecordId: "experience_platform",
-        summary: canonicalSummary,
-        bullets: [canonicalBullets[1], canonicalBullets[0]],
-      });
-      expect(result.fullText).not.toContain(fabricatedSummary);
-      expect(result.fullText).not.toContain(vagueBullet);
     } finally {
       restoreFetch();
     }
@@ -678,103 +555,6 @@ describe("openai-compatible chat and draft behavior", () => {
     }
   });
 
-  test("rejects an evidence-referenced rewrite when it adds an unsupported metric", async () => {
-    const canonicalBullet = "Improved production uptime from 99.5% to 99.9%.";
-    const fabricatedRewrite = "Raised production uptime from 99.5% to 100%.";
-    const restoreFetch = mockJsonFetch({
-      choices: [
-        {
-          message: {
-            content: JSON.stringify({
-              experienceEntries: [
-                {
-                  title: "Platform Engineer",
-                  employer: "Acme Labs",
-                  bullets: [
-                    {
-                      text: fabricatedRewrite,
-                      evidenceRefs: [
-                        "experience:experience_platform:achievement:0",
-                      ],
-                    },
-                  ],
-                  profileRecordId: "experience_platform",
-                },
-              ],
-            }),
-          },
-        },
-      ],
-    });
-
-    try {
-      const client = createOpenAiCompatibleJobFinderAiClient({
-        apiKey: "test-key",
-        baseUrl: "https://example.com/v1",
-        model: "test-model",
-      });
-      const baseProfile = createProfile();
-      const result = await client.createResumeDraft({
-        profile: {
-          ...baseProfile,
-          proofBank: [],
-          experiences: [
-            {
-              id: "experience_platform",
-              companyName: "Acme Labs",
-              companyUrl: null,
-              title: "Platform Engineer",
-              employmentType: null,
-              location: "Remote",
-              workMode: ["remote"],
-              startDate: "2022-01",
-              endDate: null,
-              isCurrent: true,
-              isDraft: false,
-              summary: "Maintained platform reliability.",
-              achievements: [canonicalBullet],
-              skills: ["TypeScript"],
-              domainTags: [],
-              peopleManagementScope: null,
-              ownershipScope: null,
-            },
-          ],
-        },
-        searchPreferences: createPreferences(),
-        settings: createSettings(),
-        job: {
-          ...createJobPosting(),
-          company: "ExampleCo",
-          keySkills: ["TypeScript"],
-        },
-        resumeText: "Resume text",
-        evidence: {
-          summary: [],
-          candidateSummary: [],
-          experience: [],
-          skills: ["TypeScript"],
-          keywords: ["TypeScript"],
-        },
-        researchContext: {
-          companyNotes: [],
-          domainVocabulary: [],
-          priorityThemes: [],
-        },
-      });
-
-      expect(result.experienceEntries[0]?.bullets).toContain(canonicalBullet);
-      expect(result.fullText).not.toContain(fabricatedRewrite);
-      expect(result.generationQuality).toMatchObject({
-        strategy: "deterministic",
-        proposedRewriteCount: 1,
-        acceptedRewriteCount: 0,
-        rejectedRewriteCount: 1,
-      });
-    } finally {
-      restoreFetch();
-    }
-  });
-
   test("keeps fallback coverage entries when a model returns a partial experience list", async () => {
     const restoreFetch = mockJsonFetch({
       choices: [
@@ -878,10 +658,12 @@ describe("openai-compatible chat and draft behavior", () => {
       expect(
         result.experienceEntries.map((entry) => entry.profileRecordId),
       ).toEqual(["experience_frontend", "experience_dotnet"]);
+      // The model's wording for the role it wrote stands (ADR 0041); the
+      // role it left out keeps its saved entry.
       expect(result.experienceEntries[0]).toMatchObject({
         profileRecordId: "experience_frontend",
-        summary: "Builds React workflow products.",
-        bullets: ["Built React workflow products for hiring teams."],
+        summary: "Model kept only the newest role.",
+        bullets: ["Model bullet for newest role."],
       });
       expect(result.experienceEntries[1]).toMatchObject({
         profileRecordId: "experience_dotnet",
@@ -1107,10 +889,12 @@ describe("openai-compatible chat and draft behavior", () => {
         result.experienceEntries.map((entry) => entry.profileRecordId),
       ).not.toContain("fake_id");
       expect(result.experienceEntries[0]?.bullets).toEqual([
-        "Built React workflow products for hiring teams.",
+        "Model omitted id for newest role.",
       ]);
+      // The entry with an unknown id is matched to its role by title and
+      // employer; its wording stands like any other model line.
       expect(result.experienceEntries[1]?.bullets).toEqual([
-        "Improved API latency by 25% through cached .NET endpoints.",
+        "Model reordered older role first.",
       ]);
     } finally {
       restoreFetch();
@@ -1337,7 +1121,7 @@ describe("openai-compatible chat and draft behavior", () => {
         "Built modern workflow tooling.",
       ]);
       expect(result.experienceEntries[1]?.bullets).toEqual([
-        "Maintained legacy workflow tooling.",
+        "Model text for the older Orbit stint.",
       ]);
     } finally {
       restoreFetch();
@@ -1444,7 +1228,7 @@ describe("openai-compatible chat and draft behavior", () => {
         result.experienceEntries.map((entry) => entry.profileRecordId),
       ).toEqual(["experience_orbit_new", "experience_orbit_old"]);
       expect(result.experienceEntries[1]?.bullets).toEqual([
-        "Maintained legacy workflow tooling.",
+        "Model text for the older Orbit stint.",
       ]);
     } finally {
       restoreFetch();
@@ -1989,377 +1773,6 @@ describe("openai-compatible chat and draft behavior", () => {
       expect(Array.isArray(compactedPayload.relevantReviewItems)).toBe(true);
     } finally {
       fetchMock.restore();
-    }
-  });
-
-  test("aggressive mode accepts stack-aware inferred rewrites and flags them for review", async () => {
-    const inferredBullet =
-      "Implemented code-splitting and lazy loading in Next.js, cutting dashboard load time by 15%.";
-    const restoreFetch = mockJsonFetch({
-      choices: [
-        {
-          message: {
-            content: JSON.stringify({
-              experienceEntries: [
-                {
-                  profileRecordId: "experience_platform",
-                  bullets: [
-                    {
-                      text: inferredBullet,
-                      evidenceRefs: [
-                        "experience:experience_platform:achievement:0",
-                        "profile:skills",
-                      ],
-                      inferred: true,
-                    },
-                  ],
-                },
-              ],
-            }),
-          },
-        },
-      ],
-    });
-
-    try {
-      const client = createOpenAiCompatibleJobFinderAiClient({
-        apiKey: "test-key",
-        baseUrl: "https://example.com/v1",
-        model: "test-model",
-      });
-      const baseProfile = createProfile();
-      const result = await client.createResumeDraft({
-        profile: {
-          ...baseProfile,
-          skills: ["TypeScript", "Next.js"],
-          proofBank: [],
-          experiences: [
-            {
-              id: "experience_platform",
-              companyName: "Acme Labs",
-              companyUrl: null,
-              title: "Platform Engineer",
-              employmentType: null,
-              location: "Remote",
-              workMode: ["remote"],
-              startDate: "2022-01",
-              endDate: null,
-              isCurrent: true,
-              isDraft: false,
-              summary: "Built the customer dashboard.",
-              achievements: ["Made the customer dashboard 15% faster on load."],
-              skills: ["TypeScript", "Next.js"],
-              domainTags: [],
-              peopleManagementScope: null,
-              ownershipScope: null,
-            },
-          ],
-        },
-        searchPreferences: {
-          ...createPreferences(),
-          tailoringMode: "aggressive" as const,
-        },
-        settings: createSettings(),
-        job: {
-          ...createJobPosting(),
-          company: "ExampleCo",
-          keySkills: ["TypeScript", "Next.js"],
-        },
-        resumeText: "Resume text",
-        evidence: {
-          summary: [],
-          candidateSummary: [],
-          experience: [],
-          skills: ["TypeScript", "Next.js"],
-          keywords: ["TypeScript", "Next.js"],
-        },
-        researchContext: {
-          companyNotes: [],
-          domainVocabulary: [],
-          priorityThemes: [],
-        },
-      });
-
-      expect(result.experienceEntries[0]?.bullets).toContain(inferredBullet);
-      expect(result.fullText).toContain(inferredBullet);
-      expect(result.generationQuality).toMatchObject({
-        strategy: "evidence_linked",
-        acceptedRewriteCount: 1,
-      });
-      expect(result.notes).toContain(
-        "1 AI-inferred line came from aggressive tailoring. These lines are small, deliberate stretches of your saved evidence with one purpose: clearing the job's screening and earning you the first interview. They stay bounded to what your evidence implies you can actually do — evidenced years may round up by at most one toward the job's stated ask, technologies the job asks for may be added when your saved experience makes them credible — including technologies named only in qualifications — and the job's requested technologies also join your skills section. Proving each claim happens in the interview, and that is yours alone: review every inferred line and only approve ones you can stand behind.",
-      );
-    } finally {
-      restoreFetch();
-    }
-  });
-
-  test("aggressive mode accepts a years-rounded inferred proposal that balanced mode rejects", async () => {
-    const roundedBullet =
-      "Delivered resilient customer dashboard services across 9 years of professional TypeScript experience.";
-    const restoreFetch = mockJsonFetch({
-      choices: [
-        {
-          message: {
-            content: JSON.stringify({
-              experienceEntries: [
-                {
-                  profileRecordId: "experience_platform",
-                  bullets: [
-                    {
-                      text: roundedBullet,
-                      evidenceRefs: [
-                        "experience:experience_platform:achievement:0",
-                        "experience:experience_platform:skills",
-                        "profile:yearsExperience",
-                      ],
-                      inferred: true,
-                    },
-                  ],
-                },
-              ],
-            }),
-          },
-        },
-      ],
-    });
-
-    try {
-      const buildClient = () =>
-        createOpenAiCompatibleJobFinderAiClient({
-          apiKey: "test-key",
-          baseUrl: "https://example.com/v1",
-          model: "test-model",
-        });
-      const profile: CandidateProfile = {
-        ...createProfile(),
-        proofBank: [],
-        experiences: [
-          {
-            id: "experience_platform",
-            companyName: "Acme Labs",
-            companyUrl: null,
-            title: "Platform Engineer",
-            employmentType: null,
-            location: "Remote",
-            workMode: ["remote"],
-            startDate: "2022-01",
-            endDate: null,
-            isCurrent: true,
-            isDraft: false,
-            summary: "Built the customer dashboard.",
-            achievements: ["Made the customer dashboard 15% faster on load."],
-            skills: ["TypeScript", "Next.js"],
-            domainTags: [],
-            peopleManagementScope: null,
-            ownershipScope: null,
-          },
-        ],
-      };
-      const sharedDraftInput = {
-        profile,
-        settings: createSettings(),
-        job: {
-          ...createJobPosting(),
-          company: "ExampleCo",
-          description:
-            "Requires 9 years of professional TypeScript experience building customer dashboards.",
-          minimumQualifications: [
-            "9 years of professional TypeScript experience.",
-          ],
-          keySkills: ["TypeScript", "Next.js"],
-        },
-        resumeText: "Resume text",
-        evidence: {
-          summary: [],
-          candidateSummary: [],
-          experience: [],
-          skills: ["TypeScript", "Next.js"],
-          keywords: ["TypeScript", "Next.js"],
-        },
-        researchContext: {
-          companyNotes: [],
-          domainVocabulary: [],
-          priorityThemes: [],
-        },
-      };
-
-      const aggressive = await buildClient().createResumeDraft({
-        ...sharedDraftInput,
-        searchPreferences: {
-          ...createPreferences(),
-          tailoringMode: "aggressive" as const,
-        },
-      });
-      expect(aggressive.experienceEntries[0]?.bullets).toContain(roundedBullet);
-      expect(aggressive.generationQuality).toMatchObject({
-        strategy: "evidence_linked",
-        acceptedRewriteCount: 1,
-      });
-      expect(aggressive.notes).toEqual(
-        expect.arrayContaining([
-          expect.stringContaining("1 AI-inferred line came from"),
-        ]),
-      );
-
-      const balanced = await buildClient().createResumeDraft({
-        ...sharedDraftInput,
-        searchPreferences: {
-          ...createPreferences(),
-          tailoringMode: "balanced" as const,
-        },
-      });
-      expect(balanced.experienceEntries[0]?.bullets).not.toContain(
-        roundedBullet,
-      );
-      expect(balanced.generationQuality).toMatchObject({
-        strategy: "deterministic",
-        acceptedRewriteCount: 0,
-      });
-    } finally {
-      restoreFetch();
-    }
-  });
-
-  test("aggressive mode adds the job's requested technologies to the skills section", async () => {
-    const restoreFetch = mockJsonFetch({
-      choices: [{ message: { content: JSON.stringify({}) } }],
-    });
-
-    try {
-      const buildClient = () =>
-        createOpenAiCompatibleJobFinderAiClient({
-          apiKey: "test-key",
-          baseUrl: "https://example.com/v1",
-          model: "test-model",
-        });
-      const draftInput = {
-        profile: createProfile(),
-        settings: createSettings(),
-        job: {
-          ...createJobPosting(),
-          description:
-            "Mandatory Kubernetes experience for the customer platform.",
-          minimumQualifications: ["Kubernetes experience required."],
-          keySkills: ["TypeScript", "Kubernetes"],
-        },
-        resumeText: "Resume text",
-        evidence: {
-          summary: [],
-          candidateSummary: [],
-          experience: [],
-          skills: ["TypeScript"],
-          keywords: ["Kubernetes"],
-        },
-        researchContext: {
-          companyNotes: [],
-          domainVocabulary: [],
-          priorityThemes: [],
-        },
-      };
-
-      const aggressive = await buildClient().createResumeDraft({
-        ...draftInput,
-        searchPreferences: {
-          ...createPreferences(),
-          tailoringMode: "aggressive" as const,
-        },
-      });
-      expect(aggressive.coreSkills).toEqual(
-        expect.arrayContaining(["Kubernetes"]),
-      );
-      expect(aggressive.notes).toEqual(
-        expect.arrayContaining([expect.stringContaining("job-listing skill")]),
-      );
-
-      const balanced = await buildClient().createResumeDraft({
-        ...draftInput,
-        searchPreferences: {
-          ...createPreferences(),
-          tailoringMode: "balanced" as const,
-        },
-      });
-      expect(balanced.coreSkills).not.toEqual(
-        expect.arrayContaining(["Kubernetes"]),
-      );
-
-      // The line that says nothing could be verified has to name the skill
-      // that is nonetheless sitting in the draft, waiting to be confirmed.
-      expect(aggressive.generationProvenance?.detail).toContain("Kubernetes");
-      expect(aggressive.generationProvenance?.detail).toContain(
-        "confirm or remove",
-      );
-    } finally {
-      restoreFetch();
-    }
-  });
-
-  test("aggressive mode adds a qualification-only listing technology to the skills section", async () => {
-    const restoreFetch = mockJsonFetch({
-      choices: [{ message: { content: JSON.stringify({}) } }],
-    });
-
-    try {
-      const buildClient = () =>
-        createOpenAiCompatibleJobFinderAiClient({
-          apiKey: "test-key",
-          baseUrl: "https://example.com/v1",
-          model: "test-model",
-        });
-      const draftInput = {
-        profile: createProfile(),
-        settings: createSettings(),
-        job: {
-          ...createJobPosting(),
-          description:
-            "Build product interfaces for customer workflows with TypeScript.",
-          keySkills: ["TypeScript"],
-          minimumQualifications: [
-            "Hands-on experience with Terraform and CI/CD.",
-            "Practical knowledge of Terraform and Kubernetes.",
-          ],
-        },
-        resumeText: "Resume text",
-        evidence: {
-          summary: [],
-          candidateSummary: [],
-          experience: [],
-          skills: ["TypeScript"],
-          keywords: [],
-        },
-        researchContext: {
-          companyNotes: [],
-          domainVocabulary: [],
-          priorityThemes: [],
-        },
-      };
-
-      const aggressive = await buildClient().createResumeDraft({
-        ...draftInput,
-        searchPreferences: {
-          ...createPreferences(),
-          tailoringMode: "aggressive" as const,
-        },
-      });
-      expect(aggressive.coreSkills).toEqual(
-        expect.arrayContaining(["Terraform", "CI/CD", "Kubernetes"]),
-      );
-      expect(aggressive.coreSkills).not.toContain("Practical");
-      expect(aggressive.additionalSkills).not.toContain("Practical");
-      expect(aggressive.notes.join(" ")).toMatch(/Terraform/);
-
-      const balanced = await buildClient().createResumeDraft({
-        ...draftInput,
-        searchPreferences: {
-          ...createPreferences(),
-          tailoringMode: "balanced" as const,
-        },
-      });
-      expect(balanced.coreSkills).not.toEqual(
-        expect.arrayContaining(["Terraform"]),
-      );
-    } finally {
-      restoreFetch();
     }
   });
 

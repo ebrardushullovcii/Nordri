@@ -12,6 +12,7 @@ import {
   findResumeAssistantPatchesDroppedOnSave,
   listResumeLinesToConfirm,
 } from "./resume-assistant-conversation";
+import { fakeResumeClaimCheck } from "../workspace-service.test-runtimes";
 import { createSeed } from "../workspace-service.test-fixtures";
 
 const at = "2026-09-24T10:00:00.000Z";
@@ -178,8 +179,9 @@ describe("checkResumeAssistantProposal", () => {
     },
   });
 
-  test("a change that cannot be applied comes back as an apply error, not a crash", () => {
-    const result = checkResumeAssistantProposal({
+  test("a change that cannot be applied comes back as an apply error, not a crash", async () => {
+    const result = await checkResumeAssistantProposal({
+      aiClient: {},
       baselineDraft: draft,
       job,
       profile: undefined as never,
@@ -197,8 +199,11 @@ describe("checkResumeAssistantProposal", () => {
     expect(result.applyError).toContain("missing_section");
   });
 
-  test("a skill neither in the profile nor in the listing is reported as removed when saved", () => {
-    const profile = { ...createSeed().profile, skills: ["React", "TypeScript"] };
+  test("a skill the profile does not show stays when saved, and the fact check judges it", async () => {
+    const profile = {
+      ...createSeed().profile,
+      skills: ["React", "TypeScript"],
+    };
     const skillsDraft = ResumeDraftSchema.parse({
       ...draft,
       sections: [
@@ -230,30 +235,29 @@ describe("checkResumeAssistantProposal", () => {
       targetSectionId: "skills",
       newText: "Storybook",
     });
-    const typescript = patch({
-      id: "resume_patch_2",
-      operation: "insert_bullet",
-      targetSectionId: "skills",
-      newText: "TypeScript",
-    });
 
-    const dropped = findResumeAssistantPatchesDroppedOnSave({
-      baselineDraft: skillsDraft,
-      patches: [storybook, typescript],
-      job,
-      profile,
-    });
-
-    expect(dropped.map((entry) => entry.patchId)).toEqual(["resume_patch_1"]);
-    expect(dropped[0]?.message).toContain('"Storybook" would be removed when the resume is saved');
     expect(
-      checkResumeAssistantProposal({
+      findResumeAssistantPatchesDroppedOnSave({
         baselineDraft: skillsDraft,
         patches: [storybook],
         job,
         profile,
-      }).droppedOnSave?.map((entry) => entry.patchId),
-    ).toEqual(["resume_patch_1"]);
+      }),
+    ).toEqual([]);
+    const checked = await checkResumeAssistantProposal({
+      aiClient: {
+        checkResumeClaims: fakeResumeClaimCheck({ Storybook: "unsupported" }),
+      },
+      baselineDraft: skillsDraft,
+      patches: [storybook],
+      job,
+      profile,
+    });
+    expect(
+      checked.findings.flatMap((finding) =>
+        finding.flaggedText ? [finding.flaggedText] : [],
+      ),
+    ).toEqual(["Storybook"]);
   });
 });
 

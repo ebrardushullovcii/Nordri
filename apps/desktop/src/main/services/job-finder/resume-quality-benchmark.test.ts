@@ -491,7 +491,14 @@ describe("desktop resume quality benchmark", () => {
         (entry) => entry.definition.canary,
       ).length * 8,
     );
-    expect(report.aggregate.groundedVisibleSkillRate).toBe(1);
+    // The contamination case injects skills the person does not have; no
+    // rule strips them any more (ADR 0041), so only the other cases are fully
+    // grounded.
+    for (const result of report.cases) {
+      if (result.caseId !== "contamination_guard") {
+        expect(result.metrics.groundedVisibleSkillRate).toBe(1);
+      }
+    }
     expect(report.aggregate.workHistoryRepresentationRate).toBe(1);
     expect(report.aggregate.visibleWorkHistoryCoverageRate).toBe(1);
     expect(report.aggregate.fragmentFreeExperienceBulletRate).toBe(1);
@@ -513,23 +520,6 @@ describe("desktop resume quality benchmark", () => {
       report.cases.every((entry) => entry.generationDiagnostics === null),
     ).toBe(true);
     expect(report.notes).toEqual([]);
-  }, 10_000);
-
-  test("keeps contamination guard cases free of visible skill bleed after sanitation", async () => {
-    const report = await runDesktopResumeQualityBenchmark({
-      benchmarkVersion: "023-test-benchmark-v1",
-      caseIds: ["contamination_guard"],
-    });
-
-    expect(report.cases).toHaveLength(8);
-    for (const result of report.cases) {
-      expect(result.visibleSkills).toEqual(expect.arrayContaining(["Figma"]));
-      expect(result.visibleSkills).not.toContain("Signal Systems");
-      expect(result.visibleSkills).not.toContain("Greenhouse");
-      expect(result.visibleSkills).not.toContain("Remote-first collaboration");
-      expect(result.metrics.groundedVisibleSkillRate).toBe(1);
-      expect(result.metrics.bleedFreeCaseRate).toBe(1);
-    }
   }, 10_000);
 
   test("keeps thin profile cases ATS-safe while retaining the thin-output fail-closed gate", async () => {
@@ -594,8 +584,9 @@ describe("desktop resume quality benchmark", () => {
 
     expect(report.cases).toHaveLength(16);
 
+    // Without a model in this run, composed lines are not fact-checked and
+    // wait for the person (ADR 0041), so issue-free is not asserted here.
     for (const result of report.cases) {
-      expect(result.metrics.issueFreeCaseRate).toBe(1);
       expect(result.metrics.atsRenderPassRate).toBe(1);
       expect(result.metrics.groundedVisibleSkillRate).toBe(1);
       expect(result.visibleSkills.length).toBeGreaterThan(0);
@@ -639,7 +630,6 @@ describe("desktop resume quality benchmark", () => {
       expect(result.metrics.fragmentFreeExperienceBulletRate).toBe(1);
       expect(result.metrics.professionalExperienceSummaryRate).toBe(1);
       expect(result.metrics.atsRenderPassRate).toBe(1);
-      expect(result.metrics.bleedFreeCaseRate).toBe(1);
       expect(result.issueCategories).not.toContain("thin_output");
     }
 

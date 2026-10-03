@@ -162,6 +162,26 @@ export function createAiClient() {
   );
 }
 
+/**
+ * A stand-in for the model's resume fact check (ADR 0041): each line gets the
+ * verdict the test names for its exact text, and "supported" otherwise.
+ */
+export function fakeResumeClaimCheck(
+  verdicts: Readonly<
+    Record<string, "supported" | "stretch" | "unsupported">
+  > = {},
+): NonNullable<JobFinderAiClient["checkResumeClaims"]> {
+  return (input) =>
+    Promise.resolve(
+      input.claims.map((claim) => ({
+        id: claim.id,
+        verdict: verdicts[claim.text.trim()] ?? "supported",
+        reason: "Test verdict.",
+        evidenceIds: [],
+      })),
+    );
+}
+
 export function createAgentAiClient() {
   const fallbackClient = createDeterministicJobFinderAiClient(
     "Tests use the deterministic fallback agent.",

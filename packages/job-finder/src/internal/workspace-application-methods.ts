@@ -51,6 +51,7 @@ import {
   JobFinderSetResumeClaimConfirmationInputSchema,
   isResumeClaimAssessmentApprovable,
   isBlockingResumeClaimAssessment,
+  isCurrentResumeClaimVerifier,
   resumeClaimOwnershipStatement,
   buildResumeIssueApprovalContentHash,
   matchResumeIssueApproval,
@@ -149,7 +150,6 @@ import {
   collectResearchContext,
   collectResumeWorkspaceEvidence,
   buildResumeProposalReplyContent,
-  evaluateResumeProposalGrounding,
   isWorkHistoryOmissionReviewSuggestion,
   hasBlockingResumeClaimAssessment,
   matchWorkHistoryReviewAcknowledgment,
@@ -158,6 +158,7 @@ import {
   sanitizeResumeDraft,
   validateResumeDraft,
 } from "./resume-workspace-helpers";
+import { evaluateCheckedResumeProposalGrounding } from "./resume-claim-checks";
 import {
   buildResumeWorkspace,
   buildWorkHistoryReviewSuggestionsFromValidation,
@@ -167,6 +168,7 @@ import {
   previewResumeDraft,
   renderDraftToPdf,
   resolveEffectiveResumeTailoringStrengthForJob,
+  sanitizeAndCheckResumeDraft,
   assertResumeProfileRevisionCurrent,
   buildOriginalResumeAssistantReply,
 } from "./workspace-application-resume-support";
@@ -3594,7 +3596,7 @@ export function createWorkspaceApplicationMethods(
             );
           }
           const previewAt = new Date().toISOString();
-          const previewResumeDraft = sanitizeResumeDraft({
+          const previewResumeDraft = await sanitizeAndCheckResumeDraft(ctx, {
             draft: buildResumeDraftFromTailoredDraft({
               job,
               templateId: template.id,
@@ -3632,10 +3634,18 @@ export function createWorkspaceApplicationMethods(
             pageCount: rendered.pageCount ?? null,
             validatedAt: previewAt,
           });
+          // A stretch is the person's call only in aggressive tailoring
+          // (ADR 0018); in the other modes the writer grounds it or drops it.
+          const stretchesAreThePersons =
+            effectiveTailoringMode === "aggressive";
           const personConfirmationAssessmentIds = new Set(
-            previewValidation.claimAssessments
-              .filter((assessment) => assessment.status === "confirm_needed")
-              .map((assessment) => assessment.id),
+            stretchesAreThePersons
+              ? previewValidation.claimAssessments
+                  .filter(
+                    (assessment) => assessment.status === "confirm_needed",
+                  )
+                  .map((assessment) => assessment.id)
+              : [],
           );
           return {
             templateId: template.id,
@@ -3653,9 +3663,7 @@ export function createWorkspaceApplicationMethods(
                   )
                 ),
             ),
-            personConfirmationCount: previewValidation.claimAssessments.filter(
-              (assessment) => assessment.status === "confirm_needed",
-            ).length,
+            personConfirmationCount: personConfirmationAssessmentIds.size,
           };
         },
       });
@@ -3718,7 +3726,7 @@ export function createWorkspaceApplicationMethods(
                 ? job.title
                 : undefined,
       });
-      const sanitizedResumeDraft = sanitizeResumeDraft({
+      const sanitizedResumeDraft = await sanitizeAndCheckResumeDraft(ctx, {
         draft: resumeDraft,
         job,
         profile,
@@ -4017,6 +4025,7 @@ export function createWorkspaceApplicationMethods(
       researchContext: collectResearchContext(research),
       checkProposal: (patches) =>
         checkResumeAssistantProposal({
+          aiClient: ctx.aiClient,
           baselineDraft: draft,
           patches,
           job: state.job,
@@ -4081,13 +4090,16 @@ export function createWorkspaceApplicationMethods(
       approvalBlockers: ResumeProposalApprovalBlocker[];
     };
     try {
-      sectionProposalGate = evaluateResumeProposalGrounding({
-        baselineDraft: draft,
-        patches: reviewablePatches,
-        job: state.job,
-        profile: state.profile,
-        evaluatedAt: proposedAt,
-      });
+      sectionProposalGate = await evaluateCheckedResumeProposalGrounding(
+        { aiClient: ctx.aiClient, tailoringStrength },
+        {
+          baselineDraft: draft,
+          patches: reviewablePatches,
+          job: state.job,
+          profile: state.profile,
+          evaluatedAt: proposedAt,
+        },
+      );
     } catch {
       // An unappliable patch is never presented as a reviewable proposal.
       await ctx.repository.upsertResumeAssistantMessage(
@@ -4741,7 +4753,7 @@ export function createWorkspaceApplicationMethods(
             : null,
           updatedAt: now,
         });
-        const sanitizedDraft = sanitizeResumeDraft({
+        const sanitizedDraft = await sanitizeAndCheckResumeDraft(ctx, {
           draft: nextDraft,
           job,
           profile,
@@ -4834,7 +4846,7 @@ export function createWorkspaceApplicationMethods(
       // pre-sanitize target snapshot bytes: sanitization here is what keeps the
       // restored current draft, its validation, and the revision afterHash
       // describing identical content.
-      const restoredDraft = sanitizeResumeDraft({
+      const restoredDraft = await sanitizeAndCheckResumeDraft(ctx, {
         draft: ResumeDraftSchema.parse({
           ...targetRevision.snapshotDraft,
           id: state.draft.id,
@@ -4936,7 +4948,7 @@ export function createWorkspaceApplicationMethods(
       }
 
       const undoneAt = createMonotonicTimestamp(state.draft.updatedAt);
-      const undoneDraft = sanitizeResumeDraft({
+      const undoneDraft = await sanitizeAndCheckResumeDraft(ctx, {
         draft: ResumeDraftSchema.parse({
           ...buildDraftWithoutAssistantEdit({
             before: targetRevision.snapshotDraft,
@@ -5045,7 +5057,7 @@ export function createWorkspaceApplicationMethods(
         // draft. Persisted drafts are saved sanitized, so sanitization must be
         // content-neutral here; otherwise grounding drifted after the last
         // save and exporting would bind claims the PDF does not contain.
-        const exportDraft = sanitizeResumeDraft({
+        const exportDraft = await sanitizeAndCheckResumeDraft(ctx, {
           draft,
           job,
           profile,
@@ -5571,7 +5583,7 @@ export function createWorkspaceApplicationMethods(
               assessment.sectionId === issue.sectionId &&
               (assessment.entryId ?? null) === (issue.entryId ?? null) &&
               (assessment.bulletId ?? null) === (issue.bulletId ?? null) &&
-              assessment.verifier === "deterministic_candidate_evidence_v2" &&
+              isCurrentResumeClaimVerifier(assessment.verifier) &&
               isResumeClaimAssessmentApprovable(assessment) &&
               isBlockingResumeClaimAssessment({
                 assessment,
@@ -5675,7 +5687,7 @@ export function createWorkspaceApplicationMethods(
               "This claim is no longer projected for the current draft or its wording changed since it was reviewed. Reload the workspace and confirm the current claim text.",
             );
           }
-          if (assessment.verifier !== "deterministic_candidate_evidence_v2") {
+          if (!isCurrentResumeClaimVerifier(assessment.verifier)) {
             throw new Error(
               "This claim assessment predates the current verifier and must be revalidated before it can be confirmed.",
             );
@@ -5824,7 +5836,7 @@ export function createWorkspaceApplicationMethods(
           patch: parsedPatch,
           updatedAt,
         });
-        const sanitizedDraft = sanitizeResumeDraft({
+        const sanitizedDraft = await sanitizeAndCheckResumeDraft(ctx, {
           draft: nextDraft,
           job: state.job,
           profile: state.profile,
@@ -5954,6 +5966,7 @@ export function createWorkspaceApplicationMethods(
         // the person a proposal that blocks approval.
         checkProposal: (patches) =>
           checkResumeAssistantProposal({
+            aiClient: ctx.aiClient,
             baselineDraft: workspaceState.draft,
             patches,
             job: workspaceState.job,
@@ -6058,13 +6071,16 @@ export function createWorkspaceApplicationMethods(
         approvalBlockers: ResumeProposalApprovalBlocker[];
       };
       try {
-        proposalGate = evaluateResumeProposalGrounding({
-          baselineDraft: workspaceState.draft,
-          patches: reviewablePatches,
-          job: workspaceState.job,
-          profile: workspaceState.profile,
-          evaluatedAt: assistantMessageTimestamp,
-        });
+        proposalGate = await evaluateCheckedResumeProposalGrounding(
+          { aiClient: ctx.aiClient },
+          {
+            baselineDraft: workspaceState.draft,
+            patches: reviewablePatches,
+            job: workspaceState.job,
+            profile: workspaceState.profile,
+            evaluatedAt: assistantMessageTimestamp,
+          },
+        );
       } catch (error) {
         const failureDetail =
           error instanceof Error
@@ -6184,7 +6200,7 @@ export function createWorkspaceApplicationMethods(
           const finalUpdatedAt = createMonotonicTimestamp(
             candidateDraft.updatedAt,
           );
-          const sanitizedDraft = sanitizeResumeDraft({
+          const sanitizedDraft = await sanitizeAndCheckResumeDraft(ctx, {
             draft: candidateDraft,
             job: workspaceState.job,
             profile: workspaceState.profile,

@@ -739,4 +739,35 @@ describe("openai compatible request compaction for grounded resume generation", 
     expect(grounded.groundingEvidence?.items).toHaveLength(32);
     expect(grounded.groundingEvidence?.compaction).toBeUndefined();
   });
+
+  test("sends every job, claim and evidence entry of a pre-sized call that fits", () => {
+    const jobs = Array.from({ length: 20 }, (_, index) => ({
+      jobId: `job_${index + 1}`,
+      title: `Role ${index + 1}`,
+    }));
+    const judged = compactOpenAiCompatibleUserPayload({
+      operation: "judgeJobFits",
+      modelContextWindowTokens: 128_000,
+      systemPrompt: SYSTEM_PROMPT,
+      userPayload: { jobs },
+    }) as { jobs: unknown[] };
+    expect(judged.jobs).toHaveLength(20);
+
+    const evidence = Array.from({ length: 42 }, (_, index) => ({
+      id: `evidence_${index + 1}`,
+      text: `Saved fact ${index + 1}.`,
+    }));
+    const claims = Array.from({ length: 30 }, (_, index) => ({
+      id: `line_${index + 1}`,
+      text: `Resume line ${index + 1}.`,
+    }));
+    const checked = compactOpenAiCompatibleUserPayload({
+      operation: "checkResumeClaims",
+      modelContextWindowTokens: 128_000,
+      systemPrompt: SYSTEM_PROMPT,
+      userPayload: { evidence, claims },
+    }) as { evidence: unknown[]; claims: unknown[] };
+    expect(checked.evidence).toHaveLength(42);
+    expect(checked.claims).toHaveLength(30);
+  });
 });

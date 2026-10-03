@@ -50,6 +50,7 @@ export type OpenAiCompatibleJsonOperation =
   | "tailorResume"
   | "assessJobFit"
   | "judgeJobFits"
+  | "checkResumeClaims"
   | "extractJobsFromPage";
 
 // Declared as a type alias (not an interface) so the shape carries an
@@ -543,6 +544,7 @@ function responseHeadroomTokensForOperation(
     case "createResumeDraft":
     case "tailorResume":
     case "judgeJobFits":
+    case "checkResumeClaims":
       return 4_096;
     case "reviseResumeDraft":
     case "reviseCandidateProfile":
@@ -610,6 +612,10 @@ function withGroundingEvidenceCompactionMetadata(
   };
 }
 
+const PRESIZED_OPERATIONS: ReadonlySet<OpenAiCompatibleJsonOperation> = new Set(
+  ["extractJobsFromPage", "judgeJobFits", "checkResumeClaims"],
+);
+
 export function compactOpenAiCompatibleUserPayload(input: {
   operation: OpenAiCompatibleJsonOperation;
   modelContextWindowTokens: number | null;
@@ -627,17 +633,16 @@ export function compactOpenAiCompatibleUserPayload(input: {
   const charBudget = computeUserPayloadCharBudget(input);
   const originalSize = estimateSerializedLength(parsedPayload.data);
 
-  // Only extractJobsFromPage skips normalization entirely while within
-  // budget. Grounded resume generation requests always normalize through
-  // the level-one field bounds so oversized individual fields (for example
-  // a long targetJob description) stay lean even when the total payload
-  // fits; candidate-safe evidence anchoring engages only under omission
-  // pressure, and payloads already within every level-one bound pass
-  // through unchanged.
-  if (
-    input.operation === "extractJobsFromPage" &&
-    originalSize <= charBudget
-  ) {
+  // Operations whose payload builders already size every list skip
+  // normalization while within budget: the level-one array bounds would
+  // otherwise drop the jobs, claims or evidence entries past the twelfth
+  // that the call was built to send. Grounded resume generation requests
+  // always normalize through the level-one field bounds so oversized
+  // individual fields (for example a long targetJob description) stay lean
+  // even when the total payload fits; candidate-safe evidence anchoring
+  // engages only under omission pressure, and payloads already within every
+  // level-one bound pass through unchanged.
+  if (PRESIZED_OPERATIONS.has(input.operation) && originalSize <= charBudget) {
     return parsedPayload.data;
   }
 

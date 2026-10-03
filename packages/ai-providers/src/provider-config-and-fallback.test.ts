@@ -686,51 +686,6 @@ describe("ai provider config and fallback behavior", () => {
     }
   });
 
-  test("keeps listing-asked skills on an aggressive draft when the model call fails", async () => {
-    const errorSpy = vi
-      .spyOn(console, "error")
-      .mockImplementation(() => undefined);
-    const restoreFetch = mockRejectedFetch(new Error("upstream draft failure"));
-
-    try {
-      const client =
-        createJobFinderAiClientFromEnvironment(createEnvironment());
-      const result = await client.createResumeDraft({
-        profile: createProfile(),
-        searchPreferences: {
-          ...createPreferences(),
-          tailoringMode: "aggressive",
-        },
-        settings: createSettings(),
-        job: {
-          ...createJobPosting(),
-          description: [
-            "Own the payments reconciliation service end to end.",
-            "Design ledger invariants, instrument settlement dashboards,",
-            "run incident response, and mentor two backend engineers.",
-            Array.from({ length: 40 }, (_, index) => `duty ${index}`).join(" "),
-          ].join(" "),
-          keySkills: ["TypeScript"],
-          minimumQualifications: ["Hands-on experience with Terraform."],
-        },
-        resumeText: "Resume text",
-      });
-
-      expect(result.generationProvenance).toMatchObject({
-        method: "deterministic",
-        reason: "provider_failed",
-      });
-      expect(result.coreSkills).toEqual(expect.arrayContaining(["Terraform"]));
-      expect(result.notes.join(" ")).toMatch(/Terraform/);
-      expect(result.notes).toContain(
-        "Fell back to the deterministic resume draft creator after the model call failed.",
-      );
-    } finally {
-      restoreFetch();
-      errorSpy.mockRestore();
-    }
-  });
-
   test("does not add listing-only skills on provider failure when a conservative strategy is selected", async () => {
     const errorSpy = vi
       .spyOn(console, "error")

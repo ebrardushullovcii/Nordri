@@ -1242,59 +1242,6 @@ describe("createJobFinderWorkspaceService", () => {
     ).toBeLessThanOrEqual(1);
   });
 
-  test("removes company and job-only phrases from visible skill sections", async () => {
-    const { workspaceService } = createWorkspaceServiceHarness({
-      aiClient: {
-        ...createAiClient(),
-        createResumeDraft(input) {
-          return Promise.resolve({
-            label: "Tailored Resume",
-            summary: "Grounded systems summary.",
-            experienceHighlights: ["Built resilient workflow tooling."],
-            coreSkills: ["Figma", "Signal Systems", "Design Systems"],
-            targetedKeywords: ["Design Systems", "Workflow platform"],
-            experienceEntries: input.profile.experiences
-              .slice(0, 1)
-              .map((experience) => ({
-                title: experience.title,
-                employer: experience.companyName,
-                location: experience.location,
-                dateRange: "2020-01 – Present",
-                summary: experience.summary,
-                bullets: experience.achievements,
-                profileRecordId: experience.id,
-              })),
-            projectEntries: [],
-            educationEntries: [],
-            certificationEntries: [],
-            coverageMetadata: [],
-            additionalSkills: ["Remote-first collaboration", "Figma"],
-            languages: [],
-            fullText: "placeholder",
-            compatibilityScore: 92,
-            notes: ["Injected by test AI client."],
-          });
-        },
-      },
-    });
-
-    await workspaceService.generateResume("job_ready");
-    const workspace = await workspaceService.getResumeWorkspace("job_ready");
-    const skillBullets = workspace.draft.sections
-      .filter((section) => section.kind === "skills")
-      .flatMap((section) =>
-        section.bullets
-          .filter((bullet) => bullet.included)
-          .map((bullet) => bullet.text),
-      );
-
-    expect(skillBullets).toEqual(
-      expect.arrayContaining(["Figma", "Design Systems"]),
-    );
-    expect(skillBullets).not.toContain("Signal Systems");
-    expect(skillBullets).not.toContain("Remote-first collaboration");
-  });
-
   test("fails assistant edits as a batch when one patch targets missing content", async () => {
     const baseAiClient = createAiClient();
     const { workspaceService } = createWorkspaceServiceHarness({

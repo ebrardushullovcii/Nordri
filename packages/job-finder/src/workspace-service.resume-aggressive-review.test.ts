@@ -1,6 +1,9 @@
 import { describe, expect, test } from "vitest";
 import { completeTailoredResumeDraft } from "@nordri/ai-providers";
-import { createAiClient } from "./workspace-service.test-runtimes";
+import {
+  createAiClient,
+  fakeResumeClaimCheck,
+} from "./workspace-service.test-runtimes";
 import {
   createWorkspaceServiceHarness,
   createSeed,
@@ -50,6 +53,7 @@ describe("aggressive resume review routing", () => {
       seed,
       aiClient: {
         ...baseAiClient,
+        checkResumeClaims: fakeResumeClaimCheck({ Terraform: "stretch" }),
         createResumeDraft(input) {
           return Promise.resolve(
             completeTailoredResumeDraft(
@@ -339,6 +343,7 @@ describe("aggressive resume review routing", () => {
       seed,
       aiClient: {
         ...baseAiClient,
+        checkResumeClaims: fakeResumeClaimCheck({ Terraform: "stretch" }),
         async createResumeDraft(input) {
           const draft = await baseAiClient.createResumeDraft(input);
           const preview = await input.renderPreview?.({

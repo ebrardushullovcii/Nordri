@@ -261,6 +261,8 @@ export type ResumeClaimEvidenceRef = z.infer<
 export const resumeClaimVerifierValues = [
   "deterministic_candidate_evidence_v1",
   "deterministic_candidate_evidence_v2",
+  /** The model read the line against the candidate's evidence (ADR 0041). */
+  "model_fact_check_v1",
 ] as const;
 export const ResumeClaimVerifierSchema = z.enum(resumeClaimVerifierValues);
 export type ResumeClaimVerifier = z.infer<typeof ResumeClaimVerifierSchema>;
@@ -684,6 +686,22 @@ export const WorkHistoryReviewAcknowledgmentsFieldSchema = z
   .max(100)
   .default([]);
 
+/**
+ * The model's verdict on one resume line, kept with the draft so every check
+ * of the same wording reuses it (ADR 0041). Keyed by the normalized-content
+ * hash; reworded lines are checked again.
+ */
+export const ResumeClaimCheckSchema = z.object({
+  contentHash: NonEmptyStringSchema,
+  verdict: z.enum(["supported", "stretch", "unsupported"]),
+  reason: z.string().default(""),
+  evidenceIds: z.array(NonEmptyStringSchema).default([]),
+  /** Fingerprint of the evidence it was checked against; a change re-checks. */
+  evidenceKey: NonEmptyStringSchema.nullable().default(null),
+  checkedAt: IsoDateTimeSchema,
+});
+export type ResumeClaimCheck = z.infer<typeof ResumeClaimCheckSchema>;
+
 export const ResumeDraftSchema = z.object({
   id: NonEmptyStringSchema,
   jobId: NonEmptyStringSchema,
@@ -699,6 +717,7 @@ export const ResumeDraftSchema = z.object({
   workHistoryReviewAcknowledgments: WorkHistoryReviewAcknowledgmentsFieldSchema,
   claimConfirmations: ResumeClaimConfirmationsFieldSchema,
   issueApprovals: ResumeIssueApprovalsFieldSchema,
+  claimChecks: z.array(ResumeClaimCheckSchema).optional(),
   createdAt: IsoDateTimeSchema,
   updatedAt: IsoDateTimeSchema,
 });
@@ -816,6 +835,20 @@ export function isBlockingResumeValidationIssue(
   return issue.severity === "error";
 }
 
+/**
+ * Whether an assessment comes from a verifier whose verdicts still stand:
+ * the model's fact check, or the last deterministic verifier for claims
+ * assessed before it (ADR 0041). Older verdicts must be checked again.
+ */
+export function isCurrentResumeClaimVerifier(
+  verifier: ResumeClaimVerifier,
+): boolean {
+  return (
+    verifier === "model_fact_check_v1" ||
+    verifier === "deterministic_candidate_evidence_v2"
+  );
+}
+
 export function isGeneratedResumeClaimOrigin(
   origin: ResumeDraftOrigin,
 ): boolean {
@@ -854,7 +887,7 @@ export function isBlockingResumeClaimAssessment(input: {
 }): boolean {
   const assessment = input.assessment;
 
-  if (assessment.verifier !== "deterministic_candidate_evidence_v2") {
+  if (!isCurrentResumeClaimVerifier(assessment.verifier)) {
     return (
       isGeneratedResumeClaimOrigin(assessment.claimOrigin) ||
       assessment.status === "unsupported"
@@ -900,7 +933,7 @@ export function isResumeClaimAssessmentApprovable(
     "claimOrigin" | "status" | "verifier"
   >,
 ): boolean {
-  if (assessment.verifier !== "deterministic_candidate_evidence_v2") {
+  if (!isCurrentResumeClaimVerifier(assessment.verifier)) {
     return false;
   }
   return (
