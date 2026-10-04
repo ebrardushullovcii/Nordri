@@ -1,5 +1,6 @@
 import {
   ApplicationAnswerRecordSchema,
+  compareApplicationAnswerRecency,
   ApplicationQuestionRecordSchema,
   GroupedDecisionJobLineageSchema,
   GroupedManualAnswerDecisionSchema,
@@ -45,8 +46,7 @@ export function areSameGroupedManualAnswerDecisions(
 }
 
 /**
- * Latest persisted answer record for a question by revision. Answer revisions
- * are unique per question, so ties cannot occur in a well-formed store.
+ * Latest persisted answer record, including legacy revision ties.
  */
 export function latestApplicationAnswerRecord(
   records: readonly ApplicationAnswerRecord[],
@@ -55,7 +55,10 @@ export function latestApplicationAnswerRecord(
   let latest: ApplicationAnswerRecord | null = null;
   for (const record of records) {
     if (record.questionId !== questionId) continue;
-    if (latest === null || record.revision > latest.revision) {
+    if (
+      latest === null ||
+      compareApplicationAnswerRecency(record, latest) < 0
+    ) {
       latest = record;
     }
   }

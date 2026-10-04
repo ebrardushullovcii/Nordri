@@ -2,6 +2,8 @@ import {
   ApplicationAttemptSchema,
   ApplicationAttemptBlockerSchema,
   ApplicationRecordSchema,
+  ApplicationAnswerRecordSchema,
+  ApplicationQuestionRecordSchema,
   ApplyJobResultSchema,
   ApplyRunSchema,
   ApplyExecutionResultSchema,
@@ -2927,6 +2929,148 @@ describe("application login UserActionRequest adoption", () => {
     expect(snapshot.applyJobResults[0]?.latestCheckpointId).toBe(
       "checkpoint_replaced_elsewhere",
     );
+  });
+
+  test("continuing a new attempt uses this application's earlier currency instead of a library-seeded copy", async () => {
+    const seed = createSeed();
+    seed.settings.resumeApplicationMode = "original_resume";
+    seed.profile.baseResume.storagePath = "/tmp/synthetic-resume.pdf";
+    const baseRuntime = createBrowserRuntime();
+    let executionCount = 0;
+    const executeApplicationFlow = vi.fn(
+      async (
+        source: Parameters<typeof baseRuntime.executeApplicationFlow>[0],
+        input: Parameters<typeof baseRuntime.executeApplicationFlow>[1],
+      ) => {
+        const base = await baseRuntime.executeApplicationFlow(source, input);
+        executionCount += 1;
+        return executionCount === 1
+          ? ApplyExecutionResultSchema.parse({
+              ...base,
+              state: "paused",
+              questions: [
+                {
+                  id: "authorization",
+                  prompt: "Are you authorized to work here?",
+                  kind: "work_authorization",
+                  isRequired: true,
+                  detectedAt: "2026-10-01T10:00:00.000Z",
+                  status: "detected",
+                },
+              ],
+              blocker: {
+                code: "missing_candidate_answer",
+                userActionKind: "manual_answer",
+                summary: "Answer work authorization",
+                detail: "Answer this question",
+                questionIds: ["authorization"],
+                sourceDebugEvidenceRefIds: [],
+                url: input.job.applicationUrl ?? input.job.canonicalUrl,
+              },
+            })
+          : base;
+      },
+    );
+    const harness = createWorkspaceServiceHarness({
+      seed,
+      browserRuntime: { ...baseRuntime, executeApplicationFlow },
+    });
+    const blocked =
+      await harness.workspaceService.startApplyCopilotRun("job_ready");
+    const request = blocked.userActionRequests[0]!;
+    if (
+      request.scope.type !== "application" ||
+      !request.scope.applicationRecordId ||
+      !request.scope.resultId
+    )
+      throw new Error("Expected an application request");
+    const scope = request.scope;
+    const currencyId = `apply_question_${scope.applicationRecordId}_currency`;
+    const own = ApplicationAnswerRecordSchema.parse({
+      id: "own_previous_currency",
+      runId: "previous_run",
+      resultId: "previous_result",
+      jobId: scope.jobId,
+      applicationRecordId: scope.applicationRecordId,
+      questionId: currencyId,
+      revision: 1,
+      status: "filled",
+      text: "GBP",
+      value: { type: "text", value: "GBP" },
+      sourceKind: "user",
+      sourceId: "previous_manual_request",
+      createdAt: "2026-10-01T09:00:00.000Z",
+    });
+    const library = ApplicationAnswerRecordSchema.parse({
+      ...own,
+      id: "seeded_other_currency",
+      runId: scope.runId,
+      resultId: scope.resultId,
+      revision: 2,
+      status: "suggested",
+      text: "EUR",
+      value: { type: "text", value: "EUR" },
+      sourceId: "answerLibrary.other_job_currency",
+      createdAt: "2026-10-01T10:00:00.000Z",
+    });
+    await harness.repository.upsertApplicationAnswerRecord(own);
+    await harness.repository.upsertApplicationAnswerRecord(library);
+    await harness.repository.upsertApplicationQuestionRecord(
+      ApplicationQuestionRecordSchema.parse({
+        id: currencyId,
+        runId: scope.runId,
+        resultId: scope.resultId,
+        jobId: scope.jobId,
+        applicationRecordId: scope.applicationRecordId,
+        prompt: "Currency",
+        kind: "salary_expectation",
+        isRequired: false,
+        detectedAt: "2026-10-01T10:00:00.000Z",
+        selectedAnswerId: library.id,
+        status: "detected",
+      }),
+    );
+    await harness.repository.commitProfileUpdate((profile) => ({
+      ...profile,
+      answerBank: {
+        ...profile.answerBank,
+        customAnswers: [
+          {
+            id: "other_job_currency",
+            question: "Currency",
+            label: "Currency",
+            kind: "other",
+            answer: "EUR",
+            roleFamilies: [],
+            proofEntryIds: [],
+          },
+        ],
+      },
+    }));
+    const question = (
+      await harness.repository.listApplicationQuestionRecords()
+    ).find((entry) => entry.prompt === "Are you authorized to work here?")!;
+    await harness.workspaceService.performUserAction({
+      commandId: "continue_with_own_currency",
+      answer: "Yes",
+      requestId: request.id,
+      expectedRevision: request.revision,
+      action: "submit_manual_answer",
+      answers: [{ questionId: question.id, answer: "Yes" }],
+      saveForFuture: false,
+      credentialsPolicy: "browser_only",
+      submitAuthorized: false,
+      accountCreationAuthorized: false,
+    });
+    expect(executeApplicationFlow).toHaveBeenCalledTimes(2);
+    const continued = executeApplicationFlow.mock.calls[1]![1];
+    const currency = continued.profile.answerBank.customAnswers.find(
+      (entry) => entry.question === "Currency",
+    );
+    expect(currency?.answer).toBe("GBP");
+    expect(currency?.id).toContain("application_");
+    expect(continued.instructions).toContain('Answer to "Currency": GBP');
+    expect(continued.instructions).not.toContain('Answer to "Currency": EUR');
   });
 
   test("retries with the exact persisted manual answer and remains restart-idempotent", async () => {

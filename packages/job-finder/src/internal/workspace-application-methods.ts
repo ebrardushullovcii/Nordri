@@ -1,3 +1,4 @@
+import { mergeApplicationAnswersIntoExecutionProfile } from "./workspace-application-answer-execution";
 import {
   describeApplicationPreparation,
   hasVerifiedApplicationSubmission,
@@ -2345,7 +2346,17 @@ export function createWorkspaceApplicationMethods(
             applicationPageBindingKey: activeResultIdRun,
             job,
             resumeArtifact,
-            profile: browserProfile.profile,
+            profile: mergeApplicationAnswersIntoExecutionProfile({
+              profile: browserProfile.profile,
+              questionRecords:
+                await ctx.repository.listApplicationQuestionRecords({
+                  applicationRecordId: exactApplicationRecordId,
+                }),
+              answerRecords: await ctx.repository.listApplicationAnswerRecords({
+                applicationRecordId: exactApplicationRecordId,
+              }),
+              idPrefix: `application_${exactApplicationRecordId}`,
+            }),
             ...(applicationAttachmentsRun.length > 0
               ? { applicationAttachments: applicationAttachmentsRun }
               : {}),
@@ -2464,6 +2475,10 @@ export function createWorkspaceApplicationMethods(
             replay,
           };
           const runArtifacts = buildApplyCopilotArtifacts({
+            existingAnswerRecords:
+              await ctx.repository.listApplicationAnswerRecords({
+                applicationRecordId: exactApplicationRecordId,
+              }),
             applicationRecordId: exactApplicationRecordId,
             job,
             resumeArtifact,
@@ -6494,7 +6509,17 @@ export function createWorkspaceApplicationMethods(
           applicationPageBindingKey: markedResult.id,
           job,
           resumeArtifact,
-          profile: browserProfile.profile,
+          profile: mergeApplicationAnswersIntoExecutionProfile({
+            profile: browserProfile.profile,
+            questionRecords:
+              await ctx.repository.listApplicationQuestionRecords({
+                applicationRecordId: selectedApplicationRecord.id,
+              }),
+            answerRecords: await ctx.repository.listApplicationAnswerRecords({
+              applicationRecordId: selectedApplicationRecord.id,
+            }),
+            idPrefix: `application_${selectedApplicationRecord.id}`,
+          }),
           ...(applicationAttachmentsApproved.length > 0
             ? { applicationAttachments: applicationAttachmentsApproved }
             : {}),
@@ -6599,6 +6624,10 @@ export function createWorkspaceApplicationMethods(
           fallbackUrl: job.applicationUrl ?? job.canonicalUrl,
         });
         const runArtifacts = buildApplyCopilotArtifacts({
+          existingAnswerRecords:
+            await ctx.repository.listApplicationAnswerRecords({
+              applicationRecordId: selectedApplicationRecord.id,
+            }),
           applicationRecordId: selectedApplicationRecord.id,
           job,
           resumeArtifact,
@@ -7102,7 +7131,17 @@ export function createWorkspaceApplicationMethods(
           applicationPageBindingKey: markedResult.id,
           job: currentJob,
           resumeArtifact,
-          profile: browserProfile.profile,
+          profile: mergeApplicationAnswersIntoExecutionProfile({
+            profile: browserProfile.profile,
+            questionRecords:
+              await ctx.repository.listApplicationQuestionRecords({
+                applicationRecordId: selectedApplicationRecord.id,
+              }),
+            answerRecords: await ctx.repository.listApplicationAnswerRecords({
+              applicationRecordId: selectedApplicationRecord.id,
+            }),
+            idPrefix: `application_${selectedApplicationRecord.id}`,
+          }),
           ...(applicationAttachmentsDirect.length > 0
             ? { applicationAttachments: applicationAttachmentsDirect }
             : {}),
@@ -7246,6 +7285,10 @@ export function createWorkspaceApplicationMethods(
           executionTimings: executionResult.executionTimings,
         });
         const runArtifacts = buildApplyCopilotArtifacts({
+          existingAnswerRecords:
+            await ctx.repository.listApplicationAnswerRecords({
+              applicationRecordId: selectedApplicationRecord.id,
+            }),
           applicationRecordId: selectedApplicationRecord.id,
           job,
           resumeArtifact,

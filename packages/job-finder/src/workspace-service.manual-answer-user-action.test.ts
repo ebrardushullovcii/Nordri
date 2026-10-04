@@ -1,5 +1,8 @@
+import { buildApplyCopilotArtifacts } from "./internal/workspace-apply-run-support";
 import {
   ApplicationAnswerRecordSchema,
+  ApplyExecutionResultSchema,
+  ApplicationResumeArtifactSchema,
   ApplicationAttemptSchema,
   ApplicationQuestionRecordSchema,
   ApplicationRecordSchema,
@@ -895,3 +898,176 @@ test.each([false, true])(
     else expect(answers).toEqual(seed.profile.answerBank.customAnswers);
   },
 );
+
+test.each([false, true])(
+  "saved pay can be answered after Prepare again (legacy tied revisions: %s)",
+  async (legacyTie) => {
+    const seed = createSeed();
+    const question = {
+      ...createQuestion(),
+      id: "apply_question_application_a_salary",
+      prompt: "Expected salary",
+      kind: "salary_expectation" as const,
+    };
+    seed.userActionRequests = [createManualAnswerRequest()];
+    seed.applicationQuestionRecords = [question];
+    const harness = createWorkspaceServiceHarness({ seed });
+    await harness.workspaceService.performUserAction({
+      ...submitManualAnswerCommand(),
+      answers: [{ questionId: question.id, answer: "42000 EUR" }],
+      saveForFuture: true,
+    });
+    const previous = (
+      await harness.repository.listApplicationAnswerRecords()
+    )[0]!;
+    const artifacts = buildApplyCopilotArtifacts({
+      applicationRecordId: "application_a",
+      job: seed.savedJobs.find((job) => job.id === "job_ready")!,
+      runId: "run_retry",
+      resultId: "result_retry",
+      detectedAt: new Date(Date.parse(previous.createdAt) + 1000).toISOString(),
+      existingAnswerRecords: [previous],
+      resumeArtifact: ApplicationResumeArtifactSchema.parse({
+        id: "resume_retry",
+        jobId: "job_ready",
+        source: "original_upload",
+        sourceDocumentId: "synthetic_resume",
+        fileName: "Synthetic.pdf",
+        filePath: "/tmp/Synthetic.pdf",
+        sha256: "a".repeat(64),
+        approvedAt: now,
+      }),
+      executionResult: ApplyExecutionResultSchema.parse({
+        state: "paused",
+        submittedAt: null,
+        outcome: "ready_for_review",
+        summary: "Pay needs you",
+        detail: "Answer this application's pay question",
+        nextActionLabel: "Answer and continue",
+        questions: [
+          {
+            ...question,
+            id: "salary",
+            status: "detected",
+            suggestedAnswers: [
+              {
+                id: "library_salary",
+                text: "42000 EUR",
+                sourceKind: "user",
+                sourceId: "answerLibrary.saved_pay",
+                provenance: [],
+              },
+            ],
+          },
+        ],
+      }),
+    });
+    expect(artifacts.answerRecords[0]).toMatchObject({
+      revision: 2,
+      supersedesAnswerId: previous.id,
+    });
+    for (const record of artifacts.questionRecords)
+      await harness.repository.upsertApplicationQuestionRecord(record);
+    for (const record of artifacts.answerRecords)
+      await harness.repository.upsertApplicationAnswerRecord(
+        legacyTie ? { ...record, revision: 1 } : record,
+      );
+    await harness.repository.createUserActionRequest(
+      createManualAnswerRequest({
+        id: "request_retry",
+        dedupeKey: "dedupe_retry",
+        scope: {
+          type: "application",
+          jobId: "job_ready",
+          applicationRecordId: "application_a",
+          runId: "run_retry",
+          resultId: "result_retry",
+          replayCheckpointId: null,
+          source: "target_site",
+        },
+      }),
+    );
+    await harness.workspaceService.performUserAction({
+      ...submitManualAnswerCommand("retry_salary"),
+      requestId: "request_retry",
+      answers: [{ questionId: question.id, answer: "42000 EUR" }],
+      saveForFuture: true,
+    });
+    const records = await harness.repository.listApplicationAnswerRecords({
+      questionId: question.id,
+    });
+    expect(records).toHaveLength(3);
+    expect(
+      records.find((record) => record.sourceId === "request_retry"),
+    ).toMatchObject({
+      revision: legacyTie ? 2 : 3,
+      supersedesAnswerId: artifacts.answerRecords[0]!.id,
+      text: "42000 EUR",
+    });
+    expect(
+      (await harness.repository.listUserActionRequests()).find(
+        (request) => request.id === "request_retry",
+      )?.state,
+    ).toBe("verifying");
+  },
+);
+
+test("answering and saving pay leaves another waiting application in Needs you", async () => {
+  const seed = createSeed();
+  seed.applicationQuestionRecords = [
+    {
+      ...createQuestion(),
+      prompt: "Expected salary",
+      kind: "salary_expectation",
+    },
+    {
+      ...createQuestion(),
+      id: "other_pay",
+      jobId: "job_other",
+      applicationRecordId: "application_b",
+      resultId: "result_b",
+      prompt: "Expected salary",
+      kind: "salary_expectation",
+    },
+  ];
+  seed.userActionRequests = [
+    createManualAnswerRequest(),
+    createManualAnswerRequest({
+      id: "request_b",
+      dedupeKey: "dedupe_b",
+      scope: {
+        type: "application",
+        runId: "run_manual",
+        jobId: "job_other",
+        applicationRecordId: "application_b",
+        resultId: "result_b",
+        replayCheckpointId: null,
+        source: "target_site",
+      },
+    }),
+  ];
+  const harness = createWorkspaceServiceHarness({ seed });
+  await harness.workspaceService.performUserAction({
+    ...submitManualAnswerCommand(),
+    answer: "42000 EUR",
+    saveForFuture: true,
+  });
+  await harness.workspaceService.getWorkspaceSnapshot();
+  expect(
+    (await harness.repository.listUserActionRequests()).find(
+      (request) => request.id === "request_b",
+    )?.state,
+  ).toBe("pending");
+  expect(
+    await harness.repository.listApplicationAnswerRecords({
+      applicationRecordId: "application_b",
+    }),
+  ).toEqual([]);
+  expect(
+    (
+      await harness.repository.listApplicationQuestionRecords({
+        applicationRecordId: "application_b",
+      })
+    )[0]?.status,
+  ).toBe("detected");
+});

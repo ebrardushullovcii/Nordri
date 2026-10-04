@@ -1,26 +1,17 @@
-import type {
-  ApplicationAnswerRecord,
-  ApplicationQuestionRecord,
-  CandidateProfile,
+import {
+  compareApplicationAnswerRecency,
+  type ApplicationAnswerRecord,
+  type ApplicationQuestionRecord,
+  type CandidateProfile,
 } from "@nordri/contracts";
 import { createReusableAnswerForQuestion } from "./workspace-answer-memory";
-
-function compareAnswerRecency(
-  left: ApplicationAnswerRecord,
-  right: ApplicationAnswerRecord,
-): number {
-  return (
-    right.revision - left.revision ||
-    Date.parse(right.createdAt) - Date.parse(left.createdAt) ||
-    right.id.localeCompare(left.id)
-  );
-}
 
 function isExecutableUserAnswer(
   answer: ApplicationAnswerRecord | undefined,
 ): answer is ApplicationAnswerRecord {
   return (
     answer?.sourceKind === "user" &&
+    !answer.sourceId?.startsWith("answerLibrary.") &&
     (answer.status === "suggested" || answer.status === "filled") &&
     answer.value?.type !== "asset_ref" &&
     answer.text.trim().length > 0
@@ -48,10 +39,12 @@ export function mergeApplicationAnswersIntoExecutionProfile(input: {
       ? answerById.get(question.selectedAnswerId)
       : undefined;
     const latest =
-      selected ??
-      [...(answersByQuestionId.get(question.id) ?? [])].sort(
-        compareAnswerRecency,
-      )[0];
+      (selected && !selected.sourceId?.startsWith("answerLibrary.")
+        ? selected
+        : undefined) ??
+      [...(answersByQuestionId.get(question.id) ?? [])]
+        .filter((answer) => !answer.sourceId?.startsWith("answerLibrary."))
+        .sort(compareApplicationAnswerRecency)[0];
     if (!isExecutableUserAnswer(latest)) {
       return [];
     }

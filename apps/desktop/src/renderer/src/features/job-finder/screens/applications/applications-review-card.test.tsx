@@ -194,28 +194,35 @@ describe("ApplicationsReviewCard", () => {
   });
 });
 
-it.each([false, true])(
-  "labels an answer chosen on the form plainly (written=%s)",
-  (written) => {
-    render(
-      <ApplicationsReviewCard
-        card={card({
-          answers: [
-            {
-              question: "Currency",
-              answer: "EUR",
-              source: "chosen on the form",
-              written,
-              groundedIn: [],
-            },
-          ],
-        })}
-        onSubmit={vi.fn()}
-      />,
-    );
-    expect(screen.getByText("Your answer on the form")).toBeTruthy();
-    expect(
-      screen.queryByText(/Written for this application chosen|From chosen/),
-    ).toBeNull();
-  },
-);
+it.each([
+  "chosen on the form",
+  "chosen on the form by Job Finder",
+  "your answer on the form",
+])("labels the source of an answer on the form (%s)", (source) => {
+  render(
+    <ApplicationsReviewCard
+      card={card({
+        answers: [
+          {
+            question: "Currency",
+            answer: "EUR",
+            source,
+            written: source !== "your answer on the form",
+            groundedIn: [],
+          },
+        ],
+      })}
+      onSubmit={vi.fn()}
+    />,
+  );
+  expect(
+    screen.getByText(
+      source === "your answer on the form"
+        ? "Your answer on the form"
+        : "Chosen on the form by Job Finder",
+    ),
+  ).toBeTruthy();
+  expect(
+    screen.queryByText(/Written for this application chosen|From chosen/),
+  ).toBeNull();
+});

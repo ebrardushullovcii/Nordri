@@ -363,8 +363,8 @@ export function getCustomerFacingApplyText(
 ): string | null {
   void receipt;
   const text = splitBlockedAttemptNote(value).message?.replace(
-    /from chosen on the form/giu,
-    "from your answer on the form",
+    /from chosen on the form(?! by Job Finder)/giu,
+    "from a choice Job Finder made on the form",
   );
   if (!text) {
     return null;

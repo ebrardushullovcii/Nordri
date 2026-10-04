@@ -1,5 +1,6 @@
 import {
   ApplicationAnswerRecordSchema,
+  compareApplicationAnswerRecency,
   ClearApplicationAnswerCommandSchema,
   SaveApplicationAnswerCommandSchema,
   type ApplicationAnswerRecord,
@@ -17,17 +18,6 @@ import {
 } from "./workspace-answer-memory";
 import type { WorkspaceServiceContext } from "./workspace-service-context";
 
-function compareAnswerRecency(
-  left: ApplicationAnswerRecord,
-  right: ApplicationAnswerRecord,
-): number {
-  return (
-    right.revision - left.revision ||
-    Date.parse(right.createdAt) - Date.parse(left.createdAt) ||
-    right.id.localeCompare(left.id)
-  );
-}
-
 function getLatestQuestionAnswer(
   details: ApplyRunDetails,
   questionId: string,
@@ -35,7 +25,7 @@ function getLatestQuestionAnswer(
   return (
     details.answerRecords
       .filter((answer) => answer.questionId === questionId)
-      .sort(compareAnswerRecency)[0] ?? null
+      .sort(compareApplicationAnswerRecency)[0] ?? null
   );
 }
 

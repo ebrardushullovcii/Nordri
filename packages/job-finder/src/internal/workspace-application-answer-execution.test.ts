@@ -179,3 +179,34 @@ it("keeps the person's pay answers scoped to this application's execution profil
   }
   expect(profile).toEqual(before);
 });
+
+it("an application's own currency survives a newer library-seeded suggestion", () => {
+  const profile = createSeed().profile;
+  const own = answer({
+    id: "own_currency",
+    questionId: "currency",
+    text: "GBP",
+    revision: 1,
+  });
+  const library = {
+    ...answer({
+      id: "seeded_currency",
+      questionId: "currency",
+      text: "EUR",
+      revision: 2,
+    }),
+    sourceId: "answerLibrary.other_job_currency",
+  };
+  const merged = mergeApplicationAnswersIntoExecutionProfile({
+    profile,
+    questionRecords: [
+      { ...question("currency", library.id), prompt: "Currency" },
+    ],
+    answerRecords: [own, library],
+    idPrefix: "application_this",
+  });
+  expect(merged.answerBank.customAnswers[0]).toMatchObject({
+    question: "Currency",
+    answer: "GBP",
+  });
+});

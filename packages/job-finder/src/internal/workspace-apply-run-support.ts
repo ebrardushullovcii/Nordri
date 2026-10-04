@@ -2,6 +2,8 @@ import { resumeFormFileNames } from "@nordri/contracts";
 import { inferQuestionKind } from "@nordri/browser-agent";
 import {
   ApplicationAnswerRecordSchema,
+  type ApplicationAnswerRecord,
+  compareApplicationAnswerRecency,
   ApplicationRecordSchema,
   ApplyExecutionResultSchema,
   ApplyJobResultSchema,
@@ -762,6 +764,7 @@ export function buildApplicationPrivacyReceipt(input: {
   });
 }
 export function buildApplyCopilotArtifacts(input: {
+  existingAnswerRecords?: readonly ApplicationAnswerRecord[];
   applicationRecordId: string;
   job: SavedJob;
   executionResult: ApplyExecutionResult;
@@ -858,9 +861,21 @@ export function buildApplyCopilotArtifacts(input: {
       : [];
   }
 
+  const latestAnswerByQuestion = new Map<string, ApplicationAnswerRecord>();
+  for (const answer of [...(input.existingAnswerRecords ?? [])].sort(
+    compareApplicationAnswerRecency,
+  )) {
+    if (!latestAnswerByQuestion.has(answer.questionId))
+      latestAnswerByQuestion.set(answer.questionId, answer);
+  }
   const answerRecords = input.executionResult.questions.flatMap((question) =>
     question.suggestedAnswers.map((answer) => {
-      return ApplicationAnswerRecordSchema.parse({
+      const questionId =
+        persistedQuestionIdByExecutionId.get(question.id) ?? question.id;
+      const previous = latestAnswerByQuestion.get(questionId);
+      const record = ApplicationAnswerRecordSchema.parse({
+        revision: (previous?.revision ?? 0) + 1,
+        supersedesAnswerId: previous?.id ?? null,
         id:
           persistedAnswerIdByExecutionId.get(answer.id) ??
           createUniqueId("apply_answer"),
@@ -885,6 +900,8 @@ export function buildApplyCopilotArtifacts(input: {
             ? input.detectedAt
             : null,
       });
+      latestAnswerByQuestion.set(questionId, record);
+      return record;
     }),
   );
   const questionRecords = input.executionResult.questions.map((question) => {

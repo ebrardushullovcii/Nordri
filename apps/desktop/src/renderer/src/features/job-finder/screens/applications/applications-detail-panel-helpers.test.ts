@@ -125,7 +125,7 @@ describe("getCustomerFacingApplyText", () => {
       getCustomerFacingApplyText(
         'Answered "Currency" from chosen on the form.',
       ),
-    ).toBe('Answered "Currency" from your answer on the form.');
+    ).toBe('Answered "Currency" from a choice Job Finder made on the form.');
   });
 
   it("keeps transport implementation language out of retained customer history", () => {

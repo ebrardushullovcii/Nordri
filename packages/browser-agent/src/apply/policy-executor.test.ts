@@ -866,7 +866,13 @@ describe("apply policy executor", () => {
 
       expect(groundedOutcome).toMatchObject({
         kind: "filled",
-        filled: { answer: { value: "Yes", sourceKind: "generated" } },
+        filled: {
+          answer: {
+            value: "Yes",
+            sourceKind: "generated",
+            provenanceLabel: "chosen on the form by Job Finder",
+          },
+        },
       });
       expect(setToggle).toHaveBeenCalledOnce();
     },
@@ -907,6 +913,86 @@ describe("apply policy executor", () => {
       } else {
         expect(outcome.kind).toBe("suggestion");
         expect(fillText).not.toHaveBeenCalled();
+      }
+    },
+  );
+
+  test.each([false, true])(
+    "salary currency obeys pay privacy and prefers this application's earlier answer (%s)",
+    async (ownAnswer) => {
+      const page = rawPage({
+        controls: [
+          rawControl({ index: 0, label: "Expected salary", required: true }),
+          rawControl({
+            index: 1,
+            label: "Currency",
+            required: true,
+            tagName: "select",
+            options: ["EUR", "GBP"],
+          }),
+        ],
+      });
+      const { config, hands } = configFor(page);
+      const chooseOption = vi.spyOn(hands, "chooseOption");
+      config.sources.reusableAnswers = [
+        {
+          id: "other_job_currency",
+          kind: "other",
+          label: "Currency",
+          question: "Currency",
+          answer: "EUR",
+          roleFamilies: [],
+          proofEntryIds: [],
+        },
+        ...(ownAnswer
+          ? [
+              {
+                id: "application_this_currency",
+                kind: "other" as const,
+                label: "Currency",
+                question: "Currency",
+                answer: "GBP",
+                roleFamilies: [],
+                proofEntryIds: [],
+              },
+            ]
+          : []),
+      ];
+      const outcome = await executeApplyProposal(
+        { tool: "select", ref: "c1", option: ownAnswer ? "GBP" : "EUR" },
+        observationOf(page).signature,
+        {
+          config,
+          now,
+          guardState: createApplyGuardState(),
+          // Even a classifier that overlooks the linked currency cannot override
+          // the salary question's pay permission for this page.
+          classifyQuestions: () =>
+            Promise.resolve(
+              new Map([
+                [
+                  "Expected salary",
+                  { asksAboutPay: true, declarationKind: null },
+                ],
+                ["Currency", { asksAboutPay: false, declarationKind: null }],
+              ]),
+            ),
+        },
+      );
+      if (ownAnswer) {
+        expect(outcome).toMatchObject({
+          kind: "filled",
+          filled: {
+            answer: {
+              value: "GBP",
+              sourceId: "answerLibrary.application_this_currency",
+            },
+          },
+        });
+        expect(chooseOption).toHaveBeenCalledWith("c1", "GBP");
+      } else {
+        expect(outcome.kind).toBe("suggestion");
+        expect(chooseOption).not.toHaveBeenCalled();
       }
     },
   );

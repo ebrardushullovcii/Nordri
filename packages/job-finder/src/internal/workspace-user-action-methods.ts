@@ -1,7 +1,9 @@
+import { resolveApplyAuthorityForJob } from "./apply-authority-resolution";
 import { releaseFinishedApplicationPages } from "./application-page-lifecycle";
 import {
   DISCOVERY_RUN_ALREADY_ACTIVE_MESSAGE,
   ApplicationAnswerRecordSchema,
+  compareApplicationAnswerRecency,
   type ApplicationAnswerRecord,
   type SubmitUserActionManualAnswerCommand,
   UserActionCommandSchema,
@@ -13,6 +15,7 @@ import {
 import {
   buildApplyFormObservation,
   inferAttestationKind,
+  inferQuestionKind,
   selectObservedSignInAction,
 } from "@nordri/browser-agent";
 
@@ -161,22 +164,6 @@ function getApplicationResumptionFlightKey(request: UserActionRequest): string {
   return `${request.id}:${targetRevision}`;
 }
 
-/**
- * Deterministic recency ordering for answer records: revision desc, then
- * createdAt desc, then id desc. Revisions are unique per question in a
- * well-formed store, but the tie-breaks keep the latest selection stable.
- */
-function compareAnswerRecency(
-  left: ApplicationAnswerRecord,
-  right: ApplicationAnswerRecord,
-): number {
-  return (
-    right.revision - left.revision ||
-    Date.parse(right.createdAt) - Date.parse(left.createdAt) ||
-    right.id.localeCompare(left.id)
-  );
-}
-
 /** Latest persisted answer record for a question, with a deterministic tie-break. */
 function latestAnswerForQuestion(
   records: readonly ApplicationAnswerRecord[],
@@ -185,7 +172,10 @@ function latestAnswerForQuestion(
   let latest: ApplicationAnswerRecord | null = null;
   for (const record of records) {
     if (record.questionId !== questionId) continue;
-    if (latest === null || compareAnswerRecency(record, latest) < 0) {
+    if (
+      latest === null ||
+      compareApplicationAnswerRecency(record, latest) < 0
+    ) {
       latest = record;
     }
   }
@@ -452,7 +442,35 @@ export async function findManualAnswerStepsCoveredBy(input: {
       (question) =>
         question.status === "detected" && !answeredIds.has(question.id),
     );
+    const isPayQuestion = (question: ApplicationQuestionRecord) =>
+      question.kind === "salary_expectation" ||
+      inferQuestionKind({
+        label: question.prompt,
+        groupLabel: question.description ?? "",
+        placeholder: "",
+        kind: "other",
+      }) === "salary_expectation";
+    let payDisclosed = false;
+    if (waiting.some(isPayQuestion)) {
+      const job = (await ctx.repository.listSavedJobs()).find(
+        (entry) => entry.id === scope.jobId,
+      );
+      if (job) {
+        const result = (await ctx.repository.listApplyJobResults()).find(
+          (entry) => entry.id === scope.resultId,
+        );
+        const { authority } = await resolveApplyAuthorityForJob({
+          repository: ctx.repository,
+          job,
+          resumeSha256: result?.privacyReceipt?.resume.sha256,
+          applicationUrl: job.applicationUrl ?? job.canonicalUrl,
+          now: new Date().toISOString(),
+        });
+        payDisclosed = authority.salaryDisclosure === "answer_from_profile";
+      }
+    }
     const answers = waiting.flatMap((question) => {
+      if (!payDisclosed && isPayQuestion(question)) return [];
       if (
         !input.savedForFuture &&
         /neither.*(?:country|region)|ambiguous|does not (?:identify|name).*country/iu.test(

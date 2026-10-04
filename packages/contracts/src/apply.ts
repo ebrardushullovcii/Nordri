@@ -584,8 +584,7 @@ export const ApplicationPacketSchema = z
       });
     }
 
-    const submissionOutcome =
-      value.privacyReceipt?.submissionOutcome ?? null;
+    const submissionOutcome = value.privacyReceipt?.submissionOutcome ?? null;
     if (
       submissionOutcome?.outcome === "outcome_uncertain" &&
       value.submissionOccurred
@@ -747,6 +746,18 @@ export const ApplicationAnswerRecordSchema = z.object({
 export type ApplicationAnswerRecord = z.infer<
   typeof ApplicationAnswerRecordSchema
 >;
+
+/** Newest first, including deterministic ordering for legacy revision ties. */
+export function compareApplicationAnswerRecency(
+  left: ApplicationAnswerRecord,
+  right: ApplicationAnswerRecord,
+): number {
+  return (
+    right.revision - left.revision ||
+    Date.parse(right.createdAt) - Date.parse(left.createdAt) ||
+    right.id.localeCompare(left.id)
+  );
+}
 
 const ApplicationAnswerMutationSafetySchema = {
   submitAuthorized: z.literal(false).default(false),
@@ -918,10 +929,7 @@ export const ApplicationReviewCardSchema = z
       .array(NonEmptyStringSchema.max(2_000))
       .max(500)
       .optional(),
-    attachments: z
-      .array(ApplicationReviewAttachmentSchema)
-      .max(20)
-      .default([]),
+    attachments: z.array(ApplicationReviewAttachmentSchema).max(20).default([]),
     letter: z
       .object({
         text: NonEmptyStringSchema.max(12_000),

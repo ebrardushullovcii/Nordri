@@ -18,6 +18,7 @@ export function applicationFacts(
   sources: ApplyAnswerSources,
   options: { payDisclosed: boolean },
 ) {
+  void options;
   const profile = sources.profile;
   const answerBank = { ...profile.answerBank };
   return {
@@ -89,6 +90,7 @@ function storedFacts(
   sources: ApplyAnswerSources,
   options: { payDisclosed: boolean },
 ): StoredFact[] {
+  void options;
   const profile = sources.profile;
   const facts: StoredFact[] = [];
   const add = (
@@ -130,7 +132,11 @@ function storedFacts(
     "profile.currentCountry",
     "the country you live in",
   );
-  add(profile.linkedinUrl, "profile.linkedinUrl", "your professional profile link");
+  add(
+    profile.linkedinUrl,
+    "profile.linkedinUrl",
+    "your professional profile link",
+  );
   add(profile.githubUrl, "profile.githubUrl", "your code profile link");
   add(profile.portfolioUrl, "profile.portfolioUrl", "your portfolio");
   add(profile.personalWebsiteUrl, "profile.personalWebsiteUrl", "your website");
@@ -214,8 +220,14 @@ export function savedAnswerForQuestion(
       .filter((text) => text.length > 0),
   );
   return (
+    reusableAnswers.find(
+      (saved) =>
+        saved.id.startsWith("application_") &&
+        asked.has(normalizeSignal(saved.question)),
+    ) ??
     reusableAnswers.find((saved) =>
       asked.has(normalizeSignal(saved.question)),
-    ) ?? null
+    ) ??
+    null
   );
 }

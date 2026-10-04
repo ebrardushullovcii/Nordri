@@ -1112,15 +1112,11 @@ export function createApplicationUserActionResumer(
     ]);
     const [answerRecords, questionRecords] = await Promise.all([
       ctx.repository.listApplicationAnswerRecords({
-        runId: scope.runId,
         jobId: scope.jobId,
-        resultId: scope.resultId,
         applicationRecordId: scope.applicationRecordId,
       }),
       ctx.repository.listApplicationQuestionRecords({
-        runId: scope.runId,
         jobId: scope.jobId,
-        resultId: scope.resultId,
         applicationRecordId: scope.applicationRecordId,
       }),
     ]);
@@ -1168,19 +1164,12 @@ export function createApplicationUserActionResumer(
     // Merged into the profile they would still have to be found; named here
     // the agent can go straight to those fields, fill them and carry on
     // instead of working the whole form a second time.
-    const answeredQuestionLines = questionRecords.flatMap((question) => {
-      const selected = answerRecords.find(
-        (answer) => answer.id === question.selectedAnswerId,
+    const answeredQuestionLines = executionProfile.answerBank.customAnswers
+      .filter((answer) => answer.id.startsWith(`application_${request.id}_`))
+      .map(
+        (answer) =>
+          `Answer to "${answer.question.trim()}": ${answer.answer.trim()}`,
       );
-      const latest =
-        selected ??
-        [...answerRecords]
-          .filter((answer) => answer.questionId === question.id)
-          .sort((left, right) => right.revision - left.revision)[0];
-      return latest
-        ? [`Answer to "${question.prompt.trim()}": ${latest.text.trim()}`]
-        : [];
-    });
     const instructions = uniqueStrings([
       ...buildInstructionGuidance(activeInstruction),
       ...buildRecoveryInstructions({
@@ -1568,6 +1557,9 @@ export function createApplicationUserActionResumer(
       executionResult: finalExecutionResult,
     });
     const resumedArtifacts = buildApplyCopilotArtifacts({
+      existingAnswerRecords: await ctx.repository.listApplicationAnswerRecords({
+        applicationRecordId: scope.applicationRecordId,
+      }),
       applicationRecordId: scope.applicationRecordId,
       job,
       executionResult: finalExecutionResult,

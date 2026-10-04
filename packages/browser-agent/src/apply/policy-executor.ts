@@ -341,10 +341,17 @@ async function withModelQuestionKinds(
     return control;
   }
   let classification: ApplyQuestionClassification | undefined;
+  let payCurrency = false;
   try {
-    classification = (await deps.classifyQuestions(observation.controls)).get(
-      questionPrompt(control),
-    );
+    const classifications = await deps.classifyQuestions(observation.controls);
+    classification = classifications.get(questionPrompt(control));
+    payCurrency =
+      /currency/iu.test(questionPrompt(control)) &&
+      (control.questionKind === "salary_expectation" ||
+        observation.controls.some(
+          (sibling) =>
+            classifications.get(questionPrompt(sibling))?.asksAboutPay === true,
+        ));
   } catch {
     return control;
   }
@@ -353,11 +360,12 @@ async function withModelQuestionKinds(
   }
   return {
     ...control,
-    questionKind: classification.asksAboutPay
-      ? "salary_expectation"
-      : control.questionKind === "salary_expectation"
-        ? "other"
-        : control.questionKind,
+    questionKind:
+      classification.asksAboutPay || payCurrency
+        ? "salary_expectation"
+        : control.questionKind === "salary_expectation"
+          ? "other"
+          : control.questionKind,
     attestationKind: classification.declarationKind,
     ...(typeof classification.asksCurrentPay === "boolean"
       ? { asksCurrentPay: classification.asksCurrentPay }
@@ -1500,7 +1508,7 @@ export async function executeApplyProposal(
                   ...choice.answer,
                   value: option,
                   sourceId: `chosen.${control.ref}`,
-                  provenanceLabel: "chosen from the options on the form",
+                  provenanceLabel: "chosen on the form by Job Finder",
                 }
               : { ...choice.answer, value: option },
           at,
@@ -1550,7 +1558,7 @@ export async function executeApplyProposal(
                 ...choice.answer,
                 value: proposedOption,
                 sourceId: `chosen.${control.ref}`,
-                provenanceLabel: "your answer on the form",
+                provenanceLabel: "chosen on the form by Job Finder",
               }
             : choice.answer;
       }
@@ -1633,7 +1641,7 @@ export async function executeApplyProposal(
                     : `chosen.${control.ref}`,
                   provenanceLabel: control.attestationKind
                     ? "a declaration you approved in advance"
-                    : "your answer on the form",
+                    : "chosen on the form by Job Finder",
                   groundedIn: [
                     control.attestationKind
                       ? "a declaration you approved in advance"

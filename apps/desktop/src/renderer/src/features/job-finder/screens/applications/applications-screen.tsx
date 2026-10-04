@@ -565,33 +565,59 @@ export function ApplicationsScreen(props: {
   // population the header badge totals, rather than its own blocked/failed
   // result states, which reported "5 need attention" beside "Needs you: 4
   // unresolved" for the same five jobs.
-  const latestRunAttentionCount = useMemo(
-    () =>
-      latestAutomaticRun
-        ? countApplyRunItemsNeedingYou({
-            applicationRecords: applicationRecords.filter((record) =>
-              latestAutomaticResults.some(
-                (result) => result.applicationRecordId === record.id,
-              ),
-            ),
-            applyJobResults: latestAutomaticResults,
-            requests: (userActionRequests ?? []).filter(
-              (request) =>
-                request.scope.type === "application" &&
-                request.scope.runId === latestAutomaticRun.id,
-            ),
-            runId: latestAutomaticRun.id,
-            runJobIds: new Set(latestAutomaticRun.jobIds),
-          })
-        : 0,
-    [
-      applicationRecords,
-      applyJobResults,
-      latestAutomaticRun,
-      latestAutomaticResults,
-      userActionRequests,
-    ],
+  const latestRunAttentionResults = latestAutomaticResults.filter(
+    (result) =>
+      !result.applicationRecordId ||
+      latestApplyResultByRecordId.get(result.applicationRecordId)?.id ===
+        result.id,
   );
+  const latestRunAttentionRecords = applicationRecords.filter((record) =>
+    latestRunAttentionResults.some(
+      (result) => result.applicationRecordId === record.id,
+    ),
+  );
+  const latestRunAttentionRequests = (userActionRequests ?? []).filter(
+    (request) => {
+      const scope = request.scope;
+      return (
+        scope.type === "application" &&
+        scope.runId === latestAutomaticRun?.id &&
+        (!scope.applicationRecordId ||
+          latestRunAttentionResults.some(
+            (result) =>
+              result.applicationRecordId === scope.applicationRecordId,
+          ))
+      );
+    },
+  );
+  const latestRunAttentionCount = latestAutomaticRun
+    ? countApplyRunItemsNeedingYou({
+        applicationRecords: latestRunAttentionRecords,
+        applyJobResults: latestRunAttentionResults,
+        requests: latestRunAttentionRequests,
+        runId: latestAutomaticRun.id,
+        runJobIds: new Set(latestAutomaticRun.jobIds),
+      })
+    : 0;
+  const latestRunHasCountedFailure =
+    latestAutomaticRun &&
+    latestRunAttentionResults.some(
+      (result) =>
+        result.state === "failed" &&
+        countApplyRunItemsNeedingYou({
+          applicationRecords: latestRunAttentionRecords.filter(
+            (record) => record.id === result.applicationRecordId,
+          ),
+          applyJobResults: [result],
+          requests: latestRunAttentionRequests.filter(
+            (request) =>
+              request.scope.type === "application" &&
+              request.scope.jobId === result.jobId,
+          ),
+          runId: latestAutomaticRun.id,
+          runJobIds: new Set([result.jobId]),
+        }) > 0,
+    );
   const latestRunQueuedCount =
     latestAutomaticRun?.state === "running"
       ? latestAutomaticResults.filter((result) => result.state === "planned")
@@ -1071,13 +1097,7 @@ export function ApplicationsScreen(props: {
                 </p>
               </div>
               <StatusBadge
-                tone={
-                  latestAutomaticResults.some(
-                    (result) => result.state === "failed",
-                  )
-                    ? "critical"
-                    : "neutral"
-                }
+                tone={latestRunHasCountedFailure ? "critical" : "neutral"}
               >
                 {latestRunAttentionCount} need attention
               </StatusBadge>

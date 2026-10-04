@@ -883,7 +883,9 @@ describe("ApplicationsScreen", () => {
         isApplyRunPending: () => false,
         onApproveApplyRun: vi.fn(),
         onCancelApplyRun: vi.fn(),
-        onGetApplyRunDetails: vi.fn(),
+        onGetApplyRunDetails: vi.fn(
+          () => new Promise<ApplyRunDetails>(() => {}),
+        ),
         onExportApplicationPacket: vi.fn(),
         onResolveApplyConsentRequest: vi.fn(),
         onSaveApplicationAnswer: vi.fn(() =>
@@ -925,7 +927,51 @@ describe("ApplicationsScreen", () => {
         <MemoryRouter>
           <ApplicationsScreen
             {...buildProps("failed")}
+            applyRuns={[
+              ...buildProps("failed").applyRuns,
+              {
+                ...finishedRun,
+                id: "retry_run",
+                mode: "copilot",
+                jobIds: ["job_retried"],
+                createdAt: "2026-08-20T10:01:00.000Z",
+              },
+            ]}
+            applicationRecords={[
+              ApplicationRecordSchema.parse({
+                id: "retried_application",
+                jobId: "job_retried",
+                title: "Retried job",
+                company: "Replica",
+                status: "drafting",
+                lastActionLabel: "Preparing again",
+                nextActionLabel: "Wait",
+                lastUpdatedAt: "2026-08-20T10:01:00.000Z",
+              }),
+            ]}
             applyJobResults={[
+              ApplyJobResultSchema.parse({
+                id: "old_failure",
+                runId: "apply_run_finished",
+                jobId: "job_retried",
+                applicationRecordId: "retried_application",
+                state: "failed",
+                summary: "Failed earlier",
+                detail: "Try again",
+                startedAt: "2026-08-20T09:56:00.000Z",
+                updatedAt: "2026-08-20T10:00:00.000Z",
+              }),
+              ApplyJobResultSchema.parse({
+                id: "retry_result",
+                runId: "retry_run",
+                jobId: "job_retried",
+                applicationRecordId: "retried_application",
+                state: "filling",
+                summary: "Preparing again",
+                detail: "Retry running",
+                startedAt: "2026-08-20T10:01:00.000Z",
+                updatedAt: "2026-08-20T10:01:00.000Z",
+              }),
               {
                 id: "apply_result_attention",
                 runId: "apply_run_finished",
@@ -957,6 +1003,16 @@ describe("ApplicationsScreen", () => {
             // open request that makes the blocked job something to act on.
             userActionRequests={
               [
+                {
+                  id: "old_failure_request",
+                  state: "awaiting_user",
+                  scope: {
+                    type: "application",
+                    runId: "apply_run_finished",
+                    jobId: "job_retried",
+                    applicationRecordId: "retried_application",
+                  },
+                },
                 {
                   id: "request_finished",
                   state: "awaiting_user",
