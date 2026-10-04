@@ -1,3 +1,4 @@
+import { releaseFinishedApplicationPages } from "./application-page-lifecycle";
 import { mergeApplyReviewCards } from "./agent-application-preparation";
 import type { ExecuteApplicationFlowInput } from "@nordri/browser-runtime";
 import {
@@ -1839,6 +1840,11 @@ export function createApplicationUserActionResumer(
       await resume(request, scope, attemptId, taskLocalCredentials);
     } finally {
       liveAttemptIds.delete(attemptId);
+      await releaseFinishedApplicationPages({
+        ...ctx,
+        runId: scope.runId,
+        applicationRecordId: scope.applicationRecordId,
+      });
     }
   };
 }

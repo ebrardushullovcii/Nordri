@@ -1398,8 +1398,21 @@ export function createBrowserAgentRuntime(
     }
   }
 
-  /** Pages of applications already sent: first to go when a tab is needed. */
-  const sentApplicationPages = new Set<Page>();
+  /** Forgets a finished application's page and closes it unless the person has it. */
+  async function releaseApplicationPage(key: string): Promise<boolean> {
+    await rebindPreparedApplicationPage(key);
+    const page = preparedApplicationPages.get(key);
+    const withPerson = preparedPagesWithPerson.has(key);
+    preparedApplicationPages.delete(key);
+    markedPreparedApplicationKeys.delete(key);
+    preparedPagesWithPerson.delete(key);
+    // The person opened it to finish it themselves: the site's confirmation
+    // stays in front of them until they close the tab.
+    if (withPerson) return false;
+    if (page && !page.isClosed()) await page.close().catch(() => undefined);
+    return true;
+  }
+
   const getLivePreparedApplicationPages = (): Page[] => [
     ...new Set(
       [...preparedApplicationPages.values()].filter((page) => !page.isClosed()),
@@ -1871,7 +1884,9 @@ export function createBrowserAgentRuntime(
       agentOptions.startingUrls.find((url) => isHttpUrlLike(url)) ?? null;
 
     if (!navigationTarget) {
-      return getReadyPage(source);
+      const page = await (await getContext()).newPage();
+      onPageResolved?.(page);
+      return page;
     }
 
     const context = await getContext();
@@ -2359,16 +2374,21 @@ export function createBrowserAgentRuntime(
       if (!page || page.isClosed()) return null;
       return readRawApplyPage(page);
     },
-    releaseApplicationPageBinding(_source, pageBindingKey) {
-      // Only sent applications are released. Their page may be closed when a
-      // new form needs the tab, so it no longer counts toward the limit.
-      const releasedPage = preparedApplicationPages.get(pageBindingKey);
-      if (releasedPage && !releasedPage.isClosed())
-        sentApplicationPages.add(releasedPage);
-      preparedApplicationPages.delete(pageBindingKey);
-      markedPreparedApplicationKeys.delete(pageBindingKey);
-      preparedPagesWithPerson.delete(pageBindingKey);
-      return Promise.resolve();
+    releaseApplicationPageBinding: (_source, key) =>
+      releaseApplicationPage(key),
+    async transferApplicationPageBinding(_source, previousKey, nextKey) {
+      await rebindPreparedApplicationPage(previousKey);
+      const page = preparedApplicationPages.get(previousKey);
+      if (!page || page.isClosed()) return false;
+      if (previousKey === nextKey) return true;
+      await closePrepareOnlyAuthorizedFormActionWindow(page);
+      await closePrepareOnlyFinalActionWindow(page);
+      preparedApplicationPages.delete(previousKey);
+      markedPreparedApplicationKeys.delete(previousKey);
+      preparedPagesWithPerson.delete(previousKey);
+      bindPreparedApplicationPage(nextKey, page);
+      await markPreparedPage(nextKey, page);
+      return true;
     },
     applyPageMechanics: applyPageMechanicsForSource,
     installApplyPrepareOnlyGuard: installApplyPrepareOnlyGuardForSource,
@@ -2478,15 +2498,19 @@ export function createBrowserAgentRuntime(
         // written. Requiring the binding also prevents restart recovery from
         // creating a fresh, empty same-URL form and calling it continuation.
         const isContinuation = isHttpUrlLike(input.startingUrl ?? "");
-        if (isContinuation && input.applicationPageBindingKey) {
+        if (input.applicationPageBindingKey) {
           await rebindPreparedApplicationPage(input.applicationPageBindingKey);
         }
         const retainedContinuationPage =
-          isContinuation && input.applicationPageBindingKey
-            ? selectPreparedApplicationPage(
-                preparedApplicationPages,
-                input.applicationPageBindingKey,
-              )
+          input.applicationPageBindingKey
+            ? isContinuation
+              ? selectPreparedApplicationPage(
+                  preparedApplicationPages,
+                  input.applicationPageBindingKey,
+                )
+              : (preparedApplicationPages.get(
+                  input.applicationPageBindingKey,
+                ) ?? null)
             : null;
         if (retainedContinuationPage) {
           await closePrepareOnlyAuthorizedFormActionWindow(
@@ -2620,10 +2644,7 @@ export function createBrowserAgentRuntime(
                           !page.isClosed() &&
                           !keep.has(page) &&
                           !pagesInUse.has(page);
-                        // First the empty startup tab, then the page of an
-                        // application that was already sent: it stays open
-                        // for the person to see the confirmation until a new
-                        // form needs the tab.
+                        // Reclaim only the unused startup tab.
                         const idle =
                           context
                             .pages()
@@ -2632,13 +2653,8 @@ export function createBrowserAgentRuntime(
                                 free(page) &&
                                 (page.url() === "about:blank" ||
                                   page.url() === ""),
-                            ) ??
-                          [...sentApplicationPages].find(
-                            (page) =>
-                              free(page) && context.pages().includes(page),
-                          );
+                            );
                         if (!idle) return false;
-                        sentApplicationPages.delete(idle);
                         await idle.close().catch(() => undefined);
                         return idle.isClosed();
                       },
@@ -2924,6 +2940,19 @@ export function createBrowserAgentRuntime(
         recordExecutionTiming("total", executionStartedAtMs);
         const lastCheckpointIndex = executionResult.checkpoints.length - 1;
 
+        if (
+          executionResult.state === "submitted" ||
+          executionResult.state === "failed" ||
+          executionResult.state === "unsupported"
+        ) {
+          if (input.applicationPageBindingKey)
+            await releaseApplicationPage(input.applicationPageBindingKey);
+          else if (
+            applicationPageForVisuals &&
+            !applicationPageForVisuals.isClosed()
+          )
+            await applicationPageForVisuals.close().catch(() => undefined);
+        }
         return ApplyExecutionResultSchema.parse({
           ...executionResult,
           checkpoints: executionResult.checkpoints.map((checkpoint, index) =>
@@ -3267,17 +3296,10 @@ export function createBrowserAgentRuntime(
             "The dedicated browser profile is open and ready for target-specific discovery.",
           );
         }
-        // A tab opened for this run alone is closed with it. A page the agent
-        // parked for the person (sign-in, a challenge) stays open: the host
-        // binds it to the request, and closing the request closes it.
-        if (
-          (agentOptions.dedicatedPage ||
-            (agentOptions.sourceCatalog?.length ?? 0) > 0) &&
-          !pageParkedForPerson &&
-          page &&
-          !page.isClosed() &&
-          !agentOptions.signal?.aborted
-        ) {
+        // The run's page is closed with it. A page the agent parked for the
+        // person (sign-in, a challenge) stays open: the host binds it to the
+        // request, and closing the request closes it.
+        if (!pageParkedForPerson && page && !page.isClosed()) {
           await page.close().catch(() => undefined);
         }
       }

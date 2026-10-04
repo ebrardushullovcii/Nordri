@@ -339,15 +339,20 @@ export interface BrowserSessionRuntime {
     pageBindingKey: string,
   ): Promise<RawApplyPage | null>;
   /**
-   * Forget the retained page of an application that is finished (the
-   * employer confirmed receipt). The tab stays open for the person but is no
-   * longer protected, so later runs can reuse or close it instead of
-   * counting it against the browser's tab limit.
+   * Close the exact retained page when its owner has finished with it.
+   * Resolves `false` when the person has the page (they opened it to finish
+   * it), which then stays open for them.
    */
   releaseApplicationPageBinding?(
     source: JobSource,
     pageBindingKey: string,
-  ): Promise<void>;
+  ): Promise<boolean | void>;
+  /** Move a retained page to a replacement attempt without reloading it. */
+  transferApplicationPageBinding?(
+    source: JobSource,
+    previousKey: string,
+    nextKey: string,
+  ): Promise<boolean>;
   /**
    * Main-process-only application hand. The runtime retains Page ownership
    * and returns a redacted, transient observation with no DOM handle.

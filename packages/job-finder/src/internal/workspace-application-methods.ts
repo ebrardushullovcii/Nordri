@@ -1,3 +1,7 @@
+import {
+  releaseFinishedApplicationPages,
+  reuseApplicationPage,
+} from "./application-page-lifecycle";
 import { savedResumeDigestMatches } from "./resume-file-integrity";
 import {
   createMonotonicTimestamp,
@@ -1000,7 +1004,13 @@ export function createWorkspaceApplicationMethods(
         }
         throw error;
       })
-      .finally(() => releaseDirectApplyExecution(claim));
+      .finally(async () => {
+        try {
+          await releaseFinishedApplicationPages({ ...ctx, runId: claim.runId });
+        } finally {
+          releaseDirectApplyExecution(claim);
+        }
+      });
     ctx.activeApplyRunPromises.set(
       claim.runId,
       operationPromise.then(
@@ -2229,6 +2239,12 @@ export function createWorkspaceApplicationMethods(
             capacityToken,
           );
           const activeResultIdRun = jobResult.id;
+          await reuseApplicationPage({
+            ...ctx,
+            source: job.source,
+            applicationRecordId: exactApplicationRecordId,
+            resultId: activeResultIdRun,
+          });
           let opening = openedSources.get(job.source);
           if (!opening) {
             opening = ctx.openRunBrowserSession(job.source, {
@@ -3099,6 +3115,7 @@ export function createWorkspaceApplicationMethods(
       }
       throw error;
     } finally {
+      await releaseFinishedApplicationPages({ ...ctx, runId: run.id });
       if (
         !keepSessionAlive ||
         shouldCloseActiveSessionOnExit ||
@@ -4518,6 +4535,11 @@ export function createWorkspaceApplicationMethods(
           };
         },
       );
+      await releaseFinishedApplicationPages({
+        ...ctx,
+        jobId: input.jobId,
+        removed: true,
+      });
       return ctx.getWorkspaceSnapshot();
     },
     async previewEmployerExclusion(jobId) {
@@ -6388,6 +6410,12 @@ export function createWorkspaceApplicationMethods(
           },
           capacityToken,
         );
+        await reuseApplicationPage({
+          ...ctx,
+          source: job.source,
+          applicationRecordId: selectedApplicationRecord.id,
+          resultId: markedResult.id,
+        });
         const browserProfile = await assertCurrentResumeProfile(
           ctx,
           prerequisites.profileRevision,
@@ -6989,6 +7017,12 @@ export function createWorkspaceApplicationMethods(
           },
           capacityToken,
         );
+        await reuseApplicationPage({
+          ...ctx,
+          source: job.source,
+          applicationRecordId: selectedApplicationRecord.id,
+          resultId: markedResult.id,
+        });
         const browserProfile = await assertCurrentResumeProfile(
           ctx,
           prerequisites.profileRevision,
@@ -7938,6 +7972,18 @@ export function createWorkspaceApplicationMethods(
       }
 
       await retireCancelledApplicationUserActions(ctx.repository, runId);
+      const jobs = await ctx.repository.listSavedJobs();
+      for (const result of results) {
+        if (result.state === "awaiting_review" || result.state === "submitted")
+          continue;
+        const job = jobs.find((entry) => entry.id === result.jobId);
+        await ctx.browserRuntime
+          .releaseApplicationPageBinding?.(
+            job?.source ?? "target_site",
+            result.id,
+          )
+          .catch(() => undefined);
+      }
       return ctx.getWorkspaceSnapshot();
     },
     async resolveApplyConsentRequest(
@@ -8125,6 +8171,11 @@ export function createWorkspaceApplicationMethods(
                 );
               }
 
+              await releaseFinishedApplicationPages({
+                ...ctx,
+                jobId: latestRequest.jobId,
+                runId: latestRun.id,
+              });
               const awaitingReviewJobs = latestRun.jobIds.filter((jobId) => {
                 if (jobId === latestRequest.jobId) return false;
                 return latestResults.some(

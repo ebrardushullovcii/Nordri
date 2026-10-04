@@ -14,6 +14,61 @@ import {
 import { describeApplicationPreparationProgress } from "@nordri/job-finder";
 
 describe("withEmbeddedBrowserActivity", () => {
+  test("terminal cleanup reaches the host even when its automation page was detached", async () => {
+    const base = createStubBrowserSessionRuntime({ sessions: [], catalog: [] });
+    const releaseApplicationPageBinding = vi.fn(() =>
+      Promise.reject(new Error("Page detached")),
+    );
+    const releaseOwnedTabs = vi.fn();
+    const wrapped = withEmbeddedBrowserActivity(
+      { ...base, releaseApplicationPageBinding },
+      { releaseOwnedTabs } as unknown as EmbeddedBrowser,
+    );
+    await expect(
+      wrapped.releaseApplicationPageBinding!("target_site", "sent_result"),
+    ).rejects.toThrow("Page detached");
+    expect(releaseOwnedTabs).toHaveBeenCalledExactlyOnceWith("sent_result", {
+      keepForPerson: false,
+    });
+  });
+
+  test("a finished form the person has stays open as their tab", async () => {
+    const base = createStubBrowserSessionRuntime({ sessions: [], catalog: [] });
+    const releaseOwnedTabs = vi.fn();
+    const wrapped = withEmbeddedBrowserActivity(
+      {
+        ...base,
+        releaseApplicationPageBinding: vi.fn(() => Promise.resolve(false)),
+      },
+      { releaseOwnedTabs } as unknown as EmbeddedBrowser,
+    );
+    await expect(
+      wrapped.releaseApplicationPageBinding!("target_site", "sent_result"),
+    ).resolves.toBe(false);
+    expect(releaseOwnedTabs).toHaveBeenCalledExactlyOnceWith("sent_result", {
+      keepForPerson: true,
+    });
+  });
+
+  test("a replacement attempt reclaims and transfers the host's exact tab owner", async () => {
+    const base = createStubBrowserSessionRuntime({ sessions: [], catalog: [] });
+    const transferApplicationPageBinding = vi.fn(() => Promise.resolve(true));
+    const reclaimOwnedTabs = vi.fn(() => Promise.resolve());
+    const transferOwnedTabs = vi.fn();
+    const wrapped = withEmbeddedBrowserActivity(
+      { ...base, transferApplicationPageBinding },
+      { reclaimOwnedTabs, transferOwnedTabs } as unknown as EmbeddedBrowser,
+    );
+    await expect(
+      wrapped.transferApplicationPageBinding!("target_site", "old", "retry"),
+    ).resolves.toBe(true);
+    expect(reclaimOwnedTabs).toHaveBeenCalledExactlyOnceWith("old");
+    expect(transferOwnedTabs).toHaveBeenCalledExactlyOnceWith("old", "retry");
+    expect(reclaimOwnedTabs.mock.invocationCallOrder[0]).toBeLessThan(
+      transferApplicationPageBinding.mock.invocationCallOrder[0]!,
+    );
+  });
+
   test("keeps form values out of the visible progress label", () => {
     expect(
       describeApplicationPreparationProgress(
@@ -345,7 +400,9 @@ describe("withEmbeddedBrowserActivity", () => {
       catalog: [],
     });
     const command = vi.fn().mockResolvedValue(undefined);
-    const reopenParkedTab = vi.fn().mockReturnValue("tab_parked_before_restart");
+    const reopenParkedTab = vi
+      .fn()
+      .mockReturnValue("tab_parked_before_restart");
     const browser = {
       command,
       showTab: vi.fn().mockReturnValue(false),

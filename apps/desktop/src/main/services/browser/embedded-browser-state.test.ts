@@ -21,6 +21,8 @@ function makeBrowser() {
     parkedTabs: Map<string, null>;
     heldTabs: Map<string, string[]>;
     personTabs: Set<string>;
+    ownedTabs: Map<string, Set<string>>;
+    closeReleasedOwnedTabs(): void;
     operationClaims: Map<
       AbortController,
       { id: string; owner: null; tabs: Set<string> }
@@ -56,6 +58,68 @@ function makeContents(id: string) {
 }
 
 describe("embedded browser tab state", () => {
+  test("releasing a finished owner closes its own tabs, never one the person has", () => {
+    const { browser, state, pages } = makeBrowser();
+    state.ownedTabs.set("sent_result", new Set(["failed", "held", "parked"]));
+    state.ownedTabs.set("waiting_result", new Set(["prepared"]));
+    state.heldTabs.set("held", ["sent_result"]);
+    state.parkedTabs.set("parked", null);
+    browser.releaseOwnedTabs("sent_result");
+    expect(pages.get("failed")?.close).toHaveBeenCalledOnce();
+    expect(pages.get("held")?.close).not.toHaveBeenCalled();
+    expect(pages.get("parked")?.close).not.toHaveBeenCalled();
+    expect(pages.get("prepared")?.close).not.toHaveBeenCalled();
+    expect(state.ownedTabs.has("sent_result")).toBe(false);
+  });
+
+  test("a form the person opened to finish becomes their tab when it is sent", () => {
+    const { browser, state, pages } = makeBrowser();
+    state.ownedTabs.set("sent_result", new Set(["prepared"]));
+    browser.releaseOwnedTabs("sent_result", { keepForPerson: true });
+    expect(pages.get("prepared")?.close).not.toHaveBeenCalled();
+    expect(state.personTabs.has("prepared")).toBe(true);
+    expect(state.ownedTabs.has("sent_result")).toBe(false);
+  });
+
+  test("an owner release waits until the operation using its tab ends", () => {
+    const { browser, state, pages } = makeBrowser();
+    const controller = new AbortController();
+    state.ownedTabs.set("result", new Set(["working"]));
+    state.operationClaims.set(controller, {
+      id: "active",
+      owner: null,
+      tabs: new Set(["working"]),
+    });
+    browser.releaseOwnedTabs("result");
+    expect(pages.get("working")?.close).not.toHaveBeenCalled();
+    state.operationClaims.delete(controller);
+    state.closeReleasedOwnedTabs();
+    expect(pages.get("working")?.close).toHaveBeenCalledOnce();
+  });
+
+  test("a retry transfers ownership so releasing the old result cannot close the form", () => {
+    const { browser, state, pages } = makeBrowser();
+    state.ownedTabs.set("previous_result", new Set(["prepared"]));
+    browser.transferOwnedTabs("previous_result", "retry_result");
+    browser.releaseOwnedTabs("previous_result");
+    expect(pages.get("prepared")?.close).not.toHaveBeenCalled();
+    browser.releaseOwnedTabs("retry_result");
+    expect(pages.get("prepared")?.close).toHaveBeenCalledOnce();
+  });
+
+  test("a retry reclaims its held page without reclaiming unrelated tabs", async () => {
+    const { browser, state } = makeBrowser();
+    state.ownedTabs.set("result", new Set(["held"]));
+    state.heldTabs.set("held", ["result"]);
+    state.heldTabs.set("prepared", ["other_result"]);
+    state.personTabs.add("held");
+    vi.spyOn(browser, "getOpenBrowser").mockResolvedValue(null);
+    await browser.reclaimOwnedTabs("result");
+    expect(state.heldTabs.has("held")).toBe(false);
+    expect(state.personTabs.has("held")).toBe(false);
+    expect(state.heldTabs.has("prepared")).toBe(true);
+  });
+
   test("sign-in attention follows its tab instead of the active public listing", async () => {
     const { browser } = makeBrowser();
     browser.requestAttention(

@@ -220,6 +220,33 @@ export function withEmbeddedBrowserActivity(
       };
     },
     closeSession: (source) => runtime.closeSession(source),
+    async releaseApplicationPageBinding(source, key) {
+      let closed: boolean | void = true;
+      try {
+        closed = await runtime.releaseApplicationPageBinding?.(source, key);
+      } finally {
+        browser.releaseOwnedTabs(key, { keepForPerson: closed === false });
+      }
+      return closed;
+    },
+    ...(runtime.transferApplicationPageBinding
+      ? {
+          async transferApplicationPageBinding(
+            source: JobSource,
+            previousKey: string,
+            nextKey: string,
+          ) {
+            await browser.reclaimOwnedTabs(previousKey);
+            const transferred = await runtime.transferApplicationPageBinding!(
+              source,
+              previousKey,
+              nextKey,
+            );
+            if (transferred) browser.transferOwnedTabs(previousKey, nextKey);
+            return transferred;
+          },
+        }
+      : {}),
     async closeParkedTab(source, tab) {
       if (tab.tabId) {
         browser.closeParkedTab(tab.tabId);

@@ -1,3 +1,4 @@
+import { releaseFinishedApplicationPages } from "./application-page-lifecycle";
 import {
   DISCOVERY_RUN_ALREADY_ACTIVE_MESSAGE,
   ApplicationAnswerRecordSchema,
@@ -1403,6 +1404,22 @@ export function createWorkspaceUserActionMethods(
           commandCommit.request.resolvedAt ?? new Date().toISOString(),
         eventId: `event_user_action_${command.action}_${command.requestId}`,
         dismissal: command.action === "skip" ? "skipped" : "cancelled",
+      });
+    }
+
+    if (
+      (command.action === "cancel" || command.action === "skip") &&
+      commandCommit.request.scope.type === "application"
+    ) {
+      await releaseFinishedApplicationPages({
+        ...ctx,
+        ...(commandCommit.request.scope.applicationRecordId
+          ? {
+              applicationRecordId:
+                commandCommit.request.scope.applicationRecordId,
+            }
+          : {}),
+        jobId: commandCommit.request.scope.jobId,
       });
     }
 

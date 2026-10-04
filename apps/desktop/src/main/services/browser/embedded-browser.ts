@@ -278,6 +278,66 @@ export class EmbeddedBrowser {
   }
 
   private readonly finishedTabs = new Set<string>();
+  private readonly ownedTabs = new Map<string, Set<string>>();
+  private readonly releasedOwnedTabs = new Set<string>();
+
+  async reclaimOwnedTabs(owner: string): Promise<void> {
+    const tabs = this.ownedTabs.get(owner);
+    if (!tabs) return;
+    for (const id of tabs) {
+      this.heldTabs.delete(id);
+      this.parkedTabs.delete(id);
+      this.personTabs.delete(id);
+    }
+    await this.getOpenBrowser();
+    for (const id of tabs) {
+      const page = this.pageMap.get(id);
+      if (page && this.bridge) await this.bridge.reclaimPage(page);
+    }
+  }
+
+  transferOwnedTabs(previousKey: string, nextKey: string): void {
+    if (previousKey === nextKey) return;
+    const tabs = this.ownedTabs.get(previousKey);
+    if (!tabs) return;
+    const next = this.ownedTabs.get(nextKey) ?? new Set<string>();
+    for (const id of tabs) next.add(id);
+    this.ownedTabs.set(nextKey, next);
+    this.ownedTabs.delete(previousKey);
+  }
+
+  /**
+   * A finished owner lets go of its tabs. They close, except a tab the person
+   * has: with `keepForPerson` (they opened the form to finish it) it becomes
+   * their own tab, and a tab they hold or a parked tab is never closed under
+   * them.
+   */
+  releaseOwnedTabs(
+    owner: string,
+    options: { keepForPerson?: boolean } = {},
+  ): void {
+    const tabs = this.ownedTabs.get(owner);
+    this.ownedTabs.delete(owner);
+    for (const id of tabs ?? []) {
+      if (options.keepForPerson) {
+        this.personTabs.add(id);
+        this.bridge?.releasePage(id);
+      } else this.releasedOwnedTabs.add(id);
+    }
+    this.closeReleasedOwnedTabs();
+    if (options.keepForPerson && tabs?.size) this.emit();
+  }
+
+  private closeReleasedOwnedTabs(): void {
+    for (const id of this.releasedOwnedTabs) {
+      if (
+        [...this.operationClaims.values()].some((claim) => claim.tabs.has(id))
+      )
+        continue;
+      this.closePageForAutomation(id);
+      this.releasedOwnedTabs.delete(id);
+    }
+  }
 
   markFinishedTabs(tabIds: readonly string[]): void {
     for (const id of tabIds) this.finishedTabs.add(id);
@@ -760,6 +820,8 @@ export class EmbeddedBrowser {
         action: "allow",
         createWindow: (options) => {
           const popup = this.createPage("about:blank", page.id, options);
+          for (const tabs of this.ownedTabs.values())
+            if (tabs.has(page.id)) tabs.add(popup.id);
           return popup.contents;
         },
       };
@@ -767,6 +829,11 @@ export class EmbeddedBrowser {
     page.contents.once("destroyed", () => {
       this.pageMap.delete(page.id);
       this.finishedTabs.delete(page.id);
+      this.releasedOwnedTabs.delete(page.id);
+      for (const [owner, tabs] of this.ownedTabs) {
+        tabs.delete(page.id);
+        if (tabs.size === 0) this.ownedTabs.delete(owner);
+      }
       this.agentPresses.forget(page.id);
       this.parkedTabs.delete(page.id);
       this.heldTabs.delete(page.id);
@@ -1183,6 +1250,11 @@ export class EmbeddedBrowser {
         .then((tabId) => {
           if (tabId && this.operations.has(controller)) {
             claim.tabs.add(tabId);
+            if (claim.owner) {
+              const tabs = this.ownedTabs.get(claim.owner) ?? new Set<string>();
+              tabs.add(tabId);
+              this.ownedTabs.set(claim.owner, tabs);
+            }
             this.finishedTabs.delete(tabId);
           }
         })
@@ -1221,6 +1293,7 @@ export class EmbeddedBrowser {
       if (options.cleanupOnFinish) this.markFinishedTabs(await claimedTabs());
       this.operations.delete(controller);
       this.operationClaims.delete(controller);
+      this.closeReleasedOwnedTabs();
       if (this.operations.size === 0)
         for (const page of this.pageMap.values()) {
           if (!page.contents.isDestroyed())
@@ -1494,6 +1567,8 @@ export class EmbeddedBrowser {
       this.attentionTabId = null;
       this.parkedTabs.clear();
       this.heldTabs.clear();
+      this.ownedTabs.clear();
+      this.releasedOwnedTabs.clear();
       this.closePromise = null;
       this.emit();
     });
