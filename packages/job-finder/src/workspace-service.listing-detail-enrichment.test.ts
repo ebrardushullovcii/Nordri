@@ -1,6 +1,52 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import type { ListingHtmlFetcher } from "./index";
+import { htmlToPlainText } from "./internal/listing-detail-extraction";
+import { createSeed } from "./workspace-service.test-fixtures";
 import { createWorkspaceServiceHarness } from "./workspace-service.test-harness";
+import { createAiClient } from "./workspace-service.test-runtimes";
+
+const DESCRIPTION_HTML =
+  "<p>We build the design system and the workflow platform every product team ships on, and this role owns both end to end.</p><h3>What you will do</h3><ul><li>Lead the design system roadmap across web and native surfaces.</li><li>Partner with product designers and engineers on component quality.</li><li>Run design reviews and mentor senior designers.</li></ul><h3>Requirements</h3><ul><li>Six or more years of product design with a shipped design system.</li><li>Deep Figma expertise and hands-on prototyping.</li><li>Experience with workflow or B2B platforms.</li></ul>";
+
+function createDetailReadingAiClient() {
+  const jobs = createSeed().savedJobs;
+  const postings = [
+    ...jobs,
+    {
+      ...jobs[1]!,
+      canonicalUrl: "https://www.linkedin.com/jobs/view/linkedin_pause_case",
+    },
+  ];
+  const aiClient = createAiClient();
+  // Configured readers now read every page, including its published record.
+  // Supply the model's result instead of relying on a structured-data bypass.
+  const extractJobsFromPage = vi.fn<typeof aiClient.extractJobsFromPage>(
+    (input) => {
+      expect(input.pageType).toBe("job_detail");
+      expect(input.maxJobs).toBe(1);
+      expect(input.pageText).toContain("Published JobPosting record");
+      expect(input.pageText).toContain("Six or more years of product design");
+      const posting = postings.find(
+        (job) => job.canonicalUrl === input.pageUrl,
+      );
+      if (!posting) throw new Error(`Unexpected listing: ${input.pageUrl}`);
+      return Promise.resolve([
+        {
+          ...posting,
+          company: "Signal Systems",
+          location: "Austin, TX, US",
+          description: htmlToPlainText(DESCRIPTION_HTML),
+          salaryText: "USD 150,000 – 190,000 / year",
+          applicationUrl: null,
+        },
+      ]);
+    },
+  );
+  return {
+    aiClient: { ...aiClient, extractJobsFromPage },
+    extractJobsFromPage,
+  };
+}
 
 const RECORD_PAGE = (title: string | null, company: string) =>
   `<html><head><script type="application/ld+json">${JSON.stringify({
@@ -23,8 +69,7 @@ const RECORD_PAGE = (title: string | null, company: string) =>
       currency: "USD",
       value: { minValue: 150000, maxValue: 190000, unitText: "YEAR" },
     },
-    description:
-      "<p>We build the design system and the workflow platform every product team ships on, and this role owns both end to end.</p><h3>What you will do</h3><ul><li>Lead the design system roadmap across web and native surfaces.</li><li>Partner with product designers and engineers on component quality.</li><li>Run design reviews and mentor senior designers.</li></ul><h3>Requirements</h3><ul><li>Six or more years of product design with a shipped design system.</li><li>Deep Figma expertise and hands-on prototyping.</li><li>Experience with workflow or B2B platforms.</li></ul>",
+    description: DESCRIPTION_HTML,
   })}</script></head><body></body></html>`;
 
 describe("listing detail enrichment inside a discovery run", () => {
@@ -38,8 +83,10 @@ describe("listing detail enrichment inside a discovery run", () => {
         finalUrl: url,
       });
     };
+    const { aiClient, extractJobsFromPage } = createDetailReadingAiClient();
     const { repository, workspaceService } = createWorkspaceServiceHarness({
       fetchListingHtml,
+      aiClient,
     });
     const before = await repository.listSavedJobs();
     const cardOnlyBefore = before.filter(
@@ -53,15 +100,18 @@ describe("listing detail enrichment inside a discovery run", () => {
     const read = after.filter((job) => job.listingDetailFetch !== null);
     expect(fetched.length).toBeGreaterThan(0);
     expect(read.length).toBe(fetched.length);
+    expect(extractJobsFromPage).toHaveBeenCalledTimes(fetched.length);
     for (const job of read) {
       expect(job.listingDetailFetch).toMatchObject({
         outcome: "enriched",
-        method: "json_ld",
+        method: "page_text",
       });
       expect(job.detailQuality).toBe("detail_enriched");
       expect(job.description).toContain("Six or more years of product design");
-      // Pay the card already carried is kept; the page only fills gaps.
-      expect(job.salaryText).toBeTruthy();
+      // The full page can correct the card's pay, employer and place.
+      expect(job.salaryText).toBe("USD 150,000 – 190,000 / year");
+      expect(job.company).toBe("Signal Systems");
+      expect(job.location).toBe("Austin, TX, US");
       // A fresh score against the body, not the card.
       expect(job.matchAssessment.postingFingerprint).toBeTruthy();
     }
@@ -138,8 +188,10 @@ describe("listing detail enrichment inside a discovery run", () => {
               finalUrl: url,
             },
       );
+    const { aiClient, extractJobsFromPage } = createDetailReadingAiClient();
     const { repository, workspaceService } = createWorkspaceServiceHarness({
       fetchListingHtml,
+      aiClient,
     });
 
     await workspaceService.runDiscovery();
@@ -147,6 +199,7 @@ describe("listing detail enrichment inside a discovery run", () => {
       (job) => job.listingDetailFetch?.outcome === "blocked",
     );
     expect(blocked?.listingDetailFetch?.retryAfterAt).toBeTruthy();
+    expect(extractJobsFromPage).not.toHaveBeenCalled();
 
     limited = false;
     await workspaceService.queueJobForReview(blocked!.id);
@@ -156,5 +209,6 @@ describe("listing detail enrichment inside a discovery run", () => {
     );
     expect(read?.listingDetailFetch?.outcome).toBe("enriched");
     expect(read?.listingDetailCapture?.state).toBe("captured");
+    expect(extractJobsFromPage).toHaveBeenCalledTimes(1);
   }, 30_000);
 });

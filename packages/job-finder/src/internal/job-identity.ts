@@ -558,20 +558,9 @@ export function createJobIdentityIndex<T extends object>(
 
   const resolve = (identity: JobIdentityInput): JobIdentityResolution<T> => {
     const aliases = buildJobIdentityAliases(identity);
-    // A posting URL identifies the job even when one extraction got its
-    // employer, title or feed id wrong. Other facts must not create a second
-    // record for that same listing (ADR 0041).
-    for (const alias of aliases.filter(
-      (entry) => entry.kind === "canonical_listing_url",
-    )) {
-      const matches = valuesByAlias.get(alias.key);
-      if (matches?.size === 1)
-        return {
-          status: "matched",
-          value: [...matches][0]!,
-          matchedAliases: [alias],
-        };
-    }
+    // A URL still matches when corrected card facts have no indexed alias.
+    // Check every known alias before selecting it: an alias naming another
+    // posting must not attach that posting's history or activity to this one.
     const matchedStrongAliases: JobIdentityAlias[] = [];
     let strongCandidates: ReadonlySet<T> | null = null;
 

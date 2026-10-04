@@ -177,7 +177,7 @@ describe("job identity", () => {
     ).toBeNull();
   });
 
-  test("the canonical listing URL wins over a conflicting extracted provider id", () => {
+  test("rejects a canonical listing URL that conflicts with a known provider id", () => {
     const providerMatch = identity({
       providerKey: "greenhouse",
       providerBoardToken: "acme",
@@ -203,12 +203,19 @@ describe("job identity", () => {
           canonicalUrl: urlMatch.canonicalUrl,
         }),
       ).status,
-    ).toBe("matched");
+    ).toBe("conflict");
+  });
+
+  test("matches the same URL despite corrected employer, title and unknown feed id", () => {
+    const urlMatch = identity();
+    const index = createJobIdentityIndex([urlMatch], (value) => value);
     expect(
       index.find(
         identity({
           canonicalUrl: urlMatch.canonicalUrl,
+          applicationUrl: null,
           company: "Wrong employer",
+          title: "Corrected role title",
           sourceJobId: "wrong",
         }),
       ),

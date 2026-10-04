@@ -35,6 +35,8 @@ const { sendPreparedApplicationIfAllowed } = vi.hoisted(() => ({
       })
     ).find((result) => result.id === input.lineage.resultId);
     if (!current) throw new Error("Expected the prepared result to exist.");
+    if (!current.privacyReceipt)
+      throw new Error("Expected the prepared privacy receipt to exist.");
     const submittedAt = "2026-09-22T16:53:04.561Z";
     await input.ctx.repository.upsertApplyJobResult({
       ...current,
@@ -43,6 +45,37 @@ const { sendPreparedApplicationIfAllowed } = vi.hoisted(() => ({
       detail: "The employer site confirmed receipt.",
       updatedAt: submittedAt,
       completedAt: submittedAt,
+      automaticSendPending: false,
+      // Sending updates the receipt as well as the workflow state. An unsent
+      // preparation receipt must never count as a confirmed submission.
+      privacyReceipt: {
+        ...current.privacyReceipt,
+        generatedAt: submittedAt,
+        finalSubmitOccurred: true,
+        submissionOutcome: {
+          id: "outcome_queue_send",
+          preflightId: "preflight_queue_send",
+          idempotencyKey: "idempotency_queue_send",
+          authorityEnvelopeId: "authority_queue_send",
+          authorityRevision: 1,
+          ...current.privacyReceipt.lineage,
+          applicationRecordId: current.applicationRecordId!,
+          outcome: "submitted",
+          attemptedAt: submittedAt,
+          verifiedAt: submittedAt,
+          evidence: [
+            {
+              id: "evidence_queue_send",
+              kind: "employer_site_state",
+              observedAt: submittedAt,
+              destination: current.privacyReceipt.destination,
+              artifactRefId: null,
+              summary: "The employer site confirmed receipt.",
+            },
+          ],
+          retry: { eligible: false, blockReason: "submission_confirmed" },
+        },
+      },
     });
     return {
       sent: true,
@@ -220,7 +253,14 @@ describe("autonomous queue send reconciliation", () => {
     });
     expect(
       finished.applyJobResults.find((result) => result.runId === runId),
-    ).toMatchObject({ state: "submitted" });
+    ).toMatchObject({
+      state: "submitted",
+      automaticSendPending: false,
+      privacyReceipt: {
+        finalSubmitOccurred: true,
+        submissionOutcome: { outcome: "submitted" },
+      },
+    });
     expect(
       (await harness.repository.getIntelligenceState()).safeguards
         .preparedBatchSampleReviews,

@@ -217,6 +217,22 @@ describe("ApplicationsScreen", () => {
               privacyReceipt: null,
             }),
           ]}
+          // The waiting form has an open question, so the run summary shows
+          // (ADR 0027: a form that is only ready to send is not attention).
+          userActionRequests={
+            [
+              {
+                id: "question_waiting",
+                state: "awaiting_user",
+                scope: {
+                  type: "application",
+                  runId: "run_count",
+                  jobId: "job_waiting",
+                  applicationRecordId: "record_waiting",
+                },
+              },
+            ] as unknown as JobFinderWorkspaceSnapshot["userActionRequests"]
+          }
         />
       </MemoryRouter>,
     );
