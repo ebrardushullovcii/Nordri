@@ -1390,7 +1390,7 @@ describe("Applications browser hand-off failure reporting", () => {
     expect(outcome).toEqual({
       kind: "failed",
       reason:
-        "That prepared application page is no longer open. Choose Try again in Applications to prepare it again.",
+        "That prepared application page is no longer open. Choose Prepare again in Applications to rebuild it.",
     });
   });
 

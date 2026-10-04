@@ -938,6 +938,7 @@ export const ApplyJobResultSchema = z
     applicationRecordId: NonEmptyStringSchema.nullable().default(null),
     queuePosition: z.number().int().nonnegative().default(0),
     state: ApplyJobStateSchema.default("planned"),
+    automaticSendPending: z.boolean().optional(),
     summary: NonEmptyStringSchema,
     detail: NonEmptyStringSchema,
     startedAt: IsoDateTimeSchema,

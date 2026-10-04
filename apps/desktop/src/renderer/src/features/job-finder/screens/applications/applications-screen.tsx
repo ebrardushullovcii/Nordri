@@ -368,8 +368,13 @@ export function ApplicationsScreen(props: {
         runsById.get(result.runId)?.createdAt ?? result.startedAt;
       if (
         !current ||
-        currentStart < resultStart ||
-        (current.runId === result.runId && current.updatedAt < result.updatedAt)
+        (result.privacyReceipt?.finalSubmitOccurred === true &&
+          result.privacyReceipt.submissionOutcome?.outcome !==
+            "outcome_uncertain") ||
+        (current.privacyReceipt?.finalSubmitOccurred !== true &&
+          (currentStart < resultStart ||
+            (current.runId === result.runId &&
+              current.updatedAt < result.updatedAt)))
       ) {
         latest.set(result.applicationRecordId, result);
       }
@@ -594,10 +599,10 @@ export function ApplicationsScreen(props: {
           ["filling", "question_capture", "submitting"].includes(result.state),
         ).length
       : 0;
-  const latestRunFinishedCount = latestAutomaticResults.filter((result) =>
-    ["awaiting_review", "submitted", "failed", "cancelled"].includes(
-      result.state,
-    ),
+  const latestRunFinishedCount = latestAutomaticResults.filter(
+    (result) =>
+      result.state === "submitted" &&
+      result.privacyReceipt?.finalSubmitOccurred !== false,
   ).length;
   const latestRunSkippedCount = latestAutomaticResults.filter(
     (result) => result.state === "skipped",
@@ -759,8 +764,10 @@ export function ApplicationsScreen(props: {
       })
       .sort(
         (left, right) =>
+          Number(right.privacyReceipt?.finalSubmitOccurred === true) -
+            Number(left.privacyReceipt?.finalSubmitOccurred === true) ||
           new Date(right.updatedAt).getTime() -
-          new Date(left.updatedAt).getTime(),
+            new Date(left.updatedAt).getTime(),
       );
   }, [
     applyJobResults,
@@ -1041,7 +1048,7 @@ export function ApplicationsScreen(props: {
                       ? `${latestRunNotStartedCount} not started`
                       : null,
                     latestRunFinishedCount
-                      ? `${latestRunFinishedCount} finished`
+                      ? `${latestRunFinishedCount} sent`
                       : null,
                     latestRunSkippedCount
                       ? `${latestRunSkippedCount} skipped`

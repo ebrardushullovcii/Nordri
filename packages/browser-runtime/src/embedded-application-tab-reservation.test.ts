@@ -120,3 +120,37 @@ describe("embedded application tab reservation", () => {
     await expect(reservation).rejects.toBeTruthy();
   });
 });
+
+test("waiting forms release working slots without being closed", async () => {
+  const { context, pages } = fakeContext(
+    Array.from({ length: 12 }, (_, i) => `https://jobs.example/apply/${i}`),
+  );
+  const release = await reserveEmbeddedApplicationTab(
+    context,
+    undefined,
+    undefined,
+    undefined,
+    () => 12,
+    () => 2,
+  );
+  expect(pages.every((page) => !page.isClosed())).toBe(true);
+  release();
+});
+
+test("the total cap still holds even when every form is waiting", async () => {
+  const { context, pages } = fakeContext(
+    Array.from({ length: 15 }, (_, i) => `https://jobs.example/apply/${i}`),
+  );
+  const controller = new AbortController();
+  const reservation = reserveEmbeddedApplicationTab(
+    context,
+    controller.signal,
+    undefined,
+    () => undefined,
+    () => 15,
+    () => 0,
+  );
+  controller.abort();
+  await expect(reservation).rejects.toBeTruthy();
+  expect(pages.every((page) => !page.isClosed())).toBe(true);
+});

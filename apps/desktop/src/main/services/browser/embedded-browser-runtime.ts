@@ -220,6 +220,13 @@ export function withEmbeddedBrowserActivity(
       };
     },
     closeSession: (source) => runtime.closeSession(source),
+    async readApplicationPageWithPerson(source, key) {
+      return (
+        (await browser.readApplicationPageWithPerson(key)) ??
+        (await runtime.readApplicationPageWithPerson?.(source, key)) ??
+        null
+      );
+    },
     async releaseApplicationPageBinding(source, key) {
       let closed: boolean | void = true;
       try {

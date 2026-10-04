@@ -1,4 +1,8 @@
 import {
+  describeApplicationPreparation,
+  hasVerifiedApplicationSubmission,
+} from "./workspace-apply-run-support";
+import {
   releaseFinishedApplicationPages,
   reuseApplicationPage,
 } from "./application-page-lifecycle";
@@ -1467,6 +1471,15 @@ export function createWorkspaceApplicationMethods(
       >;
     },
   ) {
+    if (
+      (await ctx.repository.listApplyJobResults({ jobId })).some(
+        hasVerifiedApplicationSubmission,
+      )
+    ) {
+      throw new Error(
+        "The employer already confirmed this application. It will not be prepared or sent again.",
+      );
+    }
     const profileStatePromise =
       scope?.profile && scope.profileRevision !== undefined
         ? Promise.resolve({
@@ -2412,12 +2425,14 @@ export function createWorkspaceApplicationMethods(
               }),
             }),
           };
-          const executionResult = enforceResolvedApplyAuthorityResult(
-            applyAuthorityRun.authority,
-            await ctx.browserRuntime.executeApplicationFlow(
-              job.source,
-              applyFlowInputRun,
-              { signal: executionSignal },
+          const executionResult = describeApplicationPreparation(
+            enforceResolvedApplyAuthorityResult(
+              applyAuthorityRun.authority,
+              await ctx.browserRuntime.executeApplicationFlow(
+                job.source,
+                applyFlowInputRun,
+                { signal: executionSignal },
+              ),
             ),
           );
           await assertPreparationProfileCurrent(ctx, prerequisites);
@@ -2521,8 +2536,22 @@ export function createWorkspaceApplicationMethods(
               consentRequests: runArtifacts.consentRequests,
               executionResult: normalizedExecutionResult,
             }),
-            summary: normalizedExecutionResult.summary,
-            detail: normalizedExecutionResult.detail,
+            automaticSendPending:
+              preparedHandoffRun !== null &&
+              applyAuthorityRun.authority.mode === "autonomous_submit" &&
+              normalizedExecutionResult.state === "ready",
+            summary:
+              preparedHandoffRun &&
+              applyAuthorityRun.authority.mode === "autonomous_submit" &&
+              normalizedExecutionResult.state === "ready"
+                ? "Automatic send queued."
+                : normalizedExecutionResult.summary,
+            detail:
+              preparedHandoffRun &&
+              applyAuthorityRun.authority.mode === "autonomous_submit" &&
+              normalizedExecutionResult.state === "ready"
+                ? "Job Finder will send this application next and check the employer's confirmation."
+                : normalizedExecutionResult.detail,
             startedAt: jobResult?.startedAt ?? detectedAt,
             updatedAt: detectedAt,
             completedAt:
@@ -6532,12 +6561,14 @@ export function createWorkspaceApplicationMethods(
             }),
           }),
         };
-        const executionResult = enforceResolvedApplyAuthorityResult(
-          applyAuthorityApproved.authority,
-          await ctx.browserRuntime.executeApplicationFlow(
-            job.source,
-            applyFlowInputApproved,
-            { signal: claim.controller.signal },
+        const executionResult = describeApplicationPreparation(
+          enforceResolvedApplyAuthorityResult(
+            applyAuthorityApproved.authority,
+            await ctx.browserRuntime.executeApplicationFlow(
+              job.source,
+              applyFlowInputApproved,
+              { signal: claim.controller.signal },
+            ),
           ),
         );
         await assertPreparationProfileCurrent(ctx, prerequisites);
@@ -7154,12 +7185,14 @@ export function createWorkspaceApplicationMethods(
             }),
           }),
         };
-        const executionResult = enforceResolvedApplyAuthorityResult(
-          applyAuthorityDirect.authority,
-          await ctx.browserRuntime.executeApplicationFlow(
-            currentJob.source,
-            applyFlowInputDirect,
-            { signal: claim.controller.signal },
+        const executionResult = describeApplicationPreparation(
+          enforceResolvedApplyAuthorityResult(
+            applyAuthorityDirect.authority,
+            await ctx.browserRuntime.executeApplicationFlow(
+              currentJob.source,
+              applyFlowInputDirect,
+              { signal: claim.controller.signal },
+            ),
           ),
         );
         await assertPreparationProfileCurrent(ctx, prerequisites);
@@ -7524,7 +7557,16 @@ export function createWorkspaceApplicationMethods(
       capacityToken,
       applicationAutomationMode,
     ) {
-      const uniqueJobIds = uniqueStrings(jobIds);
+      const verifiedJobIds = new Set(
+        (await ctx.repository.listApplyJobResults())
+          .filter(hasVerifiedApplicationSubmission)
+          .map((result) => result.jobId),
+      );
+      const uniqueJobIds = uniqueStrings(jobIds).filter(
+        (id) => !verifiedJobIds.has(id),
+      );
+      if (jobIds.length > 0 && uniqueJobIds.length === 0)
+        return ctx.getWorkspaceSnapshot();
 
       if (uniqueJobIds.length === 0) {
         throw new Error(

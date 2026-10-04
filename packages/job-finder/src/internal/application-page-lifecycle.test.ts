@@ -1,9 +1,12 @@
+import { releaseApplicationRecordAfterDismissedUserAction } from "./workspace-application-user-action";
+import { reconcileApplyRunAfterConfirmedSubmission } from "./workspace-apply-run-support";
 import type { BrowserSessionRuntime } from "@nordri/browser-runtime";
 import {
   ApplyJobResultSchema,
   ApplyRunSchema,
   ApplicationRecordSchema,
   UserActionRequestSchema,
+  ApplicationPrivacyReceiptSchema,
 } from "@nordri/contracts";
 import { describe, expect, test, vi } from "vitest";
 import {
@@ -13,7 +16,9 @@ import {
 } from "../workspace-service.test-support";
 import {
   releaseFinishedApplicationPages,
+  isUnsentPreparedApplication,
   reuseApplicationPage,
+  retireLostPreparedApplication,
 } from "./application-page-lifecycle";
 
 const now = "2026-10-03T10:00:00.000Z";
@@ -295,4 +300,250 @@ describe("application page ownership", () => {
       );
     },
   );
+});
+
+test.each(["blocked", "awaiting_review"])(
+  "restart retires a missing %s form and its stale question controls",
+  async (state) => {
+    const seed = seedPages([state]);
+    if (state === "blocked")
+      seed.applyJobResults[0]!.blockerReason = "required_human_input";
+    const request = UserActionRequestSchema.parse({
+      id: "missing_form_answer",
+      dedupeKey: "missing_form_answer",
+      revision: 1,
+      kind: "manual_answer",
+      state: "pending",
+      title: "Answer dates",
+      summary: "Answer dates",
+      instructions: ["Answer"],
+      createdAt: now,
+      updatedAt: now,
+      verification: {
+        type: "page_blocker_absent",
+        blockerFingerprint: "dates",
+      },
+      scope: {
+        type: "application",
+        source: "target_site",
+        runId: "run_a",
+        resultId: "result_0",
+        jobId: "job_ready",
+        applicationRecordId: "application_a",
+      },
+    });
+    seed.userActionRequests = [request];
+    expect(isUnsentPreparedApplication(seed.applyJobResults[0]!)).toBe(true);
+    const harness = createWorkspaceServiceHarness({
+      seed,
+      browserRuntime: {
+        ...createBrowserRuntime(),
+        hasApplicationPageBinding: () => Promise.resolve(false),
+      },
+    });
+    const snapshot = await harness.workspaceService.getWorkspaceSnapshot();
+    expect(
+      snapshot.applicationRecords.find(
+        (record) => record.id === "application_a",
+      ),
+    ).toMatchObject({
+      lastAttemptState: "failed",
+      nextActionLabel: "Prepare again",
+    });
+    expect(
+      (await harness.repository.getUserActionRequest(request.id))?.state,
+    ).toBe("cancelled");
+  },
+);
+
+test("releasing one skipped job keeps another job's filling page", async () => {
+  const seed = seedPages(["skipped"]);
+  seed.applyJobResults.push(
+    ApplyJobResultSchema.parse({
+      ...seed.applyJobResults[0],
+      id: "other_result",
+      jobId: "job_other",
+      applicationRecordId: "other_record",
+      state: "filling",
+    }),
+  );
+  const releaseApplicationPageBinding = vi.fn(() => Promise.resolve());
+  const harness = createWorkspaceServiceHarness({
+    seed,
+    browserRuntime: {
+      ...createBrowserRuntime(),
+      releaseApplicationPageBinding,
+    },
+  });
+  await releaseFinishedApplicationPages({ ...harness, jobId: "job_ready" });
+  expect(releaseApplicationPageBinding).toHaveBeenCalledExactlyOnceWith(
+    "target_site",
+    "result_0",
+  );
+  expect(
+    (await harness.repository.listApplyJobResults()).find(
+      (result) => result.id === "other_result",
+    )?.state,
+  ).toBe("filling");
+});
+
+test("bulk preparation leaves a verified submission and its receipt untouched", async () => {
+  const seed = seedPages(["submitted"]);
+  const result = seed.applyJobResults[0]!;
+  result.privacyReceipt = ApplicationPrivacyReceiptSchema.parse({
+    generatedAt: now,
+    lineage: {
+      runId: result.runId,
+      jobId: result.jobId,
+      resultId: result.id,
+      applicationRecordId: "application_a",
+    },
+    destination: { origin: "http://127.0.0.1:47950", safePath: "/apply" },
+    resume: {
+      source: "original_upload",
+      sourceDocumentId: "synthetic",
+      exportArtifactId: null,
+      fileName: "synthetic.pdf",
+      sha256: "a".repeat(64),
+    },
+    finalSubmitAuthorized: true,
+    finalSubmitOccurred: true,
+    submissionOutcome: null,
+    externalWrites: [],
+  });
+  seed.applyJobResults[0] = ApplyJobResultSchema.parse(result);
+  const before = structuredClone(seed.applyJobResults[0]);
+  const executeApplicationFlow = vi.fn();
+  const harness = createWorkspaceServiceHarness({
+    seed,
+    browserRuntime: { ...createBrowserRuntime(), executeApplicationFlow },
+  });
+  await harness.workspaceService.startAutoApplyQueueRun(["job_ready"]);
+  expect(executeApplicationFlow).not.toHaveBeenCalled();
+  expect(await harness.repository.listApplyJobResults()).toEqual([before]);
+});
+
+test("restart does not call a missing-resume prerequisite a lost form", () => {
+  const seed = seedPages(["blocked"]);
+  seed.applyJobResults[0]!.blockerReason = "resume_missing";
+  expect(isUnsentPreparedApplication(seed.applyJobResults[0]!)).toBe(false);
+});
+
+test("startup leaves stale prepared histories alone for a verified sent job", async () => {
+  const seed = seedPages(["submitted", "awaiting_review"]);
+  const sent = seed.applyJobResults[0]!;
+  sent.privacyReceipt = ApplicationPrivacyReceiptSchema.parse({
+    generatedAt: now,
+    lineage: {
+      runId: sent.runId,
+      jobId: sent.jobId,
+      resultId: sent.id,
+      applicationRecordId: "application_a",
+    },
+    destination: { origin: "http://127.0.0.1:47950", safePath: "/apply" },
+    resume: {
+      source: "original_upload",
+      sourceDocumentId: "synthetic",
+      exportArtifactId: null,
+      fileName: "synthetic.pdf",
+      sha256: "a".repeat(64),
+    },
+    finalSubmitOccurred: true,
+  });
+  seed.applicationRecords[0]!.status = "submitted";
+  seed.applicationRecords[0]!.lastAttemptState = "submitted";
+  seed.applicationRecords[0]!.nextActionLabel = "View application";
+  const expected = structuredClone(seed.applicationRecords[0]);
+  const hasApplicationPageBinding = vi.fn(() => Promise.resolve(false));
+  const harness = createWorkspaceServiceHarness({
+    seed,
+    browserRuntime: { ...createBrowserRuntime(), hasApplicationPageBinding },
+  });
+  await harness.workspaceService.getWorkspaceSnapshot();
+  await harness.workspaceService.getWorkspaceSnapshot();
+  await retireLostPreparedApplication({
+    repository: harness.repository,
+    applicationRecordId: "application_a",
+    resultId: "result_1",
+    occurredAt: now,
+  });
+  expect(await harness.repository.listApplicationRecords()).toEqual([expected]);
+  expect(hasApplicationPageBinding).not.toHaveBeenCalled();
+  expect(
+    (await harness.repository.listApplyJobResults()).find(
+      (result) => result.id === "result_1",
+    )?.state,
+  ).toBe("awaiting_review");
+});
+
+test("skipping a waiting job preserves its filling sibling and the sibling can finish the run", async () => {
+  const seed = seedPages(["awaiting_review"]);
+  seed.applyRuns[0]!.state = "running";
+  seed.applyRuns[0]!.jobIds = ["job_ready", "job_other"];
+  seed.applyRuns[0]!.totalJobs = 2;
+  seed.applyRuns[0]!.currentJobId = "job_other";
+  seed.applyJobResults.push(
+    ApplyJobResultSchema.parse({
+      ...seed.applyJobResults[0],
+      id: "other_result",
+      jobId: "job_other",
+      applicationRecordId: "other_record",
+      state: "filling",
+    }),
+  );
+  const request = UserActionRequestSchema.parse({
+    id: "skip_request",
+    revision: 1,
+    dedupeKey: "skip_request",
+    kind: "manual_answer",
+    state: "cancelled",
+    title: "Answer",
+    summary: "Answer",
+    createdAt: now,
+    updatedAt: now,
+    verification: { type: "page_blocker_absent", blockerFingerprint: "answer" },
+    scope: {
+      type: "application",
+      source: "target_site",
+      runId: "run_a",
+      resultId: "result_0",
+      jobId: "job_ready",
+      applicationRecordId: "application_a",
+    },
+  });
+  const harness = createWorkspaceServiceHarness({ seed });
+  await releaseApplicationRecordAfterDismissedUserAction({
+    repository: harness.repository,
+    request,
+    occurredAt: now,
+    eventId: "skip",
+    dismissal: "skipped",
+  });
+  const run = (await harness.repository.listApplyRuns())[0]!;
+  expect(run).toMatchObject({
+    state: "running",
+    currentJobId: "job_other",
+    pendingJobs: 1,
+    completedAt: null,
+  });
+  const results = await harness.repository.listApplyJobResults();
+  expect(results.find((result) => result.id === "other_result")).toMatchObject({
+    state: "filling",
+    summary: "Synthetic result",
+  });
+  const finished = reconcileApplyRunAfterConfirmedSubmission({
+    run,
+    results: results.map((result) =>
+      result.id === "other_result" ? { ...result, state: "submitted" } : result,
+    ),
+    submittedAt: now,
+    submittedSummary: "Sent",
+    submittedDetail: "The site confirmed receipt.",
+  });
+  expect(finished).toMatchObject({
+    state: "completed",
+    pendingJobs: 0,
+    submittedJobs: 1,
+    skippedJobs: 1,
+  });
 });

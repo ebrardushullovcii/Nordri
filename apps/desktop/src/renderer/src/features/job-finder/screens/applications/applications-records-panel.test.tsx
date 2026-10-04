@@ -355,7 +355,7 @@ describe("ApplicationsRecordsPanel", () => {
     const stateDescriptionId = firstRowAction.getAttribute("aria-describedby");
     expect(stateDescriptionId).toBeTruthy();
     expect(document.getElementById(stateDescriptionId!)?.textContent).toBe(
-      "Stage Needs you.",
+      "Status Needs you.",
     );
     expect(screen.queryByText("Needs follow-up")).toBeNull();
     expect(firstRowAction.getAttribute("aria-keyshortcuts")).toBe(
@@ -461,10 +461,9 @@ describe("ApplicationsRecordsPanel", () => {
     expect(rowBadgeSlot?.textContent).toContain("Needs you");
     expect(within(application).queryByText("Job")).toBeNull();
     expect(within(application).queryByText("Latest activity")).toBeNull();
-    // The stage is announced exactly once, through the row description, so
-    // "Stage" is not read twice beside its own badge.
-    expect(within(application).queryByText("Stage")).toBeNull();
-    expect((application.textContent ?? "").split("Stage").length - 1).toBe(1);
+    // The status is announced exactly once, through the row description.
+    expect(within(application).queryByText("Status")).toBeNull();
+    expect((application.textContent ?? "").split("Status").length - 1).toBe(1);
     // Needs you already covers paused prep — no second "Needs follow-up" badge.
     expect(within(application).queryByText("Apply attempt")).toBeNull();
     expect(within(application).queryByText("Needs follow-up")).toBeNull();
@@ -880,7 +879,7 @@ describe("ApplicationsRecordsPanel", () => {
     const stateDescriptionId = rowAction.getAttribute("aria-describedby");
     expect(stateDescriptionId).toBeTruthy();
     expect(document.getElementById(stateDescriptionId!)?.textContent).toBe(
-      "Stage Needs recovery. Preparation attempt Attempt failed.",
+      "Status Needs recovery. Preparation attempt Attempt failed.",
     );
   });
 

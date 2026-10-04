@@ -292,7 +292,7 @@ describe("applications status helpers", () => {
       "Submitted via apply copilot.",
     );
     expect(getApplicationNextStepLabel(record)).toBe(
-      "Wait for a recruiter response.",
+      "View application",
     );
   });
 
@@ -786,4 +786,17 @@ describe("an application the person cancelled", () => {
       applicationRecordNeedsUser({ ...cancelled, lastAttemptState: "failed" }),
     ).toBe(true);
   });
+});
+
+
+it("ignores legacy Prepare again next steps after the application was sent", () => {
+  expect(
+    getApplicationNextStepLabel(
+      createRecord({
+        status: "submitted",
+        lastAttemptState: "submitted",
+        nextActionLabel: "Prepare again",
+      }),
+    ),
+  ).toBe("View application");
 });

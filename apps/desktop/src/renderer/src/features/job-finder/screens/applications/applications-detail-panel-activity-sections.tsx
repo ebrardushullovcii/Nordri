@@ -98,7 +98,9 @@ export function ApplicationsDetailPanelActivitySections(props: {
 
   return (
     <>
-      {awaitsYourReview &&
+      {(visibleApplyResult?.automaticSendPending !== true ||
+        visibleApplyResult?.privacyReceipt?.submissionOutcome != null) &&
+      awaitsYourReview &&
       reviewCard &&
       reviewCardMatchesVisibleResult &&
       onSubmitPreparedApplication &&

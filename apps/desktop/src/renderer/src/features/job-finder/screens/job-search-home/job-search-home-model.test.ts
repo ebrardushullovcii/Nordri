@@ -2201,5 +2201,8 @@ describe("buildJobSearchHomeModel · applications the person stopped or may have
       title: "Check 1 application whose page closed",
       primary: { action: { kind: "navigate" } },
     });
+    expect(model.next.detail).toContain("Prepare again");
+    expect(model.stages?.[2]?.detail).toBe("1 needs Prepare again");
+
   });
 });

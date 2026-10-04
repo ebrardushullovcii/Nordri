@@ -450,3 +450,34 @@ describe("withEmbeddedBrowserActivity", () => {
     ).toBe("tab_second");
   });
 });
+
+test("reads the exact native person-owned application even when CDP released its page", async () => {
+  const base = createStubBrowserSessionRuntime({ sessions: [], catalog: [] });
+  const page = {
+    bodyText: "Application received",
+    loading: false,
+  } as unknown as NonNullable<
+    Awaited<
+      ReturnType<
+        NonNullable<BrowserSessionRuntime["readApplicationPageWithPerson"]>
+      >
+    >
+  >;
+  const readApplicationPageWithPerson = vi.fn(() => Promise.resolve(page));
+  const fallback = vi.fn(() => Promise.resolve(null));
+  const browser = {
+    readApplicationPageWithPerson,
+  } as unknown as EmbeddedBrowser;
+  const wrapped = withEmbeddedBrowserActivity(
+    { ...base, readApplicationPageWithPerson: fallback },
+    browser,
+  );
+  expect(
+    await wrapped.readApplicationPageWithPerson?.(
+      "target_site",
+      "result_waiting",
+    ),
+  ).toBe(page);
+  expect(readApplicationPageWithPerson).toHaveBeenCalledWith("result_waiting");
+  expect(fallback).not.toHaveBeenCalled();
+});

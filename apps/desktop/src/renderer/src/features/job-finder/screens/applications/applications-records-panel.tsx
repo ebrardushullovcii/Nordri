@@ -371,14 +371,16 @@ export function ApplicationsRecordsPanel({
             // A job its batch never reached has one next step; the record's
             // own label still named the approval that batch started from.
             const preparationNextStep =
-              (applyState?.kind === "could_not_apply"
-                ? applyState.actionLabel
-                : null) ??
-              applyState?.questionsLeftLabel ??
-              getApplicationReadableNextStepLabel(
-                getApplicationNextStepLabel(record),
-              ) ??
-              getApplicationNextStepLabel(record);
+              applyState?.kind === "applied"
+                ? "View application"
+                : ((applyState?.kind === "could_not_apply"
+                    ? applyState.actionLabel
+                    : null) ??
+                  applyState?.questionsLeftLabel ??
+                  getApplicationReadableNextStepLabel(
+                    getApplicationNextStepLabel(record),
+                  ) ??
+                  getApplicationNextStepLabel(record));
             // Sent or withdrawn, by the person's own record: what comes next
             // is on the tracker, not the preparation step the run left behind.
             const nextStepLabel =
@@ -478,8 +480,8 @@ export function ApplicationsRecordsPanel({
                       stage.label === "Needs you" &&
                       attemptLabel === "Needs follow-up"
                     )
-                      ? `Stage ${stage.label}. Preparation attempt ${attemptLabel}.`
-                      : `Stage ${stage.label}.`}
+                      ? `Status ${stage.label}. Preparation attempt ${attemptLabel}.`
+                      : `Status ${stage.label}.`}
                   </span>
                 </SelectableRow>
               </li>

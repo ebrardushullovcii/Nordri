@@ -133,6 +133,7 @@ export async function recordPreparedApplicationNotSent(input: {
     attempt.formGone
       ? {
           ...result,
+          automaticSendPending: false,
           state: "failed",
           summary: attempt.summary,
           detail: attempt.detail,
@@ -143,6 +144,7 @@ export async function recordPreparedApplicationNotSent(input: {
         }
       : {
           ...result,
+          automaticSendPending: false,
           summary: attempt.summary,
           detail: attempt.detail,
           updatedAt: now,

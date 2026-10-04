@@ -4,6 +4,8 @@ import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   UserActionRequestSchema,
+  PREPARED_PAGE_CLOSED_SUMMARY,
+  ApplyRunSchema,
   type JobFinderWorkspaceSnapshot,
 } from "@nordri/contracts";
 import { ApplicationAnswerStepCard } from "./applications-answer-step";
@@ -577,3 +579,141 @@ it("a rejected original format opens PDF review instead of retrying the same upl
   expect(onReviewResumePdf).toHaveBeenCalledWith("job_1");
   expect(onStartApplyCopilot).not.toHaveBeenCalled();
 });
+
+it("drops the browser-finish instruction as soon as the same application is submitted", () => {
+  const baseProps = {
+    canRestageAutoRun: false,
+    canRestageQueueRun: false,
+    dailyPreparationCapacity: null,
+    excludedQueueRecoveryEntries: [],
+    isApplyPending: false,
+    onStartApplyCopilot: vi.fn(),
+    onStartAutoApplyQueue: vi.fn(),
+    selectedQueueOutcomeEntries: [],
+    selectedQueueRecoveryEntries: [],
+    selectedQueueRecoveryJobIds: [],
+    selectedRecordJobId: "job_1",
+    selectedApplicationRecordId: "application_1",
+    selectedRun: null,
+    onFinishInBrowser: () => ({ kind: "opened_application_page" as const }),
+  };
+  const result = buildResult({ state: "awaiting_review" });
+  const view = render(
+    <ApplicationsDetailPanelRecoveryActionsSection
+      {...baseProps}
+      visibleApplyResult={result}
+    />,
+  );
+  fireEvent.click(
+    view.getByRole("button", { name: "Open the Job Finder browser" }),
+  );
+  expect(view.getByTestId("manual-field-finish-status")).toBeTruthy();
+  view.rerender(
+    <ApplicationsDetailPanelRecoveryActionsSection
+      {...baseProps}
+      visibleApplyResult={{ ...result, state: "submitted" }}
+    />,
+  );
+  expect(view.queryByTestId("manual-field-finish-status")).toBeNull();
+  expect(
+    view.getByTestId("applications-recovery-status-line").textContent,
+  ).toBe("Application submitted");
+});
+
+it("prints each current batch outcome only once without duplicate recovery lists", () => {
+  const result = buildResult({
+    summary: "submitted via Submit button",
+    state: "blocked",
+    latestQuestionCount: 1,
+    blockerReason: "required_human_input",
+    blockerSummary: "Answer dates",
+  });
+  const entry = {
+    jobId: "job_1",
+    label: "Synthetic nurse",
+    runResult: result,
+    includeInRecovery: false,
+  };
+  const view = renderSection({
+    visibleApplyResult: result,
+    selectedRun: ApplyRunSchema.parse({
+      id: "run_1",
+      mode: "queue_auto",
+      state: "paused_for_user_review",
+      jobIds: ["job_1"],
+      createdAt: result.startedAt,
+      updatedAt: result.updatedAt,
+      summary: "Waiting",
+      detail: "Waiting",
+      totalJobs: 1,
+    }),
+    selectedQueueOutcomeEntries: [entry],
+    excludedQueueRecoveryEntries: [entry],
+  });
+  expect(view.getAllByText("Synthetic nurse")).toHaveLength(1);
+  expect(view.queryByText("submitted via Submit button")).toBeNull();
+  expect(
+    view.queryByText("No jobs from this run still need recovery."),
+  ).toBeNull();
+  expect(view.container.textContent).toContain(
+    "0 sent. 1 application needs your answers or review.",
+  );
+});
+
+it("a missing prepared page uses Prepare again on its primary button", () => {
+  const view = renderSection({
+    visibleApplyResult: buildResult({
+      state: "failed",
+      summary: PREPARED_PAGE_CLOSED_SUMMARY,
+    }),
+  });
+  expect(primaryButtonLabels(view.container)).toEqual(["Prepare again"]);
+  expect(view.queryByRole("button", { name: "Try again" })).toBeNull();
+});
+
+it.each([
+  ["planned", "Waiting its turn", "Application queued", 0],
+  ["planned", "Waiting for a browser tab", "Waiting for a free browser tab", 0],
+  ["awaiting_review", "Needs your answers", "Needs your answers", 2],
+  ["failed", "Prepare again", PREPARED_PAGE_CLOSED_SUMMARY, 0],
+] as const)(
+  "per-job run outcome uses the actual %s standing: %s",
+  (state, label, summary, latestQuestionCount) => {
+    const result = buildResult({
+      state,
+      summary,
+      latestQuestionCount,
+      blockerReason: latestQuestionCount ? "required_human_input" : null,
+      applicationPreparationStartedAt: "2026-09-01T10:00:00.000Z",
+    });
+    const run = ApplyRunSchema.parse({
+      id: "run_1",
+      state: "running",
+      mode: "queue_auto",
+      jobIds: ["job_1"],
+      totalJobs: 1,
+      createdAt: "2026-09-01T10:00:00.000Z",
+      updatedAt: "2026-09-01T10:00:00.000Z",
+      summary: "Preparing",
+      detail: "Preparing",
+    });
+    const view = renderSection({
+      visibleApplyResult: result,
+      selectedRun: run,
+      selectedQueueOutcomeEntries: [
+        {
+          jobId: "job_1",
+          label: "Synthetic role",
+          runResult: result,
+          includeInRecovery: false,
+        },
+      ],
+    });
+    const entry = view.getByText("Synthetic role").closest("div.grid");
+    expect(entry?.textContent).toContain(label);
+    expect(entry?.textContent).not.toContain(
+      "Ready for you to finish and send",
+    );
+    expect(entry?.textContent).not.toContain("Filling in");
+  },
+);

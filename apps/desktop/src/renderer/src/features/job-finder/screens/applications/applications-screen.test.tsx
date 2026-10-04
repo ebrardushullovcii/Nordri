@@ -20,6 +20,7 @@ import type {
   JobFinderWorkspaceSnapshot,
 } from "@nordri/contracts";
 import {
+  ApplicationPrivacyReceiptSchema,
   ApplicationAttemptSchema,
   ApplyRunSchema,
   ApplyJobResultSchema,
@@ -138,6 +139,91 @@ describe("ApplicationsScreen", () => {
         : {}),
     };
   }
+
+  it("does not count waiting forms or a contradictory receipt as sent", () => {
+    vi.stubGlobal("ResizeObserver", ResizeObserverMock);
+    const result = ApplyJobResultSchema.parse({
+      id: "result_count",
+      applicationRecordId: "record_count",
+      runId: "run_count",
+      jobId: "job_count",
+      state: "submitted",
+      summary: "Submitted",
+      detail: "Synthetic",
+      startedAt: "2026-08-20T10:00:00.000Z",
+      updatedAt: "2026-08-20T10:00:00.000Z",
+      privacyReceipt: ApplicationPrivacyReceiptSchema.parse({
+        generatedAt: "2026-08-20T10:00:00.000Z",
+        lineage: {
+          runId: "run_count",
+          jobId: "job_count",
+          resultId: "result_count",
+          applicationRecordId: "record_count",
+        },
+        destination: { origin: "http://127.0.0.1:47950", safePath: "/apply" },
+        resume: {
+          source: "original_upload",
+          sourceDocumentId: "synthetic",
+          exportArtifactId: null,
+          fileName: "synthetic.pdf",
+          sha256: "a".repeat(64),
+        },
+        finalSubmitOccurred: false,
+      }),
+    });
+    render(
+      <MemoryRouter>
+        <ApplicationsScreen
+          dailyPreparationCapacity={null}
+          {...buildCrmScreenProps({
+            applicationRecords: [
+              createTrackedApplication({
+                id: "record_count",
+                jobId: "job_count",
+              }),
+              createTrackedApplication({
+                id: "record_waiting",
+                jobId: "job_waiting",
+              }),
+            ],
+            onSelectRecord: vi.fn(),
+            selectedRecord: null,
+            includeTrackerControls: false,
+          })}
+          onGetApplyRunDetails={() =>
+            Promise.reject(new Error("Synthetic history unavailable"))
+          }
+          applyRuns={[
+            ApplyRunSchema.parse({
+              id: "run_count",
+              mode: "queue_auto",
+              state: "running",
+              jobIds: ["job_count", "job_waiting"],
+              totalJobs: 2,
+              createdAt: result.startedAt,
+              updatedAt: result.updatedAt,
+              summary: "Running",
+              detail: "Synthetic",
+            }),
+          ]}
+          applyJobResults={[
+            result,
+            ApplyJobResultSchema.parse({
+              ...result,
+              id: "result_waiting",
+              applicationRecordId: "record_waiting",
+              jobId: "job_waiting",
+              state: "awaiting_review",
+              privacyReceipt: null,
+            }),
+          ]}
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.getByText("Latest automatic run")).toBeTruthy();
+    expect(screen.queryByText("1 sent")).toBeNull();
+    expect(screen.queryByText("2 finished")).toBeNull();
+  });
 
   it.each([false, true])(
     "retries only failures with the saved Send mode (cancelled sibling: %s)",
@@ -2368,6 +2454,130 @@ describe("ApplicationsScreen", () => {
     // The Recovery section's dedicated alert owns this exact sentence; the
     // route surface suppresses only that duplicate.
     expect(screen.queryByTestId("applications-route-action-status")).toBeNull();
+  });
+  it("shows a rejected submit's exact message, correction action and one Not sent badge", async () => {
+    vi.stubGlobal("ResizeObserver", ResizeObserverMock);
+    stubCandidateAssetsBridge();
+    const record = createTrackedApplication({
+      id: "application_rejected",
+      jobId: "job_rejected",
+      status: "ready_for_review",
+      lastAttemptState: "ready",
+      automationMode: "confirm_before_submit",
+      crm: undefined,
+    });
+    const result = ApplyJobResultSchema.parse({
+      id: "result_rejected",
+      runId: "run_rejected",
+      jobId: record.jobId,
+      applicationRecordId: record.id,
+      state: "awaiting_review",
+      startedAt: record.lastUpdatedAt,
+      updatedAt: record.lastUpdatedAt,
+      summary: "Application prepared",
+      detail: "Ready for you to read over and send",
+      privacyReceipt: null,
+    });
+    result.privacyReceipt = ApplicationPrivacyReceiptSchema.parse({
+      generatedAt: record.lastUpdatedAt,
+      lineage: {
+        runId: result.runId,
+        jobId: record.jobId,
+        resultId: result.id,
+        applicationRecordId: record.id,
+      },
+      destination: { origin: "http://127.0.0.1:47950", safePath: "/apply" },
+      resume: {
+        source: "original_upload",
+        sourceDocumentId: "synthetic",
+        exportArtifactId: null,
+        fileName: "synthetic.pdf",
+        sha256: "a".repeat(64),
+      },
+      finalSubmitOccurred: false,
+      submissionOutcome: {
+        id: "outcome",
+        preflightId: "preflight",
+        idempotencyKey: "send",
+        authorityEnvelopeId: "authority",
+        authorityRevision: 1,
+        runId: result.runId,
+        jobId: record.jobId,
+        resultId: result.id,
+        applicationRecordId: record.id,
+        outcome: "not_submitted",
+        attemptedAt: record.lastUpdatedAt,
+        verifiedAt: record.lastUpdatedAt,
+        evidence: [],
+        retry: { eligible: true, blockReason: null },
+        browserAction: {
+          reason: "form_validation_failed",
+          detail: "Select at least one skill.",
+        },
+      },
+    });
+    render(
+      <MemoryRouter>
+        <ApplicationsScreen
+          dailyPreparationCapacity={null}
+          {...buildCrmScreenProps({
+            applicationRecords: [record],
+            onSelectRecord: vi.fn(),
+            selectedRecord: record,
+            includeTrackerControls: false,
+          })}
+          applyJobResults={[result]}
+          onGetApplyRunDetails={vi.fn(
+            () => new Promise<ApplyRunDetails>(() => {}),
+          )}
+        />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText("Select at least one skill.")).toBeTruthy();
+    expect(
+      screen
+        .getAllByText("Not sent")
+        .filter((node) => node.getAttribute("data-variant") === "status"),
+    ).toHaveLength(2);
+    expect(
+      screen.getByRole("button", { name: "Correct the fields in the browser" }),
+    ).toBeTruthy();
+    expect(
+      screen.queryByText("Ready for you to read over and send"),
+    ).toBeNull();
+    expect(screen.queryByText("Ready to send")).toBeNull();
+  });
+
+  it("receipt-confirmed Applied rows replace a stale Prepare again next step", () => {
+    vi.stubGlobal("ResizeObserver", ResizeObserverMock);
+    stubCandidateAssetsBridge();
+    const record = createTrackedApplication({
+      nextActionLabel: "Prepare again",
+      lastAttemptState: "submitted",
+      status: "submitted",
+      crm: undefined,
+    });
+    render(
+      <MemoryRouter>
+        <ApplicationsScreen
+          dailyPreparationCapacity={null}
+          {...buildCrmScreenProps({
+            applicationRecords: [record],
+            onSelectRecord: vi.fn(),
+            selectedRecord: record,
+            includeTrackerControls: false,
+          })}
+        />
+      </MemoryRouter>,
+    );
+    expect(
+      screen.getByRole("button", { name: /Backend Engineer.*Beta/ })
+        .textContent,
+    ).toContain("View application");
+    expect(
+      screen.getByRole("button", { name: /Backend Engineer.*Beta/ })
+        .textContent,
+    ).not.toContain("Prepare again");
   });
 });
 

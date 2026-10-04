@@ -596,6 +596,7 @@ function buildReconciledSubmissionOutcomeProjection(
       });
       const result = ApplyJobResultSchema.parse({
         ...current,
+        automaticSendPending: false,
         state: "submitted",
         summary: "Application submitted",
         detail: "The employer site confirmed that it received the application.",
@@ -655,6 +656,7 @@ function buildReconciledSubmissionOutcomeProjection(
     });
     const result = ApplyJobResultSchema.parse({
       ...current,
+      automaticSendPending: false,
       ...(uncertain
         ? {
             state: "blocked" as const,
@@ -765,6 +767,7 @@ function buildResolvedSubmissionOutcomeProjection(
     });
     const result = ApplyJobResultSchema.parse({
       ...current,
+      automaticSendPending: false,
       state: submitted ? "submitted" : "blocked",
       summary: submitted
         ? "Application submission externally verified."

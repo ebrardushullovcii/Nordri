@@ -583,12 +583,14 @@ export function ApplicationsDetailPanel({
               data-testid="applications-not-submitted-pill"
               tone="muted"
             >
-              Not submitted
+              Not sent
             </StatusBadge>
           ) : null}
-          <StatusBadge tone={selectedStage ? selectedStage.tone : "muted"}>
-            {selectedRecord ? selectedStage?.label : "Nothing selected"}
-          </StatusBadge>
+          {!showNotSubmittedPill ? (
+            <StatusBadge tone={selectedStage ? selectedStage.tone : "muted"}>
+              {selectedRecord ? selectedStage?.label : "Nothing selected"}
+            </StatusBadge>
+          ) : null}
         </div>
       </div>
       {selectedRecord ? (

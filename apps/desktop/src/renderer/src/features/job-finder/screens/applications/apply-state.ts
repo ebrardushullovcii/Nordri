@@ -1,5 +1,6 @@
 import {
   APPLICATION_SKIPPED_BY_PERSON_LABEL,
+  PREPARED_PAGE_CLOSED_SUMMARY,
   isApplicationTrackedAsSentByPerson,
   isApplicationWithdrawnByPerson,
   type ApplicationRecord,
@@ -192,6 +193,17 @@ export function resolveApplyStatePresentation(input: {
   }
 
   const plannedStanding = resolvePlannedApplyStanding(result, input.run);
+  if (plannedStanding === "waiting_tab") {
+    return {
+      kind: "filling_in",
+      title: "Waiting for a browser tab",
+      sentence: result?.detail ?? null,
+      action: "none",
+      actionLabel: null,
+      questionsLeftLabel: null,
+      plannedStanding,
+    };
+  }
   if (plannedStanding === "not_started") {
     return {
       kind: "could_not_apply",
@@ -226,7 +238,7 @@ export function resolveApplyStatePresentation(input: {
     };
   }
 
-  if (applyResultIsStillRunning(result, input.run)) {
+  if (applyResultIsStillRunning(result)) {
     // The browser is full: say that it waits, and what frees a tab.
     if (result?.summary === WAITING_FOR_BROWSER_TAB_SUMMARY) {
       return {
@@ -253,7 +265,11 @@ export function resolveApplyStatePresentation(input: {
   // is never dressed up as a submission (ADR 0012).
   const submissionOutcome =
     result?.privacyReceipt?.submissionOutcome?.outcome ?? null;
-  if (submissionOutcome === "submitted" || result?.state === "submitted") {
+  if (
+    submissionOutcome === "submitted" ||
+    (result?.state === "submitted" &&
+      result.privacyReceipt?.finalSubmitOccurred !== false)
+  ) {
     return {
       kind: "applied",
       title: "Applied",
@@ -275,6 +291,36 @@ export function resolveApplyStatePresentation(input: {
         "Job Finder could not confirm whether this application was sent. Check the employer site before trying to send it again.",
       action: "open_browser",
       actionLabel: OPEN_THE_BROWSER_ACTION,
+      questionsLeftLabel: null,
+    };
+  }
+
+  if (
+    result?.state === "submitted" &&
+    result.privacyReceipt?.finalSubmitOccurred === false
+  ) {
+    return {
+      kind: "needs_you",
+      title: "Send not confirmed",
+      sentence:
+        "The saved receipt does not confirm a send. Review this application's outcome before trying again.",
+      action: "none",
+      actionLabel: null,
+      questionsLeftLabel: null,
+    };
+  }
+
+  if (
+    result?.state === "failed" &&
+    result.summary === PREPARED_PAGE_CLOSED_SUMMARY
+  ) {
+    return {
+      kind: "could_not_apply",
+      title: "Prepare again",
+      sentence:
+        "The prepared form is no longer open. Prepare it again using your saved answers and files.",
+      action: "try_again",
+      actionLabel: "Prepare again",
       questionsLeftLabel: null,
     };
   }
@@ -348,6 +394,37 @@ export function resolveApplyStatePresentation(input: {
     };
   }
 
+  if (
+    result?.state === "awaiting_review" &&
+    result.automaticSendPending === true &&
+    !result.privacyReceipt?.submissionOutcome
+  ) {
+    return {
+      kind: "filling_in",
+      title: "Waiting to send",
+      sentence: result.detail,
+      action: "none",
+      actionLabel: null,
+      questionsLeftLabel: null,
+    };
+  }
+
+  if (
+    result?.privacyReceipt?.submissionOutcome?.outcome === "not_submitted" &&
+    result.privacyReceipt.submissionOutcome.browserAction?.reason ===
+      "form_validation_failed"
+  ) {
+    return {
+      kind: "ready_to_send",
+      title: "Not sent",
+      sentence:
+        result.privacyReceipt.submissionOutcome.browserAction?.detail ??
+        result.detail,
+      action: "open_browser",
+      actionLabel: "Correct the fields in the browser",
+      questionsLeftLabel: null,
+    };
+  }
   if (result?.state === "awaiting_review") {
     // A send that was asked for and refused says why (the service writes
     // "Not sent: ..." on the result); the old row said nothing at all.

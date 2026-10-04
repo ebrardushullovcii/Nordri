@@ -255,7 +255,6 @@ export const PENDING_ADOPTION = {
     "features/job-finder/screens/applications/applications-detail-panel-attempt-section.tsx",
     "features/job-finder/screens/applications/applications-detail-panel-helpers.ts",
     "features/job-finder/screens/applications/applications-detail-panel-privacy-receipt-section.tsx",
-    "features/job-finder/screens/applications/applications-detail-panel-recovery-actions-section.tsx",
     "features/job-finder/screens/applications/applications-detail-panel-review-data-section.tsx",
     "features/job-finder/screens/applications/applications-detail-panel-run-history-section.tsx",
     "features/job-finder/screens/applications/applications-status.ts",

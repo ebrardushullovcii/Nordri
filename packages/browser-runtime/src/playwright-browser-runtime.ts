@@ -616,6 +616,8 @@ export interface BrowserAgentRuntimeOptions {
      * automation never sees. The host's tab limit counts those too.
      */
     openTabCount?(): number;
+    /** Waiting forms are excluded from the eight working slots. */
+    workingTabCount?(): number;
   };
   headless?: boolean;
   maxJobsPerRun?: number;
@@ -1187,6 +1189,7 @@ export async function reserveEmbeddedApplicationTab(
   onWaiting?: () => void,
   /** The host's own count of open tabs, when it has tabs automation cannot see. */
   hostTabCount?: () => number,
+  hostWorkingTabCount?: () => number,
 ): Promise<() => void> {
   // The embedded browser allows eight tabs. Keep one spare for a site's popup
   // and let a waiting application use the next tab the person closes.
@@ -1200,7 +1203,10 @@ export async function reserveEmbeddedApplicationTab(
         context.pages().filter((page) => !page.isClosed()).length,
         hostTabCount?.() ?? 0,
       ) + (pendingEmbeddedApplicationTabs.get(context) ?? 0);
-    if (occupied < 7) {
+    const working = hostWorkingTabCount
+      ? hostWorkingTabCount() + (pendingEmbeddedApplicationTabs.get(context) ?? 0)
+      : occupied;
+    if (working < 7 && occupied < (hostWorkingTabCount ? 15 : 7)) {
       pendingEmbeddedApplicationTabs.set(
         context,
         (pendingEmbeddedApplicationTabs.get(context) ?? 0) + 1,
@@ -1294,6 +1300,9 @@ export function createBrowserAgentRuntime(
   );
   const usesEmbeddedBrowserHost = Boolean(options.browserHost);
   const hostTabCount = options.browserHost?.openTabCount?.bind(
+    options.browserHost,
+  );
+  const hostWorkingTabCount = options.browserHost?.workingTabCount?.bind(
     options.browserHost,
   );
   // A person can prepare several Ask-before-sending forms or open unrelated
@@ -2666,6 +2675,7 @@ export function createBrowserAgentRuntime(
                           }
                         : undefined,
                       hostTabCount,
+                      hostWorkingTabCount,
                     ),
                   );
                 const protectedPreparedPages = [
@@ -3026,6 +3036,7 @@ export function createBrowserAgentRuntime(
             undefined,
             () => agentOptions.onWaitingForBrowserTab?.(),
             hostTabCount,
+            hostWorkingTabCount,
           );
         }
         page = await getAgentRunPage(source, agentOptions, (resolvedPage) => {

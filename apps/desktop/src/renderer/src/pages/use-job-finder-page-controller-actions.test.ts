@@ -29,6 +29,27 @@ import {
 } from "./use-job-finder-page-controller-actions";
 
 describe("describeAutoApplyQueueStart", () => {
+  it("explains an Apply to all press containing only receipt-confirmed jobs", () => {
+    const snapshot = {
+      applyRuns: [],
+      reviewQueue: [],
+      applyJobResults: [
+        {
+          jobId: "sent",
+          privacyReceipt: {
+            finalSubmitOccurred: true,
+            submissionOutcome: { outcome: "submitted" },
+          },
+        },
+      ],
+    } as unknown as Parameters<typeof describeAutoApplyQueueStart>[0];
+    expect(
+      describeAutoApplyQueueStart(snapshot, ["sent"], {
+        onlyWhenHeldBack: true,
+      }),
+    ).toBe("These applications are already sent. Nothing was started.");
+  });
+
   it("counts the jobs the new batch took and names the one held back", () => {
     const snapshot = {
       applyRuns: [

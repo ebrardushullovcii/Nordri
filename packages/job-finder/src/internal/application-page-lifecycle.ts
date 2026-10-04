@@ -1,5 +1,12 @@
+import { hasVerifiedApplicationSubmission } from "./workspace-apply-run-support";
+import { reduceUserActionCommand } from "../user-action-domain";
 import type { BrowserSessionRuntime } from "@nordri/browser-runtime";
-import type { JobSource } from "@nordri/contracts";
+import {
+  ApplicationAttemptSchema,
+  ApplicationRecordSchema,
+  type ApplyJobResult,
+  type JobSource,
+} from "@nordri/contracts";
 import type { JobFinderRepository } from "@nordri/db";
 
 // Page cleanup is best effort: a tab that will not close must never turn a
@@ -86,5 +93,102 @@ async function releaseApplicationPages(input: {
         .releaseApplicationPageBinding(job?.source ?? "target_site", result.id)
         .catch(() => undefined);
     }
+  }
+}
+
+/** Prepared forms are in memory; none of these states survives without its exact page. */
+export function isUnsentPreparedApplication(result: ApplyJobResult): boolean {
+  return (
+    (result.state === "awaiting_review" ||
+      (result.state === "blocked" &&
+        (result.privacyReceipt !== null ||
+          result.reviewCard !== null ||
+          [
+            "auth_required",
+            "signup_consent_required",
+            "site_protection",
+            "required_human_input",
+          ].includes(result.blockerReason ?? "")))) &&
+    result.applicationRecordId !== null &&
+    result.privacyReceipt?.finalSubmitOccurred !== true &&
+    result.privacyReceipt?.submissionOutcome?.outcome !== "submitted" &&
+    result.privacyReceipt?.submissionOutcome?.outcome !== "outcome_uncertain" &&
+    result.blockerReason !== "submission_outcome_uncertain"
+  );
+}
+
+/** Retire stale controls but retain questions, answers and attachments for re-preparation. */
+export async function retireLostPreparedApplication(input: {
+  repository: JobFinderRepository;
+  applicationRecordId: string;
+  resultId: string;
+  occurredAt: string;
+}): Promise<void> {
+  const results = await input.repository.listApplyJobResults({
+    applicationRecordId: input.applicationRecordId,
+  });
+  if (results.some(hasVerifiedApplicationSubmission)) return;
+  const records = await input.repository.listApplicationRecords();
+  const record = records.find(
+    (entry) => entry.id === input.applicationRecordId,
+  );
+  if (record?.lastAttemptState === "failed") {
+    await input.repository.upsertApplicationRecord(
+      ApplicationRecordSchema.parse({
+        ...record,
+        nextActionLabel: "Prepare again",
+      }),
+    );
+  }
+  const requests = await input.repository.listUserActionRequests({
+    scopeType: "application",
+  });
+  for (const request of requests) {
+    if (
+      request.scope.type !== "application" ||
+      request.scope.resultId !== input.resultId ||
+      !["pending", "page_opened", "awaiting_user", "still_blocked"].includes(
+        request.state,
+      )
+    )
+      continue;
+    const retired = reduceUserActionCommand(
+      request,
+      {
+        requestId: request.id,
+        commandId: `lost_page_${input.resultId}_${request.id}`,
+        expectedRevision: request.revision,
+        action: "cancel",
+        reason:
+          "The prepared page is no longer open. Prepare this application again.",
+        credentialsPolicy: "browser_only",
+        submitAuthorized: false,
+        accountCreationAuthorized: false,
+      },
+      input.occurredAt,
+    );
+    if (retired.status === "applied")
+      await input.repository.commitUserActionTransition({
+        request: retired.request,
+        event: retired.event,
+      });
+  }
+  const attempts = await input.repository.listApplicationAttempts();
+  for (const attempt of attempts) {
+    if (
+      attempt.applicationRecordId !== input.applicationRecordId ||
+      attempt.userActionResumption?.resultId !== input.resultId ||
+      !["paused", "ready"].includes(attempt.state)
+    )
+      continue;
+    await input.repository.upsertApplicationAttempt(
+      ApplicationAttemptSchema.parse({
+        ...attempt,
+        state: "failed",
+        completedAt: input.occurredAt,
+        summary: "The prepared page is no longer open.",
+        nextActionLabel: "Prepare again",
+      }),
+    );
   }
 }

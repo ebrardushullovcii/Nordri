@@ -128,25 +128,31 @@ export function ApplicationsDetailFactStrip(props: {
         ? "Paused"
         : plannedStanding === "waiting_turn"
           ? "Waiting its turn"
-          : submissionOutcome === "submitted"
-            ? "Submitted (verified)"
-            : submissionOutcome === "outcome_uncertain"
-              ? "Outcome needs verification"
-              : visibleApplyResult?.state === "submitted"
-                ? "Submitted"
-                : visibleApplyResult?.state === "cancelled"
-                  ? "Cancelled by you"
-                  : visibleApplyResult?.state === "failed"
-                    ? "Could not apply"
-                    : visibleRunIsActive && !selectedAttemptBelongsToVisibleRun
-                      ? "In progress"
-                      : isResolvedAwaitingReview
-                        ? "Ready to send"
-                        : visibleApplyResult?.state === "blocked" ||
-                            (visibleApplyResult?.state === "awaiting_review" &&
-                              visibleApplyResult.blockerReason)
-                          ? "Needs you"
-                          : fallbackAttemptLabel;
+          : plannedStanding === "waiting_tab"
+            ? "Waiting for a browser tab"
+            : submissionOutcome === "not_submitted"
+              ? "Not sent"
+              : submissionOutcome === "submitted"
+                ? "Submitted (verified)"
+                : submissionOutcome === "outcome_uncertain"
+                  ? "Outcome needs verification"
+                  : visibleApplyResult?.state === "submitted"
+                    ? "Submitted"
+                    : visibleApplyResult?.state === "cancelled"
+                      ? "Cancelled by you"
+                      : visibleApplyResult?.state === "failed"
+                        ? "Could not apply"
+                        : visibleRunIsActive &&
+                            !selectedAttemptBelongsToVisibleRun
+                          ? "In progress"
+                          : isResolvedAwaitingReview
+                            ? "Ready to send"
+                            : visibleApplyResult?.state === "blocked" ||
+                                (visibleApplyResult?.state ===
+                                  "awaiting_review" &&
+                                  visibleApplyResult.blockerReason)
+                              ? "Needs you"
+                              : fallbackAttemptLabel;
   // The person's own tracker record wins over the run's last state, short of
   // a verified send: they sent it, or withdrew it, themselves.
   const personRecordedLabel =

@@ -539,7 +539,10 @@ function countApplications(
     switch (presentation.kind) {
       case "filling_in":
         if (presentation.plannedStanding === "paused") counts.paused += 1;
-        else if (presentation.plannedStanding === "waiting_turn")
+        else if (
+          presentation.plannedStanding === "waiting_turn" ||
+          presentation.plannedStanding === "waiting_tab"
+        )
           counts.waiting += 1;
         else counts.fillingIn += 1;
         break;
@@ -1510,8 +1513,8 @@ export function buildJobSearchHomeModel(
       title: `Check ${plural(n, "application")} whose page closed`,
       detail:
         n === 1
-          ? "Job Finder filled this one in, but its page closed before Job Finder saw it sent. If you sent it yourself, set its tracker stage to Applied. If not, choose Try again on it in Applications."
-          : "Job Finder filled these in, but their pages closed before Job Finder saw them sent. If you sent any yourself, set its tracker stage to Applied. Choose Try again on the others in Applications.",
+          ? "Job Finder filled this one in, but its page closed before Job Finder saw it sent. If you sent it yourself, set its tracker stage to Applied. If not, choose Prepare again on it in Applications."
+          : "Job Finder filled these in, but their pages closed before Job Finder saw them sent. If you sent any yourself, set its tracker stage to Applied. Choose Prepare again on the others in Applications.",
       primary: {
         label: "Open Applications",
         action: { kind: "navigate", route: applicationsRoute },
@@ -1962,8 +1965,14 @@ export function buildJobSearchHomeModel(
               applications.applied > 0
                 ? `${applications.applied} applied`
                 : null,
-              applications.couldNotApply - applications.notStarted > 0
-                ? `${applications.couldNotApply - applications.notStarted} could not apply`
+              applications.pageClosedJobIds.length > 0
+                ? `${applications.pageClosedJobIds.length} ${applications.pageClosedJobIds.length === 1 ? "needs" : "need"} Prepare again`
+                : null,
+              applications.couldNotApply -
+                applications.notStarted -
+                applications.pageClosedJobIds.length >
+              0
+                ? `${applications.couldNotApply - applications.notStarted - applications.pageClosedJobIds.length} could not apply`
                 : null,
               applications.notStarted > 0
                 ? `${applications.notStarted} not started`

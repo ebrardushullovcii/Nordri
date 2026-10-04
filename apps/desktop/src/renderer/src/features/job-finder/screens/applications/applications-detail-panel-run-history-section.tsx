@@ -12,6 +12,7 @@ import {
   getCustomerFacingApplyText,
 } from "./applications-detail-panel-helpers";
 import { resolveApplicationRecoveryPresentation } from "./applications-recovery-state";
+import { PREPARED_PAGE_CLOSED_SUMMARY } from "@nordri/contracts";
 import { APPLICATION_DETAIL_FACT_LABEL_CLASS } from "./applications-detail-fact-strip";
 
 function RunHistoryEntry(props: {
@@ -51,9 +52,11 @@ function RunHistoryEntry(props: {
                 : "active"
           }
         >
-          {result.state === "cancelled"
-            ? "Cancelled by you"
-            : formatStatusLabel(result.state)}
+          {result.summary === PREPARED_PAGE_CLOSED_SUMMARY
+            ? "Prepare again"
+            : result.state === "cancelled"
+              ? "Cancelled by you"
+              : formatStatusLabel(result.state)}
         </StatusBadge>
       </span>
       {/* The same title the status block gives this run. A run that paused

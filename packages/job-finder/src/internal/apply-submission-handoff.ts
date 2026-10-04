@@ -247,12 +247,28 @@ export function describeSubmissionOutcome(input: {
         nextActionLabel: "View application",
       };
     case "outcome_uncertain":
+      if (input.result.outcome?.browserAction?.reason === "confirmation_timeout") {
+        return {
+          summary: "Send attempted; confirmation timed out",
+          detail: `${input.siteLabel} did not confirm receipt in time. Check this application on the site before trying again.`,
+          nextActionLabel: "Check the site and confirm",
+        };
+      }
       return {
         summary: "Check whether this application was sent",
-        detail: `Job Finder sent this application to ${input.siteLabel}. Its site did not confirm it arrived, and Job Finder will not send it again. Open ${input.siteLabel} to check, then tell Job Finder what you found.`,
+        detail: `Job Finder attempted to send this application to ${input.siteLabel}. Its site did not confirm it arrived, and Job Finder will not send it again. Open ${input.siteLabel} to check, then tell Job Finder what you found.`,
         nextActionLabel: "Check the site and confirm",
       };
     case "recorded_not_submitted":
+      if (input.result.outcome?.browserAction?.reason === "form_validation_failed") {
+        return {
+          summary: "Not sent: correct the marked fields",
+          detail:
+            input.result.outcome.browserAction.detail ??
+            "The site rejected a field. Correct it in the browser, then send again.",
+          nextActionLabel: "Correct the fields in the browser",
+        };
+      }
       return describeNotSubmittedOutcome({
         reason: input.result.outcome?.browserAction?.reason ?? null,
         siteLabel: input.siteLabel,

@@ -1,6 +1,7 @@
 import type {
   ApplicationAutomationMode,
   ApplyRun,
+  ApplyJobResult,
   JobFinderWorkspaceSnapshot,
 } from "@nordri/contracts";
 
@@ -20,6 +21,7 @@ export interface ApplyBatchService {
 
 export interface ApplyBatchRunReader {
   listApplyRuns(): Promise<readonly ApplyRun[]>;
+  listApplyJobResults?(): Promise<readonly ApplyJobResult[]>;
 }
 
 const IN_PROGRESS_BATCH_STATES = new Set<ApplyRun["state"]>([
@@ -80,7 +82,19 @@ export async function listJobsNotInProgress(
       .filter((run) => IN_PROGRESS_BATCH_STATES.has(run.state))
       .flatMap((run) => run.jobIds),
   );
-  return [...new Set(jobIds)].filter((jobId) => !busyJobIds.has(jobId));
+  const verified = new Set(
+    ((await runs.listApplyJobResults?.()) ?? [])
+      .filter(
+        (result) =>
+          result.privacyReceipt?.finalSubmitOccurred === true &&
+          (result.privacyReceipt.submissionOutcome === null ||
+            result.privacyReceipt.submissionOutcome.outcome === "submitted"),
+      )
+      .map((result) => result.jobId),
+  );
+  return [...new Set(jobIds)].filter(
+    (jobId) => !busyJobIds.has(jobId) && !verified.has(jobId),
+  );
 }
 
 function sameJobs(run: ApplyRun, jobIds: readonly string[]): boolean {

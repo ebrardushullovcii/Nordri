@@ -1,3 +1,8 @@
+import { hasVerifiedApplicationSubmission } from "./workspace-apply-run-support";
+import {
+  isUnsentPreparedApplication,
+  retireLostPreparedApplication,
+} from "./application-page-lifecycle";
 import {
   type ApplicationCrmSettings,
   type JobDiscoveryTarget,
@@ -517,15 +522,17 @@ export function createWorkspaceSnapshotProfileMethods(
         );
 
       const jobsById = new Map(savedJobs.map((job) => [job.id, job]));
+      const verifiedJobIds = new Set(
+        allResults
+          .filter(hasVerifiedApplicationSubmission)
+          .map((result) => result.jobId),
+      );
       const lostPreparedReviewCandidates = ctx.browserRuntime
         .hasApplicationPageBinding
         ? allResults.filter(
             (result) =>
-              result.state === "awaiting_review" &&
-              result.applicationRecordId !== null &&
-              result.blockerReason === null &&
-              (result.reviewCard === null ||
-                result.reviewCard.waitingOnYou.length === 0) &&
+              !verifiedJobIds.has(result.jobId) &&
+              isUnsentPreparedApplication(result) &&
               result.privacyReceipt?.submissionOutcome?.outcome !==
                 "outcome_uncertain" &&
               jobsById.has(result.jobId) &&
@@ -746,6 +753,12 @@ export function createWorkspaceSnapshotProfileMethods(
             occurredAt: completedAt,
             eventId: `event_${result.id}_prepared_page_binding_lost`,
             preserveRunningRun: parkedRunIds.has(result.runId),
+          });
+          await retireLostPreparedApplication({
+            repository: ctx.repository,
+            applicationRecordId: result.applicationRecordId,
+            resultId: result.id,
+            occurredAt: completedAt,
           });
         }
       }

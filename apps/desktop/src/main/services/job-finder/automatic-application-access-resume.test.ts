@@ -384,3 +384,14 @@ describe("installAutomaticApplicationAccessResume", () => {
     expect(watcher.performUserAction).not.toHaveBeenCalled();
   });
 });
+
+it("notices a completed sign-in again when its first continuation failed", async () => {
+  const h = setup({ signedIn: true });
+  h.performUserAction.mockRejectedValueOnce(
+    new Error("Temporary page read failure"),
+  );
+  await waitFor(() => h.performUserAction.mock.calls.length === 2);
+  await new Promise((resolve) => setTimeout(resolve, 70));
+  expect(h.performUserAction).toHaveBeenCalledTimes(2);
+  h.dispose();
+});

@@ -604,7 +604,7 @@ export function buildJobFinderPageContext(
                   "The prepared application page is no longer open.")
             ) {
               throw new Error(
-                "That prepared application page is no longer open. Choose Try again in Applications to prepare it again.",
+                "That prepared application page is no longer open. Choose Prepare again in Applications to rebuild it.",
               );
             }
             // The page is selected in the browser; show it, as a parked

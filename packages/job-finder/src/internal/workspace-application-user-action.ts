@@ -987,27 +987,45 @@ export async function releaseApplicationRecordAfterDismissedUserAction(input: {
   const nextResults = runResults.map((entry) =>
     entry.id === terminalResult.id ? terminalResult : entry,
   );
-  const pendingResults = nextResults.filter(
-    (entry) => entry.state === "awaiting_review",
+  const pendingResults = nextResults.filter((entry) =>
+    [
+      "planned",
+      "question_capture",
+      "filling",
+      "submitting",
+      "awaiting_review",
+    ].includes(entry.state),
   );
+  const workingResults = pendingResults.filter(
+    (entry) => entry.state !== "awaiting_review",
+  );
+  const blockedResults = nextResults.filter(
+    (entry) => entry.state === "blocked",
+  );
+  const hasWaitingWork = pendingResults.length > 0 || blockedResults.length > 0;
   await input.repository.upsertApplyRun(
     ApplyRunSchema.parse({
       ...run,
       state:
         run.state === "cancelled" || run.state === "failed"
           ? run.state
-          : pendingResults.length > 0
-            ? "paused_for_user_review"
-            : "completed",
+          : workingResults.length > 0
+            ? "running"
+            : hasWaitingWork
+              ? "paused_for_user_review"
+              : "completed",
       currentJobId:
         run.state === "cancelled" || run.state === "failed"
           ? null
-          : (pendingResults[0]?.jobId ?? null),
+          : (workingResults[0]?.jobId ??
+            pendingResults[0]?.jobId ??
+            blockedResults[0]?.jobId ??
+            null),
       updatedAt: input.occurredAt,
       completedAt:
         run.state === "cancelled" || run.state === "failed"
           ? run.completedAt
-          : pendingResults.length > 0
+          : hasWaitingWork
             ? null
             : input.occurredAt,
       // Every outcome in the batch is counted, so one cancel does not hide

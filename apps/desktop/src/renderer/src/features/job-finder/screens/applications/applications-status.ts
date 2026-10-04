@@ -349,6 +349,8 @@ export function applicationHasOpenQuestion(record: ApplicationRecord): boolean {
 const NEEDS_YOU_QUESTION_LABEL = /answer the question in needs you/i;
 
 export function getApplicationNextStepLabel(record: ApplicationRecord): string {
+  if (record.lastAttemptState === "submitted" || record.status === "submitted")
+    return "View application";
   const stateNextStep = getApplicationStateNextStepLabel(record);
   if (stateNextStep) {
     return stateNextStep;
@@ -364,16 +366,6 @@ export function getApplicationNextStepLabel(record: ApplicationRecord): string {
     return record.lastAttemptState === "failed"
       ? "Try again"
       : "Open the Job Finder browser";
-  }
-
-  // Every sent application reads the same, however it was sent: one sent
-  // during a batch run carried no saved label and read "No next step saved"
-  // beside rows reading "View application".
-  if (
-    record.lastAttemptState === "submitted" ||
-    record.status === "submitted"
-  ) {
-    return record.nextActionLabel ?? "View application";
   }
 
   if (

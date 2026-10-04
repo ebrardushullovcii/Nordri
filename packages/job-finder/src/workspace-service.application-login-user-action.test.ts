@@ -1943,6 +1943,10 @@ describe("application login UserActionRequest adoption", () => {
             ApplyJobResultSchema.parse({
               ...result,
               state: confirmed ? "submitted" : "failed",
+              privacyReceipt:
+                confirmed && result.privacyReceipt
+                  ? { ...result.privacyReceipt, finalSubmitOccurred: true }
+                  : result.privacyReceipt,
               updatedAt: now,
               completedAt: now,
             }),

@@ -692,3 +692,36 @@ it("lets the person retry a cancelled item without including it in the remaining
     getQueueRecoveryTone("failed"),
   );
 });
+
+it("counts question waits as pending work without inventing a safety limit", () => {
+  expect(
+    getQueueStateExplanation({
+      runState: "paused_for_user_review",
+      selectedJobCount: 2,
+      blockedJobCount: 0,
+      skippedJobCount: 0,
+      failedJobCount: 0,
+      completedJobCount: 0,
+      waitingJobCount: 2,
+      unfinishedJobCount: 0,
+    }),
+  ).toBe(
+    "0 sent. 2 applications need your answers or review. Open each waiting application to continue.",
+  );
+});
+
+it("describes a failed preparation without internal workflow jargon", () => {
+  expect(
+    getQueueStateExplanation({
+      runState: "completed",
+      selectedJobCount: 1,
+      blockedJobCount: 0,
+      skippedJobCount: 0,
+      failedJobCount: 1,
+      completedJobCount: 0,
+      unfinishedJobCount: 1,
+    }),
+  ).toBe(
+    "Some applications could not be prepared. Check each job below before trying again.",
+  );
+});

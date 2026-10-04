@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { ApplyRun } from "@nordri/contracts";
+import { ApplyJobResultSchema, type ApplyRun } from "@nordri/contracts";
 
 import { listJobsNotInProgress, startApplyBatch } from "./start-apply-batch";
 
@@ -228,4 +228,58 @@ describe("startApplyBatch", () => {
       );
     },
   );
+});
+
+it("excludes a receipt-confirmed send before staging the remaining batch", async () => {
+  const h = harness({});
+  const receipt = {
+    generatedAt: "2026-10-03T10:00:00.000Z",
+    lineage: {
+      runId: "sent",
+      resultId: "sent_result",
+      jobId: "job_1",
+      applicationRecordId: "application_1",
+    },
+    destination: { origin: "http://127.0.0.1:47950", safePath: "/receipt" },
+    resume: {
+      source: "original_upload",
+      sourceDocumentId: "synthetic",
+      exportArtifactId: null,
+      fileName: "synthetic.pdf",
+      sha256: "a".repeat(64),
+    },
+    finalSubmitAuthorized: true,
+    finalSubmitOccurred: true,
+    submissionOutcome: null,
+  };
+  const result = ApplyJobResultSchema.parse({
+    id: "sent_result",
+    runId: "sent",
+    jobId: "job_1",
+    applicationRecordId: "application_1",
+    state: "submitted",
+    summary: "Application submitted",
+    detail: "Confirmed",
+    startedAt: receipt.generatedAt,
+    updatedAt: receipt.generatedAt,
+    privacyReceipt: receipt,
+  });
+  const reader = {
+    ...h.reader,
+    listApplyJobResults: () => Promise.resolve([result]),
+  };
+  expect(await listJobsNotInProgress(reader, ["job_1", "job_2"])).toEqual([
+    "job_2",
+  ]);
+  await startApplyBatch({
+    service: h.service,
+    runs: reader,
+    jobIds: ["job_1", "job_2"],
+    onBackgroundSettled: vi.fn(),
+  });
+  expect(h.service.startAutoApplyQueueRun).toHaveBeenCalledWith(
+    ["job_2"],
+    undefined,
+  );
+  expect(h.service.approveApplyRun).toHaveBeenCalledWith("staged");
 });

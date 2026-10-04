@@ -9,7 +9,6 @@ import {
   type ApplicationAnswerStep,
 } from "./applications-answer-step";
 import { Button } from "@renderer/components/ui";
-import { formatStatusLabel } from "@renderer/features/job-finder/lib/job-finder-utils";
 import {
   formatDailyPreparationBatchExceedsRemainingText,
   formatDailyPreparationCapacityReachedText,
@@ -26,6 +25,7 @@ import {
   REOPEN_JOB_FINDER_BROWSER_ACTION,
   RUN_PREPARATION_AGAIN_ACTION,
 } from "../../lib/job-finder-browser-handoff-copy";
+import { resolveApplyStatePresentation } from "./apply-state";
 import { StatusBadge } from "../../components/status-badge";
 import { APPLICATION_SIGN_IN_CONTINUES_NOTE } from "../../lib/application-sign-in-handoff";
 import {
@@ -39,10 +39,7 @@ import {
 import {
   getApplicationHostLabel,
   resolveApplicationRecoveryPresentation,
-  describeNotStartedApplication,
-  PAUSED_BEFORE_APPLICATION_SENTENCE,
   resolvePlannedApplyStanding,
-  TRY_AGAIN_ACTION,
   type ApplyRunContext,
 } from "./applications-recovery-state";
 
@@ -214,7 +211,6 @@ export function ApplicationsDetailPanelRecoveryActionsSection(props: {
     canRestageAutoRun,
     canRestageQueueRun,
     dailyPreparationCapacity,
-    excludedQueueRecoveryEntries,
     isApplyPending,
     onStartApplyCopilot,
     onReviewResumePdf,
@@ -230,7 +226,6 @@ export function ApplicationsDetailPanelRecoveryActionsSection(props: {
     confirmFinishedInBrowserStatus = "idle",
     confirmFinishedInBrowserBlockerText,
     selectedQueueOutcomeEntries,
-    selectedQueueRecoveryEntries,
     selectedQueueRecoveryJobIds,
     pausedQuestionCount,
     selectedRecordJobId,
@@ -269,13 +264,12 @@ export function ApplicationsDetailPanelRecoveryActionsSection(props: {
   // "Filling this application now" only for a job that is being filled in:
   // one waiting its turn or held by the person's pause says so above.
   const showPreparingState =
+    (visibleApplyResult?.automaticSendPending !== true ||
+      visibleApplyResult?.privacyReceipt?.submissionOutcome != null) &&
     primaryAction !== "close_finished_tabs" &&
     presentation.state === "preparing" &&
-    (isApplyPending ||
-      resolvePlannedApplyStanding(
-        visibleApplyResult,
-        visibleApplyRunContext,
-      ) === null);
+    resolvePlannedApplyStanding(visibleApplyResult, visibleApplyRunContext) ===
+      null;
   // The queue action is meaningful only when the selected run produced a
   // recoverable queue. Keep an empty or non-queue selection out of the action
   // group instead of leaving a disabled control without a target.
@@ -338,6 +332,7 @@ export function ApplicationsDetailPanelRecoveryActionsSection(props: {
   } | null>(null);
   const finishInBrowserOutcome =
     visibleApplyResult &&
+    presentation.state !== "submitted" &&
     finishInBrowserReport?.resultId === visibleApplyResult.id
       ? finishInBrowserReport.outcome
       : null;
@@ -630,7 +625,9 @@ export function ApplicationsDetailPanelRecoveryActionsSection(props: {
                   type="button"
                   variant="primary"
                 >
-                  {rejectedFormat ? "Review a PDF" : TRY_AGAIN_ACTION}
+                  {rejectedFormat
+                    ? "Review a PDF"
+                    : presentation.primaryActionLabel}
                 </Button>
               ) : null}
               {showConfirmFinishedAction ? (
@@ -854,10 +851,16 @@ export function ApplicationsDetailPanelRecoveryActionsSection(props: {
                     failedJobCount: selectedQueueOutcomeEntries.filter(
                       (entry) => entry.runResult?.state === "failed",
                     ).length,
-                    completedJobCount: selectedQueueOutcomeEntries.filter(
+                    waitingJobCount: selectedQueueOutcomeEntries.filter(
                       (entry) =>
                         entry.runResult?.state === "awaiting_review" ||
-                        entry.runResult?.state === "submitted",
+                        entry.runResult?.state === "blocked",
+                    ).length,
+                    completedJobCount: selectedQueueOutcomeEntries.filter(
+                      (entry) =>
+                        entry.runResult?.state === "submitted" &&
+                        entry.runResult.privacyReceipt?.finalSubmitOccurred !==
+                          false,
                     ).length,
                     unfinishedJobCount: selectedQueueRecoveryJobIds.length,
                   }
@@ -865,44 +868,35 @@ export function ApplicationsDetailPanelRecoveryActionsSection(props: {
             )}
           </p>
           <div className="grid gap-2">
-            {selectedQueueRecoveryEntries.length > 0 ||
-            excludedQueueRecoveryEntries.length > 0 ? (
-              <div className="grid gap-2 2xl:grid-cols-2">
-                <QueueEntryList
-                  entries={selectedQueueRecoveryEntries}
-                  emptyMessage="No jobs from this run still need recovery."
-                  heading={
-                    selectedRun.state === "running"
-                      ? "Waiting or stopped"
-                      : "Will be prepared"
-                  }
-                  statusFallback="planned"
-                />
-                <QueueEntryList
-                  entries={excludedQueueRecoveryEntries}
-                  emptyMessage="No jobs are excluded from this historical run yet."
-                  heading={
-                    selectedRun.state === "running"
-                      ? "In progress or finished"
-                      : "Already completed or review-ready"
-                  }
-                  statusFallback="awaiting_review"
-                />
-              </div>
-            ) : null}
             {selectedQueueOutcomeEntries.map((entry) => {
-              const resolvedState = entry.runResult?.state ?? "planned";
+              const unconfirmed =
+                entry.runResult?.state === "submitted" &&
+                entry.runResult.privacyReceipt?.finalSubmitOccurred === false;
+              const resolvedState = unconfirmed
+                ? "blocked"
+                : (entry.runResult?.state ?? "planned");
               // The same standing the row and Home read: a planned job of a
               // stopped batch was never reached, not "waiting its turn".
-              const plannedStanding = entry.runResult
-                ? resolvePlannedApplyStanding(entry.runResult, {
-                    state: selectedRun.state,
-                    activityPaused:
-                      visibleApplyRunContext?.activityPaused ?? false,
-                    started: true,
-                  })
-                : null;
-
+              const jobPresentation = resolveApplyStatePresentation({
+                mode: "fill_only",
+                result: entry.runResult ?? null,
+                pendingQuestionCount: Math.max(
+                  0,
+                  (entry.runResult?.latestQuestionCount ?? 0) -
+                    (entry.runResult?.latestAnswerCount ?? 0),
+                ),
+                run: {
+                  state: selectedRun.state,
+                  activityPaused:
+                    visibleApplyRunContext?.activityPaused ?? false,
+                  started: true,
+                },
+              });
+              const jobLabel =
+                jobPresentation.kind === "needs_you" &&
+                jobPresentation.questionsLeftLabel
+                  ? "Needs your answers"
+                  : jobPresentation.title;
               return (
                 <div
                   key={`queue-outcome-${entry.jobId}`}
@@ -911,31 +905,14 @@ export function ApplicationsDetailPanelRecoveryActionsSection(props: {
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <strong className="text-foreground">{entry.label}</strong>
                     <StatusBadge tone={getQueueRecoveryTone(resolvedState)}>
-                      {plannedStanding === "not_started"
-                        ? "Not started"
-                        : plannedStanding === "paused"
-                          ? "Paused"
-                          : formatStatusLabel(resolvedState)}
+                      {jobLabel}
                     </StatusBadge>
                   </div>
                   <p className="text-(length:--text-small) leading-6 text-foreground-soft">
-                    {plannedStanding === "not_started"
-                      ? describeNotStartedApplication({
-                          state: selectedRun.state,
-                          activityPaused: false,
-                          started: true,
-                        })
-                      : plannedStanding === "paused"
-                        ? PAUSED_BEFORE_APPLICATION_SENTENCE
-                        : null}
-                    {plannedStanding === "not_started" ||
-                    plannedStanding === "paused"
-                      ? null
-                      : (getCustomerFacingApplyText(
-                          entry.runResult?.summary,
-                          entry.runResult?.privacyReceipt,
-                        ) ??
-                        "This job never started before the queue paused or was cancelled.")}
+                    {jobLabel}
+                    {jobPresentation.sentence
+                      ? ` — ${jobPresentation.sentence}`
+                      : null}
                   </p>
                   {entry.runResult?.blockerSummary ? (
                     <p className="text-(length:--text-small) leading-6 text-foreground-soft">
@@ -952,43 +929,5 @@ export function ApplicationsDetailPanelRecoveryActionsSection(props: {
         </section>
       ) : null}
     </>
-  );
-}
-
-function QueueEntryList(props: {
-  entries: QueueEntry[];
-  emptyMessage: string;
-  heading: string;
-  statusFallback: JobFinderWorkspaceSnapshot["applyJobResults"][number]["state"];
-}) {
-  const { entries, emptyMessage, heading, statusFallback } = props;
-
-  return (
-    <div className="grid gap-2">
-      <p className="text-(length:--text-eyebrow) font-semibold uppercase tracking-(--tracking-badge) text-muted-foreground">
-        {heading}
-      </p>
-      {entries.length ? (
-        entries.map((entry) =>
-          (() => {
-            const resolvedState = entry.runResult?.state ?? statusFallback;
-
-            return (
-              <div
-                key={`${heading}-${entry.jobId}`}
-                className="flex flex-wrap items-center justify-between gap-2 rounded-(--radius-field) border border-(--surface-panel-border) bg-background/50 px-3 py-2"
-              >
-                <span className="text-foreground">{entry.label}</span>
-                <StatusBadge tone={getQueueRecoveryTone(resolvedState)}>
-                  {formatStatusLabel(resolvedState)}
-                </StatusBadge>
-              </div>
-            );
-          })(),
-        )
-      ) : (
-        <p>{emptyMessage}</p>
-      )}
-    </div>
   );
 }

@@ -949,8 +949,7 @@ describe("apply restart recovery", () => {
       ).toMatchObject({
         lastAttemptState: "failed",
         // The form was waiting on the person, who may have sent it.
-        nextActionLabel:
-          "If you sent it, set its stage to Applied. If not, Try again.",
+        nextActionLabel: "Prepare again",
       });
       expect(
         snapshot.applyRuns.find(

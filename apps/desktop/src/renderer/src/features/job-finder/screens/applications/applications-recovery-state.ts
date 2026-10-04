@@ -17,6 +17,7 @@ export {
 } from "@nordri/job-finder/assistant-attention";
 import {
   APPLICATION_SKIPPED_BY_PERSON_LABEL,
+  PREPARED_PAGE_CLOSED_SUMMARY,
   type JobFinderWorkspaceSnapshot,
 } from "@nordri/contracts";
 import {
@@ -172,7 +173,11 @@ type ApplyRunState = NonNullable<
 >[number]["state"];
 
 /** Where a planned (not yet started) application stands. */
-export type PlannedApplyStanding = "waiting_turn" | "paused" | "not_started";
+export type PlannedApplyStanding =
+  | "waiting_turn"
+  | "paused"
+  | "not_started"
+  | "waiting_tab";
 
 export function buildApplyRunContextReader(workspace: {
   applyRuns?: JobFinderWorkspaceSnapshot["applyRuns"] | null;
@@ -212,7 +217,7 @@ export function resolvePlannedApplyStanding(
   run: ApplyRunContext | null | undefined,
 ): PlannedApplyStanding | null {
   if (result?.state !== "planned") return null;
-  if (result.applicationPreparationStartedAt != null) return null;
+  if (result.summary === WAITING_FOR_BROWSER_TAB_SUMMARY) return "waiting_tab";
   if (!run) return "waiting_turn";
   switch (run.state) {
     case "draft":
@@ -242,14 +247,11 @@ export function describeNotStartedApplication(
 export const PAUSED_BEFORE_APPLICATION_SENTENCE =
   "You paused new work before Job Finder got to this one. It carries on when you resume.";
 
-export function applyResultIsStillRunning(
-  result: ApplyResult,
-  run?: ApplyRunContext | null,
-): boolean {
+export function applyResultIsStillRunning(result: ApplyResult): boolean {
   if (result === null || !RUNNING_RESULT_STATES.has(result.state)) {
     return false;
   }
-  return resolvePlannedApplyStanding(result, run) !== "not_started";
+  return result.state !== "planned";
 }
 
 /** "2 min" from a start timestamp, for a wait the person is watching. */
@@ -482,6 +484,7 @@ export function resolveApplicationRecoveryPresentation(input: {
   // Try again here would prepare an application that was already sent.
   if (
     visibleApplyResult?.state === "submitted" &&
+    visibleApplyResult.privacyReceipt?.finalSubmitOccurred !== false &&
     (visibleApplyResult.privacyReceipt?.submissionOutcome?.outcome ??
       "submitted") === "submitted"
   ) {
@@ -510,6 +513,20 @@ export function resolveApplicationRecoveryPresentation(input: {
     };
   }
 
+  if (
+    visibleApplyResult?.state === "submitted" &&
+    visibleApplyResult.privacyReceipt?.finalSubmitOccurred === false
+  ) {
+    return {
+      state: "verify_outcome",
+      statusLine: "Send not confirmed",
+      reasonSentence:
+        "The saved receipt does not confirm a send. Review this application's outcome before trying again.",
+      primaryAction: "none",
+      primaryActionLabel: null,
+    };
+  }
+
   if (requiresSubmissionOutcomeVerification) {
     return {
       state: "verify_outcome",
@@ -519,6 +536,38 @@ export function resolveApplicationRecoveryPresentation(input: {
         "The last action finished without the employer site confirming one way or the other.",
       primaryAction: "none",
       primaryActionLabel: null,
+    };
+  }
+
+  // A site rejection is a known unsent outcome, even if preparation was ready.
+  const rejectedOutcome = visibleApplyResult?.privacyReceipt?.submissionOutcome;
+  if (
+    rejectedOutcome?.outcome === "not_submitted" &&
+    rejectedOutcome.browserAction?.reason === "form_validation_failed"
+  ) {
+    return {
+      state: "finish_in_browser",
+      statusLine: "Not sent",
+      reasonSentence:
+        rejectedOutcome.browserAction?.detail ??
+        visibleApplyResult?.detail ??
+        reasonSentence,
+      primaryAction: "open_browser",
+      primaryActionLabel: "Correct the fields in the browser",
+    };
+  }
+
+  if (
+    visibleApplyResult?.state === "failed" &&
+    visibleApplyResult.summary === PREPARED_PAGE_CLOSED_SUMMARY
+  ) {
+    return {
+      state: "retry",
+      statusLine: "Prepare again",
+      reasonSentence:
+        "The prepared form is no longer open. Prepare it again using your saved answers and files.",
+      primaryAction: "try_again",
+      primaryActionLabel: "Prepare again",
     };
   }
 
@@ -706,7 +755,16 @@ export function resolveApplicationRecoveryPresentation(input: {
     visibleApplyResult,
     input.run,
   );
-  if (plannedStanding === "not_started" && !isApplyPending) {
+  if (plannedStanding === "waiting_tab") {
+    return {
+      state: "preparing",
+      statusLine: "Waiting for a browser tab",
+      reasonSentence: visibleApplyResult?.detail ?? null,
+      primaryAction: "close_finished_tabs",
+      primaryActionLabel: "Close finished tabs",
+    };
+  }
+  if (plannedStanding === "not_started") {
     return {
       state: "retry",
       statusLine: "Job Finder did not get to this application",
@@ -715,7 +773,7 @@ export function resolveApplicationRecoveryPresentation(input: {
       primaryActionLabel: TRY_AGAIN_ACTION,
     };
   }
-  if (plannedStanding === "paused" && !isApplyPending) {
+  if (plannedStanding === "paused") {
     return {
       state: "preparing",
       statusLine: "Paused before this application",
@@ -724,10 +782,10 @@ export function resolveApplicationRecoveryPresentation(input: {
       primaryActionLabel: null,
     };
   }
-  if (plannedStanding === "waiting_turn" && !isApplyPending) {
+  if (plannedStanding === "waiting_turn") {
     return {
       state: "preparing",
-      statusLine: "Waiting its turn in this batch",
+      statusLine: "Waiting its turn",
       reasonSentence: null,
       primaryAction: "none",
       primaryActionLabel: null,
@@ -738,7 +796,7 @@ export function resolveApplicationRecoveryPresentation(input: {
   // flag for ninety seconds and then offered "Try again" beside itself.
   if (
     visibleApplyResult?.summary === WAITING_FOR_BROWSER_TAB_SUMMARY &&
-    applyResultIsStillRunning(visibleApplyResult, input.run)
+    applyResultIsStillRunning(visibleApplyResult)
   ) {
     return {
       state: "preparing",
@@ -749,10 +807,10 @@ export function resolveApplicationRecoveryPresentation(input: {
     };
   }
   if (
-    isApplyPending ||
-    applyResultIsStillRunning(visibleApplyResult, input.run)
+    (!visibleApplyResult && isApplyPending) ||
+    applyResultIsStillRunning(visibleApplyResult)
   ) {
-    const elapsed = applyResultIsStillRunning(visibleApplyResult, input.run)
+    const elapsed = applyResultIsStillRunning(visibleApplyResult)
       ? formatElapsedMinutes(visibleApplyResult?.startedAt, now)
       : null;
     return {
@@ -787,6 +845,20 @@ export function resolveApplicationRecoveryPresentation(input: {
         "This listing has no application Job Finder can fill in.",
       primaryAction: "open_listing",
       primaryActionLabel: OPEN_LISTING_ACTION,
+    };
+  }
+
+  if (
+    visibleApplyResult?.state === "awaiting_review" &&
+    visibleApplyResult.automaticSendPending === true &&
+    !visibleApplyResult.privacyReceipt?.submissionOutcome
+  ) {
+    return {
+      state: "preparing",
+      statusLine: "Waiting for automatic send",
+      reasonSentence: visibleApplyResult.detail,
+      primaryAction: "none",
+      primaryActionLabel: null,
     };
   }
 

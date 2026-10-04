@@ -571,12 +571,25 @@ function getActiveCampaignReviewQueue(
  */
 export function describeAutoApplyQueueStart(
   snapshot:
-    | Pick<JobFinderWorkspaceSnapshot, "applyRuns" | "reviewQueue">
+    | (Pick<JobFinderWorkspaceSnapshot, "applyRuns" | "reviewQueue"> &
+        Partial<Pick<JobFinderWorkspaceSnapshot, "applyJobResults">>)
     | null
     | undefined,
   jobIds: readonly string[],
   options?: { onlyWhenHeldBack?: boolean },
 ): string | null {
+  const sentJobIds = new Set(
+    (snapshot?.applyJobResults ?? [])
+      .filter(
+        (result) =>
+          result.privacyReceipt?.finalSubmitOccurred === true &&
+          (!result.privacyReceipt.submissionOutcome ||
+            result.privacyReceipt.submissionOutcome.outcome === "submitted"),
+      )
+      .map((result) => result.jobId),
+  );
+  if (jobIds.length > 0 && jobIds.every((id) => sentJobIds.has(id)))
+    return "These applications are already sent. Nothing was started.";
   const newestRun = [...(snapshot?.applyRuns ?? [])].sort((left, right) =>
     right.createdAt.localeCompare(left.createdAt),
   )[0];

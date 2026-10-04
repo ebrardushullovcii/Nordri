@@ -91,6 +91,7 @@ export function installAutomaticApplicationAccessResume(input: {
   const signatures = new Map<string, string>();
   const sawWall = new Set<string>();
   const confirmedWithoutWall = new Set<string>();
+  const continuing = new Set<string>();
   /** Requests whose page was reloaded after a sign-in elsewhere on its site. */
   const reloadedAfterSiteSignIn = new Set<string>();
   let navigationTimer: ReturnType<typeof setTimeout> | null = null;
@@ -145,7 +146,11 @@ export function installAutomaticApplicationAccessResume(input: {
       const wallSeen = sawWall.has(request.id);
       const site = siteOf(request);
       if (wallSeen && site) signedInSites.add(site);
-      if (!wallSeen && confirmedWithoutWall.has(resultKey)) continue;
+      if (
+        continuing.has(resultKey) ||
+        (!wallSeen && confirmedWithoutWall.has(resultKey))
+      )
+        continue;
 
       // The read may have awaited a page while the card moved on.
       const current = await input.repository.getUserActionRequest(request.id);
@@ -158,8 +163,7 @@ export function installAutomaticApplicationAccessResume(input: {
       ) {
         continue;
       }
-      if (!wallSeen) confirmedWithoutWall.add(resultKey);
-      sawWall.delete(request.id);
+      continuing.add(resultKey);
       // Not awaited: the command runs the whole continuation, and other
       // waiting applications must still be watched meanwhile. The command id
       // makes a repeat for the same revision a no-op.
@@ -173,7 +177,14 @@ export function installAutomaticApplicationAccessResume(input: {
           submitAuthorized: false,
           accountCreationAuthorized: false,
         })
-        .catch(() => undefined);
+        .then(() => {
+          confirmedWithoutWall.add(resultKey);
+          sawWall.delete(request.id);
+        })
+        .catch(() => {
+          // A transient continuation failure must not permanently hide a completed sign-in.
+        })
+        .finally(() => continuing.delete(resultKey));
     }
 
     // One sign-in covers the site: the other applications waiting on the

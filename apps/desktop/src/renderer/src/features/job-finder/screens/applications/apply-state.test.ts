@@ -1,5 +1,7 @@
 import {
+  ApplicationPrivacyReceiptSchema,
   APPLICATION_SKIPPED_BY_PERSON_LABEL,
+  PREPARED_PAGE_CLOSED_SUMMARY,
   ApplicationCrmDataSchema,
 } from "@nordri/contracts";
 import { describe, expect, it } from "vitest";
@@ -194,9 +196,7 @@ describe("the five apply states (ADR 0022)", () => {
       kind: "filling_in",
       sentence: "Close a tab you no longer need and this one starts.",
     });
-    expect(presentation.title).toMatch(
-      /^Waiting for a browser tab \(.*min\)$/u,
-    );
+    expect(presentation.title).toBe("Waiting for a browser tab");
   });
 
   it("never calls an unverified outcome Applied", () => {
@@ -559,5 +559,98 @@ describe("an application the person recorded as sent in the tracker", () => {
         recordCrm: trackedCrm("applied"),
       }).title,
     ).toBe("Applied");
+  });
+});
+
+it("labels an automatic send as waiting, with no manual action", () => {
+  expect(
+    resolveApplyStatePresentation({
+      mode: "apply_for_me",
+      result: buildResult({
+        state: "awaiting_review",
+        summary: "The copy can change without changing the state.",
+        automaticSendPending: true,
+        detail: "Job Finder will send this application next.",
+      }),
+    }),
+  ).toMatchObject({
+    title: "Waiting to send",
+    action: "none",
+    actionLabel: null,
+  });
+});
+
+it("does not call a contradictory submitted state a send", () => {
+  const result = buildResult({
+    state: "submitted",
+    privacyReceipt: ApplicationPrivacyReceiptSchema.parse({
+      generatedAt: "2026-09-14T10:00:00.000Z",
+      lineage: {
+        runId: "run_1",
+        jobId: "job_1",
+        resultId: "result_1",
+        applicationRecordId: "application_1",
+      },
+      destination: { origin: "http://127.0.0.1:47950", safePath: "/apply" },
+      resume: {
+        source: "original_upload",
+        sourceDocumentId: "synthetic",
+        exportArtifactId: null,
+        fileName: "synthetic.pdf",
+        sha256: "a".repeat(64),
+      },
+      finalSubmitOccurred: false,
+    }),
+  });
+  expect(
+    resolveApplyStatePresentation({ mode: "fill_only", result }),
+  ).toMatchObject({ title: "Send not confirmed", action: "none" });
+});
+
+it("offers Prepare again for a lost prepared form", () => {
+  const result = buildResult({
+    state: "failed",
+    summary: PREPARED_PAGE_CLOSED_SUMMARY,
+    blockerReason: "unexpected_navigation",
+    latestQuestionCount: 2,
+  });
+  expect(
+    resolveApplyStatePresentation({ mode: "fill_only", result }),
+  ).toMatchObject({ title: "Prepare again", actionLabel: "Prepare again" });
+});
+
+it("a queued job remains queued after a preparation timestamp was written", () => {
+  const result = buildResult({
+    state: "planned",
+    applicationPreparationStartedAt: "2026-09-14T10:00:00.000Z",
+  });
+  expect(
+    resolveApplyStatePresentation({
+      mode: "fill_only",
+      result,
+      run: { state: "running", activityPaused: false, started: true },
+    }),
+  ).toMatchObject({ title: "Waiting its turn" });
+});
+
+it("a validation rejection uses the site message instead of ready-to-send copy", () => {
+  const result = buildResult({
+    state: "awaiting_review",
+    privacyReceipt: {
+      submissionOutcome: {
+        outcome: "not_submitted",
+        browserAction: {
+          reason: "form_validation_failed",
+          detail: "Select at least one skill.",
+        },
+      },
+    } as unknown as ApplyResult["privacyReceipt"],
+  });
+  expect(
+    resolveApplyStatePresentation({ mode: "fill_only", result }),
+  ).toMatchObject({
+    title: "Not sent",
+    sentence: "Select at least one skill.",
+    actionLabel: "Correct the fields in the browser",
   });
 });

@@ -10,6 +10,8 @@ import { describe, expect, it } from "vitest";
 import { createSeed } from "../workspace-service.test-fixtures";
 import {
   buildApplicationPrivacyReceipt,
+  describeApplicationPreparation,
+  hasVerifiedApplicationSubmission,
   buildApplyCopilotArtifacts,
   enforcePrepareOnlyExecutionResult,
   mapExecutionResultToApplyBlockerReason,
@@ -622,4 +624,65 @@ describe("questions from a real form become records", () => {
       }
     }
   });
+});
+
+it("does not save a model's send claim as the summary of an unsent preparation", () => {
+  const result = ApplyExecutionResultSchema.parse({
+    state: "ready",
+    outcome: "ready_for_review",
+    summary: "Submitted via Submit button",
+    detail: "Applied successfully",
+    checkpoints: [],
+    questions: [],
+    consentDecisions: [],
+    replay: {},
+    nextActionLabel: "Review",
+    submittedAt: null,
+  });
+  expect(describeApplicationPreparation(result)).toMatchObject({
+    summary: "Ready to send.",
+    detail: "The form is filled in. Review it and send when you are ready.",
+  });
+  expect(
+    hasVerifiedApplicationSubmission(
+      ApplyJobResultSchema.parse({
+        id: "r",
+        runId: "run",
+        jobId: "j",
+        state: "submitted",
+        summary: "SENT",
+        detail: "SENT",
+        startedAt: "2026-10-03T10:00:00.000Z",
+        updatedAt: "2026-10-03T10:00:00.000Z",
+      }),
+    ),
+  ).toBe(false);
+});
+
+it("does not call a sign-in pause a prepared form", () => {
+  const result = describeApplicationPreparation(
+    ApplyExecutionResultSchema.parse({
+      state: "paused",
+      nextActionLabel: "Sign in",
+      summary: "Submitted",
+      detail: "Submitted",
+      outcome: null,
+      submittedAt: null,
+      questions: [],
+      checkpoints: [],
+      blocker: {
+        code: "requires_manual_review",
+        summary: "Sign in",
+        userActionKind: "login",
+      },
+      consentDecisions: [],
+      replay: {},
+      visualEvidence: [],
+      visualObservationSets: [],
+      visualCheckpoints: [],
+      executionTimings: [],
+    }),
+  );
+  expect(result.summary).toBe("Preparation paused.");
+  expect(result.detail).toBe("Sign in");
 });

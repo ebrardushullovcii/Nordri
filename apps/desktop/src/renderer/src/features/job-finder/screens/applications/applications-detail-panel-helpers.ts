@@ -624,6 +624,7 @@ export function getQueueStateExplanation(
     skippedJobCount: number;
     failedJobCount: number;
     completedJobCount: number;
+    waitingJobCount?: number;
     unfinishedJobCount: number;
     stopReason?: string | null;
   } | null,
@@ -634,6 +635,10 @@ export function getQueueStateExplanation(
 
   if (input.runState === "running") {
     return "This run is still working through its jobs. Progress and outcomes update here as each application finishes.";
+  }
+
+  if ((input.waitingJobCount ?? 0) > 0) {
+    return `${input.completedJobCount} sent. ${input.waitingJobCount} ${input.waitingJobCount === 1 ? "application needs" : "applications need"} your answers or review. Open each waiting application to continue.`;
   }
 
   if (input.runState === "paused_for_consent") {
@@ -657,7 +662,7 @@ export function getQueueStateExplanation(
   }
 
   if (input.failedJobCount > 0) {
-    return "Some jobs in this run failed before the flow could reach a stable review-safe state. Review the per-job outcomes below before preparing only the unfinished jobs.";
+    return "Some applications could not be prepared. Check each job below before trying again.";
   }
 
   if (input.blockedJobCount > 0 || input.skippedJobCount > 0) {

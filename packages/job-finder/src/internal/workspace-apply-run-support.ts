@@ -44,14 +44,22 @@ export function summarizeApplyJobResultStates(
   const latestByJob = new Map<string, ApplyJobResult>();
   for (const result of results) {
     const current = latestByJob.get(result.jobId);
-    if (!current || result.updatedAt.localeCompare(current.updatedAt) > 0) {
+    if (
+      !current ||
+      hasVerifiedApplicationSubmission(result) ||
+      (!hasVerifiedApplicationSubmission(current) &&
+        result.updatedAt.localeCompare(current.updatedAt) > 0)
+    ) {
       latestByJob.set(result.jobId, result);
     }
   }
   const latestResults = [...latestByJob.values()];
   return {
     submittedJobs: latestResults.filter(
-      (result) => result.state === "submitted",
+      (result) =>
+        result.state === "submitted" &&
+        (result.privacyReceipt === null ||
+          hasVerifiedApplicationSubmission(result)),
     ).length,
     awaitingReviewJobs: latestResults.filter(
       (result) => result.state === "awaiting_review",
@@ -75,7 +83,12 @@ export function reconcileApplyRunAfterConfirmedSubmission(input: {
   const latestByJob = new Map<string, ApplyJobResult>();
   for (const result of input.results) {
     const current = latestByJob.get(result.jobId);
-    if (!current || result.updatedAt.localeCompare(current.updatedAt) > 0) {
+    if (
+      !current ||
+      hasVerifiedApplicationSubmission(result) ||
+      (!hasVerifiedApplicationSubmission(current) &&
+        result.updatedAt.localeCompare(current.updatedAt) > 0)
+    ) {
       latestByJob.set(result.jobId, result);
     }
   }
@@ -90,7 +103,10 @@ export function reconcileApplyRunAfterConfirmedSubmission(input: {
   );
   const pendingJobs = pendingResults.length;
   const submittedJobs = orderedResults.filter(
-    (result) => result?.state === "submitted",
+    (result) =>
+      result?.state === "submitted" &&
+      (result.privacyReceipt === null ||
+        hasVerifiedApplicationSubmission(result)),
   ).length;
   const skippedJobs = orderedResults.filter(
     (result) => result?.state === "skipped",
@@ -152,6 +168,49 @@ export function reconcileApplyRunAfterConfirmedSubmission(input: {
     blockedJobs,
     failedJobs,
   });
+}
+
+/** Preparation prose cannot establish a send; only the submission receipt can. */
+export function describeApplicationPreparation(
+  result: ApplyExecutionResult,
+): ApplyExecutionResult {
+  if (result.state === "submitted" || result.state === "in_progress")
+    return result;
+  const waiting = result.questions.some(
+    (question) =>
+      question.status !== "answered" && question.status !== "submitted",
+  );
+  return {
+    ...result,
+    summary:
+      result.state === "failed" || result.state === "unsupported"
+        ? "Application preparation did not finish."
+        : waiting
+          ? "Needs your answers."
+          : result.state === "ready"
+            ? "Ready to send."
+            : "Preparation paused.",
+    detail:
+      result.blocker?.detail ??
+      result.blocker?.summary ??
+      (result.state === "failed" || result.state === "unsupported"
+        ? result.detail
+        : waiting
+          ? "Answer the remaining questions to continue this application."
+          : result.state === "ready"
+            ? "The form is filled in. Review it and send when you are ready."
+            : "Preparation paused before a send was confirmed."),
+  };
+}
+
+export function hasVerifiedApplicationSubmission(
+  result: ApplyJobResult,
+): boolean {
+  return (
+    result.privacyReceipt?.finalSubmitOccurred === true &&
+    (result.privacyReceipt.submissionOutcome === null ||
+      result.privacyReceipt.submissionOutcome.outcome === "submitted")
+  );
 }
 
 export function enforcePrepareOnlyExecutionResult(
@@ -718,6 +777,10 @@ export function buildApplyCopilotArtifacts(input: {
   checkpoints: ReturnType<typeof ApplicationReplayCheckpointSchema.parse>[];
   consentRequests: ReturnType<typeof ApplicationConsentRequestSchema.parse>[];
 } {
+  input = {
+    ...input,
+    executionResult: describeApplicationPreparation(input.executionResult),
+  };
   const runId = input.runId ?? createUniqueId("apply_run");
   const resultId = input.resultId ?? createUniqueId("apply_result");
   const canonicalApplyUrl = input.job.applicationUrl ?? input.job.canonicalUrl;
