@@ -260,7 +260,7 @@ function toBlocker(
   if (questions.length > 0) {
     return {
       code: "missing_candidate_answer",
-      userActionKind: questions.some(
+      userActionKind: questions.every(
         (question) => question.answerControlType === "file",
       )
         ? "manual_upload"
@@ -268,6 +268,17 @@ function toBlocker(
       summary: result.reason,
       detail: result.reason,
       questionIds: questions.map((question) => question.id),
+      sourceDebugEvidenceRefIds: [],
+      url: result.finalUrl,
+    };
+  }
+  if (result.outcome === "paused") {
+    return {
+      code: "requires_manual_review",
+      userActionKind: "other",
+      summary: result.reason,
+      detail: result.reason,
+      questionIds: [],
       sourceDebugEvidenceRefIds: [],
       url: result.finalUrl,
     };
@@ -361,9 +372,23 @@ function nextActionFor(result: ApplyAgentResult): string {
       return "Find another job";
     return blocked.blocker.nextActionLabel;
   }
-  if (result.pauses.some((pause) => pause.question !== null)) {
-    return "Answer the form's questions and continue";
+  const questions = toQuestions(result);
+  const files = questions.filter(
+    (question) => question.answerControlType === "file",
+  );
+  if (files.length === questions.length && files.length > 0) {
+    return files.length === 1
+      ? `Add the required ${files[0]!.prompt
+          .split(" — ")
+          .at(-1)!
+          .replace(/[\s*:]+$/u, "")
+          .replace(/\s+upload$/iu, "")
+          .toLowerCase()}`
+      : "Add the required files";
   }
+  if (files.length > 0)
+    return "Add the required files and answer the remaining questions";
+  if (questions.length > 0) return "Answer the form's questions and continue";
   if (result.outcome === "stuck") {
     return "Try again, or open the listing and apply on the site";
   }
@@ -645,11 +670,13 @@ export async function runAgentApplicationPreparation(
   // them to read over and send. Recording it as "paused" put every finished
   // application in the Waiting-on-you count beside the ones that were stuck.
   const attemptState: ApplyExecutionResult["state"] =
-    result.outcome === "stuck" || blocker?.code === "application_closed"
-      ? "failed"
-      : blocker === null && questions.length === 0
-        ? "ready"
-        : "paused";
+    questions.length > 0
+      ? "paused"
+      : result.outcome === "stuck" || blocker?.code === "application_closed"
+        ? "failed"
+        : blocker === null && questions.length === 0
+          ? "ready"
+          : "paused";
 
   return buildPreparationResult({
     executionInput,
@@ -940,6 +967,9 @@ export function buildApplyReviewCard(input: {
   return ApplicationReviewCardSchema.parse({
     siteLabel: clamp(input.siteLabel, 240),
     pageUrl: input.result.finalUrl,
+    ...(input.result.reviewObservedFieldKeys
+      ? { observedFieldKeys: input.result.reviewObservedFieldKeys }
+      : {}),
     answers: [
       ...new Map(
         filled.map((entry) => [entry.fieldKey ?? entry.label, entry]),
@@ -1007,15 +1037,15 @@ export function mergeApplyReviewCards(
         }
       : answer;
   });
-  const earlierAnswers = previous.answers.filter(
-    (answer) =>
-      answer.fieldKey ||
-      !answers.some((entry) => entry.question === answer.question),
+  const earlierAnswers = previous.answers.filter((answer) =>
+    answer.fieldKey
+      ? !current.observedFieldKeys?.includes(answer.fieldKey)
+      : !answers.some((entry) => entry.question === answer.question),
   );
-  const earlierAttachments = previous.attachments.filter(
-    (attachment) =>
-      attachment.fieldKey ||
-      !current.attachments.some((entry) => entry.field === attachment.field),
+  const earlierAttachments = previous.attachments.filter((attachment) =>
+    attachment.fieldKey
+      ? !current.observedFieldKeys?.includes(attachment.fieldKey)
+      : !current.attachments.some((entry) => entry.field === attachment.field),
   );
   return ApplicationReviewCardSchema.parse({
     ...current,

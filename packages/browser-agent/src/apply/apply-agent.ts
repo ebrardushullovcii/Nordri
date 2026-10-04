@@ -1,3 +1,4 @@
+import { resumeFormFileNames } from "@nordri/contracts";
 import {
   parseToolArguments,
   runAgentLoop,
@@ -45,6 +46,11 @@ import {
   storedFactFor,
 } from "./application-facts";
 import { normalizeSignal } from "./control-classification";
+import {
+  checkFormReadiness,
+  runSubmitPreflight,
+  unresolvedRequiredControls,
+} from "./submit-preflight";
 import { matchOption } from "./option-match";
 import {
   checkWrittenApplicationAnswer,
@@ -224,6 +230,7 @@ export async function runApplyAgent(
   const pauses: ApplyPause[] = [];
   const notes: string[] = [];
   const timeline: { at: string; text: string }[] = [];
+  const reviewObservedFieldKeys = new Set<string>();
   const pendingQuestions = new Map<string, ApplicationAttemptQuestion>();
   // A run that stops for the person (a check only they can pass) is first
   // asked once to fill the fields it already knows, so the person is left
@@ -357,6 +364,7 @@ export async function runApplyAgent(
   };
   let requiredEmptyNudged = false;
   let advanceFinishNudged = false;
+  let finalActionNudged = false;
   let staleResumeNudged = false;
   let optionalLetterNudged = false;
 
@@ -366,8 +374,9 @@ export async function runApplyAgent(
       "ref" | "kind" | "choiceGroupKey"
     >,
   ): string =>
-    control.kind === "radio" && control.choiceGroupKey
-      ? `radio:${control.choiceGroupKey}`
+    (control.kind === "radio" || control.kind === "checkbox") &&
+    control.choiceGroupKey
+      ? `${control.kind}:${control.choiceGroupKey}`
       : control.ref;
 
   await config.onProgress?.({
@@ -386,9 +395,14 @@ export async function runApplyAgent(
     const first = questions[0];
     if (!first) return null;
     return {
-      code: "question_needs_you",
-      summary:
-        questions.length === 1
+      code: questions.every((question) => question.answerControlType === "file")
+        ? "document_needs_you"
+        : "question_needs_you",
+      summary: questions.every(
+        (question) => question.answerControlType === "file",
+      )
+        ? `Add the required ${questions.map((question) => question.prompt).join(" and ")} to continue.`
+        : questions.length === 1
           ? `Job Finder filled in what it could on ${config.siteLabel} and needs your answer to one question.`
           : `Job Finder filled in what it could on ${config.siteLabel} and needs your answers to ${questions.length} questions.`,
       question: first,
@@ -427,13 +441,33 @@ export async function runApplyAgent(
     void classifyQuestions?.(next.controls).catch(() => undefined);
     // A person or a later page write may have answered a previously pending
     // question. Keep the live controls authoritative when continuing.
+    // Refs are page-local. Retain only questions that still describe an
+    // unresolved control on this step, rather than a field from an older page.
+    for (const [key, pending] of pendingQuestions) {
+      const current = next.controls.find(
+        (control) =>
+          pendingQuestionKey(control) === key &&
+          questionPrompt(control) === pending.prompt,
+      );
+      if (
+        !current ||
+        current.disabled ||
+        (!current.visible && current.kind !== "file") ||
+        current.answered
+      )
+        pendingQuestions.delete(key);
+    }
+    readyToSend = null;
     for (const control of next.controls) {
+      if (control.disabled || (!control.visible && control.kind !== "file"))
+        continue;
       const label = questionPrompt(control);
       const fieldKey =
         `${next.url?.split(/[?#]/u)[0] ?? ""}|${next.step.label ?? ""}|${control.choiceGroupKey ?? control.ref}|${label}`.slice(
           0,
           2_000,
         );
+      reviewObservedFieldKeys.add(fieldKey);
       if (control.kind === "file") {
         if (control.answered) {
           const fileName =
@@ -459,12 +493,22 @@ export async function runApplyAgent(
         }
       } else if (
         control.answered &&
-        (control.kind !== "radio" || control.checked) &&
+        ((control.kind !== "radio" && control.kind !== "checkbox") ||
+          control.checked) &&
         !isSecurityChallengeControl(control)
       ) {
         const value =
           control.kind === "checkbox"
-            ? "Yes"
+            ? control.answerControlType === "multi_choice"
+              ? next.controls
+                  .filter(
+                    (candidate) =>
+                      candidate.choiceGroupKey === control.choiceGroupKey &&
+                      candidate.checked,
+                  )
+                  .map((candidate) => candidate.label || candidate.value)
+                  .join(", ")
+              : "Yes"
             : control.kind === "radio"
               ? control.label || control.value
               : control.selectedOptionLabel || control.value;
@@ -492,7 +536,10 @@ export async function runApplyAgent(
             fieldKey,
           });
         }
-      } else if (control.kind !== "radio" || !control.answered) {
+      } else if (
+        (control.kind !== "radio" && control.kind !== "checkbox") ||
+        !control.answered
+      ) {
         observedAnswers.delete(fieldKey);
       }
       if (control.answered)
@@ -613,6 +660,41 @@ export async function runApplyAgent(
             : outcome.reason,
         };
       case "paused":
+        if (outcome.pause.code === "document_needs_you") {
+          const observation = await pageTools.observe();
+          const classifications = await classifyQuestions?.(
+            observation.controls,
+          ).catch(() => undefined);
+          for (const control of observation.controls) {
+            if (classifications?.get(questionPrompt(control))?.required)
+              control.required = true;
+          }
+          syncObservation(observation);
+          for (const control of unresolvedRequiredControls(observation)) {
+            const key = pendingQuestionKey(control);
+            if (pendingQuestions.has(key)) continue;
+            pendingQuestions.set(
+              key,
+              buildPendingQuestion({
+                control,
+                jobId: config.application.jobId,
+                detectedAt: now().toISOString(),
+                suggestion: null,
+                siblings: observation.controls,
+              }),
+            );
+          }
+        }
+        if (outcome.pause.code === "document_needs_you") {
+          const fileQuestion = outcome.pause.question;
+          if (fileQuestion) {
+            const matching = [...pendingQuestions.entries()].find(
+              ([, question]) => question.id === fileQuestion.id,
+            );
+            if (matching) pendingQuestions.set(matching[0], fileQuestion);
+          }
+          outcome.pause.questions = [...pendingQuestions.values()];
+        }
         pauses.push(outcome.pause);
         note(outcome.pause.summary);
         return {
@@ -621,6 +703,7 @@ export async function runApplyAgent(
           data: outcome.pause,
         };
       case "ready_to_send":
+        finalActionNudged = true;
         syncObservation(outcome.observation);
         readyToSend = {
           actionRef: outcome.finalActionRef,
@@ -637,6 +720,13 @@ export async function runApplyAgent(
         // A write receipt is not proof that a controlled field retained its
         // value. Re-read the live form before accepting the model's finish.
         const observation = await pageTools.observe();
+        const classifications = await classifyQuestions?.(
+          observation.controls,
+        ).catch(() => undefined);
+        for (const control of observation.controls) {
+          const classification = classifications?.get(questionPrompt(control));
+          if (classification?.required) control.required = true;
+        }
         syncObservation(observation);
         const resume = documentCatalog.find(
           (document) => document.kind === "resume",
@@ -647,7 +737,14 @@ export async function runApplyAgent(
             control.questionKind === "resume" &&
             control.answered &&
             resume &&
-            fileFieldHoldsOtherFile(control.value, resume.fileName),
+            resumeFormFileNames(resume.fileName).every((name) =>
+              fileFieldHoldsOtherFile(control.value, name),
+            ) &&
+            !attachments.some(
+              (entry) =>
+                entry.documentId === resume.id &&
+                !fileFieldHoldsOtherFile(control.value, entry.fileName),
+            ),
         );
         if (staleUpload && resume && !staleResumeNudged) {
           staleResumeNudged = true;
@@ -655,6 +752,20 @@ export async function runApplyAgent(
             kind: "ok",
             content: `"${questionPrompt(staleUpload)}" contains a different resume. The selected file is ${resume.fileName}.`,
           };
+        }
+        if (staleUpload && resume) {
+          pauses.push({
+            code: "document_needs_you",
+            summary:
+              "The form still contains a different resume. Attach the selected resume before sending.",
+            question: buildPendingQuestion({
+              control: staleUpload,
+              jobId: config.application.jobId,
+              detectedAt: now().toISOString(),
+              suggestion: null,
+            }),
+            blocker: null,
+          });
         }
         // "Whenever there is room" covers optional letter fields too. Ask
         // once; an empty optional field never stops the application.
@@ -684,12 +795,11 @@ export async function runApplyAgent(
         // Completing the current step is not completing a multi-step form.
         // Give the model a chance to carry on before accepting a handoff.
         const hasAnotherStep =
-          observation.step.index !== null &&
-          observation.step.total !== null &&
-          observation.step.index < observation.step.total &&
+          (observation.step.index !== null &&
+            observation.step.total !== null &&
+            observation.step.index < observation.step.total) ||
           observation.actions.some(
-            (action) =>
-              action.kind === "advance" && action.visible && !action.disabled,
+            (action) => action.kind === "advance" && action.visible,
           );
         if (
           hasAnotherStep &&
@@ -707,32 +817,7 @@ export async function runApplyAgent(
             };
           }
         }
-        const unansweredRequired = observation.controls.filter(
-          (control, index, controls) => {
-            if (
-              !control.required ||
-              control.disabled ||
-              (!control.visible && control.kind !== "file")
-            ) {
-              return false;
-            }
-            if (control.kind !== "radio") {
-              return !control.answered;
-            }
-            const group = control.choiceGroupKey;
-            const groupControls = controls.filter(
-              (candidate) =>
-                candidate.kind === "radio" &&
-                (group
-                  ? candidate.choiceGroupKey === group
-                  : candidate.ref === control.ref),
-            );
-            if (groupControls.some((candidate) => candidate.checked)) {
-              return false;
-            }
-            return groupControls[0]?.ref === control.ref;
-          },
-        );
+        const unansweredRequired = unresolvedRequiredControls(observation);
         const stuckOnMissingFile =
           outcome.stuck === true &&
           unansweredRequired.some(
@@ -740,15 +825,28 @@ export async function runApplyAgent(
               control.kind === "file" &&
               stuckReasonMentionsRequiredFile(outcome.reason, control),
           );
-        if (
-          (!outcome.stuck || stuckOnMissingFile || !stuckFinishNudged) &&
-          unansweredRequired.length > 0
-        ) {
+        if (unansweredRequired.length > 0) {
           const actionable: string[] = [];
           for (const control of unansweredRequired) {
             if (pendingQuestions.has(pendingQuestionKey(control))) continue;
             if (outcome.stuck && control.kind !== "file") {
-              if (stuckFinishNudged) continue;
+              if (stuckFinishNudged) {
+                pendingQuestions.set(
+                  pendingQuestionKey(control),
+                  buildPendingQuestion({
+                    control,
+                    jobId: config.application.jobId,
+                    detectedAt: now().toISOString(),
+                    suggestion: null,
+                    siblings: observation.controls,
+                    reason:
+                      control.answered && control.invalid
+                        ? "The site did not accept this value. Check it and try again."
+                        : null,
+                  }),
+                );
+                continue;
+              }
               actionable.push(
                 `"${questionPrompt(control)}" is required and still empty. Fill it now if the person's facts answer it; the person should only have to do what you cannot.`,
               );
@@ -779,6 +877,8 @@ export async function runApplyAgent(
                   detectedAt: now().toISOString(),
                   suggestion: null,
                   siblings: observation.controls,
+                  reason:
+                    "Your cover-letter setting is Never. Attach the required letter yourself or change that setting.",
                 });
                 pauses.push({
                   code: "document_needs_you",
@@ -846,22 +946,57 @@ export async function runApplyAgent(
           stillEmpty.length > 0
             ? `${outcome.reason.trim()} Still empty on the form: ${stillEmpty.join(", ")}.`
             : outcome.reason;
+        const readiness = checkFormReadiness(observation);
         if (
-          !outcome.stuck &&
+          !readiness.ok &&
+          pendingQuestions.size === 0 &&
+          pauses.length === 0 &&
+          !observation.blocker &&
+          !reportedSecurityChallenge(outcome.reason) &&
           !outcome.needsPerson &&
-          observation.blocker?.requiresPerson !== true &&
-          config.authority.mode !== "prepare_only" &&
-          readyToSend === null
+          !outcome.stuck
+        ) {
+          pauses.push({
+            code: "page_blocked",
+            summary: readiness.reason,
+            question: null,
+            blocker: null,
+          });
+        }
+        if (
+          readiness.ok &&
+          pendingQuestions.size === 0 &&
+          pauses.length === 0 &&
+          config.authority.mode !== "prepare_only"
         ) {
           const finalAction = observation.actions.find(
             (action) =>
               action.kind === "final" && action.visible && !action.disabled,
-          );
-          if (finalAction) {
+          )!;
+          if (!finalActionNudged) {
+            finalActionNudged = true;
             return {
               kind: "ok",
-              content: `The form is filled in, but Job Finder has not recorded its final action yet. Use submit_application with ref "${finalAction.ref}" so Job Finder can run the final readiness check without pressing it from this preparation loop.`,
+              content: `The form is filled in, but Job Finder has not recorded its final action yet. Use submit_application with ref "${finalAction.ref}" to record its final readiness check without pressing it.`,
             };
+          }
+          const preflight = runSubmitPreflight({
+            observation,
+            proposedActionRef: finalAction.ref,
+            authority: config.authority,
+          });
+          if (preflight.ok) {
+            readyToSend = {
+              actionRef: finalAction.ref,
+              actionLabel: finalAction.label,
+            };
+          } else {
+            pauses.push({
+              code: "page_blocked",
+              summary: preflight.reason,
+              question: null,
+              blocker: null,
+            });
           }
         }
         const finish: AgentLoopFinish = {
@@ -1236,6 +1371,18 @@ export async function runApplyAgent(
     now,
   });
 
+  for (const pause of pauses) {
+    if (pause.code !== "document_needs_you") continue;
+    const questions = new Map(
+      [
+        ...(pause.questions ?? (pause.question ? [pause.question] : [])),
+        ...pendingQuestions.values(),
+      ].map((question) => [question.id, question] as const),
+    );
+    // The executor's file reason is more specific than the fresh empty-control read.
+    if (pause.question) questions.set(pause.question.id, pause.question);
+    pause.questions = [...questions.values()];
+  }
   const pending = collectedQuestionsPause();
   const personOwnedBlocker =
     pageTools.state.observation?.blocker?.requiresPerson === true
@@ -1313,6 +1460,7 @@ export async function runApplyAgent(
     filled,
     attachments,
     reviewFilled: [...observedAnswers.values()],
+    reviewObservedFieldKeys: [...reviewObservedFieldKeys].slice(0, 500),
     reviewAttachments: [...observedAttachments.values()],
     pauses,
     notes: [...notes, ...guardState.notes, ...loop.turnNotes, timing],

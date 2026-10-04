@@ -11,8 +11,8 @@ import type {
  * The person's facts for one application, as the model reads them (ADR 0041).
  *
  * The model gets everything Job Finder knows about the person in one place and
- * answers the form from it; no rule picks an answer per field. Pay is left out
- * when the person keeps it to themselves, so it is never on hand to type.
+ * answers the form from it; no rule picks an answer per field. Saved expected
+ * pay describes their application preference, not their current pay or history.
  */
 export function applicationFacts(
   sources: ApplyAnswerSources,
@@ -20,9 +20,6 @@ export function applicationFacts(
 ) {
   const profile = sources.profile;
   const answerBank = { ...profile.answerBank };
-  if (!options.payDisclosed) {
-    answerBank.salaryExpectations = null;
-  }
   return {
     name: {
       full: profile.fullName,
@@ -154,11 +151,7 @@ function storedFacts(
     [bank.availability, "availability", "when you can start"],
     [bank.selfIntroduction, "selfIntroduction", "your introduction"],
     [bank.careerTransition, "careerTransition", "your career change answer"],
-    [
-      options.payDisclosed ? bank.salaryExpectations : null,
-      "salaryExpectations",
-      "your saved pay answer",
-    ],
+    [bank.salaryExpectations, "salaryExpectations", "your saved pay answer"],
   ];
   for (const [value, key, label] of bankEntries) {
     add(value, `profile.answerBank.${key}`, label);
@@ -209,7 +202,14 @@ export function savedAnswerForQuestion(
   reusableAnswers: readonly CandidateReusableAnswer[],
 ): CandidateReusableAnswer | null {
   const asked = new Set(
-    [control.label, control.groupLabel]
+    [
+      control.label,
+      control.groupLabel,
+      [control.groupLabel, control.label]
+        .filter((part) => part.trim())
+        .join(" — "),
+      control.placeholder,
+    ]
       .map((text) => normalizeSignal(text))
       .filter((text) => text.length > 0),
   );

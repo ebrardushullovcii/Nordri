@@ -17,6 +17,12 @@ export interface RawApplyControl {
   index: number;
   tagName: string;
   inputType: string;
+  /** Native field constraints, without interpreting the question. */
+  accept?: string;
+  min?: string;
+  max?: string;
+  step?: string;
+  maxLength?: number;
   role: string;
   id: string;
   name: string;

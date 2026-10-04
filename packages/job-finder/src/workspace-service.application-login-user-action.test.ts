@@ -89,7 +89,14 @@ function taskLocalSignInSession(onSubmitted: () => void): ApplyPageSession {
           },
         ],
     actions: signedIn
-      ? []
+      ? [
+          {
+            index: 0,
+            label: "Submit application",
+            visible: true,
+            disabled: false,
+          },
+        ]
       : [
           {
             index: 0,
@@ -2264,60 +2271,71 @@ describe("application login UserActionRequest adoption", () => {
     },
   );
 
-  test("names the file an upload step needs", async () => {
-    const seed = createSeed();
-    seed.settings.resumeApplicationMode = "original_resume";
-    seed.profile.baseResume.storagePath = "C:/tmp/alex-vanguard.pdf";
-    const baseRuntime = createBrowserRuntime();
-    const harness = createWorkspaceServiceHarness({
-      seed,
-      browserRuntime: {
-        ...baseRuntime,
-        executeApplicationFlow: async (source, input) =>
-          ApplyExecutionResultSchema.parse({
-            ...(await baseRuntime.executeApplicationFlow(source, input)),
-            state: "paused",
-            summary: "Browser action required",
-            detail:
-              "Job Finder filled in what it could and needs your answers to 1 question.",
-            questions: [
-              {
-                id: "question_transcript",
-                prompt: "Academic transcript",
-                kind: "other",
-                answerControlType: "file",
-                isRequired: true,
-                detectedAt: "2026-07-30T10:00:00.000Z",
-                answerOptions: [],
-                suggestedAnswers: [],
-                submittedAnswer: null,
-                status: "detected",
+  test.each([false, true])(
+    "names the file an upload step needs (cover letter=%s)",
+    async (letter) => {
+      const seed = createSeed();
+      seed.settings.resumeApplicationMode = "original_resume";
+      seed.profile.baseResume.storagePath = "C:/tmp/alex-vanguard.pdf";
+      const baseRuntime = createBrowserRuntime();
+      const harness = createWorkspaceServiceHarness({
+        seed,
+        browserRuntime: {
+          ...baseRuntime,
+          executeApplicationFlow: async (source, input) =>
+            ApplyExecutionResultSchema.parse({
+              ...(await baseRuntime.executeApplicationFlow(source, input)),
+              state: "paused",
+              summary: "Browser action required",
+              detail: letter
+                ? "This form requires a letter, but your settings say Job Finder should not write one."
+                : "Job Finder filled in what it could and needs your answers to 1 question.",
+              questions: [
+                {
+                  id: "question_transcript",
+                  prompt: letter
+                    ? "Application — Cover letter upload *"
+                    : "Academic transcript",
+                  kind: "other",
+                  answerControlType: "file",
+                  isRequired: true,
+                  detectedAt: "2026-07-30T10:00:00.000Z",
+                  answerOptions: [],
+                  suggestedAnswers: [],
+                  submittedAnswer: null,
+                  status: "detected",
+                },
+              ],
+              blocker: {
+                code: "missing_candidate_answer",
+                userActionKind: "manual_upload",
+                summary: letter
+                  ? "This form requires a letter, but your settings say Job Finder should not write one."
+                  : "Job Finder filled in what it could and needs your answers to 1 question.",
+                questionIds: ["question_transcript"],
+                url: input.job.applicationUrl ?? input.job.canonicalUrl,
               },
-            ],
-            blocker: {
-              code: "missing_candidate_answer",
-              userActionKind: "manual_upload",
-              summary:
-                "Job Finder filled in what it could and needs your answers to 1 question.",
-              questionIds: ["question_transcript"],
-              url: input.job.applicationUrl ?? input.job.canonicalUrl,
-            },
-          }),
-      },
-    });
+            }),
+        },
+      });
 
-    const snapshot =
-      await harness.workspaceService.startApplyCopilotRun("job_ready");
-    const request = snapshot.userActionRequests[0];
+      const snapshot =
+        await harness.workspaceService.startApplyCopilotRun("job_ready");
+      const request = snapshot.userActionRequests[0];
 
-    expect(request?.kind).toBe("manual_upload");
-    expect(request?.title).toMatch(
-      /^Add your academic transcript to continue/u,
-    );
-    expect(request?.summary).toMatch(
-      /form asks for your academic transcript\. Add or restore it in Profile › Files/u,
-    );
-  });
+      expect(request?.kind).toBe("manual_upload");
+      expect(request?.title).toMatch(
+        letter
+          ? /^Add your cover letter to continue/u
+          : /^Add your academic transcript to continue/u,
+      );
+      expect(request?.summary).toMatch(
+        letter
+          ? /settings say Job Finder should not write one.*form asks for your cover letter/u
+          : /form asks for your academic transcript\. Add or restore it in Profile › Files/u,
+      );
+    },
+  );
 
   test("rejects a submitted result reported through the prepare-only production path", async () => {
     const seed = createSeed();

@@ -307,9 +307,16 @@ export function ApplicationsDetailPanelPrivacyReceiptSection(props: {
                   {receipt.resume.sha256.slice(-12)}
                 </code>
                 <span>
-                  This is the exact{" "}
-                  {describeReceiptResumeFileType(receipt.resume.fileName)} you
-                  approved — unchanged.
+                  {receipt.resume.source === "original_upload" &&
+                  /\.txt$/iu.test(receipt.resume.fileName) ? (
+                    "This is a plain-text copy of your original, unchanged."
+                  ) : (
+                    <>
+                      This is the exact{" "}
+                      {describeReceiptResumeFileType(receipt.resume.fileName)}{" "}
+                      you approved — unchanged.
+                    </>
+                  )}
                 </span>
               </span>
             ) : (
@@ -325,9 +332,11 @@ export function ApplicationsDetailPanelPrivacyReceiptSection(props: {
           <ReceiptGroup icon={CheckCircle2} label="Written to the site">
             {receipt.externalWrites.length > 0 ? (
               <>
-                {receipt.externalWrites
-                  .map((entry) => entry.fieldLabel)
-                  .join(", ")}
+                {[
+                  ...new Set(
+                    receipt.externalWrites.map((entry) => entry.fieldLabel),
+                  ),
+                ].join(", ")}
                 <span className="mt-1 block">
                   Preparation writes Job Finder observed on this run. They do
                   not confirm how the site stored the data or what it did next.

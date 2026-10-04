@@ -1,4 +1,7 @@
-import type { ApplicationAttemptQuestion } from "@nordri/contracts";
+import {
+  resumeFormFileNames,
+  type ApplicationAttemptQuestion,
+} from "@nordri/contracts";
 
 import { savedAnswerForQuestion, storedFactFor } from "./application-facts";
 import { normalizeSignal } from "./control-classification";
@@ -193,7 +196,9 @@ function questionIdFor(
   );
   const ordinal = same.findIndex((candidate) => candidate.ref === control.ref);
   const choiceSuffix =
-    control.kind === "radio" && control.choiceGroupKey
+    (control.kind === "radio" ||
+      control.answerControlType === "multi_choice") &&
+    control.choiceGroupKey
       ? `_${digest(control.choiceGroupKey)}`
       : "";
   const suffix =
@@ -212,6 +217,23 @@ function questionIdFor(
  * A file field that names another file. An empty read-back is not evidence
  * either way: some sites clear the field once they hold the file.
  */
+/** Native accept is a format constraint, independent of document wording. */
+function acceptsDocument(
+  control: ApplyFormControl,
+  document: Pick<ApplyDocument, "fileName" | "mimeType">,
+): boolean {
+  if (!control.acceptedTypes?.length) return true;
+  const name = document.fileName.toLowerCase();
+  const mime = document.mimeType.toLowerCase();
+  return control.acceptedTypes.some((accepted) =>
+    accepted.startsWith(".")
+      ? name.endsWith(accepted)
+      : accepted.endsWith("/*")
+        ? mime.startsWith(accepted.slice(0, -1))
+        : accepted === mime,
+  );
+}
+
 export function fileFieldHoldsOtherFile(
   value: string,
   fileName: string,
@@ -223,9 +245,19 @@ export function fileFieldHoldsOtherFile(
 export function questionPrompt(control: ApplyFormControl): string {
   const label = control.label.trim();
   const group = control.groupLabel.trim();
+  // File tasks name the input, without its fieldset legend or required marker.
+  if (control.kind === "file") {
+    return label.replace(/[\s*:]+$/u, "").replace(/\s+upload$/iu, "") || "file";
+  }
   const normalizedLabel = normalizeSignal(label);
   const normalizedGroup = normalizeSignal(group);
-  if (control.kind === "radio" && group.length > 0) return group;
+  if (
+    (control.kind === "radio" ||
+      (control.kind === "checkbox" &&
+        control.answerControlType === "multi_choice")) &&
+    group.length > 0
+  )
+    return group;
   const groupAddsSomething =
     normalizedGroup.length > 0 &&
     normalizedLabel.length > 0 &&
@@ -265,6 +297,9 @@ export function buildPendingQuestion(input: {
     prompt: questionPrompt(control),
     kind: control.questionKind,
     answerControlType: control.answerControlType,
+    ...(control.inputConstraints
+      ? { inputConstraints: control.inputConstraints }
+      : {}),
     isRequired: control.required,
     detectedAt: input.detectedAt,
     // A list's blank first choice is not an answer anyone could give.
@@ -324,11 +359,14 @@ async function withModelQuestionKinds(
         ? "other"
         : control.questionKind,
     attestationKind: classification.declarationKind,
+    ...(typeof classification.asksCurrentPay === "boolean"
+      ? { asksCurrentPay: classification.asksCurrentPay }
+      : {}),
   };
 }
 
 const PAY_KEPT_PRIVATE_REASON =
-  "This asks what pay you expect, and you asked Job Finder to leave that to you.";
+  "Job Finder leaves pay questions to you. Answer it yourself if you want to.";
 
 type AnswerDecision =
   | { kind: "use"; answer: ApplyAnswer }
@@ -348,9 +386,24 @@ function savedSuggestion(
   config: ApplyAgentConfig,
 ): ApplyAnswer | null {
   const saved = savedAnswerForQuestion(control, config.sources.reusableAnswers);
+  let value = saved?.answer ?? "";
+  if (saved && control.answerControlType === "multi_choice") {
+    try {
+      const selected: unknown = JSON.parse(saved.answer);
+      if (
+        Array.isArray(selected) &&
+        selected.every((entry) => typeof entry === "string") &&
+        selected.includes(control.label || control.value)
+      ) {
+        value = control.label || control.value;
+      }
+    } catch {
+      /* Older text answers still go through the fact check. */
+    }
+  }
   return saved
     ? {
-        value: saved.answer,
+        value,
         kind: control.questionKind,
         sourceKind: "answer_library",
         sourceId: `answerLibrary.${saved.id}`,
@@ -381,29 +434,31 @@ async function decideAnswer(input: {
   const config = deps.config;
   const payDisclosed =
     config.authority.salaryDisclosure === "answer_from_profile";
+  const saved = savedSuggestion(control, config);
   if (control.questionKind === "salary_expectation" && !payDisclosed) {
     const savedPay = config.sources.profile.answerBank.salaryExpectations;
     return {
       kind: "leave",
       reason: PAY_KEPT_PRIVATE_REASON,
-      suggestion: savedPay
-        ? {
-            value: savedPay,
-            kind: "salary_expectation",
-            sourceKind: "profile",
-            sourceId: "profile.answerBank.salaryExpectations",
-            provenanceLabel: "your saved pay answer",
-            groundedIn: ["your saved pay answer"],
-          }
-        : null,
+      suggestion:
+        saved ??
+        (savedPay
+          ? {
+              value: savedPay,
+              kind: "salary_expectation",
+              sourceKind: "profile",
+              sourceId: "profile.answerBank.salaryExpectations",
+              provenanceLabel: "your saved pay answer",
+              groundedIn: ["your saved pay answer"],
+            }
+          : null),
       permission: true,
     };
   }
-  // The person's own answer to this exact question, even a bare Yes or No.
-  const saved = savedSuggestion(control, config);
   if (saved && normalizeSignal(saved.value) === normalizeSignal(value)) {
     return { kind: "use", answer: { ...saved, value } };
   }
+  // The person's own answer to this exact question, even a bare Yes or No.
   const stored = storedFactFor({
     sources: config.sources,
     payDisclosed,
@@ -1072,7 +1127,9 @@ export async function executeApplyProposal(
           control.questionKind === "resume" &&
           control.answered &&
           resume &&
-          fileFieldHoldsOtherFile(control.value, resume.fileName),
+          resumeFormFileNames(resume.fileName).every((name) =>
+            fileFieldHoldsOtherFile(control.value, name),
+          ),
       );
       if (staleUpload && resume) {
         return {
@@ -1285,6 +1342,8 @@ export async function executeApplyProposal(
                   jobId: config.application.jobId,
                   detectedAt: at,
                   suggestion: null,
+                  reason:
+                    "Your cover-letter setting is Never. Attach the required letter yourself or change that setting.",
                 }),
                 blocker: null,
               },
@@ -1453,7 +1512,8 @@ export async function executeApplyProposal(
       // is settled by the person's approvals below instead.
       let radioAnswer: ApplyAnswer | null = null;
       if (
-        control.kind === "radio" &&
+        (control.kind === "radio" ||
+          control.answerControlType === "multi_choice") &&
         proposal.checked &&
         control.attestationKind === null
       ) {
@@ -1652,6 +1712,8 @@ export async function executeApplyProposal(
                   jobId: config.application.jobId,
                   detectedAt: at,
                   suggestion: null,
+                  reason:
+                    "Your cover-letter setting is Never. Attach the required letter yourself or change that setting.",
                 }),
                 blocker: null,
               },
@@ -1742,7 +1804,7 @@ export async function executeApplyProposal(
         };
       }
 
-      const document = config.sources.documents.find(
+      let document = config.sources.documents.find(
         (candidate) => candidate.id === proposal.documentId,
       );
       if (!document) {
@@ -1780,6 +1842,39 @@ export async function executeApplyProposal(
             "This upload needs the person's matching file. Job Finder cannot create a substitute for it.",
           observation,
         };
+      }
+      if (!acceptsDocument(control, document)) {
+        // A plain-text copy of an Original Markdown resume preserves every
+        // byte. Never ask the writer to rewrite the person's resume for format.
+        const textCopy = {
+          ...document,
+          fileName: document.fileName.replace(/\.md$/iu, ".txt"),
+          mimeType: "text/plain",
+        };
+        if (
+          document.kind === "resume" &&
+          /\.md$/iu.test(document.fileName) &&
+          acceptsDocument(control, textCopy)
+        ) {
+          document = textCopy;
+        } else {
+          return {
+            kind: "paused",
+            pause: {
+              code: "document_needs_you",
+              summary: `The form does not accept ${document.fileName}. Attach a supported copy (${control.acceptedTypes?.join(", ")}).`,
+              question: buildPendingQuestion({
+                control,
+                jobId: config.application.jobId,
+                detectedAt: at,
+                suggestion: null,
+                reason:
+                  "The selected file format is not accepted by this form.",
+              }),
+              blocker: null,
+            },
+          };
+        }
       }
       const bytes = await document.loadBytes();
       if (bytes.byteLength === 0) {

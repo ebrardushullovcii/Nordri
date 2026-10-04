@@ -264,10 +264,40 @@ async function persistManualAnswer(input: {
       .map((record) => record.questionId),
   );
   // A partially saved command can be retried after earlier questions already
-  // became answered. Only this exact command's records admit those questions.
+  // became answered. The current form can also detect an unanswered field
+  // whose persisted record was marked answered by an earlier failed check.
+  const attempts = await input.ctx.repository.listApplicationAttempts({
+    applicationRecordId: scope.applicationRecordId,
+  });
+  const latestAttempt = [...attempts].sort((left, right) =>
+    right.updatedAt.localeCompare(left.updatedAt),
+  )[0];
+  const activeQuestionIds = latestAttempt
+    ? new Set(
+        latestAttempt.questions
+          .filter((question) => question.status === "detected")
+          .map((question) => question.id),
+      )
+    : null;
   const questions = allQuestions.filter(
     (question) =>
-      question.status === "detected" || retryQuestionIds.has(question.id),
+      retryQuestionIds.has(question.id) ||
+      ((question.status === "detected" ||
+        activeQuestionIds?.has(question.id) ||
+        activeQuestionIds?.has(
+          question.id.replace(
+            `apply_question_${scope.applicationRecordId}_`,
+            "",
+          ),
+        )) &&
+        (!activeQuestionIds ||
+          activeQuestionIds.has(question.id) ||
+          activeQuestionIds.has(
+            question.id.replace(
+              `apply_question_${scope.applicationRecordId}_`,
+              "",
+            ),
+          ))),
   );
 
   // A multi-question step arrives as one command with every answer tied to
@@ -512,10 +542,7 @@ async function persistOneManualAnswer(input: {
 
   const recordId = `manual_answer_${input.request.id}_${input.resultingRevision}${input.recordSuffix}`;
   const records = await input.ctx.repository.listApplicationAnswerRecords({
-    runId: scope.runId,
-    jobId: scope.jobId,
-    resultId: scope.resultId,
-    applicationRecordId: scope.applicationRecordId,
+    questionId: question.id,
   });
   const existingById = records.find((record) => record.id === recordId) ?? null;
   // The exact retry reuses the already-persisted record as the basis of the

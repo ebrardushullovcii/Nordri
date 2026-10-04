@@ -320,6 +320,7 @@ export function ApplicationsRecordsPanel({
             const applyState = latestResult
               ? resolveApplyStatePresentation({
                   recordCrm: record.crm,
+                  recordLatestBlocker: record.latestBlocker,
                   mode:
                     record.automationMode === "autonomous_submit"
                       ? "apply_for_me"

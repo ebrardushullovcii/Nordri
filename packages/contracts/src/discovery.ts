@@ -1823,6 +1823,13 @@ export type ApplicationAttemptSuggestedAnswer = z.infer<
   typeof ApplicationAttemptSuggestedAnswerSchema
 >;
 
+export const ApplicationQuestionInputConstraintsSchema = z.object({
+  type: z.enum(["number", "date", "month"]),
+  min: z.string().optional(),
+  max: z.string().optional(),
+  step: z.string().optional(),
+});
+
 export const ApplicationAttemptQuestionSchema = z.object({
   id: NonEmptyStringSchema,
   prompt: NonEmptyStringSchema,
@@ -1833,6 +1840,7 @@ export const ApplicationAttemptQuestionSchema = z.object({
   description: NonEmptyStringSchema.nullable().optional(),
   kind: ApplicationQuestionKindSchema.default("other"),
   answerControlType: ApplicationQuestionControlTypeSchema.optional(),
+  inputConstraints: ApplicationQuestionInputConstraintsSchema.optional(),
   isRequired: z.boolean().default(true),
   /**
    * Why this one came back to the person, in their own words. Set when an

@@ -149,9 +149,29 @@ export function buildApplyFormObservation(
       ...(inputType === "month" || inputType === "date"
         ? { dateInputType: inputType }
         : {}),
+      ...(inputType === "number" ||
+      inputType === "date" ||
+      inputType === "month"
+        ? {
+            inputConstraints: {
+              type: inputType,
+              ...(rawControl.min ? { min: rawControl.min } : {}),
+              ...(rawControl.max ? { max: rawControl.max } : {}),
+              ...(rawControl.step ? { step: rawControl.step } : {}),
+            },
+          }
+        : {}),
+      ...(inputType === "file" && rawControl.accept
+        ? {
+            acceptedTypes: rawControl.accept
+              .split(",")
+              .map((entry) => entry.trim().toLowerCase())
+              .filter(Boolean),
+          }
+        : {}),
       label: rawControl.label.trim(),
       groupLabel: rawControl.groupLabel.trim(),
-      ...(kind === "radio"
+      ...(kind === "radio" || (kind === "checkbox" && !rawControl.required)
         ? {
             choiceGroupKey: rawControl.name.trim()
               ? `${rawControl.scopeKey ?? "root"}:name:${rawControl.name.trim()}`
@@ -195,17 +215,20 @@ export function buildApplyFormObservation(
   // required field makes an agent overwrite a valid Yes with No (and vice
   // versa) while trying to satisfy an impossible form state.
   for (const control of controls) {
-    if (control.kind !== "radio") continue;
+    if (control.kind !== "radio" && control.kind !== "checkbox") continue;
     const groupKey = control.choiceGroupKey;
     if (!groupKey) continue;
     const group = controls.filter(
       (candidate) =>
-        candidate.kind === "radio" && candidate.choiceGroupKey === groupKey,
+        candidate.kind === control.kind &&
+        candidate.choiceGroupKey === groupKey,
     );
+    if (control.kind === "checkbox" && group.length < 2) continue;
     control.answered = group.some((candidate) => candidate.checked);
     // Radio choices must pass through the same saved-answer matching as a
     // select. Otherwise a saved prose answer appears usable until every
     // individual radio is refused, without a question for the person.
+    if (control.kind === "checkbox") control.answerControlType = "multi_choice";
     control.options = group.map(
       (candidate) => candidate.label || candidate.value,
     );

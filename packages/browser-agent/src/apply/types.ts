@@ -46,6 +46,13 @@ export interface ApplyFormControl {
   kind: ApplyControlKind;
   /** Native date precision, retained so month inputs receive YYYY-MM. */
   dateInputType?: "date" | "month";
+  inputConstraints?: {
+    type: "number" | "date" | "month";
+    min?: string;
+    max?: string;
+    step?: string;
+  };
+  acceptedTypes?: string[];
   label: string;
   groupLabel: string;
   /** Stable identity shared by controls that belong to one choice group. */
@@ -65,6 +72,8 @@ export interface ApplyFormControl {
   validationMessage: string;
   /** What the question is about, so an answer can be sourced for it. */
   questionKind: ApplicationQuestionKind;
+  /** Model reading of current pay versus the person's saved expected pay. */
+  asksCurrentPay?: boolean;
   answerControlType: ApplicationQuestionControlType;
   /** Set when the control asks the person to declare something themselves. */
   attestationKind: ApplicationAttestationKind | null;
@@ -392,6 +401,7 @@ export interface ApplyAgentResult {
   filled: ApplyFilledControl[];
   attachments: ApplyAttachedDocument[];
   reviewFilled?: ApplyFilledControl[];
+  reviewObservedFieldKeys?: string[];
   reviewAttachments?: ApplyAttachedDocument[];
   pauses: ApplyPause[];
   /** Plain-sentence trail of what happened, oldest first. */

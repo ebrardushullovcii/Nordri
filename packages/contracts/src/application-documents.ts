@@ -180,3 +180,10 @@ export const ApplicationDocumentExportResultSchema = z.discriminatedUnion(
 export type ApplicationDocumentExportResult = z.infer<
   typeof ApplicationDocumentExportResultSchema
 >;
+
+/** Names for the original resume and its byte-identical Markdown text copy. */
+export function resumeFormFileNames(fileName: string): readonly string[] {
+  return /\.md$/iu.test(fileName)
+    ? [fileName, fileName.replace(/\.md$/iu, ".txt")]
+    : [fileName];
+}

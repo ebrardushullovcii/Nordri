@@ -208,7 +208,13 @@ async function listNeededApplicationFiles(input: {
           `apply_question_${input.applicationRecordId}_${questionId}` &&
         entry.answerControlType === "file",
     );
-    const label = record?.prompt.trim().replace(/[\s*:]+$/u, "") ?? "";
+    const label =
+      record?.prompt
+        .split(" — ")
+        .at(-1)
+        ?.trim()
+        .replace(/[\s*:]+$/u, "")
+        .replace(/\s+upload$/iu, "") ?? "";
     if (!label) return [];
     // "Academic transcript" reads "your academic transcript"; "CV" stays.
     return [
@@ -615,7 +621,7 @@ export async function persistApplicationUserAction(input: {
       ? `${describeApplicationBlockerReason(input.blocker)} Complete this ${copy.summaryStep} step in the ${JOB_FINDER_BROWSER_LABEL}; Job Finder carries on with this application by itself once you're in.`
       : kind === "manual_upload"
         ? neededFileLabel
-          ? `The ${input.job.company} form asks for your ${neededFileLabel}. Add or restore ${neededFiles.length === 1 ? "it" : "them"} in Profile › Files and Job Finder attaches ${neededFiles.length === 1 ? "it" : "them"} and carries on by itself.`
+          ? `${describeApplicationBlockerReason(input.blocker)} The ${input.job.company} form asks for your ${neededFileLabel}. Add or restore ${neededFiles.length === 1 ? "it" : "them"} in Profile › Files and Job Finder attaches ${neededFiles.length === 1 ? "it" : "them"} and carries on by itself.`
           : `${describeApplicationBlockerReason(input.blocker)} Add or restore the file in Profile › Files and Job Finder attaches it and carries on by itself.`
         : `${describeApplicationBlockerReason(input.blocker)} Complete this ${copy.summaryStep} step in the ${JOB_FINDER_BROWSER_LABEL}, then come back here and confirm so Job Finder can check the page again.`,
     instructions: isApplicationAuthenticationUserActionKind(kind)

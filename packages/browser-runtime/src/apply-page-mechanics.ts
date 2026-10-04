@@ -248,6 +248,11 @@ async function readApplyFrame(frame: Frame, frameIndex: number) {
               index,
               tagName,
               inputType: input?.type.toLowerCase() ?? (role || tagName),
+              accept: input?.accept ?? "",
+              min: input?.min ?? "",
+              max: input?.max ?? "",
+              step: input?.step ?? "",
+              maxLength: input?.maxLength ?? textarea?.maxLength ?? -1,
               role,
               id: html.id,
               name: input?.name ?? textarea?.name ?? select?.name ?? "",
@@ -260,7 +265,12 @@ async function readApplyFrame(frame: Frame, frameIndex: number) {
                 Boolean(
                   input?.required ?? textarea?.required ?? select?.required,
                 ) || element.getAttribute("aria-required") === "true",
-              invalid: element.getAttribute("aria-invalid") === "true",
+              invalid:
+                element.getAttribute("aria-invalid") === "true" ||
+                Boolean(
+                  (input ?? textarea ?? select)?.validity &&
+                  !(input ?? textarea ?? select)?.validity.valid,
+                ),
               validationMessage:
                 input?.validationMessage ??
                 textarea?.validationMessage ??
@@ -269,14 +279,16 @@ async function readApplyFrame(frame: Frame, frameIndex: number) {
               disabled:
                 Boolean(
                   input?.disabled ?? textarea?.disabled ?? select?.disabled,
-                ) || element.getAttribute("aria-disabled") === "true",
+                ) ||
+                element.matches(":disabled") ||
+                element.getAttribute("aria-disabled") === "true",
               readOnly: Boolean(input?.readOnly ?? textarea?.readOnly),
               // A file input is almost always hidden behind a styled "Attach"
               // button (Lever, Greenhouse, Workday). Attaching works on the
               // hidden input, so it stays in the observation; without it the
               // run saw only the button and could never attach the resume.
               visible:
-                (input?.type === "file" && !input.disabled) ||
+                (input?.type === "file" && !input.matches(":disabled")) ||
                 (style.display !== "none" &&
                   style.visibility !== "hidden" &&
                   style.opacity !== "0" &&
@@ -597,6 +609,11 @@ async function readRawApplyPageOnce(page: Page): Promise<RawApplyPage> {
               index,
               tagName,
               inputType: input?.type.toLowerCase() ?? (role || tagName),
+              accept: input?.accept ?? "",
+              min: input?.min ?? "",
+              max: input?.max ?? "",
+              step: input?.step ?? "",
+              maxLength: input?.maxLength ?? textarea?.maxLength ?? -1,
               role,
               id: html.id ?? "",
               name: input?.name ?? textarea?.name ?? select?.name ?? "",
@@ -609,7 +626,12 @@ async function readRawApplyPageOnce(page: Page): Promise<RawApplyPage> {
                 Boolean(
                   input?.required ?? textarea?.required ?? select?.required,
                 ) || element.getAttribute("aria-required") === "true",
-              invalid: element.getAttribute("aria-invalid") === "true",
+              invalid:
+                element.getAttribute("aria-invalid") === "true" ||
+                Boolean(
+                  (input ?? textarea ?? select)?.validity &&
+                  !(input ?? textarea ?? select)?.validity.valid,
+                ),
               validationMessage:
                 input?.validationMessage ??
                 textarea?.validationMessage ??
@@ -618,14 +640,17 @@ async function readRawApplyPageOnce(page: Page): Promise<RawApplyPage> {
               disabled:
                 Boolean(
                   input?.disabled ?? textarea?.disabled ?? select?.disabled,
-                ) || element.getAttribute("aria-disabled") === "true",
+                ) ||
+                element.matches(":disabled") ||
+                element.getAttribute("aria-disabled") === "true",
               readOnly: Boolean(input?.readOnly ?? textarea?.readOnly),
               // A file input is almost always hidden behind a styled "Attach"
               // button (Lever, Greenhouse, Workday). Attaching works on the
               // hidden input, so it stays in the observation; without it the
               // run saw only the button and could never attach the resume.
               visible:
-                (input?.type === "file" && !input.disabled) || isVisible(html),
+                (input?.type === "file" && !input.matches(":disabled")) ||
+                isVisible(html),
               value:
                 input?.value ??
                 textarea?.value ??

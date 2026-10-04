@@ -13,6 +13,7 @@ import {
   ApplicationAttemptSuggestedAnswerSchema,
   ApplicationConsentKindSchema,
   ApplicationQuestionControlTypeSchema,
+  ApplicationQuestionInputConstraintsSchema,
   ApplicationQuestionKindSchema,
   ApplicationQuestionStatusSchema,
 } from "./discovery";
@@ -703,6 +704,7 @@ export const ApplicationQuestionRecordSchema = z.object({
   note: NonEmptyStringSchema.nullable().optional(),
   kind: ApplicationQuestionKindSchema.default("other"),
   answerControlType: ApplicationQuestionControlTypeSchema.default("text"),
+  inputConstraints: ApplicationQuestionInputConstraintsSchema.optional(),
   isRequired: z.boolean().default(true),
   detectedAt: IsoDateTimeSchema,
   answerOptions: z.array(NonEmptyStringSchema).default([]),
@@ -911,6 +913,11 @@ export const ApplicationReviewCardSchema = z
     siteLabel: NonEmptyStringSchema.max(240),
     pageUrl: UrlStringSchema.nullable().default(null),
     answers: z.array(ApplicationReviewAnswerSchema).max(200).default([]),
+    /** Fields checked on the live form, including values the person cleared. */
+    observedFieldKeys: z
+      .array(NonEmptyStringSchema.max(2_000))
+      .max(500)
+      .optional(),
     attachments: z
       .array(ApplicationReviewAttachmentSchema)
       .max(20)

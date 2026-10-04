@@ -2548,8 +2548,11 @@ export function JobFinderActionsRoute() {
           context.isPending(jobFinderPendingActions.userAction(requestId))
         }
         onApplyGroupedManualAnswer={scope.onApplyGroupedManualAnswer}
-        onCommand={(command) => {
-          void context.onPerformUserAction(command);
+        onGetApplyRunDetails={context.onGetApplyRunDetails}
+        onCommand={async (command) => {
+          await context.onPerformUserAction(command, {
+            rethrowError: command.action === "submit_manual_answer",
+          });
         }}
         onNavigate={context.onNavigateSafely}
         onProjectGroupedManualAnswer={scope.onProjectGroupedManualAnswer}

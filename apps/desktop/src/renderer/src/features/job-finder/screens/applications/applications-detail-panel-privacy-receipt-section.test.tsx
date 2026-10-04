@@ -119,6 +119,20 @@ describe("ApplicationsDetailPanelPrivacyReceiptSection", () => {
           ],
           externalWrites: [
             {
+              category: "application_answer",
+              fieldLabel: "Skills",
+              occurredAt: "2026-07-30T10:00:00.000Z",
+              artifactRefId: null,
+              verified: true,
+            },
+            {
+              category: "application_answer",
+              fieldLabel: "Skills",
+              occurredAt: "2026-07-30T10:00:00.000Z",
+              artifactRefId: null,
+              verified: true,
+            },
+            {
               category: "resume_attachment",
               fieldLabel: "Resume",
               occurredAt: "2026-07-30T10:00:00.000Z",
@@ -157,6 +171,8 @@ describe("ApplicationsDetailPanelPrivacyReceiptSection", () => {
       ),
     ).toBeTruthy();
     expect(screen.getByText("Written to the site")).not.toBeNull();
+    expect(screen.getByText("Skills, Resume")).not.toBeNull();
+    expect(screen.queryByText("Skills, Skills, Resume")).toBeNull();
     expect(screen.getByText("The resume that was used")).not.toBeNull();
     expect(
       screen.getByText(
@@ -411,7 +427,9 @@ describe("ApplicationsDetailPanelPrivacyReceiptSection", () => {
     // misname the file it is vouching for.
     const text = document.body.textContent ?? "";
     expect(text).toContain("Resume: Robin-CV.txt (text file)");
-    expect(text).toContain("This is the exact text file you approved");
+    expect(text).toContain(
+      "This is a plain-text copy of your original, unchanged.",
+    );
     expect(text).not.toMatch(/PDF/);
   });
 

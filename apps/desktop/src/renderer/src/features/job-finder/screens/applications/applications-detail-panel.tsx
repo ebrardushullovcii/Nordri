@@ -344,6 +344,7 @@ export function ApplicationsDetailPanel({
     selectedRecord && visibleApplyResult
       ? resolveApplyStatePresentation({
           recordCrm: selectedRecord.crm,
+          recordLatestBlocker: selectedRecord.latestBlocker,
           mode:
             selectedRecord.automationMode === "autonomous_submit"
               ? "apply_for_me"

@@ -1,3 +1,4 @@
+import { resumeFormFileNames } from "@nordri/contracts";
 import { inferQuestionKind } from "@nordri/browser-agent";
 import {
   ApplicationAnswerRecordSchema,
@@ -705,7 +706,9 @@ export function buildApplicationPrivacyReceipt(input: {
   );
   const matchesSelectedResume =
     !attachedResume ||
-    attachedResume.fileName === input.resumeArtifact.fileName;
+    resumeFormFileNames(input.resumeArtifact.fileName).includes(
+      attachedResume.fileName,
+    );
   return ApplicationPrivacyReceiptSchema.parse({
     generatedAt: input.generatedAt,
     lineage: {
@@ -906,6 +909,9 @@ export function buildApplyCopilotArtifacts(input: {
       prompt: question.prompt,
       ...(question.description ? { description: question.description } : {}),
       ...(question.note ? { note: question.note } : {}),
+      ...(question.inputConstraints
+        ? { inputConstraints: question.inputConstraints }
+        : {}),
       kind: question.kind,
       answerControlType:
         question.answerControlType ??

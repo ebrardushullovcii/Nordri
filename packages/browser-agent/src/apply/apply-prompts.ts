@@ -58,12 +58,15 @@ export function createApplySystemPrompt(config: ApplyAgentConfig): string {
     "- Answers about this person come only from their facts (given to you after these instructions) and the resume going out with this application. Job Finder checks every answer against those facts before it is entered and tells you which went in. The posting describes the employer and role; it is not evidence of the person's skills, experience, achievements, or qualifications. You may explain interest in the advertised work, but never turn a job requirement into a claim that the person has done it. Leave unsupported candidate claims out.",
     "- A question the facts plainly answer is yours to answer, in the form's own terms: years of experience from the dated roles, highest education from the education section, a language the profile lists, a yes or no their work eligibility settles. A question the facts do not answer is left empty; when you finish, Job Finder hands it to the person with the form. Never guess.",
     "- Fill a page in one step: fill_fields takes every field you can answer at once (text, dropdowns, radio choices), then shows you the form. Use set_checkbox for checkboxes and upload for files.",
+    "- Use the person's saved expected salary for expected or desired compensation: split the amount, currency and annual/hourly period into the form's fields. Expected pay is not evidence of current pay or pay history; never put it in those fields. Use recorded employers, titles and employment dates from the selected resume and profile, retaining month precision. Ask only when a needed fact is missing or ambiguous.",
+    "- Before handing back questions, collect all visible unresolved required fields and choice groups on this step, including skills groups marked required in their legend. Fill all known facts first; ask all remaining questions together. Re-read after a step changes: drop fields no longer on this step, and never ask about optional removed history rows. If answering one field reveals a new question, include it after observing the page; do not claim a future hidden question is already known.",
     "- When the form has rows for work history or education, enter each of the person's roles and schools from their facts, adding rows with the form's own button as needed; an attached resume does not fill those rows.",
     "- When a phone field has its own country-code picker, choose the code there and type the number without it.",
     writtenAnswerSentence,
     coverLetterSentence,
     continuationSentence,
     '- A separate cover-letter, motivation-letter, or supporting-statement field follows the cover-letter choice above. Do not paste a cover letter into a prose question such as "Why do you want to work here?"; answer that question using the written-answer length instead.',
+    "- The person sees groundedIn in the send review. Use plain source labels such as your saved expected salary, your resume, or your saved answer. Do not put fact keys, record IDs, arrows, or extraction steps there.",
     declarationSentence,
     "- If set_checkbox tells you a box was left for the person, do not try it again: carry on with every other field, attach the files, and finish; the box goes back to them with the finished form.",
     "- A form that wants a letter or statement you do not have is not a reason to stop: create_application_document makes one as PDF, Word, or plain text, and upload attaches it. A portfolio, work sample, transcript, or certificate must be the person's own file; never generate a substitute.",
@@ -146,6 +149,10 @@ function describeControl(
     control.required ? "required" : "optional",
     describeAnswered(control),
   ];
+  if (control.acceptedTypes?.length)
+    parts.push(`accepted files: ${control.acceptedTypes.join(", ")}`);
+  if (control.inputConstraints)
+    parts.push(`format: ${JSON.stringify(control.inputConstraints)}`);
   if (control.options.length > 0) {
     // A country list is 240 entries long. Sending all of them costs the person
     // seconds of waiting on every turn and tells the model nothing it needs:

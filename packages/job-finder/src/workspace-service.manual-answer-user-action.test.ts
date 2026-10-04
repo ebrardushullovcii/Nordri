@@ -1,5 +1,6 @@
 import {
   ApplicationAnswerRecordSchema,
+  ApplicationAttemptSchema,
   ApplicationQuestionRecordSchema,
   ApplicationRecordSchema,
   ApplyJobResultSchema,
@@ -704,4 +705,155 @@ describe("workspace manual-answer persistence races", () => {
       expect(answer.submittedAt).toBeNull();
     }
   });
+});
+
+test("a one-question retry ignores historical detected questions from an older handoff", async () => {
+  const seed = createSeed();
+  seed.userActionRequests = [createManualAnswerRequest()];
+  seed.applicationQuestionRecords = [
+    createQuestion(),
+    {
+      ...createQuestion(),
+      id: "question_old",
+      prompt: "Old removed work-history date",
+    },
+  ];
+  seed.applicationAttempts = [
+    ApplicationAttemptSchema.parse({
+      id: "attempt_current",
+      startedAt: now,
+      completedAt: null,
+      outcome: "ready_for_review",
+      nextActionLabel: "Answer and continue",
+      jobId: "job_ready",
+      applicationRecordId: "application_a",
+      state: "paused",
+      summary: "One answer needed",
+      detail: "Current experience question",
+      createdAt: now,
+      updatedAt: later,
+      questions: [
+        {
+          id: "question_a",
+          prompt: "Years of experience",
+          kind: "experience",
+          status: "detected",
+          detectedAt: now,
+        },
+      ],
+    }),
+  ];
+  const harness = createWorkspaceServiceHarness({ seed });
+  await harness.workspaceService.performUserAction(submitManualAnswerCommand());
+  const records = await harness.repository.listApplicationAnswerRecords();
+  expect(records).toHaveLength(1);
+  expect(records[0]).toMatchObject({
+    questionId: "question_a",
+    text: "5 years",
+    saveScope: "application_once",
+  });
+  expect(
+    (await harness.repository.getProfile()).answerBank.customAnswers,
+  ).toEqual(seed.profile.answerBank.customAnswers);
+});
+
+test.each(["Years of experience", "I consent to a background check"])(
+  "can answer %s again after a closed-page check and a new preparation result",
+  async (prompt) => {
+    const seed = createSeed();
+    seed.userActionRequests = [createManualAnswerRequest()];
+    seed.applicationQuestionRecords = [{ ...createQuestion(), prompt }];
+    const harness = createWorkspaceServiceHarness({ seed });
+    await harness.workspaceService.performUserAction(
+      submitManualAnswerCommand(),
+    );
+    const previous = (
+      await harness.repository.listApplicationAnswerRecords()
+    )[0]!;
+    // Try again produces a new result with the same stable question ID.
+    // The earlier answer remains attached to the closed-page result.
+    const currentQuestion = {
+      ...createQuestion(),
+      prompt,
+      resultId: "result_retry",
+      runId: "run_retry",
+      detectedAt: later,
+    };
+    await harness.repository.upsertApplicationQuestionRecord(currentQuestion);
+    await harness.repository.createUserActionRequest(
+      createManualAnswerRequest({
+        id: "request_retry",
+        dedupeKey: "dedupe_retry",
+        scope: {
+          type: "application",
+          jobId: "job_ready",
+          applicationRecordId: "application_a",
+          runId: "run_retry",
+          resultId: "result_retry",
+          replayCheckpointId: null,
+          source: "target_site",
+        },
+      }),
+    );
+    await harness.workspaceService.performUserAction({
+      ...submitManualAnswerCommand("retry_answer"),
+      requestId: "request_retry",
+      answers: [
+        {
+          questionId: "question_a",
+          answer: prompt === "Years of experience" ? "5 years" : "Yes",
+        },
+      ],
+    });
+    const answers = await harness.repository.listApplicationAnswerRecords({
+      questionId: "question_a",
+    });
+    expect(answers).toHaveLength(2);
+    expect(
+      answers.find((answer) => answer.resultId === "result_retry"),
+    ).toMatchObject({
+      revision: 2,
+      supersedesAnswerId: previous.id,
+      saveScope: "application_once",
+    });
+    expect(
+      (await harness.repository.getProfile()).answerBank.customAnswers,
+    ).toEqual([]);
+  },
+);
+test("a current attempt can re-answer a record marked answered by an earlier check", async () => {
+  const seed = createSeed();
+  seed.userActionRequests = [createManualAnswerRequest()];
+  const previous = createAnswer({ id: "old_check_answer" });
+  seed.applicationAnswerRecords = [previous];
+  seed.applicationQuestionRecords = [
+    {
+      ...createQuestion(),
+      status: "answered",
+      selectedAnswerId: previous.id,
+      submittedAnswer: previous.text,
+    },
+  ];
+  seed.applicationAttempts = [
+    ApplicationAttemptSchema.parse({
+      id: "current_retry",
+      applicationRecordId: "application_a",
+      jobId: "job_ready",
+      outcome: "ready_for_review",
+      state: "paused",
+      startedAt: later,
+      completedAt: null,
+      summary: "The field remains empty",
+      detail: "The page check failed",
+      nextActionLabel: "Answer and continue",
+      createdAt: later,
+      updatedAt: later,
+      questions: [{ ...createQuestion(), status: "detected" }],
+    }),
+  ];
+  const harness = createWorkspaceServiceHarness({ seed });
+  await harness.workspaceService.performUserAction(submitManualAnswerCommand());
+  expect(await harness.repository.listApplicationAnswerRecords()).toHaveLength(
+    2,
+  );
 });

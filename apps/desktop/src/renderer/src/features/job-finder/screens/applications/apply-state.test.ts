@@ -654,3 +654,25 @@ it("a validation rejection uses the site message instead of ready-to-send copy",
     actionLabel: "Correct the fields in the browser",
   });
 });
+
+it.each([false, true])(
+  "keeps awaiting review with a blocker in Needs you (record=%s)",
+  (onRecord) => {
+    expect(
+      resolveApplyStatePresentation({
+        mode: "fill_only",
+        result: buildResult({
+          state: "awaiting_review",
+          blockerReason: onRecord ? null : "required_human_input",
+        }),
+        recordLatestBlocker: onRecord
+          ? {
+              code: "requires_manual_review",
+              summary: "Finish this step",
+            }
+          : null,
+        pendingQuestionCount: 0,
+      }),
+    ).toMatchObject({ kind: "needs_you", title: "Needs you" });
+  },
+);

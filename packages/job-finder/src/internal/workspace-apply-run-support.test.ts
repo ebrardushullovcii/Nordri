@@ -582,7 +582,13 @@ describe("questions from a real form become records", () => {
             answerOptions: ["Male", "Female", "Decline To Self Identify"],
           }),
           question(3, {
-            prompt: "Why do you want to work here?",
+            prompt: "Coordination experience",
+            inputConstraints: {
+              type: "number",
+              min: "0",
+              max: "50",
+              step: "1",
+            },
             isRequired: false,
           }),
         ],
@@ -617,6 +623,12 @@ describe("questions from a real form become records", () => {
     );
     expect(artifacts.questionRecords[1]?.description).toBe("Phone country");
     expect(artifacts.questionRecords[1]?.answerOptions).toHaveLength(40);
+    expect(artifacts.questionRecords[3]?.inputConstraints).toEqual({
+      type: "number",
+      min: "0",
+      max: "50",
+      step: "1",
+    });
     for (const record of artifacts.questionRecords) {
       expect(record.prompt.trim().length).toBeGreaterThan(0);
       for (const option of record.answerOptions) {
@@ -685,4 +697,47 @@ it("does not call a sign-in pause a prepared form", () => {
   );
   expect(result.summary).toBe("Preparation paused.");
   expect(result.detail).toBe("Sign in");
+});
+
+it("keeps the original fingerprint for the byte-identical TXT copy", () => {
+  const job = createSeed().savedJobs[0]!;
+  const at = "2026-07-30T10:00:00.000Z";
+  const receipt = buildApplicationPrivacyReceipt({
+    applicationRecordId: "application_txt",
+    job,
+    generatedAt: at,
+    runId: "run_txt",
+    resultId: "result_txt",
+    resumeArtifact: ApplicationResumeArtifactSchema.parse({
+      id: "original",
+      jobId: job.id,
+      source: "original_upload",
+      sourceDocumentId: "original",
+      fileName: "resume.md",
+      filePath: "/tmp/synthetic/resume.md",
+      sha256: "b".repeat(64),
+      approvedAt: at,
+    }),
+    reviewCard: ApplicationReviewCardSchema.parse({
+      siteLabel: "Replica",
+      pageUrl: job.applicationUrl,
+      preparedAt: at,
+      attachments: [
+        { label: "Resume", field: "Resume", fileName: "resume.txt" },
+      ],
+    }),
+    executionResult: ApplyExecutionResultSchema.parse({
+      state: "paused",
+      summary: "Prepared",
+      detail: "Nothing sent",
+      submittedAt: null,
+      outcome: null,
+      nextActionLabel: null,
+    }),
+  });
+  expect(receipt.resume).toMatchObject({
+    fileName: "resume.txt",
+    sourceDocumentId: "original",
+    sha256: "b".repeat(64),
+  });
 });

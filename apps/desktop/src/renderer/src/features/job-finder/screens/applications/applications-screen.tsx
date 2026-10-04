@@ -404,6 +404,7 @@ export function ApplicationsScreen(props: {
           result,
           run: readApplyRunContext(result),
           recordCrm: record.crm,
+          recordLatestBlocker: record.latestBlocker,
           recordLastActionLabel: record.lastActionLabel,
           pendingQuestionCount: Math.max(
             0,
@@ -460,6 +461,7 @@ export function ApplicationsScreen(props: {
       if (isApplicationTrackedAsSentByPerson(record.crm)) continue;
       const presentation = resolveApplyStatePresentation({
         recordCrm: record.crm,
+        recordLatestBlocker: record.latestBlocker,
         mode:
           record.automationMode === "autonomous_submit"
             ? "apply_for_me"
@@ -503,6 +505,7 @@ export function ApplicationsScreen(props: {
               latestApplyResultByRecordId.has(record.id)
                 ? resolveApplyStatePresentation({
                     recordCrm: record.crm,
+                    recordLatestBlocker: record.latestBlocker,
                     mode:
                       record.automationMode === "autonomous_submit"
                         ? "apply_for_me"
@@ -616,6 +619,7 @@ export function ApplicationsScreen(props: {
           latestApplyResultByRecordId.has(record.id)
             ? resolveApplyStatePresentation({
                 recordCrm: record.crm,
+                recordLatestBlocker: record.latestBlocker,
                 mode:
                   record.automationMode === "autonomous_submit"
                     ? "apply_for_me"
@@ -661,6 +665,7 @@ export function ApplicationsScreen(props: {
           result,
           run: readApplyRunContext(result),
           recordCrm: selectedRecord?.crm,
+          recordLatestBlocker: selectedRecord?.latestBlocker ?? null,
           recordLastActionLabel: selectedRecord?.lastActionLabel ?? null,
         }).kind
       : undefined;

@@ -73,7 +73,9 @@ function page(overrides: Partial<RawApplyPage> = {}): RawApplyPage {
     title: "Apply",
     bodyText: "Apply for the role",
     controls: [nameControl()],
-    actions: [{ index: 0, label: "Continue", visible: true, disabled: false }],
+    actions: [
+      { index: 0, label: "Submit application", visible: true, disabled: false },
+    ],
     links: [],
     headings: [],
     clickables: [],
@@ -585,7 +587,26 @@ test("lets fill-in mode finish without recording a final action", async () => {
   expect(result.readyToSend).toBeNull();
 });
 
-test("does not demand an inaccessible hidden final action", async () => {
+test("repeated finish cannot record readiness on an unauthorized origin", async () => {
+  const result = await runApplyAgent(
+    config(page(), {
+      authority: {
+        mode: "autonomous_submit",
+        submitAuthorized: true,
+        preApprovedAttestationKinds: [],
+        salaryDisclosure: "pause_for_user",
+        allowedOrigins: [],
+      },
+    }),
+    repeatingModel("finish", { reason: "Ready to send" }),
+  );
+
+  expect(result.outcome).toBe("paused");
+  expect(result.readyToSend).toBeNull();
+  expect(result.pauses[0]?.summary).toContain("not authorized");
+});
+
+test("a hidden final action cannot be ready for review", async () => {
   const result = await runApplyAgent(
     config(
       page({
@@ -611,7 +632,7 @@ test("does not demand an inaccessible hidden final action", async () => {
     repeatingModel("finish", { reason: "The visible form is finished" }),
   );
 
-  expect(result.outcome).toBe("awaiting_your_review");
+  expect(result.outcome).toBe("paused");
   expect(result.readyToSend).toBeNull();
 });
 
@@ -815,8 +836,8 @@ describe("apply agent run endings", () => {
           entry.includes("Fill it now if the person's facts answer it"),
       ),
     ).toBe(true);
-    expect(result.outcome).toBe("stuck");
-    expect(result.reason).toContain("Still empty on the form: Full name");
+    expect(result.outcome).toBe("paused");
+    expect(result.pauses[0]?.question?.prompt).toBe("Full name");
   });
 
   test("finishing normally reports what was filled in, in plain words", async () => {
@@ -1308,7 +1329,7 @@ describe("apply agent run endings", () => {
             submitAuthorized: true,
             preApprovedAttestationKinds: [],
             salaryDisclosure: "pause_for_user",
-            allowedOrigins: [],
+            allowedOrigins: ["https://apply.example.test"],
           },
         },
       ),
@@ -1331,7 +1352,7 @@ describe("apply agent run endings", () => {
           submitAuthorized: true,
           preApprovedAttestationKinds: [],
           salaryDisclosure: "pause_for_user",
-          allowedOrigins: [],
+          allowedOrigins: ["https://apply.example.test"],
         },
       }),
       repeatingModel("finish", { reason: "Nothing left to fill in" }),
@@ -1752,6 +1773,9 @@ describe("answers and structured history on a retained form", () => {
         },
       ],
       stepLabel: "Step 3 of 4",
+      actions: [
+        { index: 0, label: "Continue", visible: true, disabled: false },
+      ],
     });
     const input = config(source);
     input.application.continuation = { sourceUrls: [source.url!] };
@@ -1838,7 +1862,7 @@ describe("answers and structured history on a retained form", () => {
     expect(result.outcome).toBe("prepared");
   });
 
-  test("a second multi-step finish keeps the model's reason", async () => {
+  test("a repeated finish on an early step remains a resumable blocker", async () => {
     const source = page({ stepLabel: "Step 3 of 4" });
     const modelReason = "I stopped on the saved questions page as requested.";
     const chatWithTools = vi.fn(
@@ -1848,9 +1872,9 @@ describe("answers and structured history on a retained form", () => {
       ]).chatWithTools,
     );
     const result = await runApplyAgent(config(source), { chatWithTools });
-    expect(result.outcome).toBe("prepared");
-    expect(result.reason).toContain(modelReason);
-    expect(result.reason).not.toContain("Preparation stopped before Review");
+    expect(result.outcome).toBe("paused");
+    expect(result.readyToSend).toBeNull();
+    expect(result.reason).toContain("another step");
     expect(result.modelTurns).toBe(2);
     expect(
       chatWithTools.mock.calls
@@ -2006,7 +2030,9 @@ test("whenever there is room cannot finish with an empty optional cover-letter u
         required: false,
       },
     ],
-    actions: [],
+    actions: [
+      { index: 0, label: "Submit application", visible: true, disabled: false },
+    ],
   });
   const runConfig = config(source, {
     writing: {
@@ -2077,7 +2103,9 @@ test("a retry replaces the retained original before handing back missing files",
         value: "",
       },
     ],
-    actions: [],
+    actions: [
+      { index: 0, label: "Submit application", visible: true, disabled: false },
+    ],
   });
   const runConfig = config(source);
   runConfig.sources.documents = [
@@ -2135,7 +2163,9 @@ test("an optional letter the run cannot attach is noted, never a stop", async ()
         required: false,
       },
     ],
-    actions: [],
+    actions: [
+      { index: 0, label: "Submit application", visible: true, disabled: false },
+    ],
   });
   const result = await runApplyAgent(
     config(source, {
@@ -2272,4 +2302,362 @@ test("fill_fields fills a page in one step with one fact check for the answers t
     "Country",
   ]);
   expect(result.outcome).toBe("prepared");
+});
+
+describe("apply readiness regressions", () => {
+  test("collects every visible required eligibility question in one handoff", async () => {
+    const source = page({
+      controls: [
+        {
+          ...nameControl(),
+          label: "Will you need visa sponsorship?",
+          value: "",
+          index: 0,
+        },
+        {
+          ...nameControl(),
+          label: "Are you willing to relocate?",
+          value: "",
+          index: 1,
+        },
+      ],
+    });
+    const result = await runApplyAgent(
+      config(source),
+      scriptedModel([
+        { name: "finish", args: { reason: "Needs answers" } },
+        { name: "finish", args: { reason: "Needs answers" } },
+      ]),
+    );
+    expect(result.outcome).toBe("paused");
+    expect(
+      result.pauses[0]?.questions?.map((question) => question.prompt),
+    ).toEqual([
+      "Will you need visa sponsorship?",
+      "Are you willing to relocate?",
+    ]);
+    expect(result.readyToSend).toBeNull();
+  });
+
+  test("a skills group marked required in its legend appears as one multi-choice question", async () => {
+    const source = page({
+      controls: ["Analysis", "Coordination"].map((label, index) => ({
+        ...nameControl(),
+        index,
+        inputType: "checkbox",
+        name: "skills",
+        label,
+        groupLabel: "Select your skills *",
+        required: false,
+        value: label,
+      })),
+    });
+    const model = scriptedModel([
+      { name: "finish", args: { reason: "Done" } },
+      { name: "finish", args: { reason: "Done" } },
+    ]);
+    const result = await runApplyAgent(
+      config(source, { modelQuestionClassification: true }),
+      {
+        chatWithTools: (messages, tools, options) =>
+          tools[0]?.function.name === "report_question_kinds"
+            ? Promise.resolve({
+                toolCalls: [
+                  {
+                    id: "kinds",
+                    type: "function" as const,
+                    function: {
+                      name: "report_question_kinds",
+                      arguments: JSON.stringify({
+                        questions: [
+                          {
+                            index: 0,
+                            required: true,
+                            asksAboutPay: false,
+                            asksCurrentPay: false,
+                            declarationKind: null,
+                          },
+                        ],
+                      }),
+                    },
+                  },
+                ],
+              })
+            : model.chatWithTools(messages, tools, options),
+      },
+    );
+    expect(result.outcome).toBe("paused");
+    expect(result.pauses[0]?.questions).toHaveLength(1);
+    expect(result.pauses[0]?.question).toMatchObject({
+      prompt: "Select your skills *",
+      answerControlType: "multi_choice",
+      answerOptions: ["Analysis", "Coordination"],
+    });
+  });
+
+  test("a later wizard step drops the older handoff even when it reuses the ref", async () => {
+    const source = page({
+      controls: [
+        {
+          ...nameControl(),
+          inputType: "checkbox",
+          label: "I consent to a background check",
+          value: "",
+          checked: false,
+        },
+      ],
+    });
+    const input = config(source);
+    input.hands.clickElement = vi.fn(() => {
+      source.controls = [
+        { ...nameControl(), label: "Are you willing to relocate?", value: "" },
+      ];
+      return Promise.resolve({ ok: true as const, observedValue: "next" });
+    });
+    source.actions = [
+      { index: 0, label: "Next", visible: true, disabled: false },
+    ];
+    const result = await runApplyAgent(
+      input,
+      scriptedModel([
+        { name: "set_checkbox", args: { ref: "c0", checked: true } },
+        { name: "click", args: { ref: "a0" } },
+        { name: "finish", args: { reason: "Needs relocation" } },
+        { name: "finish", args: { reason: "Needs relocation" } },
+      ]),
+    );
+    expect(
+      result.pauses
+        .flatMap((pause) => pause.questions ?? [])
+        .map((question) => question.prompt),
+    ).toEqual(["Are you willing to relocate?"]);
+  });
+
+  test("missing candidate facts remain a resumable handoff after the model reports stuck", async () => {
+    const source = page({
+      controls: [
+        {
+          ...nameControl(),
+          label: "Coordination experience",
+          value: "",
+          invalid: true,
+          validationMessage: "Please fill out this field.",
+        },
+      ],
+    });
+    const result = await runApplyAgent(
+      config(source),
+      scriptedModel([
+        {
+          name: "finish",
+          args: {
+            reason: "I cannot answer coordination experience",
+            stuck: true,
+          },
+        },
+        {
+          name: "finish",
+          args: {
+            reason: "I cannot answer coordination experience",
+            stuck: true,
+          },
+        },
+      ]),
+    );
+    expect(result.outcome).toBe("paused");
+    expect(result.pauses[0]?.question?.prompt).toBe("Coordination experience");
+    expect(result.pauses[0]?.question?.note).toBeUndefined();
+  });
+});
+
+test("the final form read preserves a person's edited answer and newly filled portfolio", async () => {
+  const source = page({
+    controls: [
+      {
+        ...nameControl(),
+        label: "Motivation",
+        inputType: "text",
+        value: "Old English answer",
+        required: true,
+      },
+      {
+        ...nameControl(),
+        index: 1,
+        label: "Portfolio",
+        inputType: "url",
+        value: "",
+        required: true,
+      },
+    ],
+  });
+  const input = config(source);
+  input.hands.scroll = () => {
+    source.controls[0]!.value =
+      "Je souhaite contribuer à cette équipe avec mon expérience.";
+    source.controls[1]!.value = "https://synthetic.example/portfolio";
+    return Promise.resolve({ ok: true, observedValue: "down" });
+  };
+  const result = await runApplyAgent(
+    input,
+    scriptedModel([
+      { name: "scroll", args: { direction: "down" } },
+      { name: "finish", args: { reason: "Reviewed" } },
+    ]),
+  );
+  expect(result.outcome).toBe("prepared");
+  expect(
+    result.reviewFilled?.find((entry) => entry.label === "Motivation")?.answer
+      .value,
+  ).toBe(source.controls[0]!.value);
+  expect(
+    result.reviewFilled?.find((entry) => entry.label === "Portfolio")?.answer
+      .value,
+  ).toBe("https://synthetic.example/portfolio");
+  expect(result.pauses).toEqual([]);
+});
+
+test("the current form review names every selected skill in a checkbox group", async () => {
+  const source = page({
+    controls: ["Analysis", "Coordination"].map((label, index) => ({
+      ...nameControl(),
+      index,
+      inputType: "checkbox",
+      name: "skills",
+      groupLabel: "Select your skills",
+      label,
+      value: label,
+      checked: true,
+      required: false,
+    })),
+  });
+  const result = await runApplyAgent(
+    config(source),
+    scriptedModel([{ name: "finish", args: { reason: "Reviewed" } }]),
+  );
+  expect(
+    result.reviewFilled?.filter(
+      (entry) => entry.label === "Select your skills",
+    ),
+  ).toHaveLength(1);
+  expect(
+    result.reviewFilled?.find((entry) => entry.label === "Select your skills")
+      ?.answer.value,
+  ).toBe("Analysis, Coordination");
+});
+
+test("a required letter pause collects the other visible questions and explains Never", async () => {
+  const source = page({
+    controls: [
+      {
+        ...nameControl(),
+        index: 0,
+        inputType: "file",
+        label: "Cover letter upload *",
+        groupLabel: "Application",
+        value: "",
+      },
+      { ...nameControl(), index: 1, label: "Portfolio URL", value: "" },
+      {
+        ...nameControl(),
+        index: 2,
+        inputType: "checkbox",
+        label: "I consent to a background check",
+        value: "",
+        checked: false,
+      },
+    ],
+  });
+  const input = config(source);
+  input.writing = {
+    coverLetterPolicy: "never",
+    writtenAnswerLength: "full",
+    preApprovedDeclarations: [],
+  };
+  input.letters = {
+    preference: {
+      tone: "plain_professional",
+      length: "short",
+      language: null,
+      sample: null,
+    },
+    provide: async () => ({ ok: false, reason: "Disabled" }),
+  };
+  const result = await runApplyAgent(
+    input,
+    scriptedModel([
+      { name: "upload", args: { ref: "c0", documentId: "letter" } },
+    ]),
+  );
+  const questions = result.pauses.flatMap(
+    (pause) => pause.questions ?? (pause.question ? [pause.question] : []),
+  );
+  expect(questions.map((question) => question.prompt)).toEqual([
+    "Cover letter",
+    "Portfolio URL",
+    "I consent to a background check",
+  ]);
+  expect(questions[0]?.note).toContain("Never");
+});
+
+test("the answer provenance instructions name plain sources for the send review", () => {
+  const prompt = createApplySystemPrompt(config(page()));
+  expect(prompt).toContain("your saved expected salary");
+  expect(prompt).toContain("your resume");
+  expect(prompt).toContain(
+    "Do not put fact keys, record IDs, arrows, or extraction steps there.",
+  );
+});
+
+test("finish accepts the unchanged TXT copy of the selected Markdown resume", async () => {
+  const source = page({
+    controls: [
+      {
+        ...nameControl(),
+        inputType: "file",
+        label: "Resume",
+        value: "resume.txt",
+      },
+    ],
+  });
+  const input = config(source);
+  input.sources.documents = [
+    {
+      id: "original",
+      kind: "resume",
+      label: "Original resume",
+      fileName: "resume.md",
+      mimeType: "text/markdown",
+      loadBytes: async () => new Uint8Array([1]),
+    },
+  ];
+  const result = await runApplyAgent(
+    input,
+    repeatingModel("finish", { reason: "Complete" }),
+  );
+  expect(result.pauses).toEqual([]);
+  expect(result.outcome).toBe("prepared");
+});
+test("a filled invalid answer gets plain guidance instead of the browser validation string", async () => {
+  const source = page({
+    controls: [
+      {
+        ...nameControl(),
+        label: "Years",
+        inputType: "number",
+        value: "99",
+        invalid: true,
+        validationMessage: "Range overflow",
+      },
+    ],
+  });
+  const result = await runApplyAgent(
+    config(source),
+    repeatingModel("finish", {
+      reason: "Cannot settle the years",
+      stuck: true,
+    }),
+  );
+  expect(result.pauses[0]?.question?.note).toBe(
+    "The site did not accept this value. Check it and try again.",
+  );
 });

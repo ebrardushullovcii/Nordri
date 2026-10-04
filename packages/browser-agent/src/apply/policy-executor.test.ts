@@ -2832,3 +2832,350 @@ describe("the model reads which questions ask about pay or are declarations (ADR
     expect(outcome.kind).not.toBe("filled");
   });
 });
+
+describe("one-use answers and compatible originals", () => {
+  test.each([
+    {
+      label: "Background-check consent",
+      groupLabel: "Required declarations",
+      inputType: "checkbox",
+      answer: "Yes",
+      tool: "set_checkbox",
+    },
+    {
+      label: "Annual salary expectation",
+      groupLabel: "Compensation",
+      inputType: "number",
+      answer: "60000",
+      tool: "type",
+    },
+    {
+      label: "Analysis experience",
+      groupLabel: "Experience",
+      inputType: "number",
+      answer: "0",
+      tool: "type",
+    },
+  ])(
+    "applies an exact one-job $label answer with global approval off",
+    async ({ label, groupLabel, inputType, answer, tool }) => {
+      const source = rawPage({
+        controls: [
+          rawControl({
+            index: 0,
+            label,
+            groupLabel,
+            inputType,
+            required: true,
+          }),
+        ],
+      });
+      const { config, hands } = configFor(source, {
+        authority: { salaryDisclosure: "answer_from_profile" },
+      });
+      config.sources.reusableAnswers = [
+        {
+          id: "application_once",
+          kind: "other",
+          label,
+          question: `${groupLabel} — ${label}`,
+          answer,
+          roleFamilies: [],
+          proofEntryIds: [],
+        },
+      ];
+      hands.fillText = vi.fn(hands.fillText);
+      hands.setToggle = vi.fn(hands.setToggle);
+      const outcome = await executeApplyProposal(
+        tool === "type"
+          ? { tool: "type", ref: "c0", text: answer }
+          : { tool: "set_checkbox", ref: "c0", checked: true },
+        observationOf(source).signature,
+        { config, now, guardState: createApplyGuardState() },
+      );
+      expect(outcome.kind).toBe("filled");
+      expect(
+        tool === "type" ? hands.fillText : hands.setToggle,
+      ).toHaveBeenCalledOnce();
+      expect(profile().answerBank.customAnswers).toEqual([]);
+      const unrelated = await executeApplyProposal(
+        { tool: "set_checkbox", ref: "c0", checked: true },
+        observationOf(source).signature,
+        {
+          config: configFor(source).config,
+          now,
+          guardState: createApplyGuardState(),
+        },
+      );
+      if (tool === "set_checkbox") expect(unrelated.kind).toBe("suggestion");
+    },
+  );
+
+  test("uses saved expected salary without disclosing current pay", async () => {
+    const source = rawPage({
+      controls: [
+        rawControl({
+          index: 0,
+          label: "Expected compensation",
+          inputType: "number",
+          required: true,
+        }),
+      ],
+    });
+    const { config } = configFor(source, {
+      authority: { salaryDisclosure: "answer_from_profile" },
+    });
+    config.sources.profile.answerBank.salaryExpectations =
+      "EUR 60,000 gross per year";
+    const classifyQuestions = () =>
+      Promise.resolve(
+        new Map([
+          [
+            "Expected compensation",
+            {
+              asksAboutPay: true,
+              asksCurrentPay: false,
+              declarationKind: null,
+            },
+          ],
+        ]),
+      );
+    const checkWrittenAnswer = vi.fn(() =>
+      Promise.resolve({
+        supported: true,
+        reason: "60000 is the amount of the saved expected annual salary.",
+      }),
+    );
+    const result = await executeApplyProposal(
+      { tool: "type", ref: "c0", text: "60000" },
+      observationOf(source).signature,
+      {
+        config,
+        now,
+        guardState: createApplyGuardState(),
+        classifyQuestions,
+        checkWrittenAnswer,
+      },
+    );
+    expect(result.kind).toBe("filled");
+    source.controls[0]!.label = "Current compensation";
+    config.authority.salaryDisclosure = "pause_for_user";
+    const current = await executeApplyProposal(
+      { tool: "type", ref: "c0", text: "60000" },
+      observationOf(source).signature,
+      {
+        config,
+        now,
+        guardState: createApplyGuardState(),
+        classifyQuestions: () =>
+          Promise.resolve(
+            new Map([
+              [
+                "Current compensation",
+                {
+                  asksAboutPay: true,
+                  asksCurrentPay: true,
+                  declarationKind: null,
+                },
+              ],
+            ]),
+          ),
+        checkWrittenAnswer,
+      },
+    );
+    expect(current.kind).toBe("suggestion");
+    expect(checkWrittenAnswer).toHaveBeenCalledTimes(1);
+  });
+
+  test("attaches an unchanged TXT copy when an Original Markdown resume is rejected", async () => {
+    const source = rawPage({
+      controls: [
+        rawControl({
+          index: 0,
+          label: "Resume",
+          inputType: "file",
+          required: true,
+          accept: ".txt,.pdf,.doc,.docx",
+        }),
+      ],
+    });
+    const { config, hands } = configFor(source);
+    const bytes = new TextEncoder().encode(
+      "# Robin Ashford\nSynthetic platform engineer\n",
+    );
+    config.sources.documents = [
+      {
+        id: "original",
+        kind: "resume",
+        fileName: "resume.md",
+        mimeType: "text/markdown",
+        label: "Original resume",
+        loadBytes: () => Promise.resolve(bytes),
+      },
+    ];
+    hands.uploadFile = vi.fn(hands.uploadFile);
+    const result = await executeApplyProposal(
+      { tool: "upload", ref: "c0", documentId: "original" },
+      observationOf(source).signature,
+      { config, now, guardState: createApplyGuardState() },
+    );
+    expect(result.kind).toBe("attached");
+    expect(hands.uploadFile).toHaveBeenCalledWith("c0", {
+      name: "resume.txt",
+      mimeType: "text/plain",
+      bytes,
+    });
+    if (result.kind === "attached")
+      expect(result.attachment.fileName).toBe("resume.txt");
+    source.controls[0]!.value = "C:\\fakepath\\resume.txt";
+    source.actions = [
+      { index: 0, label: "Next", visible: true, disabled: false },
+    ];
+    const next = await executeApplyProposal(
+      { tool: "click", ref: "a0" },
+      observationOf(source).signature,
+      { config, now, guardState: createApplyGuardState() },
+    );
+    expect(next.kind).toBe("moved");
+    source.actions[0]!.label = "Submit application";
+    config.authority.mode = "confirm_before_submit";
+    config.authority.allowedOrigins = ["https://apply.example.test"];
+    const submit = await executeApplyProposal(
+      { tool: "submit_application", ref: "a0" },
+      observationOf(source).signature,
+      { config, now, guardState: createApplyGuardState() },
+    );
+    expect(submit.kind).toBe("ready_to_send");
+  });
+
+  test("requests a compatible file before uploading an unsupported Original", async () => {
+    const source = rawPage({
+      controls: [
+        rawControl({
+          index: 0,
+          label: "Resume",
+          inputType: "file",
+          required: true,
+          accept: ".pdf",
+        }),
+      ],
+    });
+    const { config, hands } = configFor(source);
+    config.sources.documents = [
+      {
+        id: "original",
+        kind: "resume",
+        fileName: "resume.md",
+        mimeType: "text/markdown",
+        label: "Original resume",
+        loadBytes: () => Promise.resolve(new Uint8Array([1])),
+      },
+    ];
+    hands.uploadFile = vi.fn(hands.uploadFile);
+    const result = await executeApplyProposal(
+      { tool: "upload", ref: "c0", documentId: "original" },
+      observationOf(source).signature,
+      { config, now, guardState: createApplyGuardState() },
+    );
+    expect(result).toMatchObject({
+      kind: "paused",
+      pause: { code: "document_needs_you" },
+    });
+    expect(hands.uploadFile).not.toHaveBeenCalled();
+  });
+});
+
+test.each([
+  "Expected compensation",
+  "Current compensation",
+  "Previous compensation",
+])("keeps %s private even with an exact saved answer", async (label) => {
+  const source = rawPage({
+    controls: [rawControl({ index: 0, label, required: true })],
+  });
+  const { config, hands } = configFor(source);
+  config.sources.reusableAnswers = [
+    {
+      id: "saved_pay",
+      kind: "other",
+      label,
+      question: label,
+      answer: "60000",
+      roleFamilies: [],
+      proofEntryIds: [],
+    },
+  ];
+  hands.fillText = vi.fn(hands.fillText);
+  const result = await executeApplyProposal(
+    { tool: "type", ref: "c0", text: "60000" },
+    observationOf(source).signature,
+    {
+      config,
+      now,
+      guardState: createApplyGuardState(),
+      classifyQuestions: async () =>
+        new Map([
+          [
+            label,
+            {
+              asksAboutPay: true,
+              asksCurrentPay: label !== "Expected compensation",
+              declarationKind: null,
+            },
+          ],
+        ]),
+    },
+  );
+  expect(result).toMatchObject({
+    kind: "suggestion",
+    answer: { value: "60000" },
+    question: {
+      note: "Job Finder leaves pay questions to you. Answer it yourself if you want to.",
+    },
+  });
+  expect(hands.fillText).not.toHaveBeenCalled();
+});
+test("an exact multi-choice selection preserves option labels containing commas", async () => {
+  const label = "Writing, editing";
+  const source = rawPage({
+    controls: [
+      rawControl({
+        index: 0,
+        inputType: "checkbox",
+        label,
+        groupLabel: "Skills",
+        name: "skills",
+        required: true,
+        value: label,
+      }),
+      rawControl({
+        index: 1,
+        inputType: "checkbox",
+        label: "Planning",
+        groupLabel: "Skills",
+        name: "skills",
+        value: "Planning",
+      }),
+    ],
+  });
+  const { config, hands } = configFor(source);
+  config.sources.reusableAnswers = [
+    {
+      id: "skills",
+      kind: "other",
+      label: "Skills",
+      question: "Skills",
+      answer: JSON.stringify([label]),
+      roleFamilies: [],
+      proofEntryIds: [],
+    },
+  ];
+  hands.setToggle = vi.fn(hands.setToggle);
+  const result = await executeApplyProposal(
+    { tool: "set_checkbox", ref: "c0", checked: true },
+    observationOf(source).signature,
+    { config, now, guardState: createApplyGuardState() },
+  );
+  expect(result.kind).toBe("filled");
+  expect(hands.setToggle).toHaveBeenCalledWith("c0", true);
+});

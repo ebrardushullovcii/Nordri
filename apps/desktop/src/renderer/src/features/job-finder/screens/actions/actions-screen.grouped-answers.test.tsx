@@ -1,10 +1,17 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  waitFor,
+} from "@testing-library/react";
 import {
   GroupedManualAnswerDecisionSchema,
   UserActionRequestSchema,
   type ApplyGroupedManualAnswerInput,
+  type ApplyRunDetails,
   type CandidateProfile,
   type GroupedManualAnswerDecision,
   type JobFinderWorkspaceSnapshot,
@@ -558,6 +565,65 @@ describe("Needs you question step shapes", () => {
     );
   }
 
+  it("keeps a one-use answer after checking removes the form and creates a new request", () => {
+    const questions = [
+      {
+        id: "q_years",
+        prompt: "Analysis experience",
+        kind: "experience",
+        status: "detected",
+        isRequired: true,
+        answerOptions: [],
+      },
+    ];
+    const base = {
+      discoveryJobs: createJobs(),
+      groupedDecisions: [],
+      isPending: () => false,
+      onCommand: vi.fn(),
+      onNavigate: vi.fn(),
+      profile,
+    };
+    const { getByLabelText, rerender } = render(
+      <ActionsScreen
+        {...base}
+        applicationAttempts={attemptsWith(questions)}
+        requests={[createManualAnswerRequest({ id: "first", jobId: "job_a" })]}
+      />,
+    );
+    fireEvent.change(getByLabelText("Analysis experience"), {
+      target: { value: "0" },
+    });
+    fireEvent.click(getByLabelText("Save this answer for next time"));
+    rerender(
+      <ActionsScreen
+        {...base}
+        applicationAttempts={[]}
+        requests={[
+          createManualAnswerRequest({
+            id: "first",
+            jobId: "job_a",
+            state: "verifying",
+          }),
+        ]}
+      />,
+    );
+    rerender(
+      <ActionsScreen
+        {...base}
+        applicationAttempts={attemptsWith([{ ...questions[0], id: "q_retry" }])}
+        requests={[createManualAnswerRequest({ id: "retry", jobId: "job_a" })]}
+      />,
+    );
+    expect(
+      (getByLabelText("Analysis experience") as HTMLTextAreaElement).value,
+    ).toBe("0");
+    expect(
+      (getByLabelText("Save this answer for next time") as HTMLInputElement)
+        .checked,
+    ).toBe(false);
+  });
+
   it("sends a one-off answer when the person unticks Save for next time", async () => {
     const onCommand = vi.fn<(command: UserActionCommandInput) => Promise<void>>(
       () => Promise.resolve(),
@@ -826,3 +892,396 @@ it.each([true, false])(
     ).toBe(!ambiguous);
   },
 );
+
+describe("native answer fields and recovery", () => {
+  const question = {
+    id: "q_years",
+    prompt: "Analysis experience",
+    kind: "experience" as const,
+    status: "detected" as const,
+    isRequired: true,
+    answerOptions: [],
+    suggestedAnswers: [],
+    submittedAnswer: null,
+    detectedAt: "2026-10-04T10:00:00.000Z",
+  };
+  it("retains the typed answer and one-use choice after a new handoff question id", () => {
+    const onAnswer = vi.fn();
+    const { getByLabelText, rerender } = render(
+      <QuestionAnswerForm
+        isPending={false}
+        onAnswer={onAnswer}
+        questions={[question]}
+        requestId="first"
+      />,
+    );
+    fireEvent.change(getByLabelText("Analysis experience"), {
+      target: { value: "0" },
+    });
+    fireEvent.click(getByLabelText("Save this answer for next time"));
+    rerender(
+      <QuestionAnswerForm
+        isPending={false}
+        onAnswer={onAnswer}
+        questions={[{ ...question, id: "q_retry" }]}
+        requestId="retry"
+      />,
+    );
+    expect(
+      (getByLabelText("Analysis experience") as HTMLTextAreaElement).value,
+    ).toBe("0");
+    expect(
+      (getByLabelText("Save this answer for next time") as HTMLInputElement)
+        .checked,
+    ).toBe(false);
+  });
+  it("uses numeric source constraints and refuses negative years", () => {
+    const onAnswer = vi.fn();
+    const { getByLabelText, getByTestId } = render(
+      <QuestionAnswerForm
+        isPending={false}
+        onAnswer={onAnswer}
+        questions={[
+          {
+            ...question,
+            inputConstraints: {
+              type: "number",
+              min: "0",
+              max: "50",
+              step: "1",
+            },
+          },
+        ]}
+        requestId="number"
+      />,
+    );
+    const input = getByLabelText("Analysis experience") as HTMLInputElement;
+    expect(input.type).toBe("number");
+    expect(input.min).toBe("0");
+    fireEvent.change(input, { target: { value: "-1" } });
+    fireEvent.submit(getByTestId("needs-you-question-form"));
+    expect(onAnswer).not.toHaveBeenCalled();
+    fireEvent.change(input, { target: { value: "0" } });
+    fireEvent.submit(getByTestId("needs-you-question-form"));
+    expect(onAnswer).toHaveBeenCalledWith(
+      [{ questionId: "q_years", answer: "0" }],
+      true,
+    );
+  });
+  it("keeps equal-worded fields separate in the same handoff", () => {
+    const onAnswer = vi.fn();
+    const { getAllByLabelText, getByTestId } = render(
+      <QuestionAnswerForm
+        isPending={false}
+        onAnswer={onAnswer}
+        questions={[question, { ...question, id: "q_years_second" }]}
+        requestId="duplicate"
+      />,
+    );
+    const fields = getAllByLabelText("Analysis experience");
+    fireEvent.change(fields[0]!, { target: { value: "0" } });
+    fireEvent.change(fields[1]!, { target: { value: "3" } });
+    fireEvent.submit(getByTestId("needs-you-question-form"));
+    expect(onAnswer).toHaveBeenCalledWith(
+      [
+        { questionId: "q_years", answer: "0" },
+        { questionId: "q_years_second", answer: "3" },
+      ],
+      true,
+    );
+  });
+  it("uses a month control and explains month/year precision", () => {
+    const { getByLabelText, getByText } = render(
+      <QuestionAnswerForm
+        isPending={false}
+        onAnswer={vi.fn()}
+        questions={[
+          {
+            ...question,
+            prompt: "Work history — From",
+            answerControlType: "date",
+            inputConstraints: { type: "month" },
+          },
+        ]}
+        requestId="month"
+      />,
+    );
+    expect(
+      (getByLabelText("Work history — From") as HTMLInputElement).type,
+    ).toBe("month");
+    expect(getByText("Choose the month and year.")).toBeTruthy();
+  });
+  it("allows several required skills together", () => {
+    const onAnswer = vi.fn();
+    const { getByLabelText, getByRole } = render(
+      <QuestionAnswerForm
+        isPending={false}
+        onAnswer={onAnswer}
+        questions={[
+          {
+            ...question,
+            prompt: "Skills",
+            answerControlType: "multi_choice",
+            answerOptions: ["Analysis", "Coordination"],
+          },
+        ]}
+        requestId="skills"
+      />,
+    );
+    fireEvent.click(getByLabelText("Analysis"));
+    fireEvent.click(getByLabelText("Coordination"));
+    fireEvent.click(getByRole("button", { name: "Answer and continue" }));
+    expect(onAnswer).toHaveBeenCalledWith(
+      [
+        {
+          questionId: "q_years",
+          answer: JSON.stringify(["Analysis", "Coordination"]),
+        },
+      ],
+      true,
+    );
+  });
+});
+
+it("keeps comma-containing skill options as separate selections with an accessible legend", async () => {
+  const onAnswer = vi.fn();
+  const { getByRole, getByLabelText } = render(
+    <QuestionAnswerForm
+      isPending={false}
+      onAnswer={onAnswer}
+      questions={[
+        {
+          id: "q_skills",
+          prompt: "Skills",
+          kind: "other",
+          answerControlType: "multi_choice",
+          isRequired: true,
+          detectedAt: "2026-10-04T10:00:00.000Z",
+          answerOptions: ["Writing, editing", "Planning"],
+          suggestedAnswers: [],
+          submittedAnswer: null,
+          status: "detected",
+        },
+      ]}
+      requestId="skills_request"
+    />,
+  );
+  expect(
+    getByRole("group", { name: "Skills" }).querySelector("legend"),
+  ).not.toBeNull();
+  const writing = getByLabelText("Writing, editing");
+  expect(writing.className).toContain("size-4");
+  expect(writing.className).toContain("accent-(--primary)");
+  fireEvent.click(writing);
+  fireEvent.click(getByLabelText("Planning"));
+  fireEvent.click(writing);
+  fireEvent.click(writing);
+  fireEvent.click(getByRole("button", { name: "Answer and continue" }));
+  await waitFor(() =>
+    expect(onAnswer).toHaveBeenCalledWith(
+      [
+        {
+          questionId: "q_skills",
+          answer: JSON.stringify(["Planning", "Writing, editing"]),
+        },
+      ],
+      true,
+    ),
+  );
+});
+
+it("shows questions alongside a required file without turning the upload into a text answer", async () => {
+  const request = createManualAnswerRequest({
+    id: "mixed_request",
+    jobId: "job_a",
+  });
+  const onCommand = vi.fn();
+  const { getByLabelText, getByText, getByRole } = render(
+    <ActionsScreen
+      applicationAttempts={
+        [
+          {
+            applicationRecordId: "application_job_a",
+            jobId: "job_a",
+            blocker: { code: "missing_candidate_answer" },
+            updatedAt: "2026-10-04T10:00:00.000Z",
+            questions: [
+              {
+                id: "q_letter",
+                prompt: "Cover letter",
+                kind: "other",
+                answerControlType: "file",
+                status: "detected",
+                note: "Your cover-letter setting is Never.",
+              },
+              {
+                id: "q_portfolio",
+                prompt: "Portfolio URL",
+                kind: "other",
+                status: "detected",
+                answerOptions: [],
+              },
+            ],
+          },
+        ] as unknown as JobFinderWorkspaceSnapshot["applicationAttempts"]
+      }
+      discoveryJobs={[]}
+      isPending={() => false}
+      onCommand={onCommand}
+      onNavigate={vi.fn()}
+      requests={[request]}
+    />,
+  );
+  expect(getByText(/Add the required cover letter.*Never/)).toBeTruthy();
+  expect(getByRole("button", { name: /Profile.*Files/ })).toBeTruthy();
+  fireEvent.change(getByLabelText("Portfolio URL"), {
+    target: { value: "https://portfolio.example.test" },
+  });
+  fireEvent.click(getByRole("button", { name: "Answer and continue" }));
+  await waitFor(() =>
+    expect(onCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        answers: [
+          {
+            questionId: "q_portfolio",
+            answer: "https://portfolio.example.test",
+          },
+        ],
+      }),
+    ),
+  );
+});
+
+it("restores prior one-use values and save choice after reopening Needs you for Try again", async () => {
+  const previous = createManualAnswerRequest({
+    id: "old_request",
+    jobId: "job_a",
+  });
+  const request = createManualAnswerRequest({
+    id: "retry_request",
+    jobId: "job_a",
+  });
+  const onGetApplyRunDetails = vi.fn(() =>
+    Promise.resolve({
+      answerRecords: [
+        {
+          id: "old_answer",
+          applicationRecordId: "application_job_a",
+          questionId: "apply_question_application_job_a_q_years",
+          text: "0",
+          sourceKind: "user",
+          saveScope: "application_once",
+          revision: 1,
+          createdAt: "2026-10-04T09:00:00.000Z",
+        },
+      ],
+    } as ApplyRunDetails),
+  );
+  const { getByLabelText } = render(
+    <ActionsScreen
+      applicationAttempts={
+        [
+          {
+            applicationRecordId: "application_job_a",
+            jobId: "job_a",
+            blocker: { code: "missing_candidate_answer" },
+            updatedAt: "2026-10-04T10:00:00.000Z",
+            questions: [
+              {
+                id: "q_years",
+                prompt: "Analysis experience",
+                kind: "experience",
+                status: "detected",
+                answerOptions: [],
+              },
+            ],
+          },
+        ] as unknown as JobFinderWorkspaceSnapshot["applicationAttempts"]
+      }
+      discoveryJobs={[]}
+      isPending={() => false}
+      onCommand={vi.fn()}
+      onGetApplyRunDetails={onGetApplyRunDetails}
+      onNavigate={vi.fn()}
+      requests={[{ ...previous, state: "superseded" }, request]}
+    />,
+  );
+  await waitFor(() =>
+    expect(getByLabelText("Analysis experience")).toHaveProperty("value", "0"),
+  );
+  expect(getByLabelText("Save this answer for next time")).toHaveProperty(
+    "checked",
+    false,
+  );
+  expect(onGetApplyRunDetails).toHaveBeenCalledWith({
+    runId: "run_1",
+    jobId: "job_a",
+    applicationRecordId: "application_job_a",
+  });
+});
+
+it("a delayed draft restore keeps the person's newer edits", async () => {
+  let resolveDetails!: (details: ApplyRunDetails) => void;
+  const details = new Promise<ApplyRunDetails>((resolve) => {
+    resolveDetails = resolve;
+  });
+  const previous = createManualAnswerRequest({ id: "older", jobId: "job_a" });
+  const request = createManualAnswerRequest({ id: "current", jobId: "job_a" });
+  const { getByLabelText } = render(
+    <ActionsScreen
+      applicationAttempts={
+        [
+          {
+            applicationRecordId: "application_job_a",
+            jobId: "job_a",
+            blocker: { code: "missing_candidate_answer" },
+            updatedAt: "2026-10-04T10:00:00.000Z",
+            questions: [
+              {
+                id: "q_years",
+                prompt: "Analysis experience",
+                kind: "experience",
+                status: "detected",
+                answerOptions: [],
+              },
+            ],
+          },
+        ] as unknown as JobFinderWorkspaceSnapshot["applicationAttempts"]
+      }
+      discoveryJobs={[]}
+      isPending={() => false}
+      onCommand={vi.fn()}
+      onGetApplyRunDetails={() => details}
+      onNavigate={vi.fn()}
+      requests={[{ ...previous, state: "superseded" }, request]}
+    />,
+  );
+  fireEvent.change(getByLabelText("Analysis experience"), {
+    target: { value: "3" },
+  });
+  fireEvent.click(getByLabelText("Save this answer for next time"));
+  await act(async () => {
+    resolveDetails({
+      answerRecords: [
+        {
+          id: "old_answer",
+          applicationRecordId: "application_job_a",
+          questionId: "apply_question_application_job_a_q_years",
+          text: "0",
+          sourceKind: "user",
+          saveScope: "reusable_profile",
+          revision: 1,
+          createdAt: "2026-10-04T09:00:00.000Z",
+        },
+      ],
+    } as ApplyRunDetails);
+    await details;
+  });
+  await waitFor(() =>
+    expect(getByLabelText("Analysis experience")).toHaveProperty("value", "3"),
+  );
+  expect(getByLabelText("Save this answer for next time")).toHaveProperty(
+    "checked",
+    false,
+  );
+});

@@ -478,7 +478,7 @@ describe("ReviewQueueMissionPanel", () => {
     renderPanel({
       originalResume: {
         id: "resume_base",
-        fileName: "base-resume.pdf",
+        fileName: "base-resume.md",
         uploadedAt: "2026-08-20T00:00:00.000Z",
       } as never,
       selectedAsset: null,
@@ -489,8 +489,8 @@ describe("ReviewQueueMissionPanel", () => {
         resumeReview: {
           status: "original_resume",
           sourceDocumentId: "resume_base",
-          fileName: "base-resume.pdf",
-          filePath: "/tmp/base-resume.pdf",
+          fileName: "base-resume.md",
+          filePath: "/tmp/base-resume.md",
         },
       }),
     });
@@ -500,7 +500,12 @@ describe("ReviewQueueMissionPanel", () => {
       "attaches your original resume",
     );
     expect(
-      screen.getByText(/base-resume\.pdf goes out exactly as imported/),
+      screen.getByText(/base-resume\.md goes out with its content unchanged/),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(
+        /Forms that accept plain text receive an unchanged \.txt copy/,
+      ),
     ).toBeTruthy();
     // Its studio is one press away: that is where the original becomes an
     // editable resume.

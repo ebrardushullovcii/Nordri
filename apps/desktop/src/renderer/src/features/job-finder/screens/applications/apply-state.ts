@@ -127,6 +127,7 @@ export function resolveApplyStatePresentation(input: {
   recordLastActionLabel?: string | null;
   /** The record's tracker, where the person may have recorded the send. */
   recordCrm?: ApplicationRecord["crm"] | undefined;
+  recordLatestBlocker?: ApplicationRecord["latestBlocker"];
 }): ApplyStatePresentation {
   const { mode, now = Date.now(), pendingQuestionCount = 0, result } = input;
   const questionsLeftLabel = formatQuestionsLeft(pendingQuestionCount);
@@ -355,6 +356,8 @@ export function resolveApplyStatePresentation(input: {
   }
 
   const needsPerson =
+    (result?.state === "awaiting_review" &&
+      Boolean(result.blockerReason || input.recordLatestBlocker)) ||
     applyResultNeedsSecurityCheck(result) ||
     looksLikeSignInWall({
       blockerCode: result?.blockerReason ?? null,

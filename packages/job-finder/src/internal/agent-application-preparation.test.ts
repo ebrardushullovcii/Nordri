@@ -1,6 +1,8 @@
 import type { LLMClient } from "@nordri/browser-agent";
 import {
   ApplicationAuthorityEnvelopeSchema,
+  AiBehaviorPreferenceSchema,
+  ApplicationReviewCardSchema,
   serializeApplicationAuthorityDecisionPolicyForDigest,
 } from "@nordri/contracts";
 import { createHash } from "node:crypto";
@@ -165,7 +167,9 @@ function rawPage(bodyText: string): RawApplyPage {
         selectedOptionLabel: "",
       },
     ],
-    actions: [],
+    actions: [
+      { index: 0, label: "Send application", visible: true, disabled: false },
+    ],
     links: [],
     headings: [],
     clickables: [],
@@ -1459,4 +1463,135 @@ test("continued observations preserve generated provenance and distinct equal-wo
   expect(mergeApplyReviewCards(previous, current)?.answers).toEqual(
     previous.answers,
   );
+});
+
+test("a form stopped on an early step cannot become a ready application record", async () => {
+  const page = rawPage("Application");
+  page.stepLabel = "Step 2 of 4";
+  page.actions = [{ index: 0, label: "Next", visible: true, disabled: false }];
+  const result = await runAgentApplicationPreparation({
+    session: { ...session(), readPage: () => Promise.resolve(page) },
+    executionInput: executionInput(),
+    llmClient: modelThatFinishes(),
+    startedAt: "2026-09-14T10:00:00.000Z",
+    siteLabel: "the careers site",
+  });
+  expect(result.state).toBe("paused");
+  expect(result.blocker).toMatchObject({
+    code: "requires_manual_review",
+    userActionKind: "other",
+  });
+  expect(result.detail).toContain("another step");
+});
+
+test("a required cover letter with Never is a named file handoff", async () => {
+  const page = rawPage("Application");
+  page.controls = [
+    {
+      ...page.controls[0]!,
+      inputType: "file",
+      label: "Cover letter",
+      required: true,
+      value: "",
+    },
+  ];
+  const input = executionInput();
+  input.settings.aiBehavior = AiBehaviorPreferenceSchema.parse({
+    applying: { coverLetterPolicy: "never" },
+  });
+  const result = await runAgentApplicationPreparation({
+    session: { ...session(), readPage: () => Promise.resolve(page) },
+    executionInput: input,
+    llmClient: modelThatFinishes(),
+    startedAt: "2026-09-14T10:00:00.000Z",
+    siteLabel: "the careers site",
+  });
+  expect(result.state).toBe("paused");
+  expect(result.questions[0]).toMatchObject({
+    prompt: "Cover letter",
+    answerControlType: "file",
+  });
+  expect(result.blocker?.userActionKind).toBe("manual_upload");
+  expect(result.detail).toContain("settings");
+  expect(result.nextActionLabel).toBe("Add the required cover letter");
+});
+
+test("a required cover letter and text questions share an answerable handoff", async () => {
+  const page = rawPage("Application");
+  page.controls = [
+    {
+      ...page.controls[0]!,
+      inputType: "file",
+      label: "Cover letter",
+      required: true,
+      value: "",
+    },
+  ];
+  page.controls.push({
+    ...page.controls[0]!,
+    index: 1,
+    inputType: "text",
+    label: "Portfolio URL",
+    required: true,
+    value: "",
+  });
+  const input = executionInput();
+  input.settings.aiBehavior = AiBehaviorPreferenceSchema.parse({
+    applying: { coverLetterPolicy: "never" },
+  });
+  const result = await runAgentApplicationPreparation({
+    session: { ...session(), readPage: () => Promise.resolve(page) },
+    executionInput: input,
+    llmClient: modelThatFinishes(),
+    startedAt: "2026-09-14T10:00:00.000Z",
+    siteLabel: "the careers site",
+  });
+  expect(result.state).toBe("paused");
+  expect(result.questions[0]).toMatchObject({
+    prompt: "Cover letter",
+    answerControlType: "file",
+  });
+  expect(result.blocker?.userActionKind).toBeNull();
+  expect(result.questions.map((question) => question.prompt)).toContain(
+    "Portfolio URL",
+  );
+  expect(result.detail).toContain("settings");
+  expect(result.nextActionLabel).toBe(
+    "Add the required files and answer the remaining questions",
+  );
+});
+
+test("a refreshed review drops an answer and attachment cleared on the live form", () => {
+  const previous = ApplicationReviewCardSchema.parse({
+    siteLabel: "Synthetic form",
+    preparedAt: "2026-10-04T10:00:00.000Z",
+    answers: [
+      {
+        fieldKey: "motivation",
+        question: "Motivation",
+        answer: "Old answer",
+        source: "the filled application form",
+        written: false,
+        groundedIn: [],
+      },
+    ],
+    attachments: [
+      {
+        fieldKey: "portfolio",
+        label: "Portfolio",
+        fileName: "old.pdf",
+        field: "Portfolio",
+      },
+    ],
+  });
+  const current = ApplicationReviewCardSchema.parse({
+    siteLabel: "Synthetic form",
+    preparedAt: "2026-10-04T11:00:00.000Z",
+    answers: [],
+    attachments: [],
+    observedFieldKeys: ["motivation", "portfolio"],
+  });
+  const merged = mergeApplyReviewCards(previous, current);
+  expect(merged?.answers).toEqual([]);
+  expect(merged?.attachments).toEqual([]);
 });

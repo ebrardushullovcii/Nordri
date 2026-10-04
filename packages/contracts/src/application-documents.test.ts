@@ -1,3 +1,4 @@
+import { resumeFormFileNames } from "./application-documents";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -94,4 +95,12 @@ describe("application document contracts", () => {
       }),
     ).toThrow();
   });
+});
+
+it("accepts only the original and byte-identical Markdown copy filenames", () => {
+  expect(resumeFormFileNames("original.md")).toEqual([
+    "original.md",
+    "original.txt",
+  ]);
+  expect(resumeFormFileNames("original.pdf")).toEqual(["original.pdf"]);
 });

@@ -60,6 +60,43 @@ describe("reading the choices of lists the page draws itself", () => {
     browser = await chromium.launch({ headless: true });
   }, 60_000);
 
+  test("reads the upload format and numeric/month constraints from the actual inputs", async () => {
+    const page = await browser.newPage();
+    try {
+      await page.setContent(
+        '<form><label>Resume<input type="file" accept=".txt,.pdf"></label><label>Experience<input type="number" min="0" max="50" step="1"></label><label>From<input type="month" min="2000-01" max="2026-10"></label></form>',
+      );
+      const raw = await readRawApplyPage(page);
+      expect(raw.controls[0]).toMatchObject({ accept: ".txt,.pdf" });
+      expect(raw.controls[1]).toMatchObject({
+        inputType: "number",
+        min: "0",
+        max: "50",
+        step: "1",
+      });
+      expect(raw.controls[2]).toMatchObject({
+        inputType: "month",
+        min: "2000-01",
+        max: "2026-10",
+      });
+    } finally {
+      await page.close();
+    }
+  });
+
+  test("a file on a disabled wizard step stays disabled even when the input has no disabled attribute", async () => {
+    const page = await browser.newPage();
+    try {
+      await page.setContent(
+        '<fieldset disabled hidden><input type="file" required></fieldset><button>Send application</button>',
+      );
+      const raw = await readRawApplyPage(page);
+      expect(raw.controls[0]).toMatchObject({ disabled: true, visible: false });
+    } finally {
+      await page.close();
+    }
+  });
+
   afterAll(async () => {
     await browser?.close();
   });

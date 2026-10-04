@@ -448,9 +448,12 @@ export function ReviewQueueMissionPanel({
             className="text-(length:--text-small) leading-5 text-foreground-muted"
             role="note"
           >
-            {originalResume.fileName} goes out exactly as imported. Check it for
-            details you would not share with every employer, such as a home
-            address or date of birth.
+            {originalResume.fileName} goes out with its content unchanged.{" "}
+            {/\.md$/iu.test(originalResume.fileName)
+              ? "Forms that accept plain text receive an unchanged .txt copy. "
+              : ""}
+            Check it for details you would not share with every employer, such
+            as a home address or date of birth.
           </p>
         ) : null}
       </div>

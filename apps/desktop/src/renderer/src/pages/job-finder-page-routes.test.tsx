@@ -9,11 +9,15 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { MemoryRouter, Outlet, Route, Routes } from "react-router-dom";
-import type { JobFinderWorkspaceSnapshot } from "@nordri/contracts";
+import type {
+  JobFinderWorkspaceSnapshot,
+  UserActionCommandInput,
+} from "@nordri/contracts";
 import type { FinishInBrowserInput } from "@renderer/features/job-finder/screens/applications/applications-detail-panel-recovery-actions-section";
 import type { JobFinderPageContext } from "./job-finder-page-context";
 import {
   JobFinderApplicationsRoute,
+  JobFinderActionsRoute,
   getUnavailableApplicationMessage,
   runJobFinderApplicationBrowserHandoff,
   selectCampaignApplicationsScope,
@@ -1221,5 +1225,66 @@ describe("Applications browser-step confirmation", () => {
     });
 
     expect(onPerformUserAction).not.toHaveBeenCalled();
+  });
+});
+
+const actionsRouteProps = vi.hoisted(() => ({
+  current: null as {
+    onCommand: (command: UserActionCommandInput) => Promise<void>;
+  } | null,
+}));
+vi.mock("@renderer/features/job-finder/screens/actions/actions-screen", () => ({
+  ActionsScreen: (props: {
+    onCommand: (command: UserActionCommandInput) => Promise<void>;
+  }) => {
+    actionsRouteProps.current = props;
+    return null;
+  },
+}));
+it("Needs you returns a rejected answer command to the form so the failure is visible", async () => {
+  const onPerformUserAction = vi.fn(() =>
+    Promise.reject(new Error("This answer changed in another view")),
+  );
+  const current = workspace();
+  current.hydration = {
+    phase: "complete",
+    deferredCollections: [],
+  };
+  current.userActionRequests = [];
+  const base = {
+    workspace: current,
+    onPerformUserAction,
+    isPending: () => false,
+  };
+  const context = new Proxy(base, {
+    get: (target, key) =>
+      key in target ? target[key as keyof typeof target] : () => undefined,
+  }) as unknown as JobFinderPageContext;
+  render(
+    <MemoryRouter initialEntries={["/job-finder/actions"]}>
+      <Routes>
+        <Route path="/job-finder" element={<Outlet context={context} />}>
+          <Route path="actions" element={<JobFinderActionsRoute />} />
+        </Route>
+      </Routes>
+    </MemoryRouter>,
+  );
+  const command = {
+    action: "submit_manual_answer" as const,
+    requestId: "request_a",
+    commandId: "answer_a",
+    expectedRevision: 1,
+    answer: "Yes",
+    saveForFuture: false,
+    credentialsPolicy: "browser_only" as const,
+    submitAuthorized: false as const,
+    accountCreationAuthorized: false as const,
+  };
+  await waitFor(() => expect(actionsRouteProps.current).not.toBeNull());
+  await expect(actionsRouteProps.current!.onCommand(command)).rejects.toThrow(
+    "This answer changed in another view",
+  );
+  expect(onPerformUserAction).toHaveBeenCalledWith(command, {
+    rethrowError: true,
   });
 });
