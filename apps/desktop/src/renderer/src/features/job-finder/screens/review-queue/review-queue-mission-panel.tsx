@@ -527,10 +527,34 @@ export function ReviewQueueMissionPanel({
               {fitRecommendationCopy.skip.label}
             </StatusBadge>
           ) : null}
-          {selectedJob.matchAssessment.recommendation === "skip" ? (
-            <span className="text-(length:--text-small) text-foreground-soft">
-              {selectedJob.matchAssessment.recommendationRationale}
+          {selectedJob.matchAssessment.recommendation === "skip" ||
+          selectedJob.matchAssessment.locationReach === "outside_area" ||
+          selectedJob.matchAssessment.dimensions?.preferenceAlignment.state ===
+            "conflict" ||
+          selectedJob.matchAssessment.dimensions?.preferenceAlignment.state ===
+            "mixed" ? (
+            <span
+              className="text-(length:--text-small) text-foreground-soft"
+              data-testid="queue-suitability-warning"
+            >
+              {selectedJob.matchAssessment.recommendation === "skip"
+                ? selectedJob.matchAssessment.recommendationRationale
+                : selectedJob.matchAssessment.dimensions?.preferenceAlignment
+                    .explanation}
+              {selectedJob.matchAssessment.gaps.length > 0
+                ? ` ${selectedJob.matchAssessment.gaps.join(" ")}`
+                : ""}
             </span>
+          ) : null}
+          {selectedJob.matchAssessment.judgment?.source === "full" &&
+          selectedJob.matchAssessment.recommendation !== "skip" &&
+          selectedJob.matchAssessment.recommendationRationale ? (
+            <p
+              className="basis-full text-(length:--text-small) text-foreground-soft"
+              data-testid="queue-full-assessment-reason"
+            >
+              {selectedJob.matchAssessment.recommendationRationale}
+            </p>
           ) : null}
           {existingApplication ? (
             <Button

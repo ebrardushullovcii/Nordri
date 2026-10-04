@@ -72,3 +72,30 @@ export function readCarriedJudgment(posting: object): FitJudgment | null {
     .matchAssessment;
   return assessment?.judgment ?? null;
 }
+
+/** A completed read survives rediscovery and incomplete or older replacements. */
+export function preserveCompletedAssessment(
+  previous: MatchAssessment | null | undefined,
+  incoming: MatchAssessment,
+): MatchAssessment {
+  if (!previous?.judgment) return incoming;
+  if (!incoming.judgment) return previous;
+  if (
+    previous.judgment.contextFingerprint !==
+      incoming.judgment.contextFingerprint ||
+    previous.judgment.postingFingerprint !==
+      incoming.judgment.postingFingerprint
+  )
+    return incoming;
+  if (
+    previous.judgment.source === "full" &&
+    incoming.judgment.source !== "full"
+  )
+    return previous;
+  if (
+    Date.parse(incoming.judgment.judgedAt) <
+    Date.parse(previous.judgment.judgedAt)
+  )
+    return previous;
+  return incoming;
+}

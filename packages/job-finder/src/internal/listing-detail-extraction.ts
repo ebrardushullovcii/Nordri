@@ -81,6 +81,9 @@ function looksLikeApplyEntryText(text: string): boolean {
 
 const MAX_HTML_LENGTH = 1_500_000;
 const MAX_DESCRIPTION_LENGTH = 24_000;
+const MAX_PAGE_TEXT_LENGTH = 64_000;
+export const LISTING_PAGE_OMISSION_MARKER =
+  "[Page text excerpt: middle omitted]";
 const MAX_JSON_LD_NODES = 200;
 
 export type ListingDetailExtractionMethod = "json_ld" | "page_text";
@@ -550,8 +553,7 @@ function extractJobPostingFromJsonLd(
     postedAt: readIsoDate(node.datePosted),
     validThrough: readIsoDate(node.validThrough),
     workModeHints: [...new Set(workModeHints)],
-    directApplyUrl:
-      readDirectApplyUrl(node) ?? findApplyLinkInHtml(html, input.url),
+    directApplyUrl: readDirectApplyUrl(node),
   };
 }
 
@@ -562,8 +564,7 @@ function extractJobPostingFromJsonLd(
 /**
  * The readable text of a listing page with no JobPosting record, for the
  * model to read (ADR 0041). This only converts markup to text: scripts and
- * styles go, the page's own `<main>` or `<article>` is preferred when it has
- * one, and the page title and site name lead so the model knows whose page it
+ * styles go, all body sections stay available, and the page title and site name lead so the model knows whose page it
  * is. Deciding what the posting says is the model's job, not this function's.
  */
 export function listingPageText(html: string): string {
@@ -573,17 +574,7 @@ export function listingPageText(html: string): string {
     .replace(/<script\b[\s\S]*?<\/script\s*>/giu, " ")
     .replace(/<style\b[\s\S]*?<\/style\s*>/giu, " ")
     .replace(/<noscript\b[\s\S]*?<\/noscript\s*>/giu, " ");
-  let content: string | null = null;
-  for (const tag of ["main", "article"]) {
-    const match = stripped.match(
-      new RegExp(`<${tag}\\b[^>]*>([\\s\\S]*?)<\\/${tag}\\s*>`, "iu"),
-    );
-    if (match?.[1] && match[1].length > 400) {
-      content = match[1];
-      break;
-    }
-  }
-  content ??=
+  const content =
     stripped.match(/<body\b[^>]*>([\s\S]*?)<\/body\s*>/iu)?.[1] ?? stripped;
   const title = collapseWhitespace(
     decodeHtmlEntities(
@@ -591,13 +582,20 @@ export function listingPageText(html: string): string {
     ),
   );
   const siteName = readMetaContent(capped, "og:site_name");
-  return [
+  const text = [
     title ? `Page title: ${title}` : null,
     siteName ? `Site name: ${siteName}` : null,
     htmlToPlainText(content),
   ]
     .filter(Boolean)
     .join("\n\n");
+  if (text.length <= MAX_PAGE_TEXT_LENGTH) return text;
+  const marker = `\n\n${LISTING_PAGE_OMISSION_MARKER}\n\n`;
+  const available = MAX_PAGE_TEXT_LENGTH - marker.length;
+  const head = Math.floor((available * 2) / 3);
+  return (
+    text.slice(0, head) + marker + text.slice(text.length - (available - head))
+  );
 }
 
 function readMetaContent(html: string, property: string): string | null {
@@ -870,4 +868,41 @@ function truncateText(value: string, maxLength: number): string {
   const cut = value.slice(0, maxLength);
   const lastBreak = Math.max(cut.lastIndexOf("\n"), cut.lastIndexOf(". "));
   return `${cut.slice(0, lastBreak > maxLength * 0.6 ? lastBreak : maxLength).trimEnd()}…`;
+}
+
+/** Link labels and destinations are page data; the model selects the route. */
+export function listingPageLinks(
+  html: string,
+  baseUrl: string,
+): Array<{ label: string; url: string }> {
+  const links: Array<{ label: string; url: string }> = [];
+  const seen = new Set<string>();
+  ANCHOR_PATTERN.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while (links.length < 150 && (match = ANCHOR_PATTERN.exec(html)) !== null) {
+    const attributes = match[1] ?? "";
+    const href = HREF_PATTERN.exec(attributes)?.[1];
+    if (!href || decodeHtmlEntities(href).trim().startsWith("#")) continue;
+    try {
+      const url = new URL(decodeHtmlEntities(href), baseUrl);
+      if (url.protocol !== "http:" && url.protocol !== "https:") continue;
+      if (
+        /\.(?:avif|gif|ico|jpe?g|png|svg|webp|css|js|mjs|woff2?|ttf|eot|mp[34]|webm)(?:$)/iu.test(
+          url.pathname,
+        )
+      )
+        continue;
+      if (seen.has(url.toString())) continue;
+      seen.add(url.toString());
+      const label =
+        collapseWhitespace(htmlToPlainText(match[2] ?? "")) ||
+        collapseWhitespace(
+          decodeHtmlEntities(ARIA_LABEL_PATTERN.exec(attributes)?.[1] ?? ""),
+        );
+      links.push({ label, url: url.toString() });
+    } catch {
+      /* An invalid destination cannot be handed to the model. */
+    }
+  }
+  return links;
 }

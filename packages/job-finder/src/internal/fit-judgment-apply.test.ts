@@ -1,7 +1,10 @@
 import { FitJudgmentSchema, MatchAssessmentSchema } from "@nordri/contracts";
 import { describe, expect, test } from "vitest";
 
-import { applyFitJudgment } from "./fit-judgment-apply";
+import {
+  applyFitJudgment,
+  preserveCompletedAssessment,
+} from "./fit-judgment-apply";
 
 const at = "2026-10-03T10:00:00.000Z";
 
@@ -44,3 +47,65 @@ describe("a verdict on a job card (ADR 0041)", () => {
     );
   });
 });
+
+describe("completed assessment preservation (R3-019)", () => {
+  const full = {
+    ...applyFitJudgment(
+      MatchAssessmentSchema.parse({ score: 0, reasons: [], gaps: [] }),
+      judgment({ source: "full", score: 58 }),
+    ),
+    requirementsSource: "model" as const,
+  };
+  test("does not replace a full read with a later card judgment or no verdict", () => {
+    const shallow = applyFitJudgment(
+      MatchAssessmentSchema.parse({ score: 0, reasons: [], gaps: [] }),
+      judgment({ score: 85, judgedAt: "2026-10-04T00:00:00.000Z" }),
+    );
+    expect(preserveCompletedAssessment(full, shallow)).toBe(full);
+    expect(
+      preserveCompletedAssessment(
+        full,
+        MatchAssessmentSchema.parse({ score: 0, reasons: [], gaps: [] }),
+      ),
+    ).toBe(full);
+  });
+  test("accepts a completed later full read, but refuses an older one", () => {
+    const later = applyFitJudgment(
+      full,
+      judgment({
+        source: "full",
+        score: 32,
+        judgedAt: "2026-10-04T00:00:00.000Z",
+      }),
+    );
+    expect(preserveCompletedAssessment(full, later)).toBe(later);
+    expect(preserveCompletedAssessment(later, full)).toBe(later);
+  });
+});
+
+test.each([
+  { contextFingerprint: "goals-B", postingFingerprint: "listing-A" },
+  { contextFingerprint: "goals-A", postingFingerprint: "listing-B" },
+])(
+  "accepts a fresh batch under changed context or listing: %s",
+  (fingerprints) => {
+    const full = applyFitJudgment(
+      MatchAssessmentSchema.parse({ score: 0, reasons: [], gaps: [] }),
+      judgment({
+        source: "full",
+        contextFingerprint: "goals-A",
+        postingFingerprint: "listing-A",
+      }),
+    );
+    const batch = applyFitJudgment(
+      full,
+      judgment({
+        ...fingerprints,
+        source: "batch",
+        judgedAt: "2026-10-02T00:00:00.000Z",
+        score: 25,
+      }),
+    );
+    expect(preserveCompletedAssessment(full, batch)).toBe(batch);
+  },
+);

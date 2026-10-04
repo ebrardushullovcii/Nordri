@@ -1035,6 +1035,8 @@ export const ListingDetailCaptureSchema = z.object({
 export type ListingDetailCapture = z.infer<typeof ListingDetailCaptureSchema>;
 
 export const JobPostingSchema = z.object({
+  /** The observed page that produced this extraction, independent of the run target. */
+  producingPageUrl: UrlStringSchema.optional(),
   source: JobSourceSchema,
   sourceJobId: NonEmptyStringSchema,
   discoveryMethod: JobDiscoveryMethodSchema.default("catalog_seed"),

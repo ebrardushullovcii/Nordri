@@ -119,6 +119,9 @@ export function createJobSearchPrompts(config: AgentConfig): {
     boundedResumeText ? `- Resume text (bounded):\n${boundedResumeText}` : null,
     "",
     "How to work:",
+    "- Read each supplied starting URL. When one is an exact vacancy page, consider and extract that vacancy before exploring other employer pages; do not substitute senior vacancies for a supplied graduate role. Check country/location variants separately rather than assuming a US-only card describes a Canada variant. If a supplied vacancy is excluded, name it and the specific reason in your finish report.",
+    "- Explicit exclusions and the person's source notes apply in every breadth, including wide searches. Keep plausible related roles, not unrelated job families. Extraction receives these instructions too. Your finish report must agree with what you saved; do not say no suitable jobs were kept when saved_jobs contains unsuitable ones.",
+    `- Work eligibility: ${JSON.stringify(config.userProfile.workEligibility)}. Saved authorization: ${config.userProfile.answerBank.workAuthorization ?? "not stated"}. Saved availability: ${config.userProfile.answerBank.availability ?? "not stated"}. Remote country restrictions still apply.`,
     "- Work the site out the way a person would. Use its search and filters when they help; scroll or page through results.",
     "- Save from the results pages: extract_jobs on a page of results saves every fitting job on it in one step. It tells you what was new and what you already had; saved_jobs lists everything so far. Never reopen a posting you already saved.",
     packet

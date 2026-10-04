@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   extractListingDetailFromHtml,
+  listingPageLinks,
   findApplyLinkInHtml,
   htmlToPlainText,
   listingPageText,
@@ -138,9 +139,9 @@ describe("listingPageText", () => {
     expect(text).toContain("Site name: Northwind Careers");
     expect(text).toContain("• Five years of experience.");
     expect(text).not.toContain("track()");
-    // The page's own main content is preferred over its menus and footer.
-    expect(text).not.toContain("Menu");
-    expect(text).not.toContain("© Northwind");
+    // Keep all body sections; requirements may be outside main.
+    expect(text).toContain("Menu");
+    expect(text).toContain("© Northwind");
   });
 
   it("keeps the whole body when the page has no main or article", () => {
@@ -191,4 +192,41 @@ describe("the apply link on a listing page", () => {
       ),
     ).toBeNull();
   });
+});
+
+it("deduplicates and bounds page links in page order without choosing an application route", () => {
+  const html =
+    `<a href="#requirements">Requirements</a><a href="/logo.svg">Logo</a><a href="/style.css">Style</a><a href="/jobs/one">One</a><a href="/jobs/one">One again</a>` +
+    Array.from(
+      { length: 180 },
+      (_, i) => `<a href="/page/${i}">Page ${i}</a>`,
+    ).join("");
+  const links = listingPageLinks(html, "https://jobs.example.test/listing");
+  expect(links).toHaveLength(150);
+  expect(links[0]).toEqual({
+    label: "One",
+    url: "https://jobs.example.test/jobs/one",
+  });
+  expect(links[149]?.url).toBe("https://jobs.example.test/page/148");
+  expect(
+    links.some(
+      (link) =>
+        link.label === "Requirements" ||
+        link.label === "Logo" ||
+        link.label === "Style" ||
+        link.label === "One again",
+    ),
+  ).toBe(false);
+});
+
+it("bounds large page text and discloses omitted text while keeping ordinary listings whole", () => {
+  const ordinary =
+    "a".repeat(10000) + "Java and Dutch C1 are required" + "z".repeat(10000);
+  expect(listingPageText(`<main>${ordinary}</main>`)).toBe(ordinary);
+  const long = listingPageText(
+    `<main>${"Body ".repeat(20000)}End requirements</main>`,
+  );
+  expect(long.length).toBeLessThanOrEqual(64000);
+  expect(long).toContain("[Page text excerpt: middle omitted]");
+  expect(long).toContain("End requirements");
 });

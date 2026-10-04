@@ -1400,3 +1400,107 @@ describe("what the person sees while it runs", () => {
     expect(result.error).toContain("ran out of time");
   });
 });
+
+test("binds extraction to the current redirected page and selection context (R3-069, R3-040)", async () => {
+  const pages = { current: rawPage() };
+  const liveHands = hands(pages);
+  const readText = vi.fn(() => Promise.resolve(pages.current.bodyText));
+  liveHands.readText = readText;
+  const liveExtractor = vi.fn<JobExtractor["extractJobsFromPage"]>((input) => {
+    expect(input.pageUrl).toBe("https://jobs.lever.example.test/real/jobs/one");
+    const selection = JSON.parse(input.selectionContext ?? "{}") as {
+      sourceInstructions: string[];
+      targetRoles: string[];
+    };
+    expect(selection.sourceInstructions).toEqual([
+      "Keep design roles; exclude non-design roles.",
+    ]);
+    expect(selection.targetRoles).toEqual(["Platform Engineer"]);
+    return Promise.resolve([]);
+  });
+  const model = scripted([
+    { name: "read_page" },
+    { name: "extract_jobs", args: { pageType: "job_detail" } },
+    { name: "finish", args: { reason: "No suitable jobs." } },
+  ]);
+  let turn = 0;
+  await runJobSearchAgent({
+    hands: liveHands,
+    config: config({
+      promptContext: {
+        siteLabel: "local Atlas",
+        siteInstructions: ["Keep design roles; exclude non-design roles."],
+      },
+    }),
+    jobExtractor: { extractJobsFromPage: liveExtractor },
+    llmClient: {
+      chatWithTools: (messages, tools, options) => {
+        if (++turn === 2)
+          pages.current = rawPage({
+            url: "https://jobs.lever.example.test/real/jobs/one",
+            bodyText: "Real employer job",
+          });
+        return Promise.resolve(model.chatWithTools(messages, tools, options));
+      },
+    },
+  });
+  expect(liveExtractor).toHaveBeenCalledOnce();
+});
+
+test("considers supplied exact vacancies and country variants before substituting other jobs (R3-034)", () => {
+  const prompts = createJobSearchPrompts(config());
+  expect(prompts.system).toContain(
+    "extract that vacancy before exploring other employer pages",
+  );
+  expect(prompts.system).toContain(
+    "Check country/location variants separately",
+  );
+  expect(prompts.system).toContain("specific reason in your finish report");
+});
+
+test("keeps the producing page in saved postings and checkpoints after a cross-source visit", async () => {
+  const pages = { current: rawPage() };
+  const destination = "https://other-source.example.test/jobs/one";
+  const result = await runJobSearchAgent({
+    hands: hands(pages),
+    config: config({
+      startingUrls: [
+        "https://jobs.example.test/search?q=engineer",
+        destination,
+      ],
+      navigationPolicy: {
+        ...config().navigationPolicy,
+        allowedHostnames: ["jobs.example.test", "other-source.example.test"],
+      },
+      onCheckpoint: (checkpoint) => {
+        expect(checkpoint.collectedJobs[0]?.producingPageUrl).toBe(destination);
+      },
+    }),
+    llmClient: scripted([
+      { name: "navigate", args: { url: destination } },
+      { name: "extract_jobs", args: { pageType: "job_detail" } },
+      { name: "finish", args: { reason: "Done" } },
+    ]),
+    jobExtractor: {
+      extractJobsFromPage: () =>
+        Promise.resolve([
+          {
+            sourceJobId: "one",
+            canonicalUrl: destination,
+            title: "Platform Engineer",
+            company: "Other employer",
+            location: "Manchester",
+            description: "Platform engineering",
+            salaryText: null,
+            summary: null,
+            postedAt: null,
+            workMode: [],
+            applyPath: "unknown",
+            easyApplyEligible: false,
+            keySkills: [],
+          },
+        ]),
+    },
+  });
+  expect(result.jobs[0]?.producingPageUrl).toBe(destination);
+});

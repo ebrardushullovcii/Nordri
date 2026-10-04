@@ -1,7 +1,7 @@
 import type {
   JobPosting,
+  MatchAssessment,
   ResumeDraft,
-  ResumeDraftSourceRef,
 } from "@nordri/contracts";
 import { useId } from "react";
 import { StatusBadge } from "../../components/status-badge";
@@ -13,18 +13,19 @@ export type ResumeKeywordEvidenceJob = Pick<
   | "keywordSignals"
   | "minimumQualifications"
   | "benefits"
->;
+> & {
+  matchAssessment?: Pick<
+    MatchAssessment,
+    "requirements" | "requirementsSource"
+  >;
+};
 
 export type ResumeKeywordEvidenceItem = {
   evidence: string | null;
   sourceLabel: string | null;
-  status: "supported" | "not_evidenced";
+  status: "supported" | "partial" | "not_evidenced" | "unchecked";
+  draftEvidence?: string | null;
   term: string;
-};
-
-type CandidateEvidence = {
-  label: string;
-  text: string;
 };
 
 function normalizeForMatch(value: string): string {
@@ -60,121 +61,6 @@ function uniqueTerms(values: readonly string[]): string[] {
   }
 
   return result;
-}
-
-function formatSourceLabel(
-  sourceKind: ResumeDraftSourceRef["sourceKind"],
-): string {
-  switch (sourceKind) {
-    case "resume":
-      return "Imported resume";
-    case "profile":
-      return "Saved profile";
-    default:
-      return "Saved profile or resume";
-  }
-}
-
-function compactEvidenceText(values: readonly (string | null | undefined)[]) {
-  return values
-    .map((value) => value?.trim() ?? "")
-    .filter(Boolean)
-    .join(" — ");
-}
-
-function collectStructuredProfileEvidence(
-  draft: ResumeDraft,
-): CandidateEvidence[] {
-  const evidence: CandidateEvidence[] = [];
-
-  for (const section of draft.sections) {
-    if (section.kind === "keywords" || !section.included) {
-      continue;
-    }
-
-    if (section.profileRecordId) {
-      const text = compactEvidenceText([
-        section.text,
-        ...section.bullets
-          .filter((bullet) => bullet.included)
-          .map((bullet) => bullet.text),
-      ]);
-
-      if (text) {
-        evidence.push({
-          label: "Saved profile",
-          text,
-        });
-      }
-    }
-
-    for (const entry of section.entries) {
-      if (!entry.profileRecordId || !entry.included) {
-        continue;
-      }
-
-      const recordLabel = compactEvidenceText([entry.title, entry.subtitle]);
-      const text = compactEvidenceText([
-        recordLabel,
-        entry.summary,
-        ...entry.bullets
-          .filter((bullet) => bullet.included)
-          .map((bullet) => bullet.text),
-      ]);
-
-      // A profileRecordId is a locator, not evidence by itself. Only the
-      // profile-backed content that is actually visible in this draft can
-      // support a keyword here.
-      if (text) {
-        evidence.push({
-          label: "Saved profile",
-          text,
-        });
-      }
-    }
-  }
-
-  return evidence;
-}
-
-function collectCandidateSourceRefs(draft: ResumeDraft): CandidateEvidence[] {
-  const evidence: CandidateEvidence[] = [];
-
-  const addRefs = (sourceRefs: readonly ResumeDraftSourceRef[]) => {
-    for (const sourceRef of sourceRefs) {
-      if (
-        (sourceRef.sourceKind !== "resume" &&
-          sourceRef.sourceKind !== "profile") ||
-        !sourceRef.snippet?.trim()
-      ) {
-        continue;
-      }
-
-      evidence.push({
-        label: formatSourceLabel(sourceRef.sourceKind),
-        text: sourceRef.snippet.trim(),
-      });
-    }
-  };
-
-  for (const section of draft.sections) {
-    if (section.kind === "keywords") {
-      continue;
-    }
-
-    addRefs(section.sourceRefs);
-    for (const bullet of section.bullets) {
-      addRefs(bullet.sourceRefs);
-    }
-    for (const entry of section.entries) {
-      addRefs(entry.sourceRefs);
-      for (const bullet of entry.bullets) {
-        addRefs(bullet.sourceRefs);
-      }
-    }
-  }
-
-  return [...evidence, ...collectStructuredProfileEvidence(draft)];
 }
 
 function collectTargetedKeywords(draft: ResumeDraft): string[] {
@@ -279,29 +165,72 @@ export function isResumeDraftThin(draft: ResumeDraft): boolean {
   );
 }
 
+function findDraftWording(draft: ResumeDraft, term: string): string | null {
+  for (const section of draft.sections) {
+    if (!section.included || section.kind === "keywords") continue;
+    const texts = [
+      section.text,
+      ...section.bullets
+        .filter((bullet) => bullet.included)
+        .map((bullet) => bullet.text),
+      ...section.entries
+        .filter((entry) => entry.included)
+        .flatMap((entry) => [
+          entry.title,
+          entry.summary,
+          ...entry.bullets
+            .filter((bullet) => bullet.included)
+            .map((bullet) => bullet.text),
+        ]),
+    ];
+    const text = texts.find((value) => value && containsTerm(value, term));
+    if (text) return shortenEvidence(text);
+  }
+  return null;
+}
+
 export function buildResumeJobKeywordEvidence(input: {
   draft: ResumeDraft;
   job?: ResumeKeywordEvidenceJob | null | undefined;
 }): ResumeKeywordEvidenceItem[] {
+  // These verdicts compare the listing with saved facts, never this draft's
+  // generated wording. Draft edits cannot rewrite the person's evidence.
+  if (input.job?.matchAssessment?.requirementsSource === "model") {
+    return input.job.matchAssessment.requirements
+      .filter((requirement) =>
+        ["skill", "experience", "seniority", "domain"].includes(
+          requirement.category,
+        ),
+      )
+      .map((requirement) => ({
+        term: requirement.label,
+        status:
+          requirement.status === "supported"
+            ? "supported"
+            : requirement.status === "partial"
+              ? "partial"
+              : requirement.status === "unknown"
+                ? "unchecked"
+                : "not_evidenced",
+        evidence: [
+          ...requirement.resumeEvidence.map((ref) => ref.detail),
+          requirement.explanation,
+        ].join(" "),
+        sourceLabel: "Checked against saved facts",
+      }));
+  }
   const terms = collectJobTerms(input.job, input.draft);
   if (terms.length === 0) {
     return [];
   }
 
-  const linkedEvidence = collectCandidateSourceRefs(input.draft);
-
-  return terms.map((term) => {
-    const match = linkedEvidence.find((candidate) =>
-      containsTerm(candidate.text, term),
-    );
-
-    return {
-      evidence: match ? shortenEvidence(match.text) : null,
-      sourceLabel: match?.label ?? null,
-      status: match ? "supported" : "not_evidenced",
-      term,
-    };
-  });
+  return terms.map((term) => ({
+    evidence: null,
+    sourceLabel: null,
+    status: "unchecked",
+    draftEvidence: findDraftWording(input.draft, term),
+    term,
+  }));
 }
 
 export function ResumeJobKeywordEvidencePanel(props: {
@@ -320,8 +249,22 @@ export function ResumeJobKeywordEvidencePanel(props: {
     return null;
   }
 
-  const supportedItems = items.filter((item) => item.status === "supported");
-  const missingItems = items.filter((item) => item.status === "not_evidenced");
+  const supportedItems = items.filter(
+    (item) => item.status === "supported" || item.status === "partial",
+  );
+  const supportedCount = items.filter(
+    (item) => item.status === "supported",
+  ).length;
+  const partialCount = items.filter((item) => item.status === "partial").length;
+  const uncheckedCount = items.filter(
+    (item) => item.status === "unchecked",
+  ).length;
+  const missingCount = items.filter(
+    (item) => item.status === "not_evidenced",
+  ).length;
+  const missingItems = items.filter(
+    (item) => item.status === "not_evidenced" || item.status === "unchecked",
+  );
   const needsFactualReview =
     Boolean(props.fallbackMessage) ||
     props.draft.generationMethod === "deterministic" ||
@@ -348,8 +291,8 @@ export function ResumeJobKeywordEvidencePanel(props: {
               {props.job?.title
                 ? `Terms saved from ${props.job.title}.`
                 : "Terms saved from this job."}{" "}
-              A supported term matches candidate content shown in this draft or
-              an imported resume excerpt. A missing term is not added to the
+              Checks use saved facts and imported evidence. Draft wording alone
+              does not prove a requirement. A missing term is not added to the
               draft.
             </p>
           </div>
@@ -358,13 +301,19 @@ export function ResumeJobKeywordEvidencePanel(props: {
                 colour, beside a red "1 not evidenced", read as if something
                 had passed. Each badge carries its tone only when it has
                 something to report. */}
-            <StatusBadge
-              tone={supportedItems.length > 0 ? "positive" : "muted"}
-            >
-              {supportedItems.length} supported
+            <StatusBadge tone={supportedCount > 0 ? "positive" : "muted"}>
+              {supportedCount} supported
             </StatusBadge>
-            <StatusBadge tone={missingItems.length > 0 ? "critical" : "muted"}>
-              {missingItems.length} not evidenced
+            {partialCount > 0 ? (
+              <StatusBadge tone="warning">{partialCount} partial</StatusBadge>
+            ) : null}
+            {uncheckedCount > 0 ? (
+              <StatusBadge tone="muted">
+                {uncheckedCount} not checked
+              </StatusBadge>
+            ) : null}
+            <StatusBadge tone={missingCount > 0 ? "critical" : "muted"}>
+              {missingCount} not evidenced
             </StatusBadge>
           </div>
         </div>
@@ -392,8 +341,8 @@ export function ResumeJobKeywordEvidencePanel(props: {
               Supported by candidate content
             </h4>
             <p className="text-(length:--text-small) leading-5 text-foreground-soft">
-              These terms match saved profile content shown here or an imported
-              resume excerpt.
+              These requirements have saved evidence. Partial support still
+              needs review.
             </p>
           </div>
           {supportedItems.length > 0 ? (
@@ -407,7 +356,13 @@ export function ResumeJobKeywordEvidencePanel(props: {
                     <strong className="text-sm text-foreground">
                       {item.term}
                     </strong>
-                    <StatusBadge tone="positive">Supported</StatusBadge>
+                    <StatusBadge
+                      tone={item.status === "partial" ? "warning" : "positive"}
+                    >
+                      {item.status === "partial"
+                        ? "Partial support"
+                        : "Supported"}
+                    </StatusBadge>
                   </div>
                   {item.evidence ? (
                     <p className="text-(length:--text-small) leading-5 text-foreground-soft">
@@ -422,7 +377,7 @@ export function ResumeJobKeywordEvidencePanel(props: {
             </ul>
           ) : (
             <p className="text-(length:--text-small) leading-5 text-foreground-soft">
-              No saved candidate content matches these terms yet.
+              No requirements have been checked as supported yet.
             </p>
           )}
         </div>
@@ -433,7 +388,7 @@ export function ResumeJobKeywordEvidencePanel(props: {
         >
           <div className="grid gap-0.5">
             <h4 className="text-(--text-headline)">
-              Requested by this job, not evidenced yet
+              Requested by this job, still to review
             </h4>
             <p className="text-(length:--text-small) leading-5 text-foreground-soft">
               Keep these terms out unless you can add truthful support from your
@@ -450,7 +405,24 @@ export function ResumeJobKeywordEvidencePanel(props: {
                   <strong className="text-sm text-foreground">
                     {item.term}
                   </strong>
-                  <StatusBadge tone="critical">Not evidenced</StatusBadge>
+                  <StatusBadge
+                    tone={item.status === "unchecked" ? "muted" : "critical"}
+                  >
+                    {item.status === "unchecked"
+                      ? "Not checked"
+                      : "Not evidenced"}
+                  </StatusBadge>
+                  {item.draftEvidence ? (
+                    <p className="w-full text-(length:--text-small) text-foreground-soft">
+                      Draft wording: {item.draftEvidence}. Saved evidence still
+                      needs confirmation.
+                    </p>
+                  ) : null}
+                  {item.evidence ? (
+                    <p className="w-full text-(length:--text-small) text-foreground-soft">
+                      {item.evidence}
+                    </p>
+                  ) : null}
                 </li>
               ))}
             </ul>

@@ -19,10 +19,23 @@ import type { JobFitJudgmentResult } from "./shared";
  */
 
 export const JOB_FIT_JUDGING_BATCH_SIZE = 20;
-const DESCRIPTION_CHARACTERS_PER_JOB = 1_400;
+/** Shared by preliminary and full reads so a rescore keeps the same constraints. */
+export function buildFitEvidenceInstructions(): string {
+  return [
+    "Compare country-limited remote work with the person's current location, authorizedWorkCountries, sponsorship needs and saved eligibility answers. Remote does not mean worldwide: remoteCountsAsAnyLocation never overrides a country restriction or work permission. Do not infer authorization from residence, education or past employers.",
+    "For hybrid or onsite work, compare the actual office city and required attendance with saved locations and relocation facts. Willingness to relocate is not permission to work there. A material place or eligibility mismatch must appear in preferencesExplanation, gaps and summary, lower the score below comparable eligible jobs, and prevent an unqualified strong_fit or apply_with_original recommendation. If eligibility is not known, say what must be confirmed.",
+    "Compare the listing's start date, immediate-start requirement, hours and availability window with availableStartDate, noticePeriodDays and saved availability/notice-period answers using assessmentDate. An ambiguous month without a year is uncertain: name the possible conflict and ask the person to confirm the year rather than claiming alignment.",
+    "Title similarity is preliminary evidence, not checked requirements. With card-only or incomplete text, use review_before_applying and a provisional score; do not claim strong fit, a credible original resume or confirmed requirements. Name decisive unknowns. When the full text is provided, read all of it, including the final requirements, before recommending.",
+    "Check every explicit language and proficiency level, specialist skill (including named programming languages), portfolio, licence, education and required experience against confirmed profile facts, projects and imported resume evidence. Distinguish direct support, transferable experience, partial support and missing evidence. Do not treat an unconfirmed generated resume claim as a fact.",
+    "Benefits, training offered, equipment and employer culture are not candidate requirements. Compare capabilities by meaning, not exact keyword spelling. For a compound requirement, show partial support when only part is evidenced and name the unsupported part; never mark the whole requirement supported by one phrase.",
+    "Missing seniority means level not confirmed. A plain role title without scope or experience requirements is not evidence that it is junior or below the person's level.",
+  ].join(" ");
+}
 
 export function buildJobFitJudgingPrompt(): string {
   return [
+    buildFitEvidenceInstructions(),
+    "These batch inputs are bounded excerpts and saved facts, without the raw imported resume. An evidenceOmitted flag or excerpt marker means some listing text was omitted: say that in the summary, treat requirements as provisional and request a full read for decisive unknowns. Missing wording in an excerpt is not proof of missing candidate ability.",
     "You judge how well each job fits one person who is looking for work.",
     'Return JSON {"judgments": [...]} with one entry per job, each with the jobId exactly as given.',
     'role: "exact" when the job is the kind of work the person is looking for, in any wording or language; "adjacent" when it is related work they could credibly do; "conflict" when it is a different occupation, or a level far from theirs; "unknown" when the listing says too little.',
@@ -36,32 +49,81 @@ export function buildJobFitJudgingPrompt(): string {
   ].join(" ");
 }
 
+/** Excerpts keep the beginning and end; the single-listing read gets all text. */
+function boundedText(value: string, limit: number): string {
+  if (value.length <= limit) return value;
+  const marker = "\n[Excerpt: middle omitted]\n";
+  const available = limit - marker.length;
+  const head = Math.floor((available * 2) / 3);
+  return (
+    value.slice(0, head) +
+    marker +
+    value.slice(value.length - (available - head))
+  );
+}
+
+function boundedList(values: readonly string[], count: number): string[] {
+  return values.slice(0, count).map((value) => boundedText(value, 400));
+}
+
 function compactPerson(profile: CandidateProfile) {
   return {
     headline: profile.headline,
-    summary: profile.summary,
+    summary: profile.summary ? boundedText(profile.summary, 1200) : null,
     currentLocation: profile.currentLocation,
     yearsExperience: profile.yearsExperience,
     workEligibility: profile.workEligibility,
+    savedEligibilityAnswers: {
+      workAuthorization: profile.answerBank.workAuthorization,
+      visaSponsorship: profile.answerBank.visaSponsorship,
+      relocation: profile.answerBank.relocation,
+      travel: profile.answerBank.travel,
+      noticePeriod: profile.answerBank.noticePeriod,
+      availability: profile.answerBank.availability,
+    },
+    projects: profile.projects.slice(0, 8).map((project) => ({
+      name: boundedText(project.name, 160),
+      role: project.role ? boundedText(project.role, 160) : null,
+      summary: project.summary ? boundedText(project.summary, 600) : null,
+      outcome: project.outcome ? boundedText(project.outcome, 400) : null,
+      skills: boundedList(project.skills, 12),
+    })),
+    proofBank: profile.proofBank.slice(0, 8).map((proof) => ({
+      title: boundedText(proof.title, 160),
+      claim: boundedText(proof.claim, 600),
+      supportingContext: proof.supportingContext
+        ? boundedText(proof.supportingContext, 400)
+        : null,
+    })),
     spokenLanguages: profile.spokenLanguages,
     skills: [
       ...new Set([
         ...profile.skills,
-        ...profile.experiences.flatMap((experience) => experience.skills),
+        ...profile.experiences
+          .filter((experience) => !experience.isDraft)
+          .flatMap((experience) => experience.skills),
       ]),
     ].slice(0, 60),
-    experience: profile.experiences.slice(0, 8).map((experience) => ({
-      title: experience.title,
-      company: experience.companyName,
-      startDate: experience.startDate,
-      endDate: experience.isCurrent ? "present" : experience.endDate,
-      summary: experience.summary,
-    })),
-    education: profile.education.slice(0, 4).map((education) => ({
-      degree: education.degree,
-      fieldOfStudy: education.fieldOfStudy,
-      school: education.schoolName,
-    })),
+    experience: profile.experiences
+      .filter((experience) => !experience.isDraft)
+      .slice(0, 12)
+      .map((experience) => ({
+        title: experience.title,
+        company: experience.companyName,
+        startDate: experience.startDate,
+        endDate: experience.isCurrent ? "present" : experience.endDate,
+        summary: experience.summary
+          ? boundedText(experience.summary, 800)
+          : null,
+      })),
+    education: profile.education
+      .filter((education) => !education.isDraft)
+      .slice(0, 8)
+      .map((education) => ({
+        degree: education.degree,
+        fieldOfStudy: education.fieldOfStudy,
+        school: education.schoolName,
+      })),
   };
 }
 
@@ -90,8 +152,21 @@ function compactJob(jobId: string, posting: JobPosting) {
     employmentType: posting.employmentType,
     salaryText: posting.salaryText,
     keySkills: posting.keySkills.slice(0, 15),
-    requirements: posting.minimumQualifications.slice(0, 10),
-    description: posting.description.slice(0, DESCRIPTION_CHARACTERS_PER_JOB),
+    detailQuality: posting.detailQuality,
+    responsibilities: boundedList(posting.responsibilities, 8),
+    requirements: boundedList(posting.minimumQualifications, 12),
+    preferredQualifications: boundedList(posting.preferredQualifications, 8),
+    description: boundedText(posting.description, 3000),
+    evidenceOmitted:
+      posting.description.length > 3000 ||
+      posting.responsibilities.length > 8 ||
+      posting.minimumQualifications.length > 12 ||
+      posting.preferredQualifications.length > 8 ||
+      [
+        ...posting.responsibilities,
+        ...posting.minimumQualifications,
+        ...posting.preferredQualifications,
+      ].some((value) => value.length > 400),
   };
 }
 

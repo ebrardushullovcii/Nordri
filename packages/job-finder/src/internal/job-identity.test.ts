@@ -177,7 +177,7 @@ describe("job identity", () => {
     ).toBeNull();
   });
 
-  test("rejects conflicting provider-ID and URL evidence", () => {
+  test("the canonical listing URL wins over a conflicting extracted provider id", () => {
     const providerMatch = identity({
       providerKey: "greenhouse",
       providerBoardToken: "acme",
@@ -203,7 +203,16 @@ describe("job identity", () => {
           canonicalUrl: urlMatch.canonicalUrl,
         }),
       ).status,
-    ).toBe("conflict");
+    ).toBe("matched");
+    expect(
+      index.find(
+        identity({
+          canonicalUrl: urlMatch.canonicalUrl,
+          company: "Wrong employer",
+          sourceJobId: "wrong",
+        }),
+      ),
+    ).toBe(urlMatch);
   });
 
   test("uses exact facts only to disambiguate colliding strong IDs", () => {

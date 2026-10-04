@@ -5,7 +5,6 @@ import {
   jobPostingDetailQualityValues,
   type ApplicationStatus,
   type CandidateProfile,
-  type FitRecommendation,
   type JobKeywordSignal,
   type JobRequirementAssessment,
   type JobSearchPreferences,
@@ -27,6 +26,7 @@ import {
   createMatchAssessmentPostingFingerprint,
 } from "./match-assessment-session";
 import { createMatchAssessmentPostingInput } from "./match-assessment-posting-input";
+import { preserveCompletedAssessment } from "./fit-judgment-apply";
 import { applyFitJudgment, toFitJudgment } from "./fit-judgment";
 import { buildBookkeepingDimensions } from "./matching-dimensions";
 import { canonicalizeLocationAliases } from "./location-normalization";
@@ -591,6 +591,10 @@ function preserveRicherExistingDetail(
 
   return {
     ...enrichedPosting,
+    title: existingJob.title,
+    company: existingJob.company,
+    location: existingJob.location,
+    workMode: [...existingJob.workMode],
     summary: existingJob.summary,
     description: existingJob.description,
     keySkills: [...existingJob.keySkills],
@@ -975,14 +979,9 @@ export async function createMatchAssessmentAsync(
   aiClient: JobFinderAiClient,
   profile: CandidateProfile,
   searchPreferences: JobSearchPreferences,
-  posting: JobPosting,
+  posting: JobPosting & { matchAssessment?: MatchAssessment | null },
   signal?: AbortSignal,
 ): Promise<MatchAssessment> {
-  const fallbackAssessment = createMatchAssessment(
-    profile,
-    searchPreferences,
-    posting,
-  );
   signal?.throwIfAborted();
   const assistedAssessment = await aiClient.assessJobFit({
     ...(signal ? { signal } : {}),
@@ -993,8 +992,11 @@ export async function createMatchAssessmentAsync(
   });
 
   signal?.throwIfAborted();
-  if (!assistedAssessment) {
-    return fallbackAssessment;
+  const previous = posting.matchAssessment;
+  if (!assistedAssessment || !assistedAssessment.requirements?.length) {
+    throw new Error(
+      "The fit assessment could not be completed. Your previous assessment was kept. Try again.",
+    );
   }
 
   // The model read the full listing against the profile and goals; its score
@@ -1011,7 +1013,7 @@ export async function createMatchAssessmentAsync(
       score: assistedAssessment.score,
       recommendation:
         assistedAssessment.recommendation ??
-        recommendationForModelScore(assistedAssessment.score),
+        "review_before_applying",
       role: assistedAssessment.role ?? "unknown",
       roleExplanation: assistedAssessment.roleExplanation ?? null,
       preferences: assistedAssessment.preferences ?? "unknown",
@@ -1034,23 +1036,16 @@ export async function createMatchAssessmentAsync(
       ),
     },
   );
+  const completed = applyFitJudgment(withRequirements, judgment);
+  if (previous?.judgment && previous.score !== completed.score) {
+    completed.recommendationRationale = `After reading the listing, your fit changed from ${previous.score}% to ${completed.score}%. ${completed.recommendationRationale}`;
+  }
   return {
-    ...applyFitJudgment(withRequirements, judgment),
+    ...completed,
     ...(assistedAssessment.requirements
       ? { requirementsSource: "model" as const }
       : {}),
   };
-}
-
-/**
- * Only for a model reply that gave a score without a recommendation (an
- * older provider or a fake): the score's own band, not a rule verdict.
- */
-function recommendationForModelScore(score: number): FitRecommendation {
-  if (score >= 80) return "strong_fit";
-  if (score >= 65) return "apply_with_original";
-  if (score >= 40) return "review_before_applying";
-  return "skip";
 }
 
 function preserveJobStatus(
@@ -1102,7 +1097,10 @@ function assembleMergedDiscoveredJob(input: {
     // job silently leave plan 1 as soon as plan 2 found it.
     campaignIds: [...(existingJob?.campaignIds ?? [])],
     status: preserveJobStatus(existingJob),
-    matchAssessment,
+    matchAssessment: preserveCompletedAssessment(
+      existingJob?.matchAssessment,
+      matchAssessment,
+    ),
     discoveryFeedback: existingJob?.discoveryFeedback ?? null,
     resumeApplicationMode: existingJob?.resumeApplicationMode ?? null,
     latestMatchAssessmentAudit: existingJob?.latestMatchAssessmentAudit ?? null,
@@ -1315,6 +1313,13 @@ function uniqueProvenance(
       kept.set(key, parsed);
       continue;
     }
+    const route =
+      parsed.listingUrl === first.listingUrl &&
+      parsed.routeReadAt &&
+      (!first.routeReadAt ||
+        Date.parse(parsed.routeReadAt) > Date.parse(first.routeReadAt))
+        ? parsed
+        : first;
     // The first sighting per source keeps its discovery time; a later one only
     // fills in what the first did not record (older provenance had no links).
     kept.set(key, {
@@ -1324,13 +1329,17 @@ function uniqueProvenance(
           ? (parsed.listingFacts ?? first.listingFacts)
           : first.listingFacts,
       listingUrl: first.listingUrl ?? parsed.listingUrl ?? null,
-      applicationUrl: first.listingUrl
-        ? (first.applicationUrl ?? null)
-        : (parsed.applicationUrl ?? null),
+      applicationUrl: route.routeReadAt
+        ? (route.pageApplyUrl ?? null)
+        : first.listingUrl
+          ? (first.applicationUrl ?? null)
+          : (parsed.applicationUrl ?? null),
       sourceJobId: first.sourceJobId ?? parsed.sourceJobId ?? null,
       applyPath: first.applyPath ?? parsed.applyPath ?? null,
-      pageApplyUrl: first.pageApplyUrl ?? parsed.pageApplyUrl ?? null,
-      routeReadAt: first.routeReadAt ?? parsed.routeReadAt ?? null,
+      pageApplyUrl: route.routeReadAt
+        ? (route.pageApplyUrl ?? null)
+        : (first.pageApplyUrl ?? parsed.pageApplyUrl ?? null),
+      routeReadAt: route.routeReadAt ?? null,
     });
   }
 
@@ -1410,7 +1419,9 @@ export function applySightingRoute<T extends JobPosting>(
         }
       : {}),
     canonicalUrl: sighting.listingUrl,
-    applicationUrl: sighting.applicationUrl ?? null,
+    applicationUrl: sighting.routeReadAt
+      ? (sighting.pageApplyUrl ?? null)
+      : (sighting.applicationUrl ?? null),
     applyPath,
     easyApplyEligible: applyPath === "easy_apply",
     sourceJobId: sighting.sourceJobId ?? job.sourceJobId,
@@ -1448,7 +1459,9 @@ function settleCanonicalRoute(
   const winner = selectCanonicalSighting(provenance);
   if (!winner || winner.listingUrl === existingJob.canonicalUrl) {
     if (posting.canonicalUrl === existingJob.canonicalUrl)
-      return enrichedPosting;
+      return winner?.routeReadAt
+        ? applySightingRoute(enrichedPosting, winner)
+        : enrichedPosting;
     return copySightingRouteFields(
       {
         ...enrichedPosting,
@@ -1469,7 +1482,9 @@ function settleCanonicalRoute(
       ...enrichedPosting,
       title: posting.title,
       company: enrichedPosting.company,
-      applicationUrl: posting.applicationUrl ?? null,
+      applicationUrl: winner.routeReadAt
+        ? (winner.pageApplyUrl ?? null)
+        : (posting.applicationUrl ?? null),
       location: posting.location,
       seniority: posting.seniority,
       salaryText: posting.salaryText,

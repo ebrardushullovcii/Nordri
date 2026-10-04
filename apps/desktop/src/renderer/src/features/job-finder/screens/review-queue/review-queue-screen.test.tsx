@@ -806,6 +806,81 @@ describe("ReviewQueueScreen job details honesty", () => {
       ),
     ).toBeTruthy();
   });
+  it("keeps country suitability beside original-resume readiness (R3-177)", () => {
+    const item = {
+      ...createEligibleItem("job_overseas"),
+      resumeApplicationMode: "original_resume" as const,
+    };
+    const job = buildJob({
+      jobId: item.jobId,
+      title: item.title,
+      summary: "Customer success",
+    });
+    renderScreen({
+      queue: [item],
+      selectedItem: item,
+      selectedJob: {
+        ...job,
+        resumeApplicationMode: "original_resume",
+        matchAssessment: {
+          ...job.matchAssessment,
+          recommendation: "review_before_applying",
+          locationReach: "outside_area",
+          gaps: ["UK work permission is not confirmed."],
+          dimensions: {
+            ...job.matchAssessment.dimensions,
+            preferenceAlignment: {
+              state: "conflict",
+              explanation: "Remote UK only; you can work in the United States.",
+              evidence: [],
+            },
+          },
+        },
+      } as SavedJob,
+    });
+    expect(screen.getByTestId("queue-suitability-warning").textContent).toContain(
+      "Remote UK only",
+    );
+    expect(screen.getByTestId("queue-suitability-warning").textContent).toContain(
+      "UK work permission",
+    );
+    expect(screen.getByTestId("application-action-row").textContent).toContain(
+      "Apply",
+    );
+  });
+
+  it("shows why a completed read changed the score (R3-106)", () => {
+    const item = createEligibleItem("job_rescored");
+    const job = buildJob({
+      jobId: item.jobId,
+      title: item.title,
+      summary: "Customer success",
+    });
+    const reason =
+      "After reading the listing, your fit changed from 48% to 32%. Required enterprise-sales experience is not evidenced.";
+    renderScreen({
+      queue: [item],
+      selectedItem: item,
+      selectedJob: {
+        ...job,
+        matchAssessment: {
+          ...job.matchAssessment,
+          recommendation: "review_before_applying",
+          recommendationRationale: reason,
+          judgment: {
+            source: "full",
+            judgedAt: "2026-10-04T00:00:00Z",
+            score: 32,
+            recommendation: "review_before_applying",
+          },
+        },
+      } as SavedJob,
+    });
+    expect(screen.getByTestId("queue-full-assessment-reason").textContent).toBe(
+      reason,
+    );
+  });
+
 });
 
 describe("ReviewQueueScreen readiness agreement", () => {

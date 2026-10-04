@@ -5,6 +5,7 @@ import { stripPictographGlyphs } from "./listing-detail-extraction";
 import {
   normalizeListingText,
   resolveListingEmployer,
+  resolvePostingProducingTarget,
 } from "./workspace-discovery-methods";
 import {
   createAgentAiClient,
@@ -263,4 +264,63 @@ describe("stripPictographGlyphs", () => {
     expect(stripPictographGlyphs(null)).toBeNull();
     expect(stripPictographGlyphs(undefined)).toBeUndefined();
   });
+});
+
+test("attributes a redirected extraction to the producing configured source through persistence", async () => {
+  const seed = createSeed();
+  const atlas = {
+    ...seed.searchPreferences.discovery.targets[0]!,
+    id: "atlas",
+    label: "Atlas",
+    startingUrl: "https://atlas.example.test/jobs",
+  };
+  const lever = {
+    ...atlas,
+    id: "lever",
+    label: "Lever",
+    startingUrl: "https://lever.example.test/employer",
+  };
+  seed.searchPreferences.discovery.targets = [atlas, lever];
+  seed.savedJobs = [];
+  seed.discovery.pendingDiscoveryJobs = [];
+  seed.discovery.discoveryLedger = [];
+  const posting = JobPostingSchema.parse({
+    ...createSeed().savedJobs[0]!,
+    canonicalUrl: "https://lever.example.test/employer/one",
+    producingPageUrl: "https://lever.example.test/employer/one",
+  });
+  expect(resolvePostingProducingTarget(posting, atlas, [atlas, lever])).toEqual(
+    lever,
+  );
+  const { workspaceService, repository } = createWorkspaceServiceHarness({
+    seed,
+    browserRuntime: createAgentBrowserRuntime([posting]),
+    aiClient: createAgentAiClient(),
+  });
+  await workspaceService.runDiscoveryForTarget(
+    atlas.id,
+    () => {},
+    new AbortController().signal,
+  );
+  const state = await repository.getDiscoveryState();
+  const jobs = [
+    ...(await repository.listSavedJobs()),
+    ...state.pendingDiscoveryJobs,
+  ];
+  expect(
+    jobs.find((job) => job.canonicalUrl === posting.canonicalUrl)?.provenance[0]
+      ?.targetId,
+  ).toBe(lever.id);
+  expect(
+    jobs.find((job) => job.canonicalUrl === posting.canonicalUrl)?.provenance[0]
+      ?.startingUrl,
+  ).toBe(lever.startingUrl);
+  const unknownPage = {
+    ...posting,
+    producingPageUrl: "https://unconfigured.example.test/one",
+  };
+  expect(
+    resolvePostingProducingTarget(unknownPage, atlas, [atlas, lever])
+      .startingUrl,
+  ).toBe(unknownPage.producingPageUrl);
 });

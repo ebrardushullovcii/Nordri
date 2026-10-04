@@ -63,9 +63,11 @@ import {
 } from "./model-request-transport";
 import {
   compactOpenAiCompatibleUserPayload,
+  FullFitEvidenceBudgetError,
   type OpenAiCompatibleJsonOperation,
 } from "./openai-compatible-request-compaction";
 import {
+  buildFitEvidenceInstructions,
   buildJobFitJudgingPayload,
   buildJobFitJudgingPrompt,
   normalizeJobFitJudgments,
@@ -609,6 +611,7 @@ export function createOpenAiCompatibleJobFinderAiClient(
         "assessJobFit",
         [
           "You assess how well a job matches a candidate profile.",
+          buildFitEvidenceInstructions(),
           "Return JSON only.",
           "Use a 0-100 score, 1-3 reasons, and up to 3 gaps.",
           "Keep explanations specific to the provided profile and job.",
@@ -696,7 +699,13 @@ export function createOpenAiCompatibleJobFinderAiClient(
         systemPrompt,
         {
           pageUrl: input.pageUrl,
-          pageText: input.pageText.slice(0, pageTextLimit),
+          pageText:
+            input.pageType === "job_detail"
+              ? input.pageText
+              : input.pageText.slice(0, pageTextLimit),
+          ...(input.selectionContext
+            ? { selectionContext: input.selectionContext }
+            : {}),
         },
         {
           timeoutMs,
@@ -1461,7 +1470,9 @@ export function createJobFinderAiClientFromEnvironment(
       try {
         return await primaryClient.assessJobFit(input);
       } catch (error) {
-        if (input.signal?.aborted) throw error;
+        if (input.signal?.aborted || error instanceof FullFitEvidenceBudgetError) {
+          throw error;
+        }
         // No verdict stands in: the job stays as it was and says so.
         logFallbackError("assessJobFit", error);
         return null;

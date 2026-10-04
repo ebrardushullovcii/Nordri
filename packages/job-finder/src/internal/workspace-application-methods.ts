@@ -226,6 +226,7 @@ import {
   enrichSavedJobListingDetails,
   jobNeedsListingDetail,
 } from "./listing-detail-enrichment";
+import { jobNeedsFitJudgment } from "./fit-judgment";
 import { createMatchAssessmentSession } from "./match-assessment-session";
 import { withSavedJobSearchBehavior } from "./job-search-behavior";
 import { enrichSearchPreferencesFromProfile } from "./workspace-helpers";
@@ -534,12 +535,12 @@ export function createWorkspaceApplicationMethods(
       if (
         alreadyRead &&
         !options.throwOnFailure &&
+        !jobNeedsFitJudgment(job, session.contextFingerprint) &&
         session.assessPersisted(job, job.matchAssessment).requirementsSource ===
           "model"
       )
         return;
-      if (alreadyRead) {
-        const bound = session.assess(job);
+      if (alreadyRead && !options.throwOnFailure) {
         const assessed = await createMatchAssessmentAsync(
           ctx.aiClient,
           profile,
@@ -549,11 +550,7 @@ export function createWorkspaceApplicationMethods(
           ),
           job,
         );
-        const matchAssessment = {
-          ...assessed,
-          contextFingerprint: bound.contextFingerprint,
-          postingFingerprint: bound.postingFingerprint,
-        };
+        const matchAssessment = session.remember(job, assessed);
         await ctx.repository.commitSavedJobDelta({
           update: (current) =>
             current.id === jobId && current.description === job.description
@@ -575,24 +572,25 @@ export function createWorkspaceApplicationMethods(
         fetchHtml: fetchListingHtml,
         readPage: createModelListingPageReader(ctx.aiClient),
         assess: async (posting) => {
-          const bound = session.assess(posting);
-          const assessed = await createMatchAssessmentAsync(
-            ctx.aiClient,
-            profile,
-            withSavedJobSearchBehavior(
-              enrichSearchPreferencesFromProfile(searchPreferences, profile),
-              settings,
-            ),
-            posting,
-          ).catch(() => bound);
-          return {
-            ...assessed,
-            contextFingerprint: bound.contextFingerprint,
-            postingFingerprint: bound.postingFingerprint,
-          };
+          try {
+            const assessed = await createMatchAssessmentAsync(
+              ctx.aiClient,
+              profile,
+              withSavedJobSearchBehavior(
+                enrichSearchPreferencesFromProfile(searchPreferences, profile),
+                settings,
+              ),
+              posting,
+            );
+            return session.remember(posting, assessed);
+          } catch (error) {
+            if (options.throwOnFailure) throw error;
+            return session.assess(posting);
+          }
         },
         timeBudgetMs: 9_000,
         ...(options.force ? { ignoreRetryBackoff: true } : {}),
+        ...(options.throwOnFailure ? { rereadComplete: true } : {}),
       });
       const next = enrichment.jobs[0];
       if (!next || enrichment.changedJobIds.length === 0) {
@@ -612,7 +610,15 @@ export function createWorkspaceApplicationMethods(
               postedAt: next.postedAt,
               employmentType: next.employmentType,
               workMode: next.workMode,
+              keySkills: next.keySkills,
+              keywordSignals: next.keywordSignals,
+              responsibilities: next.responsibilities,
+              minimumQualifications: next.minimumQualifications,
+              preferredQualifications: next.preferredQualifications,
+              seniority: next.seniority,
+              benefits: next.benefits,
               applicationUrl: next.applicationUrl,
+              provenance: next.provenance,
               normalizedCompensation: next.normalizedCompensation,
               screeningHints: next.screeningHints,
               detailQuality: next.detailQuality,
@@ -628,6 +634,16 @@ export function createWorkspaceApplicationMethods(
           pendingDiscoveryJobs: current.pendingDiscoveryJobs.map(applyRead),
         }),
       });
+      if (
+        options.throwOnFailure &&
+        next.listingDetailFetch?.outcome !== "enriched" &&
+        next.listingDetailFetch?.outcome !== "partial"
+      ) {
+        throw new Error(
+          next.listingDetailFetch?.detail ??
+            "The listing could not be assessed. Your previous assessment was kept.",
+        );
+      }
     } catch (error) {
       if (options.throwOnFailure) throw error;
       // The shortlist itself succeeded; the body stays unread for now and the

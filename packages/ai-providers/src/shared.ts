@@ -322,7 +322,7 @@ export const JobFitAssessmentSchema = z.object({
   reasons: z.array(NonEmptyStringSchema).default([]),
   gaps: z.array(NonEmptyStringSchema).default([]),
   // The model's verdict on the same terms as a search's batch judging. Older
-  // replies and fakes without them leave the verdict to the score alone.
+  // replies and fakes without a recommendation remain review-only.
   recommendation: FitRecommendationSchema.optional().catch(undefined),
   role: RoleSuitabilityStateSchema.optional().catch(undefined),
   roleExplanation: NonEmptyStringSchema.max(320).optional().catch(undefined),
@@ -672,6 +672,7 @@ export interface ExtractJobsFromPageInput {
   pageUrl: string;
   pageType: "search_results" | "job_detail";
   maxJobs: number;
+  selectionContext?: string;
   signal?: AbortSignal;
 }
 

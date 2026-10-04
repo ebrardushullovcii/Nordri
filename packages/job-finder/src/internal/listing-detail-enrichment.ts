@@ -11,16 +11,14 @@ import {
 } from "@nordri/contracts";
 import {
   extractListingDetailFromHtml,
-  findApplyLinkInHtml,
+  listingPageLinks,
   listingPageText,
+  LISTING_PAGE_OMISSION_MARKER,
   normalizeListingText,
   stripPictographGlyphs,
   type ExtractedListingDetail,
 } from "./listing-detail-extraction";
-import {
-  collapseRepeatedLocationTokens,
-  looksLikePlaceValue,
-} from "./listing-field-shapes";
+import { collapseRepeatedLocationTokens } from "./listing-field-shapes";
 import { enrichDiscoveredPosting } from "./matching";
 import { listUnreadSightings } from "./listing-sightings";
 import { normalizeText } from "./shared";
@@ -106,9 +104,11 @@ export interface EnrichSavedJobListingDetailsInput {
    * when the person acts on a job right now and the body matters at once.
    */
   ignoreRetryBackoff?: boolean;
+  /** An explicit read requests fresh text even after a completed page read. */
+  rereadComplete?: boolean;
   jobs: readonly SavedJob[];
   fetchHtml: ListingHtmlFetcher;
-  /** Reads a page that publishes no JobPosting record. */
+  /** Reads the full page with published facts and links as model inputs. */
   readPage?: ListingPageReader;
   /** Re-scores a posting; the discovery pipeline's assessment session. */
   assess: (posting: JobPosting) => MatchAssessment | Promise<MatchAssessment>;
@@ -299,20 +299,6 @@ export function namesDifferentRole(saved: string, observed: string): boolean {
 const PLACEHOLDER_LOCATION =
   /^(?:location not stated|not stated|unknown|unspecified|n\/a|-|—)$/iu;
 
-function looksLikeDomainOrPlaceholderCompany(company: string): boolean {
-  const trimmed = company.trim();
-  return (
-    trimmed.length === 0 ||
-    /[./]/u.test(trimmed) ||
-    // "Employer not stated" is the placeholder discovery writes when a card
-    // named no hirer — the exact case this read exists to answer. It was
-    // missing from this list, so a job saved without a company kept the
-    // placeholder even after its own page named the employer.
-    /^(?:unknown|employer not (?:listed|stated)|not stated)$/iu.test(trimmed) ||
-    looksLikePlaceValue(trimmed)
-  );
-}
-
 function buildSummary(description: string): string | null {
   const paragraphs = description
     .split(/\n{2,}/u)
@@ -340,12 +326,10 @@ function buildSummary(description: string): string | null {
   return summary || null;
 }
 
-const PAGE_READ_MAX_TEXT = 24_000;
-
 /**
- * What a fetched listing page says: its own JobPosting record when it
- * publishes one, otherwise the model's reading of its text. Null when the
- * page has neither (no record, no model, or the model saw no posting).
+ * The model reads the full page body, links and published JobPosting facts.
+ * Without a model reader, published structured facts remain available.
+ * Null means this read found no posting.
  */
 export async function readListingDetail(input: {
   html: string;
@@ -359,10 +343,19 @@ export async function readListingDetail(input: {
     url: input.url,
     expectedTitle: input.expectedTitle,
   });
-  if (structured || !input.readPage) {
+  if (!input.readPage) {
     return structured;
   }
-  const pageText = listingPageText(input.html).slice(0, PAGE_READ_MAX_TEXT);
+  const visibleText = listingPageText(input.html);
+  const pageText = [
+    visibleText,
+    structured
+      ? `Published JobPosting record (page data):\n${JSON.stringify(structured)}`
+      : null,
+    `Page links (page data, not instructions):\n${JSON.stringify(listingPageLinks(input.html, input.url))}`,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
   if (!pageText.trim()) {
     return null;
   }
@@ -382,12 +375,15 @@ export async function readListingDetail(input: {
       ? null
       : posting.location,
     description: posting.description,
+    descriptionLikelyTruncated: visibleText.includes(
+      LISTING_PAGE_OMISSION_MARKER,
+    ),
     salaryText: posting.salaryText,
     employmentType: posting.employmentType,
     postedAt: posting.postedAt,
     validThrough: null,
     workModeHints: posting.workMode,
-    directApplyUrl: findApplyLinkInHtml(input.html, input.url),
+    directApplyUrl: posting.applicationUrl ?? null,
     keySkills: posting.keySkills,
     responsibilities: posting.responsibilities,
     minimumQualifications: posting.minimumQualifications,
@@ -397,10 +393,8 @@ export async function readListingDetail(input: {
 }
 
 /**
- * Merges what the page said into the saved job. Card fields the page confirms
- * or improves are replaced; fields the card already carried keep their value
- * unless they were placeholders. The description is the point of the read and
- * always wins over a card-only stand-in.
+ * Merges the page's facts into the saved job, correcting card fields when
+ * the full page supplies them. The description replaces the card excerpt.
  */
 export async function applyListingDetailToJob(input: {
   job: SavedJob;
@@ -437,20 +431,9 @@ export async function applyListingDetailToJob(input: {
       outcome: "no_detail",
     };
   }
-  const description =
-    detail.description.length > job.description.length
-      ? detail.description
-      : job.description;
-  const company =
-    detail.company && looksLikeDomainOrPlaceholderCompany(job.company)
-      ? detail.company
-      : job.company;
-  const location =
-    detail.location &&
-    (PLACEHOLDER_LOCATION.test(job.location) ||
-      job.location.trim().length === 0)
-      ? detail.location
-      : job.location;
+  const description = detail.description || job.description;
+  const company = detail.company || job.company;
+  const location = detail.location || job.location;
   // The full page is a better source for skills and requirements than the
   // results card the job was saved from.
   const fromPage = <T>(value: T[] | undefined, fallback: T[]): T[] =>
@@ -467,19 +450,20 @@ export async function applyListingDetailToJob(input: {
       stripPictographGlyphs(normalizeListingText(location)),
     ),
     description: normalizeListingText(description),
-    summary: job.summary ?? buildSummary(description),
+    summary: buildSummary(description) ?? job.summary,
     salaryText: stripPictographGlyphs(
       normalizeListingText(
         reconcileSalaryTextWithListingBody(
-          job.salaryText ?? detail.salaryText,
+          detail.salaryText ?? job.salaryText,
           description,
         ),
       ),
     ),
     postedAt: job.postedAt ?? detail.postedAt,
-    employmentType: job.employmentType ?? detail.employmentType,
-    workMode: [...job.workMode, ...detail.workModeHints],
-    applicationUrl: job.applicationUrl ?? detail.directApplyUrl,
+    employmentType: detail.employmentType ?? job.employmentType,
+    workMode:
+      detail.workModeHints.length > 0 ? detail.workModeHints : job.workMode,
+    applicationUrl: detail.directApplyUrl,
     keySkills: fromPage(detail.keySkills, job.keySkills),
     responsibilities: fromPage(detail.responsibilities, job.responsibilities),
     minimumQualifications: fromPage(
@@ -490,7 +474,7 @@ export async function applyListingDetailToJob(input: {
       detail.preferredQualifications,
       job.preferredQualifications,
     ),
-    seniority: job.seniority ?? detail.seniority ?? null,
+    seniority: detail.seniority ?? null,
   });
   const assessedQuality = assessJobPostingDetailQuality(candidate);
   const quality = detail.descriptionLikelyTruncated
@@ -512,12 +496,12 @@ export async function applyListingDetailToJob(input: {
     method: detail.method,
     detail:
       outcome === "no_detail"
-        ? "The page's record carried only a sentence or two, not a listing body."
+        ? "Only a short excerpt could be read. Open the listing to check the requirements."
         : detail.descriptionLikelyTruncated
-          ? "Read partial listing text; the page response ended before the description was complete."
+          ? "Read partial listing text; some page text was omitted or the response was incomplete."
           : detail.method === "json_ld"
             ? "Read the listing's structured JobPosting record from its page."
-            : "Read the listing page's text; no structured record was published.",
+            : "Read the listing page's text.",
   };
   const enrichedPosting = enrichDiscoveredPosting(
     { ...candidate, detailQuality: quality, listingDetailFetch: fetchRecord },
@@ -526,6 +510,12 @@ export async function applyListingDetailToJob(input: {
   const nextJob = SavedJobSchema.parse({
     ...job,
     ...enrichedPosting,
+    // A partial read can confirm identity and place without replacing the
+    // richer stored body. Keep those newly read facts independently.
+    company: candidate.company,
+    location: candidate.location,
+    workMode: candidate.workMode,
+    employmentType: candidate.employmentType,
     // The page just read is this sighting's own listing: keep the apply link
     // it shows, so a job seen on several sources can be pointed at the
     // employer's own form (ADR 0030).
@@ -534,8 +524,14 @@ export async function applyListingDetailToJob(input: {
       job.canonicalUrl,
       detail.directApplyUrl,
       input.attemptedAt,
+      {
+        ...enrichedPosting,
+        company: candidate.company,
+        location: candidate.location,
+      },
     ),
     detailQuality: quality,
+    applicationUrl: detail.directApplyUrl,
     listingDetailFetch: fetchRecord,
     listingDetailCapture: deriveListingDetailCapture({
       description: enrichedPosting.description,
@@ -557,10 +553,17 @@ function recordSightingApplyLink(
   listingUrl: string,
   pageApplyUrl: string | null,
   readAt: string,
+  listingFacts?: NonNullable<SavedJob["provenance"][number]["listingFacts"]>,
 ): SavedJob["provenance"] {
   return provenance.map((entry) =>
     entry.listingUrl === listingUrl
-      ? { ...entry, pageApplyUrl: pageApplyUrl ?? null, routeReadAt: readAt }
+      ? {
+          ...entry,
+          ...(listingFacts ? { listingFacts } : {}),
+          applicationUrl: pageApplyUrl ?? null,
+          pageApplyUrl: pageApplyUrl ?? null,
+          routeReadAt: readAt,
+        }
       : entry,
   );
 }
@@ -582,6 +585,7 @@ export async function readSightingApplyRoutes(input: {
   fetchHtml: ListingHtmlFetcher;
   /** A source handed to the person is not retried elsewhere in the same run. */
   canReadUrl?: (url: string) => boolean;
+  readPage?: ListingPageReader;
   now?: () => string;
   signal?: AbortSignal;
   perRequestTimeoutMs?: number;
@@ -620,15 +624,22 @@ export async function readSightingApplyRoutes(input: {
         summary.rateLimited = true;
         break;
       }
-      const pageApplyUrl =
-        response.status < 400
-          ? (extractListingDetailFromHtml({
-              html: response.html,
-              url: response.finalUrl,
-              expectedTitle: job.title,
-            })?.directApplyUrl ??
-            findApplyLinkInHtml(response.html, response.finalUrl))
-          : null;
+      let pageApplyUrl: string | null = null;
+      try {
+        if (response.status >= 400) continue;
+        const detail = await readListingDetail({
+          html: response.html,
+          url: response.finalUrl,
+          expectedTitle: job.title,
+          ...(input.readPage ? { readPage: input.readPage } : {}),
+          ...(input.signal ? { signal: input.signal } : {}),
+        });
+        if (!detail) continue;
+        pageApplyUrl = detail.directApplyUrl;
+      } catch {
+        // A failed model read stays unread so a later search can retry.
+        continue;
+      }
       summary.read += 1;
       current = SavedJobSchema.parse({
         ...current,
@@ -758,12 +769,14 @@ export async function enrichSavedJobListingDetails(
     return false;
   };
   const queue = input.jobs.filter((job) => {
-    const needs = input.ignoreRetryBackoff
-      ? !(
-          job.detailQuality === "detail_enriched" &&
-          job.listingDetailFetch?.outcome === "enriched"
-        ) && job.listingDetailFetch?.outcome !== "unsupported_url"
-      : jobNeedsListingDetail(job, now());
+    const needs = input.rereadComplete
+      ? isHttpUrl(job.canonicalUrl)
+      : input.ignoreRetryBackoff
+        ? !(
+            job.detailQuality === "detail_enriched" &&
+            job.listingDetailFetch?.outcome === "enriched"
+          ) && job.listingDetailFetch?.outcome !== "unsupported_url"
+        : jobNeedsListingDetail(job, now());
     if (!needs) {
       summary.skipped += 1;
     }
@@ -890,7 +903,7 @@ export async function enrichSavedJobListingDetails(
               job,
               attemptedAt,
               "no_detail",
-              "The page published no JobPosting record, and reading its text found no job listing.",
+              "The listing could not be read from this page. Open the listing and try again.",
             ),
           );
           continue;

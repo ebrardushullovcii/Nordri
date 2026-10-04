@@ -11,6 +11,7 @@ import {
   type DiscoveryRunRecord,
   type DiscoveryRunResult,
   type FitJudgment,
+  type MatchAssessment,
   type DiscoveryRunScope,
   type DiscoveryTargetExecution,
   type JobDiscoveryTarget,
@@ -45,6 +46,7 @@ import {
 } from "./workspace-source-user-action";
 import {
   createMatchAssessment,
+  createMatchAssessmentAsync,
   enrichDiscoveredPosting,
   applySightingRoute,
   mergeDiscoveredPostings,
@@ -867,6 +869,39 @@ function getDiscoveryCheckpointPostingKey(posting: JobPosting): string {
  * the card-only default. Re-assessing an already-scored posting is
  * idempotent.
  */
+/** Resolve attribution from the observed page, never from its extracted apply URL. */
+export function resolvePostingProducingTarget(
+  posting: JobPosting,
+  activeTarget: JobDiscoveryTarget,
+  targets: readonly JobDiscoveryTarget[],
+): Pick<JobDiscoveryTarget, "id" | "adapterKind" | "startingUrl"> {
+  if (!posting.producingPageUrl) return activeTarget;
+  const page = new URL(posting.producingPageUrl);
+  const candidates = targets
+    .filter((target) => {
+      const start = new URL(target.startingUrl);
+      const path = start.pathname.replace(/\/$/u, "");
+      return (
+        page.origin === start.origin &&
+        (!path ||
+          page.pathname === path ||
+          page.pathname.startsWith(`${path}/`))
+      );
+    })
+    .sort((left, right) => right.startingUrl.length - left.startingUrl.length);
+  const match = candidates[0];
+  if (match) return match;
+  // A same-site results page may lead to sibling listing paths. Preserve its
+  // configured source only when no other configured source matches the page.
+  if (page.origin === new URL(activeTarget.startingUrl).origin)
+    return activeTarget;
+  return {
+    id: `page:${page.origin}`,
+    adapterKind: "auto",
+    startingUrl: posting.producingPageUrl,
+  };
+}
+
 function normalizeCollectedCheckpointPosting(posting: JobPosting): JobPosting {
   const detailQuality = assessJobPostingDetailQuality(posting);
   return JobPostingSchema.parse({
@@ -2118,12 +2153,20 @@ export function createWorkspaceDiscoveryMethods(
             enrichedPreferences,
             mergeSeedJobs,
             budgetedPostings,
-            (posting) =>
-              createDiscoveryProvenance({
-                targetId: target.id,
-                adapterKind: target.adapterKind,
-                resolvedAdapterKind: resolvedTargetAdapterKind,
-                startingUrl: target.startingUrl,
+            (posting) => {
+              const producingTarget = resolvePostingProducingTarget(
+                posting,
+                target,
+                enrichedPreferences.discovery.targets,
+              );
+              return createDiscoveryProvenance({
+                targetId: producingTarget.id,
+                adapterKind: producingTarget.adapterKind,
+                resolvedAdapterKind:
+                  producingTarget.id === target.id
+                    ? resolvedTargetAdapterKind
+                    : posting.source,
+                startingUrl: producingTarget.startingUrl,
                 discoveredAt: new Date().toISOString(),
                 collectionMethod: targetCollectionMethod,
                 providerKey: posting.providerKey,
@@ -2133,7 +2176,8 @@ export function createWorkspaceDiscoveryMethods(
                 applicationUrl: posting.applicationUrl,
                 sourceJobId: posting.sourceJobId,
                 applyPath: posting.applyPath,
-              }),
+              });
+            },
             executionSignal,
             assessDiscoveryPosting,
           );
@@ -2179,7 +2223,11 @@ export function createWorkspaceDiscoveryMethods(
               ledger: workingLedger,
               index: knownJobIndex,
               posting,
-              targetId: target.id,
+              targetId: resolvePostingProducingTarget(
+                posting,
+                target,
+                enrichedPreferences.discovery.targets,
+              ).id,
               seenAt: new Date().toISOString(),
               status:
                 posting.detailQuality === "detail_enriched"
@@ -3237,6 +3285,7 @@ export function createWorkspaceDiscoveryMethods(
               jobs: multiSourceJobs,
               fetchHtml: ctx.fetchListingHtml,
               canReadUrl: canReadListingUrl,
+              readPage: createModelListingPageReader(ctx.aiClient),
               signal: executionSignal,
             });
             routedJobs = routeRead.jobs;
@@ -3324,17 +3373,53 @@ export function createWorkspaceDiscoveryMethods(
               aiClient: ctx.aiClient,
               profile,
               searchPreferences: enrichedPreferences,
-              jobs: toJudge,
+              jobs: toJudge.filter(
+                (job) => job.matchAssessment.judgment?.source !== "full",
+              ),
               contextFingerprint: assessmentSession.contextFingerprint,
               signal: executionSignal,
             });
-            if (judgments.size > 0) {
+            // Changed goals or profile require another full comparison for
+            // a job previously read in full. A batch verdict cannot replace
+            // that read or erase its requirement evidence.
+            const fullAssessments = new Map<string, MatchAssessment>();
+            const fullJobs = toJudge.filter(
+              (job) => job.matchAssessment.judgment?.source === "full",
+            );
+            let fullCursor = 0;
+            await Promise.all(
+              Array.from({ length: Math.min(5, fullJobs.length) }, async () => {
+                while (fullCursor < fullJobs.length) {
+                  executionSignal.throwIfAborted();
+                  const job = fullJobs[fullCursor++];
+                  if (!job) return;
+                  try {
+                    const assessed = await createMatchAssessmentAsync(
+                      ctx.aiClient,
+                      profile,
+                      enrichedPreferences,
+                      job,
+                      executionSignal,
+                    );
+                    fullAssessments.set(
+                      job.id,
+                      assessmentSession.remember(job, assessed),
+                    );
+                  } catch (error) {
+                    if (executionSignal.aborted) throw error;
+                    // Keep the last completed full assessment until a later pass.
+                  }
+                }
+              }),
+            );
+            if (judgments.size > 0 || fullAssessments.size > 0) {
               const pendingJobIds = new Set(
                 workingPendingJobs.map((job) => job.id),
               );
               const applyJudgment = <T extends SavedJob>(job: T): T => {
                 const judgment = judgments.get(job.id);
-                if (!judgment) return job;
+                const fullAssessment = fullAssessments.get(job.id);
+                if (!judgment && !fullAssessment) return job;
                 if (pendingJobIds.has(job.id)) {
                   touchedPendingJobIds.add(job.id);
                 } else {
@@ -3342,7 +3427,8 @@ export function createWorkspaceDiscoveryMethods(
                 }
                 return {
                   ...job,
-                  matchAssessment: assessmentSession.assess(job, judgment),
+                  matchAssessment:
+                    fullAssessment ?? assessmentSession.assess(job, judgment),
                 };
               };
               workingSavedJobs = workingSavedJobs.map(applyJudgment);
@@ -3351,9 +3437,9 @@ export function createWorkspaceDiscoveryMethods(
             }
             emitActivity(
               readEvent(
-                judgments.size === toJudge.length
-                  ? `Judged ${judgments.size} ${judgments.size === 1 ? "job" : "jobs"} against your profile and goals`
-                  : `Judged ${judgments.size} of ${toJudge.length} jobs; the rest are judged on the next search`,
+                judgments.size + fullAssessments.size === toJudge.length
+                  ? `Judged ${judgments.size + fullAssessments.size} jobs against your profile and goals`
+                  : `Judged ${judgments.size + fullAssessments.size} of ${toJudge.length} jobs; the rest keep their previous assessment and are judged on the next search`,
               ),
             );
           } catch (error) {

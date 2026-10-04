@@ -159,7 +159,9 @@ export function classifySightingRoute(
     sighting.applicationUrl && sighting.applicationUrl !== sighting.listingUrl
       ? parseHttpUrl(sighting.applicationUrl)
       : null;
-  const evidence = parseHttpUrl(sighting.pageApplyUrl) ?? collected;
+  const evidence = sighting.routeReadAt
+    ? parseHttpUrl(sighting.pageApplyUrl)
+    : (parseHttpUrl(sighting.pageApplyUrl) ?? collected);
   if (!evidence) {
     // A read page with no separate apply link is still not proof either way.
     return "unknown";

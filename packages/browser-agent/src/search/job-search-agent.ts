@@ -414,8 +414,10 @@ export async function runJobSearchAgent(
         typeof args.maxJobs === "number"
           ? Math.max(1, Math.min(50, Math.floor(args.maxJobs)))
           : 20;
-      const observation =
-        pageTools.state.observation ?? (await pageTools.observe());
+      // Navigation or a redirect can change the page between tools. Bind the
+      // text, links and extraction URL to a fresh observation, not a cached
+      // source page (R3-069).
+      const observation = await pageTools.observe();
       const pageText = await hands.readText();
       if (!observation.url) {
         return { kind: "ok", content: "There is no page to read yet." };
@@ -450,6 +452,19 @@ export async function runJobSearchAgent(
         pageUrl: observation.url,
         pageType,
         maxJobs,
+        ...(!isSourceCheck
+          ? {
+              selectionContext: JSON.stringify({
+                person: config.userProfile,
+                targetRoles: config.searchPreferences.targetRoles,
+                locations: config.searchPreferences.locations,
+                workModes: config.searchPreferences.workModes,
+                request: config.promptContext.searchRequest,
+                searchGuidance: config.promptContext.searchGuidance,
+                sourceInstructions: config.promptContext.siteInstructions ?? [],
+              }),
+            }
+          : {}),
         ...(context.signal ? { signal: context.signal } : {}),
       });
       const added: JobPosting[] = [];
@@ -457,6 +472,7 @@ export async function runJobSearchAgent(
       const ignoredBefore = outsideCatalogAttempts;
       for (const partial of found) {
         const posting = toPosting(normalizeExtractedJobSourceId(partial));
+        if (posting) posting.producingPageUrl = observation.url;
         const notAPosting = posting
           ? describeNonPosting(posting, observation.url, pageType)
           : null;

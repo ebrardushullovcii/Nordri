@@ -230,3 +230,20 @@ test("fit assessment cancellation does not call the fallback model", async () =>
   await rejection;
   expect(fetchMock).toHaveBeenCalledTimes(1);
 });
+
+test("an oversized full read reports its input limit through the configured client without sending an excerpt", async () => {
+  const fetchMock = vi.fn();
+  vi.stubGlobal("fetch", fetchMock);
+  const client = createJobFinderAiClientFromEnvironment(createEnvironment());
+  await expect(
+    client.assessJobFit({
+      profile: createProfile(),
+      searchPreferences: createPreferences(),
+      job: {
+        ...createJobPosting(),
+        description: "Full listing evidence ".repeat(100000),
+      },
+    }),
+  ).rejects.toThrow("exceed the model's input limit");
+  expect(fetchMock).not.toHaveBeenCalled();
+});
