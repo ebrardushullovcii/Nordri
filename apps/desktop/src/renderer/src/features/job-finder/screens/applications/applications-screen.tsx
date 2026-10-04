@@ -1,3 +1,4 @@
+import { useQuestionAnswerDrafts } from "../actions/use-question-answer-drafts";
 import { isSameSiteApplicationActive } from "../actions/actions-screen";
 import { formatElapsedMinutes } from "./applications-recovery-state";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -535,6 +536,11 @@ export function ApplicationsScreen(props: {
       ) as Record<ApplicationsViewFilter, number>,
     [applicationRecords, latestApplyResultByRecordId, readApplyRunContext],
   );
+  const { answerDrafts, restoredApplications } = useQuestionAnswerDrafts({
+    applicationAttempts,
+    requests: userActionRequests ?? [],
+    onGetApplyRunDetails,
+  });
   const latestAutomaticRun = useMemo(
     () =>
       [...applyRuns]
@@ -1064,10 +1070,16 @@ export function ApplicationsScreen(props: {
                     .join("")}
                 </p>
               </div>
-              <StatusBadge tone="critical">
-                {`${latestRunAttentionCount} unusual ${
-                  latestRunAttentionCount === 1 ? "case" : "cases"
-                }`}
+              <StatusBadge
+                tone={
+                  latestAutomaticResults.some(
+                    (result) => result.state === "failed",
+                  )
+                    ? "critical"
+                    : "neutral"
+                }
+              >
+                {latestRunAttentionCount} need attention
               </StatusBadge>
             </section>
           ) : null}
@@ -1299,6 +1311,20 @@ export function ApplicationsScreen(props: {
               : {})}
             activeFilter={activeFilter}
             readApplyRunContext={readApplyRunContext}
+            answerDraft={
+              selectedRecord
+                ? answerDrafts.current.get(selectedRecord.id)
+                : undefined
+            }
+            answerDraftRestored={
+              selectedRecord
+                ? restoredApplications.has(selectedRecord.id)
+                : false
+            }
+            onAnswerDraftChange={(draft) => {
+              if (selectedRecord)
+                answerDrafts.current.set(selectedRecord.id, draft);
+            }}
             applyRunDetails={applyRunDetails}
             applyRunDetailsTarget={applyRunDetailsTarget}
             applyRunDetailsError={applyRunDetailsError}

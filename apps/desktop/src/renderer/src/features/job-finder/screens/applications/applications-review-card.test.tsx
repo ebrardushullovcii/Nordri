@@ -50,7 +50,10 @@ function card(overrides: Record<string, unknown> = {}) {
 describe("ApplicationsReviewCard", () => {
   it("shows each answer with the run's own phrase for where it came from", () => {
     render(
-      <ApplicationsReviewCard card={card()} onSubmit={vi.fn(() => Promise.resolve())} />,
+      <ApplicationsReviewCard
+        card={card()}
+        onSubmit={vi.fn(() => Promise.resolve())}
+      />,
     );
 
     expect(screen.getByText("Email")).toBeTruthy();
@@ -71,7 +74,10 @@ describe("ApplicationsReviewCard", () => {
               answer: "I build platforms other engineers rely on.",
               source: "written for this application",
               written: true,
-              groundedIn: ["the resume sent with this application", "the posting"],
+              groundedIn: [
+                "the resume sent with this application",
+                "the posting",
+              ],
             },
           ],
         })}
@@ -87,11 +93,15 @@ describe("ApplicationsReviewCard", () => {
   });
 
   it("shows the letter in full with what it was written from", () => {
-    const text = "Dear hiring team, I have spent eight years building platforms.";
+    const text =
+      "Dear hiring team, I have spent eight years building platforms.";
     render(
       <ApplicationsReviewCard
         card={card({
-          letter: { text, groundedIn: ["the resume sent with this application"] },
+          letter: {
+            text,
+            groundedIn: ["the resume sent with this application"],
+          },
         })}
         onSubmit={vi.fn(() => Promise.resolve())}
       />,
@@ -121,7 +131,9 @@ describe("ApplicationsReviewCard", () => {
     const onSubmit = vi.fn(() => Promise.resolve());
     render(
       <ApplicationsReviewCard
-        card={card({ waitingOnYou: ['Job Finder stopped on "Expected salary".'] })}
+        card={card({
+          waitingOnYou: ['Job Finder stopped on "Expected salary".'],
+        })}
         onSubmit={onSubmit}
       />,
     );
@@ -168,7 +180,9 @@ describe("ApplicationsReviewCard", () => {
     render(
       <ApplicationsReviewCard
         card={card()}
-        onSubmit={vi.fn(() => Promise.reject(new Error("ECONNRESET at socket")))}
+        onSubmit={vi.fn(() =>
+          Promise.reject(new Error("ECONNRESET at socket")),
+        )}
       />,
     );
 
@@ -179,3 +193,29 @@ describe("ApplicationsReviewCard", () => {
     expect(alert.textContent).not.toMatch(/^ECONNRESET/);
   });
 });
+
+it.each([false, true])(
+  "labels an answer chosen on the form plainly (written=%s)",
+  (written) => {
+    render(
+      <ApplicationsReviewCard
+        card={card({
+          answers: [
+            {
+              question: "Currency",
+              answer: "EUR",
+              source: "chosen on the form",
+              written,
+              groundedIn: [],
+            },
+          ],
+        })}
+        onSubmit={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("Your answer on the form")).toBeTruthy();
+    expect(
+      screen.queryByText(/Written for this application chosen|From chosen/),
+    ).toBeNull();
+  },
+);

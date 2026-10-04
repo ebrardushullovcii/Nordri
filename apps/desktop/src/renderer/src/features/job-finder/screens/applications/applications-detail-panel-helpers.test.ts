@@ -120,6 +120,14 @@ function createReceipt(
 }
 
 describe("getCustomerFacingApplyText", () => {
+  it("uses a plain source label in retained answer history", () => {
+    expect(
+      getCustomerFacingApplyText(
+        'Answered "Currency" from chosen on the form.',
+      ),
+    ).toBe('Answered "Currency" from your answer on the form.');
+  });
+
   it("keeps transport implementation language out of retained customer history", () => {
     const resumeMessage = getCustomerFacingApplyText(
       "Prepare-only guard blocked a POST xhr attempt while the resume upload was running.",

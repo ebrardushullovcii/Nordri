@@ -435,6 +435,18 @@ async function decideAnswer(input: {
   const payDisclosed =
     config.authority.salaryDisclosure === "answer_from_profile";
   const saved = savedSuggestion(control, config);
+  // Application answers are injected only for this request's execution;
+  // reusable library answers do not carry this prefix.
+  const isApplicationAnswer = saved?.sourceId.startsWith(
+    "answerLibrary.application_",
+  );
+  if (
+    saved &&
+    isApplicationAnswer &&
+    normalizeSignal(saved.value) === normalizeSignal(value)
+  ) {
+    return { kind: "use", answer: { ...saved, value } };
+  }
   if (control.questionKind === "salary_expectation" && !payDisclosed) {
     const savedPay = config.sources.profile.answerBank.salaryExpectations;
     return {
@@ -1538,7 +1550,7 @@ export async function executeApplyProposal(
                 ...choice.answer,
                 value: proposedOption,
                 sourceId: `chosen.${control.ref}`,
-                provenanceLabel: "chosen on the form",
+                provenanceLabel: "your answer on the form",
               }
             : choice.answer;
       }
@@ -1621,7 +1633,7 @@ export async function executeApplyProposal(
                     : `chosen.${control.ref}`,
                   provenanceLabel: control.attestationKind
                     ? "a declaration you approved in advance"
-                    : "chosen on the form",
+                    : "your answer on the form",
                   groundedIn: [
                     control.attestationKind
                       ? "a declaration you approved in advance"

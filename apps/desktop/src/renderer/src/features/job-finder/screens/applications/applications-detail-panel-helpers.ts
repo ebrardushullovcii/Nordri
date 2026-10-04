@@ -362,7 +362,10 @@ export function getCustomerFacingApplyText(
   receipt?: ApplicationPrivacyReceipt | null,
 ): string | null {
   void receipt;
-  const text = splitBlockedAttemptNote(value).message;
+  const text = splitBlockedAttemptNote(value).message?.replace(
+    /from chosen on the form/giu,
+    "from your answer on the form",
+  );
   if (!text) {
     return null;
   }

@@ -2020,3 +2020,62 @@ describe("a new attempt for a job", () => {
     ).toHaveLength(1);
   });
 });
+
+test.each([
+  "failed",
+  "cancelled",
+  "submitted",
+  "skipped",
+  "blocked",
+  "awaiting_review",
+  "filling",
+] as const)(
+  "a running batch's %s result blocks retry only while active",
+  async (state) => {
+    const { workspaceService, repository } = createOriginalResumeHarness();
+    const initial = await workspaceService.startAutoApplyRun("job_ready");
+    const run = (await repository.listApplyRuns()).find(
+      (entry) => entry.id === initial.selectedApplyRunId,
+    )!;
+    const result = (await repository.listApplyJobResults()).find(
+      (entry) => entry.runId === run.id,
+    )!;
+    await repository.upsertApplyRun({
+      ...run,
+      mode: "queue_auto",
+      state: "running",
+      completedAt: null,
+      jobIds: ["job_ready", "job_other"],
+      totalJobs: 2,
+      pendingJobs: 1,
+    });
+    await repository.upsertApplyJobResult({ ...result, state });
+    await repository.upsertApplyJobResult({
+      ...result,
+      id: "result_other",
+      jobId: "job_other",
+      applicationRecordId: "application_other",
+      state: "filling",
+      completedAt: null,
+    });
+    if (state === "filling") {
+      await expect(
+        workspaceService.startApplyCopilotRun("job_ready"),
+      ).rejects.toThrow("already being prepared");
+    } else {
+      await expect(
+        workspaceService.startApplyCopilotRun("job_ready"),
+      ).resolves.toBeDefined();
+      expect(
+        (await repository.listApplyJobResults()).some(
+          (entry) => entry.jobId === "job_ready" && entry.runId !== run.id,
+        ),
+      ).toBe(true);
+    }
+    expect(
+      (await repository.listApplyJobResults()).find(
+        (entry) => entry.id === "result_other",
+      )?.state,
+    ).toBe("filling");
+  },
+);

@@ -132,3 +132,50 @@ describe("application answers in prepare-only execution", () => {
     expect(merged.answerBank.customAnswers[0]?.answer).toBe("Old");
   });
 });
+
+it("keeps the person's pay answers scoped to this application's execution profile", () => {
+  const profile = createSeed().profile;
+  const before = structuredClone(profile);
+  const salary = {
+    ...question("salary", "salary_answer"),
+    prompt: "Expected salary",
+    kind: "salary_expectation" as const,
+  };
+  const currency = {
+    ...question("currency", "currency_answer"),
+    prompt: "Salary currency",
+  };
+  const merged = mergeApplicationAnswersIntoExecutionProfile({
+    profile,
+    questionRecords: [salary, currency],
+    answerRecords: [
+      answer({
+        id: "salary_answer",
+        questionId: "salary",
+        text: "90000",
+        revision: 1,
+      }),
+      answer({
+        id: "currency_answer",
+        questionId: "currency",
+        text: "EUR",
+        revision: 1,
+      }),
+    ],
+    idPrefix: "application_request_pay",
+  });
+  expect(merged.answerBank.customAnswers.slice(0, 2)).toEqual([
+    expect.objectContaining({
+      question: "Expected salary",
+      answer: "90000",
+    }),
+    expect.objectContaining({
+      question: "Salary currency",
+      answer: "EUR",
+    }),
+  ]);
+  for (const entry of merged.answerBank.customAnswers.slice(0, 2)) {
+    expect(entry.id).toMatch(/^application_request_pay_/);
+  }
+  expect(profile).toEqual(before);
+});

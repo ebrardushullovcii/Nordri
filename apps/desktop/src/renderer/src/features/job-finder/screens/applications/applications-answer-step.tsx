@@ -5,6 +5,7 @@ import type {
 } from "@nordri/contracts";
 import {
   QuestionAnswerForm,
+  type QuestionAnswerDraft,
   createCommand,
   useMinutesSince,
 } from "../actions/actions-screen";
@@ -17,6 +18,9 @@ import {
  */
 export interface ApplicationAnswerStep {
   request: UserActionRequest;
+  draft?: QuestionAnswerDraft;
+  draftRestored?: boolean;
+  onDraftChange?: (draft: QuestionAnswerDraft) => void;
   questions: readonly ApplicationAttemptQuestion[];
   isPending: boolean;
   waitingForTurn?: boolean;
@@ -52,6 +56,11 @@ export function ApplicationAnswerStepCard(props: {
         Answer here and Job Finder will continue.
       </p>
       <QuestionAnswerForm
+        key={`${request.id}-${props.step.draftRestored ? "restored" : "current"}`}
+        {...(props.step.draft ? { draft: props.step.draft } : {})}
+        {...(props.step.onDraftChange
+          ? { onDraftChange: props.step.onDraftChange }
+          : {})}
         isPending={isPending}
         onAnswer={async (answers, saveForFuture) => {
           const first = answers[0];

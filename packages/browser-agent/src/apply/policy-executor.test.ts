@@ -872,6 +872,87 @@ describe("apply policy executor", () => {
     },
   );
 
+  test.each(["application_request_a_salary", "answer_memory_salary"])(
+    "pay with disclosure off uses only this application's answer (%s)",
+    async (id) => {
+      const page = rawPage({
+        controls: [
+          rawControl({ index: 0, label: "Expected salary", required: true }),
+        ],
+      });
+      const { config, hands } = configFor(page);
+      const fillText = vi.spyOn(hands, "fillText");
+      config.sources.reusableAnswers = [
+        {
+          id,
+          kind: "salary_expectation",
+          label: "Expected salary",
+          question: "Expected salary",
+          answer: "90000 EUR",
+          roleFamilies: [],
+          proofEntryIds: [],
+        },
+      ];
+      const outcome = await executeApplyProposal(
+        { tool: "type", ref: "c0", text: "90000 EUR" },
+        observationOf(page).signature,
+        { config, now, guardState: createApplyGuardState() },
+      );
+      if (id.startsWith("application_")) {
+        expect(outcome).toMatchObject({
+          kind: "filled",
+          filled: { answer: { value: "90000 EUR" } },
+        });
+        expect(fillText).toHaveBeenCalledWith("c0", "90000 EUR");
+      } else {
+        expect(outcome.kind).toBe("suggestion");
+        expect(fillText).not.toHaveBeenCalled();
+      }
+    },
+  );
+
+  test("an application pay answer permits only the exact value for its question", async () => {
+    const page = rawPage({
+      controls: [
+        rawControl({ index: 0, label: "Expected salary", required: true }),
+      ],
+    });
+    const { config, hands } = configFor(page);
+    const fillText = vi.spyOn(hands, "fillText");
+    config.sources.reusableAnswers = [
+      {
+        id: "application_request_a_salary",
+        kind: "salary_expectation",
+        label: "Expected salary",
+        question: "Expected salary",
+        answer: "90000 EUR",
+        roleFamilies: [],
+        proofEntryIds: [],
+      },
+    ];
+    for (const text of ["95000 EUR", "EUR"]) {
+      const outcome = await executeApplyProposal(
+        { tool: "type", ref: "c0", text },
+        observationOf(page).signature,
+        { config, now, guardState: createApplyGuardState() },
+      );
+      expect(outcome.kind).toBe("suggestion");
+    }
+    config.sources.reusableAnswers = config.sources.reusableAnswers.map(
+      (answer) => ({ ...answer, question: "Current salary" }),
+    );
+    expect(
+      (
+        await executeApplyProposal(
+          { tool: "type", ref: "c0", text: "90000 EUR" },
+          observationOf(page).signature,
+          { config, now, guardState: createApplyGuardState() },
+        )
+      ).kind,
+    ).toBe("suggestion");
+    expect(fillText).not.toHaveBeenCalled();
+  });
+
   test("pay is left to the person unless they said otherwise", async () => {
     const page = rawPage({
       controls: [
@@ -2958,7 +3039,7 @@ describe("one-use answers and compatible originals", () => {
       },
     );
     expect(result.kind).toBe("filled");
-    source.controls[0]!.label = "Current compensation";
+    source.controls[0].label = "Current compensation";
     config.authority.salaryDisclosure = "pause_for_user";
     const current = await executeApplyProposal(
       { tool: "type", ref: "c0", text: "60000" },
@@ -3027,7 +3108,7 @@ describe("one-use answers and compatible originals", () => {
     });
     if (result.kind === "attached")
       expect(result.attachment.fileName).toBe("resume.txt");
-    source.controls[0]!.value = "C:\\fakepath\\resume.txt";
+    source.controls[0].value = "C:\\fakepath\\resume.txt";
     source.actions = [
       { index: 0, label: "Next", visible: true, disabled: false },
     ];
@@ -3037,7 +3118,7 @@ describe("one-use answers and compatible originals", () => {
       { config, now, guardState: createApplyGuardState() },
     );
     expect(next.kind).toBe("moved");
-    source.actions[0]!.label = "Submit application";
+    source.actions[0].label = "Submit application";
     config.authority.mode = "confirm_before_submit";
     config.authority.allowedOrigins = ["https://apply.example.test"];
     const submit = await executeApplyProposal(
@@ -3113,17 +3194,19 @@ test.each([
       config,
       now,
       guardState: createApplyGuardState(),
-      classifyQuestions: async () =>
-        new Map([
-          [
-            label,
-            {
-              asksAboutPay: true,
-              asksCurrentPay: label !== "Expected compensation",
-              declarationKind: null,
-            },
-          ],
-        ]),
+      classifyQuestions: () =>
+        Promise.resolve(
+          new Map([
+            [
+              label,
+              {
+                asksAboutPay: true,
+                asksCurrentPay: label !== "Expected compensation",
+                declarationKind: null,
+              },
+            ],
+          ]),
+        ),
     },
   );
   expect(result).toMatchObject({

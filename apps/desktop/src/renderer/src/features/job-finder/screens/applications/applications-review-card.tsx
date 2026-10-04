@@ -122,9 +122,14 @@ export function ApplicationsReviewCard({
                 {answer.answer}
               </p>
               <p className="mt-1 text-(length:--text-small) leading-6 text-foreground-soft">
-                {answer.written ? "Written for this application" : "From"}{" "}
-                {answer.source}
-                {answer.written && answer.groundedIn.length > 0
+                {answer.source === "chosen on the form" ||
+                answer.source === "your answer on the form"
+                  ? "Your answer on the form"
+                  : `${answer.written ? "Written for this application" : "From"} ${answer.source}`}
+                {answer.written &&
+                answer.source !== "chosen on the form" &&
+                answer.source !== "your answer on the form" &&
+                answer.groundedIn.length > 0
                   ? `, based on ${answer.groundedIn.join(", ")}`
                   : ""}
               </p>

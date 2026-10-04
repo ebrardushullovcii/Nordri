@@ -1,3 +1,4 @@
+import type { QuestionAnswerDraft } from "../actions/actions-screen";
 import { isSameSiteApplicationActive } from "../actions/actions-screen";
 import {
   inferApplicationCrmStageForView,
@@ -95,6 +96,9 @@ function buildLiveAssistantApplicationHref(input: {
 }
 
 interface ApplicationsDetailPanelProps {
+  answerDraft?: QuestionAnswerDraft | undefined;
+  answerDraftRestored?: boolean;
+  onAnswerDraftChange?: (draft: QuestionAnswerDraft) => void;
   activeFilter: ApplicationsViewFilter;
   /** Stages the person named in the tracker, shown by those names. */
   customStages?: readonly ApplicationCrmStageDefinition[];
@@ -217,6 +221,9 @@ export function ApplicationsDetailPanel({
   onOpenSafeguards,
   onOpenNeedsYou,
   userActionRequests,
+  answerDraft,
+  answerDraftRestored,
+  onAnswerDraftChange,
   onPerformUserAction,
   isUserActionPending,
   onAllowSiteSaves,
@@ -264,6 +271,11 @@ export function ApplicationsDetailPanel({
     answerRequest && onPerformUserAction && pendingQuestions.length > 0
       ? {
           request: answerRequest,
+          ...(answerDraft ? { draft: answerDraft } : {}),
+          ...(onAnswerDraftChange
+            ? { onDraftChange: onAnswerDraftChange }
+            : {}),
+          draftRestored: answerDraftRestored ?? false,
           questions: pendingQuestions,
           isPending: isUserActionPending?.(answerRequest.id) ?? false,
           waitingForTurn: selectedRecordJob

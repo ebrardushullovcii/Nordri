@@ -765,8 +765,11 @@ export function createWorkspaceApplicationMethods(
         runResults.length === 0 ||
         runResults.some(
           (result) =>
-            result.applicationRecordId === null ||
-            result.applicationRecordId === claim.applicationRecordId,
+            ["planned", "question_capture", "filling", "submitting"].includes(
+              result.state,
+            ) &&
+            (result.applicationRecordId === null ||
+              result.applicationRecordId === claim.applicationRecordId),
         )
       );
     });

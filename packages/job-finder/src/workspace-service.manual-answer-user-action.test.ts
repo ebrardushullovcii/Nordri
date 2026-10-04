@@ -857,3 +857,41 @@ test("a current attempt can re-answer a record marked answered by an earlier che
     2,
   );
 });
+
+test.each([false, true])(
+  "saves the person's pay answer to the library only when chosen (%s)",
+  async (saveForFuture) => {
+    const seed = createSeed();
+    seed.userActionRequests = [createManualAnswerRequest()];
+    seed.applicationQuestionRecords = [
+      {
+        ...createQuestion(),
+        prompt: "Expected salary",
+        kind: "salary_expectation",
+      },
+    ];
+    const harness = createWorkspaceServiceHarness({ seed });
+    await harness.workspaceService.performUserAction({
+      ...submitManualAnswerCommand(),
+      answer: "90000 EUR",
+      saveForFuture,
+    });
+    expect(
+      (await harness.repository.listApplicationAnswerRecords())[0],
+    ).toMatchObject({
+      text: "90000 EUR",
+      sourceKind: "user",
+      saveScope: saveForFuture ? "reusable_profile" : "application_once",
+    });
+    const answers = (await harness.repository.getProfile()).answerBank
+      .customAnswers;
+    if (saveForFuture)
+      expect(answers).toContainEqual(
+        expect.objectContaining({
+          question: "Expected salary",
+          answer: "90000 EUR",
+        }),
+      );
+    else expect(answers).toEqual(seed.profile.answerBank.customAnswers);
+  },
+);

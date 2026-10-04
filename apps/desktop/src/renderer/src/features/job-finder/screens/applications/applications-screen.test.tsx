@@ -20,6 +20,8 @@ import type {
   JobFinderWorkspaceSnapshot,
 } from "@nordri/contracts";
 import {
+  ApplyRunDetailsSchema,
+  UserActionRequestSchema,
   ApplicationPrivacyReceiptSchema,
   ApplicationAttemptSchema,
   ApplyRunSchema,
@@ -139,6 +141,181 @@ describe("ApplicationsScreen", () => {
         : {}),
     };
   }
+
+  it("restores one-use answer drafts and their save choice in Applications after Prepare again", async () => {
+    vi.stubGlobal("ResizeObserver", ResizeObserverMock);
+    stubCandidateAssetsBridge();
+    const record = createTrackedApplication({ lastAttemptState: "paused" });
+    const at = "2026-10-04T10:00:00.000Z";
+    const request = UserActionRequestSchema.parse({
+      id: "new_request",
+      revision: 1,
+      dedupeKey: "new",
+      kind: "manual_answer",
+      state: "awaiting_user",
+      scope: {
+        type: "application",
+        runId: "new_run",
+        jobId: record.jobId,
+        applicationRecordId: record.id,
+        source: "target_site",
+      },
+      verification: {
+        type: "page_blocker_absent",
+        blockerFingerprint: "salary",
+      },
+      title: "Answer the questions",
+      summary: "Answers needed",
+      createdAt: at,
+      updatedAt: at,
+    });
+    const previous = UserActionRequestSchema.parse({
+      ...request,
+      id: "old_request",
+      dedupeKey: "old",
+      state: "superseded",
+      scope: { ...request.scope, runId: "old_run" },
+    });
+    const questions = [
+      {
+        id: "q_pay",
+        prompt: "Expected salary",
+        kind: "salary_expectation" as const,
+        answerControlType: "text" as const,
+        answerOptions: [],
+        suggestedAnswers: [],
+        status: "detected" as const,
+        detectedAt: at,
+      },
+    ];
+    const attempt = ApplicationAttemptSchema.parse({
+      id: "attempt",
+      blocker: {
+        code: "missing_candidate_answer",
+        userActionKind: "manual_answer",
+        summary: "Answer needed",
+        detail: "Pay is left to you",
+        questionIds: ["q_pay"],
+        sourceDebugEvidenceRefIds: [],
+        url: "http://127.0.0.1:47950/apply",
+      },
+      completedAt: null,
+      summary: "Answer needed",
+      detail: "Answer needed",
+      applicationRecordId: record.id,
+      jobId: record.jobId,
+      outcome: "ready_for_review",
+      state: "paused",
+      startedAt: at,
+      createdAt: at,
+      updatedAt: at,
+      questions,
+      nextActionLabel: "Answer",
+    });
+    const result = ApplyJobResultSchema.parse({
+      id: "result",
+      runId: "new_run",
+      jobId: record.jobId,
+      applicationRecordId: record.id,
+      state: "blocked",
+      summary: "Answer needed",
+      detail: "Answer needed",
+      startedAt: at,
+      updatedAt: at,
+      blockerReason: "required_human_input",
+      latestQuestionCount: 1,
+    });
+    const run = ApplyRunSchema.parse({
+      id: "new_run",
+      mode: "copilot",
+      state: "paused_for_user_review",
+      jobIds: [record.jobId],
+      createdAt: at,
+      updatedAt: at,
+      summary: "Answer needed",
+      detail: "Answer needed",
+      totalJobs: 1,
+    });
+    const onGetApplyRunDetails = vi.fn((query: { runId: string }) =>
+      Promise.resolve(
+        ApplyRunDetailsSchema.parse({
+          run,
+          result,
+          results: [result],
+          questionRecords: [],
+          answerRecords:
+            query.runId === "old_run"
+              ? [
+                  {
+                    id: "old_answer",
+                    runId: "old_run",
+                    jobId: record.jobId,
+                    resultId: "old_result",
+                    status: "suggested",
+                    applicationRecordId: record.id,
+                    questionId: `apply_question_${record.id}_q_pay`,
+                    text: "90000 EUR",
+                    sourceKind: "user",
+                    saveScope: "application_once",
+                    revision: 1,
+                    createdAt: at,
+                  },
+                ]
+              : [],
+          consentRequests: [],
+          checkpoints: [],
+          artifactRefs: [],
+        }),
+      ),
+    );
+    const onPerformUserAction = vi.fn();
+    render(
+      <MemoryRouter>
+        <ApplicationsScreen
+          dailyPreparationCapacity={null}
+          {...buildCrmScreenProps({
+            applicationRecords: [record],
+            selectedRecord: record,
+            onSelectRecord: vi.fn(),
+          })}
+          applicationAttempts={[attempt]}
+          selectedAttempt={attempt}
+          applyRuns={[run]}
+          applyJobResults={[result]}
+          selectedApplyRunId={run.id}
+          userActionRequests={[previous, request]}
+          onGetApplyRunDetails={onGetApplyRunDetails}
+          onPerformUserAction={onPerformUserAction}
+        />
+      </MemoryRouter>,
+    );
+    await waitFor(() =>
+      expect(screen.getByLabelText("Expected salary")).toHaveProperty(
+        "value",
+        "90000 EUR",
+      ),
+    );
+    expect(
+      screen.getByLabelText("Save this answer for next time"),
+    ).toHaveProperty("checked", false);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Answer and continue" }),
+    );
+    await waitFor(() =>
+      expect(onPerformUserAction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          requestId: request.id,
+          answer: "90000 EUR",
+          saveForFuture: false,
+        }),
+      ),
+    );
+    expect(onGetApplyRunDetails).toHaveBeenCalledWith({
+      runId: "old_run",
+      jobId: record.jobId,
+      applicationRecordId: record.id,
+    });
+  });
 
   it("does not count waiting forms or a contradictory receipt as sent", () => {
     vi.stubGlobal("ResizeObserver", ResizeObserverMock);
@@ -663,140 +840,147 @@ describe("ApplicationsScreen", () => {
     ).toBeTruthy();
   });
 
-  it("shows the latest-run banner only while it still needs attention, and never leaks a raw state", () => {
-    class ResizeObserverMock {
-      observe() {}
-      disconnect() {}
-    }
+  it.each(["blocked", "failed"] as const)(
+    "shows the attention banner with the right tone for %s results",
+    (attentionState) => {
+      class ResizeObserverMock {
+        observe() {}
+        disconnect() {}
+      }
 
-    vi.stubGlobal("ResizeObserver", ResizeObserverMock);
+      vi.stubGlobal("ResizeObserver", ResizeObserverMock);
 
-    const finishedRun: ApplyRunSummary = {
-      id: "apply_run_finished",
-      campaignId: null,
-      mode: "queue_auto",
-      state: "failed",
-      jobIds: ["job_finished"],
-      currentJobId: null,
-      submitApprovalId: null,
-      visualCheckpointsEnabled: false,
-      createdAt: "2026-08-20T09:55:00.000Z",
-      updatedAt: "2026-08-20T10:00:00.000Z",
-      completedAt: "2026-08-20T10:00:00.000Z",
-      summary: "Finished with failures.",
-      detail: "The queue stopped before every job was tried.",
-      totalJobs: 1,
-      pendingJobs: 0,
-      submittedJobs: 0,
-      skippedJobs: 0,
-      blockedJobs: 0,
-      failedJobs: 1,
-    };
-    const buildProps = (state: ApplyRunSummary["state"]) => ({
-      dailyPreparationCapacity: null,
-      applicationAttempts: [],
-      applicationRecords: [],
-      applyRuns: [{ ...finishedRun, state }],
-      applyJobResults: [],
-      discoveryJobs: [],
-      isApplyPending: false,
-      isApplyRequestPending: () => false,
-      isApplyRunPending: () => false,
-      onApproveApplyRun: vi.fn(),
-      onCancelApplyRun: vi.fn(),
-      onGetApplyRunDetails: vi.fn(),
-      onExportApplicationPacket: vi.fn(),
-      onResolveApplyConsentRequest: vi.fn(),
-      onSaveApplicationAnswer: vi.fn(() =>
-        Promise.reject(new Error("unused in this scenario")),
-      ),
-      onClearApplicationAnswer: vi.fn(() =>
-        Promise.reject(new Error("unused in this scenario")),
-      ),
-      onRevokeApplyRunApproval: vi.fn(),
-      onSelectRecord: vi.fn(),
-      onStartApplyCopilot: vi.fn(),
-      onStartAutoApply: vi.fn(),
-      onStartAutoApplyQueue: vi.fn(),
-      selectedApplyRunId: null,
-      selectedAttempt: null,
-      selectedRecord: null,
-    });
+      const finishedRun: ApplyRunSummary = {
+        id: "apply_run_finished",
+        campaignId: null,
+        mode: "queue_auto",
+        state: "failed",
+        jobIds: ["job_finished"],
+        currentJobId: null,
+        submitApprovalId: null,
+        visualCheckpointsEnabled: false,
+        createdAt: "2026-08-20T09:55:00.000Z",
+        updatedAt: "2026-08-20T10:00:00.000Z",
+        completedAt: "2026-08-20T10:00:00.000Z",
+        summary: "Finished with failures.",
+        detail: "The queue stopped before every job was tried.",
+        totalJobs: 1,
+        pendingJobs: 0,
+        submittedJobs: 0,
+        skippedJobs: 0,
+        blockedJobs: 0,
+        failedJobs: 1,
+      };
+      const buildProps = (state: ApplyRunSummary["state"]) => ({
+        dailyPreparationCapacity: null,
+        applicationAttempts: [],
+        applicationRecords: [],
+        applyRuns: [{ ...finishedRun, state }],
+        applyJobResults: [],
+        discoveryJobs: [],
+        isApplyPending: false,
+        isApplyRequestPending: () => false,
+        isApplyRunPending: () => false,
+        onApproveApplyRun: vi.fn(),
+        onCancelApplyRun: vi.fn(),
+        onGetApplyRunDetails: vi.fn(),
+        onExportApplicationPacket: vi.fn(),
+        onResolveApplyConsentRequest: vi.fn(),
+        onSaveApplicationAnswer: vi.fn(() =>
+          Promise.reject(new Error("unused in this scenario")),
+        ),
+        onClearApplicationAnswer: vi.fn(() =>
+          Promise.reject(new Error("unused in this scenario")),
+        ),
+        onRevokeApplyRunApproval: vi.fn(),
+        onSelectRecord: vi.fn(),
+        onStartApplyCopilot: vi.fn(),
+        onStartAutoApply: vi.fn(),
+        onStartAutoApplyQueue: vi.fn(),
+        selectedApplyRunId: null,
+        selectedAttempt: null,
+        selectedRecord: null,
+      });
 
-    // With zero results there are no attention cases, so the run is history:
-    // the banner is not page furniture and does not reappear as a fresh event
-    // every time the user comes back from the tracker. The run stays visible
-    // in the record's own run history.
-    for (const rawState of ["failed", "cancelled"] as const) {
+      // With zero results there are no attention cases, so the run is history:
+      // the banner is not page furniture and does not reappear as a fresh event
+      // every time the user comes back from the tracker. The run stays visible
+      // in the record's own run history.
+      for (const rawState of ["failed", "cancelled"] as const) {
+        render(
+          <MemoryRouter>
+            <ApplicationsScreen {...buildProps(rawState)} />
+          </MemoryRouter>,
+        );
+
+        expect(screen.queryByText("Latest automatic run")).toBeNull();
+        expect(screen.queryByText(rawState)).toBeNull();
+
+        cleanup();
+      }
+
+      // When it does need attention it says so, and it counts the cases rather
+      // than naming a run state.
       render(
         <MemoryRouter>
-          <ApplicationsScreen {...buildProps(rawState)} />
+          <ApplicationsScreen
+            {...buildProps("failed")}
+            applyJobResults={[
+              {
+                id: "apply_result_attention",
+                runId: "apply_run_finished",
+                jobId: "job_finished",
+                applicationRecordId: null,
+                queuePosition: 0,
+                state: attentionState,
+                summary: "Blocked before review.",
+                detail: "The run stopped before the job was prepared.",
+                startedAt: "2026-08-20T09:56:00.000Z",
+                updatedAt: "2026-08-20T10:00:00.000Z",
+                completedAt: "2026-08-20T10:00:00.000Z",
+                blockerReason: "required_human_input",
+                blockerSummary: "The job site needs you to finish a step.",
+                listingSignalEvidence: null,
+                visualObservationSets: [],
+                visualCheckpoints: [],
+                latestQuestionCount: 0,
+                latestAnswerCount: 0,
+                pendingConsentRequestCount: 0,
+                artifactCount: 0,
+                latestCheckpointId: null,
+                privacyReceipt: null,
+                reviewCard: null,
+              },
+            ]}
+            // The banner counts this run's share of the Needs you population
+            // rather than its own result states, so the fixture carries the
+            // open request that makes the blocked job something to act on.
+            userActionRequests={
+              [
+                {
+                  id: "request_finished",
+                  state: "awaiting_user",
+                  scope: {
+                    type: "application",
+                    runId: "apply_run_finished",
+                    jobId: "job_finished",
+                    applicationRecordId: null,
+                  },
+                },
+              ] as unknown as JobFinderWorkspaceSnapshot["userActionRequests"]
+            }
+          />
         </MemoryRouter>,
       );
-
-      expect(screen.queryByText("Latest automatic run")).toBeNull();
-      expect(screen.queryByText(rawState)).toBeNull();
-
-      cleanup();
-    }
-
-    // When it does need attention it says so, and it counts the cases rather
-    // than naming a run state.
-    render(
-      <MemoryRouter>
-        <ApplicationsScreen
-          {...buildProps("failed")}
-          applyJobResults={[
-            {
-              id: "apply_result_attention",
-              runId: "apply_run_finished",
-              jobId: "job_finished",
-              applicationRecordId: null,
-              queuePosition: 0,
-              state: "blocked",
-              summary: "Blocked before review.",
-              detail: "The run stopped before the job was prepared.",
-              startedAt: "2026-08-20T09:56:00.000Z",
-              updatedAt: "2026-08-20T10:00:00.000Z",
-              completedAt: "2026-08-20T10:00:00.000Z",
-              blockerReason: "required_human_input",
-              blockerSummary: "The job site needs you to finish a step.",
-              listingSignalEvidence: null,
-              visualObservationSets: [],
-              visualCheckpoints: [],
-              latestQuestionCount: 0,
-              latestAnswerCount: 0,
-              pendingConsentRequestCount: 0,
-              artifactCount: 0,
-              latestCheckpointId: null,
-              privacyReceipt: null,
-              reviewCard: null,
-            },
-          ]}
-          // The banner counts this run's share of the Needs you population
-          // rather than its own result states, so the fixture carries the
-          // open request that makes the blocked job something to act on.
-          userActionRequests={
-            [
-              {
-                id: "request_finished",
-                state: "awaiting_user",
-                scope: {
-                  type: "application",
-                  runId: "apply_run_finished",
-                  jobId: "job_finished",
-                  applicationRecordId: null,
-                },
-              },
-            ] as unknown as JobFinderWorkspaceSnapshot["userActionRequests"]
-          }
-        />
-      </MemoryRouter>,
-    );
-    expect(screen.getByText("Latest automatic run")).toBeTruthy();
-    expect(screen.getByText("1 unusual case")).toBeTruthy();
-    expect(screen.queryByText("failed")).toBeNull();
-  });
+      expect(screen.getByText("Latest automatic run")).toBeTruthy();
+      expect(
+        screen
+          .getByText("1 need attention")
+          .className.includes("text-critical"),
+      ).toBe(attentionState === "failed");
+      expect(screen.queryByText("failed")).toBeNull();
+    },
+  );
 
   it("does not show the pause banner for a contradictory answer advisory", () => {
     class ResizeObserverMock {
