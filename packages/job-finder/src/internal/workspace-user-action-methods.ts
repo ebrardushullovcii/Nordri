@@ -532,14 +532,10 @@ async function persistOneManualAnswer(input: {
         (value) => normalizeAnswerQuestion(value) === normalizedPrompt,
       ),
     );
-    const conflicting = exactMatches.some(
-      (candidate) => candidate.answer.trim() !== answer,
-    );
-    if (conflicting) {
-      throw new Error(
-        "A different saved answer already exists for this exact question. Use this answer once or resolve the saved answer in Profile; nothing was overwritten.",
-      );
-    }
+    // The person kept "save for next time" on, so this answer becomes the
+    // saved one, replacing a different answer saved earlier for the same
+    // question. Failing here would leave the application stuck on a question
+    // the person already answered.
     if (exactMatches.length === 0) {
       await input.ctx.repository.saveProfile({
         ...profile,
@@ -553,6 +549,20 @@ async function persistOneManualAnswer(input: {
               kind: question.kind,
             }),
           ],
+        },
+      });
+    } else if (
+      exactMatches.some((candidate) => candidate.answer.trim() !== answer)
+    ) {
+      await input.ctx.repository.saveProfile({
+        ...profile,
+        answerBank: {
+          ...profile.answerBank,
+          customAnswers: profile.answerBank.customAnswers.map((candidate) =>
+            exactMatches.includes(candidate)
+              ? { ...candidate, answer }
+              : candidate,
+          ),
         },
       });
     }

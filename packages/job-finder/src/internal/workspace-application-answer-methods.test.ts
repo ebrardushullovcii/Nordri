@@ -580,6 +580,27 @@ describe("workspace application answer methods", () => {
     expect(answers).toHaveLength(1);
   });
 
+  it("replaces a different saved answer when the person saves a new one", async () => {
+    const { job, methods, repository } = createHarness();
+
+    await methods.saveApplicationAnswer({
+      ...saveCommand("save-first", 0),
+      jobId: job.id,
+      saveScope: "reusable_profile",
+    });
+    const details = await methods.saveApplicationAnswer({
+      ...saveCommand("save-second", 1),
+      jobId: job.id,
+      value: { type: "single_choice" as const, value: "Yes" },
+      saveScope: "reusable_profile",
+    });
+
+    expect(details.answerRecords.at(-1)?.revision).toBe(2);
+    const profile = await repository.getProfile();
+    expect(profile.answerBank.customAnswers).toHaveLength(1);
+    expect(profile.answerBank.customAnswers[0]?.answer).toBe("Yes");
+  });
+
   it("keeps command retries idempotent", async () => {
     const { job, methods } = createHarness();
     const command = { ...saveCommand("same-command", 0), jobId: job.id };

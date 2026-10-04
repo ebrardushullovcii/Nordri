@@ -1071,3 +1071,68 @@ test("answering and saving pay leaves another waiting application in Needs you",
     )[0]?.status,
   ).toBe("detected");
 });
+
+test("saving a different pay for a second application replaces the saved answer and continues", async () => {
+  const seed = createSeed();
+  seed.applicationQuestionRecords = [
+    {
+      ...createQuestion(),
+      prompt: "Expected salary",
+      kind: "salary_expectation",
+    },
+    {
+      ...createQuestion(),
+      id: "other_pay",
+      jobId: "job_other",
+      applicationRecordId: "application_b",
+      resultId: "result_b",
+      prompt: "Expected salary",
+      kind: "salary_expectation",
+    },
+  ];
+  seed.userActionRequests = [
+    createManualAnswerRequest(),
+    createManualAnswerRequest({
+      id: "request_b",
+      dedupeKey: "dedupe_b",
+      scope: {
+        type: "application",
+        runId: "run_manual",
+        jobId: "job_other",
+        applicationRecordId: "application_b",
+        resultId: "result_b",
+        replayCheckpointId: null,
+        source: "target_site",
+      },
+    }),
+  ];
+  const harness = createWorkspaceServiceHarness({ seed });
+  await harness.workspaceService.performUserAction({
+    ...submitManualAnswerCommand(),
+    answer: "42000 EUR",
+    saveForFuture: true,
+  });
+  await harness.workspaceService.performUserAction({
+    ...submitManualAnswerCommand("command_submit_b"),
+    requestId: "request_b",
+    answer: "50000 USD",
+    saveForFuture: true,
+  });
+
+  const saved = (await harness.repository.getProfile()).answerBank
+    .customAnswers;
+  expect(saved).toHaveLength(1);
+  expect(saved[0]?.answer).toBe("50000 USD");
+  expect(
+    (
+      await harness.repository.listApplicationAnswerRecords({
+        applicationRecordId: "application_b",
+      })
+    ).map((record) => record.text),
+  ).toEqual(["50000 USD"]);
+  expect(
+    (await harness.repository.listUserActionRequests()).find(
+      (request) => request.id === "request_b",
+    )?.state,
+  ).toBe("verifying");
+});

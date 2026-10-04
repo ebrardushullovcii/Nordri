@@ -138,15 +138,27 @@ async function saveReusableAnswer(input: {
         (value) => normalizeAnswerQuestion(value) === normalizedPrompt,
       ),
     );
-    if (
-      exactMatches.some((candidate) => candidate.answer.trim() !== input.text)
-    ) {
-      throw new Error(
-        "A different reusable answer already exists for this exact question. This application answer was not saved so nothing was overwritten.",
-      );
-    }
+    // Saving for next time replaces a different answer saved earlier for the
+    // same question; refusing would leave the application stuck.
     if (exactMatches.length > 0) {
-      return current;
+      if (
+        exactMatches.every(
+          (candidate) => candidate.answer.trim() === input.text,
+        )
+      ) {
+        return current;
+      }
+      return {
+        ...current,
+        answerBank: {
+          ...current.answerBank,
+          customAnswers: current.answerBank.customAnswers.map((candidate) =>
+            exactMatches.includes(candidate)
+              ? { ...candidate, answer: input.text }
+              : candidate,
+          ),
+        },
+      };
     }
 
     return {
