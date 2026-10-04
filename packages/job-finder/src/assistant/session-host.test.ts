@@ -20,6 +20,7 @@ import {
 } from "../workspace-service.test-support";
 import { createScriptedAssistantModelHandle } from "./model-handle";
 import type { AssistantHostPorts } from "./ports";
+import type { AssistantTurnSession } from "./tool-kit";
 import {
   availablePromptTokens,
   createTokenCalibrator,
@@ -868,6 +869,92 @@ describe("assistant session host", () => {
     );
   });
 
+  it("R3-007 releases the old lease and creates unrelated work without a lent tab", async () => {
+    const { host, ports } = setup();
+    const release = vi.fn(() => Promise.resolve());
+    const inputs: (string | null)[] = [];
+    ports.browser = {
+      visibleTab: () => null,
+      lease: (input) => {
+        inputs.push(input.tabId);
+        return Promise.resolve({
+          leaseId: `lease_${inputs.length}`,
+          tabId: input.tabId ?? "owned",
+          borrowed: input.tabId !== null,
+          isApplicationBound: () => Promise.resolve(false),
+          revoked: new AbortController().signal,
+          hands: {} as never,
+          currentUrl: () => "http://127.0.0.1/",
+          childTabIds: () => [],
+          release,
+        });
+      },
+    };
+    const conversation = await host.createConversation();
+    const session = (
+      host as unknown as {
+        detachedSession(
+          id: string,
+          messageId: string | null,
+        ): AssistantTurnSession;
+      }
+    ).detachedSession(conversation.id, null);
+    await session.browserLease({ tabId: "prepared" });
+    await session.browserLease({
+      openUrl: "http://127.0.0.1:47950/brindle/",
+      newTab: true,
+    });
+    expect(inputs).toEqual(["prepared", null]);
+    expect(release).toHaveBeenCalledWith("Switching browser tabs");
+  });
+
+  it("R3-169 waits for Browser to minimize before emitting the route", async () => {
+    const { host, ports, events } = setup();
+    let finish!: () => void;
+    ports.prepareAppNavigation = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const conversation = await host.createConversation();
+    const session = (
+      host as unknown as {
+        detachedSession(
+          id: string,
+          messageId: string | null,
+        ): AssistantTurnSession;
+      }
+    ).detachedSession(conversation.id, null);
+    const pending = session.openInApp("/job-finder/applications");
+    expect(events.some((event) => event.payload.type === "open_route")).toBe(
+      false,
+    );
+    finish();
+    await vi.waitFor(() =>
+      expect(events.some((event) => event.payload.type === "open_route")).toBe(
+        true,
+      ),
+    );
+    const request = events.find(
+      (event) => event.payload.type === "open_route",
+    )!;
+    if (request.payload.type !== "open_route") throw new Error("Missing route");
+    host.acknowledgeNavigation({
+      conversationId: conversation.id,
+      navigationRequestId: request.payload.navigationRequestId!,
+      displayedRoute: request.payload.route,
+      section: null,
+      overlay: "none",
+      status: "displayed",
+      reason: null,
+    });
+    expect(await pending).toMatchObject({ status: "displayed" });
+    expect(events.some((event) => event.payload.type === "open_route")).toBe(
+      true,
+    );
+  });
+
   it("does not lease a tab again after the person took it back", async () => {
     const { host, ports } = setup();
     const controllers: AbortController[] = [];
@@ -883,6 +970,7 @@ describe("assistant session host", () => {
         return Promise.resolve({
           leaseId: `lease_${controllers.length}`,
           tabId: "tab_1",
+          isApplicationBound: () => Promise.resolve(false),
           revoked: controller.signal,
           hands: {} as never,
           currentUrl: () => "http://127.0.0.1/",
@@ -1775,5 +1863,74 @@ describe("assistant session host", () => {
         .flatMap((message) => message.parts)
         .find((part) => part.type === "proposal"),
     ).toMatchObject({ status: "rejected" });
+  });
+
+  it("R3-137 waits for the displayed Tracker and rejects wrong sections and covering overlays", async () => {
+    const { host, events } = setup();
+    const conversation = await host.createConversation();
+    const session = (
+      host as unknown as {
+        detachedSession(
+          id: string,
+          messageId: string | null,
+        ): AssistantTurnSession;
+      }
+    ).detachedSession(conversation.id, null);
+    for (const display of [
+      {
+        displayedRoute: "/job-finder/review-queue/job_ready/resume",
+        section: null,
+        overlay: "none" as const,
+      },
+      {
+        displayedRoute: "/job-finder/applications?view=tracker",
+        section: null,
+        overlay: "none" as const,
+      },
+      {
+        displayedRoute: "/job-finder/applications?view=tracker",
+        section: "tracker",
+        overlay: "browser" as const,
+      },
+      {
+        displayedRoute: "/job-finder/applications?view=tracker",
+        section: "tracker",
+        overlay: "none" as const,
+      },
+    ]) {
+      const before = events.length;
+      const pending = session.openInApp(
+        "/job-finder/applications?view=tracker",
+      );
+      await vi.waitFor(() =>
+        expect(
+          events
+            .slice(before)
+            .some((event) => event.payload.type === "open_route"),
+        ).toBe(true),
+      );
+      const event = events
+        .slice(before)
+        .find((event) => event.payload.type === "open_route")!;
+      if (event.payload.type !== "open_route") throw new Error("Missing route");
+      const ack = {
+        conversationId: conversation.id,
+        navigationRequestId: event.payload.navigationRequestId!,
+        ...display,
+        status: "displayed" as const,
+        reason: null,
+      };
+      host.acknowledgeNavigation({
+        ...ack,
+        navigationRequestId: "stale_request",
+      });
+      host.acknowledgeNavigation(ack);
+      expect(await pending).toMatchObject({
+        status:
+          display.section === "tracker" && display.overlay === "none"
+            ? "displayed"
+            : "blocked",
+      });
+    }
   });
 });

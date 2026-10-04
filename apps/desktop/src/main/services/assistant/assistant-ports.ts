@@ -216,6 +216,11 @@ export function createAssistantHostPorts(input: {
   const library = getCandidateAssetLibrary();
   const ports: AssistantHostPorts = {
     isResumeImportActive: isDesktopResumeImportActive,
+    async prepareAppNavigation() {
+      if (input.browserHost === "embedded") {
+        await getEmbeddedBrowser().command({ type: "minimize" });
+      }
+    },
     readResumeBatch: readUiResumeBatch,
     stopResumeBatch: () => {
       const batch = stopUiResumeBatch();
@@ -482,7 +487,13 @@ export function createAssistantHostPorts(input: {
     publishWorkspaceUpdate: () => publishJobFinderWorkspaceUpdate(),
   };
   if (input.browserHost === "embedded") {
-    ports.browser = createAssistantBrowserPort(getEmbeddedBrowser());
+    ports.browser = createAssistantBrowserPort(
+      getEmbeddedBrowser(),
+      async () => {
+        const service = await getJobFinderWorkspaceService();
+        return service.getWorkspaceSnapshot();
+      },
+    );
   }
   return ports;
 }

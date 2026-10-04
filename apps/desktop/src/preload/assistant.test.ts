@@ -52,3 +52,31 @@ it("returns the current main-process stop flag before another UI draft can dispa
     state,
   );
 });
+
+it("schema-checks displayed navigation acknowledgments before sending to main", async () => {
+  const invoke = vi.fn(() => Promise.resolve());
+  const bridge = createAssistantBridge({
+    invoke,
+    on: vi.fn(),
+    removeListener: vi.fn(),
+    pathForFile: () => "",
+  });
+  const ack = {
+    conversationId: "conversation",
+    navigationRequestId: "request",
+    displayedRoute: "/job-finder/applications?view=tracker",
+    section: "tracker",
+    overlay: "none" as const,
+    status: "displayed" as const,
+    reason: null,
+  };
+  await bridge.acknowledgeNavigation(ack);
+  expect(invoke).toHaveBeenCalledWith(
+    "job-finder:assistant:acknowledge-navigation",
+    ack,
+  );
+  await expect(
+    bridge.acknowledgeNavigation({ ...ack, displayedRoute: "x".repeat(401) }),
+  ).rejects.toThrow();
+  expect(invoke).toHaveBeenCalledTimes(1);
+});

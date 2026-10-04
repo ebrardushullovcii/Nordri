@@ -1,4 +1,5 @@
 import {
+  AssistantNavigationAcknowledgmentSchema,
   AssistantAnswerQuestionInputSchema,
   AssistantAttachFileResultSchema,
   AssistantConversationListSchema,
@@ -41,6 +42,12 @@ export function createAssistantBridge(ipc: {
   pathForFile: (file: File) => string;
 }): DesktopAssistantBridge {
   return {
+    async acknowledgeNavigation(input) {
+      await ipc.invoke(
+        "job-finder:assistant:acknowledge-navigation",
+        AssistantNavigationAcknowledgmentSchema.parse(input),
+      );
+    },
     syncResumeBatch: async (state) =>
       AssistantResumeBatchStateSchema.parse(
         await ipc.invoke(

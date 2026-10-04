@@ -876,6 +876,7 @@ export const AssistantEventPayloadSchema = z.discriminatedUnion("type", [
   z
     .object({
       type: z.literal("open_route"),
+      navigationRequestId: IdSchema.nullable().default(null),
       route: NonEmptyStringSchema.max(400),
     })
     .strict(),
@@ -939,6 +940,27 @@ export const AssistantConversationViewSchema = z
   .strict();
 export type AssistantConversationView = z.infer<
   typeof AssistantConversationViewSchema
+>;
+
+export const AssistantNavigationDisplaySchema = z
+  .object({
+    displayedRoute: z.string().max(400).nullable(),
+    section: z.string().max(80).nullable(),
+    overlay: z.enum(["none", "browser", "dialog", "chat"]),
+    status: z.enum(["displayed", "blocked"]),
+    reason: z.string().max(400).nullable(),
+  })
+  .strict();
+export type AssistantNavigationDisplay = z.infer<
+  typeof AssistantNavigationDisplaySchema
+>;
+export const AssistantNavigationAcknowledgmentSchema =
+  AssistantNavigationDisplaySchema.extend({
+    conversationId: IdSchema,
+    navigationRequestId: IdSchema,
+  }).strict();
+export type AssistantNavigationAcknowledgment = z.infer<
+  typeof AssistantNavigationAcknowledgmentSchema
 >;
 
 export const AssistantConversationIdInputSchema = z
@@ -1119,6 +1141,9 @@ export type AssistantResumeBatchState = z.infer<
 
 /** The typed preload bridge the sidebar uses (`window.nordri.assistant`). */
 export interface DesktopAssistantBridge {
+  acknowledgeNavigation(
+    input: AssistantNavigationAcknowledgment,
+  ): Promise<void>;
   syncResumeBatch(
     state: AssistantResumeBatchState,
   ): Promise<AssistantResumeBatchState>;

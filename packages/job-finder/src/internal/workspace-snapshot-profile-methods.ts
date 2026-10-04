@@ -2,6 +2,8 @@ import {
   type ApplicationCrmSettings,
   type JobDiscoveryTarget,
   ApplicationCrmSettingsSchema,
+  AiBehaviorPreferenceSchema,
+  CoverLetterPreferenceSchema,
   AppearanceThemeSchema,
   CandidateProfileSchema,
   JobFinderSettingsSchema,
@@ -2009,7 +2011,35 @@ export function createWorkspaceSnapshotProfileMethods(
       return getWorkspaceSnapshot();
     },
     async updateAiBehavior(input: UpdateAiBehaviorInput) {
-      const parsedInput = UpdateAiBehaviorInputSchema.parse(input);
+      const patch = UpdateAiBehaviorInputSchema.parse(input);
+      const saved = await ctx.repository.getSettings();
+      const current = AiBehaviorPreferenceSchema.parse(saved.aiBehavior ?? {});
+      // Merge explicit fields before defaults: an omitted declaration list is
+      // never permission to restore approvals the person withdrew.
+      const parsedInput = {
+        ...patch,
+        aiBehavior:
+          patch.aiBehavior === undefined
+            ? undefined
+            : AiBehaviorPreferenceSchema.parse({
+                profileAssistant: {
+                  ...current.profileAssistant,
+                  ...patch.aiBehavior.profileAssistant,
+                },
+                jobSearch: {
+                  ...current.jobSearch,
+                  ...patch.aiBehavior.jobSearch,
+                },
+                applying: { ...current.applying, ...patch.aiBehavior.applying },
+              }),
+        coverLetter:
+          patch.coverLetter === undefined
+            ? undefined
+            : CoverLetterPreferenceSchema.parse({
+                ...saved.coverLetter,
+                ...patch.coverLetter,
+              }),
+      };
       const resumeApproach = parsedInput.resumeApproach;
 
       // Settings first: the behavior preference, the letter preference, and

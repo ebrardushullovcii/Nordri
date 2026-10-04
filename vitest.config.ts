@@ -25,6 +25,10 @@ export default defineConfig({
         "packages/contracts/src/index.ts",
       ),
       "@nordri/db": path.resolve(currentDir, "packages/db/src/index.ts"),
+      "@nordri/job-finder/assistant-attention": path.resolve(
+        currentDir,
+        "packages/job-finder/src/assistant/attention.ts",
+      ),
       "@nordri/job-finder/discovery-ordering": path.resolve(
         currentDir,
         "packages/job-finder/src/discovery-ordering.ts",

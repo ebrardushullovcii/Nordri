@@ -1,6 +1,7 @@
 import { BrowserWindow, dialog } from "electron";
 import type { IpcMain, IpcMainInvokeEvent } from "electron";
 import {
+  AssistantNavigationAcknowledgmentSchema,
   AssistantAnswerQuestionInputSchema,
   AssistantAttachFileInputSchema,
   AssistantAttachFileResultSchema,
@@ -58,6 +59,14 @@ export function inferAssetKind(fileName: string): CandidateAssetKind {
 }
 
 export function registerAssistantRouteHandlers(ipcMain: IpcMain): void {
+  ipcMain.handle(
+    "job-finder:assistant:acknowledge-navigation",
+    async (event, payload: unknown) => {
+      assertAppWindow(event);
+      const input = AssistantNavigationAcknowledgmentSchema.parse(payload);
+      (await getAssistantHost()).acknowledgeNavigation(input);
+    },
+  );
   const queueOwners = new WeakSet<object>();
   let queueOwnerId: number | null = null;
   ipcMain.handle(

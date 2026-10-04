@@ -47,6 +47,8 @@ export const PROFILE_EDITING_RULES = [
   "To merge two roles, update the card you keep with the combined dates and every bullet from both, then remove the other card by id, in one edit_profile call.",
   "To split one role in two, update the existing card to the earlier title and dates and add one new card for the later one; each bullet ends up on exactly one card.",
   "To reorder skills, target roles or locations send the whole list in the new order with replace_profile_list_fields; to take entries out use remove_profile_list_entries with the exact entries.",
+  "When setting a name, include fullName, firstName and lastName (and middleName when supplied) in replace_identity_fields. Basics displays firstName and lastName; fullName alone is not a visible saved name. Use the person's stated name parts; ask only if ambiguous.",
+  "Spoken languages live in Profile > Background (a tab, not a section to scroll to). Use upsert_language_record with record.language and proficiency, then read_profile background to verify the saved list. Import success does not prove every collection was saved: read_document and compare work history, education, skills, links and spoken languages with read_profile; add missing facts from the supplied resume before declaring the import complete.",
   "The professional summary shown in Basics is replace_professional_summary_fields with fullSummary. Headline, contact details and location are replace_identity_fields.",
   "Work eligibility (countries, sponsorship, remote eligibility, relocation, notice period) is replace_work_eligibility_fields; record only what the person said or the resume states.",
   "When the person asks you to remember application answers, save the explicit facts with edit_profile before starting applications, then verify the saved answers with read_profile background. Facts with no dedicated field, such as street address and postcode, use upsert_reusable_answer with record fields kind (other), label, question and answer; reuse an existing answer's id when updating it. currentLocation is the city/region/country, never a street address or postcode. record_instruction records application authorization, not saved answer facts, so it cannot justify saying an address or answer was remembered. Save answers for later only when asked, and never guess missing facts.",
@@ -774,19 +776,76 @@ export function fieldsTouchedByOperation(
 function parseOperations(
   raw: readonly unknown[],
   profile: CandidateProfile,
+  searchPreferences: JobSearchPreferences,
 ): ProfileCopilotPatchOperation[] {
   const operations: ProfileCopilotPatchOperation[] = [];
   const problems: string[] = [];
+  let discovery = searchPreferences.discovery;
   raw.forEach((entry, index) => {
     const unknownFields = unknownProfileFields(
       ProfileCopilotPatchOperationSchema,
       entry,
       `operations[${index}]`,
     );
-    const parsed = ProfileCopilotPatchOperationSchema.safeParse(entry);
+    // Merge before schema defaults can turn an omitted source list into [].
+    let candidate = entry;
+    if (
+      entry &&
+      typeof entry === "object" &&
+      "operation" in entry &&
+      entry.operation === "replace_search_preferences_fields" &&
+      "value" in entry &&
+      entry.value &&
+      typeof entry.value === "object" &&
+      "discovery" in entry.value &&
+      entry.value.discovery &&
+      typeof entry.value.discovery === "object" &&
+      !Array.isArray(entry.value.discovery)
+    ) {
+      if (
+        unknownFields.length === 0 &&
+        Object.hasOwn(entry.value.discovery, "targets")
+      ) {
+        problems.push(
+          "Source lists cannot be replaced through edit_profile. Use update_sources to add or enable/disable only the requested sources; omit discovery.targets here.",
+        );
+        return;
+      }
+      candidate = {
+        ...entry,
+        value: {
+          ...entry.value,
+          discovery: {
+            ...discovery,
+            ...entry.value.discovery,
+          },
+        },
+      };
+    }
+    const parsed = ProfileCopilotPatchOperationSchema.safeParse(candidate);
+    if (
+      parsed.success &&
+      parsed.data.operation === "replace_identity_fields" &&
+      parsed.data.value.fullName &&
+      (parsed.data.value.fullName !== profile.fullName || !profile.firstName) &&
+      (parsed.data.value.firstName === undefined ||
+        parsed.data.value.lastName === undefined)
+    ) {
+      problems.push(
+        "A name change must include firstName and, when present, lastName alongside fullName so Basics shows the saved name. Use the person's stated name; do not guess ambiguous name parts.",
+      );
+      return;
+    }
     if (unknownFields.length > 0) problems.push(...unknownFields);
-    else if (parsed.success) operations.push(parsed.data);
-    else
+    else if (parsed.success) {
+      operations.push(parsed.data);
+      if (
+        parsed.data.operation === "replace_search_preferences_fields" &&
+        parsed.data.value.discovery
+      ) {
+        discovery = parsed.data.value.discovery;
+      }
+    } else
       problems.push(`operations[${index}]: ${describeZodIssues(parsed.error)}`);
   });
   if (problems.length > 0) {
@@ -875,7 +934,11 @@ export const editProfileTool = defineTool({
   async execute(input, context) {
     const { service, session } = context;
     const snapshot = await service.getWorkspaceSnapshot();
-    const operations = parseOperations(input.operations, snapshot.profile);
+    const operations = parseOperations(
+      input.operations,
+      snapshot.profile,
+      snapshot.searchPreferences,
+    );
 
     const editor = session.context?.editor;
     if (editor?.editor === "profile" && editor.dirtyFields.length > 0) {
@@ -919,7 +982,8 @@ export const editProfileTool = defineTool({
       summary: input.summary,
       messageId: session.sourceMessage?.id ?? null,
     });
-    const setup = setupReadiness(await service.getWorkspaceSnapshot());
+    const savedSnapshot = await service.getWorkspaceSnapshot();
+    const setup = setupReadiness(savedSnapshot);
     const recorded = await recordEditChanges(
       context,
       result.changes,
@@ -942,6 +1006,11 @@ export const editProfileTool = defineTool({
       data: {
         receiptId: recorded.receiptIds[0],
         changedFields: recorded.fields,
+        savedIdentity: basics(savedSnapshot.profile),
+        savedLanguages: savedSnapshot.profile.spokenLanguages,
+        savedSearchPreferences: preferences(savedSnapshot.searchPreferences),
+        savedSourceCount:
+          savedSnapshot.searchPreferences.discovery.targets.length,
         invalidatedApprovedResumeJobIds: result.invalidatedApprovedResumeJobIds,
         setup,
       },
@@ -1197,6 +1266,16 @@ export const importResumeTool = defineTool({
         outcome: "completed",
         savedDetailCount: saved,
         reviewSuggestionCount: review,
+        savedIdentity: basics(snapshot.profile),
+        savedCollections: {
+          experiences: snapshot.profile.experiences.length,
+          education: snapshot.profile.education.length,
+          skills: snapshot.profile.skills.length,
+          links: snapshot.profile.links.length,
+          spokenLanguages: snapshot.profile.spokenLanguages,
+        },
+        completenessNote:
+          "These are stored facts. Compare the supplied document with read_profile, add any missing languages or other supported records with edit_profile, and read back before claiming all details were imported.",
       },
     };
   },

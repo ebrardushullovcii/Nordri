@@ -4,6 +4,8 @@ import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import {
   AssistantConversationSchema,
   AssistantMessageSchema,
+  type AssistantEvent,
+  type AssistantNavigationDisplay,
 } from "@nordri/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useAssistantConversation } from "./use-assistant-conversation";
@@ -38,7 +40,12 @@ const view = (id: string, ids: string[], hasOlderMessages = false) => ({
   pendingMessageIds: [],
 });
 
-function setup() {
+function setup(
+  onOpenRoute: (
+    route: string,
+  ) => Promise<AssistantNavigationDisplay> | void = () => undefined,
+) {
+  let receive: (event: AssistantEvent) => void = () => undefined;
   let resolveOlder!: (result: ReturnType<typeof view>) => void;
   let rejectOlder!: (error: Error) => void;
   const older = new Promise<ReturnType<typeof view>>((resolve, reject) => {
@@ -66,16 +73,25 @@ function setup() {
       }),
     ),
     readConversation,
-    onEvent: vi.fn(() => () => undefined),
+    onEvent: vi.fn((listener: (event: AssistantEvent) => void) => {
+      receive = listener;
+      return () => undefined;
+    }),
+    acknowledgeNavigation: vi.fn(() => Promise.resolve()),
     selectConversation: vi.fn(() => Promise.resolve()),
   };
   (window as unknown as { nordri: unknown }).nordri = {
     assistant: bridge,
   };
-  const hook = renderHook(() =>
-    useAssistantConversation({ onOpenRoute: () => undefined }),
-  );
-  return { ...hook, readConversation, resolveOlder, rejectOlder };
+  const hook = renderHook(() => useAssistantConversation({ onOpenRoute }));
+  return {
+    ...hook,
+    readConversation,
+    resolveOlder,
+    rejectOlder,
+    bridge,
+    emit: (event: AssistantEvent) => receive(event),
+  };
 }
 
 afterEach(() => {
@@ -145,5 +161,49 @@ describe("assistant older history", () => {
       "older",
       "first_latest",
     ]);
+  });
+});
+
+it("acknowledges an open-route event only after the renderer confirms its displayed result", async () => {
+  let finish!: (display: AssistantNavigationDisplay) => void;
+  const navigate = vi.fn(
+    () =>
+      new Promise<AssistantNavigationDisplay>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const ctx = setup(navigate);
+  await waitFor(() => expect(ctx.result.current.state.loading).toBe(false));
+  const route = "/job-finder/applications?view=tracker";
+  act(() =>
+    ctx.emit({
+      conversationId: "first",
+      sequence: 0,
+      turnId: null,
+      at: "2026-10-04T12:00:00.000Z",
+      payload: {
+        type: "open_route",
+        route,
+        navigationRequestId: "display_request",
+      },
+    }),
+  );
+  expect(navigate).toHaveBeenCalledWith(route);
+  expect(ctx.bridge.acknowledgeNavigation).not.toHaveBeenCalled();
+  const display: AssistantNavigationDisplay = {
+    displayedRoute: route,
+    section: "tracker",
+    overlay: "none",
+    status: "displayed",
+    reason: null,
+  };
+  await act(async () => {
+    finish(display);
+    await Promise.resolve();
+  });
+  expect(ctx.bridge.acknowledgeNavigation).toHaveBeenCalledWith({
+    ...display,
+    conversationId: "first",
+    navigationRequestId: "display_request",
   });
 });

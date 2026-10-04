@@ -1802,8 +1802,15 @@ export const ResumeApproachSchema = z.union([
 export type ResumeApproach = z.infer<typeof ResumeApproachSchema>;
 
 export const UpdateAiBehaviorInputSchema = z.object({
-  aiBehavior: AiBehaviorPreferenceSchema.optional(),
-  coverLetter: CoverLetterPreferenceSchema.optional(),
+  aiBehavior: z
+    .object({
+      profileAssistant: AiProfileAssistantBehaviorSchema.partial().optional(),
+      jobSearch: AiJobSearchBehaviorSchema.partial().optional(),
+      applying: AiApplyingBehaviorSchema.partial().optional(),
+    })
+    .strict()
+    .optional(),
+  coverLetter: CoverLetterPreferenceSchema.partial().optional(),
   resumeApproach: ResumeApproachSchema.optional(),
 });
 export type UpdateAiBehaviorInput = z.infer<typeof UpdateAiBehaviorInputSchema>;

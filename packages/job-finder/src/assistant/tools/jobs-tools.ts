@@ -265,7 +265,7 @@ export const compareJobsTool = defineTool({
   },
 });
 
-const JobIdsInput = z.object({ jobIds: z.array(Id).min(1).max(100) });
+const JobIdsInput = z.object({ jobIds: z.array(Id).min(1).max(1000) });
 
 export const shortlistJobsTool = defineTool({
   name: "shortlist_jobs",
@@ -285,54 +285,78 @@ export const shortlistJobsTool = defineTool({
   async execute(input, { service, session, ports }) {
     const snapshot = await service.getWorkspaceSnapshot();
     const caveatsFor = createJobCaveats(snapshot);
-    const outcomes: { jobId: string; outcome: string }[] = [];
-    for (const jobId of [...new Set(input.jobIds)]) {
+    const uniqueIds = [...new Set(input.jobIds)];
+    const outcomes = uniqueIds.map((jobId) => ({
+      jobId,
+      outcome: "not started: stopped",
+    }));
+    const select = async (
+      jobId: string,
+    ): Promise<{ jobId: string; outcome: string }> => {
       const job = findJob(snapshot, jobId);
       if (!job) {
-        outcomes.push({ jobId, outcome: "not found" });
-        continue;
+        return { jobId, outcome: "not found" };
       }
       const caveats = caveatsFor(job);
       if (!input.evenIfExcludedOrApplied && caveats.excludedEmployer) {
-        outcomes.push({
+        return {
           jobId,
           outcome: `held back: the person excluded ${job.company}`,
-        });
-        continue;
+        };
       }
       if (
         !input.evenIfExcludedOrApplied &&
         caveats.alreadyAppliedAs &&
         caveats.alreadyAppliedAs.jobId !== job.id
       ) {
-        outcomes.push({
+        return {
           jobId,
           outcome: `held back: same posting as job ${caveats.alreadyAppliedAs.jobId}, already applied (${caveats.alreadyAppliedAs.status})`,
-        });
-        continue;
+        };
       }
       if (job.status !== "discovered") {
-        outcomes.push({ jobId, outcome: `already ${job.status}` });
-        continue;
+        return { jobId, outcome: `already ${job.status}` };
       }
       if (job.listingActivity.status === "closed") {
-        outcomes.push({
+        return {
           jobId,
           outcome: "refused: the listing says it is closed",
-        });
-        continue;
+        };
       }
       session.assertCurrent();
       try {
         await service.queueJobForReview(jobId);
-        outcomes.push({ jobId, outcome: "shortlisted" });
+        return { jobId, outcome: "shortlisted" };
       } catch (error) {
-        outcomes.push({
+        return {
           jobId,
           outcome: `failed: ${error instanceof Error ? error.message.slice(0, 200) : "error"}`,
-        });
+        };
       }
-    }
+    };
+    let next = 0;
+    let processed = 0;
+    const worker = async () => {
+      while (next < uniqueIds.length) {
+        const index = next++;
+        const jobId = uniqueIds[index]!;
+        if (session.signal?.aborted) {
+          outcomes[index] = { jobId, outcome: "not started: stopped" };
+          continue;
+        }
+        outcomes[index] = await select(jobId);
+        processed++;
+        if (processed % 10 === 0)
+          await session
+            .reportProgress?.(
+              `Processed ${processed} of ${uniqueIds.length} jobs; ${uniqueIds.length - processed} remaining.`,
+            )
+            .catch(() => undefined);
+      }
+    };
+    await Promise.all(
+      Array.from({ length: Math.min(3, uniqueIds.length) }, () => worker()),
+    );
     ports.publishWorkspaceUpdate();
     const done = outcomes.filter(
       (entry) => entry.outcome === "shortlisted",
@@ -343,7 +367,7 @@ export const shortlistJobsTool = defineTool({
       .map((entry) => findJob(after, entry.jobId))
       .filter((job): job is DiscoveryJobView => job !== null);
     return {
-      summary: `Shortlisted ${plural(done, "job")} of ${input.jobIds.length}.`,
+      summary: `Shortlisted ${plural(done, "job")} of ${uniqueIds.length}; ${outcomes.filter((entry) => entry.outcome === "not started: stopped").length} not started.`,
       data: outcomes,
       parts: shortlisted.length
         ? [
@@ -355,6 +379,107 @@ export const shortlistJobsTool = defineTool({
           ]
         : [],
     };
+  },
+});
+
+export const shortlistResultSetTool = defineTool({
+  name: "shortlist_result_set",
+  group: "jobs",
+  description:
+    "Shortlists a saved jobs result set in one call, using the same selection action as the UI. limit bounds how many new jobs to pick; already shortlisted jobs are preserved and do not consume it. Reports each held-back job and stopped progress. For 'all these' use this instead of one call per job.",
+  parameters: json.object(
+    {
+      resultSetId: json.string(),
+      limit: json.number("Maximum new jobs, up to 1000; omit for all."),
+      evenIfExcludedOrApplied: json.boolean(),
+    },
+    ["resultSetId"],
+  ),
+  input: z.object({
+    resultSetId: Id,
+    limit: z.number().int().min(1).max(1000).optional(),
+    evenIfExcludedOrApplied: z.boolean().default(false),
+  }),
+  label: () => "Shortlisting the selected jobs",
+  effect: "local_write",
+  async execute(input, context) {
+    const set = await context.session.getResultSet(input.resultSetId);
+    if (!set || set.kind !== "jobs")
+      throw new AssistantToolError(
+        "invalid_input",
+        "Use a saved jobs result set; save collected page jobs first.",
+      );
+    const snapshot = await context.service.getWorkspaceSnapshot();
+    const caveatsFor = createJobCaveats(snapshot);
+    const eligible: string[] = [];
+    const heldBack: { jobId: string; reason: string }[] = [];
+    const alreadySelected: string[] = [];
+    for (const id of [...new Set(set.itemIds)]) {
+      const job = findJob(snapshot, id);
+      if (!job) {
+        heldBack.push({ jobId: id, reason: "not found" });
+        continue;
+      }
+      if (job.status !== "discovered") {
+        alreadySelected.push(id);
+        continue;
+      }
+      if (job.listingActivity.status === "closed") {
+        heldBack.push({ jobId: id, reason: "listing closed" });
+        continue;
+      }
+      const caveats = caveatsFor(job);
+      if (
+        !input.evenIfExcludedOrApplied &&
+        (caveats.excludedEmployer || caveats.alreadyAppliedAs)
+      ) {
+        heldBack.push({
+          jobId: id,
+          reason: caveats.excludedEmployer
+            ? "excluded employer"
+            : "already applied",
+        });
+        continue;
+      }
+      eligible.push(id);
+    }
+    const ids = eligible.slice(0, input.limit ?? 1000);
+    const result = ids.length
+      ? await shortlistJobsTool.execute(
+          {
+            jobIds: ids,
+            evenIfExcludedOrApplied: input.evenIfExcludedOrApplied,
+          },
+          context,
+        )
+      : { summary: "No new eligible jobs to shortlist.", data: [] };
+    return {
+      ...result,
+      summary: `${result.summary} ${alreadySelected.length} existing selections kept; ${heldBack.length} held back; ${eligible.length - ids.length} eligible jobs left beyond the requested limit.`,
+      data: {
+        outcomes: result.data,
+        alreadySelected,
+        heldBack,
+        remainingBeyondLimit: eligible.length - ids.length,
+      },
+    };
+  },
+});
+
+export const assessJobListingTool = defineTool({
+  name: "assess_job_listing",
+  group: "jobs",
+  description:
+    "Runs Read and assess listing for a saved job, exactly as its detail button does. Reads the listing, saves the model assessment and returns the current saved fit evidence. Use before ranking an unassessed job; never invent a score.",
+  parameters: json.object({ jobId: json.string() }, ["jobId"]),
+  input: z.object({ jobId: Id }),
+  label: () => "Reading and assessing the listing",
+  effect: "external",
+  async execute(input, context) {
+    context.session.assertCurrent();
+    await context.service.assessJobListing(input.jobId);
+    context.ports.publishWorkspaceUpdate();
+    return getJobTool.execute(input, context);
   },
 });
 
@@ -784,6 +909,8 @@ export const jobsTools = [
   getJobTool,
   compareJobsTool,
   shortlistJobsTool,
+  shortlistResultSetTool,
+  assessJobListingTool,
   removeFromShortlistTool,
   dismissJobsTool,
   restoreJobsTool,

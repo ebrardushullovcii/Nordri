@@ -12,6 +12,7 @@ import type {
   ApplicationAutomationMode,
   AppearanceTheme,
   ApplicationPacket,
+  RawApplyPage,
   CampaignRuleFunnelProjection,
   CandidateAsset,
   CandidateAssetListInput,
@@ -565,6 +566,9 @@ export interface JobFinderWorkspaceService {
     action: "approve" | "decline",
   ): Promise<JobFinderWorkspaceSnapshot>;
   revokeApplyRunApproval(runId: string): Promise<JobFinderWorkspaceSnapshot>;
+  inspectPreparedApplicationPage(
+    input: JobFinderPreparedApplicationPageInput,
+  ): Promise<RawApplyPage>;
   focusPreparedApplicationPage(
     input: JobFinderPreparedApplicationPageInput,
   ): Promise<JobFinderWorkspaceSnapshot>;

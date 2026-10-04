@@ -1,4 +1,21 @@
 import {
+  getPausedQuestionText,
+  applyResultPausedOnQuestion,
+  applyResultHasQuestionForPerson,
+  applyResultNeedsSecurityCheck,
+  looksLikeAccountWall,
+  looksLikeSignInWall,
+} from "@nordri/job-finder/assistant-attention";
+export {
+  getPausedQuestionText,
+  formatQuestionPrompt,
+  applyResultPausedOnQuestion,
+  applyResultHasQuestionForPerson,
+  applyResultNeedsSecurityCheck,
+  looksLikeAccountWall,
+  looksLikeSignInWall,
+} from "@nordri/job-finder/assistant-attention";
+import {
   APPLICATION_SKIPPED_BY_PERSON_LABEL,
   type JobFinderWorkspaceSnapshot,
 } from "@nordri/contracts";
@@ -68,20 +85,6 @@ export type ApplicationRecoveryPresentation = {
 };
 
 /**
- * The question a run paused on, exactly as the site asks it. The runtime
- * writes it into the stop sentence in quotes; the panel shows the question
- * rather than a paragraph about the pause.
- */
-export function getPausedQuestionText(result: ApplyResult): string | null {
-  const corpus = result
-    ? `${result.blockerSummary ?? ""} ${result.detail ?? ""} ${result.summary ?? ""}`
-    : "";
-  const quoted = corpus.match(/["“‘']([^"”’']{6,300})["”’']/);
-  const question = quoted?.[1]?.trim();
-  return question ? formatQuestionPrompt(question) : null;
-}
-
-/**
  * The site writes every keystroke back to its own server as you type, and
  * Job Finder has no permission to let it. Recognised from the blocker code
  * once the runtime records one, and until then from the sentence it writes.
@@ -134,56 +137,6 @@ export function getApplicationHostLabel(
   } catch {
     return null;
   }
-}
-
-/**
- * The question as a person should read it. The runtime stores a field's label
- * and its description joined by an em dash, and a field whose description is
- * just its label again came out as "Phone — Phone".
- */
-export function formatQuestionPrompt(prompt: string): string {
-  const halves = prompt.split(/\s+[—–-]\s+/);
-  const kept: string[] = [];
-  for (const half of halves) {
-    const text = half.trim();
-    if (!text) {
-      continue;
-    }
-    if (kept.some((seen) => seen.toLowerCase() === text.toLowerCase())) {
-      continue;
-    }
-    kept.push(text);
-  }
-
-  return kept.join(" — ") || prompt.trim();
-}
-
-/** True when the run stopped because the form asked something it cannot answer. */
-export function applyResultPausedOnQuestion(result: ApplyResult): boolean {
-  return (
-    result?.blockerReason === "question_grounding_failed" ||
-    result?.blockerReason === "required_human_input" ||
-    result?.blockerReason === "field_interpretation_failed"
-  );
-}
-
-/**
- * True when the run actually handed back something to answer. A run that got
- * stuck, or lost its model, carries the same blocker reason with no question
- * behind it, and that is a run to try again, not a question to answer.
- */
-export function applyResultHasQuestionForPerson(
-  result: ApplyResult,
-  pendingQuestionCount: number | null | undefined,
-  pausedQuestion?: string | null,
-): boolean {
-  if (!applyResultPausedOnQuestion(result)) return false;
-  return (
-    (pendingQuestionCount ?? 0) > 0 ||
-    (result?.latestQuestionCount ?? 0) > 0 ||
-    Boolean(pausedQuestion?.trim()) ||
-    getPausedQuestionText(result) !== null
-  );
 }
 
 /**
@@ -353,19 +306,6 @@ function readReasonCorpus(result: ApplyResult): string {
   return `${result.detail ?? ""} ${result.blockerSummary ?? ""} ${result.summary ?? ""}`;
 }
 
-/** Older CAPTCHA handoffs used the generic human-input code, without a question. */
-export function applyResultNeedsSecurityCheck(result: ApplyResult): boolean {
-  if (result?.state !== "awaiting_review" && result?.state !== "blocked")
-    return false;
-  return (
-    result.blockerReason === "site_protection" ||
-    (result.blockerReason === "required_human_input" &&
-      /\b(?:captcha|verify (?:that )?you are human|security check)\b/i.test(
-        readReasonCorpus(result),
-      ))
-  );
-}
-
 /**
  * How the runtime introduces its own stuck sentence. The words after the colon
  * are the reason; the prefix is bookkeeping and reads as a second, vaguer
@@ -382,77 +322,6 @@ const STUCK_PREFIX_PATTERN =
  */
 const GENERIC_SUMMARY_PATTERN =
   /^\s*(?:job finder\s+)?(?:could not finish|did not finish|failed to finish|could not complete)\b[^.]*\.?\s*$|^\s*attempt (?:failed|finished)\.?\s*$|^\s*preparation (?:failed|stopped)\.?\s*$/i;
-
-/**
- * True when the site is asking for an account rather than a sign-in. Same
- * shape of answer — the person does it themselves in the browser — but the
- * sentence and the row label say "account" rather than "sign in".
- */
-export function looksLikeAccountWall(input: {
-  blockerCode?: string | null;
-  text?: string | null;
-}): boolean {
-  const { blockerCode, text } = input;
-
-  if (
-    blockerCode === "account_required" ||
-    blockerCode === "site_account_required" ||
-    blockerCode === "signup_consent_required"
-  ) {
-    return true;
-  }
-
-  return Boolean(text && ACCOUNT_WALL_PATTERN.test(text));
-}
-
-/** Words a page uses when it wants an account created before it shows a form. */
-const ACCOUNT_WALL_PATTERN =
-  /\b(?:wants an account|requires? (?:you to )?(?:create|register)|create an account|sign ?up (?:is )?required|register(?:ed)? before applying|account before you can apply)\b/i;
-
-/** Words a page uses when it is asking for a sign-in before it will show a form. */
-const LOGIN_WALL_PATTERN =
-  /\b(?:sign[- ]?in wall|log[- ]?in wall|paywall of a login|sign[- ]?in (?:is )?required|log ?in (?:is )?required|requires? (?:a )?(?:login|sign[- ]?in|account)|must (?:log|sign) ?in|need(?:s|ing)? to (?:log|sign) ?in|(?:login|sign[- ]?in) before applying|create an account before applying)\b/i;
-
-/** A URL the run finished on that is plainly a sign-in page rather than a form. */
-const LOGIN_URL_PATTERN =
-  /(?:^|[/.])(?:login|log-in|signin|sign-in|sign_in|auth|oauth|sso|account\/login)(?:[/?#]|$)/i;
-
-/**
- * True when this stop is a site asking the person to sign in, whether the run
- * recorded that as a blocker code, said it in its own sentence, or simply ended
- * on the site's login page.
- */
-export function looksLikeSignInWall(input: {
-  blockerCode?: string | null;
-  destinationUrl?: string | null;
-  text?: string | null;
-}): boolean {
-  const { blockerCode, destinationUrl, text } = input;
-
-  if (
-    blockerCode === "site_login_required" ||
-    blockerCode === "auth_required" ||
-    blockerCode === "account_required" ||
-    blockerCode === "site_account_required" ||
-    blockerCode === "signup_consent_required"
-  ) {
-    return true;
-  }
-
-  if (text && LOGIN_WALL_PATTERN.test(text)) {
-    return true;
-  }
-
-  if (!destinationUrl) {
-    return false;
-  }
-
-  try {
-    return LOGIN_URL_PATTERN.test(new URL(destinationUrl).pathname);
-  } catch {
-    return LOGIN_URL_PATTERN.test(destinationUrl);
-  }
-}
 
 /** The one sentence a sign-in wall earns, wherever it is said. */
 export const SIGN_IN_WALL_REASON = `This site asks you to sign in before applying. Sign in in ${JOB_FINDER_BROWSER_NAME} and Job Finder can pick the application back up.`;

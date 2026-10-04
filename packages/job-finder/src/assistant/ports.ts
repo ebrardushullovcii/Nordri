@@ -63,6 +63,8 @@ export interface AssistantHostPorts {
   exportTracker?(format: "csv" | "json"): Promise<string | null>;
   /** The browser, when the host has one. */
   browser?: AssistantBrowserPort;
+  /** Makes app navigation visible while preserving every browser tab. */
+  prepareAppNavigation?(): Promise<void>;
   /** Tells mounted screens to refresh after the assistant changed something. */
   publishWorkspaceUpdate(): void;
 }
@@ -74,6 +76,10 @@ export interface AssistantHostPorts {
  */
 export interface AssistantBrowserLease {
   leaseId: string;
+  /** True for a tab the person lent, rather than one this task opened. */
+  borrowed?: boolean;
+  /** Rechecks whether the current page retains a saved application. */
+  isApplicationBound(): Promise<boolean>;
   tabId: string;
   /** Aborted when the lease is revoked. */
   revoked: AbortSignal;
@@ -94,6 +100,7 @@ export interface AssistantBrowserPort {
     tabId: string | null;
     conversationId: string;
     turnId: string;
+    signal?: AbortSignal;
     /** When no tab is lent, the task may open its own at this address. */
     openUrl?: string | null;
   }): Promise<AssistantBrowserLease>;

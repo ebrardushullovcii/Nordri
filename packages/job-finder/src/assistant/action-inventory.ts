@@ -770,7 +770,7 @@ export const SERVICE_METHOD_COVERAGE: Record<
   keyof JobFinderWorkspaceService,
   string
 > = {
-  assessJobListing: "internal",
+  assessJobListing: "assess_job_listing",
   shutdown: "internal",
   getWorkspaceSnapshot: "get_workspace_summary",
   getWorkspaceBootstrap: "internal",
@@ -882,6 +882,7 @@ export const SERVICE_METHOD_COVERAGE: Record<
   cancelApplyRun: "cancel_applications",
   resolveApplyConsentRequest: "internal",
   revokeApplyRunApproval: "cancel_applications",
+  inspectPreparedApplicationPage: "browser_use_application",
   focusPreparedApplicationPage: "continue_application",
   recordApplicationsSentByPerson: "internal",
   submitPreparedApplication: "send_applications",

@@ -207,9 +207,9 @@ export function readRunStatus(
     }
     return {
       done: true,
-      summary: batch?.cancelled
-        ? `Resume batch stopped; ${batch.completedJobIds.length} completed, ${batch.failures.length} failed. Queued jobs were not started.`
-        : `Resume writing ended for ${run.jobIds.length} job(s)${batch?.failures.length ? `; ${batch.failures.length} failed` : ""}${batch?.skipped.length ? `; ${batch.skipped.length} skipped` : ""}.`,
+      summary: batch
+        ? `Resume ${batch.cancelled ? "batch stopped" : "writing finished"}: ${batch.completedJobIds.length} rewritten, ${batch.failures.length} failed, ${batch.skipped.length} skipped, ${Math.max(0, batch.jobIds.length - batch.completedJobIds.length - batch.failures.length - batch.skipped.length)} not started.`
+        : "The resume writer is no longer running. Its completion counts are unavailable; inspect each saved draft before claiming a completed rewrite.",
       details: {
         resumes: run.jobIds.map((jobId) => {
           const item = snapshot.reviewQueue.find(
@@ -230,12 +230,14 @@ export function readRunStatus(
                 ? "original"
                 : (item?.resumeTailoringMode ??
                   snapshot.searchPreferences.tailoringMode),
+            generationMethod: draft?.generationMethod ?? null,
             revision: draft?.updatedAt ?? null,
             approved:
               mode !== "original_resume" && draft?.status === "approved",
             linesToDecide: item?.resumeLinesToDecide ?? 0,
           };
         }),
+        completedJobIds: batch?.completedJobIds ?? [],
         failures: batch?.failures ?? [],
         skipped: batch?.skipped ?? [],
         cancelled: batch?.cancelled ?? false,

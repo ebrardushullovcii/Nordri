@@ -946,7 +946,9 @@ describe("sidebar resume import outcomes", () => {
       outcome: "completed",
       savedDetailCount: 1,
       reviewSuggestionCount: 0,
+      savedCollections: { spokenLanguages: snapshot.profile.spokenLanguages },
     });
+    expect(JSON.stringify(result.data)).toContain("add any missing languages");
   });
 
   it("does not credit existing facts or older import candidates to an empty new file", async () => {

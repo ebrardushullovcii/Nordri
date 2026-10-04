@@ -18,6 +18,7 @@ import { AssistantToolError, defineTool, json } from "../tool-kit";
 import {
   applicationRowsPart,
   compactApplication,
+  interviewForModel,
   createJobCaveats,
   findJob,
   pausedByPersonMessage,
@@ -423,6 +424,12 @@ export const listApplicationsTool = defineTool({
     ),
     stage: json.enumOf(applicationCrmStageValues),
     needsAttention: json.boolean("Only ones blocked or waiting on the person."),
+    olderThanDays: json.number(
+      "Sent more than this many days ago, using crm.appliedAt; unknown sent dates do not match.",
+    ),
+    unansweredOnly: json.boolean(
+      "Applied or no_response with no recorded employer response since sending.",
+    ),
     limit: json.number(),
     show: json.boolean(
       "False when you are only checking facts for your answer; the rows then are not shown as cards.",
@@ -433,6 +440,8 @@ export const listApplicationsTool = defineTool({
     status: z.string().trim().max(60).optional(),
     stage: ApplicationCrmStageSchema.optional(),
     needsAttention: z.boolean().default(false),
+    olderThanDays: z.number().int().min(0).max(3650).optional(),
+    unansweredOnly: z.boolean().optional(),
     limit: z.number().int().min(1).max(25).default(10),
     show: z.boolean().default(true),
   }),
@@ -440,6 +449,7 @@ export const listApplicationsTool = defineTool({
   effect: "read",
   async execute(input, { service, session }) {
     const snapshot = await service.getWorkspaceSnapshot();
+    const now = Date.parse(session.now());
     const words = (input.text ?? "")
       .toLowerCase()
       .split(/\s+/u)
@@ -447,6 +457,23 @@ export const listApplicationsTool = defineTool({
     const records = snapshot.applicationRecords
       .filter((record) => !input.status || record.status === input.status)
       .filter((record) => !input.stage || record.crm?.stage === input.stage)
+      .filter(
+        (record) =>
+          input.olderThanDays === undefined ||
+          (record.crm?.appliedAt &&
+            now - Date.parse(record.crm.appliedAt) >
+              input.olderThanDays * 86_400_000),
+      )
+      .filter(
+        (record) =>
+          !input.unansweredOnly ||
+          (record.crm &&
+            ["applied", "no_response"].includes(record.crm.stage) &&
+            (!record.crm.lastEmployerActivityAt ||
+              (record.crm.appliedAt &&
+                Date.parse(record.crm.lastEmployerActivityAt) <=
+                  Date.parse(record.crm.appliedAt)))),
+      )
       .filter(
         (record) =>
           !input.needsAttention ||
@@ -472,6 +499,9 @@ export const listApplicationsTool = defineTool({
       data: {
         resultSetId: resultSet.id,
         applications: shown.map(compactApplication),
+        missingAppliedDateCount: snapshot.applicationRecords.filter(
+          (record) => !record.crm?.appliedAt,
+        ).length,
       },
       parts:
         input.show && shown.length
@@ -641,7 +671,9 @@ export const getApplicationTool = defineTool({
               stage: record.crm.stage,
               revision: record.crm.revision,
               reminders: record.crm.reminders.slice(0, 5),
-              interviews: record.crm.interviews.slice(0, 5),
+              appliedAt: record.crm.appliedAt,
+              lastEmployerActivityAt: record.crm.lastEmployerActivityAt,
+              interviews: record.crm.interviews.map(interviewForModel),
               notes: record.crm.notes.slice(-5),
             }
           : null,
@@ -794,7 +826,7 @@ export const updateTrackingTool = defineTool({
   effect: "local_write",
   async execute(input, { service, session, ports }) {
     session.assertCurrent();
-    await service.mutateApplicationCrm({
+    const saved = await service.mutateApplicationCrm({
       applicationRecordId: input.applicationRecordId,
       expectedRevision: input.revision,
       mutation: input.mutation,
@@ -803,6 +835,19 @@ export const updateTrackingTool = defineTool({
     ports.publishWorkspaceUpdate();
     return {
       summary: `Tracking updated (${input.mutation.type.replaceAll("_", " ")}).`,
+      data: (() => {
+        const record = saved.applicationRecords.find(
+          (entry) => entry.id === input.applicationRecordId,
+        );
+        return {
+          tracking: record?.crm
+            ? {
+                ...record.crm,
+                interviews: record.crm.interviews.map(interviewForModel),
+              }
+            : null,
+        };
+      })(),
     };
   },
 });

@@ -1,3 +1,4 @@
+import { waitForDisplayedDestination } from "./navigation-display";
 import { ASSISTANT_NARROW_CONTENT_MIN_WIDTH } from "./use-assistant-side-menu-collapse";
 import {
   useCallback,
@@ -274,6 +275,8 @@ function AssistantSidebarPanel() {
   const assistant = useAssistant();
   const navigate = useNavigate();
   const location = useLocation();
+  const displayedLocation = useRef(location);
+  displayedLocation.current = location;
   const headerBottom = useHeaderBottom();
   const browserChip = useVisibleBrowserTitle();
   const contentWidth = useContentWidth();
@@ -291,7 +294,15 @@ function AssistantSidebarPanel() {
     loadOlder,
     clearError,
   } = useAssistantConversation({
-    onOpenRoute: (route) => void navigate(route),
+    onOpenRoute: async (route) => {
+      assistant?.setNarrowView("page");
+      await navigate(route);
+      return waitForDisplayedDestination(
+        route,
+        () =>
+          `${displayedLocation.current.pathname}${displayedLocation.current.search}`,
+      );
+    },
   });
   const [text, setText] = useState("");
   const [mentions, setMentions] = useState<AssistantEntityRef[]>([]);

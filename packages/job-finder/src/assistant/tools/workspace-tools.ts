@@ -1,3 +1,4 @@
+import { projectWorkspaceAttention } from "../attention";
 import { readAssistantWorkState, runningSearchState } from "../work-state";
 import {
   AssistantTaskPlanStepSchema,
@@ -15,7 +16,7 @@ import {
   compactJob,
   plural,
   trackerAgenda,
-  unresolvedUserActions,
+  outstandingReviews,
 } from "./format";
 
 const Id = NonEmptyStringSchema.max(200);
@@ -49,13 +50,13 @@ export const getWorkspaceSummaryTool = defineTool({
         run.state,
       ),
     );
-    const needsYou = unresolvedUserActions(snapshot);
+    const attention = projectWorkspaceAttention(snapshot);
     const campaign = snapshot.campaigns.find(
       (entry) => entry.id === snapshot.activeCampaignId,
     );
     const searchReadiness = getAssistantSearchReadiness(snapshot);
     return {
-      summary: `${plural(snapshot.discoveryJobs.length, "job")} found, ${snapshot.reviewQueue.length} shortlisted, ${plural(applications.length, "application")}, ${needsYou.length} waiting on the person. ${
+      summary: `${plural(snapshot.discoveryJobs.length, "job")} found, ${snapshot.reviewQueue.length} shortlisted, ${plural(applications.length, "application")}, ${attention.count} Needs you items, ${attention.readyToSend.length} ready to send, ${attention.resumeReviews.length} resume reviews. ${
         searchReadiness.runningRunId
           ? "A search is already running."
           : searchReadiness.canStartSearch
@@ -95,7 +96,9 @@ export const getWorkspaceSummaryTool = defineTool({
           ...searchReadiness,
           enabledSources: searchReadiness.enabledSources.slice(0, 40),
         },
-        needsYou: needsYou.length,
+        needsYou: attention.count,
+        readyToSend: attention.readyToSend.length,
+        resumeReviews: attention.resumeReviews.length,
         tracker: (() => {
           const agenda = trackerAgenda(snapshot, Date.now());
           return {
@@ -154,23 +157,42 @@ export const listNeedsYouTool = defineTool({
   effect: "read",
   async execute(_input, { service }) {
     const snapshot = await service.getWorkspaceSnapshot();
-    const requests = unresolvedUserActions(snapshot);
+    const attention = projectWorkspaceAttention(snapshot);
+    const reviews = outstandingReviews(snapshot);
+    const count = attention.count + reviews.length;
     return {
       summary:
-        requests.length === 0
+        count === 0
           ? "Nothing is waiting on the person."
-          : `${plural(requests.length, "step")} waiting on the person.`,
-      data: requests.slice(0, 40).map((request) => ({
-        id: request.id,
-        revision: request.revision,
-        kind: request.kind,
-        state: request.state,
-        title: request.title,
-        summary: request.summary,
-        instructions: request.instructions.slice(0, 6),
-        scope: request.scope,
-        url: request.actionUrl,
-      })),
+          : `${plural(attention.count, "Needs you item")}, ${attention.readyToSend.length} ready to send, ${attention.resumeReviews.length} resume reviews waiting on the person.`,
+      data: {
+        needsYou: {
+          requests: attention.requests.map((request) => ({
+            id: request.id,
+            revision: request.revision,
+            kind: request.kind,
+            state: request.state,
+            title: request.title,
+            summary: request.summary,
+            instructions: request.instructions.slice(0, 6),
+            scope: request.scope,
+            url: request.actionUrl,
+          })),
+          groupedDecisions: attention.groupedDecisions,
+          applications: attention.applications.map((record) => ({
+            id: record.id,
+            jobId: record.jobId,
+            title: record.title,
+            company: record.company,
+            reason: record.nextActionLabel ?? record.lastActionLabel,
+            route: `/job-finder/applications?applicationRecordId=${encodeURIComponent(record.id)}`,
+          })),
+          safeguards: attention.safeguards,
+          count: attention.count,
+        },
+        readyToSend: reviews.filter((item) => item.kind === "application_send"),
+        resumeReviews: reviews.filter((item) => item.kind === "resume_review"),
+      },
     };
   },
 });
@@ -678,6 +700,7 @@ const APP_ROUTES = {
   find_jobs: "/job-finder/discovery",
   shortlisted: "/job-finder/review-queue",
   applications: "/job-finder/applications",
+  tracker: "/job-finder/applications?view=tracker",
   needs_you: "/job-finder/actions",
   settings: "/job-finder/settings",
   companies: "/job-finder/companies",
@@ -688,12 +711,16 @@ export const openInAppTool = defineTool({
   name: "open_in_app",
   group: "workspace",
   description:
-    "Opens a screen or a record in the app for the person. When asked to create or schedule a search plan, open search_plans in the same reply and explain that named plans and recurring schedules exist there, but your tools cannot create or schedule them directly. Otherwise open screens only when asked to see them.",
+    "Opens a screen or a record in the app for the person. Use screen tracker for saved interviews, reminders and stages, optionally with applicationRecordId. When asked to create or schedule a search plan, open search_plans in the same reply and explain that named plans and recurring schedules exist there, but your tools cannot create or schedule them directly. Otherwise open screens only when asked to see them.",
   parameters: json.object({
     screen: json.enumOf(Object.keys(APP_ROUTES)),
     jobId: json.string("Opens that job (its resume when resume is true)."),
     applicationRecordId: json.string(),
     resume: json.boolean(),
+    section: json.enumOf(
+      ["basics", "experience", "background", "preferences", "sources", "files"],
+      "Profile tab to show. Languages are in background.",
+    ),
   }),
   input: z.object({
     screen: z
@@ -702,19 +729,58 @@ export const openInAppTool = defineTool({
     jobId: Id.optional(),
     applicationRecordId: Id.optional(),
     resume: z.boolean().optional(),
+    section: z
+      .enum([
+        "basics",
+        "experience",
+        "background",
+        "preferences",
+        "sources",
+        "files",
+      ])
+      .optional(),
   }),
   label: () => "Opening it in the app",
   effect: "read",
-  execute(input, { session }) {
+  async execute(input, { session }) {
+    if (
+      input.screen &&
+      (input.jobId || input.applicationRecordId) &&
+      !(input.applicationRecordId && input.screen === "tracker") &&
+      input.screen !==
+        (input.applicationRecordId
+          ? "applications"
+          : input.resume
+            ? "shortlisted"
+            : "find_jobs")
+    ) {
+      throw new AssistantToolError(
+        "invalid_input",
+        "Choose one destination per call. To show a tracker after writing a resume, open tracker last.",
+      );
+    }
+    if (input.section && input.screen !== "profile")
+      throw new AssistantToolError(
+        "invalid_input",
+        "A Profile tab requires screen profile.",
+      );
     const route = input.applicationRecordId
-      ? `/job-finder/applications?applicationRecordId=${encodeURIComponent(input.applicationRecordId)}`
+      ? `/job-finder/applications?${input.screen === "tracker" ? "view=tracker&" : ""}applicationRecordId=${encodeURIComponent(input.applicationRecordId)}`
       : input.jobId
         ? input.resume
           ? `/job-finder/review-queue/${encodeURIComponent(input.jobId)}/resume`
           : `/job-finder/discovery?jobId=${encodeURIComponent(input.jobId)}`
-        : APP_ROUTES[input.screen ?? "home"];
-    session.openInApp(route);
-    return Promise.resolve({ summary: `Opened ${route}.` });
+        : input.screen === "profile" && input.section
+          ? `${APP_ROUTES.profile}?section=${input.section}`
+          : APP_ROUTES[input.screen ?? "home"];
+    const display = await session.openInApp(route);
+    return {
+      summary:
+        display?.status === "displayed"
+          ? `The renderer confirms ${display.displayedRoute}${display.section ? ` (${display.section})` : ""} is displayed with no covering overlay.`
+          : `Navigation was not confirmed: ${display?.reason ?? "no renderer acknowledgment"}. Do not claim the destination is visible.`,
+      data: { route, requested: true, display: display ?? null },
+    };
   },
 });
 

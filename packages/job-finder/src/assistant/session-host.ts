@@ -12,6 +12,9 @@ import {
   type TokenCalibrator,
 } from "@nordri/agent-runtime";
 import {
+  AssistantNavigationAcknowledgmentSchema,
+  type AssistantNavigationAcknowledgment,
+  type AssistantNavigationDisplay,
   AssistantContextReferenceSchema,
   AssistantSendMessageInputSchema,
   type AssistantActivity,
@@ -221,6 +224,20 @@ function titleFrom(text: string): string {
 }
 
 export class AssistantSessionHost {
+  private readonly navigationRequests = new Map<
+    string,
+    {
+      conversationId: string;
+      resolve: (display: AssistantNavigationDisplay) => void;
+    }
+  >();
+
+  acknowledgeNavigation(input: AssistantNavigationAcknowledgment): void {
+    const ack = AssistantNavigationAcknowledgmentSchema.parse(input);
+    const pending = this.navigationRequests.get(ack.navigationRequestId);
+    if (pending?.conversationId === ack.conversationId) pending.resolve(ack);
+  }
+
   private readonly repository: AssistantRepository;
   private readonly service: JobFinderWorkspaceService;
   private readonly ports: AssistantHostPorts;
@@ -1536,16 +1553,86 @@ export class AssistantSessionHost {
         this.profileReadDone.add(conversationId);
         return Promise.resolve(true);
       },
-      openInApp: (route) => {
-        void this.emit(conversationId, live.turn.id, {
-          type: "open_route",
-          route,
+      openInApp: async (route) => {
+        session.assertCurrent();
+        await this.ports.prepareAppNavigation?.();
+        session.assertCurrent();
+        const navigationRequestId = randomUUID();
+        let resolve!: (display: AssistantNavigationDisplay) => void;
+        const displayed = new Promise<AssistantNavigationDisplay>((done) => {
+          resolve = done;
         });
+        const unverified: AssistantNavigationDisplay = {
+          displayedRoute: null,
+          section: null,
+          overlay: "none",
+          status: "blocked",
+          reason: "The displayed destination was not acknowledged.",
+        };
+        const timeout = setTimeout(() => resolve(unverified), 4_000);
+        const stopped = () =>
+          resolve({
+            ...unverified,
+            reason: "Navigation stopped before it was acknowledged.",
+          });
+        session.signal?.addEventListener("abort", stopped, { once: true });
+        this.navigationRequests.set(navigationRequestId, {
+          conversationId,
+          resolve,
+        });
+        try {
+          await this.emit(conversationId, live.turn.id, {
+            type: "open_route",
+            route,
+            navigationRequestId,
+          });
+          const result = await displayed;
+          const expected = new URL(route, "https://nordri.local");
+          const actual = result.displayedRoute
+            ? new URL(result.displayedRoute, "https://nordri.local")
+            : null;
+          const matches =
+            actual?.pathname === expected.pathname &&
+            [...expected.searchParams].every(
+              ([key, value]) => actual.searchParams.get(key) === value,
+            );
+          const section =
+            expected.searchParams.get("section") ??
+            (expected.searchParams.get("view") === "tracker"
+              ? "tracker"
+              : null);
+          if (
+            result.status === "displayed" &&
+            (!matches ||
+              result.overlay !== "none" ||
+              (section && result.section !== section))
+          )
+            return {
+              ...result,
+              status: "blocked",
+              reason: "The requested destination is not visible.",
+            };
+          return result;
+        } finally {
+          clearTimeout(timeout);
+          session.signal?.removeEventListener("abort", stopped);
+          this.navigationRequests.delete(navigationRequestId);
+        }
       },
       visionAvailable: handle.capabilities.images,
       browserLease: async (options) => {
-        if (live.lease && !live.lease.revoked.aborted) return live.lease;
-        const tabId = live.sourceMessage?.context?.browser?.tabId ?? null;
+        const tabId = options?.newTab
+          ? null
+          : (options?.tabId ??
+            live.sourceMessage?.context?.browser?.tabId ??
+            null);
+        if (
+          live.lease &&
+          !live.lease.revoked.aborted &&
+          !options?.newTab &&
+          (!options?.tabId || live.lease.tabId === options.tabId)
+        )
+          return live.lease;
         // A tab the person took back stays theirs until they send a new
         // message; neither this turn nor its continuations lease it again
         // (ADR 0038).
@@ -1567,12 +1654,21 @@ export class AssistantSessionHost {
             "The browser is not available here.",
           );
         }
+        await this.releaseLease(live, "Switching browser tabs");
+        session.assertCurrent();
         const lease = await this.ports.browser.lease({
           tabId,
           conversationId,
           turnId: live.turn.id,
+          signal: session.signal,
           openUrl: options?.openUrl ?? null,
         });
+        try {
+          session.assertCurrent();
+        } catch (error) {
+          await lease.release("The turn stopped");
+          throw error;
+        }
         live.lease = lease;
         await this.repository.upsertLease({
           id: lease.leaseId,

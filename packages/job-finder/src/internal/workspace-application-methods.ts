@@ -344,6 +344,7 @@ type WorkspaceApplicationMethods = Omit<
     | "revokeApplyRunApproval"
     | "approveApply"
     | "focusPreparedApplicationPage"
+    | "inspectPreparedApplicationPage"
     | "submitPreparedApplication"
     | "recordLiveAssistantApplicationAction"
   >,
@@ -8536,6 +8537,65 @@ export function createWorkspaceApplicationMethods(
 
         return ctx.getWorkspaceSnapshot();
       });
+    },
+    async inspectPreparedApplicationPage(input) {
+      const [jobs, runs, results, records] = await Promise.all([
+        ctx.repository.listSavedJobs(),
+        ctx.repository.listApplyRuns(),
+        ctx.repository.listApplyJobResults({ runId: input.runId }),
+        ctx.repository.listApplicationRecords(),
+      ]);
+      const job = jobs.find((entry) => entry.id === input.jobId) ?? null;
+      const run = runs.find((entry) => entry.id === input.runId) ?? null;
+      const result =
+        results.find(
+          (entry) =>
+            entry.id === input.resultId &&
+            entry.jobId === input.jobId &&
+            entry.applicationRecordId === input.applicationRecordId,
+        ) ?? null;
+      const record =
+        records.find(
+          (entry) =>
+            entry.id === input.applicationRecordId &&
+            entry.jobId === input.jobId,
+        ) ?? null;
+      if (!job || !run || !result || !record) {
+        throw new Error(
+          "This prepared application no longer matches the saved run. Try preparing it again.",
+        );
+      }
+      if (
+        result.state === "submitted" ||
+        result.privacyReceipt?.submissionOutcome?.outcome ===
+          "outcome_uncertain"
+      ) {
+        throw new Error(
+          "This application already has a terminal submission outcome and cannot be reopened as a prepared form.",
+        );
+      }
+
+      if (!["awaiting_review", "blocked"].includes(result.state)) {
+        throw new Error(
+          "This application is not waiting for inspection. Wait for its preparation to finish.",
+        );
+      }
+      if (
+        !ctx.browserRuntime.closeApplicationFormAction ||
+        !ctx.browserRuntime.readApplicationPageBinding
+      ) {
+        throw new Error(
+          "Guarded inspection of the retained application is unavailable.",
+        );
+      }
+      await ctx.browserRuntime.closeApplicationFormAction(
+        job.source,
+        result.id,
+      );
+      return ctx.browserRuntime.readApplicationPageBinding(
+        job.source,
+        result.id,
+      );
     },
     async focusPreparedApplicationPage(input) {
       const [jobs, runs, results, records] = await Promise.all([
