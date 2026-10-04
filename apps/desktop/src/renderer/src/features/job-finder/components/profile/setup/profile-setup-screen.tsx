@@ -16,6 +16,7 @@ import {
   type SourceDebugRunRecord,
 } from "@nordri/contracts";
 import { Button } from "@renderer/components/ui/button";
+import { useToast } from "@renderer/components/ui/toast";
 import { LockedScreenLayout } from "../../locked-screen-layout";
 import { PageHeader } from "../../page-header";
 import { AskAssistantButton } from "../../../assistant/ask-assistant-button";
@@ -420,6 +421,19 @@ export function ProfileSetupScreen(props: {
     />
   );
 
+  // A merge that kept the person's edits needs nothing from them, so it is
+  // a toast; a conflict needs a choice and stays as a box (ADR 0042).
+  const { showToast } = useToast();
+  useEffect(() => {
+    if (!backgroundMergeNotice || hasBackgroundConflict) return;
+    showToast({
+      id: "profile-background-merge",
+      title: "Profile updated in the background",
+      description:
+        "Your unsaved edits were kept. Check the merged fields before saving.",
+    });
+  }, [backgroundMergeNotice, hasBackgroundConflict, showToast]);
+
   return (
     <LockedScreenLayout
       bottomContent={
@@ -531,9 +545,9 @@ export function ProfileSetupScreen(props: {
             />
           )}
 
-          {backgroundMergeNotice ? (
+          {backgroundMergeNotice && hasBackgroundConflict ? (
             <div
-              className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 rounded-(--radius-field) border border-(--info-border) bg-(--info-surface) px-4 py-3 text-sm leading-6 text-(--info-text)"
+              className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 rounded-(--radius-field) border border-(--warning-border) bg-(--warning-surface) px-4 py-3 text-sm leading-6 text-(--warning-text)"
               role="status"
             >
               <span>{backgroundMergeNotice}</span>

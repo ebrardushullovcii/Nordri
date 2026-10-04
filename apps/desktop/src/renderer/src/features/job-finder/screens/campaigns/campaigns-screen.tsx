@@ -2014,7 +2014,7 @@ export function CampaignsScreen(props: {
                   ) : null}
                   {remoteOnlySourceWarning ? (
                     <p
-                      className="rounded-(--radius-small) border border-(--warning-border) bg-(--warning-surface) px-3 py-2 text-sm leading-6 text-(--warning-text)"
+                      className="text-sm leading-6 text-(--warning-text)"
                       data-testid="campaign-remote-only-sources-note"
                     >
                       {remoteOnlySourceWarning}

@@ -669,6 +669,7 @@ export function buildJobFinderPageContext(
               hasDiscoveryRunReportCounts(report)
                 ? formatDiscoveryRunReportLabel(report)
                 : null,
+              hasDiscoveryRunReportCounts(report) ? report.new : null,
             ),
           );
         },

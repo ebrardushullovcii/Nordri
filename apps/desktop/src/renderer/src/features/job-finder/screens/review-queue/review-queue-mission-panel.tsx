@@ -504,7 +504,7 @@ export function ReviewQueueMissionPanel({
         {!existingApplication && primaryApplicationAction.blocker ? (
           primaryApplicationAction.blockerTone === "info" ? (
             <p
-              className="min-w-0 break-words rounded-(--radius-small) border border-(--info-border) bg-(--info-surface) px-3 py-2 text-(length:--text-small) leading-5 text-(--info-text)"
+              className="min-w-0 break-words text-(length:--text-small) leading-5 text-foreground-muted"
               role="status"
             >
               {primaryApplicationAction.blocker}

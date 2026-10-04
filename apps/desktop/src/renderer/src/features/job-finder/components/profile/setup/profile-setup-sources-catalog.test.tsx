@@ -202,13 +202,13 @@ describe("ProfileSetupTargetingStep guided source catalog", () => {
 
     expect(screen.getByText("6 sources")).toBeTruthy();
     expect(screen.getByText("0 of 6 sources enabled for search")).toBeTruthy();
-    // Starter sources exist but are all disabled: warn before the ready
-    // check instead of staying silent until discovery fails.
+    // Starter sources exist but are all disabled: the step warns once, at its
+    // top, with a jump to the list; the list does not say it a second time.
     expect(
-      screen.getByText(
+      screen.queryByText(
         "All 6 saved sources are turned off. Enable at least one source below so Job Finder has somewhere to search.",
       ),
-    ).toBeTruthy();
+    ).toBeNull();
     const jumpCta = screen.getByRole("button", {
       name: "Show job sources to enable",
     });

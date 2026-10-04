@@ -15,6 +15,7 @@ import {
 } from "@nordri/contracts";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter, useLocation } from "react-router-dom";
+import { ToastProvider } from "@renderer/components/ui/toast";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ProfileScreen } from "./profile-screen";
 
@@ -138,11 +139,13 @@ function renderProfileScreen(
   } = {},
 ): ReturnType<typeof render> {
   return render(
-    <MemoryRouter
-      initialEntries={[overrides.initialEntry ?? "/job-finder/profile"]}
-    >
-      <ProfileScreen {...buildProfileScreenProps(overrides)} />
-    </MemoryRouter>,
+    <ToastProvider>
+      <MemoryRouter
+        initialEntries={[overrides.initialEntry ?? "/job-finder/profile"]}
+      >
+        <ProfileScreen {...buildProfileScreenProps(overrides)} />
+      </MemoryRouter>
+    </ToastProvider>,
   );
 }
 
@@ -190,16 +193,18 @@ describe("ProfileScreen ready-state density and save-bar footprint", () => {
     );
     expect(props.onImportResume).not.toHaveBeenCalled();
     view.rerender(
-      <MemoryRouter>
-        <ProfileScreen
-          {...props}
-          latestResumeImportRun={{
-            ...props.latestResumeImportRun,
-            status: "applied",
-            completedAt: "2026-10-02T10:01:00.000Z",
-          }}
-        />
-      </MemoryRouter>,
+      <ToastProvider>
+        <MemoryRouter>
+          <ProfileScreen
+            {...props}
+            latestResumeImportRun={{
+              ...props.latestResumeImportRun,
+              status: "applied",
+              completedAt: "2026-10-02T10:01:00.000Z",
+            }}
+          />
+        </MemoryRouter>
+      </ToastProvider>,
     );
     expect(screen.queryAllByText("Importing")).toHaveLength(0);
     expect(
@@ -461,8 +466,9 @@ describe("ProfileScreen ready-state density and save-bar footprint", () => {
   it("renders the compact section panel with a reduced save-bar footprint", () => {
     renderProfileScreen();
 
-    // Ready state keeps the banner path intact.
-    expect(screen.getByText("Core setup is ready.")).toBeTruthy();
+    // Core setup being ready is a one-time toast, not a standing banner
+    // above the sections (ADR 0042).
+    expect(screen.queryByText("Core setup is ready.")).toBeNull();
 
     // Tab panel content padding is tightened at wide breakpoints.
     const panel = document.getElementById("profile-section-panel");
@@ -709,24 +715,30 @@ describe("ProfileScreen ready-state density and save-bar footprint", () => {
 
     // A meaningful external canonical update lands while the draft is dirty.
     rerender(
-      <MemoryRouter initialEntries={["/job-finder/profile"]}>
-        <ProfileScreen
-          {...buildProfileScreenProps({
-            onSaveAll,
-            profile: {
-              ...profile,
-              headline: "External canonical headline",
-              currentLocation: "Berlin",
-            },
-          })}
-        />
-      </MemoryRouter>,
+      <ToastProvider>
+        <MemoryRouter initialEntries={["/job-finder/profile"]}>
+          <ProfileScreen
+            {...buildProfileScreenProps({
+              onSaveAll,
+              profile: {
+                ...profile,
+                headline: "External canonical headline",
+                currentLocation: "Berlin",
+              },
+            })}
+          />
+        </MemoryRouter>
+      </ToastProvider>,
     );
 
-    const mergeNotice = screen.getByText(/updated in the background/);
-    expect(mergeNotice.closest('[role="status"]')).toBeTruthy();
-    expect(mergeNotice.textContent).toContain(
-      "Your unsaved edits were kept; review the merged fields before saving.",
+    // A merge that kept the draft needs nothing, so it is a toast (ADR 0042).
+    const mergeToast = document.querySelector("[data-toast]");
+    expect(mergeToast?.getAttribute("role")).toBe("status");
+    expect(mergeToast?.textContent).toContain(
+      "Profile updated in the background",
+    );
+    expect(mergeToast?.textContent).toContain(
+      "Your unsaved edits were kept. Check the merged fields before saving.",
     );
     expect(
       document
@@ -769,18 +781,22 @@ describe("ProfileScreen ready-state density and save-bar footprint", () => {
     // The background removes the very record the user is editing: the merge
     // cannot be safe, so the local draft stays whole under a conflict notice.
     rerender(
-      <MemoryRouter initialEntries={["/job-finder/profile?section=experience"]}>
-        <ProfileScreen
-          {...buildProfileScreenProps({
-            onSaveAll,
-            profile: {
-              ...profile,
-              experiences: [],
-              targetRoles: ["Program Manager"],
-            },
-          })}
-        />
-      </MemoryRouter>,
+      <ToastProvider>
+        <MemoryRouter
+          initialEntries={["/job-finder/profile?section=experience"]}
+        >
+          <ProfileScreen
+            {...buildProfileScreenProps({
+              onSaveAll,
+              profile: {
+                ...profile,
+                experiences: [],
+                targetRoles: ["Program Manager"],
+              },
+            })}
+          />
+        </MemoryRouter>
+      </ToastProvider>,
     );
 
     const conflictNotice = screen.getByText(
@@ -818,11 +834,15 @@ describe("ProfileScreen ready-state density and save-bar footprint", () => {
     // The returned snapshot echoes what this save emitted, so the surface
     // rebases clean and the conflict notice clears without another merge.
     rerender(
-      <MemoryRouter initialEntries={["/job-finder/profile?section=experience"]}>
-        <ProfileScreen
-          {...buildProfileScreenProps({ onSaveAll, profile: emittedProfile })}
-        />
-      </MemoryRouter>,
+      <ToastProvider>
+        <MemoryRouter
+          initialEntries={["/job-finder/profile?section=experience"]}
+        >
+          <ProfileScreen
+            {...buildProfileScreenProps({ onSaveAll, profile: emittedProfile })}
+          />
+        </MemoryRouter>
+      </ToastProvider>,
     );
 
     expect(
@@ -861,18 +881,22 @@ describe("ProfileScreen ready-state density and save-bar footprint", () => {
     // The background removes the edited record: the merge aborts and the
     // notice exposes the discard-and-reload recovery action.
     rerender(
-      <MemoryRouter initialEntries={["/job-finder/profile?section=experience"]}>
-        <ProfileScreen
-          {...buildProfileScreenProps({
-            onSaveAll,
-            profile: {
-              ...profile,
-              experiences: [],
-              targetRoles: ["Program Manager"],
-            },
-          })}
-        />
-      </MemoryRouter>,
+      <ToastProvider>
+        <MemoryRouter
+          initialEntries={["/job-finder/profile?section=experience"]}
+        >
+          <ProfileScreen
+            {...buildProfileScreenProps({
+              onSaveAll,
+              profile: {
+                ...profile,
+                experiences: [],
+                targetRoles: ["Program Manager"],
+              },
+            })}
+          />
+        </MemoryRouter>
+      </ToastProvider>,
     );
 
     expect(

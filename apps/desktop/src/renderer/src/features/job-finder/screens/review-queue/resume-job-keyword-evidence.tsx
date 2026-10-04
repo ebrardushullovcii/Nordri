@@ -372,7 +372,7 @@ export function ResumeJobKeywordEvidencePanel(props: {
 
       {needsFactualReview ? (
         <div
-          className="rounded-(--radius-field) border border-(--warning-border) bg-(--warning-surface) px-3 py-2 text-(length:--text-small) leading-5 text-(--warning-text)"
+          className="text-(length:--text-small) leading-5 text-foreground-muted"
           data-resume-keyword-factual-review
           role="note"
         >
@@ -384,7 +384,7 @@ export function ResumeJobKeywordEvidencePanel(props: {
 
       <div className="grid gap-3 md:grid-cols-2">
         <div
-          className="grid content-start gap-2 rounded-(--radius-field) border border-positive/25 bg-positive/5 p-2.5"
+          className="grid content-start gap-2 rounded-(--radius-field) border border-(--surface-panel-border) p-2.5"
           data-resume-supported-keywords
         >
           <div className="grid gap-0.5">
@@ -428,7 +428,7 @@ export function ResumeJobKeywordEvidencePanel(props: {
         </div>
 
         <div
-          className="grid content-start gap-2 rounded-(--radius-field) border border-(--warning-border) bg-(--warning-surface)/35 p-2.5"
+          className="grid content-start gap-2 rounded-(--radius-field) border border-(--surface-panel-border) p-2.5"
           data-resume-missing-keywords
         >
           <div className="grid gap-0.5">

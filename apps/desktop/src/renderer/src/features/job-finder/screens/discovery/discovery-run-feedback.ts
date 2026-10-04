@@ -213,6 +213,13 @@ export interface DiscoveryRunFeedback {
   };
   targetLabel: string | null;
   targetId?: string | null;
+  /**
+   * Set on outcomes that need nothing from the person (a finished or stopped
+   * search). Find jobs shows these as a short toast instead of a banner over
+   * the results (ADR 0042); `headline` stays the full sentence for Home,
+   * Search history and tests.
+   */
+  toast?: { title: string; description: string | null };
 }
 
 const BROWSER_RUNTIME_FAILURE_RE =
@@ -385,6 +392,8 @@ export function createDiscoveryRunStartedFeedback(
 export function createDiscoveryRunSucceededFeedback(
   targetLabel: string | null = null,
   runCountLabel: string | null = null,
+  /** Jobs new to the person, for the toast's one short line. */
+  newJobCount: number | null = null,
 ): DiscoveryRunFeedback {
   const finished = targetLabel
     ? `Search finished for ${targetLabel} and results were saved on this device.`
@@ -396,6 +405,17 @@ export function createDiscoveryRunSucceededFeedback(
     headline: runCountLabel ? `${finished} ${runCountLabel}.` : finished,
     recovery: null,
     targetLabel,
+    toast: {
+      title: targetLabel
+        ? `Search finished for ${targetLabel}`
+        : "Search finished",
+      description:
+        newJobCount === null
+          ? runCountLabel
+          : newJobCount === 0
+            ? "No new jobs this time."
+            : `${newJobCount} new ${newJobCount === 1 ? "job" : "jobs"} to review.`,
+    },
   };
 }
 
@@ -451,6 +471,12 @@ export function createDiscoveryRunRepeatedFeedback(input: {
       : `Search finished. ${summary}; your existing results are unchanged.`,
     recovery: null,
     targetLabel,
+    toast: {
+      title: targetLabel
+        ? `Search finished for ${targetLabel}`
+        : "Search finished",
+      description: `${summary}; your results are unchanged.`,
+    },
   };
 }
 
@@ -477,6 +503,12 @@ export function createDiscoveryRunCancelledFeedback(input: {
         : "Search stopped. Jobs found so far were kept on this device.",
       recovery: null,
       targetLabel,
+      toast: {
+        title: targetLabel
+          ? `Search stopped for ${targetLabel}`
+          : "Search stopped",
+        description: "Jobs found so far were kept.",
+      },
     };
   }
 
@@ -488,6 +520,12 @@ export function createDiscoveryRunCancelledFeedback(input: {
       : "The search stopped before it could finish.",
     recovery: null,
     targetLabel,
+    toast: {
+      title: targetLabel
+        ? `Search stopped for ${targetLabel}`
+        : "Search stopped",
+      description: "It stopped before any jobs were saved.",
+    },
   };
 }
 
@@ -558,6 +596,10 @@ export function createDiscoveryRunAlreadyRunningFeedback(
       : "The last search is still finishing. Wait for it to stop, then search again.",
     recovery: null,
     targetLabel,
+    toast: {
+      title: "A search is still finishing",
+      description: "Wait for it to stop, then search again.",
+    },
   };
 }
 

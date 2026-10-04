@@ -782,7 +782,7 @@ export function ApplicationsDetailPanelRecoveryActionsSection(props: {
             aria-live="polite"
             className={
               finishInBrowserOutcome.kind === "opened_application_page"
-                ? "rounded-(--radius-field) border border-primary/25 bg-primary/5 px-3 py-2 text-(length:--text-small) leading-6 text-foreground"
+                ? "text-(length:--text-small) leading-6 text-foreground-muted"
                 : "rounded-(--radius-field) border border-(--warning-border) bg-(--warning-surface) px-3 py-2 text-(length:--text-small) leading-6 text-foreground"
             }
             data-handoff-outcome={finishInBrowserOutcome.kind}
@@ -795,7 +795,7 @@ export function ApplicationsDetailPanelRecoveryActionsSection(props: {
         {dailyQueueRecoveryExceedsRemainingReason ? (
           <p
             aria-live="polite"
-            className="rounded-(--radius-field) border border-(--warning-border) bg-(--warning-surface) px-3 py-2 text-(length:--text-small) leading-6 text-foreground"
+            className="text-(length:--text-small) leading-6 text-foreground-muted"
             data-testid="queue-recovery-daily-capacity-exceeded-note"
             id={queueRecoveryExceedsNoteId}
           >
@@ -804,7 +804,9 @@ export function ApplicationsDetailPanelRecoveryActionsSection(props: {
         ) : null}
         {dailyCapacityReachedText ? (
           <p
-            className="rounded-(--radius-field) border border-(--warning-border) bg-(--warning-surface) px-3 py-2 text-(length:--text-small) leading-6 text-foreground"
+            // A line by the actions it limits, not a box: amber because the
+            // day's preparations are used up (ADR 0042).
+            className="text-(length:--text-small) leading-6 text-(--warning-text)"
             data-testid="daily-capacity-reached-alert"
             role="alert"
           >

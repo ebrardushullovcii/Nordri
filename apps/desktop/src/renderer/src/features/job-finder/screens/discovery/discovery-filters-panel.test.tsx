@@ -1433,7 +1433,8 @@ describe("DiscoveryFiltersPanel", () => {
       </MemoryRouter>,
     );
 
-    expect(getByText("1 match ready to review.")).toBeTruthy();
+    // One plain status line under the Results header (ADR 0042).
+    expect(getByText(/^1 match ready to review\./)).toBeTruthy();
     expect(getByText(/remaining sources/i)).toBeTruthy();
     expect(getByText("Senior Product Designer")).toBeTruthy();
     expect(queryByRole("listbox")).toBeNull();
@@ -1526,7 +1527,10 @@ describe("DiscoveryFiltersPanel", () => {
     expect(offlineCatalogStatus?.textContent).toContain(
       "Job Finder cannot search right now; try again in a moment.",
     );
-    expect(offlineCatalogStatus?.parentElement?.className).toContain("py-4");
+    // The status line lives in the Results header, not a padded box.
+    expect(offlineCatalogStatus?.getAttribute("data-testid")).toBe(
+      "discovery-results-status-line",
+    );
     expect(getAllByText("Source unavailable").length).toBeGreaterThan(0);
     expect(getAllByText("Unknown").length).toBeGreaterThan(0);
     expect(getAllByText("Fit not assessed").length).toBeGreaterThan(0);

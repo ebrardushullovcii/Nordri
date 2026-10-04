@@ -23,7 +23,7 @@ import {
   getDiscoveryRunPhase,
   workModeValues,
 } from "@nordri/contracts";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, LoaderCircle } from "lucide-react";
 import { Badge } from "@renderer/components/ui/badge";
 import { Button } from "@renderer/components/ui/button";
 import { SelectableRow } from "@renderer/components/ui";
@@ -569,7 +569,7 @@ export function ResultsEmptyState(props: {
         {...emptyStateProps}
       />
       {props.recoveryActionLabel ? (
-        <div className="surface-card-tint grid gap-3 rounded-(--radius-panel) border border-(--warning-border) bg-(--warning-surface) px-4 py-4 text-left text-(length:--text-description) text-(--warning-text)">
+        <div className="grid gap-3 rounded-(--radius-panel) border border-(--surface-panel-border) px-4 py-4 text-left text-(length:--text-description) text-foreground">
           <div className="grid gap-1">
             <p className="font-medium">Next step</p>
             <p className="leading-6">
@@ -1086,6 +1086,30 @@ export function DiscoveryResultsPanel({
     browserSession.status === "unknown" &&
     browserSession.driver !== "catalog_seed" &&
     recoveryActionPending;
+  const resultsStatusLine: {
+    busy: boolean;
+    id?: string;
+    text: string;
+  } | null = isSearchInProgress
+    ? {
+        busy: true,
+        text: [
+          getDiscoveryProgressCountLabel(filteredJobs.length, jobs.length),
+          liveStatusLine ?? "Still checking the remaining sources.",
+        ].join(" "),
+      }
+    : sessionWaitingOnRuntime
+      ? {
+          busy: true,
+          text: "Showing results from the last search while the browser gets ready.",
+        }
+      : isOfflineRuntime
+        ? {
+            busy: false,
+            id: DISCOVERY_OFFLINE_CATALOG_NOTICE_ID,
+            text: `${DISCOVERY_OFFLINE_RUNTIME_LABEL}. ${DISCOVERY_OFFLINE_SETUP_NOTICE}`,
+          }
+        : null;
   const allResultsHidden = jobs.length === 0 && hiddenAlsoFoundCount > 0;
   // One number: the jobs on this list. The band arithmetic ("6 worth opening
   // · 3 title matches · 2 also found · 11 kept in this search plan") now
@@ -1185,6 +1209,30 @@ export function DiscoveryResultsPanel({
             </Button>
           ) : null}
         </div>
+        {/* What the list is doing right now, as one plain line under the
+            header instead of a tinted box above the list (ADR 0042): a
+            search still running, saved results shown while the browser gets
+            ready, or live search being unavailable. */}
+        {jobs.length > 0 && resultsStatusLine ? (
+          <p
+            aria-atomic="true"
+            aria-live="polite"
+            className="flex basis-full items-start gap-1.5 text-(length:--text-small) leading-5 text-foreground-muted"
+            data-testid="discovery-results-status-line"
+            {...(resultsStatusLine.id ? { id: resultsStatusLine.id } : {})}
+            role="status"
+          >
+            {resultsStatusLine.busy ? (
+              <LoaderCircle
+                aria-hidden="true"
+                className="mt-0.5 size-3.5 shrink-0 animate-spin motion-reduce:animate-none"
+              />
+            ) : null}
+            <span className="min-w-0 break-words">
+              {resultsStatusLine.text}
+            </span>
+          </p>
+        ) : null}
       </header>
 
       {jobs.length > 0 ? (
@@ -1552,52 +1600,6 @@ export function DiscoveryResultsPanel({
         </div>
       ) : null}
 
-      {sessionWaitingOnRuntime && jobs.length > 0 ? (
-        <div className="px-5 py-4">
-          <div
-            aria-atomic="true"
-            aria-live="polite"
-            className="rounded-(--radius-panel) border border-(--info-border) bg-(--info-surface) px-4 py-3 text-(length:--text-description) leading-6 text-(--info-text)"
-            role="status"
-          >
-            You're viewing results from the last completed search while the
-            browser gets ready.
-          </div>
-        </div>
-      ) : null}
-
-      {isOfflineRuntime && jobs.length > 0 ? (
-        <div className="px-5 py-4">
-          <div
-            aria-atomic="true"
-            aria-live="polite"
-            className="min-w-0 break-words rounded-(--radius-panel) border border-(--info-border) bg-(--info-surface) px-4 py-3 text-(length:--text-description) leading-6 text-(--info-text)"
-            id={DISCOVERY_OFFLINE_CATALOG_NOTICE_ID}
-            role="status"
-          >
-            <strong>{DISCOVERY_OFFLINE_RUNTIME_LABEL}.</strong>{" "}
-            {DISCOVERY_OFFLINE_SETUP_NOTICE}
-          </div>
-        </div>
-      ) : null}
-
-      {isSearchInProgress && jobs.length > 0 ? (
-        <div className="px-5 py-4">
-          <div
-            aria-atomic="true"
-            aria-live="polite"
-            className="rounded-(--radius-panel) border border-(--info-border) bg-(--info-surface) px-4 py-3 text-(length:--text-description) leading-6 text-(--info-text)"
-            role="status"
-          >
-            <strong>
-              {getDiscoveryProgressCountLabel(filteredJobs.length, jobs.length)}
-            </strong>{" "}
-            {liveStatusLine ??
-              "Search is still checking the remaining sources; stronger matches may move to the top."}
-          </div>
-        </div>
-      ) : null}
-
       {!allResultsHidden &&
       !searchSetupBlocker &&
       !showSearchingEmptyState &&
@@ -1631,17 +1633,6 @@ export function DiscoveryResultsPanel({
                   : "The last search stopped before finishing"
             }
           />
-          {emptyRunVerdict.hasEarlierCompleted ? (
-            <div
-              aria-atomic="true"
-              aria-live="polite"
-              className="mt-3 rounded-(--radius-field) border border-(--info-border) bg-(--info-surface) px-3 py-2.5 text-(length:--text-description) leading-6 text-(--info-text)"
-              role="status"
-            >
-              An earlier completed search exists behind this stopped attempt,
-              but it is not on screen right now.
-            </div>
-          ) : null}
         </div>
       ) : null}
 

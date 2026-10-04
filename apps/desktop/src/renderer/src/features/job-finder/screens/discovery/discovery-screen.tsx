@@ -28,6 +28,7 @@ import type {
 import { isListableCompanyName } from "@nordri/contracts";
 import { PauseCircle, Play, X } from "lucide-react";
 import { Button } from "@renderer/components/ui/button";
+import { useToast } from "@renderer/components/ui/toast";
 import {
   DISCOVERY_PAUSED_SEARCH_REASON,
   getDiscoveryRuntimeProjection,
@@ -546,6 +547,7 @@ export function DiscoveryScreen(props: {
           formatDiscoveryRunCountLabel(
             getDiscoveryRunCountEvidence(selectedPlanLatestRun, null),
           ),
+        getDiscoveryRunReportCounts(selectedPlanLatestRun).new,
       );
     }
     if (selectedPlanLatestRun.state === "cancelled") {
@@ -598,6 +600,31 @@ export function DiscoveryScreen(props: {
   const currentFeedbackKey = currentDiscoveryRunFeedback
     ? `${currentDiscoveryRunFeedback.status}|${currentDiscoveryRunFeedback.headline}|${activeRun?.id ?? selectedPlanLatestRun?.id ?? ""}`
     : null;
+  // A finished or stopped search needs nothing from the person, so it is a
+  // toast, not a banner over the results (ADR 0042). Only a change seen on
+  // this visit is announced: the verdict standing when the screen opens
+  // describes a search that ended before, and the results already show it.
+  const { showToast } = useToast();
+  const announcedFeedbackKeyRef = useRef<string | null | undefined>(undefined);
+  useEffect(() => {
+    if (announcedFeedbackKeyRef.current === undefined) {
+      announcedFeedbackKeyRef.current = currentFeedbackKey;
+      return;
+    }
+    if (announcedFeedbackKeyRef.current === currentFeedbackKey) return;
+    announcedFeedbackKeyRef.current = currentFeedbackKey;
+    const toast = currentDiscoveryRunFeedback?.toast;
+    if (!toast) return;
+    showToast({
+      id: "discovery-run",
+      title: toast.title,
+      ...(toast.description ? { description: toast.description } : {}),
+      tone:
+        currentDiscoveryRunFeedback?.status === "succeeded"
+          ? "success"
+          : "neutral",
+    });
+  }, [currentDiscoveryRunFeedback, currentFeedbackKey, showToast]);
   const visibleDiscoveryRunFeedback =
     currentFeedbackKey !== null && currentFeedbackKey === dismissedFeedbackKey
       ? null
@@ -628,36 +655,28 @@ export function DiscoveryScreen(props: {
       ? formatDiscoveryRunCountLabel(evidence)
       : null;
   }, [activeRun, liveEvents]);
-  // The agent's own latest note, with the source it is on and how long ago
-  // it said it, so a slow model turn or a long page read never reads as a
-  // frozen page.
+  // Which source the search is on and how many are done. The agent's own
+  // notes stay in Activity: printed here they read as internal chatter, and
+  // the search bar's running clock already shows the page is not frozen.
   const liveStatusLine = useMemo(() => {
     if (activeRun?.state !== "running") return null;
     const events =
       liveEvents.length > 0 ? liveEvents : (activeRun.activity ?? []);
-    const latest = [...events]
-      .reverse()
-      .find((event) => event.message && event.message.trim().length > 0);
-    if (!latest) return null;
-    const target = latest.targetId
+    const latest = [...events].reverse().find((event) => event.targetId);
+    const target = latest?.targetId
       ? searchPreferences.discovery.targets.find(
           (entry) => entry.id === latest.targetId,
         )
       : null;
-    const done = activeRun.summary.targetsCompleted;
-    const planned = activeRun.summary.targetsPlanned;
-    const agoMs = Date.now() - Date.parse(latest.timestamp);
-    const ago =
-      Number.isFinite(agoMs) && agoMs >= 60_000
-        ? ` (${Math.floor(agoMs / 60_000)} min ago)`
-        : "";
-    return [
-      target ? `${target.label}:` : null,
-      `${latest.message.replace(/\.$/u, "")}${ago}.`,
+    const done = activeRun.summary?.targetsCompleted ?? 0;
+    const planned = activeRun.summary?.targetsPlanned ?? 0;
+    const line = [
+      target ? `Checking ${target.label}.` : null,
       planned > 0 ? `${done} of ${planned} sources done.` : null,
     ]
       .filter(Boolean)
       .join(" ");
+    return line.length > 0 ? line : null;
   }, [activeRun, liveEvents, searchPreferences.discovery.targets]);
   const workspaceMode: "results" | "setup" = isSetupOpen ? "setup" : "results";
   const setWorkspaceMode = useCallback((mode: "results" | "setup") => {
@@ -1363,20 +1382,18 @@ export function DiscoveryScreen(props: {
                 search-setup editor is open there are no results on screen, so
                 only feedback that still needs the user — a failure, a
                 cancellation, a run in flight — stays visible. */}
+            {/* Toast outcomes (finished, stopped) and a run in flight get no
+                banner: the search bar already says "Searching" with the
+                elapsed time and counts. */}
             {visibleDiscoveryRunFeedback &&
+            !visibleDiscoveryRunFeedback.toast &&
+            visibleDiscoveryRunFeedback.status !== "started" &&
             (!isSetupOpen ||
               visibleDiscoveryRunFeedback.status !== "succeeded") ? (
               <DiscoveryRunFeedbackCallout
                 feedback={visibleDiscoveryRunFeedback}
                 isRecoveryPending={isBrowserSessionPending}
-                // A run in flight has recorded nothing yet, so an earlier
-                // run's evidence warning must not sit under "Search started"
-                // where it would read as a claim about the live attempt.
-                notices={
-                  visibleDiscoveryRunFeedback.status === "started"
-                    ? []
-                    : latestRunNotices
-                }
+                notices={latestRunNotices}
                 onDismiss={() => setDismissedFeedbackKey(currentFeedbackKey)}
                 onOpenBrowserSession={onOpenBrowserSession}
                 suppressBrowserRecovery={runtimeProjection.isOffline}

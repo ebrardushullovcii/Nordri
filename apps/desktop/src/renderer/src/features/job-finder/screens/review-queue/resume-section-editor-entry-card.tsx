@@ -261,7 +261,7 @@ export function ResumeEntryEditorCard(props: ResumeEntryEditorCardProps) {
       {workHistoryReviewSuggestions.length > 0 ? (
         <div
           aria-labelledby={workHistoryHeadingId}
-          className="grid gap-1 rounded-(--radius-field) border border-(--warning-border) bg-(--warning-surface) px-3 py-2 text-(length:--text-body) leading-6 text-(--warning-text)"
+          className="grid gap-1 border-l-2 border-(--warning-border) py-1 pl-3 text-(length:--text-body) leading-6 text-foreground"
           role="region"
         >
           <h3 className="text-foreground" id={workHistoryHeadingId}>

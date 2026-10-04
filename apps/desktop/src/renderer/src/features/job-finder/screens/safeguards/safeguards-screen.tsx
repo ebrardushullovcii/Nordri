@@ -272,7 +272,7 @@ export function SafeguardsScreen(props: {
         </div>
       ) : dailyCapacityExhausted && dailyCapacity ? (
         <div
-          className="flex flex-wrap items-center gap-2 rounded-(--radius-field) border border-(--warning-border) bg-(--warning-surface) px-3 py-2 text-(length:--text-small) text-foreground"
+          className="flex flex-wrap items-center gap-2 text-(length:--text-small) text-foreground-soft"
           data-testid="safeguards-daily-capacity-status"
           role="status"
         >
@@ -284,7 +284,7 @@ export function SafeguardsScreen(props: {
         </div>
       ) : (
         <div
-          className="flex flex-wrap items-center gap-2 rounded-(--radius-field) border border-positive/30 bg-positive/10 px-3 py-2 text-(length:--text-small) text-foreground"
+          className="flex flex-wrap items-center gap-2 text-(length:--text-small) text-foreground-soft"
           role="status"
         >
           <ShieldCheck aria-hidden="true" className="size-4 text-positive" />

@@ -1,3 +1,12 @@
+import {
+  BriefcaseBusiness,
+  FileText,
+  Globe,
+  GraduationCap,
+  SlidersHorizontal,
+  UserRound,
+  type LucideIcon,
+} from "lucide-react";
 import { Tabs, TabsList, TabsTrigger } from "@renderer/components/ui/tabs";
 import {
   formatSectionProgressLabel,
@@ -19,6 +28,17 @@ interface ProfileSectionTabsProps {
   panelId: string;
   sections: readonly ProfileSectionDescriptor[];
 }
+
+// Each section carries an icon so the strip reads as navigation, not as a row
+// of column headings.
+const SECTION_ICONS: Record<ProfileSection, LucideIcon> = {
+  basics: UserRound,
+  experience: BriefcaseBusiness,
+  background: GraduationCap,
+  preferences: SlidersHorizontal,
+  sources: Globe,
+  files: FileText,
+};
 
 function countRequiredRemaining(progress: SectionProgress): number {
   if (getSectionProgressState(progress) !== "remaining") {
@@ -46,6 +66,11 @@ export function ProfileSectionTabs({
     // so the selected state is the shared primary underline, there are no
     // per-tab boxes, and the labels are plain text that never ellipsizes.
     //
+    // Spread evenly across the page in 12px text, the six labels read as
+    // column headings, and people did not notice they could click them. They
+    // now sit left-aligned at body size with an icon each and a hover fill,
+    // the conventional look of section tabs.
+    //
     // Activation is Radix's default `automatic`, deliberately: arrowing to a
     // tab opens that section, which is the expected tab-pattern behaviour and
     // matches the rest of the app's tabs. It is safe here because focus only
@@ -72,12 +97,13 @@ export function ProfileSectionTabs({
         // scrolls sideways rather than stacking: the old two-column stack cost
         // ~85px of the section pane, which is what pushed a newly selected
         // section's content below the fold at 1200x640 and 1024x720.
-        className="w-full max-w-full justify-start overflow-x-auto"
+        className="w-full max-w-full justify-start gap-1 overflow-x-auto overflow-y-hidden group-data-[orientation=horizontal]/tabs:h-auto"
         data-profile-section-tabs
         variant="line"
       >
         {sections.map((section) => {
           const remaining = countRequiredRemaining(section.progress);
+          const Icon = SECTION_ICONS[section.id];
 
           return (
             <TabsTrigger
@@ -86,6 +112,7 @@ export function ProfileSectionTabs({
               // the section deep links focus `#<section>-tab`, and the panel
               // is labelled by it.
               aria-controls={panelId}
+              className="flex-none gap-2 rounded-t-(--radius-small) text-(length:--text-body) group-data-[orientation=horizontal]/tabs:px-3.5 group-data-[orientation=horizontal]/tabs:py-2.5"
               data-profile-section-progress-state={getSectionProgressState(
                 section.progress,
               )}
@@ -96,6 +123,7 @@ export function ProfileSectionTabs({
               onClick={() => onSectionChange(section.id)}
               value={section.id}
             >
+              <Icon aria-hidden="true" />
               {section.label}
               {remaining > 0 ? (
                 <>

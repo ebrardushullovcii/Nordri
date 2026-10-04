@@ -19,6 +19,7 @@ import type {
   SourceInstructionArtifact,
 } from "@nordri/contracts";
 import { Button } from "@renderer/components/ui/button";
+import { useToast } from "@renderer/components/ui/toast";
 import {
   describeResumeIdentityOwnershipChoice,
   useResumeSourceNameForProfile,
@@ -572,6 +573,19 @@ export function ProfileScreen(props: {
     });
   }
 
+  // A merge that kept the person's edits needs nothing from them, so it is
+  // a toast; a conflict needs a choice and stays as the box below (ADR 0042).
+  const { showToast } = useToast();
+  useEffect(() => {
+    if (!backgroundMergeNotice || hasBackgroundConflict) return;
+    showToast({
+      id: "profile-background-merge",
+      title: "Profile updated in the background",
+      description:
+        "Your unsaved edits were kept. Check the merged fields before saving.",
+    });
+  }, [backgroundMergeNotice, hasBackgroundConflict, showToast]);
+
   return (
     <LockedScreenLayout
       // F01: Profile's Save lived at the end of a ~5,400px page and was never
@@ -581,9 +595,9 @@ export function ProfileScreen(props: {
       // action is inside the viewport at 1024x720 and every larger size.
       bottomContent={
         <>
-          {backgroundMergeNotice ? (
+          {backgroundMergeNotice && hasBackgroundConflict ? (
             <div
-              className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 border-b border-(--surface-panel-border) bg-(--info-surface) px-4 py-2 text-sm leading-6 text-(--info-text) sm:px-5"
+              className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 border-b border-(--warning-border) bg-(--warning-surface) px-4 py-2 text-sm leading-6 text-(--warning-text) sm:px-5"
               role="status"
             >
               <span>{backgroundMergeNotice}</span>
@@ -647,14 +661,13 @@ export function ProfileScreen(props: {
           )}
 
           {resumeAnalysisPending ? (
-            <div
-              className="rounded-(--radius-field) border border-(--info-border) bg-(--info-surface) px-4 py-3 text-sm leading-6 text-(--info-text)"
+            <p
+              className="text-(length:--text-description) leading-6 text-foreground-muted"
               role="status"
             >
-              Profile editing is paused while the resume update finishes. This
-              prevents the completed import from overwriting a draft created at
-              the same time.
-            </div>
+              Editing is paused while your resume update finishes, so the import
+              cannot overwrite a draft made at the same time.
+            </p>
           ) : null}
         </>
       }

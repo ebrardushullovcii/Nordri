@@ -620,7 +620,7 @@ export function ProfileSetupReviewQueueCard(props: {
                       </div>
                     ) : null}
                     {(linkedCandidate?.conflictChoices?.length ?? 0) >= 2 ? (
-                      <div className="mt-3 rounded-(--radius-field) border border-(--warning-border) bg-(--warning-surface) p-3">
+                      <div className="mt-3 rounded-(--radius-field) border border-(--surface-panel-border) p-3">
                         <div className="flex flex-wrap items-center gap-2">
                           <p className="text-(length:--text-tiny) uppercase tracking-[0.2em] text-(--warning-text)">
                             Import comparison

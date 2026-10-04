@@ -954,7 +954,7 @@ export function ProfileSetupTargetingStep(props: {
 
           {discoveryTargets.length === 0 ? (
             <div
-              className="rounded-(--radius-field) border border-(--warning-border) bg-(--warning-surface) p-3 text-sm leading-6 text-(--warning-text)"
+              className="rounded-(--radius-field) border border-dashed border-(--surface-panel-border) p-3 text-sm leading-6 text-foreground-soft"
               role="status"
             >
               Add at least one site to search — for example
@@ -964,16 +964,8 @@ export function ProfileSetupTargetingStep(props: {
             </div>
           ) : (
             <>
-              {enabledSourceCount === 0 ? (
-                <div
-                  className="rounded-(--radius-field) border border-(--warning-border) bg-(--warning-surface) p-3 text-sm leading-6 text-(--warning-text)"
-                  role="status"
-                >
-                  All {discoveryTargets.length} saved sources are turned off.
-                  Enable at least one source below so Job Finder has somewhere
-                  to search.
-                </div>
-              ) : null}
+              {/* "Saved job sources are still off" already heads this step
+                  with a jump to this list; a second box here said it twice. */}
               <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
                 <div className="grid gap-(--gap-field)">
                   <FieldLabel htmlFor={sourceSearchInputId}>

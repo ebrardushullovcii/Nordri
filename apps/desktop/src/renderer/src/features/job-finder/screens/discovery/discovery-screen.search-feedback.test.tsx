@@ -15,6 +15,7 @@ import {
 } from "@nordri/contracts";
 import type { ReactNode } from "react";
 import { MemoryRouter } from "react-router-dom";
+import { ToastProvider } from "@renderer/components/ui/toast";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { JobFinderQueuedJobOutcome } from "@renderer/features/job-finder/lib/job-finder-types";
 
@@ -243,7 +244,7 @@ afterEach(() => {
 });
 
 describe("DiscoveryScreen Search now truthful feedback", () => {
-  it("replaces an earlier failed source banner after its resumed plan completes", () => {
+  it("clears an earlier failed source banner after its resumed plan completes", () => {
     const failedFeedback = {
       ...createDiscoveryRunFailedFeedback({
         detail: "The source needed a sign-in.",
@@ -269,12 +270,10 @@ describe("DiscoveryScreen Search now truthful feedback", () => {
       ],
     });
 
-    expect(screen.getByTestId("discovery-run-feedback").textContent).toContain(
-      "Search finished",
-    );
-    expect(
-      screen.getByTestId("discovery-run-feedback").textContent,
-    ).not.toContain("Search could not start");
+    // The failure is superseded by the finished run, which needs nothing
+    // from the person, so nothing is boxed over the results (ADR 0042).
+    expect(screen.queryByTestId("discovery-run-feedback")).toBeNull();
+    expect(screen.queryByText(/Search could not start/)).toBeNull();
   });
 
   it("replaces a finished banner with the active plan's safeguard pause", () => {
@@ -328,14 +327,14 @@ describe("DiscoveryScreen Search now truthful feedback", () => {
     void first;
   });
 
-  it("shows immediate truthful start feedback next to the entry point", () => {
+  it("boxes nothing over the results while a search starts", () => {
     renderScreen({
       discoveryRunFeedback: createDiscoveryRunStartedFeedback(),
     });
 
-    const region = screen.getByTestId("discovery-run-feedback");
-    expect(region.getAttribute("role")).toBe("status");
-    expect(region.textContent).toContain("Search started");
+    // The search bar's Searching state and clock carry a run in flight.
+    expect(screen.queryByTestId("discovery-run-feedback")).toBeNull();
+    expect(screen.queryByText(/Search started/)).toBeNull();
   });
 
   it("renders a visible alert with a corrective action when the browser runtime is closed", () => {
@@ -378,33 +377,42 @@ describe("DiscoveryScreen Search now truthful feedback", () => {
     );
   });
 
-  it("reports success without claiming matches that may not exist", () => {
-    // The finished banner is read from the selected plan's own frozen run
-    // report now, not from the transient feedback prop, so Find jobs states
-    // the same numbers as Home, Search history, the plan card and Tasks.
-    renderScreen({ recentRuns: [cleanRun] });
-
-    const status = screen.getByRole("status");
-    expect(status.textContent).toContain(
-      "Search finished and results were saved on this device.",
+  it("announces a search that finishes during the visit as a toast without claiming matches", () => {
+    // The verdict is read from the selected plan's own frozen run report, so
+    // the toast states the same numbers as Home, Search history and Tasks.
+    const view = render(
+      <ToastProvider>{buildScreen({ recentRuns: [] })}</ToastProvider>,
     );
-    // It quotes the run's own count line instead of claiming matches.
-    expect(status.textContent).toContain("4 new jobs saved");
-    expect(status.textContent).not.toMatch(/match/iu);
+    expect(document.querySelector("[data-toast]")).toBeNull();
+
+    view.rerender(
+      <ToastProvider>{buildScreen({ recentRuns: [cleanRun] })}</ToastProvider>,
+    );
+
+    const toast = document.querySelector("[data-toast]");
+    expect(toast?.textContent).toContain("Search finished");
+    expect(toast?.textContent).toContain("4 new jobs saved");
+    expect(toast?.textContent).not.toMatch(/match/iu);
+    expect(screen.queryByTestId("discovery-run-feedback")).toBeNull();
   });
 
-  it("prints the run's own card-only evidence warning verbatim beside the outcome", () => {
+  it("does not replay a search that finished before the visit", () => {
+    render(
+      <ToastProvider>{buildScreen({ recentRuns: [cleanRun] })}</ToastProvider>,
+    );
+
+    expect(document.querySelector("[data-toast]")).toBeNull();
+    expect(screen.queryByTestId("discovery-run-feedback")).toBeNull();
+  });
+
+  it("leaves a finished run's evidence warning to Activity, not a box over the results", () => {
     const warning = buildDiscoveryCardOnlyEvidenceWarning("Example Board");
-    // The completed run is the source of both the outcome and the warning.
     renderScreen({ recentRuns: [cardOnlyRun] });
 
-    const notice = screen.getByTestId("discovery-run-notice");
-    expect(notice.textContent).toBe(warning);
-    // The app cannot open a listing anywhere, so the warning must never offer to.
-    expect(notice.textContent).not.toMatch(/open|browser|link/i);
-    expect(screen.getByTestId("discovery-run-feedback").textContent).toContain(
-      warning,
-    );
+    // The warning needs nothing from the person; Activity and Home's source
+    // health carry it (ADR 0042).
+    expect(screen.queryByTestId("discovery-run-notice")).toBeNull();
+    expect(screen.queryByText(warning)).toBeNull();
   });
 
   it("keeps an earlier run's warning off a search that is still running", () => {
@@ -419,8 +427,6 @@ describe("DiscoveryScreen Search now truthful feedback", () => {
   it("shows no run notice when the newest run recorded no warning", () => {
     renderScreen({ recentRuns: [cleanRun] });
 
-    // The banner is on screen; only the notice line is absent.
-    expect(screen.getByTestId("discovery-run-feedback")).toBeTruthy();
     expect(screen.queryByTestId("discovery-run-notice")).toBeNull();
   });
 });
@@ -583,15 +589,10 @@ describe("DiscoveryScreen Results-mode shortlist feedback", () => {
     expect(screen.getByTestId("discovery-paused-banner")).toBeTruthy();
   });
 
-  it("keeps a finished-search banner off the search-setup editor", () => {
-    // Driven by the run record: the succeeded banner is the plan's frozen run
-    // report, and its headline now carries the run's own counts, so assert on
-    // the banner surface rather than on one whole-string text match.
+  it("keeps a finished search off both the results and the search-setup editor", () => {
     renderScreen({ recentRuns: [cleanRun] });
 
-    expect(screen.getByTestId("discovery-run-feedback").textContent).toContain(
-      "Search finished and results were saved on this device.",
-    );
+    expect(screen.queryByTestId("discovery-run-feedback")).toBeNull();
 
     fireEvent.click(
       document.querySelector(
@@ -726,12 +727,10 @@ describe("source-specific stale errors and provider timeouts", () => {
         recentRuns: [completed("source_1")],
       }),
     );
-    expect(screen.getByTestId("discovery-run-feedback").textContent).toContain(
-      "Search finished",
-    );
-    expect(
-      screen.getByTestId("discovery-run-feedback").textContent,
-    ).not.toContain("Search could not start");
+    // The failure is superseded by the finished run, which needs nothing
+    // from the person, so nothing is boxed over the results (ADR 0042).
+    expect(screen.queryByTestId("discovery-run-feedback")).toBeNull();
+    expect(screen.queryByText(/Search could not start/)).toBeNull();
   });
   it("tells the person a timed-out plan kept jobs and can be searched again", () => {
     const onRunAgentDiscovery = vi.fn();

@@ -271,7 +271,7 @@ export function ResumeWorkspaceEditorPanel(
               className={
                 deterministicFallbackMessage
                   ? "flex flex-wrap items-start justify-between gap-x-3 gap-y-2 rounded-(--radius-field) border border-(--warning-border) bg-(--warning-surface) px-3 py-2 text-(length:--text-body) leading-6 text-(--warning-text)"
-                  : "flex flex-wrap items-start justify-between gap-x-3 gap-y-2 rounded-(--radius-field) border border-primary/30 bg-primary/10 px-3 py-2 text-(length:--text-body) leading-6 text-foreground"
+                  : "flex flex-wrap items-start justify-between gap-x-3 gap-y-2 text-(length:--text-body) leading-6 text-foreground-soft"
               }
               data-resume-draft-provenance
               {...(deterministicFallbackMessage
@@ -306,7 +306,9 @@ export function ResumeWorkspaceEditorPanel(
           ) : null}
           {props.showGeneratedLineMarkers && generatedBulletCount > 0 ? (
             <div
-              className="rounded-(--radius-field) border border-(--warning-border) bg-(--warning-surface) px-3 py-2 text-(length:--text-body) leading-6 text-(--warning-text)"
+              // The lines themselves carry the marks and Lines to confirm
+              // is the review box; this is the explanation, in plain text.
+              className="text-(length:--text-small) leading-6 text-foreground-muted"
               data-resume-inference-disclosure
               role="note"
             >

@@ -92,8 +92,8 @@ describe("ProfileSectionTabs", () => {
     const experienceTab = screen.getByRole("tab", { name: /experience/i });
     // The trigger owns its own padding, so the whole painted cell is the
     // button rather than a box wrapping a smaller inner target.
-    expect(experienceTab.className).toContain("px-4");
-    expect(experienceTab.className).toContain("py-3");
+    expect(experienceTab.className).toContain("px-3.5");
+    expect(experienceTab.className).toContain("py-2.5");
 
     fireEvent.click(experienceTab);
     expect(onSectionChange).toHaveBeenCalledWith("experience");
@@ -190,8 +190,11 @@ describe("ProfileSectionTabs", () => {
       expect(tab.textContent).not.toContain("Empty");
       expect(tab.textContent).not.toContain("17/29");
       expect(tab.textContent).not.toContain("59%");
-      // No check icon in any cell.
-      expect(tab.querySelector("svg")).toBeNull();
+      // Only the section's own icon; no check icon in any cell.
+      expect(tab.querySelectorAll("svg")).toHaveLength(1);
+      expect(
+        tab.querySelector('svg[class*="check"], svg[class*="circle-check"]'),
+      ).toBeNull();
     }
 
     // A finished section is just its name.

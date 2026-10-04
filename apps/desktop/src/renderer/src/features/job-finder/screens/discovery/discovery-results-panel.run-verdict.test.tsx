@@ -116,7 +116,7 @@ describe("DiscoveryResultsPanel newest-run empty-state verdicts", () => {
     expect(screen.queryByText("Ready for your first search")).toBeNull();
   });
 
-  it("acknowledges an earlier completed search behind the stopped attempt", () => {
+  it("shows the stopped verdict without a second box about an earlier search", () => {
     renderEmptyResults({
       latestRunVerdict: {
         hasEarlierCompleted: true,
@@ -125,7 +125,7 @@ describe("DiscoveryResultsPanel newest-run empty-state verdicts", () => {
       },
     });
 
-    expect(screen.getByText(/An earlier completed search exists/)).toBeTruthy();
+    expect(screen.queryByText(/An earlier completed search exists/)).toBeNull();
     expect(screen.getByText("The last search was cancelled")).toBeTruthy();
   });
 
@@ -164,7 +164,7 @@ describe("DiscoveryResultsPanel newest-run empty-state verdicts", () => {
     ).toBeTruthy();
   });
 
-  it("keeps the earlier-completed note behind a degraded newest run", () => {
+  it("keeps the degraded verdict without a second box about an earlier search", () => {
     renderEmptyResults({
       latestRunVerdict: {
         hasEarlierCompleted: true,
@@ -176,7 +176,7 @@ describe("DiscoveryResultsPanel newest-run empty-state verdicts", () => {
     expect(
       screen.getByText("The last search finished, but sources failed"),
     ).toBeTruthy();
-    expect(screen.getByText(/An earlier completed search exists/)).toBeTruthy();
+    expect(screen.queryByText(/An earlier completed search exists/)).toBeNull();
     expect(screen.queryByText("No matches from this search")).toBeNull();
   });
 

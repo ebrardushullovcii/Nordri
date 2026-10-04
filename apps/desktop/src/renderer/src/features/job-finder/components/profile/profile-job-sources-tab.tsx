@@ -569,8 +569,10 @@ export function ProfileJobSourcesTab(props: ProfileJobSourcesTabProps) {
         </div>
 
         {discoveryTargets.length === 0 ? (
-          <div className="rounded-(--radius-field) border border-(--info-border) bg-(--info-surface) px-4 py-3 text-[0.9rem] leading-6 text-(--info-text)">
-            <p className="font-medium">Add your first public job source</p>
+          <div className="rounded-(--radius-field) border border-dashed border-(--surface-panel-border) px-4 py-3 text-[0.9rem] leading-6 text-foreground-soft">
+            <p className="font-medium text-foreground">
+              Add your first public job source
+            </p>
             <p className="mt-1">
               Add the careers page or job board you would normally browse. It is
               saved and turned on for searches straight away.

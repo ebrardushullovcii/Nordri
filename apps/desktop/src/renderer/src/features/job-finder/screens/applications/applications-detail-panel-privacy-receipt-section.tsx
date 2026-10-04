@@ -157,11 +157,13 @@ export function ApplicationsDetailPanelPrivacyReceiptSection(props: {
         onResolveOutcome ? (
           <section
             aria-label="Verify submission outcome"
-            className="grid gap-3 rounded-(--radius-field) border border-(--warning-border) bg-(--warning-surface) px-3 py-3"
+            // The amber alert above already says the outcome is uncertain;
+            // this is the form that settles it, so it is not a second alert.
+            className="grid gap-3 rounded-(--radius-field) border border-(--surface-panel-border) px-3 py-3"
           >
             <div className="grid gap-1">
               <strong>Verify on the employer site</strong>
-              <p className="text-(length:--text-small) leading-6 text-(--warning-text)">
+              <p className="text-(length:--text-small) leading-6 text-foreground-soft">
                 Open the employer site yourself and check this exact
                 application. Recording the result changes durable history and
                 cannot be undone from this screen.

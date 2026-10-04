@@ -1160,6 +1160,7 @@ export function createPrimaryPageActions(
             : createDiscoveryRunSucceededFeedback(
                 targetLabel,
                 hasReport ? formatDiscoveryRunReportLabel(reportCounts) : null,
+                hasReport ? reportCounts.new : null,
               ),
         );
       })

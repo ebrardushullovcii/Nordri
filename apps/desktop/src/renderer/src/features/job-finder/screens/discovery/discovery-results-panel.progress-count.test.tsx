@@ -60,11 +60,10 @@ function renderStreamingResults(jobs: readonly SavedJob[]) {
   );
 }
 
+/** The count sentence that leads the results status line while a run streams. */
 function getProgressCount(): string {
-  const liveRegion = screen.getByText(/ready to review\.$/, {
-    selector: "strong",
-  });
-  return liveRegion.textContent ?? "";
+  const line = screen.getByTestId("discovery-results-status-line");
+  return /^.*?ready to review\./.exec(line.textContent ?? "")?.[0] ?? "";
 }
 
 afterEach(() => {

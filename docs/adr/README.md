@@ -48,6 +48,7 @@ ADRs capture durable decisions and rejected alternatives. Use them to avoid reop
 | [0039](0039-written-instructions-authorize.md) | accepted | Written sidebar instructions authorize their steps, sending included, through recorded grants |
 | [0040](0040-nordri-rebrand.md) | accepted | UnEmployed becomes Nordri and Interview Helper becomes Live Assistant; existing data moves once |
 | [0041](0041-the-model-reads-the-page.md) | accepted | The model reads the page and returns job details; scripts keep safety and mechanics, not interpretation |
+| [0042](0042-toasts-for-news-boxes-for-action.md) | accepted | Toasts for news; tinted boxes only when the person must act; status in the control that owns it |
 
 ## Policy
 
