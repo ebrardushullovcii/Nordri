@@ -808,7 +808,15 @@ describe("apply policy executor", () => {
     expect(setToggle).toHaveBeenCalledWith("c1", true);
     expect(checkWrittenAnswer).not.toHaveBeenCalled();
 
-    // An option the person did not choose still goes through the fact check.
+    const uncheck = await executeApplyProposal(
+      { tool: "set_checkbox", ref: "c1", checked: false },
+      observation.signature,
+      { config, now, guardState: createApplyGuardState(), checkWrittenAnswer },
+    );
+    expect(uncheck.kind).toBe("filled");
+    expect(setToggle).toHaveBeenLastCalledWith("c1", true);
+
+    // An option the person did not choose is not entered.
     const other = await executeApplyProposal(
       { tool: "set_checkbox", ref: "c2", checked: true },
       observation.signature,
@@ -1077,7 +1085,8 @@ describe("apply policy executor", () => {
         observationOf(page).signature,
         { config, now, guardState: createApplyGuardState() },
       );
-      expect(outcome.kind).toBe("suggestion");
+      expect(outcome.kind).toBe("filled");
+      expect(fillText).toHaveBeenLastCalledWith("c0", "90000 EUR");
     }
     config.sources.reusableAnswers = config.sources.reusableAnswers.map(
       (answer) => ({ ...answer, question: "Current salary" }),
@@ -1091,7 +1100,7 @@ describe("apply policy executor", () => {
         )
       ).kind,
     ).toBe("suggestion");
-    expect(fillText).not.toHaveBeenCalled();
+    expect(fillText).toHaveBeenCalledTimes(2);
   });
 
   test("pay is left to the person unless they said otherwise", async () => {
@@ -3697,4 +3706,154 @@ test("an optional letter that needs review pauses with its draft and reason", as
     expect(outcome.pause.reviewDraft?.reason).toContain("location mismatch");
   }
   expect(write).not.toHaveBeenCalled();
+});
+
+test("Prepare again uses all four of this application's answers over different model proposals", async () => {
+  const fields = [
+    { label: "Years of analysis experience", answer: "4", proposed: "0" },
+    { label: "Expected salary", answer: "62000", proposed: "50000" },
+    {
+      label: "Are you willing to relocate?",
+      answer: "No",
+      proposed: "Yes",
+      tagName: "select",
+      options: ["Yes", "No"],
+    },
+    {
+      label: "Do you require visa sponsorship?",
+      answer: "Yes",
+      proposed: "No",
+      tagName: "select",
+      options: ["Yes", "No"],
+    },
+  ];
+  const page = rawPage({
+    controls: fields.map((field, index) =>
+      rawControl({
+        index,
+        label: field.label,
+        tagName: field.tagName ?? "input",
+        options: field.options ?? [],
+        required: true,
+      }),
+    ),
+  });
+  const { config, hands } = configFor(page);
+  config.application.applicationRecordId = "application_same";
+  config.sources.reusableAnswers = fields.map((field, index) => ({
+    id: `application_once_${index}`,
+    kind: "other",
+    label: field.label,
+    question: field.label,
+    answer: field.answer,
+    roleFamilies: [],
+    proofEntryIds: [],
+    applicationScope: {
+      applicationRecordId: "application_same",
+      resultId: "previous",
+      location: null,
+    },
+  }));
+  const fill = vi.spyOn(hands, "fillText");
+  const select = vi.spyOn(hands, "chooseOption");
+  const checkWrittenAnswer = vi.fn(() =>
+    Promise.resolve({ supported: false, reason: "No profile fact." }),
+  );
+  for (const [index, field] of fields.entries()) {
+    const outcome = await executeApplyProposal(
+      field.options
+        ? { tool: "select", ref: `c${index}`, option: field.proposed }
+        : { tool: "type", ref: `c${index}`, text: field.proposed },
+      observationOf(page).signature,
+      { config, now, guardState: createApplyGuardState(), checkWrittenAnswer },
+    );
+    expect(outcome.kind).toBe("filled");
+    expect(field.options ? select : fill).toHaveBeenLastCalledWith(
+      `c${index}`,
+      field.answer,
+    );
+  }
+  expect(checkWrittenAnswer).not.toHaveBeenCalled();
+  const other = configFor(page).config;
+  other.application.applicationRecordId = "application_other";
+  other.sources.reusableAnswers = config.sources.reusableAnswers;
+  // Even if supplied, one-time answers belong only to the original application.
+  for (const [index, field] of fields.entries()) {
+    const outcome = await executeApplyProposal(
+      field.options
+        ? { tool: "select", ref: `c${index}`, option: field.proposed }
+        : { tool: "type", ref: `c${index}`, text: field.proposed },
+      observationOf(page).signature,
+      {
+        config: other,
+        now,
+        guardState: createApplyGuardState(),
+        checkWrittenAnswer,
+      },
+    );
+    expect(outcome.kind).toBe("suggestion");
+  }
+});
+
+test("Prepare again uses the person's No for a checkbox and the saved sibling radio", async () => {
+  const page = rawPage({
+    controls: [
+      rawControl({
+        index: 0,
+        inputType: "checkbox",
+        label: "I agree to a background check",
+        required: true,
+      }),
+      rawControl({
+        index: 1,
+        inputType: "radio",
+        name: "relocation",
+        groupLabel: "Willing to relocate",
+        label: "Yes",
+        value: "yes",
+      }),
+      rawControl({
+        index: 2,
+        inputType: "radio",
+        name: "relocation",
+        groupLabel: "Willing to relocate",
+        label: "No",
+        value: "no",
+      }),
+    ],
+  });
+  const { config, hands } = configFor(page);
+  config.sources.reusableAnswers = [
+    {
+      id: "application_once_check",
+      kind: "other",
+      label: "I agree to a background check",
+      question: "I agree to a background check",
+      answer: "No",
+      roleFamilies: [],
+      proofEntryIds: [],
+    },
+    {
+      id: "application_once_relocate",
+      kind: "other",
+      label: "Willing to relocate",
+      question: "Willing to relocate",
+      answer: "No",
+      roleFamilies: [],
+      proofEntryIds: [],
+    },
+  ];
+  const toggle = vi.spyOn(hands, "setToggle");
+  for (const ref of ["c0", "c1"]) {
+    const outcome = await executeApplyProposal(
+      { tool: "set_checkbox", ref, checked: true },
+      observationOf(page).signature,
+      { config, now, guardState: createApplyGuardState() },
+    );
+    expect(outcome.kind).toBe("filled");
+  }
+  expect(toggle.mock.calls).toEqual([
+    ["c0", false],
+    ["c2", true],
+  ]);
 });

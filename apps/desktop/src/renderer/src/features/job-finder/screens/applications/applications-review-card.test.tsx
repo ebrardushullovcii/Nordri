@@ -247,22 +247,27 @@ it("labels an unchecked letter as a draft and shows the review reason", () => {
   expect(screen.queryByText("The letter going with it")).toBeNull();
 });
 
-it("offers the Job Finder browser next to the page link without sending", async () => {
-  const onOpenBrowser = vi.fn(() => Promise.resolve());
+it("Open this page opens the record's own application tab without sending", async () => {
+  const onOpenPage = vi.fn(() => Promise.resolve());
   const onSubmit = vi.fn(() => Promise.resolve());
+  const command = vi.fn();
+  vi.stubGlobal("nordri", { browser: { command } });
   render(
     <ApplicationsReviewCard
       card={card()}
       onSubmit={onSubmit}
-      onOpenBrowser={onOpenBrowser}
+      onOpenPage={onOpenPage}
     />,
   );
-  const open = screen.getByRole("button", {
-    name: "Open the Job Finder browser",
-  });
+  const open = screen.getByRole("button", { name: "Open this page" });
   expect(open.dataset.variant).toBe("secondary");
-  expect(open.parentElement?.textContent).toContain("Page:");
+  expect(open.parentElement?.textContent).toContain(
+    "Page: https://apply.example.test/form",
+  );
   fireEvent.click(open);
-  await waitFor(() => expect(onOpenBrowser).toHaveBeenCalledOnce());
+  await waitFor(() => expect(onOpenPage).toHaveBeenCalledOnce());
+  // It opens the tab bound to this result, never a tab found by address.
+  expect(command).not.toHaveBeenCalled();
   expect(onSubmit).not.toHaveBeenCalled();
+  vi.unstubAllGlobals();
 });

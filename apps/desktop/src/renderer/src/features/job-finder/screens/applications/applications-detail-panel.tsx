@@ -714,21 +714,27 @@ export function ApplicationsDetailPanel({
               {...(onSubmitPreparedApplication
                 ? { onSubmitPreparedApplication }
                 : {})}
-              {...(onFinishInBrowser && visibleApplyResult
-                ? {
-                    onOpenBrowser: async () => {
-                      await onFinishInBrowser({
-                        applicationRecordId: selectedRecord.id,
-                        jobId: selectedRecord.jobId,
-                        runId: visibleApplyResult.runId,
-                        destinationUrl: getApplyResultDestinationUrl(
-                          visibleApplyResult.privacyReceipt,
-                        ),
+              onOpenApplicationPage={
+                onFinishInBrowser && visibleApplyResult
+                  ? async () => {
+                      const outcome = await onFinishInBrowser({
+                        jobId: visibleApplyResult.jobId,
                         resultId: visibleApplyResult.id,
+                        runId: visibleApplyResult.runId,
+                        applicationRecordId: selectedRecord.id,
+                        destinationUrl:
+                          selectedApplyRunDetails?.reviewCard?.pageUrl ??
+                          getApplyResultDestinationUrl(
+                            visibleApplyResult.privacyReceipt,
+                          ),
                       });
-                    },
-                  }
-                : {})}
+                      if (outcome?.kind !== "opened_application_page")
+                        throw new Error(
+                          "The application page could not be opened. Prepare it again.",
+                        );
+                    }
+                  : undefined
+              }
               awaitsYourReview={
                 applyPresentation?.state === "awaiting_your_review"
               }

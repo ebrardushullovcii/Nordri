@@ -1293,6 +1293,7 @@ ${ownSentence}`,
       field: "summary",
       text: "Builds resilient workflow tools.",
       restorable: true,
+      sourceAchievementIds: ["experience:experience_1:summary:0"],
     });
     expect(
       comparison.roles.find((role) => role.profileRecordId === "experience_2"),
@@ -1746,7 +1747,14 @@ test("comparison preserves sentences split into bullets and offers only missing 
       profile: { ...profile, experiences: [role] },
       draft: missing,
     }).roles[0]?.removedClaims,
-  ).toEqual([{ field: "bullet", text: facts[2], restorable: true }]);
+  ).toEqual([
+    {
+      field: "bullet",
+      text: facts[2],
+      restorable: true,
+      sourceAchievementIds: ["experience:experience_1:summary:2"],
+    },
+  ]);
 });
 
 test("unconfirmed import roles are excluded from seed, preview and comparison", () => {

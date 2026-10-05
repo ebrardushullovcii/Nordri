@@ -391,6 +391,24 @@ export class EmbeddedBrowser {
   }
 
   getState(): DesktopBrowserState {
+    // A stopped task on another tab does not describe this page. A prepared
+    // form the person owns has no interrupted task for Resume to carry on.
+    const paused =
+      this.activityPaused ||
+      this.closedByPerson ||
+      Boolean(
+        this.activeTabId &&
+        (this.heldTabs.get(this.activeTabId)?.length ?? 0) > 0,
+      );
+    const activeOperations = [...this.operations.entries()].filter(
+      ([controller]) => {
+        const claim = this.operationClaims.get(controller);
+        return (
+          !claim ||
+          Boolean(this.activeTabId && claim.tabs.has(this.activeTabId))
+        );
+      },
+    );
     return DesktopBrowserStateSchema.parse({
       revision: this.revision,
       phase: this.closing
@@ -401,16 +419,16 @@ export class EmbeddedBrowser {
             ? "pausing"
             : this.visibleAttention()
               ? "needs_you"
-              : this.operations.size > 0
+              : activeOperations.length > 0
                 ? "working"
-                : this.isPausedForPerson()
+                : paused
                   ? "paused"
                   : "ready",
       presentation: this.presentation,
       activeTabId: this.activeTabId,
-      activity: [...this.operations.values()].at(-1) ?? null,
+      activity: activeOperations.at(-1)?.[1] ?? null,
       attention: this.visibleAttention(),
-      automationPaused: this.isPausedForPerson(),
+      automationPaused: paused,
       tabs: [...this.pageMap.values()]
         .filter((page) => !page.contents.isDestroyed())
         .map((page) => ({

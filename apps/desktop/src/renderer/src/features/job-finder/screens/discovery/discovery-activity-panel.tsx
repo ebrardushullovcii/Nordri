@@ -38,6 +38,45 @@ import {
   type DiscoveryTargetConfig,
 } from "./discovery-history-utils";
 
+import { describeFailure } from "../../lib/describe-failure";
+import {
+  createDiscoveryRunSucceededFeedback,
+  createDiscoveryRunCancelledFeedback,
+  createDiscoveryRunInterruptedFeedback,
+} from "./discovery-run-feedback";
+
+function stripTerminalColors(value: string): string {
+  return value.replace(
+    new RegExp(`${String.fromCharCode(27)}\\[[0-?]*[ -/]*[@-~]`, "g"),
+    "",
+  );
+}
+
+export function describeHistoryRun(run: DiscoveryRunRecord): string {
+  const counts = getDiscoveryRunReportCounts(run);
+  const feedback =
+    run.state === "completed"
+      ? createDiscoveryRunSucceededFeedback(
+          null,
+          describeRunCounts(run),
+          counts.new,
+          run.targetExecutions.filter((source) => source.state === "failed")
+            .length,
+        )
+      : run.state === "cancelled"
+        ? createDiscoveryRunCancelledFeedback({
+            savedJobCount: run.summary.validJobsFound,
+          })
+        : run.state === "running"
+          ? null
+          : createDiscoveryRunInterruptedFeedback({ detail: null });
+  return feedback?.toast
+    ? [feedback.toast.title, feedback.toast.description]
+        .filter(Boolean)
+        .join(". ")
+    : (feedback?.headline ?? "Search is running.");
+}
+
 /**
  * Search history quotes the run's own frozen report, so a row here reads the
  * same "N found · M new · K kept" as Home, Find jobs, the plan card and
@@ -132,7 +171,7 @@ function ActivityEventCard(props: {
         <span className="shrink-0">{formatTimestamp(event.timestamp)}</span>
       </div>
       <p className="text-[0.95rem] leading-6 text-(--text-headline)">
-        {event.message}
+        {stripTerminalColors(event.message)}
       </p>
       {event.jobsFound !== null ||
       event.jobsPersisted !== null ||
@@ -542,6 +581,7 @@ export function DiscoveryHistoryModal(props: {
           </aside>
 
           <div className="grid min-h-0 content-start gap-4 overflow-y-auto px-4 py-4">
+            {selectedRun ? <p>{describeHistoryRun(selectedRun)}</p> : null}
             {selectedRun ? (
               <div className="grid gap-3 rounded-(--radius-panel) border border-(--surface-panel-border) bg-(--surface-panel-raised) px-4 py-4 sm:grid-cols-4">
                 <div>
@@ -830,19 +870,33 @@ export function DiscoveryHistoryModal(props: {
                                 </Button>
                               ) : null}
                             </div>
-                            {terminalReport && source.warnings.length === 0 ? (
-                              <p className="text-[0.82rem] leading-5 text-foreground-soft">
-                                {terminalReport}
-                              </p>
+                            {source.warnings.length > 0 ? (
+                              <>
+                                <p className="text-[0.82rem] leading-5 text-foreground-soft">
+                                  {
+                                    describeFailure(source.warnings[0], {
+                                      action: "read this source",
+                                    }).userMessage
+                                  }
+                                </p>
+                              </>
                             ) : null}
-                            {source.warnings.map((warning) => (
-                              <p
-                                className="text-[0.82rem] leading-5 text-foreground-soft"
-                                key={warning}
-                              >
-                                {warning}
-                              </p>
-                            ))}
+                            {source.warnings.length > 0 || terminalReport ? (
+                              <details>
+                                <summary>Technical details</summary>
+                                {[
+                                  ...source.warnings,
+                                  ...(terminalReport ? [terminalReport] : []),
+                                ].map((detail, index) => (
+                                  <p
+                                    className="text-[0.82rem] leading-5 text-foreground-soft"
+                                    key={index}
+                                  >
+                                    {stripTerminalColors(detail)}
+                                  </p>
+                                ))}
+                              </details>
+                            ) : null}
                             {zeroReason ? (
                               <p className="text-[0.82rem] leading-5 text-(--warning-text)">
                                 {zeroReason}
@@ -883,7 +937,8 @@ export function DiscoveryHistoryModal(props: {
                 so it carries the same edge affordance the shared bounded
                 floating surfaces use instead of cutting a line mid-glyph with
                 nothing to say there is more. */}
-            <div className="relative grid min-h-0">
+            <details className="relative grid min-h-0">
+              <summary>Technical details</summary>
               <BoundedFloatingSurfaceScrollHint
                 edge="start"
                 visible={
@@ -932,7 +987,7 @@ export function DiscoveryHistoryModal(props: {
                 )}
                 <div aria-hidden="true" ref={eventStreamEndRef} />
               </div>
-            </div>
+            </details>
           </div>
         </div>
       </div>

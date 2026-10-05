@@ -450,15 +450,27 @@ async function decideAnswer(input: {
   const saved = savedSuggestion(control, config);
   // Application answers are injected only for this request's execution;
   // reusable library answers do not carry this prefix.
-  const isApplicationAnswer = saved?.sourceId.startsWith(
-    "answerLibrary.application_",
+  const savedRecord = savedAnswerForQuestion(
+    control,
+    config.sources.reusableAnswers,
   );
-  if (
-    saved &&
-    isApplicationAnswer &&
-    normalizeSignal(saved.value) === normalizeSignal(value)
-  ) {
-    return { kind: "use", answer: { ...saved, value } };
+  const isApplicationAnswer =
+    saved?.sourceId.startsWith("answerLibrary.application_") &&
+    (!savedRecord?.applicationScope ||
+      isAnswerFromThisApplication(
+        savedRecord,
+        config.application,
+        config.sources.posting.location,
+      ));
+  if (saved && isApplicationAnswer) {
+    if (control.answerControlType === "multi_choice" && saved.value !== value)
+      return {
+        kind: "leave",
+        reason: "Use only the options the person chose for this question.",
+        suggestion: saved,
+        permission: false,
+      };
+    return { kind: "use", answer: saved };
   }
   if (control.questionKind === "salary_expectation" && !payDisclosed) {
     const savedPay = config.sources.profile.answerBank.salaryExpectations;
@@ -1519,20 +1531,24 @@ export async function executeApplyProposal(
         };
       }
       const control = await withModelQuestionKinds(deps, observation, found);
+      const choice = await decideAnswer({
+        deps,
+        control,
+        value: matchOption(control.options, proposal.option) ?? proposal.option,
+      });
+      if (choice.kind === "leave") {
+        return notEntered({ deps, control, observation, at, decision: choice });
+      }
       const option =
         control.options.length > 0
-          ? matchOption(control.options, proposal.option)
-          : proposal.option;
+          ? matchOption(control.options, choice.answer.value)
+          : choice.answer.value;
       if (!option) {
         return {
           kind: "refused",
           reason: `"${proposal.option}" is not one of the choices for "${questionPrompt(control)}": ${control.options.slice(0, 12).join(", ")}.`,
           observation,
         };
-      }
-      const choice = await decideAnswer({ deps, control, value: option });
-      if (choice.kind === "leave") {
-        return notEntered({ deps, control, observation, at, decision: choice });
       }
       const write = await writeUnderGuard(deps, {
         declaredValue: option,
@@ -1576,7 +1592,7 @@ export async function executeApplyProposal(
           observation,
         };
       }
-      const control = await withModelQuestionKinds(deps, observation, found);
+      let control = await withModelQuestionKinds(deps, observation, found);
       // A radio button is a choice like a select's option: the model's pick
       // stands when the person's facts support it (ADR 0041). A declaration
       // is settled by the person's approvals below instead.
@@ -1584,7 +1600,20 @@ export async function executeApplyProposal(
       const eligibilityAnswer =
         control.questionKind === "work_authorization" ||
         control.questionKind === "visa_sponsorship";
+      const savedToggle = savedAnswerForQuestion(
+        control,
+        config.sources.reusableAnswers,
+      );
+      const ownToggle =
+        savedToggle?.id.startsWith("application_") &&
+        (!savedToggle.applicationScope ||
+          isAnswerFromThisApplication(
+            savedToggle,
+            config.application,
+            config.sources.posting.location,
+          ));
       if (
+        ownToggle ||
         ((control.kind === "radio" ||
           control.answerControlType === "multi_choice") &&
           proposal.checked &&
@@ -1626,6 +1655,44 @@ export async function executeApplyProposal(
               }
             : choice.answer;
       }
+      let checked = proposal.checked;
+      if (radioAnswer?.sourceId.startsWith("answerLibrary.application_")) {
+        if (control.kind === "radio") {
+          const selected = observation.controls.find(
+            (candidate) =>
+              candidate.kind === "radio" &&
+              (control.choiceGroupKey
+                ? candidate.choiceGroupKey === control.choiceGroupKey
+                : candidate.ref === control.ref) &&
+              [candidate.value, candidate.label].some(
+                (value) =>
+                  normalizeSignal(value) ===
+                  normalizeSignal(radioAnswer!.value),
+              ),
+          );
+          if (!selected)
+            return {
+              kind: "refused",
+              reason:
+                "The person's answer is not one of this question's choices.",
+              observation,
+            };
+          control = selected;
+          checked = true;
+        } else if (control.answerControlType === "multi_choice") {
+          // decideAnswer accepted only an option the person included.
+          checked = true;
+        } else if (control.answerControlType === "boolean") {
+          const value = normalizeSignal(radioAnswer.value);
+          if (value !== "yes" && value !== "no")
+            return {
+              kind: "refused",
+              reason: "The person's answer does not match this checkbox.",
+              observation,
+            };
+          checked = value === "yes";
+        }
+      }
       // A declaration the person makes about themselves is theirs. This is the
       // one place the model is overruled rather than advised. It is not,
       // however, a reason to stop: the run used to end on the first such box
@@ -1637,7 +1704,7 @@ export async function executeApplyProposal(
       // A "Yes" the person saved for this exact question earlier counts as
       // their approval: they answered it once and asked to keep it.
       const savedDeclaration =
-        control.attestationKind !== null && proposal.checked
+        control.attestationKind !== null && checked
           ? savedSuggestion(control, config)
           : null;
       const savedDeclarationSaysYes =
@@ -1647,7 +1714,7 @@ export async function executeApplyProposal(
         );
       if (
         control.attestationKind !== null &&
-        proposal.checked &&
+        checked &&
         !config.authority.preApprovedAttestationKinds.includes(
           control.attestationKind,
         ) &&
@@ -1672,7 +1739,7 @@ export async function executeApplyProposal(
       }
       const write = await writeUnderGuard(deps, {
         declaredValue: null,
-        write: () => config.hands.setToggle(control.ref, proposal.checked),
+        write: () => config.hands.setToggle(control.ref, checked),
       });
       if (!write.ok) {
         return { kind: "refused", reason: write.error, observation };
@@ -1693,9 +1760,9 @@ export async function executeApplyProposal(
               ? savedDeclaration
               : (radioAnswer ?? {
                   value:
-                    control.kind === "radio" && proposal.checked
+                    control.kind === "radio" && checked
                       ? control.value || control.label
-                      : proposal.checked
+                      : checked
                         ? "Yes"
                         : "No",
                   kind: control.questionKind,

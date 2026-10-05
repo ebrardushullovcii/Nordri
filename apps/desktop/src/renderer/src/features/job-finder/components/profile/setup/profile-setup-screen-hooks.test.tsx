@@ -790,3 +790,82 @@ describe("useProfileSetupForms draft-edit revision signals", () => {
     expect(onDraftEdited).toHaveBeenCalledTimes(2);
   });
 });
+
+it("the person's own setup save may mirror a contact without announcing a background merge", () => {
+  const { result, rerender } = renderHook(
+    (input: ProfileSetupFormProps) => useProfileSetupForms(input),
+    {
+      initialProps: createInput({
+        profile: {
+          ...profile,
+          email: "old@synthetic.example",
+          applicationIdentity: {
+            ...profile.applicationIdentity,
+            preferredEmail: "old@synthetic.example",
+          },
+        },
+      }),
+    },
+  );
+  act(() =>
+    result.current.profileForm.setValue(
+      "identity.email",
+      "new@synthetic.example",
+      { shouldDirty: true },
+    ),
+  );
+  const submitted = buildProfileSetupPayload(
+    profile,
+    result.current.profileForm.getValues(),
+  ).payload!;
+  act(() => result.current.markOwnSave(submitted, searchPreferences));
+  rerender(
+    createInput({
+      profile: {
+        ...submitted,
+        applicationIdentity: {
+          ...submitted.applicationIdentity,
+          preferredEmail: "new@synthetic.example",
+        },
+      },
+    }),
+  );
+  expect(result.current.backgroundMergeNotice).toBeNull();
+  expect(result.current.hasUserDraftChanges).toBe(false);
+  expect(
+    result.current.profileForm.getValues("applicationIdentity.preferredEmail"),
+  ).toBe("new@synthetic.example");
+});
+
+it("keeps a newer edit while the person's own setup save is in flight", () => {
+  const { result, rerender } = renderHook(
+    (input: ProfileSetupFormProps) => useProfileSetupForms(input),
+    {
+      initialProps: createInput(),
+    },
+  );
+  act(() =>
+    result.current.profileForm.setValue(
+      "identity.email",
+      "new@synthetic.example",
+      { shouldDirty: true },
+    ),
+  );
+  const submitted = buildProfileSetupPayload(
+    profile,
+    result.current.profileForm.getValues(),
+  ).payload!;
+  act(() => result.current.markOwnSave(submitted, searchPreferences));
+  act(() =>
+    result.current.profileForm.setValue(
+      "identity.email",
+      "newer@synthetic.example",
+      { shouldDirty: true },
+    ),
+  );
+  rerender(createInput({ profile: submitted }));
+  expect(result.current.profileForm.getValues("identity.email")).toBe(
+    "newer@synthetic.example",
+  );
+  expect(result.current.hasUserDraftChanges).toBe(true);
+});

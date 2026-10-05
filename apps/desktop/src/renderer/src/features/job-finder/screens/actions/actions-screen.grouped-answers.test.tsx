@@ -1161,23 +1161,35 @@ it("restores prior one-use values and save choice after reopening Needs you for 
     id: "retry_request",
     jobId: "job_a",
   });
+  const fields = [
+    { prompt: "Analysis experience", kind: "experience", text: "4" },
+    { prompt: "Expected salary", kind: "salary_expectation", text: "62000" },
+    { prompt: "Willing to relocate", kind: "relocation", text: "No" },
+    { prompt: "Need visa sponsorship", kind: "visa_sponsorship", text: "Yes" },
+  ];
   const onGetApplyRunDetails = vi.fn(() =>
     Promise.resolve({
-      answerRecords: [
-        {
-          id: "old_answer",
-          applicationRecordId: "application_job_a",
-          questionId: "apply_question_application_job_a_q_years",
-          text: "0",
-          sourceKind: "user",
-          saveScope: "application_once",
-          revision: 1,
-          createdAt: "2026-10-04T09:00:00.000Z",
-        },
-      ],
+      questionRecords: fields.map((field, index) => ({
+        id: `previous_question_${index}`,
+        applicationRecordId: "application_job_a",
+        prompt: field.prompt,
+        kind: index === 1 ? "other" : field.kind,
+      })),
+      answerRecords: fields.map((field, index) => ({
+        id: `old_answer_${index}`,
+        applicationRecordId: "application_job_a",
+        questionId: `previous_question_${index}`,
+        status: "suggested",
+        text: field.text,
+        sourceKind: "user",
+        sourceId: index === 1 ? "answerLibrary.application_prior_salary" : null,
+        saveScope: "application_once",
+        revision: 1,
+        createdAt: "2026-10-04T09:00:00.000Z",
+      })),
     } as ApplyRunDetails),
   );
-  const { getByLabelText } = render(
+  const { getByLabelText, getAllByLabelText } = render(
     <ActionsScreen
       applicationAttempts={
         [
@@ -1186,15 +1198,13 @@ it("restores prior one-use values and save choice after reopening Needs you for 
             jobId: "job_a",
             blocker: { code: "missing_candidate_answer" },
             updatedAt: "2026-10-04T10:00:00.000Z",
-            questions: [
-              {
-                id: "q_years",
-                prompt: "Analysis experience",
-                kind: "experience",
-                status: "detected",
-                answerOptions: [],
-              },
-            ],
+            questions: fields.map((field, index) => ({
+              id: `retry_question_${index}`,
+              prompt: field.prompt,
+              kind: field.kind,
+              status: "detected",
+              answerOptions: [],
+            })),
           },
         ] as unknown as JobFinderWorkspaceSnapshot["applicationAttempts"]
       }
@@ -1206,13 +1216,12 @@ it("restores prior one-use values and save choice after reopening Needs you for 
       requests={[{ ...previous, state: "superseded" }, request]}
     />,
   );
-  await waitFor(() =>
-    expect(getByLabelText("Analysis experience")).toHaveProperty("value", "0"),
-  );
-  expect(getByLabelText("Save this answer for next time")).toHaveProperty(
-    "checked",
-    false,
-  );
+  await waitFor(() => {
+    for (const field of fields)
+      expect(getByLabelText(field.prompt)).toHaveProperty("value", field.text);
+  });
+  for (const choice of getAllByLabelText(/Save .*answers? for next time/))
+    expect(choice).toHaveProperty("checked", false);
   expect(onGetApplyRunDetails).toHaveBeenCalledWith({
     runId: "run_1",
     jobId: "job_a",

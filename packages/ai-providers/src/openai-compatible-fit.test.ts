@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 
 import {
   buildFitEvidenceInstructions,
+  buildJobFitAssessmentPayload,
   buildJobFitJudgingPayload,
   buildJobFitJudgingPrompt,
   normalizeJobFitJudgments,
@@ -28,7 +29,16 @@ describe("batch fit judging", () => {
       searchPreferences: createPreferences(),
       jobs: [],
     });
-    expect(payload.person.workEligibility).toEqual(profile.workEligibility);
+    expect(payload.person.workEligibility).toMatchObject({
+      "Countries where you can work":
+        profile.workEligibility.authorizedWorkCountries,
+      "Need visa sponsorship":
+        profile.workEligibility.requiresVisaSponsorship === null
+          ? "Not known"
+          : profile.workEligibility.requiresVisaSponsorship
+            ? "Yes"
+            : "No",
+    });
     expect(payload.person.savedEligibilityAnswers.workAuthorization).toBe(
       "Canada only",
     );
@@ -231,7 +241,16 @@ test("bounds twenty-job batch evidence while keeping eligibility facts", () => {
   expect(payload.person).not.toHaveProperty("importedResumeText");
   expect(payload.person.projects).toHaveLength(8);
   expect(payload.person.proofBank).toHaveLength(8);
-  expect(payload.person.workEligibility).toEqual(profile.workEligibility);
+  expect(payload.person.workEligibility).toMatchObject({
+    "Countries where you can work":
+      profile.workEligibility.authorizedWorkCountries,
+    "Need visa sponsorship":
+      profile.workEligibility.requiresVisaSponsorship === null
+        ? "Not known"
+        : profile.workEligibility.requiresVisaSponsorship
+          ? "Yes"
+          : "No",
+  });
   expect(buildJobFitJudgingPrompt()).toContain("bounded excerpts");
 });
 
@@ -307,19 +326,97 @@ test("R3-065, R3-105 and R3-138 give the judge permit, schedule and OTE facts", 
     searchPreferences: preferences,
     jobs: [{ jobId: "ote", posting }],
   });
-  expect(payload.person.workEligibility.limitedWorkPermissions).toEqual(
-    profile.workEligibility.limitedWorkPermissions,
-  );
+  expect(payload.person.workEligibility["Limited work permissions"]).toEqual([
+    {
+      Country: "Germany",
+      Conditions:
+        profile.workEligibility.limitedWorkPermissions![0]!.conditions,
+      "Will need sponsorship later": "Yes",
+    },
+  ]);
   expect(payload.goals).toMatchObject({
-    shiftPreference: "day",
-    weeklyHours: { minimum: 20, maximum: 30 },
-    compensation: { basis: "total_ote", minimum: 160000 },
+    "Shift preference": "day",
+    "Weekly hours": { Minimum: 20, Maximum: 30 },
+    "Pay preference": {
+      "Pay basis": "Total on-target earnings",
+      Minimum: 160000,
+    },
   });
   expect(payload.jobs[0]?.salaryText).toBe(posting.salaryText);
   const instructions = buildFitEvidenceInstructions();
-  expect(instructions).toContain("requiresFutureSponsorship");
+  expect(instructions).toContain("Will need sponsorship later");
   expect(instructions).toContain("Explain conflicting shifts or weekly hours");
   expect(instructions).toContain(
-    "meets a 160,000 total_ote floor, but not a 160,000 base floor",
+    "meets a 160,000 total on-target earnings floor, but not a 160,000 base salary floor",
+  );
+});
+
+test("fit inputs label personal facts and preferences in plain words", () => {
+  const profile = createProfile();
+  profile.workEligibility.willingToRelocate = false;
+  profile.workEligibility.limitedWorkPermissions = [
+    {
+      country: "Germany",
+      conditions: "Part-time study permit",
+      requiresFutureSponsorship: true,
+    },
+  ];
+  const payload = buildJobFitJudgingPayload({
+    assessmentDate: "2026-10-05",
+    profile,
+    searchPreferences: createPreferences(),
+    jobs: [],
+  });
+  expect(payload.person.workEligibility["Willing to relocate"]).toBe("No");
+  expect(
+    payload.person.workEligibility["Limited work permissions"][0]?.[
+      "Will need sponsorship later"
+    ],
+  ).toBe("Yes");
+  expect(JSON.stringify(payload)).not.toMatch(
+    /willingToRelocate|requiresFutureSponsorship|remoteCountsAsAnyLocation/,
+  );
+  expect(buildJobFitJudgingPrompt()).toContain(
+    "never field names, key=value text or true/false flags",
+  );
+});
+
+test("the full listing judge gets plain preferences and keeps all listing and profile evidence", () => {
+  const profile = createProfile();
+  profile.workEligibility.willingToRelocate = false;
+  profile.workEligibility.limitedWorkPermissions = [
+    {
+      country: "Germany",
+      conditions: "20 hours during term",
+      requiresFutureSponsorship: true,
+    },
+  ];
+  const preferences = createPreferences();
+  preferences.companyBlacklist = ["Synthetic excluded company"];
+  const job = createJobPosting();
+  const payload = buildJobFitAssessmentPayload({
+    assessmentDate: "2026-10-05",
+    profile,
+    searchPreferences: preferences,
+    job,
+  });
+  expect(payload.profile.workEligibility["Willing to relocate"]).toBe("No");
+  expect(
+    payload.profile.workEligibility["Limited work permissions"][0]?.[
+      "Will need sponsorship later"
+    ],
+  ).toBe("Yes");
+  expect(payload.searchPreferences["Companies to exclude"]).toEqual(
+    preferences.companyBlacklist,
+  );
+  expect(payload).toEqual(JSON.parse(JSON.stringify(payload)));
+  expect(payload.job).toBe(job);
+  expect(payload.profile.experiences).toBe(profile.experiences);
+  expect(payload.profile.baseResume).toBe(profile.baseResume);
+  expect(JSON.stringify(payload)).not.toMatch(
+    /willingToRelocate|requiresFutureSponsorship|remoteCountsAsAnyLocation/,
+  );
+  expect(buildFitEvidenceInstructions()).toContain(
+    "never field names, key=value text or true/false flags",
   );
 });

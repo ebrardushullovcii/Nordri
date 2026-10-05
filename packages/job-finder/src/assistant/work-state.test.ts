@@ -174,7 +174,7 @@ it("exposes the existing schedule screen and answers questions in prose", async 
   );
   expect(openInApp).toHaveBeenCalledWith("/job-finder/campaigns");
   expect(ASSISTANT_SYSTEM_PROMPT).toContain(
-    "answer in prose using the available evidence and say what is unknown",
+    "answer the question in text first",
   );
 });
 

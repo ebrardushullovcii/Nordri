@@ -8,7 +8,10 @@ import {
 } from "@nordri/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { DiscoveryHistoryModal } from "./discovery-activity-panel";
+import {
+  DiscoveryHistoryModal,
+  describeHistoryRun,
+} from "./discovery-activity-panel";
 
 afterEach(() => {
   cleanup();
@@ -361,4 +364,55 @@ it("keeps a live run's captured sources when Profile adds another source", () =>
   );
   expect(screen.queryByText("Added later")).toBeNull();
   expect(screen.getAllByText(/0\/1 sources/).length).toBeGreaterThan(0);
+});
+
+it("leads with the notification sentence and keeps raw logs behind clean technical details", () => {
+  const raw = "\u001b[31mTimeout 30000ms: locator.click failed\u001b[39m";
+  const run = {
+    ...failedRun,
+    activity: [
+      { ...liveEvent, runId: failedRun.id, message: raw },
+      {
+        ...liveEvent,
+        id: "digest",
+        runId: failedRun.id,
+        message: "Digest v1_synthetic. I should inspect the page.",
+      },
+    ],
+    summary: {
+      ...failedRun.summary,
+      sourceHealth: [
+        { ...failedRun.summary.sourceHealth[0]!, warnings: [raw] },
+      ],
+    },
+  };
+  render(
+    <DiscoveryHistoryModal
+      open
+      activeRun={null}
+      isDiscoveryPending={false}
+      isTargetPending={() => false}
+      liveEvents={[]}
+      onClose={vi.fn()}
+      recentRuns={[run]}
+      targets={targets}
+    />,
+  );
+  expect(
+    screen.getByText(describeHistoryRun(run)).closest("details"),
+  ).toBeNull();
+  for (const element of screen.getAllByText(
+    "Timeout 30000ms: locator.click failed",
+  )) {
+    expect(element.closest("details")?.open).toBe(false);
+  }
+  expect(
+    screen
+      .getByText("Digest v1_synthetic. I should inspect the page.")
+      .closest("details")?.open,
+  ).toBe(false);
+  expect(document.body.textContent).not.toContain("\u001b");
+  expect(
+    screen.getByText(/Could not read this source/).closest("details"),
+  ).toBeNull();
 });

@@ -1,3 +1,4 @@
+import { FAILURE_SENTENCES } from "@renderer/features/job-finder/lib/describe-failure";
 import {
   JOB_FINDER_BROWSER_NAME,
   JOB_FINDER_BROWSER_NAME_SENTENCE_START,
@@ -2372,7 +2373,9 @@ export function createPrimaryPageActions(
             return await actions.regenerateResumeDraft(jobId);
           } catch (error) {
             await refreshResumeWorkspace(jobId).catch(() => undefined);
-            throw error;
+            throw new Error(FAILURE_SENTENCES.assistant_unavailable, {
+              cause: error,
+            });
           }
         },
         async () => {
@@ -2807,7 +2810,20 @@ export function createPrimaryPageActions(
         let saveSucceeded = false;
 
         await runSaveAction({
-          action: () => actions.saveResumeDraft(draft),
+          action: async () => {
+            try {
+              return await actions.saveResumeDraft(draft);
+            } catch (error) {
+              if (
+                (draft.language ?? null) !==
+                (activeRouteResumeWorkspace?.draft.language ?? null)
+              )
+                throw new Error(FAILURE_SENTENCES.assistant_unavailable, {
+                  cause: error,
+                });
+              throw error;
+            }
+          },
           dedupeKey: createSaveDedupeKey("resume", draft),
           failedFallback:
             "Resume draft was not saved. Retry before continuing.",

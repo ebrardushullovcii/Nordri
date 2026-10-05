@@ -207,6 +207,7 @@ export function ProfileSetupScreen(props: {
 
   const {
     backgroundArrays,
+    markOwnSave,
     backgroundMergeNotice,
     discardEditsAndReloadCanonical,
     draftAwareReviewItems,
@@ -272,7 +273,10 @@ export function ProfileSetupScreen(props: {
     hasUnsavedChanges: hasUnsavedSetupChanges,
     onContinueToProfile,
     onResumeSetup,
-    onSaveSetupStep,
+    onSaveSetupStep: (nextProfile, nextPreferences, nextStep, options) => {
+      markOwnSave(nextProfile, nextPreferences);
+      onSaveSetupStep(nextProfile, nextPreferences, nextStep, options);
+    },
     resumeApplicationMode: selectedResumeApplicationMode,
     preferencesFormValues: () => preferencesForm.getValues(),
     profile,

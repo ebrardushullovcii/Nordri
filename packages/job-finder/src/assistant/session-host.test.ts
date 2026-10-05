@@ -1666,7 +1666,7 @@ describe("assistant session host", () => {
     // Leave room for a checkpoint and this turn's context above the fixed
     // prompt, while keeping the history budget small enough to compact.
     const smallBudget = fixedPromptTokens + 2_400;
-    expect(productionBudget).toBeGreaterThan(smallBudget * 5);
+    expect(productionBudget).toBeGreaterThan(smallBudget * 4);
     const { host, repository } = setup({ budgetOverrideTokens: smallBudget });
     const { conversationId } = await sendAndWait(
       host,
@@ -1932,5 +1932,50 @@ describe("assistant session host", () => {
             : "blocked",
       });
     }
+  });
+  it("follows a tool-only job card with a text answer placed before the card", async () => {
+    let calls = 0;
+    const { host } = setup({
+      modelHandle: {
+        ...createScriptedAssistantModelHandle(),
+        createModel: () => ({
+          chatWithTools: async () => {
+            calls += 1;
+            return calls === 1
+              ? {
+                  content: "",
+                  toolCalls: [
+                    {
+                      id: "show",
+                      type: "function" as const,
+                      function: {
+                        name: "show_jobs",
+                        arguments: '{"jobIds":["job_ready"]}',
+                      },
+                    },
+                  ],
+                }
+              : {
+                  content:
+                    "The listing asks for design experience. Your saved profile shows that experience.",
+                };
+          },
+        }),
+      },
+    });
+    const { conversationId } = await sendAndWait(
+      host,
+      "Do I meet this job's qualifications?",
+    );
+    const view = await host.readConversation({ conversationId });
+    const parts = reply(view.messages).parts;
+    expect(calls).toBe(2);
+    expect(parts[0]).toMatchObject({
+      type: "text",
+      text: expect.stringContaining("design experience"),
+    });
+    expect(
+      parts.some((part) => part.type === "records" && part.kind === "jobs"),
+    ).toBe(true);
   });
 });

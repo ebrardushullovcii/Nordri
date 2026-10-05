@@ -1,3 +1,4 @@
+import { compareApplicationAnswerRecency } from "@nordri/contracts";
 import { useEffect, useRef, useState } from "react";
 import type {
   ApplicationAttempt,
@@ -77,13 +78,11 @@ export function useQuestionAnswerDrafts(props: {
             .filter(
               (answer) =>
                 answer.applicationRecordId === applicationRecordId &&
-                answer.sourceKind === "user",
+                answer.sourceKind === "user" &&
+                (!answer.sourceId?.startsWith("answerLibrary.") ||
+                  answer.sourceId.startsWith("answerLibrary.application_")),
             )
-            .sort(
-              (left, right) =>
-                right.revision - left.revision ||
-                right.createdAt.localeCompare(left.createdAt),
-            );
+            .sort(compareApplicationAnswerRecency);
           const questions = listPendingApplicationQuestions({
             applicationAttempts: props.applicationAttempts ?? [],
             applicationRecordId,
@@ -92,13 +91,29 @@ export function useQuestionAnswerDrafts(props: {
           });
           const answers: QuestionAnswerDraft["answers"] = {};
           for (const question of questions) {
+            const samePrompt = (details.questionRecords ?? []).filter(
+              (record) =>
+                record.applicationRecordId === applicationRecordId &&
+                record.prompt.trim() === question.prompt.trim(),
+            );
+            const matchingQuestionIds = new Set(
+              samePrompt.map((record) => record.id),
+            );
             const answer = records.find(
               (entry) =>
                 entry.questionId === question.id ||
                 entry.questionId ===
-                  `apply_question_${applicationRecordId}_${question.id}`,
+                  `apply_question_${applicationRecordId}_${question.id}` ||
+                (questions.filter((entry) => entry.prompt === question.prompt)
+                  .length === 1 &&
+                  matchingQuestionIds.has(entry.questionId)),
             );
-            if (!answer) continue;
+            if (
+              !answer ||
+              answer.status === "rejected" ||
+              answer.value?.type === "asset_ref"
+            )
+              continue;
             let value: string | string[] = answer.text;
             if (question.answerControlType === "multi_choice") {
               try {

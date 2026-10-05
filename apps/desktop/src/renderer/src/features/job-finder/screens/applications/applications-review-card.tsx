@@ -1,7 +1,6 @@
 import { useState } from "react";
 import type { ApplicationReviewCard } from "@nordri/contracts";
 import { Button } from "@renderer/components/ui/button";
-import { ExternalUrlLink } from "../../components/open-outside-links";
 import {
   TECHNICAL_DETAILS_LABEL,
   describeFailure,
@@ -27,8 +26,8 @@ export interface ApplicationsReviewCardProps {
    * Sending is impossible until it is prepared again.
    */
   pageClosed?: boolean | undefined;
-  onOpenBrowser?: (() => Promise<void>) | undefined;
   onSubmit: () => Promise<void>;
+  onOpenPage?: (() => Promise<void>) | undefined;
   onPrepareAgain?: (() => Promise<void>) | undefined;
   isSubmitPending?: boolean | undefined;
 }
@@ -37,7 +36,7 @@ export function ApplicationsReviewCard({
   card,
   pageClosed,
   onSubmit,
-  onOpenBrowser,
+  onOpenPage,
   onPrepareAgain,
   isSubmitPending,
 }: ApplicationsReviewCardProps) {
@@ -80,19 +79,19 @@ export function ApplicationsReviewCard({
         {card.pageUrl ? (
           <div className="flex min-w-0 flex-wrap items-center gap-2">
             <p className="min-w-0 break-all text-(length:--text-small) leading-5 text-foreground-soft">
-              Page: <ExternalUrlLink url={card.pageUrl} />
+              Page: {card.pageUrl}
             </p>
-            {onOpenBrowser && !pageClosed ? (
+            {onOpenPage && !pageClosed ? (
               <Button
                 size="sm"
                 variant="secondary"
                 type="button"
                 pending={busy}
                 onClick={() =>
-                  void run(onOpenBrowser, "open the application page")
+                  void run(onOpenPage, "open this application page")
                 }
               >
-                Open the Job Finder browser
+                Open this page
               </Button>
             ) : null}
           </div>

@@ -2,6 +2,7 @@ import type { JobFinderAiClient } from "@nordri/ai-providers";
 import {
   ResumeLanguageTranslationSchema,
   type ResumeDraft,
+  type ResumeDraftSourceRef,
   type SavedJob,
 } from "@nordri/contracts";
 
@@ -82,16 +83,32 @@ function resumeLanguageFields(source: ResumeDraft) {
       identity.headline = text;
     });
   }
+  function keepOriginal(
+    id: string,
+    text: string,
+    refs: ResumeDraftSourceRef[],
+  ) {
+    const sourceId = `draft:${draft.id}:field:${id}`;
+    if (!refs.some((ref) => ref.sourceId === sourceId))
+      refs.push({
+        id: sourceId,
+        sourceKind: "resume",
+        sourceId,
+        snippet: text,
+      });
+  }
   for (const section of draft.sections) {
     add(`${section.id}:label`, section.label, (text) => {
       section.label = text;
     });
     add(`${section.id}:text`, section.text, (text) => {
+      keepOriginal(`${section.id}:text`, section.text!, section.sourceRefs);
       section.text = text;
       section.origin = "ai_generated";
     });
     for (const bullet of section.bullets)
       add(bullet.id, bullet.text, (text) => {
+        keepOriginal(bullet.id, bullet.text, bullet.sourceRefs);
         bullet.text = text;
         bullet.origin = "ai_generated";
       });
@@ -104,12 +121,15 @@ function resumeLanguageFields(source: ResumeDraft) {
         "summary",
       ] as const) {
         add(`${entry.id}:${key}`, entry[key], (text) => {
+          if (key === "summary" || key === "title")
+            keepOriginal(`${entry.id}:${key}`, entry[key]!, entry.sourceRefs);
           entry[key] = text;
           entry.origin = "ai_generated";
         });
       }
       for (const bullet of entry.bullets)
         add(bullet.id, bullet.text, (text) => {
+          keepOriginal(bullet.id, bullet.text, bullet.sourceRefs);
           bullet.text = text;
           bullet.origin = "ai_generated";
         });

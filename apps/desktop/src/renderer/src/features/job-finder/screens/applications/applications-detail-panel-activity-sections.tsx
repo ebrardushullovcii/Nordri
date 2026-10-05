@@ -42,7 +42,6 @@ export function ApplicationsDetailPanelActivitySections(props: {
     input: JobFinderApplyConsentActionInput,
   ) => void;
   onSelectApplyRun: (runId: string) => void;
-  onOpenBrowser?: () => Promise<void>;
   /**
    * Sends this application. Present only when the person chose to look it over
    * before it goes, which is the only way this button ever appears.
@@ -52,6 +51,7 @@ export function ApplicationsDetailPanelActivitySections(props: {
   onPrepareApplicationAgain?: (jobId: string) => Promise<void>;
   /** True when this application is filled in and waiting on their decision. */
   awaitsYourReview?: boolean;
+  onOpenApplicationPage?: (() => Promise<void>) | undefined;
   /** True when the browser no longer holds the page this was filled in on. */
   applicationPageClosed?: boolean;
   selectedApplyRunDetails: ApplyRunDetails | null;
@@ -114,7 +114,7 @@ export function ApplicationsDetailPanelActivitySections(props: {
       visibleApplyResult ? (
         <ApplicationsReviewCard
           card={reviewCard}
-          onOpenBrowser={props.onOpenBrowser}
+          onOpenPage={props.onOpenApplicationPage}
           onSubmit={() => onSubmitPreparedApplication(visibleApplyResult.jobId)}
           {...(onPrepareApplicationAgain
             ? {

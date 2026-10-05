@@ -594,6 +594,20 @@ describe("ResumeWorkspaceScreen", () => {
     expect(onRegenerateDraft).not.toHaveBeenCalled();
   });
 
+  it("a failed language choice leaves the saved draft clean and does not save again", () => {
+    const onSaveDraftAndThen = vi.fn(); // Failure: no success callback.
+    const onDirtyChange = vi.fn();
+    renderScreen({ onSaveDraftAndThen, onDirtyChange });
+    fireEvent.change(screen.getByLabelText("Resume language"), {
+      target: { value: "German" },
+    });
+    expect(onSaveDraftAndThen).toHaveBeenCalledTimes(1);
+    expect(
+      screen.getByLabelText<HTMLSelectElement>("Resume language").value,
+    ).toBe("");
+    expect(onDirtyChange).not.toHaveBeenCalledWith(true);
+  });
+
   it("opens the one mounted proof disclosure from Review 1 line at desktop width", async () => {
     // Both studio layouts used to mount at once, so `id="resume-proof-details"`
     // existed twice and `getElementById` always returned the CSS-hidden
@@ -2269,6 +2283,12 @@ describe("ResumeWorkspaceScreen", () => {
           "The language change did not cover the whole resume. Your previous resume was kept; try again.",
       }),
     );
+    expect(
+      screen.getByText(
+        "The writing assistant did not answer. Try again in a few minutes.",
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByText(/did not cover the whole resume/)).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(onSaveDraftAndThen).toHaveBeenLastCalledWith(
       expect.objectContaining({ language: "German" }),
@@ -2289,7 +2309,9 @@ describe("ResumeWorkspaceScreen", () => {
     const onRegenerateDraft = vi.fn();
     renderScreen({ workspace, onRegenerateDraft });
     expect(
-      screen.getByText(workspace.tailoredAsset.failureMessage!),
+      screen.getByText(
+        "The writing assistant did not answer. Try again in a few minutes.",
+      ),
     ).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(onRegenerateDraft).toHaveBeenCalledWith("job_ready");

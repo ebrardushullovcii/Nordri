@@ -32,6 +32,7 @@ import {
   type ResumeCoverageComparison,
   type ResumeDraft,
   type ResumeDraftBullet,
+  type ResumeDraftSourceRef,
   type ResumeDraftPatch,
   type ResumeDraftRevision,
   type ResumeDraftRevisionActor,
@@ -2033,29 +2034,47 @@ export function buildResumeCoverageComparison(input: {
         tailoredClaims,
         originalClaims,
       );
-      const sourceAchievementIds = (text: string) =>
-        experience.achievements.flatMap((achievement, index) =>
+      const sourceAchievementIds = (text: string) => [
+        ...resumeSentences(experience.summary ?? "").flatMap((line, index) =>
+          normalizeText(line) === normalizeText(text)
+            ? [`experience:${experience.id}:summary:${index}`]
+            : [],
+        ),
+        ...experience.achievements.flatMap((achievement, index) =>
           resumeSentences(achievement).some(
             (line) => normalizeText(line) === normalizeText(text),
           )
             ? [`experience:${experience.id}:achievement:${index}`]
             : [],
+        ),
+      ];
+      const restatedSourceIds = (text: string) => {
+        const refs =
+          entry?.summary && resumeSentences(entry.summary).includes(text)
+            ? entry.sourceRefs
+            : (entry?.bullets
+                .filter((bullet) => bullet.included && bullet.text === text)
+                .flatMap((bullet) => bullet.sourceRefs) ?? []);
+        return uniqueStrings(
+          refs.flatMap((ref) => {
+            if (ref.sourceId?.startsWith(`draft:${input.draft.id}:field:`))
+              return resumeSentences(ref.snippet ?? "").flatMap(
+                sourceAchievementIds,
+              );
+            if (ref.sourceId === `experience:${experience.id}:summary`)
+              return resumeSentences(experience.summary ?? "").flatMap(
+                sourceAchievementIds,
+              );
+            return experience.achievements.some(
+              (_, index) =>
+                ref.sourceId ===
+                `experience:${experience.id}:achievement:${index}`,
+            )
+              ? [ref.sourceId!]
+              : [];
+          }),
         );
-      const restatedSourceIds = (text: string) =>
-        entry?.bullets
-          .filter((bullet) => bullet.included && bullet.text === text)
-          .flatMap((bullet) =>
-            bullet.sourceRefs.flatMap((ref) =>
-              ref.sourceId &&
-              experience.achievements.some(
-                (_, index) =>
-                  ref.sourceId ===
-                  `experience:${experience.id}:achievement:${index}`,
-              )
-                ? [ref.sourceId]
-                : [],
-            ),
-          ) ?? [];
+      };
       const originalSummaryKey = normalizeText(experience.summary ?? "");
       const removedClaims = removedClaimText.map((text) => ({
         ...(sourceAchievementIds(text).length
@@ -2138,34 +2157,79 @@ export function buildResumeCoverageComparison(input: {
     ...input.profile.spokenLanguages.map((entry) =>
       [entry.language, entry.proficiency].filter(Boolean).join(" — "),
     ),
+    ...input.profile.certifications
+      .filter((entry) => !entry.isDraft)
+      .flatMap((entry) => (entry.name ? [entry.name] : [])),
   ];
+  const originalFieldText = (
+    text: string,
+    fieldId: string,
+    refs: readonly ResumeDraftSourceRef[],
+  ) =>
+    refs.find(
+      (ref) => ref.sourceId === `draft:${input.draft.id}:field:${fieldId}`,
+    )?.snippet ??
+    refs.find((ref) => ref.sourceId?.startsWith("language:"))?.snippet ??
+    text;
   const tailoredKeywords = uniqueStrings(
     input.draft.sections
       .filter(
         (section) =>
           section.included &&
-          (section.kind === "skills" || section.kind === "keywords"),
+          (section.kind === "skills" ||
+            section.kind === "keywords" ||
+            section.kind === "certifications"),
       )
       .flatMap((section) => [
-        ...(section.text ? [section.text] : []),
+        ...(section.text
+          ? [
+              originalFieldText(
+                section.text,
+                `${section.id}:text`,
+                section.sourceRefs,
+              ),
+            ]
+          : []),
         ...section.bullets
           .filter((bullet) => bullet.included)
           .map((bullet) =>
-            section.id === "section_languages" &&
-            bullet.origin === "ai_generated"
-              ? (bullet.sourceRefs.find((ref) =>
-                  ref.sourceId?.startsWith("language:"),
-                )?.snippet ?? bullet.text)
-              : bullet.text,
+            originalFieldText(bullet.text, bullet.id, bullet.sourceRefs),
           ),
         ...section.entries
           .filter((entry) => entry.included)
           .flatMap((entry) => [
-            ...(entry.title ? [entry.title] : []),
-            ...(entry.summary ? [entry.summary] : []),
+            ...(entry.title
+              ? [
+                  section.kind === "certifications"
+                    ? (input.profile.certifications.find(
+                        (record) => record.id === entry.profileRecordId,
+                      )?.name ??
+                      originalFieldText(
+                        entry.title,
+                        `${entry.id}:title`,
+                        entry.sourceRefs,
+                      ))
+                    : originalFieldText(
+                        entry.title,
+                        `${entry.id}:title`,
+                        entry.sourceRefs,
+                      ),
+                ]
+              : []),
+            ...(entry.summary
+              ? [
+                  originalFieldText(
+                    entry.summary,
+                    `${entry.id}:summary`,
+                    entry.sourceRefs,
+                  ),
+                ]
+              : []),
             ...entry.bullets
               .filter((bullet) => bullet.included)
-              .map((bullet) => bullet.text),
+              .map((bullet) =>
+                originalFieldText(bullet.text, bullet.id, bullet.sourceRefs),
+              ),
           ]),
       ]),
   );

@@ -143,6 +143,98 @@ describe("ApplicationsScreen", () => {
     };
   }
 
+  it("opens the page bound to the selected result when an older result has the same URL", async () => {
+    vi.stubGlobal("ResizeObserver", ResizeObserverMock);
+    stubCandidateAssetsBridge();
+    const at = "2026-10-04T10:00:00.000Z";
+    const record = createTrackedApplication({
+      lastAttemptState: "ready",
+      automationMode: "confirm_before_submit",
+      crm: null,
+    });
+    const run = ApplyRunSchema.parse({
+      id: "run_current",
+      mode: "queue_auto",
+      state: "completed",
+      jobIds: [record.jobId],
+      createdAt: at,
+      updatedAt: at,
+      completedAt: at,
+      summary: "Prepared",
+      detail: "Ready for review",
+      totalJobs: 1,
+    });
+    const result = ApplyJobResultSchema.parse({
+      id: "result_current",
+      runId: run.id,
+      applicationRecordId: record.id,
+      jobId: record.jobId,
+      state: "awaiting_review",
+      startedAt: at,
+      updatedAt: at,
+      completedAt: at,
+      summary: "Prepared",
+      detail: "Ready for review",
+    });
+    const url = "https://apply.synthetic.example/form";
+    const details = ApplyRunDetailsSchema.parse({
+      run,
+      result,
+      results: [result],
+      reviewCard: {
+        siteLabel: "Synthetic careers",
+        pageUrl: url,
+        answers: [],
+        attachments: [],
+        letter: null,
+        waitingOnYou: [],
+        preparedAt: at,
+      },
+    });
+    const base = buildCrmScreenProps({
+      applicationRecords: [record],
+      selectedRecord: record,
+      onSelectRecord: vi.fn(),
+    });
+    base.onGetApplyRunDetails.mockResolvedValue(details);
+    const onFinishInBrowser = vi.fn(() =>
+      Promise.resolve({ kind: "opened_application_page" as const }),
+    );
+    render(
+      <MemoryRouter>
+        <ApplicationsScreen
+          {...base}
+          dailyPreparationCapacity={null}
+          selectedApplyRunId={run.id}
+          onSubmitPreparedApplication={vi.fn(async () => {})}
+          applyRuns={[run]}
+          applyJobResults={[
+            {
+              ...result,
+              id: "result_old",
+              state: "submitted",
+              updatedAt: "2026-10-03T10:00:00.000Z",
+            },
+            result,
+          ]}
+          onFinishInBrowser={onFinishInBrowser}
+        />
+      </MemoryRouter>,
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Open this page" }),
+    );
+    await waitFor(() =>
+      expect(onFinishInBrowser).toHaveBeenCalledWith({
+        jobId: record.jobId,
+        resultId: result.id,
+        runId: run.id,
+        applicationRecordId: record.id,
+        destinationUrl: url,
+      }),
+    );
+  });
+
   it("hides completed run furniture after all records are marked Applied", () => {
     vi.stubGlobal("ResizeObserver", ResizeObserverMock);
     stubCandidateAssetsBridge();

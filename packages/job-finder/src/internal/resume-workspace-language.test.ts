@@ -9,6 +9,7 @@ import {
   seedResumeDraft,
   buildResumeRenderDocument,
 } from "./resume-workspace-structure";
+import { buildResumeCoverageComparison } from "./resume-workspace-helpers";
 import { writeResumeLanguage } from "./resume-workspace-language";
 
 function context() {
@@ -226,4 +227,112 @@ test("changing an existing Light draft translates once, checks translated text a
   });
   await workspaceService.saveResumeDraft(saved!);
   expect(chatWithTools).toHaveBeenCalledTimes(1);
+});
+
+test("translated imported lines and keywords keep their original field sources", async () => {
+  const seed = context();
+  const profile = {
+    ...seed.profile,
+    skills: ["Warehouse planning", "Inventory control"],
+    spokenLanguages: [
+      {
+        id: "german",
+        language: "German",
+        proficiency: "C1",
+        interviewPreference: false,
+        notes: null,
+      },
+      {
+        id: "polish",
+        language: "Polish",
+        proficiency: "Native",
+        interviewPreference: false,
+        notes: null,
+      },
+      {
+        id: "english",
+        language: "English",
+        proficiency: "B1",
+        interviewPreference: false,
+        notes: null,
+      },
+    ],
+    certifications: [
+      {
+        id: "first_aid",
+        name: "First aid",
+        issuer: null,
+        issueDate: null,
+        expiryDate: null,
+        credentialUrl: null,
+        isDraft: false,
+      },
+    ],
+  };
+  const job = seed.job;
+  const draft = seedResumeDraft({
+    profile,
+    job,
+    templateId: seed.settings.resumeTemplateId,
+  });
+  const result = await writeResumeLanguage({
+    draft,
+    job,
+    aiClient: {
+      chatWithTools: async (messages) => {
+        const payload = JSON.parse(messages[1]!.content) as {
+          fields: Array<{ id: string; text: string }>;
+        };
+        return {
+          content: JSON.stringify({
+            language: "German",
+            translations: payload.fields.map(({ id, text }) => ({
+              id,
+              text: `Übersetzt: ${text}`,
+            })),
+          }),
+        };
+      },
+    },
+  });
+  const comparison = buildResumeCoverageComparison({ profile, draft: result });
+  expect(comparison.addedKeywords).toEqual([]);
+  expect(comparison.removedKeywords).toEqual(
+    buildResumeCoverageComparison({ profile, draft }).removedKeywords,
+  );
+  for (const role of comparison.roles) {
+    expect(role.status).toBe("rewritten");
+    expect(role.retainedClaimCount).toBe(role.originalClaimCount);
+    for (const original of role.removedClaims)
+      expect(
+        role.addedClaims.some((added) =>
+          original.sourceAchievementIds?.some((id) =>
+            added.sourceAchievementIds?.includes(id),
+          ),
+        ),
+      ).toBe(true);
+  }
+  const again = await writeResumeLanguage({
+    draft: result,
+    job,
+    aiClient: {
+      chatWithTools: async (messages) => {
+        const payload = JSON.parse(messages[1]!.content) as {
+          fields: Array<{ id: string; text: string }>;
+        };
+        return {
+          content: JSON.stringify({
+            language: "French",
+            translations: payload.fields.map(({ id, text }) => ({
+              id,
+              text: `Traduit: ${text}`,
+            })),
+          }),
+        };
+      },
+    },
+  });
+  expect(
+    buildResumeCoverageComparison({ profile, draft: again }).addedKeywords,
+  ).toEqual([]);
 });

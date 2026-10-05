@@ -1,3 +1,4 @@
+import { FAILURE_SENTENCES } from "../../lib/describe-failure";
 import { ResumeWorkspaceLanguagePicker } from "./resume-workspace-language-picker";
 import { OriginalResumeFilePanel } from "./original-resume-file-panel";
 import {
@@ -151,6 +152,9 @@ export function ResumeWorkspaceScreen(props: ResumeWorkspaceScreenProps) {
   // An approval freezes one exact artifact. A Guided edits proposal that is
   // still pending at that moment would silently invalidate the approval the
   // moment it were accepted, so approval sets it aside and says so.
+  const [languageRequest, setLanguageRequest] = useState<{
+    language: string | null;
+  } | null>(null);
   const [setAsideProposalNote, setSetAsideProposalNote] = useState<
     string | null
   >(null);
@@ -1007,22 +1011,33 @@ export function ResumeWorkspaceScreen(props: ResumeWorkspaceScreenProps) {
     assistant?.openWith();
   };
 
+  const writeLanguage = (language: string | null) => {
+    const nextDraft = { ...draft, language };
+    setLanguageRequest({ language });
+    props.onDraftEdited?.();
+    props.onSaveDraftAndThen(
+      nextDraft,
+      () => undefined,
+      null,
+      (updatedAt) => {
+        setLanguageRequest(null);
+        setDraft(nextDraft);
+        acknowledgeSave(nextDraft, updatedAt);
+      },
+    );
+  };
+
   const editorPanel = (
     <ResumeWorkspaceEditorPanel
       actionMessage={
-        props.actionMessage ??
-        props.workspace.tailoredAsset?.failureMessage ??
-        null
+        (languageRequest && props.actionMessage && !props.isWorkspacePending) ||
+        props.workspace.tailoredAsset?.failureMessage
+          ? FAILURE_SENTENCES.assistant_unavailable
+          : (props.actionMessage ?? null)
       }
       onRetryAction={
-        draft.language !== props.workspace.draft.language && hasUnsavedChanges
-          ? () =>
-              props.onSaveDraftAndThen(
-                draft,
-                () => undefined,
-                null,
-                (updatedAt) => acknowledgeSave(draft, updatedAt),
-              )
+        languageRequest
+          ? () => writeLanguage(languageRequest.language)
           : props.workspace.tailoredAsset?.failureMessage
             ? () => props.onRegenerateDraft(props.jobId)
             : undefined
@@ -1223,17 +1238,7 @@ export function ResumeWorkspaceScreen(props: ResumeWorkspaceScreenProps) {
               writtenLanguage={draft.writtenLanguage ?? null}
               listingLanguage={draft.listingLanguage ?? null}
               disabled={props.isWorkspacePending || backgroundDraft !== null}
-              onWrite={(language) => {
-                const nextDraft = { ...draft, language };
-                setDraft(nextDraft);
-                props.onDraftEdited?.();
-                props.onSaveDraftAndThen(
-                  nextDraft,
-                  () => undefined,
-                  null,
-                  (updatedAt) => acknowledgeSave(nextDraft, updatedAt),
-                );
-              }}
+              onWrite={writeLanguage}
             />
           ) : null}
           {backgroundDraft ? (

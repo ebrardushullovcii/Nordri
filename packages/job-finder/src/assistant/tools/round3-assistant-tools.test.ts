@@ -84,6 +84,27 @@ describe("R3-117 saved search on a return visit", () => {
       "Do not report zero changed or closed jobs without a fresh comparison",
     );
   });
+  it("uses the frozen summary report when a cancelled run's digest is empty", async () => {
+    const ctx = world();
+    const snapshot = await ctx.service.getWorkspaceSnapshot();
+    const run = DiscoveryRunRecordSchema.parse({
+      id: "cancelled",
+      state: "cancelled",
+      startedAt: "2026-10-05T09:00:00.000Z",
+      summary: {
+        report: { measuredAt: "2026-10-05T09:10:00.000Z", saved: 33, new: 20 },
+      },
+    });
+    snapshot.recentDiscoveryRuns = [run];
+    vi.spyOn(ctx.service, "getWorkspaceSnapshot").mockResolvedValue(snapshot);
+    expect(getAssistantSavedSearch(snapshot)).toMatchObject({
+      historicalCounts: { saved: 33, new: 20 },
+      summaryReport: run.summary.report,
+    });
+    expect((await getWorkspaceSummaryTool.execute({}, ctx)).data).toMatchObject(
+      { search: { latestSavedSearch: { summaryReport: run.summary.report } } },
+    );
+  });
   it("does not fabricate a comparison when no search was saved", async () => {
     const ctx = world();
     const snapshot = await ctx.service.getWorkspaceSnapshot();
@@ -371,4 +392,14 @@ it("R3-062 gives the model the full country restriction and asks it to answer fi
   expect(ASSISTANT_SYSTEM_PROMPT).toContain(
     "Germany does not meet a UK-only residence/work-location requirement",
   );
+});
+
+it("requires a text answer first and supporting cards only", () => {
+  expect(ASSISTANT_SYSTEM_PROMPT).toContain(
+    "answer the question in text first",
+  );
+  expect(ASSISTANT_SYSTEM_PROMPT).toContain(
+    "Do not reply with only a card or a question back",
+  );
+  expect(ASSISTANT_SYSTEM_PROMPT).toContain("finish with a text answer");
 });

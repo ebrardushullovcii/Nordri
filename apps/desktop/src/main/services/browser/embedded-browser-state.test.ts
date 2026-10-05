@@ -370,3 +370,46 @@ test("opening the browser to watch a working application does not open its Send 
   ).not.toHaveBeenCalled();
   expect(controller.signal.aborted).toBe(false);
 });
+
+test("a prepared tab is ready without Resume when another tab was handed over", async () => {
+  const { browser, state } = makeBrowser();
+  state.heldTabs.set("held", ["old_result"]);
+  state.ownedTabs.set("ready_result", new Set(["prepared"]));
+  state.activeTabId = "prepared";
+  await browser.command({ type: "open" });
+  expect(browser.getState()).toMatchObject({
+    phase: "ready",
+    automationPaused: false,
+    activeTabId: "prepared",
+  });
+  await browser.command({ type: "select_tab", tabId: "held" });
+  expect(browser.getState()).toMatchObject({
+    phase: "paused",
+    automationPaused: true,
+    activeTabId: "held",
+  });
+  state.heldTabs.set("held", []); // The person finished a prepared page; no task is interrupted.
+  expect(browser.getState()).toMatchObject({
+    phase: "ready",
+    automationPaused: false,
+  });
+});
+
+test("a background application does not label the selected prepared tab as working", async () => {
+  const { browser, state } = makeBrowser();
+  state.activeTabId = "prepared";
+  const controller = new AbortController();
+  state.operations.set(controller, "Preparing another application");
+  state.operationClaims.set(controller, {
+    id: "another",
+    owner: null,
+    tabs: new Set(["working"]),
+  });
+  await browser.command({ type: "open" });
+  expect(browser.getState()).toMatchObject({ phase: "ready", activity: null });
+  await browser.command({ type: "select_tab", tabId: "working" });
+  expect(browser.getState()).toMatchObject({
+    phase: "working",
+    activity: "Preparing another application",
+  });
+});
