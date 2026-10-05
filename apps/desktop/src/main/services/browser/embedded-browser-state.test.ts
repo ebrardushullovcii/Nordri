@@ -329,8 +329,11 @@ test("prepared tabs identify the job even when the site gives them identical tit
 });
 
 test.each(["record", "top_bar", "tab_picker"] as const)(
-  "showing a prepared form through %s opens its person guard before Send and keeps the receipt bound to that application",
+  "showing a prepared form through %s leaves it bound to its application until the person acts",
   async (entry) => {
+    // Handing the page over on sight released it from its application, which
+    // recorded the prepared form as closed ("Could not apply") and lost the
+    // person's own send. The page is handed over on their first input instead.
     const { browser, state, pages } = makeBrowser();
     state.ownedTabs.set("ready_result", new Set(["prepared"]));
     state.activeTabId = "prepared";
@@ -340,28 +343,13 @@ test.each(["record", "top_bar", "tab_picker"] as const)(
       await browser.command({ type: "open" });
       await browser.command({ type: "select_tab", tabId: "prepared" });
     }
+    expect(state.heldTabs.has("prepared")).toBe(false);
+    expect(state.ownedTabs.get("ready_result")?.has("prepared")).toBe(true);
     expect(
       pages.get("prepared")?.mainFrame.framesInSubtree[0]?.executeJavaScript,
-    ).toHaveBeenCalledWith(
+    ).not.toHaveBeenCalledWith(
       expect.stringContaining("finalActionAllowed = true"),
     );
-    expect(
-      await browser.readApplicationPageWithPerson("ready_result"),
-    ).toBeNull();
-    const native = browser as unknown as {
-      handleUserInput(
-        id: string,
-        kind: "key",
-        key: { code: string; key: string },
-      ): void;
-    };
-    native.handleUserInput("prepared", "key", { code: "Enter", key: "Enter" });
-    expect(
-      await browser.readApplicationPageWithPerson("ready_result"),
-    ).toMatchObject({ bodyText: "Application received" });
-    expect(
-      await browser.readApplicationPageWithPerson("other_result"),
-    ).toBeNull();
   },
 );
 
@@ -381,24 +369,4 @@ test("opening the browser to watch a working application does not open its Send 
     pages.get("prepared")?.mainFrame.framesInSubtree[0]?.executeJavaScript,
   ).not.toHaveBeenCalled();
   expect(controller.signal.aborted).toBe(false);
-});
-
-test("a watched form opens its person Send guard when preparation finishes", async () => {
-  const { browser, state, pages } = makeBrowser();
-  state.ownedTabs.set("ready_result", new Set(["prepared"]));
-  state.activeTabId = "prepared";
-  await browser.runAutomation("Preparing application", undefined, async () => {
-    const claim = [...state.operationClaims.values()][0]!;
-    claim.tabs.add("prepared");
-    await browser.command({ type: "open" });
-    expect(
-      pages.get("prepared")?.mainFrame.framesInSubtree[0]?.executeJavaScript,
-    ).not.toHaveBeenCalled();
-  });
-  expect(
-    pages.get("prepared")?.mainFrame.framesInSubtree[0]?.executeJavaScript,
-  ).toHaveBeenCalledWith(expect.stringContaining("finalActionAllowed = true"));
-  expect(
-    await browser.readApplicationPageWithPerson("ready_result"),
-  ).toBeNull();
 });

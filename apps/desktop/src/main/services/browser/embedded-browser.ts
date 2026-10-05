@@ -607,7 +607,6 @@ export class EmbeddedBrowser {
     this.closed = false;
     this.presentation = "peek";
     this.selectPage(tabId);
-    this.openShownApplicationForPerson();
     this.layout();
     this.emit();
     return true;
@@ -1159,23 +1158,6 @@ export class EmbeddedBrowser {
     }
   }
 
-  /** Showing a finished form hands its page guard over before the first click. */
-  private openShownApplicationForPerson(): void {
-    const tabId = this.activeTabId;
-    if (
-      !tabId ||
-      this.closed ||
-      this.presentation === "minimized" ||
-      this.lentTabs.has(tabId)
-    )
-      return;
-    const owned = [...this.ownedTabs.values()].some((tabs) => tabs.has(tabId));
-    const running = [...this.operationClaims.values()].some((claim) =>
-      claim.tabs.has(tabId),
-    );
-    if (owned && !running && !this.heldTabs.has(tabId)) this.takeTab(tabId, []);
-  }
-
   private async closeTabForAutomation(tabId: string): Promise<void> {
     this.personInputTabs.delete(tabId);
     const page = this.pageMap.get(tabId);
@@ -1436,7 +1418,6 @@ export class EmbeddedBrowser {
       this.operations.delete(controller);
       this.operationClaims.delete(controller);
       this.closeReleasedOwnedTabs();
-      this.openShownApplicationForPerson();
       if (this.operations.size === 0)
         for (const page of this.pageMap.values()) {
           if (!page.contents.isDestroyed())
@@ -1467,7 +1448,6 @@ export class EmbeddedBrowser {
         if (existingPage) this.selectPage(existingPage.id);
         else this.createPage(requestedUrl);
       }
-      this.openShownApplicationForPerson();
     } else if (command.type === "minimize") {
       this.presentation = "minimized";
       if (
@@ -1506,10 +1486,8 @@ export class EmbeddedBrowser {
       const owners = handedBack.flatMap(([, tabOwners]) => tabOwners);
       if (owners.length > 0 && this.activityHooks?.handback)
         void this.activityHooks.handback(owners).catch(() => undefined);
-    } else if (command.type === "select_tab") {
-      this.selectPage(command.tabId);
-      this.openShownApplicationForPerson();
-    } else if (command.type === "close_finished_tabs") this.closeFinishedTabs();
+    } else if (command.type === "select_tab") this.selectPage(command.tabId);
+    else if (command.type === "close_finished_tabs") this.closeFinishedTabs();
     else if (command.type === "new_tab") this.openPersonTab("about:blank");
     else if (command.type === "close_tab") {
       this.takeTabByPerson(command.tabId, false, true);
