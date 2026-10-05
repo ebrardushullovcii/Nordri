@@ -12,6 +12,7 @@ afterEach(() => {
   cleanup();
   vi.useRealTimers();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 function Trigger() {
   const { showToast } = useToast();
@@ -46,18 +47,250 @@ it("keeps bulk Undo available for twenty seconds and holds it on hover", async (
   expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
 });
 
-it("sits above list pagers without resizing the page while it shows", () => {
-  render(
-    <ToastProvider>
-      <Trigger />
-    </ToastProvider>,
+function mockLayout({
+  stackHeight = 112,
+  pagerTop,
+  sidebarRight = 272,
+}: { stackHeight?: number; pagerTop?: number; sidebarRight?: number } = {}) {
+  vi.stubGlobal("innerHeight", 900);
+  const rect = (left: number, top: number, width: number, height: number) => ({
+    left,
+    top,
+    width,
+    height,
+    right: left + width,
+    bottom: top + height,
+    x: left,
+    y: top,
+    toJSON: () => ({}),
+  });
+  let railRight = sidebarRight;
+  let measuredStackHeight = stackHeight;
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+    function (this: HTMLElement) {
+      if (this.hasAttribute("data-toast-viewport"))
+        return rect(
+          parseFloat(this.style.left) || 16,
+          0,
+          360,
+          measuredStackHeight,
+        );
+      if (this.hasAttribute("data-job-finder-sidebar"))
+        return rect(0, 56, railRight, 844);
+      if (this.hasAttribute("data-collection-pagination"))
+        return rect(288, pagerTop ?? 856, 600, 44);
+      if (this.hasAttribute("data-job-results-pagination"))
+        return rect(288, pagerTop ?? 856, 600, 44);
+      if (this.hasAttribute("data-locked-pane-scroll-region"))
+        return rect(this.dataset.rightPane ? 900 : 288, 200, 600, 700);
+      if (this.hasAttribute("data-locked-screen-scroll-area"))
+        return rect(288, 130, 1100, 770);
+      return rect(0, 0, 0, 0);
+    },
   );
+  return {
+    setSidebarRight: (right: number) => {
+      railRight = right;
+    },
+    setStackHeight: (height: number) => {
+      measuredStackHeight = height;
+    },
+  };
+}
+
+function ScrollFixture({
+  pager = false,
+  compact = false,
+}: {
+  pager?: boolean;
+  compact?: boolean;
+}) {
+  return (
+    <ToastProvider>
+      <aside data-job-finder-sidebar />
+      <main style={{ height: 770 }}>
+        <Trigger />
+        <div
+          data-locked-screen-scroll-area
+          style={{ height: 770, overflowY: "auto" }}
+        >
+          <div
+            data-locked-pane-scroll-region
+            style={{
+              height: 700,
+              overflowY: compact ? "visible" : "auto",
+              rowGap: 12,
+            }}
+          >
+            <ul>
+              <li>First job</li>
+              <li>Last job</li>
+            </ul>
+          </div>
+          <ul
+            aria-label="Applications"
+            data-locked-pane-scroll-region
+            style={{ height: 700, overflowY: compact ? "visible" : "auto" }}
+          >
+            <li>Only application</li>
+          </ul>
+          <div
+            data-locked-pane-scroll-region
+            data-right-pane
+            style={{ height: 700, overflowY: compact ? "visible" : "auto" }}
+          >
+            Right pane
+          </div>
+          <div data-locked-pane-scroll-region style={{ overflowY: "visible" }}>
+            Natural height list
+          </div>
+          {pager ? <nav data-collection-pagination>251–300 of 353</nav> : null}
+        </div>
+      </main>
+    </ToastProvider>
+  );
+}
+
+it("adds trailing scroll space for the measured stack without changing page or pane height or scroll position", () => {
+  mockLayout();
+  const view = render(<ScrollFixture />);
+  const page = view.container.querySelector("main")!;
+  const owner = view.container.querySelector<HTMLElement>(
+    "[data-locked-pane-scroll-region]",
+  )!;
+  owner.scrollTop = 50;
+  const originalPageHeight = page.style.height;
+  const originalPaneHeight = owner.style.height;
   fireEvent.click(screen.getByText("Hide jobs"));
-  const viewport = document.querySelector("[data-toast-viewport]");
-  // Clear of the one-line pager at the bottom of a list panel.
-  expect(viewport?.className).toContain("bottom-16");
-  // Showing a toast never moves the content under the person's pointer.
+  const slot = owner.lastElementChild as HTMLElement;
+  expect(slot.hasAttribute("data-toast-scroll-spacer-slot")).toBe(true);
+  expect(slot.style.height).toBe("0px");
+  expect(slot.style.marginTop).toBe("-12px");
+  const spacer = slot.querySelector<HTMLElement>("[data-toast-scroll-spacer]")!;
+  expect(spacer.style.position).toBe("absolute");
+  expect(spacer.style.height).toBe("136px");
+  expect(owner.scrollTop).toBe(50);
+  expect(page.style.height).toBe(originalPageHeight);
+  expect(owner.style.height).toBe(originalPaneHeight);
   expect(
     document.documentElement.style.getPropertyValue("--toast-reserved-height"),
   ).toBe("");
+  // A list uses a hidden list item, not invalid div markup; other columns and
+  // natural-height content receive no spacer.
+  const list = screen.getByRole("list", { name: "Applications" });
+  expect(list.lastElementChild?.tagName).toBe("LI");
+  expect(list.lastElementChild?.getAttribute("aria-hidden")).toBe("true");
+  expect(
+    view.container.querySelector(
+      "[data-right-pane] [data-toast-scroll-spacer]",
+    ),
+  ).toBeNull();
+  expect(
+    screen
+      .getByText("Natural height list")
+      .querySelector("[data-toast-scroll-spacer]"),
+  ).toBeNull();
+  expect(
+    view.container
+      .querySelector("[data-locked-screen-scroll-area]")
+      ?.lastElementChild?.hasAttribute("data-toast-scroll-spacer-slot"),
+  ).toBe(false);
+  fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+  expect(document.querySelector("[data-toast-scroll-spacer]")).toBeNull();
+  expect(page.style.height).toBe(originalPageHeight);
+});
+
+it.each([112, 260])(
+  "clears a Tracker pager above the window bottom with a %ipx toast stack",
+  (stackHeight) => {
+    mockLayout({ stackHeight, pagerTop: 780 });
+    const view = render(<ScrollFixture pager />);
+    fireEvent.click(screen.getByText("Hide jobs"));
+    const viewport = document.querySelector<HTMLElement>(
+      "[data-toast-viewport]",
+    )!;
+    const bottom = 128;
+    expect(viewport.style.bottom).toBe(`${bottom}px`);
+    const spacer = view.container.querySelector<HTMLElement>(
+      "[data-toast-scroll-spacer]",
+    )!;
+    expect(parseFloat(spacer.style.height)).toBe(stackHeight + bottom + 8);
+  },
+);
+
+it("follows the current sidebar width when the assistant collapses it", async () => {
+  vi.useFakeTimers();
+  const layout = mockLayout();
+  render(<ScrollFixture />);
+  fireEvent.click(screen.getByText("Hide jobs"));
+  const viewport = document.querySelector<HTMLElement>(
+    "[data-toast-viewport]",
+  )!;
+  expect(viewport.style.left).toBe("288px");
+  layout.setSidebarRight(64);
+  fireEvent(window, new Event("resize"));
+  await act(() => vi.advanceTimersByTime(20));
+  expect(viewport.style.left).toBe("80px");
+  expect(viewport.style.width).toContain("80px");
+  layout.setSidebarRight(0);
+  fireEvent(window, new Event("resize"));
+  await act(() => vi.advanceTimersByTime(20));
+  expect(viewport.style.left).toBe("16px");
+});
+
+it("remeasures scroll clearance when the toast stack grows or text wraps", async () => {
+  vi.useFakeTimers();
+  const layout = mockLayout();
+  const view = render(<ScrollFixture />);
+  fireEvent.click(screen.getByText("Hide jobs"));
+  layout.setStackHeight(300);
+  fireEvent(window, new Event("resize"));
+  await act(() => vi.advanceTimersByTime(20));
+  expect(
+    view.container.querySelector<HTMLElement>("[data-toast-scroll-spacer]")
+      ?.style.height,
+  ).toBe("324px");
+});
+
+it("removes old spacers safely when navigating while a toast stays visible", async () => {
+  vi.useFakeTimers();
+  mockLayout();
+  const route = (show: boolean) => (
+    <ToastProvider>
+      <Trigger />
+      {show ? (
+        <ul
+          data-locked-pane-scroll-region
+          style={{ height: 700, overflowY: "auto" }}
+        >
+          <li>Old route</li>
+        </ul>
+      ) : (
+        <p>New route</p>
+      )}
+    </ToastProvider>
+  );
+  const view = render(route(true));
+  fireEvent.click(screen.getByText("Hide jobs"));
+  expect(document.querySelector("[data-toast-scroll-spacer]")).toBeTruthy();
+  view.rerender(route(false));
+  await act(async () => {
+    await Promise.resolve();
+    vi.advanceTimersByTime(20);
+  });
+  expect(document.querySelector("[data-toast-scroll-spacer]")).toBeNull();
+  expect(screen.getByRole("status")).toBeTruthy();
+});
+
+it("gives the outer route scroll clearance when compact lists use natural height", () => {
+  mockLayout();
+  const view = render(<ScrollFixture compact />);
+  fireEvent.click(screen.getByText("Hide jobs"));
+  const owner = view.container.querySelector(
+    "[data-locked-screen-scroll-area]",
+  )!;
+  expect(
+    owner.lastElementChild?.hasAttribute("data-toast-scroll-spacer-slot"),
+  ).toBe(true);
+  expect(owner.querySelectorAll("[data-toast-scroll-spacer]")).toHaveLength(1);
 });

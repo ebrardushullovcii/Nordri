@@ -49,10 +49,180 @@ export function useToast(): ToastContextValue {
   return React.useContext(ToastContext);
 }
 
+const SCROLL_OWNERS =
+  "[data-locked-pane-scroll-region], [data-locked-screen-scroll-area], [data-job-finder-shell-content] > main";
+const TOAST_AVOID =
+  "[data-collection-pagination], [data-job-results-pagination], [data-locked-screen-bottom-content]";
+const EDGE_GAP = 16;
+const CONTENT_GAP = 8;
+
+interface ToastLayout {
+  left: number;
+  bottom: number;
+  spacers: readonly { owner: HTMLElement; height: number; gap: number }[];
+}
+
+/** Reserve scroll range, never space around the page or its viewport. */
+function useToastLayout(
+  viewportRef: React.RefObject<HTMLElement | null>,
+  active: boolean,
+): ToastLayout {
+  const [layout, setLayout] = React.useState<ToastLayout>({
+    left: EDGE_GAP,
+    bottom: EDGE_GAP,
+    spacers: [],
+  });
+
+  React.useLayoutEffect(() => {
+    if (!active) {
+      setLayout((current) => ({ ...current, spacers: [] }));
+      return undefined;
+    }
+    const viewport = viewportRef.current;
+    if (!viewport) return undefined;
+    let frame: number | undefined;
+    const observed = new Set<Element>();
+    const resizeObserver =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(() => schedule());
+    const measure = () => {
+      const sidebar = document.querySelector<HTMLElement>(
+        "[data-job-finder-sidebar]",
+      );
+      const sidebarRect = sidebar?.getBoundingClientRect();
+      const left =
+        sidebarRect && sidebarRect.width > 0
+          ? sidebarRect.right + EDGE_GAP
+          : EDGE_GAP;
+      const { height, width } = viewport.getBoundingClientRect();
+      let bottom = EDGE_GAP;
+      const avoid = Array.from(
+        document.querySelectorAll<HTMLElement>(TOAST_AVOID),
+      );
+      // Lowest first: a lifted stack must also clear a higher visible pager.
+      const avoidRects = avoid
+        .map((element) => element.getBoundingClientRect())
+        .sort((a, b) => b.top - a.top);
+      for (const rect of avoidRects) {
+        const stackBottom = window.innerHeight - bottom;
+        if (
+          rect.width > 0 &&
+          rect.height > 0 &&
+          rect.left < left + width &&
+          rect.right > left &&
+          rect.top < stackBottom &&
+          rect.bottom > stackBottom - height
+        ) {
+          bottom = window.innerHeight - rect.top + CONTENT_GAP;
+        }
+      }
+      const top = window.innerHeight - bottom - height;
+      const owners = Array.from(
+        document.querySelectorAll<HTMLElement>(SCROLL_OWNERS),
+      );
+      const candidates = owners.flatMap((owner) => {
+        const overflowY = window.getComputedStyle(owner).overflowY;
+        const rect = owner.getBoundingClientRect();
+        if (
+          (overflowY !== "auto" && overflowY !== "scroll") ||
+          rect.width <= 0 ||
+          rect.height <= 0 ||
+          rect.left >= left + width ||
+          rect.right <= left ||
+          rect.bottom <= top
+        )
+          return [];
+        return [
+          {
+            owner,
+            gap: parseFloat(window.getComputedStyle(owner).rowGap) || 0,
+            height: Math.ceil(
+              Math.min(rect.bottom, window.innerHeight) - top + CONTENT_GAP,
+            ),
+          },
+        ];
+      });
+      // A pane filling the bottom of its route already owns this clearance.
+      // Do not give the route a second scroll range underneath that pane.
+      const spacers = candidates.filter(
+        ({ owner }) =>
+          !candidates.some(
+            ({ owner: nested }) =>
+              owner !== nested &&
+              owner.contains(nested) &&
+              Math.abs(
+                owner.getBoundingClientRect().bottom -
+                  nested.getBoundingClientRect().bottom,
+              ) <= EDGE_GAP,
+          ),
+      );
+      for (const element of [
+        viewport,
+        ...(sidebar ? [sidebar] : []),
+        ...avoid,
+        ...owners,
+      ]) {
+        if (!observed.has(element)) {
+          observed.add(element);
+          resizeObserver?.observe(element);
+        }
+      }
+      for (const element of observed) {
+        if (!element.isConnected) {
+          resizeObserver?.unobserve(element);
+          observed.delete(element);
+        }
+      }
+      setLayout((current) =>
+        current.left === left &&
+        current.bottom === bottom &&
+        current.spacers.length === spacers.length &&
+        current.spacers.every(
+          (spacer, index) =>
+            spacer.owner === spacers[index]?.owner &&
+            spacer.height === spacers[index]?.height &&
+            spacer.gap === spacers[index]?.gap,
+        )
+          ? current
+          : { left, bottom, spacers },
+      );
+    };
+    const schedule = () => {
+      if (frame !== undefined) return;
+      frame = window.requestAnimationFrame(() => {
+        frame = undefined;
+        measure();
+      });
+    };
+    measure();
+    const mutations = new MutationObserver(schedule);
+    mutations.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["style", "class", "data-sidebar-collapsed"],
+    });
+    window.addEventListener("resize", schedule);
+    window.addEventListener("scroll", schedule, true);
+    return () => {
+      if (frame !== undefined) window.cancelAnimationFrame(frame);
+      mutations.disconnect();
+      resizeObserver?.disconnect();
+      window.removeEventListener("resize", schedule);
+      window.removeEventListener("scroll", schedule, true);
+    };
+  }, [active, viewportRef]);
+  return layout;
+}
+
 let toastSequence = 0;
 
 export function ToastProvider({ children }: { children: React.ReactNode }) {
+  const viewportRef = React.useRef<HTMLElement | null>(null);
   const [toasts, setToasts] = React.useState<readonly ToastEntry[]>([]);
+
+  const layout = useToastLayout(viewportRef, toasts.length > 0);
 
   const dismissToast = React.useCallback((id: string) => {
     setToasts((current) =>
@@ -79,10 +249,43 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   return (
     <ToastContext.Provider value={value}>
       {children}
+      {layout.spacers.map(({ owner, height, gap }, index) =>
+        createPortal(
+          React.createElement(
+            owner.tagName === "UL" || owner.tagName === "OL" ? "li" : "div",
+            {
+              "aria-hidden": true,
+              "data-toast-scroll-spacer-slot": "",
+              className: "pointer-events-none col-span-full shrink-0",
+              // The zero-height slot does not enlarge naturally sized panes or
+              // move their siblings. Its absolute child extends only the scroll
+              // range; cancel a grid/flex gap introduced by the trailing slot.
+              style: {
+                position: "relative",
+                height: 0,
+                marginTop: -gap,
+                overflowAnchor: "none",
+              },
+            },
+            <div
+              data-toast-scroll-spacer
+              style={{ position: "absolute", top: 0, width: 1, height }}
+            />,
+          ),
+          owner,
+          `toast-spacer-${index}`,
+        ),
+      )}
       {createPortal(
         <section
           aria-label="Notifications"
-          className="pointer-events-none fixed bottom-16 left-4 z-[130] flex w-[min(22.5rem,calc(100vw-var(--assistant-sidebar-reserved,0px)-2rem))] flex-col-reverse gap-2 min-[1440px]:left-[calc(var(--job-finder-side-width)+1rem)] min-[1440px]:w-[min(22.5rem,calc(100vw-var(--job-finder-side-width)-var(--assistant-sidebar-reserved,0px)-2rem))]"
+          className="pointer-events-none fixed z-[130] flex flex-col-reverse gap-2"
+          ref={viewportRef}
+          style={{
+            bottom: layout.bottom,
+            left: layout.left,
+            width: `min(22.5rem, calc(100vw - ${layout.left}px - var(--assistant-sidebar-reserved, 0px) - 1rem))`,
+          }}
           data-toast-viewport
         >
           {toasts.map((toast) => (

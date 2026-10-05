@@ -261,7 +261,7 @@ export function PageStatusLine(props: {
         !moreRef.current?.contains(target) &&
         !popoverRef.current?.contains(target)
       ) {
-        setPopoverOpen(false);
+        closePopover(true);
       }
     };
     const closeOnEscape = (event: KeyboardEvent) => {
@@ -277,6 +277,14 @@ export function PageStatusLine(props: {
       document.removeEventListener("keydown", closeOnEscape);
     };
   }, [closePopover, isPopoverOpen, isTopmost]);
+
+  const isPopoverMounted = isPopoverOpen && placement !== null;
+  useLayoutEffect(() => {
+    if (!isPopoverMounted) return;
+    popoverRef.current
+      ?.querySelector<HTMLElement>("button:not(:disabled), a[href]")
+      ?.focus();
+  }, [isPopoverMounted]);
 
   const hideFocusRef = useRef<{
     nextIds: string[];
@@ -410,7 +418,10 @@ export function PageStatusLine(props: {
           aria-haspopup="dialog"
           className="shrink-0"
           data-page-status-more
-          onClick={() => setPopoverOpen((open) => !open)}
+          onClick={() => {
+            if (isPopoverOpen) closePopover(true);
+            else setPopoverOpen(true);
+          }}
           ref={moreRef}
           size="xs"
           type="button"
@@ -425,6 +436,19 @@ export function PageStatusLine(props: {
           data-page-status-popover
           label="Everything on this page's status line"
           open={isPopoverOpen}
+          onKeyDown={(event) => {
+            if (event.key !== "Tab" || isImeComposingEvent(event)) return;
+            const controls = Array.from(
+              event.currentTarget.querySelectorAll<HTMLElement>(
+                "button:not(:disabled), a[href]",
+              ),
+            );
+            const edge = event.shiftKey ? controls[0] : controls.at(-1);
+            if (document.activeElement === edge) {
+              event.preventDefault();
+              closePopover(true);
+            }
+          }}
           placement={{
             left: placement.left,
             maxHeight: placement.maxHeight,

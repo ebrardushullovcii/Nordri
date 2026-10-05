@@ -298,3 +298,82 @@ it("returns focus to More when hiding the last listed overflow item", () => {
     screen.getByRole("button", { name: "+1 more" }),
   );
 });
+
+function renderOverflowMenu() {
+  vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockImplementation(
+    function (this: HTMLElement) {
+      return this.hasAttribute("data-page-status-item") ? 200 : 70;
+    },
+  );
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(
+    function (this: HTMLElement) {
+      return this.hasAttribute("data-page-header-status") ? 300 : 0;
+    },
+  );
+  renderLine([
+    {
+      id: "paused",
+      text: "Paused",
+      action: {
+        kind: "button",
+        label: "Resume activity",
+        disabled: true,
+        onClick: vi.fn(),
+      },
+    },
+    {
+      id: "holds",
+      text: "Check holds",
+      action: {
+        kind: "link",
+        label: "Open Safeguards",
+        to: "/job-finder/safeguards",
+      },
+    },
+    { id: "run", text: "Last run" },
+  ]);
+  const more = screen.getByRole("button", { name: "+2 more" });
+  more.focus();
+  fireEvent.click(more);
+  return { more, dialog: screen.getByRole("dialog") };
+}
+
+it("focuses the first enabled menu control on open and restores More on Escape", () => {
+  const { more, dialog } = renderOverflowMenu();
+  const first = within(dialog).getByRole("button", {
+    name: "Hide for now: Paused",
+  });
+  expect(document.activeElement).toBe(first);
+  const link = within(dialog).getByRole("link", { name: "Open Safeguards" });
+  link.focus();
+  fireEvent.keyDown(link, { key: "Escape" });
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(document.activeElement).toBe(more);
+});
+
+it.each([false, true])(
+  "returns to the header at the menu's Tab boundary (Shift=%s)",
+  (shiftKey) => {
+    const { more, dialog } = renderOverflowMenu();
+    const controls = Array.from(
+      dialog.querySelectorAll<HTMLElement>("button:not(:disabled), a[href]"),
+    );
+    const edge = shiftKey ? controls[0]! : controls.at(-1)!;
+    edge.focus();
+    fireEvent.keyDown(edge, { key: "Tab", shiftKey });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(document.activeElement).toBe(more);
+  },
+);
+
+it("restores More when the menu closes on an outside press or the trigger", () => {
+  const { more } = renderOverflowMenu();
+  fireEvent.pointerDown(document.body);
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(document.activeElement).toBe(more);
+  fireEvent.click(more);
+  expect(screen.getByRole("dialog")).toBeTruthy();
+  fireEvent.click(more);
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(document.activeElement).toBe(more);
+});
