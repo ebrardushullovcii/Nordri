@@ -296,6 +296,48 @@ describe("automatic application safeguard identity", () => {
     };
   }
 
+  test("groups later verified sends into one stable company decision", () => {
+    const submission = verifiedSubmission("2026-08-15T10:01:00.000Z");
+    const first = deriveSimultaneousApplicationConflicts({
+      ...submission,
+      runs: [submission.run],
+      companies: [],
+      now: "2026-08-17T10:00:00.000Z",
+      windowDays: 7,
+    });
+    const extraRecord = ApplicationRecordSchema.parse({
+      ...submission.records[0],
+      id: "application-c",
+      jobId: "job-c",
+    });
+    const extraResult = ApplyJobResultSchema.parse({
+      ...submission.results[0],
+      id: "result-c",
+      jobId: "job-c",
+      completedAt: "2026-08-16T10:00:00.000Z",
+      privacyReceipt: {
+        ...submission.results[0]!.privacyReceipt!,
+        generatedAt: "2026-08-16T10:00:00.000Z",
+        lineage: {
+          runId: submission.run.id,
+          jobId: "job-c",
+          resultId: "result-c",
+        },
+      },
+    });
+    const later = deriveSimultaneousApplicationConflicts({
+      runs: [submission.run],
+      results: [...submission.results, extraResult],
+      records: [...submission.records, extraRecord],
+      companies: [],
+      now: "2026-08-17T10:00:00.000Z",
+      windowDays: 7,
+    });
+    expect(later).toHaveLength(1);
+    expect(later[0]?.conflictId).toBe(first[0]?.conflictId);
+    expect(later[0]?.explanation).toContain("future");
+  });
+
   test("uses the verified submission occurrence in conflict identity", () => {
     const first = verifiedSubmission("2026-08-15T10:01:00.000Z");
     const second = verifiedSubmission("2026-08-16T10:01:00.000Z");

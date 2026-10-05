@@ -1,3 +1,4 @@
+import { resetJobFinderBrowser } from "../services/job-finder/reset-workspace";
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { access } from "node:fs/promises";
@@ -134,7 +135,11 @@ import {
   resolveTailoredAssetLabel,
   withApplicationAuthorityGate,
 } from "@nordri/job-finder";
-import { buildJobFinderDiagnosticExport } from "../services/job-finder/build-diagnostic-export";
+import {
+  buildJobFinderDiagnosticExport,
+  buildPersonalWorkspaceExport,
+  personalWorkspaceExportFileName,
+} from "../services/job-finder/build-diagnostic-export";
 import { collectJobFinderPerformanceSnapshot } from "../services/job-finder/collect-performance-snapshot";
 import { createJobFinderWorkspaceDeltaTracker } from "../services/job-finder/workspace-delta";
 import {
@@ -2413,6 +2418,56 @@ export function registerJobFinderRouteHandlers(
       });
     },
   );
+  ipcMain.handle("job-finder:export-personal-workspace", async (event) => {
+    const service = await getJobFinderWorkspaceService();
+    const browserWindow = BrowserWindow.fromWebContents(event.sender);
+    const options: SaveDialogOptions = {
+      title: "Export personal workspace",
+      defaultPath: path.join(
+        app.getPath("documents"),
+        personalWorkspaceExportFileName(),
+      ),
+      filters: [{ name: "JSON", extensions: ["json"] }],
+      properties: ["createDirectory", "showOverwriteConfirmation"],
+    };
+    const result = browserWindow
+      ? await dialog.showSaveDialog(browserWindow, options)
+      : await dialog.showSaveDialog(options);
+    if (result.canceled || !result.filePath)
+      return ApplicationCrmFileExportResultSchema.parse({
+        status: "cancelled",
+        exportedCount: 0,
+        filePath: null,
+      });
+    const workspace = await service.getWorkspaceSnapshot();
+    const { exportAssistantHistory } =
+      await import("../services/assistant/assistant-service");
+    const assistantHistory = await exportAssistantHistory();
+    const repository = getJobFinderRepositoryForWorkspaceService(service);
+    if (!repository)
+      throw new Error(
+        "Your workspace could not be exported. Nothing was deleted. Try again.",
+      );
+    const [applicationQuestions, applicationAnswers] = await Promise.all([
+      repository.listApplicationQuestionRecords(),
+      repository.listApplicationAnswerRecords(),
+    ]);
+    const content = await buildPersonalWorkspaceExport({
+      workspace,
+      assistantHistory,
+      applicationQuestions,
+      applicationAnswers,
+    });
+    const filePath = result.filePath.toLowerCase().endsWith(".json")
+      ? result.filePath
+      : `${result.filePath}.json`;
+    await writeFile(filePath, content, { encoding: "utf8", mode: 0o600 });
+    return ApplicationCrmFileExportResultSchema.parse({
+      status: "saved",
+      exportedCount: workspace.applicationRecords.length,
+      filePath,
+    });
+  });
   ipcMain.handle("job-finder:export-diagnostics", async (event) => {
     const service = await getJobFinderWorkspaceService();
     const { performance, workspace } =
@@ -3126,6 +3181,9 @@ export function registerJobFinderRouteHandlers(
     },
   );
 
+  ipcMain.handle("job-finder:reset-browser", async () =>
+    workspaceMutationResponse(await resetJobFinderBrowser()),
+  );
   ipcMain.handle("job-finder:reset-workspace", async () => {
     return resetJobFinderWorkspace();
   });

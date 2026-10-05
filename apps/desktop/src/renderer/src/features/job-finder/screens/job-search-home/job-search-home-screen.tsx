@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Pause, Play } from "lucide-react";
 import type {
   ApplicationAutomationMode,
@@ -173,6 +173,11 @@ const PANEL_CLASS =
   "surface-panel-shell grid min-w-0 gap-3 rounded-(--radius-panel) border border-(--surface-panel-border) p-5";
 
 export function JobSearchHomeScreen(props: JobSearchHomeScreenProps) {
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(timer);
+  }, []);
   const [applyPending, setApplyPending] = useState(false);
   const [dismissedActionState, setDismissedActionState] =
     useState<ActionState | null>(null);
@@ -193,6 +198,7 @@ export function JobSearchHomeScreen(props: JobSearchHomeScreenProps) {
   // its own corrective action. A finished search is a status fact and reads
   // as the line under the title instead.
   const model = buildJobSearchHomeModel({
+    now,
     workspace: props.workspace,
     tasks,
     tailoredDraftPreparation: props.tailoredDraftPreparation,

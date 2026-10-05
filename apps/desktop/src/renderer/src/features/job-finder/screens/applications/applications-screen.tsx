@@ -1,3 +1,4 @@
+import { projectApplicationRecordsActivity } from "@nordri/contracts";
 import { useQuestionAnswerDrafts } from "../actions/use-question-answer-drafts";
 import { isSameSiteApplicationActive } from "../actions/actions-screen";
 import { formatElapsedMinutes } from "./applications-recovery-state";
@@ -54,10 +55,7 @@ import {
 import { useApplicationsApplyRunDetails } from "./use-applications-apply-run-details";
 import { ApplicationsRecordsPanel } from "./applications-records-panel";
 import { StatusBadge } from "../../components/status-badge";
-import {
-  countApplicationLedgerEntries,
-  countApplyRunItemsNeedingYou,
-} from "../../lib/needs-you-count";
+import { countApplyRunItemsNeedingYou } from "../../lib/needs-you-count";
 import {
   ApplicationsCrmViews,
   type ApplicationCrmView,
@@ -84,6 +82,7 @@ const OUTCOME_STATUSES = new Set<string>([
 ]);
 
 export function ApplicationsScreen(props: {
+  homeTimeZone?: string;
   actionMessage?: string | null;
   searchPlanName?: string | undefined;
   hasOtherPlanApplications?: boolean;
@@ -203,6 +202,7 @@ export function ApplicationsScreen(props: {
   /** The mode chosen in Settings; decides what a finished fill means. */
   applyMode?: ApplyMode;
   /** Route-owned tracker mode, so "Open tracker" is a link, not a tab. */
+  requestedRecordId?: string | null;
   workspaceView?: "workflow" | "crm";
   onWorkspaceViewChange?: (view: "workflow" | "crm") => void;
 }) {
@@ -397,50 +397,12 @@ export function ApplicationsScreen(props: {
   // the same newest attempt as Preparation without rewriting saved history.
   const crmApplicationRecords = useMemo(
     () =>
-      applicationRecords.map((record) => {
-        const result = latestApplyResultByRecordId.get(record.id);
-        if (!result) return record;
-        const state = resolveApplyStatePresentation({
-          mode: applyMode,
-          result,
-          run: readApplyRunContext(result),
-          recordCrm: record.crm,
-          recordLatestBlocker: record.latestBlocker,
-          recordLastActionLabel: record.lastActionLabel,
-          pendingQuestionCount: Math.max(
-            0,
-            record.questionSummary.total - record.questionSummary.answered,
-          ),
-          recordFailure:
-            record.lastAttemptState === "failed"
-              ? {
-                  lastActionLabel: record.lastActionLabel,
-                  lastUpdatedAt: record.lastUpdatedAt,
-                }
-              : null,
-        });
-        const lastAttemptState: ApplicationRecord["lastAttemptState"] =
-          state.cancelledByPerson
-            ? "cancelled"
-            : state.kind === "could_not_apply"
-              ? "failed"
-              : state.kind === "filling_in"
-                ? "in_progress"
-                : state.kind === "ready_to_send"
-                  ? "ready"
-                  : state.kind === "needs_you"
-                    ? "paused"
-                    : record.lastAttemptState;
-        return lastAttemptState === record.lastAttemptState
-          ? record
-          : { ...record, lastAttemptState };
+      projectApplicationRecordsActivity({
+        records: applicationRecords,
+        results: applyJobResults,
+        runs: applyRuns,
       }),
-    [
-      applicationRecords,
-      latestApplyResultByRecordId,
-      readApplyRunContext,
-      applyMode,
-    ],
+    [applicationRecords, applyJobResults, applyRuns],
   );
   // Bulk retry: every application whose last run ended where a fresh run
   // could differ. One control, so a batch that failed on a bad network night
@@ -599,6 +561,9 @@ export function ApplicationsScreen(props: {
         runJobIds: new Set(latestAutomaticRun.jobIds),
       })
     : 0;
+  const latestRunCouldNotApplyCount = latestRunAttentionResults.filter(
+    (result) => ["failed", "blocked", "skipped"].includes(result.state),
+  ).length;
   const latestRunHasCountedFailure =
     latestAutomaticRun &&
     latestRunAttentionResults.some(
@@ -962,8 +927,6 @@ export function ApplicationsScreen(props: {
               "The application you had selected is not shown by this view's search or lifecycle filter, so its tracking tools are unavailable here. Clearing the search box, switching the lifecycle view, or choosing Show all applications will bring it back.",
           };
 
-  const applicationCount = countApplicationLedgerEntries(applicationRecords);
-
   return (
     <LockedScreenLayout
       contentClassName={
@@ -999,6 +962,37 @@ export function ApplicationsScreen(props: {
                 </Button>
               ) : applicationRecords.length > 0 ? (
                 <div className="flex flex-wrap items-center gap-2">
+                  {workspaceView === "workflow" &&
+                  retryableJobIds.length > 1 ? (
+                    <section
+                      aria-label="Retry applications that could not be applied"
+                      className="flex items-center gap-2"
+                      data-testid="applications-bulk-retry"
+                    >
+                      <p className="sr-only">
+                        {retryableJobIds.length} applications could not be
+                        applied and can be tried again.
+                      </p>
+                      <Button
+                        disabled={
+                          isApplyPending ||
+                          (dailyPreparationCapacity !== null &&
+                            dailyPreparationCapacity.remaining < 1)
+                        }
+                        onClick={() =>
+                          onStartAutoApplyQueue(
+                            [...retryableJobIds],
+                            props.applicationAutomationMode ?? "prepare_only",
+                          )
+                        }
+                        size="sm"
+                        type="button"
+                        variant="secondary"
+                      >
+                        Try again for all {retryableJobIds.length}
+                      </Button>
+                    </section>
+                  ) : null}
                   {/* Outcomes has no navigation entry; it is reached from
                       here once something has been sent and can have one. */}
                   {props.onOpenOutcomes &&
@@ -1032,7 +1026,7 @@ export function ApplicationsScreen(props: {
             description={
               workspaceView === "crm"
                 ? "Stages you record yourself, plus notes, reminders and export. Recording a stage is a local note; it never submits anything."
-                : `${applicationCount} ${applicationCount === 1 ? "application" : "applications"}. Each one shows where it stands and what it needs from you.`
+                : "Track preparations and hiring progress. Search or filter to find an application."
             }
             title={workspaceView === "crm" ? "Tracker" : "Applications"}
           />
@@ -1061,13 +1055,12 @@ export function ApplicationsScreen(props: {
               ) : null}
             </section>
           ) : null}
-          {/* The completion banner used to persist as page furniture and
-              re-render on every return from the tracker as if it were a fresh
-              event. It now appears only while it still asks something of the
-              user; once nothing needs attention the same run is history and
-              lives in the record's own run history. */}
-          {latestAutomaticRun && latestRunAttentionCount > 0 ? (
-            <section className="flex flex-wrap items-center justify-between gap-4 rounded-(--radius-field) border border-(--surface-panel-border) bg-(--surface-panel-tint) px-4 py-3">
+          {/* Completed runs belong in Activity. Keep this callout only while
+              the person has an unresolved step in this run. */}
+          {latestAutomaticRun &&
+          latestRunAttentionCount > 0 &&
+          workspaceView === "workflow" ? (
+            <section className="flex flex-wrap items-center justify-between gap-4 rounded-(--radius-field) border border-(--surface-panel-border) px-4 py-3">
               <div className="min-w-0">
                 <p className="label-mono-xs">Latest automatic run</p>
                 <p className="mt-1 text-(length:--text-small) leading-6 text-foreground-soft">
@@ -1075,6 +1068,9 @@ export function ApplicationsScreen(props: {
                   {latestAutomaticRun.totalJobs === 1 ? "" : "s"} ·{" "}
                   {latestRunAttentionCount} need attention
                   {[
+                    latestRunCouldNotApplyCount
+                      ? `${latestRunCouldNotApplyCount} could not apply`
+                      : null,
                     latestRunQueuedCount
                       ? `${latestRunQueuedCount} queued`
                       : null,
@@ -1083,6 +1079,11 @@ export function ApplicationsScreen(props: {
                       : null,
                     latestRunNotStartedCount
                       ? `${latestRunNotStartedCount} not started`
+                      : null,
+                    latestAutomaticResults.filter(
+                      (result) => result.state === "awaiting_review",
+                    ).length
+                      ? `${latestAutomaticResults.filter((result) => result.state === "awaiting_review").length} prepared`
                       : null,
                     latestRunFinishedCount
                       ? `${latestRunFinishedCount} sent`
@@ -1101,36 +1102,6 @@ export function ApplicationsScreen(props: {
               >
                 {latestRunAttentionCount} need attention
               </StatusBadge>
-            </section>
-          ) : null}
-          {workspaceView === "workflow" && retryableJobIds.length > 1 ? (
-            <section
-              aria-label="Retry applications that could not be applied"
-              className="flex flex-wrap items-center justify-between gap-4 rounded-(--radius-field) border border-(--surface-panel-border) bg-(--surface-panel-tint) px-4 py-3"
-              data-testid="applications-bulk-retry"
-            >
-              <p className="min-w-0 text-(length:--text-small) leading-6 text-foreground">
-                {retryableJobIds.length} applications could not be applied and
-                can be tried again.
-              </p>
-              <Button
-                disabled={
-                  isApplyPending ||
-                  (dailyPreparationCapacity !== null &&
-                    dailyPreparationCapacity.remaining < 1)
-                }
-                onClick={() =>
-                  onStartAutoApplyQueue(
-                    [...retryableJobIds],
-                    props.applicationAutomationMode ?? "prepare_only",
-                  )
-                }
-                size="sm"
-                type="button"
-                variant="secondary"
-              >
-                Try again for all {retryableJobIds.length}
-              </Button>
             </section>
           ) : null}
           {hasUnassignedLegacyLineage ? (
@@ -1164,6 +1135,12 @@ export function ApplicationsScreen(props: {
       >
         {workspaceView === "crm" ? (
           <ApplicationsCrmViews
+            {...(props.homeTimeZone
+              ? { homeTimeZone: props.homeTimeZone }
+              : {})}
+            {...(props.onMutateApplicationCrmBulkStage
+              ? { onBulkChange: props.onMutateApplicationCrmBulkStage }
+              : {})}
             {...(props.onMutateApplicationCrmBulkStage
               ? {
                   onBulkStageChange: async (recordIds, stage) => {
@@ -1228,6 +1205,7 @@ export function ApplicationsScreen(props: {
             onSelectRecord={onSelectRecord}
             onViewChange={setCrmView}
             onVisibleRecordIdsChange={handleCrmVisibleRecordIdsChange}
+            requestedRecordId={props.requestedRecordId ?? null}
             records={crmApplicationRecords}
             discoveryJobs={discoveryJobs}
             selectedRecordId={effectiveSelectedRecord?.id ?? null}
@@ -1239,7 +1217,7 @@ export function ApplicationsScreen(props: {
               ? { customStages: props.crmSettings.customStages }
               : {})}
             activeFilter={activeFilter}
-            applicationRecords={filteredApplicationRecords}
+            applicationRecords={crmApplicationRecords}
             filterCounts={filterCounts}
             hasAnyApplications={applicationRecords.length > 0}
             searchPlanName={props.searchPlanName}
@@ -1265,6 +1243,9 @@ export function ApplicationsScreen(props: {
               data-locked-pane-scroll-region
             >
               <ApplicationsCrmDetail
+                {...(props.homeTimeZone
+                  ? { homeTimeZone: props.homeTimeZone }
+                  : {})}
                 isRecordOutcomePending={
                   props.isRecordOutcomePending?.(
                     effectiveSelectedRecord.jobId,

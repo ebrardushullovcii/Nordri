@@ -62,7 +62,7 @@ it("replaces only the safeguarded plan's next run and restores it on dismissal",
   expect(screen.queryByText("Paused by a safeguard")).toBeNull();
 });
 
-it("prints every card clock in the device zone and names a different schedule zone only on its run line", () => {
+it("prints next run in the schedule zone and past activity in the device zone", () => {
   const scheduled = {
     ...campaign("one", "First", "precision"),
     schedule: {
@@ -100,7 +100,8 @@ it("prints every card clock in the device zone and names a different schedule zo
     hour: "numeric",
     minute: "2-digit",
     month: "short",
-    timeZone: deviceTimeZone(),
+    timeZone: "America/Chicago",
+    timeZoneName: "short",
   }).format(new Date("2026-09-12T13:00:00.000Z"));
   const expectedLast = new Intl.DateTimeFormat(undefined, {
     day: "numeric",
@@ -110,8 +111,13 @@ it("prints every card clock in the device zone and names a different schedule zo
     timeZone: deviceTimeZone(),
   }).format(new Date("2026-09-11T13:01:00.000Z"));
   expect(nextRun?.textContent).toContain(expectedNext);
+  expect(nextRun?.textContent).toContain("America/Chicago");
   expect(lastRun?.textContent).toContain(expectedLast);
-  expect(screen.getByText(`Times shown in ${deviceTimeZone()}.`)).toBeTruthy();
+  expect(
+    screen.getByText(
+      `Past activity is shown in ${deviceTimeZone()}. Schedule times and pauses use each plan’s saved time zone.`,
+    ),
+  ).toBeTruthy();
   if (deviceTimeZone() !== "America/Chicago") {
     expect(screen.getByText("Runs at 8:00 AM America/Chicago")).toBeTruthy();
   }
@@ -170,7 +176,9 @@ it("prints one timestamp shape whether or not the plan saved a time zone", () =>
   expect(zoneSuffix.test(first.trim())).toBe(true);
   expect(zoneSuffix.test(second.trim())).toBe(true);
   expect(
-    screen.getAllByText(`Times shown in ${deviceTimeZone()}.`),
+    screen.getAllByText(
+      `Past activity is shown in ${deviceTimeZone()}. Schedule times and pauses use each plan’s saved time zone.`,
+    ),
   ).toHaveLength(1);
 });
 

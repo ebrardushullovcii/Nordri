@@ -806,7 +806,7 @@ export const updateTrackingTool = defineTool({
   name: "update_tracking",
   group: "tracking",
   description:
-    "Changes one application's tracking: set_stage, add_note, upsert_reminder (with a dueAt date), set_tags, upsert_interview, set_compensation and their removals. The revision comes from get_application. A tracking stage never counts as sending anything.",
+    "Changes one application's tracking: set_stage, add_note, upsert_reminder (with a dueAt date), set_tags, upsert_interview, set_compensation, set_archived (archived:true to hide finished records, false to restore) and their removals. The revision comes from get_application. A tracking stage never counts as sending anything.",
   parameters: json.object(
     {
       applicationRecordId: json.string(),
@@ -855,11 +855,14 @@ export const updateTrackingTool = defineTool({
 export const setStageForManyTool = defineTool({
   name: "set_stage_for_applications",
   group: "tracking",
-  description: "Moves several applications to one tracking stage at once.",
+  description:
+    "Updates a selected group of applications: any stage, adds tags without removing existing tags, archives without changing outcomes or dates, or restores. Read the exact saved dates before selecting old applications; never guess dates.",
   parameters: json.object(
     {
       applicationRecordIds: json.ids(),
       stage: json.enumOf(applicationCrmStageValues),
+      action: json.enumOf(["stage", "tags", "archive", "restore"]),
+      tags: json.ids(),
       note: json.string(),
     },
     ["applicationRecordIds", "stage"],
@@ -867,6 +870,8 @@ export const setStageForManyTool = defineTool({
   input: z.object({
     applicationRecordIds: z.array(Id).min(1).max(500),
     stage: ApplicationCrmStageSchema,
+    action: z.enum(["stage", "tags", "archive", "restore"]).optional(),
+    tags: z.array(Id).max(50).optional(),
     note: z.string().trim().min(1).max(1_000).optional(),
   }),
   label: () => "Updating application stages",
@@ -888,13 +893,18 @@ export const setStageForManyTool = defineTool({
     await service.mutateApplicationCrmBulkStage({
       items,
       stage: input.stage,
+      ...(input.action ? { action: input.action } : {}),
+      ...(input.tags ? { tags: input.tags } : {}),
       customStageId: null,
       note: input.note ?? null,
       actor: "assistant",
     });
     ports.publishWorkspaceUpdate();
     return {
-      summary: `Moved ${plural(items.length, "application")} to ${input.stage}.`,
+      summary:
+        input.action && input.action !== "stage"
+          ? `Updated ${plural(items.length, "application")}: ${input.action}.`
+          : `Moved ${plural(items.length, "application")} to ${input.stage}.`,
     };
   },
 });

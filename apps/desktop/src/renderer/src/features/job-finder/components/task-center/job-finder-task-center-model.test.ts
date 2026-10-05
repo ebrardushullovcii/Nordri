@@ -1705,3 +1705,28 @@ test.each([
     expect(findTask(model, "apply").stageLabel).toBe(label);
   },
 );
+
+test("keeps other running batches visible when the newest batch was cancelled", () => {
+  const model = buildJobFinderTaskCenterModel({
+    workspace: createWorkspace({
+      applyRuns: [
+        createApplyRun({
+          id: "cancelled",
+          state: "cancelled",
+          pendingJobs: 0,
+          updatedAt: "2026-07-31T11:00:00Z",
+        }),
+        createApplyRun({ id: "running_a" }),
+        createApplyRun({ id: "running_b" }),
+      ],
+    }),
+    isDiscoveryPending: false,
+    isResumeImportPending: false,
+  });
+  expect(model.activeCount).toBe(2);
+  expect(
+    model.items
+      .filter((item) => item.status === "active")
+      .map((item) => item.id),
+  ).toEqual(["running_a", "running_b"]);
+});

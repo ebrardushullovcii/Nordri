@@ -1121,6 +1121,10 @@ const desktopApi = {
         "job-finder:snooze-grouped-decision",
         input,
       ) as Promise<JobFinderWorkspaceSnapshot>,
+    exportPersonalWorkspace: () =>
+      ipcRenderer.invoke(
+        "job-finder:export-personal-workspace",
+      ) as Promise<ApplicationCrmFileExportResult>,
     exportDiagnostics: () =>
       ipcRenderer.invoke(
         "job-finder:export-diagnostics",
@@ -1160,6 +1164,10 @@ const desktopApi = {
       ipcRenderer.invoke(
         "job-finder:cancel-discovery-run",
         input,
+      ) as Promise<JobFinderWorkspaceSnapshot>,
+    resetBrowser: () =>
+      ipcRenderer.invoke(
+        "job-finder:reset-browser",
       ) as Promise<JobFinderWorkspaceSnapshot>,
     resetWorkspace: () =>
       ipcRenderer.invoke(

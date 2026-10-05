@@ -411,3 +411,33 @@ test("marking an application withdrawn closes its step without calling it sent",
     summary: "You marked this application withdrawn.",
   });
 });
+
+test("recording a send preserves a completed preparation run", async () => {
+  const { repository, workspaceService } = harness();
+  const original = (await repository.listApplyJobResults()).find(
+    (result) => result.id === "result_a",
+  )!;
+  await repository.upsertApplyJobResult({
+    ...original,
+    completedAt: original.updatedAt,
+  });
+  await workspaceService.mutateApplicationCrm({
+    applicationRecordId: "application_a",
+    expectedRevision: 0,
+    mutation: {
+      type: "set_stage",
+      stage: "applied",
+      customStageId: null,
+      note: null,
+    },
+  });
+  const current = (await repository.listApplyJobResults()).find(
+    (result) => result.id === "result_a",
+  )!;
+  expect(current.state).toBe("awaiting_review");
+  expect(current.completedAt).toBe(original.updatedAt);
+  expect(current.summary).toBe(original.summary);
+  expect((await repository.getUserActionRequest("request_a"))?.state).toBe(
+    "skipped",
+  );
+});

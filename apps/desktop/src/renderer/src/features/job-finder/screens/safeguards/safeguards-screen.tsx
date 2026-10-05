@@ -1,8 +1,10 @@
+import { useToast } from "@renderer/components/ui/toast";
 import { PageHeaderStack } from "../../components/page-header";
 import { useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import type {
   JobFinderWorkspaceSnapshot,
+  SetJobFinderActivityControlInput,
   SafeguardMutationInput,
 } from "@nordri/contracts";
 import { Search, ShieldAlert, ShieldCheck } from "lucide-react";
@@ -11,6 +13,7 @@ import { EmptyState } from "@renderer/features/job-finder/components/empty-state
 import { Input } from "@renderer/components/ui/input";
 import { StatusBadge } from "@renderer/features/job-finder/components/status-badge";
 import {
+  describeDailyPreparationUsage,
   formatDailyPreparationCapacityReachedText,
   isDailyPreparationCapacityExhausted,
 } from "@renderer/features/job-finder/lib/job-finder-daily-capacity";
@@ -170,6 +173,10 @@ export function SafeguardsScreen(props: {
   actionMessage: string | null;
   isPending: (controlId: string) => boolean;
   onMutateSafeguards: (input: SafeguardMutationInput) => Promise<boolean>;
+  onSetActivityControl?: (
+    input: SetJobFinderActivityControlInput,
+  ) => Promise<boolean>;
+  onResetBrowser?: () => Promise<boolean>;
   workspace: JobFinderWorkspaceSnapshot | null;
 }) {
   const { actionMessage, isPending, onMutateSafeguards, workspace } = props;
@@ -178,6 +185,14 @@ export function SafeguardsScreen(props: {
     searchParams.get("tab") === "reviews" ? "reviews" : "all",
   );
   const [query, setQuery] = useState("");
+  const { showToast } = useToast();
+  const [browserResetPending, setBrowserResetPending] = useState(false);
+  const [browserResetError, setBrowserResetError] = useState<string | null>(
+    null,
+  );
+  const [confirmBrowserReset, setConfirmBrowserReset] = useState(false);
+  const [resumePending, setResumePending] = useState(false);
+  const [resumeError, setResumeError] = useState<string | null>(null);
   const [eventsOpenOverride, setEventsOpenOverride] = useState<boolean | null>(
     null,
   );
@@ -237,26 +252,38 @@ export function SafeguardsScreen(props: {
         title="Safeguards"
       />
 
-      <SafeguardsApplicationBoundary />
-
-      {/* Limits are read when a run starts, so a change never reaches the
-          run already in progress; and the per-plan limits and stop rules
-          are edited on the plan, not here, which this page used to leave
-          unsaid. */}
-      <p className="text-(length:--text-small) leading-6 text-foreground-soft">
-        Each limit is checked when its relevant work starts and applies from the
-        next run you start. Per-plan limits and stop rules are edited on each
-        plan in{" "}
-        <Link
-          className="font-medium text-foreground underline underline-offset-2"
-          to="/job-finder/campaigns"
+      {workspace.activityControl?.paused ? (
+        <div
+          className="flex flex-wrap items-center gap-3 rounded-(--radius-field) border border-(--warning-border) bg-(--warning-surface) p-3"
+          role="status"
         >
-          Search plans
-        </Link>
-        .
-      </p>
-
-      {blockedCount > 0 ? (
+          <p>
+            Everything is paused. Searches, application preparation and
+            scheduled plans wait until you resume.
+          </p>
+          <Button
+            pending={resumePending}
+            onClick={() => {
+              setResumePending(true);
+              setResumeError(null);
+              void props
+                .onSetActivityControl?.({ paused: false })
+                .then((ok) => {
+                  if (!ok) throw new Error("Resume failed");
+                })
+                .catch(() =>
+                  setResumeError("Work could not be resumed. Try again."),
+                )
+                .finally(() => setResumePending(false));
+            }}
+            size="sm"
+          >
+            Resume everything
+          </Button>
+          {resumeError ? <p role="alert">{resumeError}</p> : null}
+        </div>
+      ) : null}
+      {workspace.activityControl?.paused ? null : blockedCount > 0 ? (
         <div
           className="flex flex-wrap items-center gap-2 rounded-(--radius-field) border border-destructive/30 bg-destructive/10 px-3 py-2 text-(length:--text-small) text-foreground"
           role="status"
@@ -399,6 +426,100 @@ export function SafeguardsScreen(props: {
           )}
         </div>
       </details>
+      <SafeguardsApplicationBoundary>
+        <div className="grid justify-items-start gap-2">
+          <p className="text-sm text-foreground-soft">
+            Reset closes all tabs, clears forms, attachments and sign-ins, and
+            pauses work. Saved applications stay.
+          </p>
+          {confirmBrowserReset ? (
+            <div
+              role="alertdialog"
+              aria-label="Reset browser confirmation"
+              className="flex flex-wrap gap-3"
+            >
+              <span>
+                Close every browser tab and clear form entries, attachments and
+                sign-ins? Saved applications stay.
+              </span>
+              <Button
+                pending={browserResetPending}
+                onClick={() => {
+                  setBrowserResetPending(true);
+                  setBrowserResetError(null);
+                  void props
+                    .onResetBrowser?.()
+                    .then((ok) => {
+                      if (!ok) throw new Error("Browser reset failed");
+                      setConfirmBrowserReset(false);
+                      showToast({
+                        title: "Browser cleared",
+                        description:
+                          "Work is paused. Resume everything when you are ready.",
+                      });
+                    })
+                    .catch(() =>
+                      setBrowserResetError(
+                        "The browser could not be fully cleared. Try again before continuing.",
+                      ),
+                    )
+                    .finally(() => setBrowserResetPending(false));
+                }}
+                variant="destructive"
+                size="sm"
+              >
+                Clear browser
+              </Button>
+              <Button
+                disabled={browserResetPending}
+                onClick={() => setConfirmBrowserReset(false)}
+                variant="ghost"
+                size="sm"
+              >
+                Cancel
+              </Button>
+            </div>
+          ) : (
+            <Button
+              onClick={() => setConfirmBrowserReset(true)}
+              variant="outline"
+              size="sm"
+            >
+              Reset browser
+            </Button>
+          )}
+          {browserResetError ? (
+            <p role="alert" className="text-destructive">
+              {browserResetError}
+            </p>
+          ) : null}
+        </div>
+
+        {dailyCapacity ? (
+          <p className="text-sm text-foreground-soft">
+            {describeDailyPreparationUsage({
+              capacity: dailyCapacity,
+              results: workspace.applyJobResults ?? [],
+            })}
+          </p>
+        ) : null}
+        {/* Limits are read when a run starts, so a change never reaches the
+          run already in progress; and the per-plan limits and stop rules
+          are edited on the plan, not here, which this page used to leave
+          unsaid. */}
+        <p className="text-(length:--text-small) leading-6 text-foreground-soft">
+          Each limit is checked when its relevant work starts and applies from
+          the next run you start. Per-plan limits and stop rules are edited on
+          each plan in{" "}
+          <Link
+            className="font-medium text-foreground underline underline-offset-2"
+            to="/job-finder/campaigns"
+          >
+            Search plans
+          </Link>
+          .
+        </p>
+      </SafeguardsApplicationBoundary>
     </section>
   );
 }

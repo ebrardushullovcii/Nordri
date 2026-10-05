@@ -637,8 +637,13 @@ function buildApplyTasks(
         resumeActionLabel: "Verify outcome",
       }
     : null;
-  const runItem = buildApplyRunTask(input);
-  return [verificationItem, runItem].filter(
+  const runs = input.workspace.applyRuns ?? [];
+  const newest = newestBy(runs, (run) => run.updatedAt);
+  const displayedRuns = runs.filter(
+    (run) => run.state === "running" || run.id === newest?.id,
+  );
+  const runItems = displayedRuns.map((run) => buildApplyRunTask(input, run));
+  return [verificationItem, ...runItems].filter(
     (item): item is JobFinderTaskCenterItem =>
       item !== null &&
       // With an outcome to verify, the run card shows only while it runs.
@@ -651,9 +656,10 @@ function buildApplyTasks(
 
 function buildApplyRunTask(
   input: BuildJobFinderTaskCenterModelInput,
+  selectedRun?: ApplyRunSummary,
 ): JobFinderTaskCenterItem | null {
   const runs = input.workspace.applyRuns ?? [];
-  const run = newestBy(runs, (candidate) => candidate.updatedAt);
+  const run = selectedRun ?? newestBy(runs, (candidate) => candidate.updatedAt);
   if (!run) {
     return null;
   }

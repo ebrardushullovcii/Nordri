@@ -96,7 +96,10 @@ export function createWorkspaceCrmMethods(input: {
       await input.ctx.withApplicationCrmTransition(async () => {
         const parsedCommand =
           ApplicationCrmBulkStageMutationInputSchema.parse(command);
-        if (parsedCommand.customStageId) {
+        if (
+          (!parsedCommand.action || parsedCommand.action === "stage") &&
+          parsedCommand.customStageId
+        ) {
           const settings = ApplicationCrmSettingsSchema.parse(
             (await input.ctx.repository.getSettings()).applicationCrm ?? {},
           );
@@ -117,7 +120,10 @@ export function createWorkspaceCrmMethods(input: {
       });
       const parsedCommand =
         ApplicationCrmBulkStageMutationInputSchema.parse(command);
-      const closeReason = trackedStageCloseReason(parsedCommand.stage);
+      const closeReason =
+        !parsedCommand.action || parsedCommand.action === "stage"
+          ? trackedStageCloseReason(parsedCommand.stage)
+          : null;
       if (closeReason) {
         await closeApplicationStepsTrackedByPerson(
           input.ctx.repository,
@@ -148,6 +154,7 @@ export function createWorkspaceCrmMethods(input: {
     async exportApplicationCrm(
       command: ApplicationCrmExportInput,
     ): Promise<ApplicationCrmExportResult> {
+      const snapshot = await input.getWorkspaceSnapshot();
       return input.ctx.withApplicationCrmTransition(async () => {
         const [records, settings] = await Promise.all([
           input.ctx.repository.listApplicationRecords(),
@@ -155,7 +162,10 @@ export function createWorkspaceCrmMethods(input: {
         ]);
         return exportApplicationCrm({
           records,
+          results: snapshot.applyJobResults,
+          runs: snapshot.applyRuns,
           request: command,
+          outcomes: snapshot.intelligence.outcomeEvents,
           customStages: settings.applicationCrm?.customStages ?? [],
         });
       });

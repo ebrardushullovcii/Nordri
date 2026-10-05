@@ -1,3 +1,4 @@
+import type { ApplyJobResult, ApplyRunSummary } from "@nordri/contracts";
 import { useEffect, useMemo, useState } from "react";
 import type {
   JobDiscoveryTarget,
@@ -36,6 +37,7 @@ import {
   outcomeDimensionOrder,
   outcomeEventsForCampaign,
 } from "./outcome-analytics-presentation";
+import { deriveVerifiedApplicationFunnel } from "./outcome-analytics-presentation";
 
 type OutcomeScope = { kind: "all" } | { kind: "campaign"; campaignId: string };
 
@@ -290,6 +292,8 @@ export function OutcomeAnalyticsScreen(props: {
   onSetOutcomeSuggestionEnabled: (
     input: SetOutcomeSuggestionEnabledInput,
   ) => Promise<boolean>;
+  applyJobResults?: readonly ApplyJobResult[];
+  applyRuns?: readonly ApplyRunSummary[];
   overview: OutcomeAnalyticsOverview | null;
   resumeStrategies: readonly ResumeStrategy[];
   /** The saved job sources, so a source bucket prints its own name. */
@@ -422,6 +426,14 @@ export function OutcomeAnalyticsScreen(props: {
     setPage((current) => Math.min(current, pageCount));
   }, [pageCount]);
 
+  const funnel = deriveVerifiedApplicationFunnel({
+    results: props.applyJobResults ?? [],
+    runs: props.applyRuns ?? [],
+    events: scopedEvents,
+    ...(effectiveScope.kind === "campaign"
+      ? { campaignId: effectiveScope.campaignId }
+      : {}),
+  });
   const totalEventCount = useMemo(
     () => countOutcomeEvents(props.events),
     [props.events],
@@ -494,6 +506,22 @@ export function OutcomeAnalyticsScreen(props: {
         title="Outcomes"
       />
 
+      <div aria-label="Application funnel" className="grid gap-2 text-sm">
+        <p>
+          <strong>{funnel.sent} sent</strong> · {funnel.responses} employer{" "}
+          {funnel.responses === 1 ? "response" : "responses"} ·{" "}
+          {funnel.responseRate === null
+            ? "No response rate yet"
+            : `${Math.round(funnel.responseRate * 100)}% response rate`}
+        </p>
+        <p>
+          Sent counts come from employer receipts. Outcomes below are those you
+          recorded.
+          {funnel.sent > 0 && funnel.smallSample
+            ? " This is a small sample; the rate may change quickly."
+            : ""}
+        </p>
+      </div>
       {props.actionMessage ? (
         <p
           aria-atomic="true"

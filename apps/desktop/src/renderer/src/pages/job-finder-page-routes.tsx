@@ -1,3 +1,4 @@
+import { inferProfileTimeZone } from "@renderer/features/job-finder/lib/job-finder-timestamp-format";
 import { lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { projectPlanSafeguardPauses } from "@nordri/job-finder/plan-safeguard-pauses";
 import type { ReactNode } from "react";
@@ -2259,6 +2260,10 @@ export function JobFinderApplicationsRoute() {
       workspace={context.workspace}
     >
       <ApplicationsScreen
+        requestedRecordId={navigationContext.applicationRecordId}
+        homeTimeZone={
+          inferProfileTimeZone(context.workspace.profile ?? {}).timeZone
+        }
         activityControl={context.workspace.activityControl}
         userActionRequests={context.workspace.userActionRequests}
         actionMessage={startingApplicationNote ?? context.actionState.message}
@@ -2606,6 +2611,8 @@ export function JobFinderAnalyticsRoute() {
       workspace={context.workspace}
     >
       <OutcomeAnalyticsScreen
+        applyJobResults={context.workspace.applyJobResults}
+        applyRuns={context.workspace.applyRuns}
         actionMessage={context.actionState.message}
         activeCampaignId={scope.activeCampaignId}
         campaigns={scope.campaigns}
@@ -2668,6 +2675,8 @@ export function JobFinderSafeguardsRoute() {
           )
         }
         onMutateSafeguards={context.onMutateSafeguards}
+        onSetActivityControl={context.onSetActivityControl}
+        onResetBrowser={context.onResetBrowser}
         workspace={context.workspace}
       />
     </JobFinderHydrationGate>

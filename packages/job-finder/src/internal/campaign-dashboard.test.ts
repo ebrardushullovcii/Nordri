@@ -2087,7 +2087,10 @@ describe("ready-for-approval notification resolves once preparation begins", () 
     });
   }
 
-  function summaryFor(lastAttemptState: string | null) {
+  function summaryFor(
+    lastAttemptState: string | null,
+    status: "approved" | "ready_for_review" = "approved",
+  ) {
     const seed = createSeed();
     const campaign = createCampaign({
       id: "campaign_approval",
@@ -2106,7 +2109,7 @@ describe("ready-for-approval notification resolves once preparation begins", () 
       },
       savedJobs: [],
       reviewQueue: [],
-      applicationRecords: [approvalRecord(lastAttemptState)],
+      applicationRecords: [{ ...approvalRecord(lastAttemptState), status }],
       applyRuns: [],
       userActionRequests: [],
       discovery: seed.discovery,
@@ -2114,10 +2117,16 @@ describe("ready-for-approval notification resolves once preparation begins", () 
     });
   }
 
-  test("counts an approved application that has not been prepared yet", () => {
-    expect(summaryFor(null).applicationsReadyForApproval).toBe(1);
-    expect(summaryFor("not_started").applicationsReadyForApproval).toBe(1);
-    expect(summaryFor("ready").applicationsReadyForApproval).toBe(1);
+  test("does not mistake resume approval or a ready form for pending approval", () => {
+    expect(summaryFor(null).applicationsReadyForApproval).toBe(0);
+    expect(summaryFor("not_started").applicationsReadyForApproval).toBe(0);
+    expect(summaryFor("ready").applicationsReadyForApproval).toBe(0);
+  });
+
+  test("counts a real resume approval request before preparation", () => {
+    expect(
+      summaryFor(null, "ready_for_review").applicationsReadyForApproval,
+    ).toBe(1);
   });
 
   test("stops counting once the application was prepared", () => {
@@ -2132,7 +2141,7 @@ describe("ready-for-approval notification resolves once preparation begins", () 
   });
 
   test("drops the recommended approval step once preparation began", () => {
-    expect(summaryFor(null).recommendedNextAction.label).toBe(
+    expect(summaryFor(null).recommendedNextAction.label).not.toBe(
       "Review prepared applications",
     );
     expect(summaryFor("paused").recommendedNextAction.label).not.toBe(

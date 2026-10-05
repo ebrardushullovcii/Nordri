@@ -4,6 +4,8 @@ import {
   formatTrackerMoment,
   trackerTimeToIso,
   trackerTimeZones,
+  searchableTrackerTimeZones,
+  trackerTimeZoneLabel,
 } from "./applications-tracker-time";
 
 describe("interview time zones", () => {
@@ -23,17 +25,27 @@ describe("interview time zones", () => {
     );
     expect(trackerTimeToIso("2026-02-30T09:00", "UTC")).toBeNull();
   });
-  it("names the chosen clock and brackets the computer clock when different", () => {
+  it("names only the chosen clock", () => {
     const zone =
       deviceTimeZone() === "America/New_York"
         ? "Europe/London"
         : "America/New_York";
     const at = "2026-10-05T13:00:00.000Z";
-    expect(formatTrackerMoment(at, zone)).toContain(
-      `[${formatTrackerMoment(at)}]`,
-    );
+    expect(formatTrackerMoment(at, zone)).toContain(zone);
     expect(formatTrackerMoment(at, deviceTimeZone())).not.toContain("[");
     expect(trackerTimeZones()).toContain(deviceTimeZone());
     expect(trackerTimeZones()).toContain("Europe/London");
   });
+});
+
+it("a Los Angeles pause covers the Los Angeles run and city search finds London", () => {
+  const starts = trackerTimeToIso("2026-10-05T07:30", "America/Los_Angeles")!;
+  const ends = trackerTimeToIso("2026-10-05T09:00", "America/Los_Angeles")!;
+  const run = trackerTimeToIso("2026-10-05T08:00", "America/Los_Angeles")!;
+  expect(Date.parse(starts)).toBeLessThan(Date.parse(run));
+  expect(Date.parse(ends)).toBeGreaterThan(Date.parse(run));
+  expect(searchableTrackerTimeZones("London", "Europe/Lisbon")).toEqual([
+    "Europe/London",
+  ]);
+  expect(trackerTimeZoneLabel("Europe/London")).toMatch(/GMT/);
 });

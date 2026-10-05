@@ -741,6 +741,8 @@ export function useJobFinderWorkspace(): JobFinderWorkspaceState {
           ...(resumeTailoringMode === undefined ? {} : { resumeTailoringMode }),
         }),
       refreshWorkspace: syncWorkspace,
+      resetBrowser: () =>
+        runWorkspaceAction(() => window.nordri.jobFinder.resetBrowser()),
       resetWorkspace: () =>
         runWorkspaceAction(() => window.nordri.jobFinder.resetWorkspace()),
       runAgentDiscovery: (

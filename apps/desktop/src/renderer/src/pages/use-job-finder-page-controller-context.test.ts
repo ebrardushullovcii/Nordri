@@ -4,6 +4,7 @@ import {
   syncUiResumeBatch,
 } from "../../../main/services/assistant/ui-resume-batch";
 import type { AssistantResumeBatchState } from "@nordri/contracts";
+import { ApplicationCrmBulkStageMutationInputSchema } from "@nordri/contracts";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MutableRefObject, SetStateAction } from "react";
 import type {
@@ -1573,4 +1574,44 @@ it("does not count a removed in-flight job as a written resume", async () => {
   expect(getActionState().message).toBe(
     "Wrote 0 resumes · 1 removed from the shortlist.",
   );
+});
+
+describe("tracker bulk notices and reset completion", () => {
+  it.each(["stage", "tags", "archive"] as const)(
+    "leaves %s success to the tracker toast",
+    async (action) => {
+      const mutateApplicationCrmBulkStage = vi
+        .fn<JobFinderShellActions["mutateApplicationCrmBulkStage"]>()
+        .mockResolvedValue({
+          activeCampaignId: null,
+        } as unknown as JobFinderWorkspaceSnapshot);
+      const { context, getActionMessages } = buildContext({
+        actions: { mutateApplicationCrmBulkStage },
+      });
+      const command = ApplicationCrmBulkStageMutationInputSchema.parse({
+        action,
+        stage: "reviewing",
+        tags: ["Priority"],
+        items: [
+          { applicationRecordId: "synthetic_application", expectedRevision: 0 },
+        ],
+      });
+      await context.onMutateApplicationCrmBulkStage(command);
+      expect(mutateApplicationCrmBulkStage).toHaveBeenCalledWith(command);
+      expect(getActionMessages().filter((message) => message !== null)).toEqual(
+        [],
+      );
+    },
+  );
+
+  it("returns reset failure to the pending confirmation", async () => {
+    const resetWorkspace = vi.fn(() =>
+      Promise.reject(new Error("Your workspace was not deleted.")),
+    );
+    const { context } = buildContext({ actions: { resetWorkspace } });
+    await expect(context.onResetWorkspace()).rejects.toThrow(
+      "Your workspace was not deleted.",
+    );
+    expect(resetWorkspace).toHaveBeenCalledOnce();
+  });
 });

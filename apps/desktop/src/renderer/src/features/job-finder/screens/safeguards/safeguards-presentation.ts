@@ -198,7 +198,9 @@ function applicationRecordLabel(
   const record = workspace.applicationRecords.find(
     (entry) => entry.id === applicationRecordId,
   );
-  return record ? `${record.title} · ${record.company}` : applicationRecordId;
+  return record
+    ? `${record.title} · ${record.company}`
+    : "Application no longer saved";
 }
 
 function dismissalReferenceLabel(
@@ -402,11 +404,11 @@ export function buildSafeguardsPresentationModel(
     const jobIds = [
       conflict.applicationRecordId,
       conflict.conflictingApplicationRecordId,
-    ].map((recordId) => {
+    ].flatMap((id) => {
       const record = workspace.applicationRecords.find(
-        (entry) => entry.id === recordId,
+        (record) => record.id === id,
       );
-      return record?.jobId ?? recordId;
+      return record ? [record.jobId] : [];
     });
     const controls: SafeguardControl[] = [];
     if (active && !dismissal) {
@@ -451,8 +453,10 @@ export function buildSafeguardsPresentationModel(
         conflict.status === "detected"
           ? "Two applications overlapped in time"
           : "Conflict resolved",
-      explanation: conflict.explanation,
-      recoveryGuidance: conflict.recoveryGuidance,
+      explanation:
+        "These applications were recorded close together at the same employer. Review them before starting more work for this company.",
+      recoveryGuidance:
+        "Review the two applications, then resolve or dismiss this hold. Applications already sent stay sent.",
       statusLabel: active ? "Detected" : "Resolved",
       statusTone: active ? (dismissal ? "muted" : "critical") : "positive",
       active,

@@ -322,6 +322,46 @@ describe("useJobFinderWorkspace entity mutations", () => {
     Reflect.deleteProperty(window, "nordri");
   });
 
+  it("applies returned pause and browser-reset snapshots without polling", async () => {
+    const initial = createBaseSnapshot("2026-10-05T10:00:00Z");
+    const resumed = {
+      ...initial,
+      generatedAt: "2026-10-05T10:00:01Z",
+      activityControl: { paused: false, pausedAt: null, reason: null },
+    };
+    const reset = {
+      ...resumed,
+      generatedAt: "2026-10-05T10:00:02Z",
+      activityControl: {
+        paused: true,
+        pausedAt: "2026-10-05T10:00:02Z",
+        reason: "Browser reset",
+      },
+    };
+    syncWorkspace.mockResolvedValueOnce({
+      kind: "snapshot",
+      currentRevision: 1,
+      reason: "initial",
+      snapshot: initial,
+    });
+    Object.assign(window.nordri.jobFinder, {
+      setActivityControl: vi.fn().mockResolvedValue(resumed),
+      resetBrowser: vi.fn().mockResolvedValue(reset),
+    });
+    const { result } = renderHook(() => useJobFinderWorkspace());
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    await act(async () => {
+      await requireReadyWorkspace(result.current).actions.setActivityControl({
+        paused: false,
+      });
+    });
+    expect(requireReadyWorkspace(result.current).workspace).toBe(resumed);
+    await act(async () => {
+      await requireReadyWorkspace(result.current).actions.resetBrowser();
+    });
+    expect(requireReadyWorkspace(result.current).workspace).toBe(reset);
+  });
+
   it("commits a typed entity delta without calling the legacy snapshot route", async () => {
     const initialWorkspace = createWorkspace("job-old");
     syncWorkspace.mockResolvedValueOnce({

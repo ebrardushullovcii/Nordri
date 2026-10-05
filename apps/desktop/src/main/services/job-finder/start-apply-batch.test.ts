@@ -1,3 +1,4 @@
+import type { JobFinderWorkspaceSnapshot } from "@nordri/contracts";
 import { describe, expect, it, vi } from "vitest";
 import { ApplyJobResultSchema, type ApplyRun } from "@nordri/contracts";
 
@@ -282,4 +283,60 @@ it("excludes a receipt-confirmed send before staging the remaining batch", async
     undefined,
   );
   expect(h.service.approveApplyRun).toHaveBeenCalledWith("staged");
+});
+
+it("names same-company jobs before staging a sending batch", async () => {
+  const h = harness({});
+  const service = {
+    ...h.service,
+    getWorkspaceSnapshot: () =>
+      Promise.resolve({
+        settings: { applicationAutomationMode: "autonomous_submit" },
+        discoveryJobs: [
+          {
+            id: "job_1",
+            company: "Synthetic Company",
+            title: "Engineer",
+            location: "Denver",
+          },
+          {
+            id: "job_2",
+            company: "Synthetic Company",
+            title: "Designer",
+            location: "London",
+          },
+        ],
+      } as unknown as JobFinderWorkspaceSnapshot),
+  };
+  await expect(
+    startApplyBatch({
+      service,
+      runs: h.reader,
+      jobIds: ["job_1", "job_2"],
+      onBackgroundSettled: vi.fn(),
+    }),
+  ).rejects.toThrow(/Synthetic Company.*Engineer.*Denver.*Designer.*London/);
+  expect(h.service.startAutoApplyQueueRun).not.toHaveBeenCalled();
+});
+
+it("allows Ask before sending to prepare same-company jobs", async () => {
+  const h = harness({});
+  const service = {
+    ...h.service,
+    getWorkspaceSnapshot: () =>
+      Promise.resolve({
+        settings: { applicationAutomationMode: "confirm_before_submit" },
+        discoveryJobs: [
+          { id: "job_1", company: "Synthetic", title: "Engineer" },
+          { id: "job_2", company: "Synthetic", title: "Engineer" },
+        ],
+      } as unknown as JobFinderWorkspaceSnapshot),
+  };
+  await startApplyBatch({
+    service,
+    runs: h.reader,
+    jobIds: ["job_1", "job_2"],
+    onBackgroundSettled: vi.fn(),
+  });
+  expect(h.service.startAutoApplyQueueRun).toHaveBeenCalled();
 });

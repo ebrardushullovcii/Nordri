@@ -187,10 +187,10 @@ describe("Settings section nav is real navigation", () => {
       name: APPLICATION_AUTHORITY_LABEL,
     });
     expect(
-      within(authority).getByText(/account creation pause for you/i),
+      within(authority).getAllByText(/You control account creation/i).length,
     ).toBeTruthy();
     expect(
-      within(authority).getByText(/never stores a password/i),
+      within(authority).getAllByText(/without saving them/i).length,
     ).toBeTruthy();
     expect(
       within(authority).queryByRole("button", { name: /submit/i }),
@@ -341,7 +341,7 @@ describe("Settings save ownership", () => {
     expect(unsavedBar()).toBeNull();
 
     fireEvent.change(
-      within(applying).getByLabelText("Most applications in one day"),
+      within(applying).getByLabelText("Most preparations in one day"),
       { target: { value: "5" } },
     );
     const bar = unsavedBar();

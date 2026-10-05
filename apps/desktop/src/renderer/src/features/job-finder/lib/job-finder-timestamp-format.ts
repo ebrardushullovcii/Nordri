@@ -75,6 +75,7 @@ const CITY_TIME_ZONES: Readonly<Record<string, string>> = {
   vancouver: "America/Vancouver",
   montreal: "America/Toronto",
   lisbon: "Europe/Lisbon",
+  porto: "Europe/Lisbon",
   budapest: "Europe/Budapest",
   london: "Europe/London",
   pristina: "Europe/Belgrade",
@@ -150,10 +151,13 @@ function lookupLocation(
 
 /** Best-effort default from profile location, with an explicit device fallback. */
 export function inferProfileTimeZone(input: {
+  timeZone?: string | null;
   currentLocation?: string | null;
   currentRegion?: string | null;
   currentCountry?: string | null;
 }): { timeZone: string; source: "profile" | "device" } {
+  if (input.timeZone?.trim() && isSupportedTimeZone(input.timeZone.trim()))
+    return { timeZone: input.timeZone.trim(), source: "profile" };
   const city = normalizedLocationPart(input.currentLocation);
   const region = normalizedLocationPart(input.currentRegion);
   const country = normalizedLocationPart(input.currentCountry);

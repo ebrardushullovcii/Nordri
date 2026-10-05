@@ -178,7 +178,7 @@ export function SettingsScreen(props: {
   availableResumeTemplates: readonly ResumeTemplateDefinition[];
   browserSession: BrowserSessionState;
   isWorkspaceResetPending: boolean;
-  onResetWorkspace: () => void;
+  onResetWorkspace: () => void | Promise<boolean | void>;
   // Reports staged settings edits upward so a shell save retry captured
   // before the edit can never resubmit stale values.
   onSettingsDraftEdited: () => void;

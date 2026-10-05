@@ -27,6 +27,10 @@ import {
   jobFinderListRowTitleLineClassName,
 } from "../../components/list-row";
 
+Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+  configurable: true,
+  value: vi.fn(),
+});
 afterEach(cleanup);
 
 describe("ApplicationsRecordsPanel", () => {
@@ -551,8 +555,8 @@ describe("ApplicationsRecordsPanel", () => {
       screen.getByRole("button", { name: /waiting on you/i }),
     ).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("button", { name: /in progress/i }));
-    expect(onFilterChange).toHaveBeenCalledWith("in_progress");
+    fireEvent.click(screen.getByRole("button", { name: /waiting on you/i }));
+    expect(onFilterChange).toHaveBeenCalledWith("needs_action");
   });
 
   it("names the waiting-applications filter apart from the Needs you step badge", () => {
@@ -652,7 +656,7 @@ describe("ApplicationsRecordsPanel", () => {
     expect(rows).toHaveLength(2);
     expect(within(rows[0]!).getByText("Needs you")).toBeTruthy();
     expect(within(rows[1]!).queryByText("Needs you")).toBeNull();
-    expect(within(rows[1]!).getByText("Needs recovery")).toBeTruthy();
+    expect(within(rows[1]!).getByText("Could not apply")).toBeTruthy();
   });
 
   it("filters by the newest five-state result instead of the older record stage", () => {
@@ -868,7 +872,7 @@ describe("ApplicationsRecordsPanel", () => {
       "[data-locked-pane-scroll-region]",
     );
     expect(rowRegion?.textContent ?? "").not.toMatch(/In progress/);
-    expect(screen.getByText("Needs recovery")).not.toBeNull();
+    expect(screen.getByText("Could not apply")).not.toBeNull();
     // "Needs recovery" already says the attempt failed; the row carries one
     // badge, and the failure detail lives in the panel.
     expect(screen.queryByText("Attempt failed")).toBeNull();
@@ -879,7 +883,7 @@ describe("ApplicationsRecordsPanel", () => {
     const stateDescriptionId = rowAction.getAttribute("aria-describedby");
     expect(stateDescriptionId).toBeTruthy();
     expect(document.getElementById(stateDescriptionId!)?.textContent).toBe(
-      "Status Needs recovery. Preparation attempt Attempt failed.",
+      "Status Could not apply. Preparation attempt Attempt failed.",
     );
   });
 
@@ -1193,7 +1197,112 @@ describe("ApplicationsRecordsPanel", () => {
       screen.getByRole("list", { name: "Applications" }),
     ).getByRole("listitem");
     const badge = application.querySelector('[data-slot="badge"]');
-    expect(badge?.textContent).toBe("Paused");
+    expect(badge?.textContent).toBe("Preparing");
     expect(application.textContent).not.toContain("Filling in");
   });
+});
+
+it("finds a company and an offer across 300 applications before paging", () => {
+  const records = Array.from({ length: 300 }, (_, index) =>
+    ApplicationRecordSchema.parse({
+      id: `application_${index}`,
+      jobId: `job_${index}`,
+      title: index === 299 ? "Design Lead" : `Role ${index}`,
+      company: index === 299 ? "Willow" : "Acorn",
+      status: index === 299 ? "offer" : "submitted",
+      lastActionLabel: "Tracked",
+      nextActionLabel: null,
+      lastUpdatedAt: "2026-10-02T10:00:00Z",
+    }),
+  );
+  render(
+    <MemoryRouter>
+      <ApplicationsRecordsPanel
+        activeFilter="all"
+        applicationRecords={records}
+        filterCounts={{
+          all: 300,
+          needs_action: 0,
+          in_progress: 0,
+          submitted: 299,
+          manual_only: 0,
+        }}
+        hasAnyApplications
+        onFilterChange={vi.fn()}
+        onSelectRecord={vi.fn()}
+        selectedRecord={null}
+      />
+    </MemoryRouter>,
+  );
+  fireEvent.change(screen.getByLabelText("Search applications"), {
+    target: { value: "Willow" },
+  });
+  expect(screen.getByText("Design Lead")).toBeTruthy();
+  fireEvent.change(screen.getByLabelText("Search applications"), {
+    target: { value: "" },
+  });
+  fireEvent.click(screen.getByRole("combobox", { name: "Hiring stage" }));
+  fireEvent.click(screen.getByRole("option", { name: "Offer" }));
+  expect(screen.getByText("Design Lead")).toBeTruthy();
+  expect(screen.queryByText("Role 0")).toBeNull();
+});
+
+it("counts chips from unarchived search and stage matches and keeps filters in one row", () => {
+  const records = ["visible", "archived", "other"].map((id) =>
+    ApplicationRecordSchema.parse({
+      id,
+      jobId: id,
+      title: "Engineer",
+      company: id === "other" ? "Other" : "Acme",
+      status: "submitted",
+      lastActionLabel: "Sent",
+      nextActionLabel: null,
+      lastUpdatedAt: "2026-10-05T10:00:00Z",
+      crm: {
+        stage: "applied",
+        stageSource: "user",
+        stageChangedAt: "2026-10-05T10:00:00Z",
+        archivedAt: id === "archived" ? "2026-10-05T10:00:00Z" : null,
+      },
+    }),
+  );
+  render(
+    <MemoryRouter>
+      <ApplicationsRecordsPanel
+        activeFilter="all"
+        applicationRecords={records}
+        filterCounts={{
+          all: 3,
+          needs_action: 0,
+          submitted: 3,
+          in_progress: 0,
+          manual_only: 0,
+        }}
+        hasAnyApplications
+        onFilterChange={vi.fn()}
+        onSelectRecord={vi.fn()}
+        selectedRecord={null}
+      />
+    </MemoryRouter>,
+  );
+  expect(
+    screen.getByRole("button", { name: "All: 2 applications" }),
+  ).toBeTruthy();
+  const group = screen.getByRole("group", { name: "Application filters" });
+  expect(group.contains(screen.getByLabelText("Search applications"))).toBe(
+    true,
+  );
+  expect(
+    group.contains(screen.getByRole("combobox", { name: "Hiring stage" })),
+  ).toBe(true);
+  fireEvent.change(screen.getByLabelText("Search applications"), {
+    target: { value: "Acme" },
+  });
+  expect(
+    screen.getByRole("button", { name: "All: 1 application" }),
+  ).toBeTruthy();
+  expect(
+    screen.getByRole("button", { name: "Submitted: 1 application" }),
+  ).toBeTruthy();
+  expect(screen.getByText("1 application")).toBeTruthy();
 });

@@ -714,7 +714,7 @@ describe("ApplicationsCrmDetail", () => {
     fireEvent.change(screen.getByLabelText("Interview"), {
       target: { value: "Recruiter call" },
     });
-    fireEvent.change(screen.getByLabelText("Starts"), {
+    fireEvent.change(screen.getByLabelText(/Starts/), {
       target: { value: "2026-10-05T09:00" },
     });
     Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
@@ -726,9 +726,9 @@ describe("ApplicationsCrmDetail", () => {
       { key: "ArrowDown" },
     );
     fireEvent.click(
-      await screen.findByRole("option", { name: "America/New_York" }),
+      await screen.findByRole("option", { name: /America\/New_York/ }),
     );
-    fireEvent.submit(screen.getByLabelText("Starts").closest("form")!);
+    fireEvent.submit(screen.getByLabelText(/Starts/).closest("form")!);
     await waitFor(() => expect(onMutate).toHaveBeenCalled());
     const mutation = onMutate.mock.calls[0]?.[0];
     expect(mutation?.mutation).toMatchObject({
@@ -1033,5 +1033,143 @@ describe("ApplicationsCrmDetail", () => {
       type: "add_note",
       note: { body: "Recruiter requested a portfolio." },
     });
+  });
+  test("keeps a note typed during a tag save and refresh", async () => {
+    stubCandidateAssets();
+    let finish!: () => void;
+    const onMutate = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const initial = buildCrmRecord({
+      id: "race",
+      revision: 1,
+      crm: { tags: ["old"] },
+    });
+    const view = renderDetail(initial, onMutate);
+    const tags = screen.getByLabelText("Tags");
+    fireEvent.change(tags, { target: { value: "new" } });
+    fireEvent.blur(tags);
+    const note = screen.getByLabelText<HTMLTextAreaElement>("Add a note");
+    expect(note.disabled).toBe(false);
+    fireEvent.change(note, { target: { value: "Exact text while tags save" } });
+    finish();
+    await waitFor(() => expect(onMutate).toHaveBeenCalledTimes(1));
+    view.rerender(
+      <ApplicationsCrmDetail
+        key={initial.id}
+        record={{
+          ...initial,
+          crm: { ...initial.crm!, revision: 2, tags: ["new"] },
+        }}
+        settings={ApplicationCrmSettingsSchema.parse({})}
+        onMutate={onMutate}
+        onExport={vi.fn()}
+      />,
+    );
+    expect(note.value).toBe("Exact text while tags save");
+  });
+
+  test("offers a saved custom stage and records a manual receipt without claiming a verified send", async () => {
+    stubCandidateAssets();
+    const onMutate = vi.fn(() => Promise.resolve());
+    const prepared = {
+      ...buildCrmRecord({ id: "manual" }),
+      status: "approved" as const,
+      lastAttemptState: "ready" as const,
+      crm: null,
+    };
+    render(
+      <ApplicationsCrmDetail
+        record={prepared}
+        settings={ApplicationCrmSettingsSchema.parse({
+          customStages: [
+            {
+              id: "screen",
+              label: "Recruiter screen",
+              baseStage: "recruiter_contact",
+              color: "cyan",
+              position: 0,
+            },
+          ],
+        })}
+        onMutate={onMutate}
+        onExport={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByRole("option", { name: "Recruiter screen" }),
+    ).toBeTruthy();
+    const receipt = screen.getByLabelText("Receipt reference (optional)");
+    expect(receipt.getAttribute("data-slot")).toBe("input");
+    expect(
+      screen.getByLabelText("Stage").closest("div")?.contains(receipt),
+    ).toBe(true);
+    expect(screen.queryByRole("option", { name: "Preparing" })).toBeNull();
+    expect(
+      screen.queryByRole("option", { name: "Could not apply" }),
+    ).toBeNull();
+    fireEvent.change(screen.getByLabelText("Receipt reference (optional)"), {
+      target: { value: "LOCAL-SYNTHETIC-44" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "I sent it" }));
+    await waitFor(() =>
+      expect(onMutate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          mutation: {
+            type: "set_stage",
+            stage: "applied",
+            customStageId: null,
+            note: "You recorded a send. Receipt: LOCAL-SYNTHETIC-44",
+          },
+        }),
+      ),
+    );
+  });
+
+  test("uses the home zone for reminders and defaults interviews to it", () => {
+    stubCandidateAssets();
+    render(
+      <ApplicationsCrmDetail
+        record={buildCrmRecord({ id: "lisbon" })}
+        homeTimeZone="Europe/Lisbon"
+        settings={ApplicationCrmSettingsSchema.parse({})}
+        onMutate={vi.fn()}
+        onExport={vi.fn()}
+      />,
+    );
+    expect(screen.getByLabelText(/Due.*Europe\/Lisbon/)).toBeTruthy();
+    openSection("Interviews and contacts");
+    expect(screen.getByLabelText(/Starts.*Europe\/Lisbon/)).toBeTruthy();
+  });
+
+  test("searches interview zones inside one combobox without hiding the page", () => {
+    stubCandidateAssets();
+    renderDetail(buildCrmRecord({ id: "zone-search" }), vi.fn());
+    openSection("Interviews and contacts");
+    const zone = screen.getByRole("combobox", { name: "Interview time zone" });
+    fireEvent.focus(zone);
+    fireEvent.change(zone, { target: { value: "London" } });
+    const option = screen.getByRole("option", { name: /Europe\/London/ });
+    expect(screen.queryByLabelText("Find interview time zone")).toBeNull();
+    expect(
+      screen.getByLabelText("Interview").closest('[aria-hidden="true"]'),
+    ).toBeNull();
+    const form = zone.closest("form")!;
+    expect(form.querySelectorAll("label")).toHaveLength(3);
+    fireEvent.click(option);
+    expect((zone as HTMLInputElement).value).toContain("Europe/London");
+    expect(screen.queryByRole("listbox", { name: "Time zones" })).toBeNull();
+    fireEvent.change(zone, { target: { value: "Denver" } });
+    fireEvent.keyDown(zone, { key: "ArrowDown" });
+    const keyboardOption = screen.getByRole("option", {
+      name: /America\/Denver/,
+    });
+    expect(document.activeElement).toBe(keyboardOption);
+    fireEvent.keyDown(keyboardOption, { key: "Escape" });
+    expect(document.activeElement).toBe(zone);
+    expect(screen.queryByRole("listbox", { name: "Time zones" })).toBeNull();
   });
 });

@@ -817,13 +817,27 @@ export function buildJobSearchHomeModel(
   const now = input.now ?? Date.now();
   const trackerDue = (() => {
     let overdue = 0;
+    let firstDue: { recordId: string; title: string; at: number } | null = null;
     let interviewsSoon = 0;
     const soon = now + 2 * 86_400_000;
     for (const record of input.workspace.applicationRecords) {
+      if (record.crm?.archivedAt) continue;
       for (const reminder of record.crm?.reminders ?? []) {
         const due = Date.parse(reminder.dueAt);
-        if (reminder.status === "pending" && Number.isFinite(due) && due < now)
+        if (
+          reminder.status === "pending" &&
+          Number.isFinite(due) &&
+          due <= now
+        ) {
           overdue += 1;
+          if (!firstDue || due < firstDue.at) {
+            firstDue = {
+              recordId: record.id,
+              title: `${reminder.title} · ${record.title} at ${record.company}`,
+              at: due,
+            };
+          }
+        }
       }
       for (const interview of record.crm?.interviews ?? []) {
         const starts = Date.parse(interview.startsAt);
@@ -836,7 +850,7 @@ export function buildJobSearchHomeModel(
           interviewsSoon += 1;
       }
     }
-    return { overdue, interviewsSoon };
+    return { overdue, interviewsSoon, firstDue };
   })();
   const jobIds = selectCampaignJobIds(workspace);
   const queue = (workspace.reviewQueue ?? []).filter((item) =>
@@ -1117,7 +1131,7 @@ export function buildJobSearchHomeModel(
   };
   const dailyLimitNext: HomeNextStep = {
     id: "daily_limit",
-    title: "Today's application limit is reached",
+    title: "Today's preparation limit is reached",
     detail:
       "Application preparation can continue after the daily limit resets, or you can change the limit in Applying settings.",
     primary: {
@@ -1471,6 +1485,20 @@ export function buildJobSearchHomeModel(
       },
       // The rest of the pipeline does not wait on this one item.
       secondary: nextInPlaceAction ? [nextInPlaceAction] : [],
+    };
+  } else if (trackerDue.firstDue) {
+    next = {
+      id: "tracker_due",
+      title: trackerDue.firstDue.title,
+      detail: `${plural(trackerDue.overdue, "follow-up is due", "follow-ups are due")}. You can follow up while other work runs.`,
+      primary: {
+        label: "Open application",
+        action: {
+          kind: "navigate",
+          route: `${trackerRoute}&applicationRecordId=${encodeURIComponent(trackerDue.firstDue.recordId)}`,
+        },
+      },
+      secondary: [],
     };
   } else if (enabledSourceCount === 0) {
     next =
@@ -1876,6 +1904,22 @@ export function buildJobSearchHomeModel(
   }
 
   // What is going on, in one sentence.
+  if (trackerDue.firstDue && next.id !== "tracker_due") {
+    next = {
+      ...next,
+      detail: `${next.detail} Follow-up due: ${trackerDue.firstDue.title}.`,
+      secondary: [
+        ...next.secondary,
+        {
+          label: "Open due follow-up",
+          action: {
+            kind: "navigate",
+            route: `${trackerRoute}&applicationRecordId=${encodeURIComponent(trackerDue.firstDue.recordId)}`,
+          },
+        },
+      ],
+    };
+  }
   const paused = workspace.activityControl.paused;
   let statusLine: string;
   if (paused) {

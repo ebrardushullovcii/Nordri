@@ -6,6 +6,9 @@ import type {
   ApplicationRecord,
 } from "@nordri/contracts";
 import {
+  APPLICATION_CRM_STAGE_NAMES,
+  APPLICATION_CRM_STAGE_NAMES as APPLICATION_CRM_STAGE_LABELS,
+  inferApplicationActivityStage,
   isApplicationTrackedAsSentByPerson,
   isApplicationWithdrawnByPerson,
   resolveApplicationCrmStageSource,
@@ -18,6 +21,8 @@ export const APPLICATION_CRM_STAGE_ORDER: readonly ApplicationCrmStage[] = [
   "reviewing",
   "shortlisted",
   "preparing",
+  "needs_you",
+  "ready_to_send",
   "ready_for_approval",
   "failed",
   "cancelled",
@@ -32,46 +37,11 @@ export const APPLICATION_CRM_STAGE_ORDER: readonly ApplicationCrmStage[] = [
   "no_response",
 ];
 
-export const APPLICATION_CRM_STAGE_NAMES: Record<ApplicationCrmStage, string> =
-  {
-    discovered: "Discovered",
-    reviewing: "Reviewing",
-    shortlisted: "Shortlisted",
-    preparing: "Preparing",
-    ready_for_approval: "Ready for approval",
-    failed: "Could not apply",
-    cancelled: "Cancelled by you",
-    applied: "Applied",
-    employer_viewed: "Employer viewed",
-    recruiter_contact: "Recruiter contact",
-    assessment: "Assessment",
-    interview: "Interview",
-    offer: "Offer",
-    rejected: "Rejected",
-    withdrawn: "Withdrawn",
-    no_response: "No response",
-  };
-
-export const APPLICATION_CRM_STAGE_LABELS: Record<ApplicationCrmStage, string> =
-  {
-    discovered: "Discovered",
-    reviewing: "Reviewing",
-    shortlisted: "Shortlisted",
-    preparing: "Preparing",
-    ready_for_approval: "Ready for approval",
-    failed: "Could not apply",
-    cancelled: "Cancelled by you",
-    // Provenance lives in the "You recorded this" badge, not in every label.
-    applied: "Applied",
-    employer_viewed: "Employer viewed",
-    recruiter_contact: "Recruiter contact",
-    assessment: "Assessment",
-    interview: "Interview",
-    offer: "Offer",
-    rejected: "Rejected",
-    withdrawn: "Withdrawn",
-    no_response: "No response",
-  };
+export {
+  APPLICATION_CRM_STAGE_NAMES,
+  APPLICATION_CRM_MANUAL_STAGES,
+} from "@nordri/contracts";
+export { APPLICATION_CRM_STAGE_NAMES as APPLICATION_CRM_STAGE_LABELS } from "@nordri/contracts";
 
 export function inferApplicationCrmStageForView(
   record: ApplicationRecord,
@@ -83,53 +53,7 @@ export function inferApplicationCrmStageForView(
 }
 
 function inferActivityStage(record: ApplicationRecord): ApplicationCrmStage {
-  if (
-    ![
-      "submitted",
-      "assessment",
-      "interview",
-      "offer",
-      "rejected",
-      "withdrawn",
-      "archived",
-    ].includes(record.status)
-  ) {
-    if (record.lastAttemptState === "cancelled") return "cancelled";
-    if (
-      record.lastAttemptState === "failed" ||
-      record.lastAttemptState === "unsupported"
-    )
-      return "failed";
-  }
-
-  // A paused or blocked attempt is still being prepared and is waiting on the
-  // user. Reading only `status` showed "Ready for approval" on the Stages tab
-  // while the Preparation tab said Needs you about the same application.
-  const preparationBlocked =
-    Boolean(record.latestBlocker) || record.lastAttemptState === "paused";
-  switch (record.status) {
-    case "shortlisted":
-      return preparationBlocked ? "preparing" : "shortlisted";
-    case "drafting":
-      return "preparing";
-    case "ready_for_review":
-    case "approved":
-      return preparationBlocked ? "preparing" : "ready_for_approval";
-    case "submitted":
-      return "applied";
-    case "assessment":
-    case "interview":
-    case "offer":
-    case "rejected":
-    case "withdrawn":
-      return record.status;
-    case "archived":
-      return "no_response";
-    default:
-      return preparationBlocked || record.lastAttemptState === "in_progress"
-        ? "preparing"
-        : "discovered";
-  }
+  return inferApplicationActivityStage(record);
 }
 
 /**
@@ -317,7 +241,7 @@ export function buildApplicationCrmCalendarForView(
           ? { canonicalUrl: relatedJobsById.get(record.jobId)?.canonicalUrl }
           : {}),
       });
-      const employerSuffix = employerLine ? ` · ${employerLine}` : "";
+      const employerSuffix = ` · ${record.title}${employerLine ? ` at ${employerLine}` : ""}`;
       const entries: ApplicationCrmCalendarEntry[] = [
         ...crm.reminders
           .filter((reminder) => reminder.status === "pending")
@@ -365,4 +289,30 @@ export function buildApplicationCrmCalendarForView(
     .sort(
       (left, right) => Date.parse(left.startsAt) - Date.parse(right.startsAt),
     );
+}
+
+export type TrackerSort =
+  | "updated"
+  | "company"
+  | "applied_oldest"
+  | "applied_newest";
+export function sortApplicationCrmRecords(
+  records: readonly ApplicationRecord[],
+  sort: TrackerSort,
+): ApplicationRecord[] {
+  return [...records].sort((left, right) => {
+    if (sort === "company")
+      return (
+        left.company.localeCompare(right.company) ||
+        left.title.localeCompare(right.title)
+      );
+    if (sort === "updated")
+      return Date.parse(right.lastUpdatedAt) - Date.parse(left.lastUpdatedAt);
+    const a = applicationCrmDataForView(left).appliedAt;
+    const b = applicationCrmDataForView(right).appliedAt;
+    if (!a || !b) return a ? -1 : b ? 1 : 0;
+    return sort === "applied_oldest"
+      ? Date.parse(a) - Date.parse(b)
+      : Date.parse(b) - Date.parse(a);
+  });
 }

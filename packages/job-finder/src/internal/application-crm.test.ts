@@ -1,3 +1,5 @@
+import { ApplyJobResultSchema } from "@nordri/contracts";
+import { OutcomeEventSchema } from "@nordri/contracts";
 import { describe, expect, test } from "vitest";
 import { ApplicationRecordSchema } from "@nordri/contracts";
 import type {
@@ -223,7 +225,7 @@ describe("application CRM service", () => {
       getApplicationCrmData(
         record({ status: "ready_for_review", lastAttemptState: "paused" }),
       ).stage,
-    ).toBe("preparing");
+    ).toBe("needs_you");
   });
 
   test("saving tracking details preserves the stage of an application waiting on the person", async () => {
@@ -244,18 +246,18 @@ describe("application CRM service", () => {
     });
 
     expect(updated.crm).toMatchObject({
-      stage: "preparing",
+      stage: "needs_you",
       tags: ["Follow up"],
     });
     expect(updated.lastAttemptState).toBe("paused");
     expect(updated.latestBlocker?.code).toBe("missing_candidate_answer");
-    expect(getApplicationCrmData(repo.read()[0]!).stage).toBe("preparing");
+    expect(getApplicationCrmData(repo.read()[0]!).stage).toBe("needs_you");
     expect(
       exportApplicationCrm({
         records: repo.read(),
         request: { format: "csv", applicationRecordIds: [] },
       }).content,
-    ).toContain(",preparing,");
+    ).toContain(",Needs you,");
   });
 
   test.each([
@@ -346,7 +348,7 @@ describe("application CRM service", () => {
       tags: ["Priority"],
     });
     expect(tagged.crm).toMatchObject({
-      stage: "preparing",
+      stage: "needs_you",
       stageSource: "activity",
     });
     await repo.upsertApplicationRecord(
@@ -387,7 +389,7 @@ describe("application CRM service", () => {
         records: repo.read(),
         request: { format: "csv", applicationRecordIds: [] },
       }).content,
-    ).toContain(",interview,,local_historical_inference,");
+    ).toContain(",Interview,,local_historical_inference,");
   });
 
   test("explicitly choosing the inferred stage prevents future automatic stage changes", async () => {
@@ -1004,13 +1006,13 @@ describe("application CRM service", () => {
     expect(csv.content.match(/\r\n/gu)).toHaveLength(4);
     const csvRows = new Map(lines.map((line) => [line.split(",", 1)[0], line]));
     expect(csvRows.get("application_persisted")).toBe(
-      "application_persisted,job_persisted,Software Engineer,Example Inc,applied,,user_recorded_local,,2026-08-10T09:30:00.000Z,user_recorded_local,not_verified_with_employer_or_ats,,,2026-08-01T10:00:00.000Z",
+      "application_persisted,job_persisted,Software Engineer,Example Inc,Applied,,user_recorded_local,,2026-08-10T09:30:00.000Z,user_recorded_local,not_verified_with_employer_or_ats,,,2026-08-01T10:00:00.000Z,,,,,,none,,,",
     );
     expect(csvRows.get("application_inferred")).toBe(
-      "application_inferred,job_inferred,Software Engineer,Example Inc,applied,,local_historical_inference,,2026-08-01T10:00:00.000Z,local_historical_inference,not_verified_with_employer_or_ats,,,2026-08-01T10:00:00.000Z",
+      "application_inferred,job_inferred,Software Engineer,Example Inc,Applied,,local_historical_inference,,2026-08-01T10:00:00.000Z,local_historical_inference,not_verified_with_employer_or_ats,,,2026-08-01T10:00:00.000Z,,,,,,none,,,",
     );
     expect(csvRows.get("application_inferred_unapplied")).toBe(
-      "application_inferred_unapplied,job_inferred_unapplied,Software Engineer,Example Inc,shortlisted,,local_historical_inference,,,,not_verified_with_employer_or_ats,,,2026-08-01T10:00:00.000Z",
+      "application_inferred_unapplied,job_inferred_unapplied,Software Engineer,Example Inc,Shortlisted,,local_historical_inference,,,,not_verified_with_employer_or_ats,,,2026-08-01T10:00:00.000Z,,,,,,none,,,",
     );
   });
 
@@ -1614,4 +1616,256 @@ describe("terminal preparation activity", () => {
       expect(getApplicationCrmData(manual).stage).toBe("interview");
     },
   );
+});
+
+describe("tracker bulk safety and current exports", () => {
+  test("restores all 61 original stages and dates without overwriting other data", async () => {
+    const initial = Array.from({ length: 61 }, (_, index) =>
+      record({
+        id: `bulk_${index}`,
+        status: "submitted",
+        crm: {
+          stage: index % 2 ? "rejected" : "interview",
+          stageSource: "user",
+          stageChangedAt: "2026-08-01T10:00:00Z",
+          appliedAt: "2026-07-01T10:00:00Z",
+          tags: ["keep"],
+        },
+      }),
+    );
+    const repo = repository(initial);
+    await mutateApplicationCrmBulkStage({
+      repository: repo,
+      command: {
+        items: initial.map((entry) => ({
+          applicationRecordId: entry.id,
+          expectedRevision: 0,
+        })),
+        stage: "reviewing",
+        customStageId: null,
+        note: null,
+      },
+    });
+    await mutateApplicationCrmBulkStage({
+      repository: repo,
+      command: {
+        action: "undo",
+        stage: "reviewing",
+        customStageId: null,
+        note: null,
+        items: initial.map((entry) => ({
+          applicationRecordId: entry.id,
+          expectedRevision: 1,
+          previousStage: { ...getApplicationCrmData(entry) },
+        })),
+      },
+    });
+    repo.read().forEach((entry, index) => {
+      expect(entry.crm).toMatchObject({
+        stage: initial[index]?.crm?.stage,
+        stageSource: "user",
+        appliedAt: "2026-07-01T10:00:00Z",
+        stageChangedAt: "2026-08-01T10:00:00Z",
+        tags: ["keep"],
+        revision: 2,
+      });
+    });
+  });
+
+  test("archives and restores without changing stages or applied dates, and adds tags", async () => {
+    const initial = record({
+      crm: {
+        stage: "rejected",
+        stageSource: "user",
+        stageChangedAt: "2026-08-01T10:00:00Z",
+        appliedAt: "2026-07-01T10:00:00Z",
+        tags: ["existing"],
+      },
+    });
+    const repo = repository([initial]);
+    for (const [revision, action] of ["tags", "archive", "restore"].entries()) {
+      await mutateApplicationCrmBulkStage({
+        repository: repo,
+        command: {
+          action: action as "tags" | "archive" | "restore",
+          tags: ["new"],
+          items: [
+            { applicationRecordId: initial.id, expectedRevision: revision },
+          ],
+          stage: "reviewing",
+          customStageId: null,
+          note: null,
+        },
+      });
+      expect(repo.read()[0]?.crm).toMatchObject({
+        stage: "rejected",
+        appliedAt: "2026-07-01T10:00:00Z",
+        tags: ["existing", "new"],
+      });
+      expect(Boolean(repo.read()[0]?.crm?.archivedAt)).toBe(
+        action === "archive",
+      );
+    }
+  });
+
+  test.each(["json", "csv"] as const)(
+    "exports the current failed preparation to %s",
+    (format) => {
+      const current = record({
+        status: "approved",
+        lastAttemptState: "failed",
+        lastUpdatedAt: "2026-10-04T09:00:00Z",
+        crm: {
+          stage: "preparing",
+          stageSource: "activity",
+          stageChangedAt: "2026-10-03T09:00:00Z",
+        },
+      });
+      const exported = exportApplicationCrm({
+        records: [current],
+        request: { format, applicationRecordIds: [] },
+      });
+      expect(exported.content).toContain(
+        format === "json" ? "failed" : "Could not apply",
+      );
+      expect(exported.content).toContain("2026-10-04T09:00:00Z");
+    },
+  );
+});
+
+test("exports offer, note and follow-up details and the exact recorded outcome", () => {
+  const current = record({
+    crm: {
+      stage: "offer",
+      stageSource: "user",
+      stageChangedAt: "2026-08-15T10:00:00Z",
+      compensation: {
+        offerBase: { amount: 95000, currency: "EUR", period: "year" },
+        offerDeadlineAt: "2026-08-20T10:00:00Z",
+        offerStatus: "active",
+      },
+      notes: [
+        {
+          id: "note",
+          body: "Synthetic offer discussion",
+          createdAt: "2026-08-15T10:00:00Z",
+          updatedAt: "2026-08-15T10:00:00Z",
+        },
+      ],
+      reminders: [reminder()],
+      interviews: [interview()],
+    },
+  });
+  const outcome = OutcomeEventSchema.parse({
+    id: "outcome",
+    applicationRecordId: current.id,
+    jobId: current.jobId,
+    campaignId: "plan",
+    source: "local",
+    company: current.company,
+    jobTitle: current.title,
+    outcome: "interview",
+    occurredAt: "2026-08-15T10:00:00Z",
+    note: "Recruiter debrief synthetic unique note",
+    userControlled: true,
+  });
+  const csv = exportApplicationCrm({
+    records: [current],
+    request: { format: "csv", applicationRecordIds: [] },
+  }).content;
+  expect(csv).toContain("95000,EUR");
+  expect(csv).toContain("Synthetic offer discussion");
+  expect(csv).toContain("Follow up");
+  expect(csv).toContain("Panel interview");
+  const json = JSON.parse(
+    exportApplicationCrm({
+      records: [current],
+      request: { format: "json", applicationRecordIds: [] },
+      outcomes: [outcome],
+    }).content,
+  ) as { applications: { outcomes: (typeof outcome)[] }[] };
+  expect(json.applications[0]?.outcomes).toEqual([outcome]);
+  expect(buildApplicationCrmCalendar([current])[0]?.title).toContain(
+    "Software Engineer at Example Inc",
+  );
+  expect(
+    buildApplicationCrmCalendar([
+      {
+        ...current,
+        crm: { ...current.crm!, archivedAt: "2026-08-15T10:00:00Z" },
+      },
+    ]),
+  ).toEqual([]);
+});
+
+test.each(["csv", "json"] as const)(
+  "%s export projects a failed result on a record with blank attempt state",
+  (format) => {
+    const current = record({
+      status: "ready_for_review",
+      lastAttemptState: null,
+    });
+    const result = ApplyJobResultSchema.parse({
+      id: "failed",
+      runId: "run",
+      jobId: current.jobId,
+      applicationRecordId: current.id,
+      state: "failed",
+      summary: "Stopped",
+      detail: "Interrupted",
+      startedAt: current.lastUpdatedAt,
+      updatedAt: current.lastUpdatedAt,
+    });
+    const exported = exportApplicationCrm({
+      records: [current],
+      results: [result],
+      request: { format, applicationRecordIds: [] },
+    });
+    expect(exported.content).toContain(
+      format === "csv" ? "Could not apply" : '"stage": "failed"',
+    );
+    expect(exported.content).not.toContain('"stage": "ready_for_approval"');
+  },
+);
+
+test("CSV writes readable stage, reminder and interview text without their internal IDs", () => {
+  const current = record({
+    crm: {
+      stage: "no_response",
+      stageSource: "user",
+      stageChangedAt: "2026-08-01T10:00:00Z",
+      reminders: [
+        {
+          id: "private-reminder-id",
+          title: "Follow up",
+          dueAt: "2026-10-05T10:00:00Z",
+          createdAt: "2026-08-01T10:00:00Z",
+          updatedAt: "2026-08-01T10:00:00Z",
+        },
+      ],
+      interviews: [
+        {
+          id: "private-interview-id",
+          title: "Technical interview",
+          startsAt: "2026-10-05T10:00:00Z",
+          timeZone: "America/Denver",
+          createdAt: "2026-08-01T10:00:00Z",
+          updatedAt: "2026-08-01T10:00:00Z",
+        },
+      ],
+    },
+  });
+  const exported = exportApplicationCrm({
+    records: [current],
+    request: { format: "csv", applicationRecordIds: [] },
+  });
+  expect(exported.content).toContain("No response");
+  expect(exported.content).toContain(
+    "Follow up · 2026-10-05T10:00:00Z · pending",
+  );
+  expect(exported.content).toContain(
+    "Technical interview · 2026-10-05T10:00:00Z (America/Denver) · scheduled",
+  );
+  expect(exported.content).not.toContain("private-reminder-id");
+  expect(exported.content).not.toContain("private-interview-id");
 });

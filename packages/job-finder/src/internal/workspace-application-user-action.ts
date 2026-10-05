@@ -851,6 +851,7 @@ export async function releaseApplicationRecordAfterDismissedUserAction(input: {
   eventId: string;
   dismissal: "cancelled" | "skipped";
   unavailablePreparedPage?: boolean;
+  preserveCompletedPreparation?: boolean;
   /**
    * Said instead of "you cancelled the step" when Job Finder closed a step
    * that was never the person's to do.
@@ -954,6 +955,9 @@ export async function releaseApplicationRecordAfterDismissedUserAction(input: {
   if (
     !result ||
     result.state === "submitted" ||
+    (input.preserveCompletedPreparation &&
+      result.state === "awaiting_review" &&
+      result.completedAt !== null) ||
     result.privacyReceipt?.submissionOutcome?.outcome === "outcome_uncertain"
   ) {
     return;
@@ -1259,6 +1263,7 @@ export async function closeApplicationStepsTrackedByPerson(
           occurredAt: now,
           eventId: `event_${request.id}_tracked_${reason}`,
           dismissal: "skipped",
+          preserveCompletedPreparation: true,
           closedBecause: {
             lastActionLabel: wording.lastActionLabel,
             eventTitle: wording.eventTitle,

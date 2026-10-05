@@ -13,7 +13,9 @@ export function getPausedQuestionText(result: ApplyResult): string | null {
     : "";
   const quoted = corpus.match(/["“‘']([^"”’']{6,300})["”’']/);
   const question = quoted?.[1]?.trim();
-  return question ? formatQuestionPrompt(question) : null;
+  return question && !["(unknown)", "unknown"].includes(question.toLowerCase())
+    ? formatQuestionPrompt(question)
+    : null;
 }
 
 /**
@@ -61,7 +63,10 @@ export function applyResultHasQuestionForPerson(
   return (
     (pendingQuestionCount ?? 0) > 0 ||
     (result?.latestQuestionCount ?? 0) > 0 ||
-    Boolean(pausedQuestion?.trim()) ||
+    Boolean(
+      pausedQuestion?.trim() &&
+      !["unknown", "(unknown)"].includes(pausedQuestion.trim().toLowerCase()),
+    ) ||
     getPausedQuestionText(result) !== null
   );
 }

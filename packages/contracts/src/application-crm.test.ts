@@ -1,6 +1,9 @@
+import { ApplyJobResultSchema } from "./apply";
 import { describe, expect, test } from "vitest";
 
 import {
+  projectApplicationRecordsActivity,
+  inferApplicationActivityStage,
   ApplicationCrmBulkStageMutationInputSchema,
   ApplicationCrmDataSchema,
   ApplicationCrmMutationInputSchema,
@@ -174,5 +177,132 @@ describe("application CRM contracts", () => {
       customStageId: null,
       note: null,
     });
+  });
+});
+
+test("requires complete Undo snapshots and tags for bulk actions", () => {
+  const base = {
+    items: [{ applicationRecordId: "application", expectedRevision: 1 }],
+    stage: "reviewing",
+  };
+  expect(
+    ApplicationCrmBulkStageMutationInputSchema.safeParse({
+      ...base,
+      action: "undo",
+    }).success,
+  ).toBe(false);
+  expect(
+    ApplicationCrmBulkStageMutationInputSchema.safeParse({
+      ...base,
+      action: "tags",
+    }).success,
+  ).toBe(false);
+  expect(
+    ApplicationCrmBulkStageMutationInputSchema.safeParse({
+      ...base,
+      action: "tags",
+      tags: ["priority"],
+    }).success,
+  ).toBe(true);
+  expect(
+    ApplicationCrmMutationInputSchema.safeParse({
+      applicationRecordId: "application",
+      expectedRevision: 1,
+      mutation: { type: "set_archived", archived: true },
+    }).success,
+  ).toBe(true);
+});
+
+describe("latest application result projection", () => {
+  const at = "2026-10-05T10:00:00Z";
+  const record = ApplicationRecordSchema.parse({
+    id: "application",
+    jobId: "job",
+    title: "Engineer",
+    company: "Synthetic",
+    status: "ready_for_review",
+    lastActionLabel: "Preparing",
+    nextActionLabel: null,
+    lastUpdatedAt: at,
+    lastAttemptState: null,
+  });
+  function result(state: string, overrides: Record<string, unknown> = {}) {
+    return ApplyJobResultSchema.parse({
+      id: "result",
+      runId: "run",
+      jobId: "job",
+      applicationRecordId: "application",
+      state,
+      summary: "Synthetic attempt",
+      detail: "Synthetic detail",
+      startedAt: at,
+      updatedAt: at,
+      ...overrides,
+    });
+  }
+  test("a failed retained result replaces blank record attempt state", () => {
+    const projected = projectApplicationRecordsActivity({
+      records: [record],
+      results: [result("failed")],
+    })[0]!;
+    expect(projected.lastAttemptState).toBe("failed");
+    expect(inferApplicationActivityStage(projected)).toBe("failed");
+  });
+  test("verified sends supply the applied date without rewriting a manual stage", () => {
+    const sent = result("submitted", {
+      completedAt: at,
+      privacyReceipt: {
+        generatedAt: at,
+        lineage: { runId: "run", jobId: "job", resultId: "result" },
+        destination: { origin: "http://127.0.0.1:47950", safePath: "/apply" },
+        resume: { source: "original_upload", fileName: "synthetic.pdf" },
+        finalSubmitAuthorized: true,
+        finalSubmitOccurred: true,
+      },
+    });
+    const manual = {
+      ...record,
+      crm: ApplicationCrmDataSchema.parse({
+        stage: "interview",
+        stageSource: "user",
+        stageChangedAt: at,
+      }),
+    };
+    const projected = projectApplicationRecordsActivity({
+      records: [manual, { ...record, id: "other" }],
+      results: [sent],
+    });
+    expect(projected[0]?.crm?.stage).toBe("interview");
+    expect(projected[0]?.crm?.appliedAt).toBe(at);
+    expect(
+      projectApplicationRecordsActivity({
+        records: [record],
+        results: [sent],
+      })[0]?.crm?.appliedAt,
+    ).toBe(at);
+    const uncertain = projectApplicationRecordsActivity({
+      records: [record],
+      results: [result("submitted")],
+    })[0]!;
+    expect(uncertain.crm?.appliedAt).toBeFalsy();
+    expect(uncertain.lastAttemptState).toBe("paused");
+  });
+  test.each([
+    ["filling", {}, "in_progress"],
+    ["planned", {}, "in_progress"],
+    ["awaiting_review", {}, "ready"],
+    [
+      "awaiting_review",
+      { latestQuestionCount: 2, latestAnswerCount: 1 },
+      "paused",
+    ],
+    ["blocked", { blockerReason: "auth_required" }, "paused"],
+  ])("projects %s as %s", (state, overrides, expected) => {
+    expect(
+      projectApplicationRecordsActivity({
+        records: [record],
+        results: [result(state, overrides as Record<string, unknown>)],
+      })[0]?.lastAttemptState,
+    ).toBe(expected);
   });
 });

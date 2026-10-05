@@ -1,4 +1,6 @@
+import { ToastProvider } from "@renderer/components/ui/toast";
 // @vitest-environment jsdom
+import type { ApplicationCrmBulkStageMutationInput } from "@nordri/contracts";
 
 import { useState } from "react";
 import {
@@ -7,6 +9,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { ApplicationRecordSchema } from "@nordri/contracts";
 import { afterEach, describe, expect, test, vi } from "vitest";
@@ -29,6 +32,13 @@ function expectCanonicalFieldClasses(control: HTMLElement) {
   expect(control.className).not.toContain("border-input");
   expect(control.className).not.toContain("bg-background");
   expect(control.className).not.toContain("ring-[3px]");
+}
+
+async function chooseShow(label: string) {
+  const trigger = screen.getByRole("combobox", { name: "Show" });
+  fireEvent.click(screen.getByRole("combobox", { name: "Show" }));
+  fireEvent.click(screen.getByRole("option", { name: label }));
+  await waitFor(() => expect(document.activeElement).toBe(trigger));
 }
 
 function record(
@@ -55,12 +65,104 @@ function record(
   });
 }
 
+Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+  configurable: true,
+  value: vi.fn(),
+});
+
 afterEach(() => {
   cleanup();
   window.localStorage.clear();
 });
 
 describe("ApplicationsCrmViews", () => {
+  test("confirms all 61 selected rows across pages and offers exact-stage Undo", async () => {
+    const onBulkChange = vi.fn<
+      (command: ApplicationCrmBulkStageMutationInput) => Promise<void>
+    >(() => Promise.resolve());
+    const records = Array.from({ length: 61 }, (_, index) =>
+      record(`row_${index}`, `Role ${index}`, "Acme", {
+        crm: {
+          stage: index % 2 ? "rejected" : "interview",
+          stageSource: "user",
+          stageChangedAt: "2026-08-01T00:00:00Z",
+          revision: index,
+        },
+      }),
+    );
+    render(
+      <ToastProvider>
+        <ApplicationsCrmViews
+          onBulkChange={onBulkChange}
+          onSelectRecord={vi.fn()}
+          onViewChange={vi.fn()}
+          records={records}
+          selectedRecordId={null}
+          view="table"
+        />
+      </ToastProvider>,
+    );
+    fireEvent.click(
+      screen.getByRole("checkbox", {
+        name: "Select all matching applications",
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Move to Reviewing" }));
+    expect(screen.getByRole("alertdialog").textContent).toContain(
+      "61 applications to Reviewing",
+    );
+    expect(
+      screen.getByRole("alertdialog").closest("[data-bulk-selection-bar]"),
+    ).not.toBeNull();
+    expect(onBulkChange).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm change" }));
+    await waitFor(() => expect(onBulkChange).toHaveBeenCalledTimes(1));
+    expect(onBulkChange.mock.calls[0]?.[0].items).toHaveLength(61);
+    expect(screen.queryByText("Bulk stages changed.")).toBeNull();
+    expect(screen.queryByText("Application tracker updated.")).toBeNull();
+    fireEvent.click(await screen.findByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(onBulkChange).toHaveBeenCalledTimes(2));
+    expect(onBulkChange.mock.calls[1]?.[0]).toMatchObject({
+      action: "undo",
+      items: [
+        {
+          applicationRecordId: "row_0",
+          expectedRevision: 1,
+          previousStage: { stage: "interview" },
+        },
+        ...records.slice(1).map((entry, index) => ({
+          applicationRecordId: entry.id,
+          expectedRevision: index + 2,
+          previousStage: { stage: index % 2 ? "interview" : "rejected" },
+        })),
+      ],
+    });
+  });
+
+  test("includes interview-stage records without events and separates scheduled interviews", async () => {
+    render(
+      <ApplicationsCrmViews
+        onSelectRecord={vi.fn()}
+        onViewChange={vi.fn()}
+        records={Array.from({ length: 24 }, (_, index) =>
+          record(`interview_${index}`, `Role ${index}`, "Acme", {
+            crm: {
+              stage: "interview",
+              stageSource: "user",
+              stageChangedAt: "2026-08-01T00:00:00Z",
+            },
+          }),
+        )}
+        selectedRecordId={null}
+        view="table"
+      />,
+    );
+    await chooseShow("Interview stage");
+    expect(screen.getByText(/24 of 24 applications/)).toBeTruthy();
+    await chooseShow("Scheduled interviews");
+    expect(screen.getByText(/0 of 24 applications/)).toBeTruthy();
+  });
+
   test.each([
     ["2026-10-25T10:00:00+01:00", "2026-10-25T23:30:00+01:00", "Today"],
     ["2026-10-24T10:00:00+02:00", "2026-10-25T23:30:00+01:00", "Tomorrow"],
@@ -232,6 +334,7 @@ describe("ApplicationsCrmViews", () => {
     );
     expect(screen.getByText("1 matching application selected")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Move to Reviewing" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm change" }));
     await waitFor(() =>
       expect(onBulkStageChange).toHaveBeenCalledWith(
         ["application_1"],
@@ -265,7 +368,9 @@ describe("ApplicationsCrmViews", () => {
 
     // Both rows say "Applied"; provenance is the badge, not a suffix on the
     // stage name.
-    expect(screen.getAllByText("Applied")).toHaveLength(2);
+    expect(
+      screen.getAllByText("Applied", { selector: "td span" }),
+    ).toHaveLength(2);
     expect(screen.queryByText(/historical inference/i)).toBeNull();
     expect(screen.queryByText(/user recorded/i)).toBeNull();
     expect(
@@ -512,6 +617,7 @@ describe("ApplicationsCrmViews", () => {
       }),
     );
     fireEvent.click(screen.getByRole("button", { name: "Move to Reviewing" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm change" }));
 
     expect((await screen.findByRole("alert")).textContent).toBe(
       "The selected applications could not be updated. Keep them selected and try again.",
@@ -520,9 +626,7 @@ describe("ApplicationsCrmViews", () => {
     expect(screen.getByText("1 matching application selected")).toBeTruthy();
     expect(onBulkStageChange).toHaveBeenCalledTimes(1);
 
-    const retryButton = screen.getByRole("button", {
-      name: "Move to Reviewing",
-    });
+    const retryButton = screen.getByRole("button", { name: "Confirm change" });
     fireEvent.click(retryButton);
     expect((retryButton as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(retryButton);
@@ -556,6 +660,7 @@ describe("ApplicationsCrmViews", () => {
     });
     fireEvent.click(checkbox);
     fireEvent.click(screen.getByRole("button", { name: "Move to Reviewing" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm change" }));
     expect(await screen.findByRole("alert")).toBeTruthy();
 
     fireEvent.click(checkbox);
@@ -574,7 +679,7 @@ describe("ApplicationsCrmViews", () => {
     );
 
     const lifecycleSelect = screen.getByLabelText("Show");
-    expect(lifecycleSelect.className).toContain("h-9");
+    expect(lifecycleSelect.getAttribute("data-size")).toBe("toolbar");
     expectCanonicalFieldClasses(lifecycleSelect);
   });
 });
@@ -693,4 +798,237 @@ describe("ApplicationsCrmViews locked pane scroll regions", () => {
       cleanup();
     }
   });
+});
+
+test("shows every populated board stage and pages stages independently", () => {
+  const entries = Array.from({ length: 61 }, (_, index) =>
+    record(`reject_${index}`, `Rejected role ${index}`, "Acorn", {
+      crm: {
+        stage: "rejected",
+        stageSource: "user",
+        stageChangedAt: "2026-08-01T10:00:00Z",
+      },
+    }),
+  );
+  entries.push(
+    record("offer", "Offer role", "Willow", {
+      crm: {
+        stage: "offer",
+        stageSource: "user",
+        stageChangedAt: "2026-08-01T10:00:00Z",
+      },
+    }),
+  );
+  render(
+    <ApplicationsCrmViews
+      records={entries}
+      onSelectRecord={vi.fn()}
+      onViewChange={vi.fn()}
+      selectedRecordId={null}
+      view="kanban"
+    />,
+  );
+  expect(screen.getByText("Offer role")).toBeTruthy();
+  const column = screen.getByRole("region", { name: "Rejected applications" });
+  expect(within(column).getByText("61")).toBeTruthy();
+  fireEvent.click(within(column).getByRole("button", { name: /Next/ }));
+  expect(within(column).getByText("Rejected role 10")).toBeTruthy();
+  expect(screen.getByText("Offer role")).toBeTruthy();
+});
+
+test("restores a named Show filter after remounting", async () => {
+  const entries = [
+    record("offer", "Offer role", "Willow", {
+      crm: {
+        stage: "offer",
+        stageSource: "user",
+        stageChangedAt: "2026-08-01T10:00:00Z",
+      },
+    }),
+    record("other", "Other role", "Acorn"),
+  ];
+  const view = render(
+    <ApplicationsCrmViews
+      records={entries}
+      onSelectRecord={vi.fn()}
+      onViewChange={vi.fn()}
+      selectedRecordId={null}
+      view="table"
+    />,
+  );
+  await chooseShow("Offers");
+  fireEvent.click(screen.getByRole("button", { name: /Saved views/ }));
+  fireEvent.change(await screen.findByLabelText("Saved view name"), {
+    target: { value: "Offers only" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  await chooseShow("All applications");
+  view.unmount();
+  render(
+    <ApplicationsCrmViews
+      records={entries}
+      onSelectRecord={vi.fn()}
+      onViewChange={vi.fn()}
+      selectedRecordId={null}
+      view="table"
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: /Saved views/ }));
+  fireEvent.click(await screen.findByRole("button", { name: "Offers only" }));
+  expect(screen.getByLabelText("Show").textContent).toBe("Offers");
+  expect(screen.queryByText("Other role")).toBeNull();
+});
+
+test("keeps Sort beside Show, uses compact dates and adds Applied to older column choices", () => {
+  window.localStorage.setItem(
+    "nordri.job-finder.applications-crm.columns.v1",
+    JSON.stringify(["job", "updated"]),
+  );
+  const view = render(
+    <ApplicationsCrmViews
+      records={[record("one", "Role", "Acme")]}
+      homeTimeZone="America/Denver"
+      selectedRecordId={null}
+      view="table"
+      onViewChange={vi.fn()}
+      onSelectRecord={vi.fn()}
+    />,
+  );
+  const sort = screen.getByRole("combobox", { name: "Sort applications" });
+  expect(sort.closest("[data-tracker-filter-row]")).toBe(
+    screen.getByLabelText("Show").closest("[data-tracker-filter-row]"),
+  );
+  expect(screen.getByRole("table").closest("section")?.className).toContain(
+    "max-h-[calc(100dvh-15rem)]",
+  );
+  expect(screen.getByRole("columnheader", { name: "Applied" })).toBeTruthy();
+  expect(
+    screen.getByRole("columnheader", { name: "Updated" }).getAttribute("title"),
+  ).toBe("America/Denver");
+  const date = view.container.querySelector("tbody td:last-child");
+  expect(date?.className).toContain("whitespace-nowrap");
+  expect(date?.textContent).not.toContain("America/Denver");
+  view.rerender(
+    <ApplicationsCrmViews
+      records={[record("one", "Role", "Acme")]}
+      selectedRecordId={null}
+      view="calendar"
+      onViewChange={vi.fn()}
+      onSelectRecord={vi.fn()}
+    />,
+  );
+  expect(
+    screen.queryByRole("combobox", { name: "Sort applications" }),
+  ).toBeNull();
+});
+
+test("sort and Show changes return to page one without following the old selection", async () => {
+  const records = Array.from({ length: 120 }, (_, index) =>
+    record(`row${index}`, `Role ${String(index).padStart(3, "0")}`, "Acme", {
+      crm: {
+        stage: "offer",
+        stageSource: "user",
+        stageChangedAt: "2026-08-15T10:00:00Z",
+        appliedAt: new Date(
+          Date.parse("2026-01-01T00:00:00Z") + index * 86400000,
+        ).toISOString(),
+      },
+    }),
+  );
+  render(
+    <ApplicationsCrmViews
+      records={records}
+      selectedRecordId="row119"
+      view="table"
+      onViewChange={vi.fn()}
+      onSelectRecord={vi.fn()}
+    />,
+  );
+  fireEvent.click(screen.getByRole("combobox", { name: "Sort applications" }));
+  fireEvent.click(
+    screen.getByRole("option", { name: "Applied date: oldest first" }),
+  );
+  expect(screen.getByText("Showing 1–50 of 120 applications")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: /Next/ }));
+  await chooseShow("Offers");
+  expect(screen.getByText("Showing 1–50 of 120 applications")).toBeTruthy();
+});
+
+test("a requested record opens despite persisted search and Show filters", () => {
+  window.localStorage.setItem(
+    "nordri.job-finder.collection.applications-crm.v1",
+    JSON.stringify({ density: "comfortable", query: "hidden", savedViews: [] }),
+  );
+  window.localStorage.setItem(
+    "nordri.job-finder.applications-crm.saved-view.v1",
+    "offers",
+  );
+  render(
+    <ApplicationsCrmViews
+      records={[
+        ...Array.from({ length: 110 }, (_, index) =>
+          record(`before-${index}`, "Other role", "Acme"),
+        ),
+        record("one", "Target role", "Acme"),
+      ]}
+      requestedRecordId="one"
+      selectedRecordId="one"
+      view="table"
+      onViewChange={vi.fn()}
+      onSelectRecord={vi.fn()}
+    />,
+  );
+  expect(screen.getByRole("button", { name: "Target role" })).toBeTruthy();
+  expect(screen.getByLabelText("Show").textContent).toBe("All applications");
+});
+
+test("older saved views explain that Show was not recorded", async () => {
+  window.localStorage.setItem(
+    "nordri.job-finder.collection.applications-crm.v1",
+    JSON.stringify({
+      density: "comfortable",
+      query: "",
+      savedViews: [
+        { id: "older", name: "Offers only", query: "", density: "comfortable" },
+      ],
+    }),
+  );
+  render(
+    <ToastProvider>
+      <ApplicationsCrmViews
+        records={[record("one", "Role", "Acme")]}
+        selectedRecordId={null}
+        view="table"
+        onViewChange={vi.fn()}
+        onSelectRecord={vi.fn()}
+      />
+    </ToastProvider>,
+  );
+  fireEvent.click(screen.getByRole("button", { name: /Saved views/ }));
+  fireEvent.click(await screen.findByRole("button", { name: "Offers only" }));
+  expect(screen.getByText(/This older view did not save Show/)).toBeTruthy();
+});
+
+test("bulk controls use shared fields and offer only manually recorded stages", () => {
+  render(
+    <ApplicationsCrmViews
+      records={[record("one", "Role", "Acme")]}
+      selectedRecordId={null}
+      view="table"
+      onBulkChange={vi.fn()}
+      onViewChange={vi.fn()}
+      onSelectRecord={vi.fn()}
+    />,
+  );
+  fireEvent.click(
+    screen.getByRole("checkbox", { name: "Select all matching applications" }),
+  );
+  expect(screen.getByLabelText("Bulk tags").getAttribute("data-slot")).toBe(
+    "input",
+  );
+  fireEvent.click(screen.getByRole("combobox", { name: "Bulk stage" }));
+  expect(screen.queryByRole("option", { name: "Preparing" })).toBeNull();
+  expect(screen.queryByRole("option", { name: "Needs you" })).toBeNull();
+  expect(screen.queryByRole("option", { name: "Could not apply" })).toBeNull();
+  expect(screen.getByRole("option", { name: "Interview" })).toBeTruthy();
 });

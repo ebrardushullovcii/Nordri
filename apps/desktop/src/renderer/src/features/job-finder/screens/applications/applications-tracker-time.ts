@@ -17,7 +17,10 @@ export function trackerTimeZones(): readonly string[] {
   ];
 }
 
-function wallTime(instant: number, timeZone: string): string {
+export function trackerTimeInputValue(
+  instant: number,
+  timeZone: string,
+): string {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone,
     year: "numeric",
@@ -43,9 +46,11 @@ export function trackerTimeToIso(
   const candidates = new Set<number>();
   for (const days of [-2, -1, 0, 1, 2]) {
     const sample = clock + days * 86400000;
-    const offset = Date.parse(`${wallTime(sample, timeZone)}:00Z`) - sample;
+    const offset =
+      Date.parse(`${trackerTimeInputValue(sample, timeZone)}:00Z`) - sample;
     const instant = clock - offset;
-    if (wallTime(instant, timeZone) === value) candidates.add(instant);
+    if (trackerTimeInputValue(instant, timeZone) === value)
+      candidates.add(instant);
   }
   // A repeated autumn time uses its first occurrence. A spring gap is refused.
   return candidates.size
@@ -68,7 +73,46 @@ export function formatTrackerMoment(
       timeZone,
       timeZoneName: "short",
     });
-  return zone === deviceTimeZone()
-    ? format(zone)
-    : `${format(zone)} [${format(deviceTimeZone())}]`;
+  return `${format(zone)} (${zone})`;
+}
+
+export function searchableTrackerTimeZones(
+  query: string,
+  homeZone: string,
+): readonly string[] {
+  const search = query.trim().toLocaleLowerCase().replaceAll(" ", "_");
+  return [
+    ...new Set([
+      homeZone,
+      "Europe/London",
+      "Europe/Lisbon",
+      "America/New_York",
+      "America/Los_Angeles",
+      ...trackerTimeZones(),
+    ]),
+  ].filter((zone) => zone.toLocaleLowerCase().includes(search));
+}
+
+export function trackerTimeZoneLabel(zone: string): string {
+  const offset = new Intl.DateTimeFormat(undefined, {
+    timeZone: zone,
+    timeZoneName: "shortOffset",
+  })
+    .formatToParts(new Date())
+    .find((part) => part.type === "timeZoneName")?.value;
+  return `${zone} · ${offset ?? zone}`;
+}
+
+/** Compact table cells; the column names the zone once. */
+export function formatTrackerCell(
+  value: string,
+  timeZone?: string | null,
+): string {
+  return new Date(value).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: resolvePlanTimeZone(timeZone),
+  });
 }

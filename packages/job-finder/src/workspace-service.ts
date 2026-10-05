@@ -1081,7 +1081,7 @@ export function createJobFinderWorkspaceService(
       dailyLimit
     ) {
       throw new Error(
-        `The global daily preparation safeguard allows at most ${dailyLimit} begun employer ${dailyLimit === 1 ? "application" : "applications"} per local day.`,
+        `You can start up to ${dailyLimit} ${dailyLimit === 1 ? "preparation" : "preparations"} per day. Today: ${capacity.used} started${capacity.legacyUncertain ? `, ${capacity.legacyUncertain} older attempts also count` : ""}${reservedJobs ? `, ${reservedJobs} reserved` : ""}. Retries and failed attempts count; continuing an open form does not. Change the limit in Settings → Applying.`,
       );
     }
   }

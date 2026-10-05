@@ -142,6 +142,89 @@ describe("ApplicationsScreen", () => {
     };
   }
 
+  it("hides completed run furniture after all records are marked Applied", () => {
+    vi.stubGlobal("ResizeObserver", ResizeObserverMock);
+    stubCandidateAssetsBridge();
+    const at = "2026-10-04T10:00:00.000Z";
+    const records = Array.from({ length: 5 }, (_, index) =>
+      createTrackedApplication({
+        id: `application_${index}`,
+        jobId: `job_${index}`,
+        status: "approved",
+        lastAttemptState: "ready",
+        crm: null,
+      }),
+    );
+    const run = ApplyRunSchema.parse({
+      id: "run_history",
+      mode: "queue_auto",
+      state: "completed",
+      jobIds: records.map((record) => record.jobId),
+      createdAt: at,
+      updatedAt: at,
+      completedAt: at,
+      summary: "Prepared five applications",
+      detail: "Local preparations only",
+      totalJobs: 5,
+    });
+    const results = records.map((record) =>
+      ApplyJobResultSchema.parse({
+        id: `result_${record.id}`,
+        runId: run.id,
+        applicationRecordId: record.id,
+        jobId: record.jobId,
+        state: "awaiting_review",
+        startedAt: at,
+        updatedAt: at,
+        completedAt: at,
+        summary: "Prepared",
+        detail: "Ready for the person",
+      }),
+    );
+    const base = buildCrmScreenProps({
+      applicationRecords: records,
+      selectedRecord: null,
+      onSelectRecord: vi.fn(),
+    });
+    base.onGetApplyRunDetails.mockImplementation(
+      () => new Promise<ApplyRunDetails>(() => {}),
+    );
+    const view = render(
+      <MemoryRouter>
+        <ApplicationsScreen
+          {...base}
+          dailyPreparationCapacity={null}
+          applyRuns={[run]}
+          applyJobResults={results}
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.queryByText("Latest automatic run")).toBeNull();
+    const tracked = records.map((record) => ({
+      ...record,
+      crm: {
+        ...ApplicationRecordSchema.parse({
+          ...record,
+          crm: { stage: "applied", stageSource: "user", stageChangedAt: at },
+        }).crm!,
+      },
+    }));
+    view.rerender(
+      <MemoryRouter>
+        <ApplicationsScreen
+          {...base}
+          dailyPreparationCapacity={null}
+          applicationRecords={tracked}
+          applyRuns={[run]}
+          applyJobResults={results}
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.queryByText("Latest automatic run")).toBeNull();
+    expect(screen.queryByText(/5 prepared/)).toBeNull();
+    expect(screen.queryByText(/5 skipped/)).toBeNull();
+  });
+
   it("restores one-use answer drafts and their save choice in Applications after Prepare again", async () => {
     vi.stubGlobal("ResizeObserver", ResizeObserverMock);
     stubCandidateAssetsBridge();
@@ -513,6 +596,9 @@ describe("ApplicationsScreen", () => {
       expect(
         screen.getByTestId("applications-bulk-retry").textContent,
       ).toContain("2 applications could not be applied");
+      expect(
+        screen.getByTestId("applications-bulk-retry").closest("header"),
+      ).toBeTruthy();
       fireEvent.click(
         screen.getByRole("button", { name: "Try again for all 2" }),
       );
@@ -607,7 +693,9 @@ describe("ApplicationsScreen", () => {
       </MemoryRouter>,
     );
     expect(
-      screen.getByText(/2 jobs · 1 need attention · 1 in progress/),
+      screen.getByText(
+        /2 jobs · 1 need attention · 1 could not apply · 1 in progress/,
+      ),
     ).toBeTruthy();
   });
   it.each(["failed", "awaiting_review"] as const)(
@@ -2218,9 +2306,12 @@ describe("ApplicationsScreen", () => {
     fireEvent.click(screen.getByRole("button", { name: "Open tracker" }));
     expect(await screen.findByRole("combobox", { name: "Stage" })).toBeTruthy();
 
-    fireEvent.change(screen.getByRole("combobox", { name: "Show" }), {
-      target: { value: "offers" },
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: vi.fn(),
     });
+    fireEvent.click(screen.getByRole("combobox", { name: "Show" }));
+    fireEvent.click(screen.getByRole("option", { name: "Offers" }));
     expect(
       await screen.findByText("No application selected in this view"),
     ).toBeTruthy();
@@ -2794,14 +2885,16 @@ describe("ApplicationsScreen", () => {
       screen
         .getAllByText("Not sent")
         .filter((node) => node.getAttribute("data-variant") === "status"),
-    ).toHaveLength(2);
+    ).toHaveLength(1);
     expect(
       screen.getByRole("button", { name: "Correct the fields in the browser" }),
     ).toBeTruthy();
     expect(
       screen.queryByText("Ready for you to read over and send"),
     ).toBeNull();
-    expect(screen.queryByText("Ready to send")).toBeNull();
+    expect(
+      screen.getByText("Ready to send", { selector: "[data-variant=status]" }),
+    ).toBeTruthy();
   });
 
   it("receipt-confirmed Applied rows replace a stale Prepare again next step", () => {

@@ -584,7 +584,13 @@ describe("resolved user action resumption activity gating", () => {
       (attempt) => attempt.userActionResumption?.requestId === freshRequest.id,
     );
     expect(failedAttempt?.state).toBe("failed");
-    expect(failedAttempt?.detail).toMatch(/daily preparation safeguard/iu);
+    expect(failedAttempt?.detail).toContain(
+      "You can start up to 20 preparations per day. Today: 20 started.",
+    );
+    expect(failedAttempt?.detail).toContain(
+      "Retries and failed attempts count",
+    );
+    expect(failedAttempt?.detail).toContain("Settings → Applying");
   });
 
   test("processes twenty resumed actions without exceeding the defined concurrency", async () => {

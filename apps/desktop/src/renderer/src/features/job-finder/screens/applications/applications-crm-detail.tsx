@@ -1,3 +1,4 @@
+import { Input } from "@renderer/components/ui/input";
 import { useEffect, useId, useMemo, useState } from "react";
 import type {
   ApplicationCrmExportFormat,
@@ -11,23 +12,21 @@ import type {
   RecordOutcomeInput,
 } from "@nordri/contracts";
 import {
-  Select,
-  SelectTrigger,
-  SelectValue,
-  SelectContent,
-  SelectItem,
-} from "@renderer/components/ui/select";
-import { deviceTimeZone } from "../../lib/job-finder-timestamp-format";
+  deviceTimeZone,
+  resolvePlanTimeZone,
+} from "../../lib/job-finder-timestamp-format";
 import {
   trackerTimeToIso,
-  trackerTimeZones,
+  searchableTrackerTimeZones,
+  trackerTimeZoneLabel,
+  trackerTimeInputValue,
   formatTrackerMoment,
 } from "./applications-tracker-time";
 import { Button } from "@renderer/components/ui/button";
 
 import {
   APPLICATION_CRM_STAGE_LABELS,
-  APPLICATION_CRM_STAGE_ORDER,
+  APPLICATION_CRM_MANUAL_STAGES,
   applicationCrmDataForView,
 } from "./applications-crm-model";
 import { ApplicationsOutcomeRecorder } from "./applications-outcome-recorder";
@@ -39,21 +38,6 @@ const jobFinderDateInputLocale = getJobFinderDateInputLocale();
 
 function createId(prefix: string) {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-}
-
-function toIso(localValue: string): string | null {
-  if (!localValue) return null;
-  const parsed = new Date(localValue);
-  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
-}
-
-function toLocalInputValue(iso: string): string {
-  const parsed = new Date(iso);
-  if (Number.isNaN(parsed.getTime())) return "";
-  const pad = (value: number) => value.toString().padStart(2, "0");
-  return `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(
-    parsed.getDate(),
-  )}T${pad(parsed.getHours())}:${pad(parsed.getMinutes())}`;
 }
 
 const fieldClassName =
@@ -85,15 +69,9 @@ function applicationCrmEventCopyForView(
   };
 }
 
-/** Reminders use this device's time zone; name it beside the field. */
-const DEVICE_TIME_ZONE_LABEL =
-  new Intl.DateTimeFormat(undefined, { timeZoneName: "short" })
-    .formatToParts(new Date())
-    .find((part) => part.type === "timeZoneName")?.value ??
-  Intl.DateTimeFormat().resolvedOptions().timeZone;
-
 export function ApplicationsCrmDetail(props: {
   record: ApplicationRecord;
+  homeTimeZone?: string;
   relatedJobCanonicalUrl?: string | null;
   settings: ApplicationCrmSettings;
   onMutate: (command: ApplicationCrmMutationInput) => Promise<void>;
@@ -113,6 +91,9 @@ export function ApplicationsCrmDetail(props: {
     note: string | null;
   }[];
 }) {
+  const homeTimeZone = resolvePlanTimeZone(
+    props.homeTimeZone ?? deviceTimeZone(),
+  );
   const crm = applicationCrmDataForView(props.record);
   const employerLine = formatApplicationEmployerLine({
     company: props.record.company,
@@ -124,12 +105,17 @@ export function ApplicationsCrmDetail(props: {
   const [error, setError] = useState<string | null>(null);
   const [tags, setTags] = useState(crm.tags.join(", "));
   const [note, setNote] = useState("");
+  const [manualReceipt, setManualReceipt] = useState("");
   const [reminderTitle, setReminderTitle] = useState("");
   const [reminderAt, setReminderAt] = useState("");
   const [interviewTitle, setInterviewTitle] = useState("");
   const [interviewAt, setInterviewAt] = useState("");
-  const [interviewTimeZone, setInterviewTimeZone] = useState(deviceTimeZone);
-  const timeZones = useMemo(trackerTimeZones, []);
+  const [interviewTimeZone, setInterviewTimeZone] = useState(homeTimeZone);
+  const [timeZoneQuery, setTimeZoneQuery] = useState("");
+  const timeZones = useMemo(
+    () => searchableTrackerTimeZones(timeZoneQuery, homeTimeZone),
+    [timeZoneQuery, homeTimeZone],
+  );
   const [timeZoneOpen, setTimeZoneOpen] = useState(false);
   const [contactName, setContactName] = useState("");
   const [contactEmail, setContactEmail] = useState("");
@@ -144,7 +130,10 @@ export function ApplicationsCrmDetail(props: {
   );
   const [offerDeadline, setOfferDeadline] = useState(
     crm.compensation.offerDeadlineAt
-      ? toLocalInputValue(crm.compensation.offerDeadlineAt)
+      ? trackerTimeInputValue(
+          Date.parse(crm.compensation.offerDeadlineAt),
+          homeTimeZone,
+        )
       : "",
   );
   const [reminderReschedules, setReminderReschedules] = useState<
@@ -167,7 +156,10 @@ export function ApplicationsCrmDetail(props: {
     setOfferPeriod(nextCrm.compensation.offerBase?.period ?? "year");
     setOfferDeadline(
       nextCrm.compensation.offerDeadlineAt
-        ? toLocalInputValue(nextCrm.compensation.offerDeadlineAt)
+        ? trackerTimeInputValue(
+            Date.parse(nextCrm.compensation.offerDeadlineAt),
+            homeTimeZone,
+          )
         : "",
     );
     setReminderReschedules({});
@@ -267,7 +259,10 @@ export function ApplicationsCrmDetail(props: {
   }
 
   function rescheduleReminder(entry: ApplicationCrmReminder) {
-    const dueAt = toIso(reminderReschedules[entry.id] ?? "");
+    const dueAt = trackerTimeToIso(
+      reminderReschedules[entry.id] ?? "",
+      homeTimeZone,
+    );
     if (!dueAt) return;
     void mutate({
       type: "upsert_reminder",
@@ -362,32 +357,72 @@ export function ApplicationsCrmDetail(props: {
       ) : null}
 
       <div className="grid gap-3 sm:grid-cols-2">
-        <label className="grid gap-1.5 text-sm font-medium text-foreground">
-          Stage
-          <select
-            className={fieldClassName}
-            disabled={pending}
-            onChange={(event) => selectStage(event.target.value)}
-            value={
-              crm.customStageId ? `custom:${crm.customStageId}` : crm.stage
-            }
-          >
-            {APPLICATION_CRM_STAGE_ORDER.map((stage) => (
-              <option key={stage} value={stage}>
-                {APPLICATION_CRM_STAGE_LABELS[stage]}
-              </option>
-            ))}
-            {props.settings.customStages.length > 0 ? (
-              <optgroup label="Custom stages">
-                {props.settings.customStages.map((stage) => (
-                  <option key={stage.id} value={`custom:${stage.id}`}>
-                    {stage.label}
-                  </option>
-                ))}
-              </optgroup>
-            ) : null}
-          </select>
-        </label>
+        <div className="grid content-start gap-3">
+          <label className="grid gap-1.5 text-sm font-medium text-foreground">
+            Stage
+            <select
+              className={fieldClassName}
+              disabled={pending}
+              onChange={(event) => selectStage(event.target.value)}
+              value={
+                crm.customStageId ? `custom:${crm.customStageId}` : crm.stage
+              }
+            >
+              {!APPLICATION_CRM_MANUAL_STAGES.includes(crm.stage) &&
+              !crm.customStageId ? (
+                <option value={crm.stage} disabled>
+                  {APPLICATION_CRM_STAGE_LABELS[crm.stage]} (from activity)
+                </option>
+              ) : null}
+              {APPLICATION_CRM_MANUAL_STAGES.map((stage) => (
+                <option key={stage} value={stage}>
+                  {APPLICATION_CRM_STAGE_LABELS[stage]}
+                </option>
+              ))}
+              {props.settings.customStages.length > 0 ? (
+                <optgroup label="Custom stages">
+                  {props.settings.customStages.map((stage) => (
+                    <option key={stage.id} value={`custom:${stage.id}`}>
+                      {stage.label}
+                    </option>
+                  ))}
+                </optgroup>
+              ) : null}
+            </select>
+          </label>
+          {crm.stage === "ready_to_send" ||
+          (props.record.lastAttemptState === "ready" &&
+            crm.stageSource !== "user") ? (
+            <div className="grid gap-2">
+              <p className="text-sm text-foreground-soft">
+                After the employer confirms receipt, record that you sent it.
+              </p>
+              <Input
+                aria-label="Receipt reference (optional)"
+                placeholder="Receipt reference (optional)"
+                value={manualReceipt}
+                onChange={(event) => setManualReceipt(event.target.value)}
+              />
+              <Button
+                disabled={pending}
+                onClick={() =>
+                  void mutate({
+                    type: "set_stage",
+                    stage: "applied",
+                    customStageId: null,
+                    note: manualReceipt.trim()
+                      ? `You recorded a send. Receipt: ${manualReceipt.trim()}`
+                      : "You recorded that you sent this application.",
+                  })
+                }
+                size="sm"
+                variant="secondary"
+              >
+                I sent it
+              </Button>
+            </div>
+          ) : null}
+        </div>
         {/* Tags save when the field is left or Enter is pressed, the same
             as the stage beside them saves on change; Add buttons are only for
             new notes, reminders and interviews. */}
@@ -441,7 +476,10 @@ export function ApplicationsCrmDetail(props: {
                   updatedAt: new Date().toISOString(),
                 },
               }).then((saved) => {
-                if (saved) setNote("");
+                if (saved)
+                  setNote((current) =>
+                    current.trim() === body ? "" : current,
+                  );
               });
             }}
           >
@@ -453,7 +491,6 @@ export function ApplicationsCrmDetail(props: {
             </label>
             <textarea
               className={areaClassName}
-              disabled={pending}
               id="application-crm-note"
               maxLength={4_000}
               onChange={(event) => setNote(event.target.value)}
@@ -501,7 +538,7 @@ export function ApplicationsCrmDetail(props: {
                       className="mt-1 block text-xs text-muted-foreground"
                       dateTime={entry.updatedAt}
                     >
-                      {new Date(entry.updatedAt).toLocaleString()}
+                      {formatTrackerMoment(entry.updatedAt, homeTimeZone)}
                     </time>
                   </div>
                   <Button
@@ -523,7 +560,7 @@ export function ApplicationsCrmDetail(props: {
             className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(12rem,0.75fr)_auto] sm:items-end"
             onSubmit={(event) => {
               event.preventDefault();
-              const dueAt = toIso(reminderAt);
+              const dueAt = trackerTimeToIso(reminderAt, homeTimeZone);
               if (!reminderTitle.trim() || !dueAt) return;
               const now = new Date().toISOString();
               void mutate({
@@ -562,7 +599,7 @@ export function ApplicationsCrmDetail(props: {
                   aria-hidden="true"
                   className="font-normal text-foreground-muted"
                 >
-                  ({DEVICE_TIME_ZONE_LABEL})
+                  ({homeTimeZone})
                 </span>
               </span>
               <input
@@ -600,7 +637,7 @@ export function ApplicationsCrmDetail(props: {
                         className="mt-0.5 block text-xs text-muted-foreground"
                         dateTime={entry.dueAt}
                       >
-                        Due {formatTrackerMoment(entry.dueAt)}
+                        Due {formatTrackerMoment(entry.dueAt, homeTimeZone)}
                       </time>
                     </div>
                     <StatusBadge
@@ -755,29 +792,115 @@ export function ApplicationsCrmDetail(props: {
                 value={interviewAt}
               />
             </label>
-            <label className="grid gap-1.5 text-sm font-medium text-foreground">
-              Time zone
-              <Select
-                open={timeZoneOpen}
-                onOpenChange={setTimeZoneOpen}
-                value={interviewTimeZone}
-                onValueChange={setInterviewTimeZone}
+            <div
+              className="relative grid min-w-0 gap-1.5 text-sm font-medium text-foreground"
+              onBlur={(event) => {
+                if (
+                  !(event.relatedTarget instanceof Node) ||
+                  !event.currentTarget.contains(event.relatedTarget)
+                )
+                  setTimeZoneOpen(false);
+              }}
+            >
+              <label htmlFor="interview-zone-search">Time zone</label>
+              <Input
+                id="interview-zone-search"
+                aria-label="Interview time zone"
+                role="combobox"
+                aria-expanded={timeZoneOpen}
+                aria-controls="interview-zone-options"
+                aria-autocomplete="list"
                 disabled={pending}
-              >
-                <SelectTrigger aria-label="Interview time zone">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {(timeZoneOpen ? timeZones : [interviewTimeZone]).map(
-                    (zone) => (
-                      <SelectItem key={zone} value={zone}>
-                        {zone}
-                      </SelectItem>
-                    ),
-                  )}
-                </SelectContent>
-              </Select>
-            </label>
+                value={
+                  timeZoneOpen
+                    ? timeZoneQuery
+                    : trackerTimeZoneLabel(interviewTimeZone)
+                }
+                placeholder="Search city or zone"
+                onFocus={(event) => {
+                  if (
+                    !(event.relatedTarget instanceof Node) ||
+                    !event.currentTarget.parentElement?.contains(
+                      event.relatedTarget,
+                    )
+                  ) {
+                    setTimeZoneQuery("");
+                    setTimeZoneOpen(true);
+                  }
+                }}
+                onChange={(event) => {
+                  setTimeZoneQuery(event.target.value);
+                  setTimeZoneOpen(true);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") setTimeZoneOpen(false);
+                  if (event.key === "Enter" && timeZoneOpen) {
+                    event.preventDefault();
+                    if (timeZones[0]) setInterviewTimeZone(timeZones[0]);
+                    setTimeZoneOpen(false);
+                  }
+                  if (event.key === "ArrowDown") {
+                    event.preventDefault();
+                    setTimeZoneOpen(true);
+                    document
+                      .querySelector<HTMLButtonElement>(
+                        "#interview-zone-options [role=option]",
+                      )
+                      ?.focus();
+                  }
+                }}
+              />
+              {timeZoneOpen ? (
+                <div
+                  id="interview-zone-options"
+                  role="listbox"
+                  aria-label="Time zones"
+                  className="absolute top-full z-50 mt-1 max-h-56 w-full overflow-auto rounded-(--radius-field) border border-(--field-border) bg-popover p-1 shadow-(--select-shadow)"
+                  onMouseDown={(event) => event.preventDefault()}
+                >
+                  {timeZones.slice(0, 50).map((zone) => (
+                    <button
+                      key={zone}
+                      type="button"
+                      role="option"
+                      aria-selected={zone === interviewTimeZone}
+                      className="block w-full rounded px-2 py-1.5 text-left text-xs hover:bg-secondary focus:bg-secondary"
+                      onClick={() => {
+                        setInterviewTimeZone(zone);
+                        document
+                          .getElementById("interview-zone-search")
+                          ?.focus();
+                        setTimeZoneOpen(false);
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === "Escape") {
+                          document
+                            .getElementById("interview-zone-search")
+                            ?.focus();
+                          setTimeZoneOpen(false);
+                        }
+                        if (
+                          event.key === "ArrowDown" ||
+                          event.key === "ArrowUp"
+                        ) {
+                          event.preventDefault();
+                          const sibling =
+                            event.key === "ArrowDown"
+                              ? event.currentTarget.nextElementSibling
+                              : event.currentTarget.previousElementSibling;
+                          if (sibling instanceof HTMLElement) sibling.focus();
+                        }
+                      }}
+                    >
+                      {trackerTimeZoneLabel(zone)}
+                    </button>
+                  ))}
+                  {timeZones.length === 0 ? (
+                    <p className="p-2 text-xs">No matching time zone</p>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
             <Button
               disabled={pending || !interviewTitle.trim() || !interviewAt}
               size="sm"
@@ -973,7 +1096,10 @@ export function ApplicationsCrmDetail(props: {
                     currency: offerCurrency.trim().toUpperCase(),
                     period: offerPeriod,
                   },
-                  offerDeadlineAt: toIso(offerDeadline),
+                  offerDeadlineAt: trackerTimeToIso(
+                    offerDeadline,
+                    homeTimeZone,
+                  ),
                   offerStatus:
                     crm.compensation.offerStatus === "none"
                       ? "active"
@@ -1025,7 +1151,7 @@ export function ApplicationsCrmDetail(props: {
                   aria-hidden="true"
                   className="font-normal text-foreground-muted"
                 >
-                  ({DEVICE_TIME_ZONE_LABEL})
+                  ({homeTimeZone})
                 </span>
               </span>
               <input
@@ -1174,7 +1300,7 @@ export function ApplicationsCrmDetail(props: {
                     className="mt-1 block text-xs text-muted-foreground"
                     dateTime={event.at}
                   >
-                    {new Date(event.at).toLocaleString()} ·{" "}
+                    {formatTrackerMoment(event.at, homeTimeZone)} ·{" "}
                     {event.source.replaceAll("_", " ")}
                   </time>
                 </li>
@@ -1202,7 +1328,7 @@ export function ApplicationsCrmDetail(props: {
                     .replaceAll("_", " ")
                     .replace(/^./u, (first) => first.toUpperCase())}
                 </span>{" "}
-                · {formatTrackerMoment(entry.occurredAt)}
+                · {formatTrackerMoment(entry.occurredAt, homeTimeZone)}
                 {entry.note ? ` · ${entry.note}` : ""}
               </li>
             ))}

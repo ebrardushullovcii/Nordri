@@ -1,3 +1,4 @@
+import { APPLICATION_BOUNDARY_SENTENCE } from "../safeguards/safeguards-application-boundary";
 import { useEffect, useId, useState } from "react";
 import { Field, FieldLabel } from "@renderer/components/ui/field";
 import { Input } from "@renderer/components/ui/input";
@@ -243,8 +244,7 @@ export function SettingsApplyModeSection(props: {
       ) : null}
 
       <p className="text-sm leading-5 text-foreground-soft">
-        Sign-in, security checks, and account creation pause for you. Job Finder
-        never stores a password you provide for one task.
+        {APPLICATION_BOUNDARY_SENTENCE}
       </p>
 
       <div className="grid gap-2 border-t border-(--surface-panel-border) pt-4">
@@ -278,9 +278,15 @@ export function SettingsApplyModeSection(props: {
         ) : null}
       </div>
 
+      <p className="text-sm text-foreground-soft">
+        Each preparation that starts uses one slot, including failed attempts
+        and retries. If the employer page never opens, no slot is used. Filling
+        answers in an existing prepared form uses no new slot. Confirmed sends
+        are counted separately.
+      </p>
       <Field>
         <FieldLabel htmlFor={dailyCapId}>
-          Most applications in one day
+          Most preparations in one day
         </FieldLabel>
         <Input
           aria-describedby={!capIsValid ? dailyCapErrorId : undefined}

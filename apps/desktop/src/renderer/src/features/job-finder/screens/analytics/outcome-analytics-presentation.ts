@@ -1,3 +1,4 @@
+import type { ApplyJobResult, ApplyRunSummary } from "@nordri/contracts";
 import {
   type ApplicationOutcome,
   type OutcomeAnalyticsBucket,
@@ -540,4 +541,54 @@ export function bucketDisplayLabel(
 /** Counts distinct events in the log (used for the screen summary strip). */
 export function countOutcomeEvents(events: readonly OutcomeEvent[]): number {
   return events.length;
+}
+
+/** Verified employer receipts are the funnel denominator; reported outcomes stay distinct. */
+export function deriveVerifiedApplicationFunnel(input: {
+  results: readonly ApplyJobResult[];
+  runs: readonly ApplyRunSummary[];
+  events: readonly OutcomeEvent[];
+  campaignId?: string;
+}) {
+  const runById = new Map(input.runs.map((run) => [run.id, run]));
+  const sent = new Map<string, { recordId: string | null; jobId: string }>();
+  for (const result of input.results) {
+    if (
+      result.privacyReceipt?.finalSubmitOccurred !== true ||
+      (result.privacyReceipt.submissionOutcome &&
+        result.privacyReceipt.submissionOutcome.outcome !== "submitted")
+    )
+      continue;
+    if (
+      input.campaignId &&
+      runById.get(result.runId)?.campaignId !== input.campaignId
+    )
+      continue;
+    sent.set(result.applicationRecordId ?? result.jobId, {
+      recordId: result.applicationRecordId,
+      jobId: result.jobId,
+    });
+  }
+  const responseOutcomes = new Set<ApplicationOutcome>([
+    "employer_response",
+    "assessment",
+    "interview",
+    "offer",
+    "rejected",
+  ]);
+  const responses = [...sent.values()].filter((application) =>
+    input.events.some(
+      (event) =>
+        responseOutcomes.has(event.outcome) &&
+        (application.recordId && event.applicationRecordId
+          ? application.recordId === event.applicationRecordId
+          : application.jobId === event.jobId),
+    ),
+  ).length;
+  return {
+    sent: sent.size,
+    responses,
+    responseRate: sent.size ? responses / sent.size : null,
+    smallSample: sent.size < 10,
+  };
 }

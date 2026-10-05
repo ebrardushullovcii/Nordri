@@ -1,3 +1,4 @@
+import { sortApplicationCrmRecords } from "./applications-crm-model";
 import { describe, expect, test } from "vitest";
 import { ApplicationRecordSchema } from "@nordri/contracts";
 
@@ -98,8 +99,8 @@ describe("application CRM renderer model", () => {
       },
     });
 
-    expect(inferApplicationCrmStageForView(pausedRecord)).toBe("preparing");
-    expect(applicationCrmStageLabelForView(pausedRecord)).toBe("Preparing");
+    expect(inferApplicationCrmStageForView(pausedRecord)).toBe("needs_you");
+    expect(applicationCrmStageLabelForView(pausedRecord)).toBe("Needs you");
   });
 
   test("groups records into all lifecycle columns", () => {
@@ -279,4 +280,65 @@ describe("terminal preparation activity", () => {
       expect(applicationCrmDataForView(manual).stage).toBe("interview");
     },
   );
+});
+
+test("automatic stages follow filling, answers and prepared forms while keeping manual overrides", () => {
+  for (const [state, expected] of [
+    ["in_progress", "preparing"],
+    ["paused", "needs_you"],
+    ["ready", "ready_to_send"],
+  ]) {
+    const current = record({
+      status: "approved",
+      lastAttemptState: state,
+      crm: {
+        stage: "preparing",
+        stageSource: "activity",
+        stageChangedAt: "2026-08-15T10:00:00Z",
+      },
+    });
+    expect(inferApplicationCrmStageForView(current)).toBe(expected);
+    expect(
+      inferApplicationCrmStageForView({
+        ...current,
+        crm: { ...current.crm!, stageSource: "user", stage: "reviewing" },
+      }),
+    ).toBe("reviewing");
+  }
+});
+
+test("sorts the whole tracker by company or applied date before paging", () => {
+  const entries = [
+    record({
+      id: "b",
+      company: "Zeta",
+      crm: {
+        stage: "applied",
+        stageChangedAt: "2026-08-01T10:00:00Z",
+        appliedAt: "2026-08-02T10:00:00Z",
+      },
+    }),
+    record({
+      id: "a",
+      company: "Acorn",
+      crm: {
+        stage: "applied",
+        stageChangedAt: "2026-08-01T10:00:00Z",
+        appliedAt: "2026-08-01T10:00:00Z",
+      },
+    }),
+  ];
+  expect(
+    sortApplicationCrmRecords(entries, "company").map((entry) => entry.id),
+  ).toEqual(["a", "b"]);
+  expect(
+    sortApplicationCrmRecords(entries, "applied_oldest").map(
+      (entry) => entry.id,
+    ),
+  ).toEqual(["a", "b"]);
+  expect(
+    sortApplicationCrmRecords(entries, "applied_newest").map(
+      (entry) => entry.id,
+    ),
+  ).toEqual(["b", "a"]);
 });

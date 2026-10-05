@@ -42,7 +42,7 @@ describe("SettingsApplyModeSection", () => {
       screen.getByRole("radio", { name: /Ask before sending/ }),
     ).toBeTruthy();
     expect(screen.getByRole("radio", { name: /Send for me/ })).toBeTruthy();
-    expect(screen.getByLabelText("Most applications in one day")).toBeTruthy();
+    expect(screen.getByLabelText("Most preparations in one day")).toBeTruthy();
 
     // Nothing about envelopes, approvals, revoking, websites, or reusable
     // answers survives on this screen (ADR 0022).
@@ -99,7 +99,7 @@ describe("SettingsApplyModeSection", () => {
     const save = screen.getByRole("button", { name: "Save daily limit" });
     expect(save).toHaveProperty("disabled", true);
 
-    fireEvent.change(screen.getByLabelText("Most applications in one day"), {
+    fireEvent.change(screen.getByLabelText("Most preparations in one day"), {
       target: { value: "8" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Save daily limit" }));
@@ -118,7 +118,7 @@ describe("SettingsApplyModeSection", () => {
   it("offers one Save daily limit, not a second one under the field", () => {
     renderSection({ mode: "confirm_before_submit" });
 
-    fireEvent.change(screen.getByLabelText("Most applications in one day"), {
+    fireEvent.change(screen.getByLabelText("Most preparations in one day"), {
       target: { value: "8" },
     });
 
@@ -132,7 +132,7 @@ describe("SettingsApplyModeSection", () => {
     "keeps an invalid daily limit %s unsaved without sending a rounded value",
     (value) => {
       const { onSave } = renderSection();
-      fireEvent.change(screen.getByLabelText("Most applications in one day"), {
+      fireEvent.change(screen.getByLabelText("Most preparations in one day"), {
         target: { value },
       });
 
@@ -159,25 +159,49 @@ describe("SettingsApplyModeSection", () => {
 });
 
 describe("application mode and daily limit save ordering", () => {
-  it.each(["mode", "daily limit"])("prevents a second settings write while the %s saves", async (first) => {
-    let finish: () => void = () => undefined;
-    const onSave = vi.fn(() => new Promise<void>((resolve) => { finish = resolve; }));
-    renderSection({ onSave });
-    fireEvent.change(screen.getByLabelText("Most applications in one day"), { target: { value: "8" } });
-    if (first === "mode") {
-      fireEvent.click(screen.getByRole("radio", { name: /Ask before sending/ }));
-    } else {
-      fireEvent.click(screen.getByRole("button", { name: "Save daily limit" }));
-    }
-    expect(onSave).toHaveBeenCalledTimes(1);
-    expect(screen.getByLabelText("Most applications in one day")).toHaveProperty("disabled", true);
-    for (const radio of screen.getAllByRole("radio")) expect(radio).toHaveProperty("disabled", true);
-    fireEvent.click(screen.getByRole("radio", { name: /Send for me/ }));
-    if (first === "mode") fireEvent.click(screen.getByRole("button", { name: "Save daily limit" }));
-    expect(onSave).toHaveBeenCalledTimes(1);
-    finish();
-    await waitFor(() => expect(screen.getByLabelText("Most applications in one day")).toHaveProperty("disabled", false));
-  });
+  it.each(["mode", "daily limit"])(
+    "prevents a second settings write while the %s saves",
+    async (first) => {
+      let finish: () => void = () => undefined;
+      const onSave = vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            finish = resolve;
+          }),
+      );
+      renderSection({ onSave });
+      fireEvent.change(screen.getByLabelText("Most preparations in one day"), {
+        target: { value: "8" },
+      });
+      if (first === "mode") {
+        fireEvent.click(
+          screen.getByRole("radio", { name: /Ask before sending/ }),
+        );
+      } else {
+        fireEvent.click(
+          screen.getByRole("button", { name: "Save daily limit" }),
+        );
+      }
+      expect(onSave).toHaveBeenCalledTimes(1);
+      expect(
+        screen.getByLabelText("Most preparations in one day"),
+      ).toHaveProperty("disabled", true);
+      for (const radio of screen.getAllByRole("radio"))
+        expect(radio).toHaveProperty("disabled", true);
+      fireEvent.click(screen.getByRole("radio", { name: /Send for me/ }));
+      if (first === "mode")
+        fireEvent.click(
+          screen.getByRole("button", { name: "Save daily limit" }),
+        );
+      expect(onSave).toHaveBeenCalledTimes(1);
+      finish();
+      await waitFor(() =>
+        expect(
+          screen.getByLabelText("Most preparations in one day"),
+        ).toHaveProperty("disabled", false),
+      );
+    },
+  );
 });
 
 it("keeps pay inside Applying and saves on toggle without another button", async () => {

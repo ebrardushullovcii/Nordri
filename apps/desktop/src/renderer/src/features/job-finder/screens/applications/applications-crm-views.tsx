@@ -1,10 +1,25 @@
-import { formatTrackerMoment as formatCalendarMoment } from "./applications-tracker-time";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@renderer/components/ui/select";
+import { Input } from "@renderer/components/ui/input";
+import {
+  formatTrackerMoment as formatCalendarMoment,
+  trackerTimeInputValue,
+  formatTrackerCell,
+} from "./applications-tracker-time";
+import { resolvePlanTimeZone } from "../../lib/job-finder-timestamp-format";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
+  ApplicationCrmBulkStageMutationInput,
   ApplicationCrmStage,
   ApplicationCrmStageDefinition,
   ApplicationRecord,
 } from "@nordri/contracts";
+import { useToast } from "@renderer/components/ui/toast";
 import { Button } from "@renderer/components/ui/button";
 import { cn } from "@renderer/lib/utils";
 import { Badge } from "@renderer/components/ui/badge";
@@ -23,8 +38,11 @@ import {
 import { usePersistedCollectionView } from "../../hooks/use-persisted-collection-view";
 
 import {
+  sortApplicationCrmRecords,
+  type TrackerSort,
   APPLICATION_CRM_STAGE_NAMES,
   APPLICATION_CRM_STAGE_ORDER,
+  APPLICATION_CRM_MANUAL_STAGES,
   applicationCrmDataForView,
   applicationCrmStageLabelForView,
   applicationCrmStageProvenanceDetailForView,
@@ -47,14 +65,18 @@ const crmSavedViewValues = [
   "all",
   "needs_follow_up",
   "interviews",
+  "scheduled_interviews",
   "offers",
+  "archived",
 ] as const;
 type CrmSavedView = (typeof crmSavedViewValues)[number];
 
 const crmSavedViewLabels: Record<CrmSavedView, string> = {
   all: "All applications",
   needs_follow_up: "Needs follow-up",
-  interviews: "Interviews",
+  interviews: "Interview stage",
+  scheduled_interviews: "Scheduled interviews",
+  archived: "Archived applications",
   offers: "Offers",
 };
 
@@ -65,6 +87,7 @@ const columnValues = [
   "reminder",
   "interview",
   "tags",
+  "applied",
   "updated",
 ] as const;
 type CrmColumn = (typeof columnValues)[number];
@@ -119,20 +142,19 @@ const emptyStateCopy: Record<
   },
 };
 
-function startOfLocalDay(time: number, daysAhead = 0): number {
-  const date = new Date(time);
-  date.setDate(date.getDate() + daysAhead);
-  date.setHours(0, 0, 0, 0);
-  return date.getTime();
-}
-
 /** Overdue first, then today, tomorrow and later, so what is due is on top. */
 function groupCalendarEntries<T extends { startsAt: string }>(
   entries: readonly T[],
   now: number,
+  timeZone?: string,
 ): { key: string; label: string; entries: T[] }[] {
-  const tomorrow = startOfLocalDay(now, 1);
-  const dayAfter = startOfLocalDay(now, 2);
+  const today = trackerTimeInputValue(now, resolvePlanTimeZone(timeZone)).slice(
+    0,
+    10,
+  );
+  const tomorrowDate = new Date(`${today}T12:00:00Z`);
+  tomorrowDate.setUTCDate(tomorrowDate.getUTCDate() + 1);
+  const tomorrow = tomorrowDate.toISOString().slice(0, 10);
   const groups = [
     { key: "overdue", label: "Overdue", entries: [] as T[] },
     { key: "today", label: "Today", entries: [] as T[] },
@@ -141,18 +163,34 @@ function groupCalendarEntries<T extends { startsAt: string }>(
   ];
   for (const entry of entries) {
     const at = Date.parse(entry.startsAt);
+    const day = trackerTimeInputValue(
+      Date.parse(entry.startsAt),
+      resolvePlanTimeZone(timeZone),
+    ).slice(0, 10);
     const group =
       at < now
         ? groups[0]
-        : at < tomorrow
+        : day === today
           ? groups[1]
-          : at < dayAfter
+          : day === tomorrow
             ? groups[2]
             : groups[3];
     group?.entries.push(entry);
   }
   return groups.filter((group) => group.entries.length > 0);
 }
+
+const BOARD_PAGE_SIZE = 10;
+const columnLabels: Record<CrmColumn, string> = {
+  job: "Job",
+  company: "Company",
+  stage: "Stage",
+  reminder: "Next reminder",
+  interview: "Interview",
+  tags: "Tags",
+  applied: "Applied",
+  updated: "Updated",
+};
 
 const NO_CUSTOM_STAGES: readonly ApplicationCrmStageDefinition[] = [];
 
@@ -216,6 +254,8 @@ function RecordButton(props: {
 }
 
 export function ApplicationsCrmViews(props: {
+  requestedRecordId?: string | null;
+  homeTimeZone?: string;
   records: readonly ApplicationRecord[];
   selectedRecordId: string | null;
   view: ApplicationCrmView;
@@ -226,6 +266,9 @@ export function ApplicationsCrmViews(props: {
   onSelectRecord: (recordId: string) => void;
   onViewChange: (view: ApplicationCrmView) => void;
   onVisibleRecordIdsChange?: (recordIds: readonly string[]) => void;
+  onBulkChange?: (
+    command: ApplicationCrmBulkStageMutationInput,
+  ) => Promise<void>;
   onBulkStageChange?: (
     recordIds: readonly string[],
     stage: ApplicationCrmStage,
@@ -236,6 +279,18 @@ export function ApplicationsCrmViews(props: {
   onCompleteReminder?: (recordId: string, reminderId: string) => Promise<void>;
 }) {
   const customStages = props.customStages ?? NO_CUSTOM_STAGES;
+  const { showToast } = useToast();
+  const [bulkStage, setBulkStage] = useState("reviewing");
+  const [bulkTags, setBulkTags] = useState("");
+  const [confirmation, setConfirmation] = useState<{
+    action: "stage" | "tags" | "archive" | "restore";
+    ids: readonly string[];
+    label: string;
+    records: readonly ApplicationRecord[];
+    stage: ApplicationCrmStage;
+    customStageId: string | null;
+    tags: string[];
+  } | null>(null);
   const {
     applySavedView,
     deleteSavedView,
@@ -263,11 +318,22 @@ export function ApplicationsCrmViews(props: {
       try {
         const stored = JSON.parse(
           window.localStorage.getItem(
-            "nordri.job-finder.applications-crm.columns.v1",
-          ) ?? "null",
+            "nordri.job-finder.applications-crm.columns.v2",
+          ) ??
+            window.localStorage.getItem(
+              "nordri.job-finder.applications-crm.columns.v1",
+            ) ??
+            "null",
         ) as unknown;
         return Array.isArray(stored)
-          ? columnValues.filter((column) => stored.includes(column))
+          ? columnValues.filter(
+              (column) =>
+                stored.includes(column) ||
+                (column === "applied" &&
+                  !window.localStorage.getItem(
+                    "nordri.job-finder.applications-crm.columns.v2",
+                  )),
+            )
           : columnValues;
       } catch {
         return columnValues;
@@ -306,7 +372,19 @@ export function ApplicationsCrmViews(props: {
   const pagedRecordIdsRef = useRef<readonly string[]>([]);
   selectedIdsRef.current = selectedIds;
   const [page, setPage] = useState(1);
+  const [sort, setSort] = useState<TrackerSort>("updated");
+  const [boardPages, setBoardPages] = useState<
+    Partial<Record<ApplicationCrmStage, number>>
+  >({});
   const selectionKey = selectedIds.join("\0");
+  useLayoutEffect(() => {
+    if (!props.requestedRecordId) return;
+    setQuery("");
+    const record = props.records.find(
+      (record) => record.id === props.requestedRecordId,
+    );
+    setSavedView(record?.crm?.archivedAt ? "archived" : "all");
+  }, [props.requestedRecordId]);
 
   useEffect(() => {
     setBulkError(null);
@@ -319,7 +397,7 @@ export function ApplicationsCrmViews(props: {
         savedView,
       );
       window.localStorage.setItem(
-        "nordri.job-finder.applications-crm.columns.v1",
+        "nordri.job-finder.applications-crm.columns.v2",
         JSON.stringify(visibleColumns),
       );
     } catch {
@@ -335,44 +413,56 @@ export function ApplicationsCrmViews(props: {
 
   const filteredRecords = useMemo(
     () =>
-      props.records.filter((record) => {
-        const crm = applicationCrmDataForView(record);
-        const savedViewMatch =
-          savedView === "all" ||
-          (savedView === "needs_follow_up" &&
-            (crm.stage === "no_response" ||
-              crm.reminders.some(
-                (reminder) => reminder.status === "pending",
-              ))) ||
-          (savedView === "interviews" &&
-            crm.interviews.some(
-              (interview) => interview.status === "scheduled",
-            )) ||
-          // An offer is an offer whether or not the stage was moved to it:
-          // a saved, still-open offer counts.
-          (savedView === "offers" &&
-            (crm.stage === "offer" ||
-              crm.compensation.offerStatus === "active"));
-        const employerLine = formatApplicationEmployerLine({
-          company: record.company,
-          ...(relatedJobsById.get(record.jobId)?.canonicalUrl
-            ? { canonicalUrl: relatedJobsById.get(record.jobId)?.canonicalUrl }
-            : {}),
-        });
-        return (
-          savedViewMatch &&
-          matchesCollectionSearch(query, [
-            record.title,
-            record.company,
-            employerLine,
-            crm.stage,
-            applicationCrmStageLabelForView(record, customStages),
-            ...crm.tags,
-            ...crm.contacts.flatMap((contact) => [contact.name, contact.email]),
-          ])
-        );
-      }),
-    [customStages, props.records, query, relatedJobsById, savedView],
+      sortApplicationCrmRecords(
+        props.records.filter((record) => {
+          const crm = applicationCrmDataForView(record);
+          if (Boolean(crm.archivedAt) !== (savedView === "archived"))
+            return false;
+          const savedViewMatch =
+            savedView === "all" ||
+            savedView === "archived" ||
+            (savedView === "needs_follow_up" &&
+              (crm.stage === "no_response" ||
+                crm.reminders.some(
+                  (reminder) => reminder.status === "pending",
+                ))) ||
+            (savedView === "interviews" && crm.stage === "interview") ||
+            (savedView === "scheduled_interviews" &&
+              crm.interviews.some(
+                (interview) => interview.status === "scheduled",
+              )) ||
+            // An offer is an offer whether or not the stage was moved to it:
+            // a saved, still-open offer counts.
+            (savedView === "offers" &&
+              (crm.stage === "offer" ||
+                crm.compensation.offerStatus === "active"));
+          const employerLine = formatApplicationEmployerLine({
+            company: record.company,
+            ...(relatedJobsById.get(record.jobId)?.canonicalUrl
+              ? {
+                  canonicalUrl: relatedJobsById.get(record.jobId)?.canonicalUrl,
+                }
+              : {}),
+          });
+          return (
+            savedViewMatch &&
+            matchesCollectionSearch(query, [
+              record.title,
+              record.company,
+              employerLine,
+              crm.stage,
+              applicationCrmStageLabelForView(record, customStages),
+              ...crm.tags,
+              ...crm.contacts.flatMap((contact) => [
+                contact.name,
+                contact.email,
+              ]),
+            ])
+          );
+        }),
+        sort,
+      ),
+    [customStages, props.records, query, relatedJobsById, savedView, sort],
   );
   const visibleRecordIdKey = useMemo(
     () => encodeVisibleRecordIdKey(filteredRecords.map((record) => record.id)),
@@ -413,7 +503,8 @@ export function ApplicationsCrmViews(props: {
 
   useEffect(() => {
     setPage(1);
-  }, [props.view, query, savedView]);
+    setBoardPages({});
+  }, [props.view, query, savedView, sort]);
 
   const calendar = useMemo(
     () => buildApplicationCrmCalendarForView(filteredRecords, relatedJobsById),
@@ -440,9 +531,22 @@ export function ApplicationsCrmViews(props: {
   pagedRecordIdsRef.current = pagedRecords.map((record) => record.id);
 
   const grouped = useMemo(
-    () => groupApplicationRecordsByStage(pagedRecords),
-    [pagedRecords],
+    () => groupApplicationRecordsByStage(filteredRecords),
+    [filteredRecords],
   );
+  if (props.view === "kanban") {
+    pagedRecordIdsRef.current = [...grouped.entries()].flatMap(
+      ([stage, records]) => {
+        const stagePage = Math.min(
+          boardPages[stage] ?? 1,
+          Math.max(1, Math.ceil(records.length / BOARD_PAGE_SIZE)),
+        );
+        return records
+          .slice((stagePage - 1) * BOARD_PAGE_SIZE, stagePage * BOARD_PAGE_SIZE)
+          .map((record) => record.id);
+      },
+    );
+  }
   const groupedTotals = useMemo(
     () => groupApplicationRecordsByStage(filteredRecords),
     [filteredRecords],
@@ -491,45 +595,142 @@ export function ApplicationsCrmViews(props: {
         : -1,
     [calendar, props.selectedRecordId],
   );
+  const lastPagedSelection = useRef<string | null>(null);
   useEffect(() => {
+    if (lastPagedSelection.current === props.selectedRecordId) return;
     const selectedIndex =
       props.view === "calendar" ? selectedCalendarIndex : selectedRecordIndex;
     if (selectedIndex < 0) return;
+    lastPagedSelection.current = props.selectedRecordId;
     setPage(Math.floor(selectedIndex / APPLICATION_CRM_PAGE_SIZE) + 1);
-  }, [props.view, selectedCalendarIndex, selectedRecordIndex]);
+  }, [
+    props.selectedRecordId,
+    props.view,
+    selectedCalendarIndex,
+    selectedRecordIndex,
+  ]);
   const selectedIdSet = useMemo(() => new Set(selectedIds), [selectedIds]);
   const columnVisible = (column: CrmColumn) => visibleColumns.includes(column);
   const rowPadding =
     density === "compact" ? "py-2" : density === "detailed" ? "py-5" : "py-3";
 
-  function submitBulkStageChange(stage: ApplicationCrmStage) {
-    if (!props.onBulkStageChange || selectedIds.length === 0) return;
-    const submittedSelectionKey = selectionKey;
+  function requestBulkChange(action: "stage" | "tags" | "archive" | "restore") {
+    const custom = customStages.find(
+      (entry) => `custom:${entry.id}` === bulkStage,
+    );
+    const label =
+      action === "stage"
+        ? `Move ${selectedIds.length} applications to ${custom?.label ?? APPLICATION_CRM_STAGE_NAMES[bulkStage as ApplicationCrmStage]}?`
+        : action === "tags"
+          ? `Add tags to ${selectedIds.length} applications?`
+          : `${action === "archive" ? "Archive" : "Restore"} ${selectedIds.length} applications?`;
+    setConfirmation({
+      action,
+      ids: [...selectedIds],
+      label,
+      records: props.records.filter((record) =>
+        selectedIds.includes(record.id),
+      ),
+      stage: custom?.baseStage ?? (bulkStage as ApplicationCrmStage),
+      customStageId: custom?.id ?? null,
+      tags: bulkTags
+        .split(",")
+        .map((tag) => tag.trim())
+        .filter(Boolean),
+    });
+  }
+
+  async function runBulkChange() {
+    if (!confirmation) return;
+    const stage = confirmation.stage;
+    const selected = confirmation.records;
+    if (selected.length !== confirmation.ids.length) {
+      setBulkError("Some selected applications changed. Select them again.");
+      return;
+    }
+    const command: ApplicationCrmBulkStageMutationInput = {
+      action: confirmation.action,
+      items: selected.map((record) => ({
+        applicationRecordId: record.id,
+        expectedRevision: applicationCrmDataForView(record).revision,
+      })),
+      stage,
+      customStageId: confirmation.customStageId,
+      note: null,
+      ...(confirmation.action === "tags" ? { tags: confirmation.tags } : {}),
+    };
     setBulkPending(true);
-    const operation = props.onBulkStageChange(selectedIds, stage);
-    void operation
-      .then(
-        () => {
-          if (selectedIdsRef.current.join("\0") !== submittedSelectionKey) {
-            return;
-          }
-          setBulkError(null);
-          setSelectedIds([]);
-        },
-        () => {
-          if (selectedIdsRef.current.join("\0") !== submittedSelectionKey) {
-            return;
-          }
-          setBulkError(
-            "The selected applications could not be updated. Keep them selected and try again.",
-          );
-        },
-      )
-      .finally(() => setBulkPending(false));
+    setBulkError(null);
+    try {
+      if (props.onBulkChange) await props.onBulkChange(command);
+      else if (confirmation.action === "stage" && props.onBulkStageChange)
+        await props.onBulkStageChange(confirmation.ids, stage);
+      else throw new Error("This change is unavailable.");
+      if (confirmation.action === "stage" && props.onBulkChange) {
+        const reverse: ApplicationCrmBulkStageMutationInput = {
+          action: "undo",
+          stage,
+          customStageId: null,
+          note: "Undid bulk stage change",
+          items: selected.map((record) => {
+            const crm = applicationCrmDataForView(record);
+            const changed =
+              crm.stageSource !== "user" ||
+              crm.stage !== stage ||
+              crm.customStageId !== confirmation.customStageId;
+            return {
+              applicationRecordId: record.id,
+              expectedRevision: crm.revision + (changed ? 1 : 0),
+              previousStage: {
+                stage: crm.stage,
+                stageSource: crm.stageSource,
+                customStageId: crm.customStageId,
+                stageChangedAt: crm.stageChangedAt,
+                appliedAt: crm.appliedAt,
+                lastEmployerActivityAt: crm.lastEmployerActivityAt,
+              },
+            };
+          }),
+        };
+        showToast({
+          title: `${selected.length} applications moved`,
+          action: {
+            label: "Undo",
+            onClick: () => {
+              void undoBulkChange(reverse);
+            },
+          },
+        });
+      } else showToast({ title: `${selected.length} applications updated` });
+      setSelectedIds([]);
+      setConfirmation(null);
+    } catch {
+      setBulkError(
+        "The selected applications could not be updated. Keep them selected and try again.",
+      );
+    } finally {
+      setBulkPending(false);
+    }
+  }
+
+  async function undoBulkChange(command: ApplicationCrmBulkStageMutationInput) {
+    if (!props.onBulkChange) return;
+    setBulkPending(true);
+    setBulkError(null);
+    try {
+      await props.onBulkChange(command);
+      showToast({ title: "Previous stages restored" });
+    } catch {
+      setBulkError(
+        "Undo could not be saved because an application changed. Your newer changes were kept.",
+      );
+    } finally {
+      setBulkPending(false);
+    }
   }
 
   return (
-    <section className="surface-panel-shell @container/tracker flex min-h-0 max-h-128 min-w-0 flex-1 flex-col overflow-hidden rounded-(--radius-field) border border-(--surface-panel-border)">
+    <section className="surface-panel-shell @container/tracker flex min-h-0 max-h-[calc(100dvh-15rem)] min-w-0 flex-1 flex-col overflow-hidden rounded-(--radius-field) border border-(--surface-panel-border)">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-(--surface-panel-border) px-5 py-3">
         <div>
           {/* Same panel-title rule as the Preparation list: the base scale
@@ -580,16 +781,29 @@ export function ApplicationsCrmViews(props: {
         viewActions={
           <div className="flex items-center gap-1">
             <CollectionSavedViews
-              onApply={applySavedView}
+              onApply={(id) => {
+                const metadata = applySavedView(id);
+                const show = metadata?.show?.[0];
+                if (crmSavedViewValues.includes(show as CrmSavedView))
+                  setSavedView(show as CrmSavedView);
+                else {
+                  setSavedView("all");
+                  showToast({
+                    title: "Saved search restored",
+                    description:
+                      "This older view did not save Show. Choose Show and save the view again to include it.",
+                  });
+                }
+              }}
               onDelete={deleteSavedView}
-              onSave={saveCurrentView}
+              onSave={(name) => saveCurrentView(name, { show: [savedView] })}
               views={savedViews}
             />
             {props.view === "table" ? (
               <CollectionColumnPicker
                 columns={columnValues.map((column) => ({
                   id: column,
-                  label: column === "reminder" ? "Next reminder" : column,
+                  label: columnLabels[column],
                   required: column === "job",
                   visible: visibleColumns.includes(column),
                 }))}
@@ -606,23 +820,55 @@ export function ApplicationsCrmViews(props: {
         }
         visibleCount={filteredRecords.length}
       />
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-(--surface-panel-border) px-5 py-2">
-        <label className="flex items-center gap-2 text-sm font-medium text-foreground">
+      <div
+        className="flex flex-wrap items-center gap-3 border-b border-(--surface-panel-border) px-5 py-2"
+        data-tracker-filter-row
+      >
+        <label className="flex items-center gap-2 text-sm">
           Show
-          <select
-            className="h-9 rounded-(--radius-field) border border-(--field-border) bg-(--field) px-2 text-sm outline-none focus-visible:border-(--field-focus-border) focus-visible:bg-(--field-strong) focus-visible:shadow-[var(--field-focus-shadow)]"
-            onChange={(event) =>
-              setSavedView(event.target.value as CrmSavedView)
-            }
+          <Select
             value={savedView}
+            onValueChange={(value) => setSavedView(value as CrmSavedView)}
           >
-            {crmSavedViewValues.map((view) => (
-              <option key={view} value={view}>
-                {crmSavedViewLabels[view]}
-              </option>
-            ))}
-          </select>
+            <SelectTrigger aria-label="Show" size="toolbar" className="w-40">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {crmSavedViewValues.map((view) => (
+                <SelectItem key={view} value={view}>
+                  {crmSavedViewLabels[view]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </label>
+        {props.view !== "calendar" ? (
+          <label className="flex items-center gap-2 text-sm">
+            Sort
+            <Select
+              value={sort}
+              onValueChange={(value) => setSort(value as TrackerSort)}
+            >
+              <SelectTrigger
+                aria-label="Sort applications"
+                size="toolbar"
+                className="w-48"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="updated">Recently updated</SelectItem>
+                <SelectItem value="company">Company</SelectItem>
+                <SelectItem value="applied_oldest">
+                  Applied date: oldest first
+                </SelectItem>
+                <SelectItem value="applied_newest">
+                  Applied date: newest first
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </label>
+        ) : null}
       </div>
 
       {props.records.length === 0 ? (
@@ -707,8 +953,13 @@ export function ApplicationsCrmViews(props: {
                     className="label-mono-xs px-2 @[54rem]/tracker:px-4 py-3 capitalize"
                     key={column}
                     scope="col"
+                    title={
+                      ["updated", "applied", "reminder"].includes(column)
+                        ? resolvePlanTimeZone(props.homeTimeZone)
+                        : undefined
+                    }
                   >
-                    {column === "reminder" ? "Next reminder" : column}
+                    {columnLabels[column]}
                   </th>
                 ))}
               </tr>
@@ -815,26 +1066,35 @@ export function ApplicationsCrmViews(props: {
                     {columnVisible("reminder") ? (
                       <td
                         className={cn(
-                          "px-2 @[54rem]/tracker:px-4 text-muted-foreground",
+                          "whitespace-nowrap px-2 @[54rem]/tracker:px-4 text-muted-foreground",
                           rowPadding,
                         )}
                       >
                         {reminder
-                          ? new Date(reminder.dueAt).toLocaleDateString()
+                          ? formatTrackerCell(
+                              reminder.dueAt,
+                              props.homeTimeZone,
+                            )
                           : "—"}
                       </td>
                     ) : null}
                     {columnVisible("interview") ? (
                       <td
+                        title={
+                          interview
+                            ? formatCalendarMoment(
+                                interview.startsAt,
+                                interview.timeZone,
+                              )
+                            : undefined
+                        }
                         className={cn(
-                          "px-2 @[54rem]/tracker:px-4 text-muted-foreground",
+                          "whitespace-nowrap px-2 @[54rem]/tracker:px-4 text-muted-foreground",
                           rowPadding,
                         )}
                       >
-                        {/* The zone is named so a time set up across
-                            borders reads unambiguously (N-014). */}
                         {interview
-                          ? formatCalendarMoment(
+                          ? formatTrackerCell(
                               interview.startsAt,
                               interview.timeZone,
                             )
@@ -844,21 +1104,36 @@ export function ApplicationsCrmViews(props: {
                     {columnVisible("tags") ? (
                       <td
                         className={cn(
-                          "px-2 @[54rem]/tracker:px-4 text-muted-foreground",
+                          "whitespace-nowrap px-2 @[54rem]/tracker:px-4 text-muted-foreground",
                           rowPadding,
                         )}
                       >
                         {crm.tags.join(", ") || "—"}
                       </td>
                     ) : null}
-                    {columnVisible("updated") ? (
+                    {columnVisible("applied") ? (
                       <td
                         className={cn(
-                          "px-2 @[54rem]/tracker:px-4 text-muted-foreground",
+                          "whitespace-nowrap px-2 text-muted-foreground",
                           rowPadding,
                         )}
                       >
-                        {new Date(record.lastUpdatedAt).toLocaleDateString()}
+                        {crm.appliedAt
+                          ? formatTrackerCell(crm.appliedAt, props.homeTimeZone)
+                          : "—"}
+                      </td>
+                    ) : null}
+                    {columnVisible("updated") ? (
+                      <td
+                        className={cn(
+                          "whitespace-nowrap px-2 @[54rem]/tracker:px-4 text-muted-foreground",
+                          rowPadding,
+                        )}
+                      >
+                        {formatTrackerCell(
+                          record.lastUpdatedAt,
+                          props.homeTimeZone,
+                        )}
                       </td>
                     ) : null}
                   </tr>
@@ -869,8 +1144,16 @@ export function ApplicationsCrmViews(props: {
         </div>
       ) : null}
 
+      {bulkError && selectedIds.length === 0 ? (
+        <p role="alert" className="p-3 text-destructive">
+          {bulkError}
+        </p>
+      ) : null}
       {props.view === "table" && selectedIds.length > 0 ? (
-        <div className="sticky bottom-0 z-20 flex flex-wrap items-center justify-between gap-3 border-t border-primary/30 bg-(--surface-panel-solid) px-5 py-3 shadow-[0_-12px_28px_rgba(0,0,0,0.35)]">
+        <div
+          data-bulk-selection-bar
+          className="sticky bottom-0 z-20 shrink-0 flex flex-wrap items-center justify-between gap-3 border-t border-primary/30 bg-(--surface-panel-solid) px-5 py-3 shadow-[0_-12px_28px_rgba(0,0,0,0.35)]"
+        >
           {bulkError ? (
             <p
               className="basis-full rounded-(--radius-field) border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive"
@@ -879,39 +1162,139 @@ export function ApplicationsCrmViews(props: {
               {bulkError}
             </p>
           ) : null}
+          {confirmation ? (
+            <div
+              role="alertdialog"
+              aria-label="Confirm bulk change"
+              className="grid w-full gap-2"
+            >
+              <strong>{confirmation.label}</strong>
+              <p>
+                Every selected application will change, including those on other
+                pages.
+              </p>
+              {confirmation.action === "archive" ? (
+                <p>
+                  Outcomes and dates stay saved. You can restore these
+                  applications from Archived applications.
+                </p>
+              ) : null}
+              <div className="flex gap-2">
+                <Button
+                  disabled={bulkPending}
+                  onClick={() => void runBulkChange()}
+                >
+                  Confirm change
+                </Button>
+                <Button
+                  disabled={bulkPending}
+                  onClick={() => setConfirmation(null)}
+                  variant="ghost"
+                >
+                  Cancel change
+                </Button>
+              </div>
+            </div>
+          ) : null}
           <strong className="text-sm text-foreground">
             {selectedIds.length} matching application
             {selectedIds.length === 1 ? "" : "s"} selected
           </strong>
-          <div className="flex flex-wrap gap-2">
-            <Button
-              disabled={bulkPending || !props.onBulkStageChange}
-              onClick={() => submitBulkStageChange("reviewing")}
-              size="sm"
-              type="button"
-              variant="secondary"
-            >
-              Move to Reviewing
-            </Button>
-            <Button
-              disabled={bulkPending || !props.onBulkStageChange}
-              onClick={() => submitBulkStageChange("withdrawn")}
-              size="sm"
-              type="button"
-              variant="ghost"
-            >
-              Mark withdrawn
-            </Button>
-            <Button
-              disabled={bulkPending}
-              onClick={() => setSelectedIds([])}
-              size="sm"
-              type="button"
-              variant="ghost"
-            >
-              Clear selection
-            </Button>
-          </div>
+          {!confirmation ? (
+            <>
+              <div className="flex flex-wrap gap-2">
+                <label className="flex items-center gap-2 text-sm">
+                  Stage
+                  <Select
+                    value={bulkStage}
+                    disabled={bulkPending}
+                    onValueChange={setBulkStage}
+                  >
+                    <SelectTrigger
+                      aria-label="Bulk stage"
+                      size="toolbar"
+                      className="w-40"
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {APPLICATION_CRM_MANUAL_STAGES.map((stage) => (
+                        <SelectItem key={stage} value={stage}>
+                          {APPLICATION_CRM_STAGE_NAMES[stage]}
+                        </SelectItem>
+                      ))}
+                      {customStages.map((stage) => (
+                        <SelectItem key={stage.id} value={`custom:${stage.id}`}>
+                          {stage.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </label>
+                <Button
+                  disabled={
+                    bulkPending ||
+                    (!props.onBulkStageChange && !props.onBulkChange)
+                  }
+                  onClick={() => requestBulkChange("stage")}
+                  size="sm"
+                  type="button"
+                  variant="secondary"
+                >
+                  Move to{" "}
+                  {customStages.find(
+                    (entry) => `custom:${entry.id}` === bulkStage,
+                  )?.label ??
+                    APPLICATION_CRM_STAGE_NAMES[
+                      bulkStage as ApplicationCrmStage
+                    ]}
+                </Button>
+                {props.onBulkChange ? (
+                  <>
+                    <Input
+                      size="toolbar"
+                      className="w-56"
+                      aria-label="Bulk tags"
+                      placeholder="Tags, separated by commas"
+                      value={bulkTags}
+                      onChange={(event) => setBulkTags(event.target.value)}
+                    />
+                    <Button
+                      disabled={bulkPending || !bulkTags.trim()}
+                      onClick={() => requestBulkChange("tags")}
+                      size="sm"
+                      variant="ghost"
+                    >
+                      Add tags
+                    </Button>
+                    <Button
+                      disabled={bulkPending}
+                      onClick={() =>
+                        requestBulkChange(
+                          savedView === "archived" ? "restore" : "archive",
+                        )
+                      }
+                      size="sm"
+                      variant="ghost"
+                    >
+                      {savedView === "archived"
+                        ? "Restore selected"
+                        : "Archive selected"}
+                    </Button>
+                  </>
+                ) : null}
+                <Button
+                  disabled={bulkPending}
+                  onClick={() => setSelectedIds([])}
+                  size="sm"
+                  type="button"
+                  variant="ghost"
+                >
+                  Clear selection
+                </Button>
+              </div>
+            </>
+          ) : null}
         </div>
       ) : null}
 
@@ -938,11 +1321,23 @@ export function ApplicationsCrmViews(props: {
               </div>
             ) : null}
             {populatedKanbanStages.map((stage) => {
-              const stageRecords = grouped.get(stage) ?? [];
+              const allStageRecords = grouped.get(stage) ?? [];
+              const stagePage = Math.min(
+                boardPages[stage] ?? 1,
+                Math.max(
+                  1,
+                  Math.ceil(allStageRecords.length / BOARD_PAGE_SIZE),
+                ),
+              );
+              const stageRecords = allStageRecords.slice(
+                (stagePage - 1) * BOARD_PAGE_SIZE,
+                stagePage * BOARD_PAGE_SIZE,
+              );
               return (
                 <section
                   className="grid min-w-0 gap-3 rounded-(--radius-field) border border-(--surface-panel-border) bg-(--surface-panel-tint) p-3"
                   key={stage}
+                  aria-label={`${APPLICATION_CRM_STAGE_NAMES[stage]} applications`}
                 >
                   <div className="flex items-center justify-between gap-2">
                     <h3 className="font-semibold text-foreground">
@@ -973,6 +1368,20 @@ export function ApplicationsCrmViews(props: {
                       </p>
                     )}
                   </div>
+                  {allStageRecords.length > BOARD_PAGE_SIZE ? (
+                    <CollectionPagination
+                      itemLabel={`${APPLICATION_CRM_STAGE_NAMES[stage]} applications`}
+                      page={stagePage}
+                      pageSize={BOARD_PAGE_SIZE}
+                      totalCount={allStageRecords.length}
+                      onPageChange={(value) =>
+                        setBoardPages((current) => ({
+                          ...current,
+                          [stage]: value,
+                        }))
+                      }
+                    />
+                  ) : null}
                 </section>
               );
             })}
@@ -1015,7 +1424,11 @@ export function ApplicationsCrmViews(props: {
           ) : null}
           {calendar.length > 0 ? (
             <div className="grid gap-5">
-              {groupCalendarEntries(pagedCalendar, Date.now()).map((group) => (
+              {groupCalendarEntries(
+                pagedCalendar,
+                Date.now(),
+                props.homeTimeZone,
+              ).map((group) => (
                 <section
                   aria-label={group.label}
                   className="grid gap-2"
@@ -1044,7 +1457,7 @@ export function ApplicationsCrmViews(props: {
                           >
                             {formatCalendarMoment(
                               entry.startsAt,
-                              entry.timeZone,
+                              entry.timeZone ?? props.homeTimeZone,
                             )}
                           </time>
                           <div className="min-w-0">
@@ -1104,7 +1517,7 @@ export function ApplicationsCrmViews(props: {
           )}
         </div>
       ) : null}
-      {pageItemCount > 0 ? (
+      {pageItemCount > 0 && props.view !== "kanban" ? (
         <CollectionPagination
           itemLabel={
             props.view === "calendar" ? "scheduled items" : "applications"

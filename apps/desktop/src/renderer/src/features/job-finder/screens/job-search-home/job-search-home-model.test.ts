@@ -1379,7 +1379,7 @@ describe("buildJobSearchHomeModel · shortlist and applications", () => {
     });
     expect(build(withDailyPreparationRemaining(ws, 0)).next).toMatchObject({
       id: "daily_limit",
-      title: "Today's application limit is reached",
+      title: "Today's preparation limit is reached",
       primary: {
         label: "Open Applying settings",
         action: {
@@ -2110,6 +2110,82 @@ describe("buildJobSearchHomeModel · tracker dates", () => {
     } as JobFinderWorkspaceSnapshot;
   }
 
+  it.each(["search", "limit"])(
+    "names a due reminder while %s holds other work",
+    (mode) => {
+      const state = withTrackedApplication(withJobs(workspace(), 1));
+      if (mode === "search") {
+        state.activeDiscoveryRun = {
+          ...state.recentDiscoveryRuns[0],
+          state: "running",
+        } as JobFinderWorkspaceSnapshot["activeDiscoveryRun"];
+      }
+      if (mode === "limit") {
+        state.dashboard.globalDailyApplicationPreparationCapacity = {
+          localDate: "2026-08-15",
+          limit: 20,
+          used: 20,
+          remaining: 0,
+          resetsAt: "2026-08-16T00:00:00Z",
+          legacyUncertain: 0,
+        };
+      }
+      const model = build(state);
+      expect(model.next.id).toBe("tracker_due");
+      expect(model.next.title).toContain("Send a thank-you note");
+      expect(model.next.primary.action.kind).toBe("navigate");
+      if (model.next.primary.action.kind === "navigate") {
+        expect(model.next.primary.action.route).toContain("application_0");
+      }
+    },
+  );
+
+  it.each(["paused", "safeguards", "needs_you"])(
+    "keeps %s before a due reminder and names the reminder second",
+    (mode) => {
+      const state = withTrackedApplication(withJobs(workspace(), 1));
+      if (mode === "paused")
+        state.activityControl = {
+          paused: true,
+          reason: null,
+          pausedAt: "2026-08-15T10:00:00Z",
+        };
+      if (mode === "safeguards")
+        state.intelligence.safeguards.abnormalFailurePauses = [
+          AbnormalFailurePauseSchema.parse({
+            id: "pause",
+            windowStartedAt: "2026-08-01T10:00:00Z",
+            failuresInWindow: 4,
+            sampleSize: 5,
+            failureRatePercent: 80,
+            failureRateThresholdPercent: 50,
+            minimumSample: 5,
+            paused: true,
+            explanation: "Review failures",
+            recoveryGuidance: "Review this hold",
+          }),
+        ];
+      if (mode === "needs_you")
+        state.userActionRequests = [
+          {
+            id: "request",
+            kind: "login",
+            state: "pending",
+            scope: { type: "discovery_source", targetId: "source-1" },
+            summary: "Sign in",
+          },
+        ] as unknown as JobFinderWorkspaceSnapshot["userActionRequests"];
+      const model = build(state);
+      expect(model.next.id).toBe(mode);
+      expect(model.next.detail).toContain("Send a thank-you note");
+      expect(
+        model.next.secondary.some(
+          (button) => button.label === "Open due follow-up",
+        ),
+      ).toBe(true);
+    },
+  );
+
   it("counts an overdue follow-up and a near interview on the Applications tile", () => {
     const model = build(withTrackedApplication(withJobs(workspace(), 1)));
     const applications = model.stages?.find(
@@ -2134,9 +2210,7 @@ describe("buildJobSearchHomeModel · tracker dates", () => {
       ),
     );
     expect(model.next.id).toBe("tracker_due");
-    expect(model.next.title).toBe(
-      "1 follow-up is overdue · 1 interview in the next two days",
-    );
+    expect(model.next.title).toBe("Send a thank-you note · Job 0 at Employer");
   });
 });
 

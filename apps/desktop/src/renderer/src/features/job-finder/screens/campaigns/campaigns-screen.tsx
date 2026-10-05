@@ -15,6 +15,7 @@ import {
   type SaveCampaignRuleInput,
   type SaveJobSearchCampaignInput,
 } from "@nordri/contracts";
+import { trackerTimeToIso } from "../applications/applications-tracker-time";
 import { ChevronRight } from "lucide-react";
 import { Button } from "@renderer/components/ui/button";
 import { Input } from "@renderer/components/ui/input";
@@ -35,6 +36,7 @@ import {
   formatPlanTimestamp,
   inferProfileTimeZone,
   isSupportedTimeZone,
+  resolvePlanTimeZone,
 } from "../../lib/job-finder-timestamp-format";
 import { jobSourceLabel } from "../../lib/job-source-display-name";
 import {
@@ -169,7 +171,7 @@ function describeNextRun(schedule: JobSearchCampaignSchedule): string {
     }
     return "Next run not scheduled yet";
   }
-  return formatPlanCardDateTime(nextRunAt) ?? "Next run not scheduled yet";
+  return `${formatPlanTimestamp(nextRunAt, schedule.timeZone)} (${resolvePlanTimeZone(schedule.timeZone)})`;
 }
 
 /**
@@ -369,15 +371,6 @@ function describeLastRun(
     : `Ran · ${witnessed} (outcome not recorded)`;
 }
 
-/** Converts a `datetime-local` input value to an ISO-8601 UTC instant. */
-function toIsoDateTime(localValue: string): string | null {
-  const trimmed = localValue.trim();
-  if (!trimmed) return null;
-  const parsed = new Date(trimmed);
-  if (Number.isNaN(parsed.getTime())) return null;
-  return parsed.toISOString();
-}
-
 function campaignToInput(
   campaign: JobSearchCampaign,
 ): SaveJobSearchCampaignInput {
@@ -529,8 +522,14 @@ function CampaignEditor(props: {
     // window.confirm; staying is the safe default.
     setDiscardConfirmationOpen(true);
   };
-  const pauseWindowStart = toIsoDateTime(pauseWindowStartsAt);
-  const pauseWindowEnd = toIsoDateTime(pauseWindowEndsAt);
+  const pauseWindowStart = trackerTimeToIso(
+    pauseWindowStartsAt,
+    resolvePlanTimeZone(draft.schedule.timeZone),
+  );
+  const pauseWindowEnd = trackerTimeToIso(
+    pauseWindowEndsAt,
+    resolvePlanTimeZone(draft.schedule.timeZone),
+  );
   const pauseWindowValidationMessage =
     pauseWindowStartsAt.trim() && pauseWindowStart === null
       ? "Enter a valid start date and time."
@@ -1240,8 +1239,15 @@ function CampaignEditor(props: {
                         {window.enabled ? "Active" : "Disabled"}
                       </label>
                       <div className="text-sm text-foreground-soft">
-                        {formatDateTime(window.startsAt) ?? window.startsAt} →{" "}
-                        {formatDateTime(window.endsAt) ?? window.endsAt}
+                        {formatDateTime(
+                          window.startsAt,
+                          draft.schedule.timeZone,
+                        ) ?? window.startsAt}{" "}
+                        →{" "}
+                        {formatDateTime(
+                          window.endsAt,
+                          draft.schedule.timeZone,
+                        ) ?? window.endsAt}
                         {window.reason ? ` · ${window.reason}` : ""}
                       </div>
                       <Button
@@ -1258,7 +1264,9 @@ function CampaignEditor(props: {
               )}
               <div className="grid gap-3 sm:grid-cols-4">
                 <label className="grid gap-1 text-sm">
-                  <span>Starts</span>
+                  <span>
+                    Starts ({resolvePlanTimeZone(draft.schedule.timeZone)})
+                  </span>
                   <Input
                     aria-label="Do not run from"
                     aria-describedby={
@@ -1279,7 +1287,9 @@ function CampaignEditor(props: {
                   />
                 </label>
                 <label className="grid gap-1 text-sm">
-                  <span>Ends</span>
+                  <span>
+                    Ends ({resolvePlanTimeZone(draft.schedule.timeZone)})
+                  </span>
                   <Input
                     aria-label="Do not run until"
                     aria-describedby={
@@ -1912,7 +1922,8 @@ export function CampaignsScreen(props: {
       ) : (
         <div className="grid gap-3">
           <p className="text-xs text-foreground-muted">
-            Times shown in {deviceTimeZone()}.
+            Past activity is shown in {deviceTimeZone()}. Schedule times and
+            pauses use each plan’s saved time zone.
           </p>
           <div
             className={

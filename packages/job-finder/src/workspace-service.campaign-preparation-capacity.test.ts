@@ -361,7 +361,7 @@ describe("workspace campaign preparation capacity", () => {
 
     await expect(
       harness.workspaceService.startAutoApplyRun("job_generating"),
-    ).rejects.toThrow("at most 20 begun employer applications per local day");
+    ).rejects.toThrow("up to 20 preparations per day");
   });
 
   test("enforces a configured daily application limit below the default", async () => {
@@ -376,7 +376,7 @@ describe("workspace campaign preparation capacity", () => {
 
     await expect(
       harness.workspaceService.startAutoApplyRun("job_generating"),
-    ).rejects.toThrow("at most 1 begun employer application per local day");
+    ).rejects.toThrow("up to 1 preparation per day");
   });
 
   test.each([
@@ -400,7 +400,7 @@ describe("workspace campaign preparation capacity", () => {
           ["job_ready"],
           applicationAutomationMode,
         ),
-      ).rejects.toThrow("at most 1 begun employer application per local day");
+      ).rejects.toThrow("up to 1 preparation per day");
       expect(await harness.repository.listApplyRuns()).toHaveLength(1);
     },
   );
@@ -497,7 +497,7 @@ describe("workspace campaign preparation capacity", () => {
 
     await expect(
       harness.workspaceService.startAutoApplyRun("job_ready"),
-    ).rejects.toThrow(/global daily preparation safeguard/);
+    ).rejects.toThrow(/Retries and failed attempts count.*Settings/);
   });
 
   test("uses the local calendar day and frees capacity from yesterday", async () => {
@@ -574,7 +574,7 @@ describe("workspace campaign preparation capacity", () => {
 
     await expect(
       harness.workspaceService.approveApplyRun("run_staged_recheck"),
-    ).rejects.toThrow(/global daily preparation safeguard/);
+    ).rejects.toThrow(/Retries and failed attempts count.*Settings/);
     const approvals = await harness.repository.listApplySubmitApprovals();
     expect(approvals[0]?.status).toBe("pending");
   });
@@ -642,7 +642,7 @@ describe("workspace campaign preparation capacity", () => {
           "consent_at_capacity",
           action,
         ),
-      ).rejects.toThrow(/global daily preparation safeguard/);
+      ).rejects.toThrow(/Retries and failed attempts count.*Settings/);
 
       expect(executeApplicationFlow).not.toHaveBeenCalled();
       expect(
@@ -837,7 +837,7 @@ describe("workspace campaign preparation capacity", () => {
       stagedApproval,
     ]);
     await expect(stagedApproval).rejects.toThrow(
-      "at most 20 begun employer applications per local day",
+      "up to 20 preparations per day",
     );
     browserGate.resolve();
     const outcomes = await concurrentOutcomes;

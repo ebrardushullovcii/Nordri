@@ -1,3 +1,5 @@
+import { useState } from "react";
+import { APPLICATION_BOUNDARY_SENTENCE } from "./safeguards-application-boundary";
 // @vitest-environment jsdom
 
 import {
@@ -12,11 +14,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   JobFinderWorkspaceSnapshot,
   SafeguardMutationInput,
+  SetJobFinderActivityControlInput,
 } from "@nordri/contracts";
 import { JobFinderIntelligenceSafeguardsSchema } from "@nordri/contracts";
 import { SafeguardsScreen } from "./safeguards-screen";
 
 const now = "2026-08-15T10:00:00.000Z";
+afterEach(cleanup);
 
 function emptySafeguards() {
   return JobFinderIntelligenceSafeguardsSchema.parse({});
@@ -117,6 +121,8 @@ function workspaceWith(
 }
 
 function renderScreen(props: {
+  onSetActivityControl?: (input: { paused: boolean }) => Promise<boolean>;
+  onResetBrowser?: () => Promise<boolean>;
   onMutateSafeguards?: (input: SafeguardMutationInput) => Promise<boolean>;
   isPending?: (controlId: string) => boolean;
   actionMessage?: string | null;
@@ -125,6 +131,12 @@ function renderScreen(props: {
   return render(
     <MemoryRouter>
       <SafeguardsScreen
+        {...(props.onSetActivityControl
+          ? { onSetActivityControl: props.onSetActivityControl }
+          : {})}
+        {...(props.onResetBrowser
+          ? { onResetBrowser: props.onResetBrowser }
+          : {})}
         actionMessage={props.actionMessage ?? null}
         isPending={props.isPending ?? (() => false)}
         onMutateSafeguards={
@@ -588,11 +600,7 @@ describe("SafeguardsScreen", () => {
     renderScreen({});
 
     // The sentence a job seeker can hold the product to, verbatim.
-    expect(
-      screen.getByText(
-        "Job Finder fills applications and sends them only with your permission. It never asks for your password or solves CAPTCHA or MFA.",
-      ),
-    ).toBeTruthy();
+    expect(screen.getByText(APPLICATION_BOUNDARY_SENTENCE)).toBeTruthy();
 
     const revokeTrigger = await screen.findByRole("button", {
       name: "Revoke permission",
@@ -618,4 +626,73 @@ describe("SafeguardsScreen", () => {
 
     delete (window as unknown as Record<string, unknown>).nordri;
   });
+});
+
+it("uses workspace actions to refresh immediately after Resume and browser reset", async () => {
+  const next = workspaceWith();
+  next.activityControl = { paused: false, reason: null, pausedAt: null };
+  const initial = workspaceWith();
+  initial.activityControl = { paused: true, reason: null, pausedAt: now };
+  const setActivityControl = vi
+    .fn<
+      (
+        command: SetJobFinderActivityControlInput,
+      ) => Promise<JobFinderWorkspaceSnapshot>
+    >()
+    .mockResolvedValue(next);
+  const resetBrowser = vi
+    .fn<() => Promise<JobFinderWorkspaceSnapshot>>()
+    .mockResolvedValue(initial);
+  function Harness() {
+    const [workspace, setWorkspace] = useState(initial);
+    return (
+      <MemoryRouter>
+        <SafeguardsScreen
+          actionMessage={null}
+          isPending={() => false}
+          onMutateSafeguards={vi.fn()}
+          workspace={workspace}
+          onSetActivityControl={async (command) => {
+            setWorkspace(await setActivityControl(command));
+            return true;
+          }}
+          onResetBrowser={async () => {
+            setWorkspace(await resetBrowser());
+            return true;
+          }}
+        />
+      </MemoryRouter>
+    );
+  }
+  render(<Harness />);
+  expect(screen.getByText(/Everything is paused/)).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Resume everything" }));
+  await waitFor(() =>
+    expect(screen.queryByText(/Everything is paused/)).toBeNull(),
+  );
+  expect(setActivityControl).toHaveBeenCalledWith({ paused: false });
+  fireEvent.click(screen.getByRole("button", { name: "Reset browser" }));
+  expect(resetBrowser).not.toHaveBeenCalled();
+  expect(screen.getByRole("alertdialog").textContent).toContain("sign-ins");
+  fireEvent.click(screen.getByRole("button", { name: "Clear browser" }));
+  await waitFor(() =>
+    expect(screen.getByText(/Everything is paused/)).toBeTruthy(),
+  );
+  expect(resetBrowser).toHaveBeenCalledOnce();
+});
+
+it("puts events before permissions, with compact browser recovery inside permissions", () => {
+  const { container } = renderScreen({
+    workspace: workspaceWith(signalSafeguards()),
+  });
+  const events = container.querySelector("[data-safeguard-events]")!;
+  const permissions = screen.getByTestId("safeguards-application-boundary");
+  expect(
+    events.compareDocumentPosition(permissions) &
+      Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+  const reset = screen.getByRole("button", { name: "Reset browser" });
+  expect(permissions.contains(reset)).toBe(true);
+  expect(reset.parentElement?.className).toContain("justify-items-start");
+  expect(screen.getAllByText(APPLICATION_BOUNDARY_SENTENCE)).toHaveLength(1);
 });

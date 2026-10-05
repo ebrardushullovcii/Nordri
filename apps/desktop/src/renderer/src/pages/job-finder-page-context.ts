@@ -276,7 +276,8 @@ export interface JobFinderPageContext {
     resumeTailoringMode?: TailoringMode | null,
   ) => void;
   onRejectProfileCopilotPatchGroup: (patchGroupId: string) => void;
-  onResetWorkspace: () => void;
+  onResetWorkspace: () => void | Promise<boolean | void>;
+  onResetBrowser: () => Promise<boolean>;
   onResumeProfileSetup: (step?: ProfileSetupStep) => void;
   onRunAgentDiscovery?: (searchRequest?: JobFinderSearchRequest) => void;
   /**

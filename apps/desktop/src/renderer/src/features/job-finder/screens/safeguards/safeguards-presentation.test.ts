@@ -592,3 +592,39 @@ describe("describeSampleReviewExplanation", () => {
     );
   });
 });
+
+it("keeps an old same-company conflict limited to its two applications and uses plain text", () => {
+  const workspace = workspaceWith();
+  workspace.applicationRecords = Array.from({ length: 10 }, (_, index) => ({
+    id: `application_${index}`,
+    jobId: `job_${index}`,
+    title: `Role ${index}`,
+    company: "Synthetic Employer",
+  })) as JobFinderWorkspaceSnapshot["applicationRecords"];
+  workspace.discoveryJobs = workspace.applicationRecords.map((record) => ({
+    id: record.jobId,
+    title: record.title,
+    company: record.company,
+    location: "Remote",
+  })) as JobFinderWorkspaceSnapshot["discoveryJobs"];
+  const safeguards = JobFinderIntelligenceSafeguardsSchema.parse({
+    simultaneousApplicationConflicts: [
+      {
+        id: "legacy",
+        applicationRecordId: "application_0",
+        conflictingApplicationRecordId: "application_1",
+        explanation:
+          "application_0 conservatively normalized company application_1",
+        recoveryGuidance: "Review internal IDs",
+      },
+    ],
+  });
+  const row = buildSafeguardsPresentationModel({
+    safeguards,
+    workspace,
+  }).rows.find((row) => row.kind === "conflicts")!;
+  expect(row.lineage.jobs).toHaveLength(2);
+  expect(row.lineage.jobs.join(" ")).not.toContain("Role 9");
+  expect(row.explanation).not.toContain("application_");
+  expect(row.explanation).not.toContain("normalized");
+});

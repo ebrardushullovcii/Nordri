@@ -24,6 +24,10 @@ const {
   mockResolveJobFinderWorkspaceRelativePath,
   mockGetJobFinderWorkspaceService,
   mockResetWorkspace,
+  mockCloseBrowser,
+  mockClearBrowserStorage,
+  mockClearBrowserCache,
+  mockSetActivityControl,
 } = vi.hoisted(() => ({
   mockMkdir: vi.fn(),
   mockOpen: vi.fn(),
@@ -45,6 +49,25 @@ const {
   mockResolveJobFinderWorkspaceRelativePath: vi.fn(),
   mockGetJobFinderWorkspaceService: vi.fn(),
   mockResetWorkspace: vi.fn(),
+  mockCloseBrowser: vi.fn(),
+  mockClearBrowserStorage: vi.fn(),
+  mockClearBrowserCache: vi.fn(),
+  mockSetActivityControl: vi.fn(),
+}));
+
+vi.mock("../assistant/assistant-service", () => ({
+  shutdownAssistantHost: vi.fn(),
+  resetAssistantStore: vi.fn(),
+}));
+
+vi.mock("../browser/embedded-browser", () => ({
+  getEmbeddedBrowser: () => ({
+    close: mockCloseBrowser,
+    getSession: () => ({
+      clearStorageData: mockClearBrowserStorage,
+      clearCache: mockClearBrowserCache,
+    }),
+  }),
 }));
 
 // Resolved so the fake root is native on both platforms. On Windows the code
@@ -79,6 +102,7 @@ const allResetSourceRelativePaths = [
   candidateAssetsRelativePath,
   applicationDocumentsRelativePath,
   browserProfileRelativePath,
+  "exports",
 ];
 const intentMarkerPath = workspacePath("job-finder-reset-intent.json");
 const maxMarkerBytes = 64 * 1024;
@@ -295,6 +319,7 @@ beforeEach(() => {
   mockReaddir.mockRejectedValue(enoentError());
   mockGetJobFinderWorkspaceService.mockResolvedValue({
     resetWorkspace: mockResetWorkspace,
+    setActivityControl: mockSetActivityControl,
   });
   mockResetWorkspace.mockImplementation(
     async (
@@ -312,6 +337,49 @@ afterEach(() => {
 });
 
 describe("resetJobFinderWorkspace", () => {
+  test("stops work and clears live pages and storage before resetting records", async () => {
+    const order: string[] = [];
+    mockSetActivityControl.mockImplementationOnce(() => {
+      order.push("pause");
+      return Promise.resolve();
+    });
+    mockCloseBrowser.mockImplementationOnce(() => {
+      order.push("close");
+      return Promise.resolve();
+    });
+    mockClearBrowserStorage.mockImplementationOnce(() => {
+      order.push("storage");
+      return Promise.resolve();
+    });
+    mockClearBrowserCache.mockImplementationOnce(() => {
+      order.push("cache");
+      return Promise.resolve();
+    });
+    mockResetWorkspace.mockImplementationOnce(
+      async (
+        _seed: unknown,
+        options: { beforeStateReset: () => Promise<void> },
+      ) => {
+        order.push("records");
+        await options.beforeStateReset();
+        return { snapshotMarker: "test-snapshot" };
+      },
+    );
+    await resetJobFinderWorkspace();
+    expect(order).toEqual(["pause", "close", "storage", "cache", "records"]);
+    expect(mockCloseBrowser).toHaveBeenCalledWith(true);
+  });
+
+  test("does not delete records or report success when browser clearing fails", async () => {
+    mockClearBrowserStorage.mockRejectedValueOnce(
+      new Error("Storage could not be cleared"),
+    );
+    await expect(resetJobFinderWorkspace()).rejects.toThrow(
+      "Storage could not be cleared",
+    );
+    expect(mockResetWorkspace).not.toHaveBeenCalled();
+    expect(fileSystemEventLog).toEqual([]);
+  });
   test("creates no marker, trash, or file moves when the workspace reset is blocked", async () => {
     mockResetWorkspace.mockRejectedValueOnce(
       new Error(
@@ -1284,5 +1352,25 @@ describe("sweepStaleJobFinderResetArtifacts", () => {
         force: true,
       },
     );
+  });
+
+  test("times out a browser clear that never finishes before deleting anything", async () => {
+    vi.useFakeTimers();
+    try {
+      mockClearBrowserStorage.mockImplementationOnce(
+        () => new Promise(() => {}),
+      );
+      const { resetJobFinderWorkspace } = await import("./reset-workspace");
+      const result = resetJobFinderWorkspace();
+      const rejection = expect(result).rejects.toThrow(
+        "Your workspace was not deleted",
+      );
+      await vi.advanceTimersByTimeAsync(15_000);
+      await rejection;
+      expect(mockResetWorkspace).not.toHaveBeenCalled();
+      expect(mockRename).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

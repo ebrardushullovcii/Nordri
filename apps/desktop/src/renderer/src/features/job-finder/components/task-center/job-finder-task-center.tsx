@@ -299,7 +299,11 @@ export function JobFinderTaskCenter(props: JobFinderTaskCenterProps) {
     >
       <summary
         aria-label={
-          taskCountsLabel ? `Activity: ${taskCountsLabel}` : "Activity"
+          props.workspace.activityControl?.paused
+            ? "Activity: paused"
+            : taskCountsLabel
+              ? `Activity: ${taskCountsLabel}`
+              : "Activity"
         }
         className="inline-flex h-10 min-h-10 min-w-10 cursor-pointer list-none items-center justify-center gap-2 rounded-(--radius-button) border border-(--control-border) bg-(--surface-panel) px-2.5 py-2 text-(length:--text-small) font-medium text-muted-foreground outline-none transition-colors hover:border-primary/50 hover:bg-secondary hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/40 xl:px-4 xl:text-(length:--text-small) [&::-webkit-details-marker]:hidden"
         onClick={(event) => {
@@ -309,7 +313,13 @@ export function JobFinderTaskCenter(props: JobFinderTaskCenterProps) {
           setIsPanelOpen((open) => !open);
         }}
         ref={summaryRef}
-        title={taskCountsLabel ? `Activity: ${taskCountsLabel}` : "Activity"}
+        title={
+          props.workspace.activityControl?.paused
+            ? "Activity: paused"
+            : taskCountsLabel
+              ? `Activity: ${taskCountsLabel}`
+              : "Activity"
+        }
       >
         <ListChecks aria-hidden="true" className="size-4 shrink-0" />
         {/* One name at every width. "Tasks" read as a to-do list for the
@@ -323,7 +333,9 @@ export function JobFinderTaskCenter(props: JobFinderTaskCenterProps) {
             screenshot of every round — and the one count that rendered zero
             was the one that means "nothing is happening". The accessible name
             on the summary still states the active count at any value. */}
-        {taskCountsLabel ? (
+        {props.workspace.activityControl?.paused ? (
+          <span className="text-xs text-foreground">Paused</span>
+        ) : taskCountsLabel ? (
           <span className="inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-(--input) px-1.5 text-(length:--text-tiny) text-foreground tabular-nums">
             {taskCountsLabel}
           </span>

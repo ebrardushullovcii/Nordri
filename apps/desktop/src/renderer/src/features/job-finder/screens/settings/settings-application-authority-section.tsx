@@ -1,3 +1,4 @@
+import { APPLICATION_BOUNDARY_SENTENCE } from "../safeguards/safeguards-application-boundary";
 import { CreateApplicationAuthorityEnvelopeInputSchema } from "@nordri/contracts";
 import type {
   ApplicationAttestationKind,
@@ -129,7 +130,7 @@ function mutationMessage(
 ): string {
   if (result.status === "applied") {
     return action === "revoked"
-      ? "What Job Finder may do has been taken back. It can no longer open or fill an application for you, and it has never been able to submit one."
+      ? "What Job Finder may do has been taken back. It can no longer open or fill this application for you."
       : result.envelope.intermediateMutationsAuthorized
         ? "Saved. Job Finder may fill this application and let the site save answers as it goes. It still cannot send the application."
         : "Saved. Job Finder may fill this application. It cannot let the site save answers as it goes, and it cannot send the application.";
@@ -601,10 +602,7 @@ export function SettingsApplicationAuthoritySection({
             </h3>
           </div>
           <p className="text-(length:--text-description) leading-5 text-foreground-soft">
-            Decide how much of an application Job Finder may fill in for you.
-            Today it can open an application and fill supported fields for your
-            review. It never sends an application, creates an account, enters a
-            password, or answers a security check.
+            {APPLICATION_BOUNDARY_SENTENCE}
           </p>
         </div>
         <Button

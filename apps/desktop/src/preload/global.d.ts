@@ -477,6 +477,7 @@ declare global {
         snoozeGroupedDecision: (
           input: SnoozeGroupedDecisionInput,
         ) => Promise<JobFinderWorkspaceSnapshot>;
+        exportPersonalWorkspace: () => Promise<ApplicationCrmFileExportResult>;
         exportDiagnostics: () => Promise<JobFinderDiagnosticExportResult>;
         getPerformanceSnapshot: () => Promise<JobFinderPerformanceSnapshot>;
         exportApplicationPacket: (
@@ -500,6 +501,7 @@ declare global {
         cancelAgentDiscovery: (
           input: JobFinderDiscoveryCancellationInput,
         ) => Promise<JobFinderWorkspaceSnapshot>;
+        resetBrowser: () => Promise<JobFinderWorkspaceSnapshot>;
         resetWorkspace: () => Promise<JobFinderWorkspaceSnapshot>;
         getStartupResetRecovery: () => Promise<JobFinderStartupResetRecoveryFact>;
         getStartupDatabaseRecovery: () => Promise<JobFinderStartupDatabaseRecoveryFact>;

@@ -11,6 +11,7 @@ import type {
  * minutes; the press only has to wait until it is running or refused.
  */
 export interface ApplyBatchService {
+  getWorkspaceSnapshot?(): Promise<JobFinderWorkspaceSnapshot>;
   startAutoApplyQueueRun(
     jobIds: string[],
     applicationAutomationMode?: ApplicationAutomationMode,
@@ -129,6 +130,37 @@ export async function startApplyBatch(input: {
   const jobIds = await listJobsNotInProgress(input.runs, input.jobIds);
   if (jobIds.length === 0) {
     return { startedJobIds: [] };
+  }
+
+  if (input.service.getWorkspaceSnapshot) {
+    const workspace = await input.service.getWorkspaceSnapshot();
+    const mode =
+      input.applicationAutomationMode ??
+      workspace.settings.applicationAutomationMode ??
+      "prepare_only";
+    if (mode === "autonomous_submit") {
+      const jobs = jobIds
+        .map((id) => workspace.discoveryJobs.find((job) => job.id === id))
+        .filter((job) => job !== undefined);
+      const byCompany = new Map<string, typeof jobs>();
+      for (const job of jobs) {
+        const key = job.company
+          .normalize("NFKC")
+          .trim()
+          .toLocaleLowerCase("en-US");
+        if (!key) continue;
+        const group = byCompany.get(key) ?? [];
+        group.push(job);
+        byCompany.set(key, group);
+      }
+      const overlaps = [...byCompany.values()].filter(
+        (group) => group.length > 1,
+      );
+      if (overlaps.length)
+        throw new Error(
+          `These selected jobs share an employer: ${overlaps.map((group) => `${group[0]!.company} (${group.map((job) => `${job.title} (${job.location || (job.canonicalUrl ? new URL(job.canonicalUrl).hostname : "location not listed")})`).join(", ")})`).join("; ")}. Choose one job per employer before sending, or use Prepare for me to review the forms first. Nothing was started or sent.`,
+        );
+    }
   }
 
   const knownRunIds = new Set(

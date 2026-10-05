@@ -1,4 +1,12 @@
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@renderer/components/ui/select";
+import { matchesApplicationsFilter } from "./applications-screen-helpers";
+import {
   useCallback,
   useEffect,
   useId,
@@ -15,12 +23,18 @@ import {
   type ApplyJobResult,
 } from "@nordri/contracts";
 import {
+  applicationCrmDataForView,
+  applicationCrmStageLabelForView,
+  APPLICATION_CRM_STAGE_ORDER,
+  APPLICATION_CRM_STAGE_NAMES,
   nextTrackerStepLabel,
   trackedHiringStageBadge,
 } from "./applications-crm-model";
 import type { ApplyMode } from "../../lib/apply-mode-contracts-stub";
 import { resolveApplyStatePresentation } from "./apply-state";
 import type { ApplyRunContext } from "./applications-recovery-state";
+import { Input } from "@renderer/components/ui/input";
+import { matchesCollectionSearch } from "../../components/collection-search-toolbar";
 import { Badge } from "@renderer/components/ui/badge";
 import { Button } from "@renderer/components/ui/button";
 import {
@@ -105,10 +119,9 @@ interface ApplicationsRecordsPanelProps {
 
 export function ApplicationsRecordsPanel({
   activeFilter,
-  applicationRecords,
+  applicationRecords: sourceRecords,
   customStages,
   discoveryJobs = [],
-  filterCounts,
   hasAnyApplications,
   searchPlanName,
   hasOtherPlanApplications,
@@ -119,6 +132,57 @@ export function ApplicationsRecordsPanel({
   onSelectRecord,
   selectedRecord,
 }: ApplicationsRecordsPanelProps) {
+  const [query, setQuery] = useState("");
+  const [pipelineStage, setPipelineStage] = useState("all");
+  function stateFor(record: ApplicationRecord) {
+    const result = latestApplyResultByRecordId?.get(record.id) ?? null;
+    return result
+      ? resolveApplyStatePresentation({
+          mode:
+            record.automationMode === "autonomous_submit"
+              ? "apply_for_me"
+              : "fill_only",
+          result,
+          run: readApplyRunContext?.(result) ?? null,
+          recordCrm: record.crm,
+          recordLatestBlocker: record.latestBlocker,
+          recordLastActionLabel: record.lastActionLabel,
+          pendingQuestionCount: Math.max(
+            0,
+            record.questionSummary.total - record.questionSummary.answered,
+          ),
+          recordFailure:
+            record.lastAttemptState === "failed"
+              ? {
+                  lastActionLabel: record.lastActionLabel,
+                  lastUpdatedAt: record.lastUpdatedAt,
+                }
+              : null,
+        })
+      : null;
+  }
+  const searchedRecords = sourceRecords.filter(
+    (record) =>
+      !record.crm?.archivedAt &&
+      (pipelineStage === "all" ||
+        applicationCrmDataForView(record).stage === pipelineStage) &&
+      matchesCollectionSearch(query, [
+        record.title,
+        record.company,
+        applicationCrmStageLabelForView(record, customStages),
+      ]),
+  );
+  const filterCounts = Object.fromEntries(
+    APPLICATION_FILTERS.map((filter) => [
+      filter,
+      searchedRecords.filter((record) =>
+        matchesApplicationsFilter(record, filter, stateFor(record)?.kind),
+      ).length,
+    ]),
+  ) as Record<ApplicationsViewFilter, number>;
+  const applicationRecords = searchedRecords.filter((record) =>
+    matchesApplicationsFilter(record, activeFilter, stateFor(record)?.kind),
+  );
   const recordCount = applicationRecords.length;
   const filterGroupId = useId();
   const [page, setPage] = useState(1);
@@ -142,14 +206,17 @@ export function ApplicationsRecordsPanel({
   );
   useEffect(() => {
     setPage(1);
-  }, [activeFilter]);
+  }, [activeFilter, query, pipelineStage]);
   useEffect(() => {
     setPage((currentPage) => Math.min(currentPage, pageCount));
   }, [pageCount]);
+  const lastPagedSelection = useRef<string | null>(null);
   useEffect(() => {
+    if (lastPagedSelection.current === selectedRecordId) return;
     if (selectedRecordIndex < 0) return;
+    lastPagedSelection.current = selectedRecordId;
     setPage(Math.floor(selectedRecordIndex / COLLECTION_PAGE_SIZE) + 1);
-  }, [selectedRecordIndex]);
+  }, [selectedRecordId, selectedRecordIndex]);
   useEffect(() => {
     if (!pendingFocusId) return;
     // Scoped to this panel's list region so the deferred frame can never
@@ -229,6 +296,31 @@ export function ApplicationsRecordsPanel({
             <span className="sr-only" id={filterGroupId}>
               Application filters
             </span>
+            <Input
+              size="toolbar"
+              className="w-40 flex-1"
+              aria-label="Search applications"
+              placeholder="Search company or role"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+            />
+            <Select value={pipelineStage} onValueChange={setPipelineStage}>
+              <SelectTrigger
+                aria-label="Hiring stage"
+                size="toolbar"
+                className="w-36"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All stages</SelectItem>
+                {APPLICATION_CRM_STAGE_ORDER.map((stage) => (
+                  <SelectItem key={stage} value={stage}>
+                    {APPLICATION_CRM_STAGE_NAMES[stage]}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             {visibleFilters.map((filterOption) => (
               <Button
                 aria-label={formatApplicationFilterAccessibleLabel(
@@ -389,6 +481,10 @@ export function ApplicationsRecordsPanel({
               isApplicationWithdrawnByPerson(record.crm)
                 ? nextTrackerStepLabel(record)
                 : preparationNextStep;
+            const rowStageLabel =
+              applyState?.kind === "applied"
+                ? stage.label
+                : applicationCrmStageLabelForView(record, customStages);
             const recordStateDescriptionId = `applications-record-${record.id}-state-description`;
             const relatedJob = relatedJobsById.get(record.jobId);
             const employerLine = formatApplicationEmployerLine({
@@ -441,13 +537,7 @@ export function ApplicationsRecordsPanel({
                               : stage.tone
                           }
                         >
-                          {liveLine && !applyState?.plannedStanding
-                            ? liveLine.startsWith("Waiting")
-                              ? "Waiting its turn"
-                              : liveLine.startsWith("Inserting")
-                                ? "Inserting your answer"
-                                : "Filling in"
-                            : stage.label}
+                          {rowStageLabel}
                         </StatusBadge>
                       </div>
                     </div>
@@ -478,11 +568,11 @@ export function ApplicationsRecordsPanel({
                         "Needs recovery" alone does not say why. */}
                     {attemptLabel &&
                     !(
-                      stage.label === "Needs you" &&
+                      rowStageLabel === "Needs you" &&
                       attemptLabel === "Needs follow-up"
                     )
-                      ? `Status ${stage.label}. Preparation attempt ${attemptLabel}.`
-                      : `Status ${stage.label}.`}
+                      ? `Status ${rowStageLabel}. Preparation attempt ${attemptLabel}.`
+                      : `Status ${rowStageLabel}.`}
                   </span>
                 </SelectableRow>
               </li>

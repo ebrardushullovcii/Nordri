@@ -126,6 +126,7 @@ export interface JobFinderShellActions {
   ) => Promise<JobFinderWorkspaceSnapshot>;
   refreshWorkspace: () => Promise<JobFinderWorkspaceSnapshot>;
   resetWorkspace: () => Promise<JobFinderWorkspaceSnapshot>;
+  resetBrowser: () => Promise<JobFinderWorkspaceSnapshot>;
   runAgentDiscovery: (
     onActivity?: (event: DiscoveryActivityEvent) => void,
     targetId?: string,
