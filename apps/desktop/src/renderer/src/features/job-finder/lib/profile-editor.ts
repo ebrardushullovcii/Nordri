@@ -1,3 +1,4 @@
+import { normalizePublicLinkUrl } from "@nordri/contracts";
 import {
   candidateAnswerKindValues,
   CandidateProfileSchema,
@@ -491,6 +492,14 @@ export function buildProfilePayload(
     }
   }
 
+  for (const link of values.links) {
+    const message = getProfileLinkValidationMessage(
+      link.url,
+      link.label.trim() || "Public link",
+    );
+    if (message) return { validationMessage: message };
+  }
+
   const incompleteRowMessage =
     findIncompleteRowMessage(
       values.projects,
@@ -822,7 +831,7 @@ export function buildProfilePayload(
     links: values.links.map((entry) => ({
       id: entry.id,
       label: entry.label.trim() || null,
-      url: entry.url.trim() || null,
+      url: normalizePublicLinkUrl(entry.url) || null,
       kind: entry.kind ? entry.kind : null,
       isDraft: !entry.label.trim() || !entry.url.trim(),
     })),

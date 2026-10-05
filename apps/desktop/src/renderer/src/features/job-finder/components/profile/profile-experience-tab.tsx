@@ -19,6 +19,7 @@ import {
   profileSelectTriggerClassName,
 } from "./profile-form-primitives";
 import type { ProfileFieldArrayKeyName } from "./profile-field-array-types";
+import { ProfileOptionalSection } from "./profile-optional-section";
 import { ProfileListEditor } from "./profile-list-editor";
 import { ProfileRecordCard } from "./profile-record-card";
 import { ProfileSectionHeader } from "./profile-section-header";
@@ -35,6 +36,8 @@ const EMPLOYMENT_TYPE_VALUES = [
   "Contract",
   "Internship",
   "Temporary",
+  "Freelance",
+  "Self-employed",
 ] as const;
 
 function buildEmploymentTypeOptions(
@@ -410,54 +413,69 @@ export function ProfileExperienceTab({
                       {...register(`records.experiences.${index}.endDate`)}
                     />
                   </Field>
-                  <Field>
-                    <FieldLabel
-                      htmlFor={buildExperienceFieldId(
-                        entry.id,
-                        "people-management-scope",
-                      )}
+                  <div className="md:col-span-2">
+                    <ProfileOptionalSection
+                      title="Team, ownership and industries"
+                      description="Add scope when it helps explain this role."
                     >
-                      Team scope (optional)
-                    </FieldLabel>
-                    <ProfileInput
-                      id={buildExperienceFieldId(
-                        entry.id,
-                        "people-management-scope",
-                      )}
-                      {...register(
-                        `records.experiences.${index}.peopleManagementScope`,
-                      )}
-                    />
-                  </Field>
-                  <Field>
-                    <FieldLabel
-                      htmlFor={buildExperienceFieldId(
-                        entry.id,
-                        "ownership-scope",
-                      )}
-                    >
-                      Ownership or budget scope (optional)
-                    </FieldLabel>
-                    <ProfileInput
-                      id={buildExperienceFieldId(entry.id, "ownership-scope")}
-                      {...register(
-                        `records.experiences.${index}.ownershipScope`,
-                      )}
-                    />
-                  </Field>
-                  <Field className="md:col-span-2">
-                    <FieldLabel
-                      htmlFor={buildExperienceFieldId(entry.id, "domain-tags")}
-                    >
-                      Industries or domains
-                    </FieldLabel>
-                    <ProfileAutoGrowTextarea
-                      id={buildExperienceFieldId(entry.id, "domain-tags")}
-                      placeholder="Example: Healthcare, Payments"
-                      rows={2}
-                      {...register(`records.experiences.${index}.domainTags`)}
-                    />
-                  </Field>
+                      <Field>
+                        <FieldLabel
+                          htmlFor={buildExperienceFieldId(
+                            entry.id,
+                            "people-management-scope",
+                          )}
+                        >
+                          Team scope (optional)
+                        </FieldLabel>
+                        <ProfileInput
+                          id={buildExperienceFieldId(
+                            entry.id,
+                            "people-management-scope",
+                          )}
+                          {...register(
+                            `records.experiences.${index}.peopleManagementScope`,
+                          )}
+                        />
+                      </Field>
+                      <Field>
+                        <FieldLabel
+                          htmlFor={buildExperienceFieldId(
+                            entry.id,
+                            "ownership-scope",
+                          )}
+                        >
+                          Ownership or budget scope (optional)
+                        </FieldLabel>
+                        <ProfileInput
+                          id={buildExperienceFieldId(
+                            entry.id,
+                            "ownership-scope",
+                          )}
+                          {...register(
+                            `records.experiences.${index}.ownershipScope`,
+                          )}
+                        />
+                      </Field>
+                      <Field className="md:col-span-2">
+                        <FieldLabel
+                          htmlFor={buildExperienceFieldId(
+                            entry.id,
+                            "domain-tags",
+                          )}
+                        >
+                          Industries or domains
+                        </FieldLabel>
+                        <ProfileAutoGrowTextarea
+                          id={buildExperienceFieldId(entry.id, "domain-tags")}
+                          placeholder="Example: Healthcare, Payments"
+                          rows={2}
+                          {...register(
+                            `records.experiences.${index}.domainTags`,
+                          )}
+                        />
+                      </Field>
+                    </ProfileOptionalSection>
+                  </div>
                   <Field className="md:col-span-2">
                     <FieldLabel
                       htmlFor={buildExperienceFieldId(entry.id, "summary")}

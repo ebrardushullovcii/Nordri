@@ -175,6 +175,7 @@ export interface JobFinderWorkspaceService {
     searchPreferences: JobSearchPreferences,
   ): Promise<JobFinderWorkspaceSnapshot>;
   runResumeImport(input: {
+    signal?: AbortSignal;
     baseResume: ResumeSourceDocument;
     documentBundle: ResumeDocumentBundle;
     importWarnings?: readonly string[];
@@ -825,6 +826,7 @@ export interface CreateJobFinderWorkspaceServiceOptions {
   ) => void | Promise<void>;
   /** Publishes the terminal snapshot of a queue resumed after restart. */
   onDetachedApplyRunFinished?: () => void;
+  onResumeEvidenceFinished?: () => void;
   /**
    * Called when the person deliberately starts work (Search now, Apply, Run
    * now). The desktop host lifts a browser pause the person caused there

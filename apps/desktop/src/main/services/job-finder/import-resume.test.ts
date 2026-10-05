@@ -8,6 +8,7 @@ import {
   JobFinderWorkspaceSnapshotSchema,
   JobSearchCampaignSchema,
   ResumeImportVisionArtifactSchema,
+  ResumeImportRunSchema,
   getDefaultCampaignConfiguration,
   type ResumeDocumentBundle,
   type ResumeImportProgressEvent,
@@ -597,6 +598,12 @@ describe("importing a stopped import's file again", () => {
 
     try {
       await retryInterruptedResumeImport(stoppedRun);
+      // R3-041: an AI failure can retry the same saved file without the picker.
+      await retryInterruptedResumeImport({
+        ...stoppedRun,
+        failureKind: "ai_unavailable",
+        errorMessage: "The AI connection failed.",
+      });
 
       expect(mockCopyFile).toHaveBeenCalledWith(
         path.join(documentsDirectory, "1758621600000_resume.txt"),
@@ -615,14 +622,23 @@ describe("importing a stopped import's file again", () => {
         failureKind: "interrupted",
       });
       expect(workspaceService.runResumeImport).toHaveBeenCalledOnce();
-      // A failure that was not an interruption offers nothing to redo.
+      // A service failure also retries the saved file.
       await expect(
         retryInterruptedResumeImport({
           ...stoppedRun,
           errorMessage: "The resume could not be read.",
-          failureKind: null,
+          failureKind: "ai_unavailable",
         }),
-      ).rejects.toThrow("There is no stopped import to start again.");
+      ).resolves.toBeTruthy();
+
+      await expect(
+        retryInterruptedResumeImport({
+          ...stoppedRun,
+          failureKind: "invalid_document",
+          errorMessage:
+            "No resume details were found in this file. Choose another file.",
+        }),
+      ).rejects.toThrow("There is no failed import to try again.");
 
       // Nothing to redo, or nothing left on disk: a plain sentence.
       await expect(
@@ -631,7 +647,7 @@ describe("importing a stopped import's file again", () => {
           status: "applied",
           errorMessage: null,
         }),
-      ).rejects.toThrow("There is no stopped import to start again.");
+      ).rejects.toThrow("There is no failed import to try again.");
       await expect(
         retryInterruptedResumeImport({
           ...stoppedRun,
@@ -642,4 +658,53 @@ describe("importing a stopped import's file again", () => {
       await rm(directory, { recursive: true, force: true });
     }
   });
+});
+
+test("R3-041 returns the saved failed import so retry is visible immediately", async () => {
+  const { importResumeFromSourcePath } = await import("./import-resume");
+  const { directory, filePath } = await createTempResumeFile();
+  const bundle = createTestBundle("Fatima Noor\nfatima@example.test");
+  let failedSnapshot: ReturnType<typeof createSnapshot>;
+  mockGetJobFinderDocumentsDirectory.mockReturnValue(
+    path.join(directory, "documents"),
+  );
+  mockExtractResumeDocument.mockResolvedValue({
+    textContent: bundle.fullText,
+    bundle,
+    warnings: [],
+  });
+  mockMkdir.mockResolvedValue(undefined);
+  mockCopyFile.mockResolvedValue(undefined);
+  mockGetJobFinderWorkspaceService.mockResolvedValue({
+    runResumeImport: vi.fn(
+      ({ baseResume }: { baseResume: ResumeSourceDocument }) => {
+        failedSnapshot = createSnapshot({
+          ...baseResume,
+          extractionStatus: "failed",
+        });
+        failedSnapshot.latestResumeImportRun = ResumeImportRunSchema.parse({
+          id: "outage",
+          sourceResumeId: baseResume.id,
+          sourceResumeFileName: baseResume.fileName,
+          trigger: "import",
+          status: "failed",
+          startedAt: baseResume.uploadedAt,
+          errorMessage: "The AI connection failed. Your file is saved.",
+        });
+        return Promise.reject(new Error("The AI connection failed."));
+      },
+    ),
+    getWorkspaceSnapshot: () => Promise.resolve(failedSnapshot),
+  });
+  try {
+    const result = await importResumeFromSourcePath(filePath, {
+      useVision: false,
+    });
+    expect(result.profile.baseResume.extractionStatus).toBe("failed");
+    expect(result.latestResumeImportRun?.errorMessage).toContain(
+      "AI connection failed",
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });

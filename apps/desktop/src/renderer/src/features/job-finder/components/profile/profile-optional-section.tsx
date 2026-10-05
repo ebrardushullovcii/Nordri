@@ -20,7 +20,7 @@ export function ProfileOptionalSection({
 
   return (
     <details
-      className="surface-card-tint group rounded-(--radius-panel) border border-(--surface-panel-border) p-4 [&_summary::-webkit-details-marker]:hidden"
+      className="surface-card-tint group/optional rounded-(--radius-panel) border border-(--surface-panel-border) p-4 [&_summary::-webkit-details-marker]:hidden"
       onToggle={(event) =>
         setOpen((event.currentTarget as HTMLDetailsElement).open)
       }
@@ -47,7 +47,7 @@ export function ProfileOptionalSection({
             does; "Optional" stays as plain descriptive text beside the title.
             The boundary is `--control-border` because this is interactive
             chrome, not an inert well (F10). */}
-        <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-(--control-border) bg-(--surface-well) px-2.5 py-1 text-(length:--text-tiny) font-medium uppercase tracking-(--tracking-mono) text-foreground-soft transition-transform group-open:[&_svg]:rotate-180">
+        <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-(--control-border) bg-(--surface-well) px-2.5 py-1 text-(length:--text-tiny) font-medium uppercase tracking-(--tracking-mono) text-foreground-soft transition-transform group-open/optional:[&_svg]:rotate-180">
           <ChevronDown className="size-3 transition-transform duration-200" />
           {open ? "Hide" : "Show"}
         </span>

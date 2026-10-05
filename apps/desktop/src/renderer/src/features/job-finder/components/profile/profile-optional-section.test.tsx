@@ -97,3 +97,23 @@ describe("ProfileOptionalSection", () => {
     expect(details.open).toBe(true);
   });
 });
+
+it("scopes the collapsed chevron to its own details inside an open card", () => {
+  const { container } = render(
+    <details open className="group">
+      <ProfileOptionalSection
+        title="Team, ownership and industries"
+        description="Optional role scope"
+      >
+        Fields
+      </ProfileOptionalSection>
+    </details>,
+  );
+  const inner = screen
+    .getByText("Team, ownership and industries")
+    .closest("details");
+  expect(inner?.className).toContain("group/optional");
+  expect(inner?.hasAttribute("open")).toBe(false);
+  expect(screen.getByText("Show").className).toContain("group-open/optional:");
+  expect(container.querySelector("details")?.open).toBe(true);
+});

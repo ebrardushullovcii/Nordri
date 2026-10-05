@@ -1122,7 +1122,9 @@ describe("tool-using AI capabilities", () => {
       );
       if (stage === "experience") {
         expect(instructions).toContain("achievements (array of strings)");
-        expect(instructions).toContain("every bullet under that role");
+        expect(instructions).toContain("each achievement under that role");
+        expect(instructions).toContain("read_resume_document");
+        expect(instructions).toContain("read_existing_profile");
       }
       if (stage === "background") {
         expect(instructions).toContain("complete skills array");

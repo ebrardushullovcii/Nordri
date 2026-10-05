@@ -2067,7 +2067,10 @@ export function createPrimaryPageActions(
             case "needs_text":
               return `${fileName} was saved, but no text could be read from it, so no details were extracted. Try another file, or add your details manually in Profile.`;
             case "failed":
-              return `${fileName} was saved, but extracting its details failed. Try importing it again, or add your details manually in Profile.`;
+              return (
+                result.latestResumeImportRun?.errorMessage ??
+                `${fileName} was saved, but extracting its details failed. Try importing it again, or add your details manually in Profile.`
+              );
             case "not_started":
               return `${fileName} was saved, but its details have not been extracted yet. Open Profile and refresh from the saved resume.`;
           }
@@ -2663,6 +2666,12 @@ export function createPrimaryPageActions(
             .saveProfileSetupState({
               ...snapshot.profileSetupState,
               reviewItems,
+              reviewedSteps: [
+                ...new Set([
+                  ...(snapshot.profileSetupState.reviewedSteps ?? []),
+                  snapshot.profileSetupState.currentStep,
+                ]),
+              ],
               status: nextStatus,
               currentStep:
                 nextStatus === "completed"

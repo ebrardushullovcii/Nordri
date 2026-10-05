@@ -440,7 +440,7 @@ declare global {
           /** `retryInterrupted` imports again the file a stopped import saved. */
           options?: { retryInterrupted?: boolean },
         ) => Promise<JobFinderWorkspaceSnapshot>;
-        cancelImportResume: () => void;
+        cancelImportResume: (stopProcessing?: boolean) => void;
         runDiscovery: () => Promise<JobFinderWorkspaceSnapshot>;
         runAgentDiscovery: (
           onActivity?: (event: DiscoveryActivityEvent) => void,

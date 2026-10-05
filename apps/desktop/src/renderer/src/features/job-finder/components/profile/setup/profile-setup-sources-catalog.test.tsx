@@ -489,7 +489,11 @@ describe("ProfileSetupTargetingStep guided source catalog", () => {
   it("adds a manual URL fallback that is ready to search straight away", async () => {
     render(<SetupCatalogHarness targets={[]} />);
 
-    expect(screen.getByText(/Add at least one site to search/)).toBeTruthy();
+    expect(
+      screen.getByText(
+        /Add an employer’s careers page or a job board you already use/,
+      ),
+    ).toBeTruthy();
     // With nothing saved, adding a site is the step: the form is already open,
     // so there is no button to open it, and Cancel closes it.
     expect(

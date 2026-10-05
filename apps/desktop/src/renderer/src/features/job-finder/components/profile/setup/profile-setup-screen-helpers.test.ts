@@ -1,3 +1,4 @@
+import { canConfirmReviewItem } from "./profile-setup-screen-helpers";
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook } from "@testing-library/react";
@@ -1295,4 +1296,66 @@ it("counts missing identity and eligibility once even with missing-field review 
       sourceCandidateId: "candidate_name",
     }),
   ).toBe(false);
+});
+
+it("keeps a model match for a saved partial role pending with Confirm", () => {
+  const currentProfile = createFreshStartCandidateProfile();
+  const savedRole = {
+    id: "copperline",
+    companyName: "Copperline Studio",
+    companyUrl: null,
+    title: null,
+    employmentType: null,
+    location: null,
+    workMode: [],
+    startDate: null,
+    endDate: null,
+    isCurrent: false,
+    isDraft: false,
+    summary: null,
+    achievements: ["Captions", "Canva"],
+    skills: [],
+    domainTags: [],
+    peopleManagementScope: null,
+    ownershipScope: null,
+  };
+  currentProfile.experiences = [savedRole];
+  const draftProfile = {
+    ...currentProfile,
+    experiences: [
+      {
+        ...savedRole,
+        title: "Digital Marketing Intern",
+        achievements: [...savedRole.achievements, "Campaign reporting"],
+      },
+    ],
+  };
+  const item = {
+    id: "matched",
+    step: "background" as const,
+    target: {
+      domain: "experience" as const,
+      key: "record",
+      recordId: "copperline",
+    },
+    label: "Digital Marketing Intern",
+    reason: "Complete the saved role",
+    severity: "recommended" as const,
+    status: "pending" as const,
+    proposedValue: "Digital Marketing Intern",
+    sourceCandidateId: "candidate_copperline",
+    sourceRunId: "run",
+    sourceSnippet: null,
+    resolvedAt: null,
+    createdAt: "2026-10-04T00:00:00.000Z",
+  };
+  const [display] = buildDraftAwareSetupReviewItems({
+    currentProfile,
+    draftProfile,
+    currentSearchPreferences: createTestSearchPreferences(),
+    draftSearchPreferences: createTestSearchPreferences(),
+    reviewItems: [item],
+  });
+  expect(display?.status).toBe("pending");
+  expect(display && canConfirmReviewItem(display)).toBe(true);
 });

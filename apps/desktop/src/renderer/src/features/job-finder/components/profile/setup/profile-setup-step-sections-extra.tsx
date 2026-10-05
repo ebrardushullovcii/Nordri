@@ -16,6 +16,7 @@ import {
   ProfileInput,
   ProfileTextarea,
 } from "../profile-form-primitives";
+import { ProfileOptionalSection } from "../profile-optional-section";
 import { ProfileRecordCard } from "../profile-record-card";
 import { PreferredApplicationLinksField } from "../preferred-application-links-field";
 import type { RenderFooter } from "./profile-setup-step-sections";
@@ -57,7 +58,7 @@ function ProfileSetupStorySection(props: {
           <ProfileAutoGrowTextarea
             className={PROFILE_SETUP_REVEAL_SCROLL_MARGIN_CLASS_NAME}
             id={professionalStoryId}
-            placeholder="Example: I have spent ten years on healthcare platforms, mostly making slow, fragile systems dependable."
+            placeholder="Example: I solve problems, keep work organized, and help my team."
             rows={3}
             {...props.profileForm.register("narrative.professionalStory")}
           />
@@ -70,7 +71,7 @@ function ProfileSetupStorySection(props: {
             <ProfileAutoGrowTextarea
               className={PROFILE_SETUP_REVEAL_SCROLL_MARGIN_CLASS_NAME}
               id={nextChapterId}
-              placeholder="Example: A senior backend role on a small team, with real ownership."
+              placeholder="Example: A role where I can use my experience and keep learning."
               rows={3}
               {...props.profileForm.register("narrative.nextChapterSummary")}
             />
@@ -82,7 +83,7 @@ function ProfileSetupStorySection(props: {
             <ProfileAutoGrowTextarea
               className={PROFILE_SETUP_REVEAL_SCROLL_MARGIN_CLASS_NAME}
               id={differentiatorsId}
-              placeholder="Example: I am the person teams call when a system is slow and nobody knows why."
+              placeholder="Example: I communicate clearly and deliver work on time."
               rows={3}
               {...props.profileForm.register("narrative.differentiators")}
             />
@@ -94,7 +95,7 @@ function ProfileSetupStorySection(props: {
             <ProfileAutoGrowTextarea
               className={PROFILE_SETUP_REVEAL_SCROLL_MARGIN_CLASS_NAME}
               id={careerTransitionId}
-              placeholder="Example: Moving from consulting back to a product team."
+              placeholder="Example: Moving into a new field after training and project work."
               rows={3}
               {...props.profileForm.register(
                 "narrative.careerTransitionSummary",
@@ -108,7 +109,7 @@ function ProfileSetupStorySection(props: {
             <ProfileAutoGrowTextarea
               className={PROFILE_SETUP_REVEAL_SCROLL_MARGIN_CLASS_NAME}
               id={motivationThemesId}
-              placeholder="Example: Work that reaches real users, and a team that reviews carefully."
+              placeholder="Example: Useful work and a supportive team."
               rows={3}
               {...props.profileForm.register("narrative.motivationThemes")}
             />
@@ -386,7 +387,7 @@ function ProfileSetupScreenerAnswersSection(props: {
             </p>
             <ProfileAutoGrowTextarea
               id={selfIntroductionId}
-              placeholder="Example: I am a backend engineer who has spent ten years making healthcare systems dependable."
+              placeholder="Example: I coordinate daily operations, solve problems and keep teams informed."
               rows={3}
               {...props.profileForm.register("answerBank.selfIntroduction")}
             />
@@ -601,16 +602,26 @@ export function ProfileSetupExtrasStep(props: {
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-6 pt-6">
-        <ProfileSetupStorySection
-          backgroundArrays={props.backgroundArrays}
-          isProfileSetupPending={props.isProfileSetupPending}
-          profileForm={props.profileForm}
-        />
-        <ProfileSetupScreenerAnswersSection
-          backgroundArrays={props.backgroundArrays}
-          isProfileSetupPending={props.isProfileSetupPending}
-          profileForm={props.profileForm}
-        />
+        <ProfileOptionalSection
+          title="Your story and saved evidence"
+          description="Add your own words and reusable achievements when you need them."
+        >
+          <ProfileSetupStorySection
+            backgroundArrays={props.backgroundArrays}
+            isProfileSetupPending={props.isProfileSetupPending}
+            profileForm={props.profileForm}
+          />
+        </ProfileOptionalSection>
+        <ProfileOptionalSection
+          title="Reusable answers and application links"
+          description="Choose links and save answers for future applications."
+        >
+          <ProfileSetupScreenerAnswersSection
+            backgroundArrays={props.backgroundArrays}
+            isProfileSetupPending={props.isProfileSetupPending}
+            profileForm={props.profileForm}
+          />
+        </ProfileOptionalSection>
         {props.renderFooter()}
       </CardContent>
     </Card>

@@ -186,6 +186,8 @@ export function getResumeImportStageFallbackNotes(
 const PERSON_FACING_IMPORT_NOTE_PATTERNS: readonly RegExp[] = [
   /^\d+ optional proof suggestions? (?:is|are) available to review\b/u,
   /^paste plain-text resume content\b/u,
+  /^could not import\b/u,
+  /^job finder could not read\b/u,
 ];
 
 export function isPersonFacingImportNote(value: string): boolean {

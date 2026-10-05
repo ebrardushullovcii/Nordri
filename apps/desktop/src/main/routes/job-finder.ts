@@ -101,6 +101,7 @@ import {
   ResumeDocumentBundleSchema,
   ResumeImportFieldCandidateSchema,
   ImportResumeRequestSchema,
+  CancelResumeImportRequestSchema,
   ResumeImportProgressEventSchema,
   ResumeImportRunSchema,
   ResumeQualityBenchmarkReportSchema,
@@ -1390,6 +1391,7 @@ export function registerJobFinderRouteHandlers(
     async (event, payload: unknown) => {
       const importRequest = ImportResumeRequestSchema.parse(payload ?? {});
       const requestId = importRequest.requestId ?? null;
+      const abortController = new AbortController();
       const request: {
         requestId: string;
         cancelled: boolean;
@@ -1403,19 +1405,23 @@ export function registerJobFinderRouteHandlers(
 
       const cancelHandler = request
         ? (cancelEvent: Electron.IpcMainEvent, cancelPayload: unknown) => {
+            const cancelRequest =
+              CancelResumeImportRequestSchema.safeParse(cancelPayload);
             const activeRequest = activeResumeImportRequests.get(
               cancelEvent.sender,
             );
             if (
               activeRequest === request &&
-              parseOptionalRequestId(cancelPayload) === request.requestId &&
-              activeRequest.phase === "picking"
+              cancelRequest.success &&
+              cancelRequest.data.requestId === request.requestId &&
+              (request.phase === "picking" ||
+                cancelRequest.data.stopProcessing === true)
             ) {
-              // The native picker cannot be force-closed safely from the main
-              // process. Marking the request is enough to discard a late file
-              // choice, so a manual fallback never imports behind the user's
-              // back after they stopped waiting.
+              // Ignore a late picker choice, or stop processing before it can
+              // apply results. The listener stays installed until this request
+              // settles, so manual setup can stop an in-flight model read.
               request.cancelled = true;
+              abortController.abort();
             }
           }
         : null;
@@ -1475,9 +1481,12 @@ export function registerJobFinderRouteHandlers(
             await getJobFinderWorkspaceService();
           const snapshot =
             await jobFinderWorkspaceService.getWorkspaceSnapshot();
-          return retryInterruptedResumeImport(
+          return await retryInterruptedResumeImport(
             snapshot.latestResumeImportRun ?? null,
-            reportProgress ? { onProgress: reportProgress } : {},
+            {
+              ...(reportProgress ? { onProgress: reportProgress } : {}),
+              signal: abortController.signal,
+            },
           );
         }
         const usableParentWindow =
@@ -1521,7 +1530,8 @@ export function registerJobFinderRouteHandlers(
           // route-change cancellation race discard real processing.
           request.phase = "processing";
         }
-        return importResumeFromSourcePath(sourcePath, {
+        return await importResumeFromSourcePath(sourcePath, {
+          signal: abortController.signal,
           ...(reportProgress ? { onProgress: reportProgress } : {}),
         });
       } finally {

@@ -168,6 +168,7 @@ export const ProfileSetupStateSchema = z.object({
   currentStep: CanonicalProfileSetupStepSchema.default("import"),
   completedAt: IsoDateTimeSchema.nullable().default(null),
   reviewItems: z.array(ProfileReviewItemSchema).default([]),
+  reviewedSteps: z.array(CanonicalProfileSetupStepSchema).optional(),
   lastResumedAt: IsoDateTimeSchema.nullable().default(null),
 });
 export type ProfileSetupState = z.infer<typeof ProfileSetupStateSchema>;
@@ -678,6 +679,9 @@ export function deriveProfileSetupState(
         ? (currentState?.completedAt ?? options.now ?? null)
         : null,
     reviewItems: currentState?.reviewItems ?? [],
+    ...(currentState?.reviewedSteps
+      ? { reviewedSteps: currentState.reviewedSteps }
+      : {}),
     lastResumedAt: currentState?.lastResumedAt ?? null,
   });
 }

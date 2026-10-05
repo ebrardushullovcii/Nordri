@@ -1855,6 +1855,7 @@ export function createWorkspaceSnapshotProfileMethods(
       const importStartedAt = new Date().toISOString();
       const workflowResult = await runResumeImportWorkflow(ctx, {
         profile: nextProfile,
+        ...(input.signal ? { signal: input.signal } : {}),
         searchPreferences,
         documentBundle,
         trigger: "import",

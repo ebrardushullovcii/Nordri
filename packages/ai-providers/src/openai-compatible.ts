@@ -1001,7 +1001,7 @@ const RESUME_IMPORT_STAGE_SUBJECTS: Record<string, string> = {
   identity_summary: "your name, contact details and summary",
   experience: "your work history",
   background: "your education, skills, languages and certifications",
-  shared_memory: "the shared resume context",
+  shared_memory: "your reusable evidence and application answers",
 };
 
 /**
@@ -1184,26 +1184,6 @@ export function createJobFinderAiClientFromEnvironment(
     },
     async extractResumeImportStage(input) {
       const startedAtMs = performance.now();
-      if (input.stage === "shared_memory") {
-        const fallback = await fallbackClient.extractResumeImportStage(input);
-        const durationMs = Math.max(
-          0,
-          Math.round(performance.now() - startedAtMs),
-        );
-
-        return {
-          ...fallback,
-          timing: {
-            durationMs,
-            primaryProviderMs: null,
-            deterministicFallbackMs:
-              fallback.timing?.deterministicFallbackMs ??
-              fallback.timing?.durationMs ??
-              durationMs,
-          },
-        };
-      }
-
       // The model reads the resume (ADR 0041). Its candidates are the
       // import; no rule-read candidates are mixed in beside them. A call that
       // fails for a passing reason (an overloaded provider, a dropped

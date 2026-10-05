@@ -836,3 +836,19 @@ export function formatDiscoveryAccounting(
     count(report.duplicates, "duplicates merged"),
   ].join(" · ");
 }
+
+/** Add the missing scheme on a public domain; leave malformed input for validation. */
+export function normalizePublicLinkUrl(value: string): string {
+  let normalized = value.trim();
+  if (
+    !/^[a-z][a-z\d+.-]*:/i.test(normalized) &&
+    /^[^\s/@:]+\.[^\s/@:]+(?::\d+)?(?:[/?#].*)?$/.test(normalized)
+  ) {
+    normalized = `https://${normalized}`;
+  }
+  try {
+    return new URL(normalized).toString();
+  } catch {
+    return normalized;
+  }
+}

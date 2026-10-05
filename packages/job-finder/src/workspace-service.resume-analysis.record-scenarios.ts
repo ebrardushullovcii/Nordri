@@ -109,7 +109,7 @@ describe("createJobFinderWorkspaceService", () => {
     );
   });
 
-  test("keeps LinkedIn separate from personal website and auto-applies grounded shared-memory candidates", async () => {
+  test("keeps LinkedIn separate and leaves imported proof points available for review", async () => {
     const seed = createSeed();
     // No LinkedIn saved yet: a saved one that differs from the resume now
     // waits for review instead of being replaced (see the re-import test in
@@ -416,10 +416,17 @@ describe("createJobFinderWorkspaceService", () => {
     expect(snapshot.profile.narrative.careerTransitionSummary).toContain(
       "Returned to hands-on development",
     );
-    expect(snapshot.profile.proofBank).toEqual(
+    expect(
+      snapshot.profile.proofBank.some(
+        (proof) =>
+          proof.title === "Technical achievement - Performance optimization",
+      ),
+    ).toBe(false);
+    expect(snapshot.latestResumeImportReviewCandidates).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          title: "Technical achievement - Performance optimization",
+          target: expect.objectContaining({ section: "proof_point" }),
+          resolution: "needs_review",
         }),
       ]),
     );

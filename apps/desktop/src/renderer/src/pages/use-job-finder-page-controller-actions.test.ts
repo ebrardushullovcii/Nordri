@@ -762,6 +762,7 @@ describe("createPrimaryPageActions", () => {
       status: "edited",
     });
     expect(typeof persisted?.reviewItems[0]?.resolvedAt).toBe("string");
+    expect(persisted?.reviewedSteps).toContain("answers");
 
     // A still-pending recommended suggestion must not block finishing.
     const finish = createSetupActions({
@@ -1478,6 +1479,61 @@ describe("createPrimaryPageActions", () => {
     );
     expect(importResume).toHaveBeenCalledTimes(2);
     expect(pendingActionState).toEqual({});
+  });
+
+  it("R3-231 clears a cancelled-picker notice when the next import starts and succeeds", async () => {
+    let state: ActionState = { message: null };
+    let pending: PendingActionState = {};
+    const setActionState = (next: SetStateAction<ActionState>) => {
+      state = typeof next === "function" ? next(state) : next;
+    };
+    const { runAction } = createActionRunners({
+      setActionState,
+      setPendingActionState: (next) => {
+        pending = typeof next === "function" ? next(pending) : next;
+      },
+    });
+    let finish!: (snapshot: JobFinderWorkspaceSnapshot) => void;
+    const importResume = vi
+      .fn<JobFinderShellActions["importResume"]>()
+      .mockResolvedValueOnce({
+        profile: completeSetupProfile,
+      } as JobFinderWorkspaceSnapshot)
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          }),
+      );
+    const actions = createPrimaryPageActions({
+      actions: { importResume } as unknown as JobFinderShellActions,
+      canImportResume: true,
+      importResumeGuardMessage: null,
+      runAction,
+      setActionState,
+      workspace: { profile: completeSetupProfile },
+    } as unknown as Parameters<typeof createPrimaryPageActions>[0]);
+    actions.onImportResume();
+    await vi.waitFor(() =>
+      expect(state.message).toContain("No resume selected"),
+    );
+    actions.onImportResume();
+    expect(state.message).toBeNull();
+    finish({
+      profile: {
+        ...completeSetupProfile,
+        baseResume: {
+          ...completeSetupProfile.baseResume,
+          id: "resume_new",
+          fileName: "fatima-noor.md",
+          extractionStatus: "ready",
+        },
+      },
+    } as JobFinderWorkspaceSnapshot);
+    await vi.waitFor(() =>
+      expect(state.message).toContain("fatima-noor.md was imported"),
+    );
+    expect(state.message).not.toContain("No resume selected");
   });
 
   it("classifies resolved imports by extraction status instead of claiming extracted details", async () => {

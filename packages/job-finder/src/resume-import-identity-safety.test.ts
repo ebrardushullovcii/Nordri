@@ -241,7 +241,7 @@ describe("resume import identity and revision safety", () => {
           fullText: "Taylor Quinn\ntaylor@example.com",
         }),
       }),
-    ).rejects.toThrow("text extraction failed");
+    ).rejects.toThrow("The AI connection failed");
 
     const profile = await base.getProfile();
     expect(raced).toBe(true);

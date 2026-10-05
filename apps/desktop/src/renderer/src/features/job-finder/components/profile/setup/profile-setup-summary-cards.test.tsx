@@ -289,7 +289,7 @@ describe("ProfileSetupSummaryCards", () => {
     expect(onStartManually).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps manual setup guarded once resume processing has started", () => {
+  it("R3-163 lets the person stop a processing import and start manually", () => {
     const onResumeCurrentStep = vi.fn();
     const onImportResume = vi.fn();
     const onStartManually = vi.fn();
@@ -309,11 +309,14 @@ describe("ProfileSetupSummaryCards", () => {
 
     const buttons = listButtons();
     const manualButton = getButtonOrThrow(buttons, 1);
-    expect(manualButton.getAttribute("aria-disabled")).toBe("true");
+    expect(manualButton.getAttribute("aria-disabled")).toBeNull();
+    expect(manualButton.textContent).toContain(
+      "Stop import and start manually",
+    );
     act(() => {
       dispatchClick(manualButton);
     });
-    expect(onStartManually).not.toHaveBeenCalled();
+    expect(onStartManually).toHaveBeenCalledOnce();
   });
 
   it("keeps focus on the import control across the pending transition and restores activation", () => {

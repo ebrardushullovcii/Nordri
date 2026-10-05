@@ -1314,13 +1314,15 @@ Preferred location: Remote worldwide or Berlin, Germany`;
           warnings: [],
         },
       }),
-    ).rejects.toThrow("text branch exploded");
+    ).rejects.toThrow("The AI connection failed");
 
     const run = await repository.getLatestResumeImportRun();
 
     expect(run?.status).toBe("failed");
     expect(run?.modelRoles?.text.status).toBe("failed");
-    expect(run?.modelRoles?.text.errorMessage).toBe("text branch exploded");
+    expect(run?.modelRoles?.text.errorMessage).toContain(
+      "The AI connection failed",
+    );
     expect(run?.modelRoles?.vision.status).toBe("timed_out");
     expect(run?.modelRoles?.vision.errorMessage).toContain(
       "timed out after 20ms",

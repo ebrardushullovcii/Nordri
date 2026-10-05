@@ -630,7 +630,13 @@ export function buildDraftAwareSetupReviewItems(input: {
   reviewItems: readonly ProfileSetupReviewItem[];
 }): ProfileSetupReviewItemDisplay[] {
   return input.reviewItems.map((item) => {
-    if (item.status !== "pending") {
+    if (
+      item.status !== "pending" ||
+      (item.target.domain === "experience" &&
+        item.target.key === "record" &&
+        item.target.recordId &&
+        item.sourceCandidateId)
+    ) {
       return {
         ...item,
         savedStatus: item.status,
@@ -961,5 +967,15 @@ export function isProfileSetupPathStepComplete(input: {
       setupCompleted,
       stepId,
     })
+  );
+}
+
+export function summarizeSavedSetupReviewValue(
+  profile: CandidateProfile,
+  preferences: JobSearchPreferences,
+  item: ProfileSetupReviewItem,
+): string | null {
+  return summarizeValue(
+    getCurrentTargetValue(profile, preferences, item.target),
   );
 }

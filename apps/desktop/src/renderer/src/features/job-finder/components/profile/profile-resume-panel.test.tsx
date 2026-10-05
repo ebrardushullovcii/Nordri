@@ -1460,3 +1460,16 @@ describe("isPersonFacingImportNote", () => {
     }
   });
 });
+
+it("R3-028 names unresolved project details in the import notes", () => {
+  expect(
+    isPersonFacingImportNote(
+      "Could not import Pantry app testing details. Review the source description.",
+    ),
+  ).toBe(true);
+  expect(
+    isPersonFacingImportNote(
+      "Job Finder could not read your projects because the AI was unavailable.",
+    ),
+  ).toBe(true);
+});

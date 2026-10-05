@@ -1,3 +1,5 @@
+import { useRef } from "react";
+import { normalizePublicLinkUrl } from "@nordri/contracts";
 import { Controller, type UseFormReturn } from "react-hook-form";
 import { Checkbox } from "@renderer/components/ui/checkbox";
 import type { ProfileEditorValues } from "../../lib/profile-editor";
@@ -21,7 +23,29 @@ export function PreferredApplicationLinksField(props: {
   fieldId: string;
   profileForm: UseFormReturn<ProfileEditorValues>;
 }) {
-  const links = props.profileForm.watch("links");
+  const syntheticIds = useRef(new Set<string>());
+  const savedLinks = props.profileForm.watch("links");
+  const persistedLinks = props.profileForm.formState.defaultValues?.links ?? [];
+  const website = props.profileForm.watch("identity.personalWebsiteUrl");
+  const portfolio = props.profileForm.watch("identity.portfolioUrl");
+  const links = [...savedLinks];
+  for (const [label, kind, url] of [
+    ["Website", "website", website],
+    ["Portfolio", "portfolio", portfolio],
+  ] as const) {
+    const normalizedUrl = normalizePublicLinkUrl(url);
+    if (
+      url.trim() &&
+      !links.some((link) => normalizePublicLinkUrl(link.url) === normalizedUrl)
+    ) {
+      const baseId = `contact_${kind}`;
+      let id = baseId;
+      for (let suffix = 1; links.some((link) => link.id === id); suffix += 1) {
+        id = `${baseId}_${suffix}`;
+      }
+      links.push({ id, label, kind, url: normalizedUrl });
+    }
+  }
 
   return (
     <Controller
@@ -39,8 +63,8 @@ export function PreferredApplicationLinksField(props: {
               Links to include on applications
             </legend>
             <p className="text-sm leading-6 text-foreground-soft">
-              Choose from the public links saved in Background. The application
-              will use the label and URL, never an internal ID.
+              Choose a saved Website, Portfolio, or public link to include on
+              applications.
             </p>
             {links.length > 0 ? (
               <div className="grid gap-2">
@@ -60,9 +84,34 @@ export function PreferredApplicationLinksField(props: {
                         onCheckedChange={(nextChecked) => {
                           const nextIds = new Set(selectedIds);
                           if (nextChecked === true) {
+                            if (
+                              !savedLinks.some((saved) => saved.id === link.id)
+                            ) {
+                              syntheticIds.current.add(link.id);
+                              props.profileForm.setValue(
+                                "links",
+                                [...savedLinks, link],
+                                { shouldDirty: true },
+                              );
+                            }
                             nextIds.add(link.id);
                           } else {
                             nextIds.delete(link.id);
+                            if (
+                              syntheticIds.current.has(link.id) &&
+                              !persistedLinks.some(
+                                (saved) => saved?.id === link.id,
+                              )
+                            ) {
+                              props.profileForm.setValue(
+                                "links",
+                                savedLinks.filter(
+                                  (saved) => saved.id !== link.id,
+                                ),
+                                { shouldDirty: true },
+                              );
+                              syntheticIds.current.delete(link.id);
+                            }
                           }
                           field.onChange(joinListInput([...nextIds]));
                         }}

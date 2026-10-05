@@ -120,7 +120,7 @@ describe("what the last import left behind, on whichever step setup opens", () =
         }),
         profile,
       }),
-    ).toBeNull();
+    ).toMatchObject({ kind: "failed" });
   });
 
   it("says plainly when the AI never read the resume, with one press to read it again", () => {
@@ -220,5 +220,65 @@ describe("what the last import left behind, on whichever step setup opens", () =
     expect(document.body.textContent).toContain(
       "whether you would need visa sponsorship",
     );
+  });
+  // R3-041: a selected file remains retryable after a service failure.
+  it("shows the AI failure with a saved-file retry", () => {
+    const run = ResumeImportRunSchema.parse({
+      ...interruptedRun,
+      failureKind: "ai_unavailable",
+      errorMessage: "The AI connection failed. Your file is saved.",
+    });
+    expect(
+      buildProfileSetupImportNotice({ latestResumeImportRun: run, profile }),
+    ).toMatchObject({
+      kind: "failed",
+      message: run.errorMessage,
+      actionLabel: "Try resume-import-sample.txt again",
+    });
+  });
+
+  it("offers a new picker for a file with no resume details", () => {
+    const onImportResume = vi.fn();
+    const onRetryInterruptedImport = vi.fn();
+    const run = ResumeImportRunSchema.parse({
+      ...interruptedRun,
+      failureKind: "invalid_document",
+      errorMessage:
+        "No resume details were found in this file. Choose another file.",
+    });
+    render(
+      <ProfileSetupImportNotice
+        latestResumeImportRun={run}
+        profile={profile}
+        isImportResumePending={false}
+        isAnalyzeProfilePending={false}
+        importDisabledReason={null}
+        onImportResume={onImportResume}
+        onRetryInterruptedImport={onRetryInterruptedImport}
+      />,
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Choose another file" }),
+    );
+    expect(onImportResume).toHaveBeenCalledOnce();
+    expect(onRetryInterruptedImport).not.toHaveBeenCalled();
+  });
+  it("replaces a retry notice with progress while reading on another setup step", () => {
+    render(
+      <ProfileSetupImportNotice
+        latestResumeImportRun={interruptedRun}
+        profile={profile}
+        isImportResumePending={true}
+        resumeImportProgress={{
+          stage: "building_profile",
+          message: "Reading resume-import-sample.txt",
+          occurredAt: "2026-10-04T00:00:00.000Z",
+        }}
+        isAnalyzeProfilePending={false}
+        importDisabledReason={null}
+      />,
+    );
+    expect(screen.getByText("Building profile suggestions")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /again/ })).toBeNull();
   });
 });

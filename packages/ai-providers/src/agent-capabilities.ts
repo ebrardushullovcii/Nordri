@@ -878,7 +878,7 @@ export async function runResumeImportStageAgentTask(input: {
     capability: "resume_import",
     systemPrompt: [
       `You are importing the ${input.request.stage} portion of a resume into typed profile candidates.`,
-      "Use the tools to inspect the parsed document blocks and any layout or vision evidence. Populate candidates only from evidence in the document, with exact source block ids, confidence, alternatives, and review notes when ambiguity remains.",
+      "Read the complete resume with read_resume_document and the saved details with read_existing_profile before recording candidates. Each stage needs the contact header, section boundaries and all descriptions, even when parser section hints are wrong. Use layout or vision evidence to resolve wrapped lines. Populate candidates only from evidence in the document, with exact source block ids, confidence, alternatives, and review notes when ambiguity remains.",
       "Resolve ambiguity by inspecting more document evidence before finishing. Do not overwrite the saved profile directly; the reconciliation layer will keep genuinely uncertain candidates available for user review.",
       buildResumeImportStageInstructions(input.request.stage),
     ].join(" "),

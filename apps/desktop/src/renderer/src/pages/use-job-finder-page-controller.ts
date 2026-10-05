@@ -402,18 +402,21 @@ export function useJobFinderPageController() {
     workspaceState.status === "ready"
       ? workspaceState.resumeImportProgress
       : null;
-  const cancelImportResumeIfWaiting = useCallback(() => {
-    const scope = jobFinderPendingActions.profileImport();
-    if (
-      !hasPendingAction(pendingActionStateRef.current, scope) ||
-      resumeImportProgressRef.current !== null
-    ) {
-      return;
-    }
+  const cancelImportResumeIfWaiting = useCallback(
+    (includeProcessing = false) => {
+      const scope = jobFinderPendingActions.profileImport();
+      if (
+        !hasPendingAction(pendingActionStateRef.current, scope) ||
+        (!includeProcessing && resumeImportProgressRef.current !== null)
+      ) {
+        return;
+      }
 
-    window.nordri.jobFinder.cancelImportResume();
-    clearResumeLifecyclePending([scope]);
-  }, [clearResumeLifecyclePending]);
+      window.nordri.jobFinder.cancelImportResume(includeProcessing);
+      clearResumeLifecyclePending([scope]);
+    },
+    [clearResumeLifecyclePending],
+  );
   const [liveDiscoveryEvents, setLiveDiscoveryEvents] = useState<
     DiscoveryActivityEvent[]
   >([]);
@@ -1273,7 +1276,7 @@ export function useJobFinderPageController() {
       clearResumeWorkspaceState,
       setResumeWorkspaceDirty: applyResumeWorkspaceDirty,
       onProfileSurfaceDraftEdited: noteProfileSurfaceDraftEdited,
-      onCancelImportResume: cancelImportResumeIfWaiting,
+      onCancelImportResume: () => cancelImportResumeIfWaiting(true),
       onResumeWorkspaceDraftEdited: noteResumeWorkspaceDraftEdited,
       onSettingsDraftEdited: noteSettingsDraftEdited,
       setSelectedApplicationRecordId,

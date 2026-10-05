@@ -123,6 +123,12 @@ function existingScalarValueForCandidate(
       return profile.summary;
     case "identity.yearsExperience":
       return profile.yearsExperience;
+    case "location.currentCity":
+      return profile.currentCity;
+    case "location.currentRegion":
+      return profile.currentRegion;
+    case "location.currentCountry":
+      return profile.currentCountry;
     case "location.currentLocation":
       return profile.currentLocation;
     case "location.timeZone":
@@ -727,13 +733,14 @@ function normalizeRecordCandidateValue(
     case "project": {
       const value = parsedValue;
       return {
-        name: typeof value.name === "string" ? value.name : null,
-        projectType:
-          typeof value.projectType === "string" ? value.projectType : null,
-        summary: typeof value.summary === "string" ? value.summary : null,
-        role: typeof value.role === "string" ? value.role : null,
-        skills: toStringArray(value.skills),
-        outcome: typeof value.outcome === "string" ? value.outcome : null,
+        name: readAliasString(value, ["name", "title"]),
+        projectType: readAliasString(value, ["projectType", "type", "context"]),
+        summary: readAliasString(value, ["summary", "description"]),
+        role: readAliasString(value, ["role", "contribution"]),
+        skills: toStringArray(
+          value.skills ?? value.technologies ?? value.tools,
+        ),
+        outcome: readAliasString(value, ["outcome", "impact", "results"]),
         projectUrl:
           typeof value.projectUrl === "string" ? value.projectUrl : null,
         repositoryUrl:
@@ -3082,7 +3089,7 @@ export function reconcileCandidates(
     appendResolvedConflictGroup(resolved, groupResolved);
   }
 
-  const reconciled = promoteImportCandidatesIntoEmptyProfile(
+  const promoted = promoteImportCandidatesIntoEmptyProfile(
     profile,
     searchPreferences,
     resolveRedundantFreshStartNamePartCandidates(
@@ -3091,6 +3098,23 @@ export function reconcileCandidates(
       resolved,
     ),
     bundle,
+  );
+  const reconciled = promoted.map((candidate) =>
+    options.readByModel &&
+    candidate.resolution === "auto_applied" &&
+    (candidate.target.section === "proof_point" ||
+      (candidate.target.section === "search_preferences" &&
+        ["workModes", "targetRoles"].includes(candidate.target.key)))
+      ? applyCandidateResolution(
+          profile,
+          searchPreferences,
+          candidate,
+          "needs_review",
+          candidate.target.section === "proof_point"
+            ? "confirm_imported_achievement"
+            : "confirm_imported_search_preferences",
+        )
+      : candidate,
   );
   if (!differentPersonConflict) {
     return reconciled;

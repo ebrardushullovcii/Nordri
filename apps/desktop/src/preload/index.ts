@@ -967,7 +967,7 @@ const desktopApi = {
         );
       }
     },
-    cancelImportResume: () => {
+    cancelImportResume: (stopProcessing = false) => {
       const requestId = activeResumeImportRequestId;
       if (!requestId) {
         return;
@@ -977,7 +977,10 @@ const desktopApi = {
       // native file choice. Release the renderer single-flight lock after the
       // send; the main handler will discard that old choice if the picker
       // returns later, and its finally cannot clear a newer request.
-      ipcRenderer.send("job-finder:cancel-import-resume", { requestId });
+      ipcRenderer.send("job-finder:cancel-import-resume", {
+        requestId,
+        ...(stopProcessing ? { stopProcessing: true } : {}),
+      });
       if (activeResumeImportRequestId === requestId) {
         activeResumeImportRequestId = null;
       }

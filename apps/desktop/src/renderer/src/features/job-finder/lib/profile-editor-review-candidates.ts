@@ -266,6 +266,7 @@ function mergeExperienceReviewCandidates(
 
     const matchingIndex = merged.findIndex(
       (entry) =>
+        entry.id === candidate.target.recordId ||
         buildExperienceIdentity(entry) === buildExperienceIdentity(nextEntry) ||
         areEquivalentExperienceRecords(entry, nextEntry),
     );

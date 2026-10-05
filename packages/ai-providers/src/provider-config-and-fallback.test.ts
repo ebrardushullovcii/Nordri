@@ -409,13 +409,12 @@ describe("ai provider config and fallback behavior", () => {
     });
   });
 
-  test("keeps optional shared-memory suggestions off the remote import critical path", async () => {
-    const originalFetch = globalThis.fetch;
-    const fetchSpy = vi.fn(() =>
-      Promise.reject(new Error("shared-memory import should stay local")),
-    );
-    globalThis.fetch = fetchSpy as typeof fetch;
-
+  test("R3-095/R3-223 reads reusable evidence with the model instead of a local rule reader", async () => {
+    const capture = mockCapturingJsonFetch({
+      choices: [
+        { message: { content: JSON.stringify({ candidates: [], notes: [] }) } },
+      ],
+    });
     try {
       const client =
         createJobFinderAiClientFromEnvironment(createEnvironment());
@@ -425,23 +424,14 @@ describe("ai provider config and fallback behavior", () => {
         existingSearchPreferences: createPreferences(),
         documentBundle: createFastPathResumeBundle(),
       });
-
-      expect(fetchSpy).not.toHaveBeenCalled();
-      expect(result.analysisProviderKind).toBe("deterministic");
-      expect(result.timing?.durationMs).toEqual(expect.any(Number));
-      expect(result.timing?.primaryProviderMs).toBeNull();
-      expect(result.timing?.deterministicFallbackMs).toEqual(
-        expect.any(Number),
+      expect(capture.getCapturedBody()).toContain(
+        "never in employer proof points",
       );
-      expect(
-        result.candidates.some(
-          (candidate) =>
-            candidate.target.section === "proof_point" &&
-            candidate.sourceBlockIds.length > 0,
-        ),
-      ).toBe(true);
+      expect(result.analysisProviderKind).toBe("openai_compatible");
+      expect(result.timing?.primaryProviderMs).toEqual(expect.any(Number));
+      expect(result.timing?.deterministicFallbackMs).toBeNull();
     } finally {
-      globalThis.fetch = originalFetch;
+      capture.restore();
     }
   });
 
@@ -549,18 +539,25 @@ describe("ai provider config and fallback behavior", () => {
     }
   });
 
-  test("leaves the fallback reason unset when a core stage reaches the model", async () => {
-    const client = createJobFinderAiClientFromEnvironment(createEnvironment());
-    const result = await client.extractResumeImportStage({
-      stage: "shared_memory",
-      existingProfile: createProfile(),
-      existingSearchPreferences: createPreferences(),
-      documentBundle: createFastPathResumeBundle(),
+  test("leaves the fallback reason unset when a stage reaches the model", async () => {
+    const restoreFetch = mockJsonFetch({
+      choices: [
+        { message: { content: JSON.stringify({ candidates: [], notes: [] }) } },
+      ],
     });
-
-    // `shared_memory` is deterministic by design, so it never lost a model
-    // call and must not be reported as a degraded stage.
-    expect(result.fallback ?? null).toBeNull();
+    try {
+      const client =
+        createJobFinderAiClientFromEnvironment(createEnvironment());
+      const result = await client.extractResumeImportStage({
+        stage: "shared_memory",
+        existingProfile: createProfile(),
+        existingSearchPreferences: createPreferences(),
+        documentBundle: createFastPathResumeBundle(),
+      });
+      expect(result.fallback ?? null).toBeNull();
+    } finally {
+      restoreFetch();
+    }
   });
 
   test("marks the OpenAI-compatible client as not ready when config is invalid", () => {

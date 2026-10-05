@@ -907,7 +907,8 @@ export function ProfileSetupTargetingStep(props: {
               )}
             />
             <p className="px-1 text-(length:--text-body) leading-6 text-foreground">
-              Related titles you&apos;d also consider, e.g. Backend Engineer.
+              Related titles you&apos;d also consider, e.g. Teaching Assistant,
+              Registered Nurse, or Visual Designer.
             </p>
           </div>
           <div className="grid gap-2">
@@ -922,7 +923,7 @@ export function ProfileSetupTargetingStep(props: {
                   listFieldOptions,
                 )
               }
-              placeholder="Example: Austin, TX; Remote"
+              placeholder="Example: Hamburg; Remote"
               values={parseListInput(props.preferencesForm.watch("locations"))}
             />
             <p className="px-1 text-(length:--text-body) leading-6 text-foreground">
@@ -957,10 +958,8 @@ export function ProfileSetupTargetingStep(props: {
               className="rounded-(--radius-field) border border-dashed border-(--surface-panel-border) p-3 text-sm leading-6 text-foreground-soft"
               role="status"
             >
-              Add at least one site to search — for example
-              https://weworkremotely.com/remote-jobs, https://remoteok.com, or a
-              company&apos;s careers page. Job Finder searches only the sites
-              you add.
+              Add an employer’s careers page or a job board you already use. Job
+              Finder searches only the sites you add.
             </div>
           ) : (
             <>
@@ -1163,7 +1162,7 @@ export function ProfileSetupTargetingStep(props: {
                                         ),
                                       )
                                     }
-                                    placeholder="Example: Acme careers"
+                                    placeholder="Example: City Hospital careers"
                                     value={target.label}
                                   />
                                 </div>
@@ -1336,7 +1335,7 @@ export function ProfileSetupTargetingStep(props: {
                       onChange={(event) =>
                         setManualSourceLabel(event.target.value)
                       }
-                      placeholder="Example: Acme careers"
+                      placeholder="Example: City Hospital careers"
                       value={manualSourceLabel}
                     />
                   </div>

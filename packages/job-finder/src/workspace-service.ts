@@ -256,6 +256,7 @@ export function createJobFinderWorkspaceService(
     fetchListingHtml,
     onActivityControlChanged,
     onDetachedApplyRunFinished,
+    onResumeEvidenceFinished,
     onExplicitUserStart,
   } = options;
   const activeDiscoveryAbortControllerRef = {
@@ -279,6 +280,7 @@ export function createJobFinderWorkspaceService(
   let intelligenceTransitionTail: Promise<void> = Promise.resolve();
   let campaignTransitionTail: Promise<void> = Promise.resolve();
   const activeResumeVisionRunIds = new Set<string>();
+  const activeResumeEvidenceRunIds = new Set<string>();
   const shutdownPromiseRef = {
     current: null as Promise<void> | null,
   };
@@ -309,7 +311,10 @@ export function createJobFinderWorkspaceService(
     ) {
       labels.add("application preparation");
     }
-    if (activeResumeVisionRunIds.size > 0) {
+    if (
+      activeResumeVisionRunIds.size > 0 ||
+      activeResumeEvidenceRunIds.size > 0
+    ) {
       labels.add("resume analysis");
     }
 
@@ -423,6 +428,8 @@ export function createJobFinderWorkspaceService(
       return result;
     },
     activeResumeVisionRunIds,
+    activeResumeEvidenceRunIds,
+    ...(onResumeEvidenceFinished ? { onResumeEvidenceFinished } : {}),
     getWorkspaceSnapshot: () =>
       Promise.reject(new Error("Workspace snapshot method not initialized.")),
     readWorkspaceSnapshot: () =>

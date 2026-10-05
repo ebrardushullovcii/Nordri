@@ -745,6 +745,45 @@ describe("job-finder resume import picker route", () => {
     expect(mockImportResumeFromSourcePath).toHaveBeenCalledOnce();
   });
 
+  it("R3-163 cancels only the active processing import request", async () => {
+    const snapshot = createEmptyWorkspace("2026-08-30T10:02:00.000Z");
+    const sender = { isDestroyed: vi.fn(() => false), send: vi.fn() };
+    const captured: { signal: AbortSignal | undefined } = {
+      signal: undefined,
+    };
+    mockShowOpenDialog.mockResolvedValue({
+      canceled: false,
+      filePaths: ["/tmp/synthetic-resume.md"],
+    });
+    mockImportResumeFromSourcePath.mockImplementation(
+      (_path: string, options: { signal?: AbortSignal }) => {
+        captured.signal = options.signal;
+        return new Promise((resolve) => {
+          captured.signal?.addEventListener("abort", () => resolve(snapshot), {
+            once: true,
+          });
+        });
+      },
+    );
+    const result = registerAndFindHandler()(
+      { sender },
+      { requestId: "processing_import" },
+    );
+    await vi.waitFor(() =>
+      expect(mockImportResumeFromSourcePath).toHaveBeenCalled(),
+    );
+    cancelImportResume?.({ sender }, { requestId: "other_import" });
+    expect(captured.signal?.aborted).toBe(false);
+    cancelImportResume?.({ sender }, { requestId: "processing_import" });
+    expect(captured.signal?.aborted).toBe(false);
+    cancelImportResume?.(
+      { sender },
+      { requestId: "processing_import", stopProcessing: true },
+    );
+    expect(captured.signal?.aborted).toBe(true);
+    await expect(result).resolves.toEqual(snapshot);
+  });
+
   it("discards a late file choice after the renderer cancels the picker", async () => {
     const snapshot = createEmptyWorkspace("2026-08-30T10:02:00.000Z");
     const sender = {

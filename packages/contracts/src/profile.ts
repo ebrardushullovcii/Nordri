@@ -24,6 +24,12 @@ export const ResumeSourceDocumentSchema = z.object({
     .optional(),
   textContent: NonEmptyStringSchema.nullable().default(null),
   textUpdatedAt: IsoDateTimeSchema.nullable().default(null),
+  sourceIdentity: z
+    .object({
+      fullName: NonEmptyStringSchema.nullable(),
+      email: NonEmptyStringSchema.nullable(),
+    })
+    .optional(),
   extractionStatus: ResumeExtractionStatusSchema.default("not_started"),
   lastAnalyzedAt: IsoDateTimeSchema.nullable().default(null),
   analysisProviderKind: AiProviderKindSchema.nullable().default(null),

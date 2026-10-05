@@ -1,10 +1,13 @@
+import { ResumeImportProgress } from "../resume-import-progress";
 import { useState } from "react";
 import { X } from "lucide-react";
 import {
   isInterruptedResumeImportRun,
+  canRetrySavedResumeImport,
   RESUME_IMPORT_INTERRUPTED_MESSAGE,
   type CandidateProfile,
   type ResumeImportRun,
+  type ResumeImportProgressEvent,
 } from "@nordri/contracts";
 import { Button } from "@renderer/components/ui/button";
 import { getResumeImportStageFallbackNotes } from "../profile-resume-panel";
@@ -43,7 +46,7 @@ export function isInterruptedResumeImport(
 
 export type ProfileSetupImportNoticeModel =
   | {
-      kind: "interrupted";
+      kind: "interrupted" | "failed";
       key: string;
       message: string;
       actionLabel: string;
@@ -74,6 +77,18 @@ export function buildProfileSetupImportNotice(input: {
       actionLabel: `Import ${run.sourceResumeFileName} again`,
     };
   }
+  if (run?.status === "failed") {
+    return {
+      kind: "failed",
+      key: `failed:${run.id}`,
+      message:
+        run.errorMessage ??
+        "The resume could not be read. Try again or continue manually.",
+      actionLabel: canRetrySavedResumeImport(run)
+        ? `Try ${run.sourceResumeFileName} again`
+        : "Choose another file",
+    };
+  }
   const summary = getResumeImportStageFallbackSummary(run);
   if (!run || !summary) {
     return null;
@@ -94,8 +109,10 @@ export function ProfileSetupImportNotice(props: {
   latestResumeImportRun: ResumeImportRun | null;
   profile: CandidateProfile;
   isImportResumePending: boolean;
+  resumeImportProgress?: ResumeImportProgressEvent | null;
   isAnalyzeProfilePending: boolean;
   importDisabledReason: string | null;
+  onImportResume?: (() => void) | undefined;
   onRetryInterruptedImport?: (() => void) | undefined;
   onAnalyzeProfileFromResume?: (() => void) | undefined;
 }) {
@@ -106,6 +123,13 @@ export function ProfileSetupImportNotice(props: {
     latestResumeImportRun: props.latestResumeImportRun,
     profile: props.profile,
   });
+  if (props.isImportResumePending)
+    return (
+      <ResumeImportProgress
+        isPending={true}
+        progress={props.resumeImportProgress ?? null}
+      />
+    );
   if (
     !notice ||
     props.isImportResumePending ||
@@ -115,8 +139,10 @@ export function ProfileSetupImportNotice(props: {
     return null;
   }
   const onAction =
-    notice.kind === "interrupted"
-      ? props.onRetryInterruptedImport
+    notice.kind !== "read_without_ai"
+      ? canRetrySavedResumeImport(props.latestResumeImportRun)
+        ? props.onRetryInterruptedImport
+        : props.onImportResume
       : props.onAnalyzeProfileFromResume;
 
   return (
@@ -132,7 +158,7 @@ export function ProfileSetupImportNotice(props: {
             disabled={Boolean(props.importDisabledReason)}
             onClick={onAction}
             pending={
-              notice.kind === "interrupted"
+              notice.kind !== "read_without_ai"
                 ? props.isImportResumePending
                 : props.isAnalyzeProfilePending
             }

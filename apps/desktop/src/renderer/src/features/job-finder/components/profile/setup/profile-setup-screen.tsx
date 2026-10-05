@@ -1,3 +1,4 @@
+import { canRetrySavedResumeImport } from "@nordri/contracts";
 import { getRunningResumeImportProgress } from "@renderer/features/job-finder/lib/profile-resume-panel-utils";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -30,6 +31,7 @@ import { ProfileSetupStepEditor } from "./profile-setup-step-editor";
 import { ProfileSetupStepFooter } from "./profile-setup-step-footer";
 import {
   buildProfileSetupReadinessPresentation,
+  summarizeSavedSetupReviewValue,
   getProfileSetupReadinessBlockerLabel,
   getProfileSetupReadinessBlockerStep,
   getProfileSetupReviewItemCopy,
@@ -297,13 +299,16 @@ export function ProfileSetupScreen(props: {
     localImportPending || runningImportProgress !== null;
   const resumeImportProgress = localImportProgress ?? runningImportProgress;
   const interruptedImportMessage =
-    isInterruptedResumeImport(latestResumeImportRun) && !isImportResumePending
-      ? RESUME_IMPORT_INTERRUPTED_MESSAGE
+    latestResumeImportRun?.status === "failed" && !isImportResumePending
+      ? isInterruptedResumeImport(latestResumeImportRun)
+        ? RESUME_IMPORT_INTERRUPTED_MESSAGE
+        : latestResumeImportRun.errorMessage
       : null;
-  const interruptedImportFileName =
-    latestResumeImportRun && isInterruptedResumeImport(latestResumeImportRun)
-      ? latestResumeImportRun.sourceResumeFileName
-      : null;
+  const interruptedImportFileName = canRetrySavedResumeImport(
+    latestResumeImportRun,
+  )
+    ? (latestResumeImportRun?.sourceResumeFileName ?? null)
+    : null;
   const pendingCurrentStepReviewItems = currentStepReviewItems.filter(
     (item) => item.status === "pending",
   );
@@ -405,6 +410,9 @@ export function ProfileSetupScreen(props: {
   const reviewQueue = (
     <ProfileSetupReviewQueueCard
       compact={profileSetupState.currentStep === "targeting"}
+      getSavedValue={(item) =>
+        summarizeSavedSetupReviewValue(profile, searchPreferences, item)
+      }
       actionsDisabledReason={
         setupActionsDisabledReason ??
         (hasUserDraftChanges
@@ -531,6 +539,8 @@ export function ProfileSetupScreen(props: {
           {isPristineSetup ||
           profileSetupState.currentStep === "import" ? null : (
             <ProfileSetupImportNotice
+              onImportResume={onImportResume}
+              resumeImportProgress={resumeImportProgress}
               importDisabledReason={importResumeGuardMessage}
               isAnalyzeProfilePending={isAnalyzeProfilePending}
               isImportResumePending={isImportResumePending}
@@ -583,7 +593,7 @@ export function ProfileSetupScreen(props: {
                 hasImportedResume={hasImportedResume}
                 onImportResume={onImportResume}
                 onStartManually={() => {
-                  if (isImportResumePending && resumeImportProgress === null) {
+                  if (isImportResumePending) {
                     onCancelImportResume();
                   }
                   goToStep("essentials");
