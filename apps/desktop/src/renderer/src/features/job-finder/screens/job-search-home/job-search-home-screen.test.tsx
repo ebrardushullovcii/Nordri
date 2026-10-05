@@ -772,3 +772,17 @@ describe("listCurrentUnreadNotifications", () => {
     ).toHaveLength(1);
   });
 });
+
+it("keeps Home's description short and places the full summary on its status line", () => {
+  const view = render(
+    <JobSearchHomeScreen {...baseProps()} workspace={workspace()} />,
+  );
+  const description = view.container.querySelector("[data-page-header] p");
+  expect(description?.textContent?.length).toBeLessThanOrEqual(90);
+  expect(description?.textContent).toBe(
+    "Your search, shortlisted jobs, and applications.",
+  );
+  expect(
+    view.container.querySelector('[data-page-status-item="run-summary"]'),
+  ).not.toBeNull();
+});

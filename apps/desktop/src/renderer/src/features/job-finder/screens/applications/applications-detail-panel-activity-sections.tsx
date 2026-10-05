@@ -42,6 +42,7 @@ export function ApplicationsDetailPanelActivitySections(props: {
     input: JobFinderApplyConsentActionInput,
   ) => void;
   onSelectApplyRun: (runId: string) => void;
+  onOpenBrowser?: () => Promise<void>;
   /**
    * Sends this application. Present only when the person chose to look it over
    * before it goes, which is the only way this button ever appears.
@@ -113,6 +114,7 @@ export function ApplicationsDetailPanelActivitySections(props: {
       visibleApplyResult ? (
         <ApplicationsReviewCard
           card={reviewCard}
+          onOpenBrowser={props.onOpenBrowser}
           onSubmit={() => onSubmitPreparedApplication(visibleApplyResult.jobId)}
           {...(onPrepareApplicationAgain
             ? {

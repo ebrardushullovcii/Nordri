@@ -488,6 +488,22 @@ export function ApplicationsDetailPanelRecoveryActionsSection(props: {
               {presentation.reasonSentence}
             </p>
           ) : null}
+          {visibleApplyResult?.state === "submitted" &&
+          visibleApplyResult.privacyReceipt?.submissionOutcome?.outcome ===
+            "submitted" ? (
+            <div className="grid min-w-0 gap-1" data-site-confirmation>
+              {visibleApplyResult.privacyReceipt.submissionOutcome.evidence.map(
+                (entry) => (
+                  <p
+                    key={entry.id}
+                    className="break-words text-(length:--text-small) leading-6 text-foreground-soft"
+                  >
+                    {entry.summary}
+                  </p>
+                ),
+              )}
+            </div>
+          ) : null}
         </div>
         {showPreparingState ? (
           <p

@@ -317,7 +317,7 @@ export function resolveApplyStatePresentation(input: {
   ) {
     return {
       kind: "could_not_apply",
-      title: "Prepare again",
+      title: "Could not apply",
       sentence:
         "The prepared form is no longer open. Prepare it again using your saved answers and files.",
       action: "try_again",

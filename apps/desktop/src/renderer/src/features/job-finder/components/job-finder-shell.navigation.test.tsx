@@ -231,6 +231,70 @@ describe("JobFinderShell section navigation", () => {
     vi.unstubAllGlobals();
   });
 
+  it("moves complete navigation labels into More at a 200% viewport", async () => {
+    let availableWidth = 240;
+    const resizeCallbacks: Array<() => void> = [];
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(callback: () => void) {
+          resizeCallbacks.push(callback);
+        }
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(
+      function (this: HTMLElement) {
+        return this.hasAttribute("data-job-finder-compact-navigation-scroll")
+          ? availableWidth
+          : 0;
+      },
+    );
+    const originalRect = HTMLElement.prototype.getBoundingClientRect.bind(
+      document.createElement("div"),
+    );
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+      function (this: HTMLElement) {
+        if (
+          this.parentElement?.getAttribute("aria-hidden") === "true" &&
+          this.parentElement.className.includes("w-max")
+        )
+          return { ...originalRect(), width: 100 };
+        return originalRect();
+      },
+    );
+    const view = render(
+      <MemoryRouter>
+        <JobFinderShell platform="darwin" workspace={createWorkspace()}>
+          <div>Page</div>
+        </JobFinderShell>
+      </MemoryRouter>,
+    );
+    const compact = view.container.querySelector<HTMLElement>(
+      "[data-job-finder-compact-navigation-content]",
+    )!;
+    expect(
+      within(compact).queryByRole("button", { name: /Applications/ }),
+    ).toBeNull();
+    expect(within(compact).getAllByRole("button")).toHaveLength(2);
+    fireEvent.click(screen.getByRole("button", { name: "More" }));
+    const menu = await screen.findByRole("navigation", { name: "More" });
+    expect(
+      within(menu).getByRole("button", { name: "Applications" }),
+    ).toBeTruthy();
+    fireEvent.keyDown(menu, { key: "Escape" });
+    act(() => {
+      availableWidth = 640;
+      resizeCallbacks.forEach((callback) => callback());
+    });
+    expect(within(compact).getAllByRole("button")).toHaveLength(5);
+    expect(
+      within(compact).getByRole("button", { name: "Applications" }),
+    ).toBeTruthy();
+  });
+
   it("separates the sequential workflow from the Needs you notification control", () => {
     render(
       <MemoryRouter initialEntries={["/job-finder/discovery"]}>
@@ -3051,10 +3115,8 @@ describe("JobFinderShell responsive shell contract", () => {
     }
     // Both the scrollport box and its content row are observed so badge or
     // label width changes refresh fades even when the box itself is stable.
-    expect(observations.map((record) => record.target)).toEqual([
-      scroller,
-      content,
-    ]);
+    expect(observations.map((record) => record.target)).toContain(scroller);
+    expect(observations.map((record) => record.target)).toContain(content);
 
     const startFade = document.querySelector<HTMLElement>(
       "[data-job-finder-compact-navigation-fade-start]",

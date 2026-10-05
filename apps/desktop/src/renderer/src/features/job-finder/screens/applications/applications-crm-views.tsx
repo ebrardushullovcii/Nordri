@@ -913,13 +913,9 @@ export function ApplicationsCrmViews(props: {
           className="min-h-28 flex-1 overflow-auto"
           data-locked-pane-scroll-region
         >
-          {/* A fixed 50rem minimum turned this table into a horizontally
-              scrolling strip inside a ~28rem column, which cut the Stage cell
-              off at the pane edge. The wide layout is kept only once the
-              panel is actually wide enough for it. */}
           <table
             aria-labelledby="application-tracker-heading"
-            className="w-full min-w-0 border-collapse text-left text-sm @[54rem]/tracker:min-w-200"
+            className="w-full min-w-[48rem] table-fixed border-collapse text-left text-sm"
             data-application-tracker-table
           >
             <thead className="sticky top-0 z-10 bg-(--surface-panel-solid)">
@@ -945,11 +941,13 @@ export function ApplicationsCrmViews(props: {
                   <th
                     className={cn(
                       "label-mono-xs px-2 py-3 capitalize",
-                      column === "job"
-                        ? "w-[28%]"
-                        : column === "company"
-                          ? "w-[22%]"
-                          : "w-[1%] whitespace-nowrap",
+                      column === "job" || column === "company"
+                        ? "min-w-0"
+                        : column === "stage"
+                          ? "w-[8.5rem] whitespace-nowrap"
+                          : column === "tags"
+                            ? "w-20 whitespace-nowrap"
+                            : "w-[5.5rem] whitespace-nowrap",
                     )}
                     key={column}
                     scope="col"
@@ -1040,7 +1038,8 @@ export function ApplicationsCrmViews(props: {
                         )}
                       >
                         <button
-                          className="text-left outline-none focus-visible:underline"
+                          className="block w-full truncate text-left outline-none focus-visible:underline"
+                          title={record.title}
                           onClick={() => props.onSelectRecord(record.id)}
                           type="button"
                         >
@@ -1052,17 +1051,19 @@ export function ApplicationsCrmViews(props: {
                       <td
                         className={cn("px-2 text-foreground-soft", rowPadding)}
                       >
-                        {employerLine ?? "—"}
+                        <span
+                          className="block truncate"
+                          title={employerLine ?? undefined}
+                        >
+                          {employerLine ?? "—"}
+                        </span>
                       </td>
                     ) : null}
                     {columnVisible("stage") ? (
-                      <td
-                        className={cn("px-2 @[54rem]/tracker:px-4", rowPadding)}
-                      >
+                      <td className={cn("whitespace-nowrap px-2", rowPadding)}>
                         <span
-                          title={applicationCrmStageProvenanceDetailForView(
-                            record,
-                          )}
+                          className="block truncate"
+                          title={`${applicationCrmStageLabelForView(record, customStages)}. ${applicationCrmStageProvenanceDetailForView(record)}`}
                         >
                           {applicationCrmStageLabelForView(
                             record,
@@ -1074,16 +1075,28 @@ export function ApplicationsCrmViews(props: {
                     {columnVisible("reminder") ? (
                       <td
                         className={cn(
-                          "whitespace-nowrap px-2 @[54rem]/tracker:px-4 text-muted-foreground",
+                          "whitespace-nowrap px-2 text-muted-foreground",
                           rowPadding,
                         )}
                       >
-                        {reminder
-                          ? formatTrackerCell(
-                              reminder.dueAt,
-                              props.homeTimeZone,
-                            )
-                          : "—"}
+                        <span
+                          className="block truncate"
+                          title={
+                            reminder
+                              ? formatCalendarMoment(
+                                  reminder.dueAt,
+                                  props.homeTimeZone,
+                                )
+                              : undefined
+                          }
+                        >
+                          {reminder
+                            ? formatTrackerCell(
+                                reminder.dueAt,
+                                props.homeTimeZone,
+                              )
+                            : "—"}
+                        </span>
                       </td>
                     ) : null}
                     {columnVisible("interview") ? (
@@ -1097,26 +1110,33 @@ export function ApplicationsCrmViews(props: {
                             : undefined
                         }
                         className={cn(
-                          "whitespace-nowrap px-2 @[54rem]/tracker:px-4 text-muted-foreground",
+                          "whitespace-nowrap px-2 text-muted-foreground",
                           rowPadding,
                         )}
                       >
-                        {interview
-                          ? formatTrackerCell(
-                              interview.startsAt,
-                              interview.timeZone,
-                            )
-                          : "—"}
+                        <span className="block truncate">
+                          {interview
+                            ? formatTrackerCell(
+                                interview.startsAt,
+                                interview.timeZone,
+                              )
+                            : "—"}
+                        </span>
                       </td>
                     ) : null}
                     {columnVisible("tags") ? (
                       <td
                         className={cn(
-                          "whitespace-nowrap px-2 @[54rem]/tracker:px-4 text-muted-foreground",
+                          "whitespace-nowrap px-2 text-muted-foreground",
                           rowPadding,
                         )}
                       >
-                        {crm.tags.join(", ") || "—"}
+                        <span
+                          className="block truncate"
+                          title={crm.tags.join(", ") || undefined}
+                        >
+                          {crm.tags.join(", ") || "—"}
+                        </span>
                       </td>
                     ) : null}
                     {columnVisible("applied") ? (
@@ -1126,22 +1146,45 @@ export function ApplicationsCrmViews(props: {
                           rowPadding,
                         )}
                       >
-                        {crm.appliedAt
-                          ? formatTrackerCell(crm.appliedAt, props.homeTimeZone)
-                          : "—"}
+                        <span
+                          className="block truncate"
+                          title={
+                            crm.appliedAt
+                              ? formatCalendarMoment(
+                                  crm.appliedAt,
+                                  props.homeTimeZone,
+                                )
+                              : undefined
+                          }
+                        >
+                          {crm.appliedAt
+                            ? formatTrackerCell(
+                                crm.appliedAt,
+                                props.homeTimeZone,
+                              )
+                            : "—"}
+                        </span>
                       </td>
                     ) : null}
                     {columnVisible("updated") ? (
                       <td
                         className={cn(
-                          "whitespace-nowrap px-2 @[54rem]/tracker:px-4 text-muted-foreground",
+                          "whitespace-nowrap px-2 text-muted-foreground",
                           rowPadding,
                         )}
                       >
-                        {formatTrackerCell(
-                          record.lastUpdatedAt,
-                          props.homeTimeZone,
-                        )}
+                        <span
+                          className="block truncate"
+                          title={formatCalendarMoment(
+                            record.lastUpdatedAt,
+                            props.homeTimeZone,
+                          )}
+                        >
+                          {formatTrackerCell(
+                            record.lastUpdatedAt,
+                            props.homeTimeZone,
+                          )}
+                        </span>
                       </td>
                     ) : null}
                   </tr>

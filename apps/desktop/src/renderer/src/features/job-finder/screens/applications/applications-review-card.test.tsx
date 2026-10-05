@@ -246,3 +246,23 @@ it("labels an unchecked letter as a draft and shows the review reason", () => {
   expect(screen.getByRole("alert").textContent).toContain("location mismatch");
   expect(screen.queryByText("The letter going with it")).toBeNull();
 });
+
+it("offers the Job Finder browser next to the page link without sending", async () => {
+  const onOpenBrowser = vi.fn(() => Promise.resolve());
+  const onSubmit = vi.fn(() => Promise.resolve());
+  render(
+    <ApplicationsReviewCard
+      card={card()}
+      onSubmit={onSubmit}
+      onOpenBrowser={onOpenBrowser}
+    />,
+  );
+  const open = screen.getByRole("button", {
+    name: "Open the Job Finder browser",
+  });
+  expect(open.dataset.variant).toBe("secondary");
+  expect(open.parentElement?.textContent).toContain("Page:");
+  fireEvent.click(open);
+  await waitFor(() => expect(onOpenBrowser).toHaveBeenCalledOnce());
+  expect(onSubmit).not.toHaveBeenCalled();
+});

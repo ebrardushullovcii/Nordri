@@ -230,13 +230,15 @@ describe("main window zoom shortcuts", () => {
       setZoomFactor,
     } as unknown as Pick<WebContents, "getZoomFactor" | "on" | "setZoomFactor">;
 
-    bindMainWindowZoomShortcuts(webContents, "win32");
+    bindMainWindowZoomShortcuts(webContents, "win32", {
+      initialZoomFactor: 1.5,
+    });
 
     // A test or user zoom change on the current route is observed before the
     // same-document navigation starts.
     zoomFactor = 1.5;
     const didStartNavigation = listeners.get("did-start-navigation");
-    expect(didStartNavigation).toBeTypeOf("function");
+    expect(didStartNavigation).toBeUndefined();
     didStartNavigation?.({
       isMainFrame: true,
       isSameDocument: true,
@@ -316,11 +318,33 @@ describe("main window zoom shortcuts", () => {
       initialZoomFactor: 1.44,
     });
     expect(harness.zoomFactor()).toBe(1.44);
-    harness.webContents.setZoomFactor(1.728);
+    applyMainWindowZoomCommand(harness.webContents, "in");
     harness.startMainNavigation();
     harness.applyCommitTimeHostZoom(1);
     harness.finishLoad();
-    expect(harness.zoomFactor()).toBe(1.728);
+    expect(harness.zoomFactor()).toBe(1.54);
+  });
+
+  test("reapplies a saved 200% choice after the reopened window starts at 100%", () => {
+    const harness = createLoadLifecycleHarness();
+    bindMainWindowZoomShortcuts(harness.webContents, "win32", {
+      initialZoomFactor: 2,
+    });
+    harness.applyCommitTimeHostZoom(1);
+    harness.startMainNavigation();
+    harness.finishLoad();
+    expect(harness.zoomFactor()).toBe(2);
+  });
+
+  test("a reset command replaces the remembered value even while Chromium is at 100%", () => {
+    const harness = createLoadLifecycleHarness();
+    bindMainWindowZoomShortcuts(harness.webContents, "win32", {
+      initialZoomFactor: 2,
+    });
+    harness.applyCommitTimeHostZoom(1);
+    applyMainWindowZoomCommand(harness.webContents, "reset");
+    harness.finishLoad();
+    expect(harness.zoomFactor()).toBe(1);
   });
 
   test("beats persisted Chromium host zoom by re-asserting after every completed load", () => {

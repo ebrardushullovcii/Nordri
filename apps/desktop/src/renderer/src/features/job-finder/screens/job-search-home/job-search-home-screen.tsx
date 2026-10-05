@@ -405,33 +405,36 @@ export function JobSearchHomeScreen(props: JobSearchHomeScreenProps) {
             </label>
           ) : undefined
         }
-        description={model.statusLine}
-        statusItems={model.problems.map((problem): PageStatusItem => {
-          const button = problem.button;
-          return {
-            id: problem.id,
-            tone: problem.tone === "critical" ? "critical" : "warning",
-            text: problem.text,
-            ...(button
-              ? {
-                  // Going to the screen that owns the problem is a link;
-                  // doing something here is the line's one button.
-                  action:
-                    button.action.kind === "navigate"
-                      ? {
-                          kind: "link",
-                          label: button.label,
-                          onClick: () => run(button.action),
-                        }
-                      : {
-                          kind: "button",
-                          label: button.label,
-                          onClick: () => run(button.action),
-                        },
-                }
-              : {}),
-          };
-        })}
+        description="Your search, shortlisted jobs, and applications."
+        statusItems={[
+          ...model.problems.map((problem): PageStatusItem => {
+            const button = problem.button;
+            return {
+              id: problem.id,
+              tone: problem.tone === "critical" ? "critical" : "warning",
+              text: problem.text,
+              ...(button
+                ? {
+                    // Going to the screen that owns the problem is a link;
+                    // doing something here is the line's one button.
+                    action:
+                      button.action.kind === "navigate"
+                        ? {
+                            kind: "link",
+                            label: button.label,
+                            onClick: () => run(button.action),
+                          }
+                        : {
+                            kind: "button",
+                            label: button.label,
+                            onClick: () => run(button.action),
+                          },
+                  }
+                : {}),
+            };
+          }),
+          { id: "run-summary", text: model.statusLine },
+        ]}
         title="Home"
       />
 

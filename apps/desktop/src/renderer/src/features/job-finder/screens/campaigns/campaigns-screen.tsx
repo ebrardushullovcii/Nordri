@@ -186,9 +186,15 @@ function describeScheduleStart(
   const suffix = hour < 12 ? "AM" : "PM";
   const time = `${hour12}:${String(minute).padStart(2, "0")} ${suffix}`;
   const zone = schedule.timeZone?.trim();
-  return zone && zone !== deviceTimeZone()
-    ? `Runs at ${time} ${zone}`
-    : `Runs at ${time}`;
+  const days =
+    schedule.mode === "selected_days"
+      ? [...new Set(schedule.daysOfWeek)]
+          .sort((a, b) => a - b)
+          .map((day) => ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][day])
+          .join(", ")
+      : null;
+  const start = days ? `Runs ${days} at ${time}` : `Runs at ${time}`;
+  return zone && zone !== deviceTimeZone() ? `${start} ${zone}` : start;
 }
 
 function describeNextRun(schedule: JobSearchCampaignSchedule): string {

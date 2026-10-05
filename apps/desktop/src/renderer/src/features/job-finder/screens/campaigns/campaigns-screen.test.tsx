@@ -2639,3 +2639,25 @@ it("R3-193 and R3-138 save plan pickiness and OTE basis", () => {
     compensation: { basis: "total_ote" },
   });
 });
+
+it("names the selected weekdays beside the scheduled time on the plan card", () => {
+  const plan = campaign("one", "Weekday plan", "precision");
+  plan.schedule = {
+    ...plan.schedule,
+    enabled: true,
+    mode: "selected_days",
+    daysOfWeek: [5, 1, 3],
+    localStartTime: "08:00",
+    timeZone: deviceTimeZone(),
+  };
+  render(
+    <CampaignsScreen
+      activeCampaignId="one"
+      campaigns={[plan]}
+      onSaveCampaign={vi.fn()}
+      onSelectCampaign={vi.fn()}
+      pending={false}
+    />,
+  );
+  expect(screen.getByText("Runs Mon, Wed, Fri at 8:00 AM")).toBeTruthy();
+});

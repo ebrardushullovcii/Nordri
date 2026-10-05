@@ -41,6 +41,7 @@ import {
   buildQueueEntries,
   applicationNeedsPrimaryRecovery,
   findActionableApplicationAnswerRequest,
+  getApplyResultDestinationUrl,
 } from "./applications-detail-panel-helpers";
 import { ApplicationsDetailPanelOverviewSections } from "./applications-detail-panel-overview-sections";
 import type {
@@ -712,6 +713,21 @@ export function ApplicationsDetailPanel({
               onSelectApplyRun={onSelectApplyRun}
               {...(onSubmitPreparedApplication
                 ? { onSubmitPreparedApplication }
+                : {})}
+              {...(onFinishInBrowser && visibleApplyResult
+                ? {
+                    onOpenBrowser: async () => {
+                      await onFinishInBrowser({
+                        applicationRecordId: selectedRecord.id,
+                        jobId: selectedRecord.jobId,
+                        runId: visibleApplyResult.runId,
+                        destinationUrl: getApplyResultDestinationUrl(
+                          visibleApplyResult.privacyReceipt,
+                        ),
+                        resultId: visibleApplyResult.id,
+                      });
+                    },
+                  }
                 : {})}
               awaitsYourReview={
                 applyPresentation?.state === "awaiting_your_review"

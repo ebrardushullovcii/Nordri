@@ -11,6 +11,7 @@ import {
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { PageHeaderStack } from "./page-header";
 import {
   PageStatusLine,
   sortPageStatusItems,
@@ -241,4 +242,59 @@ describe("PageStatusLine", () => {
       view.container.querySelector("[data-page-header-status]"),
     ).not.toBeNull();
   });
+});
+
+it("moves focus to the next status item after hiding with the keyboard", () => {
+  renderLine([
+    { id: "first", text: "First" },
+    { id: "next", text: "Next" },
+  ]);
+  const hide = screen.getByRole("button", { name: "Hide for now: First" });
+  hide.focus();
+  fireEvent.click(hide);
+  expect(document.activeElement).toBe(
+    screen.getByRole("button", { name: "Hide for now: Next" }),
+  );
+});
+it("focuses the header after the last status item is hidden", () => {
+  const view = render(
+    <MemoryRouter>
+      <PageHeaderStack
+        title="Home"
+        description="Your jobs"
+        statusItems={[{ id: "last", text: "Last" }]}
+      />
+    </MemoryRouter>,
+  );
+  const hide = screen.getByRole("button", { name: "Hide for now: Last" });
+  hide.focus();
+  fireEvent.click(hide);
+  expect(document.activeElement).toBe(
+    view.container.querySelector("[data-page-header]"),
+  );
+});
+
+it("returns focus to More when hiding the last listed overflow item", () => {
+  vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockImplementation(
+    function (this: HTMLElement) {
+      return this.hasAttribute("data-page-status-item") ? 200 : 70;
+    },
+  );
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(
+    function (this: HTMLElement) {
+      return this.hasAttribute("data-page-header-status") ? 300 : 0;
+    },
+  );
+  renderLine([
+    { id: "a", text: "First" },
+    { id: "b", text: "Second" },
+    { id: "c", text: "Last" },
+  ]);
+  fireEvent.click(screen.getByRole("button", { name: "+2 more" }));
+  const hide = screen.getByRole("button", { name: "Hide for now: Last" });
+  hide.focus();
+  fireEvent.click(hide);
+  expect(document.activeElement).toBe(
+    screen.getByRole("button", { name: "+1 more" }),
+  );
 });

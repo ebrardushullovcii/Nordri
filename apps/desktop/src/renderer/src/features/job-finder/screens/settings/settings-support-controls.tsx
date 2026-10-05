@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { Button } from "@renderer/components/ui/button";
-import { SettingsPerformanceEvidence } from "./settings-performance-evidence";
 
 type DiagnosticExportState =
   | { status: "idle"; message: string }
@@ -92,7 +91,6 @@ export function SettingsSupportControls() {
           </p>
         </div>
       </section>
-      <SettingsPerformanceEvidence />
     </>
   );
 }

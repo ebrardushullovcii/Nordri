@@ -702,3 +702,15 @@ it("puts pay privacy in the Applying section", () => {
     salaryDisclosure: "answer_from_profile",
   });
 });
+
+it("places workflow timing below both diagnostics columns", () => {
+  const view = render(
+    <MemoryRouter>
+      <SettingsScreen {...baseProps} />
+    </MemoryRouter>,
+  );
+  const timing = view.container.querySelector("[data-settings-timing]");
+  expect(timing?.parentElement?.id).toBe("settings-diagnostics");
+  expect(timing?.previousElementSibling?.className).toContain("xl:grid-cols-");
+  expect(timing?.textContent).toContain("Workflow timing evidence");
+});

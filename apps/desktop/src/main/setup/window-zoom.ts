@@ -145,17 +145,6 @@ export function bindMainWindowZoomShortcuts(
   // reused user-data root can never decide the launch zoom.
   webContents.on("did-finish-load", applyOwnedZoomFactor);
 
-  webContents.on("did-start-navigation", (details) => {
-    if (!details.isMainFrame) {
-      return;
-    }
-
-    const currentFactor = webContents.getZoomFactor();
-    if (Number.isFinite(currentFactor) && currentFactor > 0) {
-      desiredZoomFactor = currentFactor;
-    }
-  });
-
   webContents.on("did-navigate-in-page", (_event, _url, isMainFrame) => {
     if (!isMainFrame) {
       return;
@@ -170,10 +159,10 @@ export function bindMainWindowZoomShortcuts(
 
   zoomControllers.set(webContents, (command) => {
     const currentFactor = webContents.getZoomFactor();
-    const nextFactor = getNextMainWindowZoomFactor(currentFactor, command);
+    const nextFactor = getNextMainWindowZoomFactor(desiredZoomFactor, command);
+    desiredZoomFactor = nextFactor;
 
     if (nextFactor !== currentFactor) {
-      desiredZoomFactor = nextFactor;
       webContents.setZoomFactor(nextFactor);
     }
   });

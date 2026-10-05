@@ -82,7 +82,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
       {createPortal(
         <section
           aria-label="Notifications"
-          className="pointer-events-none fixed bottom-4 left-4 z-[130] flex w-[min(22.5rem,calc(100vw-2rem))] flex-col-reverse gap-2 min-[1440px]:left-[calc(var(--job-finder-side-width)+1rem)]"
+          className="pointer-events-none fixed bottom-16 left-4 z-[130] flex w-[min(22.5rem,calc(100vw-var(--assistant-sidebar-reserved,0px)-2rem))] flex-col-reverse gap-2 min-[1440px]:left-[calc(var(--job-finder-side-width)+1rem)] min-[1440px]:w-[min(22.5rem,calc(100vw-var(--job-finder-side-width)-var(--assistant-sidebar-reserved,0px)-2rem))]"
           data-toast-viewport
         >
           {toasts.map((toast) => (

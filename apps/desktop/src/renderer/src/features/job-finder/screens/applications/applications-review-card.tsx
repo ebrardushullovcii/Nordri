@@ -27,6 +27,7 @@ export interface ApplicationsReviewCardProps {
    * Sending is impossible until it is prepared again.
    */
   pageClosed?: boolean | undefined;
+  onOpenBrowser?: (() => Promise<void>) | undefined;
   onSubmit: () => Promise<void>;
   onPrepareAgain?: (() => Promise<void>) | undefined;
   isSubmitPending?: boolean | undefined;
@@ -36,6 +37,7 @@ export function ApplicationsReviewCard({
   card,
   pageClosed,
   onSubmit,
+  onOpenBrowser,
   onPrepareAgain,
   isSubmitPending,
 }: ApplicationsReviewCardProps) {
@@ -76,9 +78,24 @@ export function ApplicationsReviewCard({
           yet. Everything it wrote is below, with where each answer came from.
         </p>
         {card.pageUrl ? (
-          <p className="break-all text-(length:--text-small) leading-5 text-foreground-soft">
-            Page: <ExternalUrlLink url={card.pageUrl} />
-          </p>
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <p className="min-w-0 break-all text-(length:--text-small) leading-5 text-foreground-soft">
+              Page: <ExternalUrlLink url={card.pageUrl} />
+            </p>
+            {onOpenBrowser && !pageClosed ? (
+              <Button
+                size="sm"
+                variant="secondary"
+                type="button"
+                pending={busy}
+                onClick={() =>
+                  void run(onOpenBrowser, "open the application page")
+                }
+              >
+                Open the Job Finder browser
+              </Button>
+            ) : null}
+          </div>
         ) : null}
       </div>
 

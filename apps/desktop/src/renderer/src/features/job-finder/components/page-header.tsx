@@ -31,6 +31,7 @@ export function PageHeader({ actions, description, title }: PageHeaderProps) {
     <header
       className="flex min-h-8 min-w-0 items-center justify-between gap-4"
       data-page-header
+      tabIndex={-1}
     >
       <div className="flex min-w-0 flex-1 flex-col gap-1 lg:flex-row lg:items-baseline lg:gap-3">
         <h1

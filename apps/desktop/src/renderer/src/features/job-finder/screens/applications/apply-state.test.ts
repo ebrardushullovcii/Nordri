@@ -616,7 +616,7 @@ it("offers Prepare again for a lost prepared form", () => {
   });
   expect(
     resolveApplyStatePresentation({ mode: "fill_only", result }),
-  ).toMatchObject({ title: "Prepare again", actionLabel: "Prepare again" });
+  ).toMatchObject({ title: "Could not apply", actionLabel: "Prepare again" });
 });
 
 it("a queued job remains queued after a preparation timestamp was written", () => {

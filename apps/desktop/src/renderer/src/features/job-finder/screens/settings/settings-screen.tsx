@@ -43,6 +43,7 @@ import {
 } from "./settings-dirty-sections";
 import { SettingsRuntimeSummary } from "./settings-runtime-summary";
 import { focusSettingsSection } from "./settings-section-anchor";
+import { SettingsPerformanceEvidence } from "./settings-performance-evidence";
 import { SettingsSupportControls } from "./settings-support-controls";
 import { SettingsUnsavedChangesBar } from "./settings-unsaved-changes-bar";
 import { SettingsWorkspaceBehaviorSection } from "./settings-workspace-behavior-section";
@@ -673,6 +674,9 @@ export function SettingsScreen(props: {
             <div className="grid min-w-0 gap-3">
               <SettingsSupportControls />
             </div>
+          </div>
+          <div className="mt-3 min-w-0" data-settings-timing>
+            <SettingsPerformanceEvidence />
           </div>
         </section>
 

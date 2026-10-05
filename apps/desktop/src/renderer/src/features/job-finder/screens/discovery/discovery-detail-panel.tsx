@@ -1005,7 +1005,7 @@ export function DiscoveryDetailPanel({
               role="region"
               tabIndex={0}
             >
-              <div className="grid min-h-full content-start gap-5">
+              <div className="grid min-h-full min-w-0 content-start gap-5 [overflow-wrap:anywhere]">
                 {/* The job first, the app's reasoning after it. A job seeker
                   asks what the job is, what it pays, and why them — in that
                   order — so the listing text, pay and place lead, the score
@@ -1018,7 +1018,7 @@ export function DiscoveryDetailPanel({
                   <span className="text-(length:--text-tiny) uppercase tracking-(--tracking-label) text-foreground-soft">
                     About this job
                   </span>
-                  <p className="text-(length:--text-body) leading-7 text-foreground-soft">
+                  <p className="min-w-0 text-(length:--text-body) leading-7 text-foreground-soft">
                     {wasDiscoveryListingReadBlocked(selectedJob)
                       ? describeDiscoveryMissingListingText(selectedJob)
                       : listingExcerpt ||

@@ -140,6 +140,13 @@ describe("Button", () => {
     expect(container?.querySelector(".button-pending-rail")).not.toBeNull();
   });
 
+  it("gives small header actions the same 14px text as normal buttons", () => {
+    render(<Button size="sm">Header action</Button>);
+    const button = container?.querySelector("button");
+    expect(button?.className).toMatch(/\btext-sm\b/);
+    expect(button?.className).toMatch(/\bh-8\b/);
+  });
+
   it("publishes the field and toolbar sizes without moving any existing size", () => {
     render(
       <div>

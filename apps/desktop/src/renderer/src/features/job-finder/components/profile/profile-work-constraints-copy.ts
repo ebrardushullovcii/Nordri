@@ -8,7 +8,7 @@
 export const PROFILE_WORK_CONSTRAINT_COPY = {
   authorizedWorkCountries: {
     description:
-      "Where you have unrestricted permission to work. Save limited permits in Profile under Job targets.",
+      "Where you have unrestricted permission to work. Save limited permits in Profile under Work eligibility.",
     label: "Countries where you can work",
     placeholder: "Example: United States, Germany",
   },

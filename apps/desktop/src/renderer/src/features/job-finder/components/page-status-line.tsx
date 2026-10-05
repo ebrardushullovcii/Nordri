@@ -174,6 +174,7 @@ export function PageStatusLine(props: {
   const lineRef = useRef<HTMLDivElement | null>(null);
   const moreRef = useRef<HTMLButtonElement | null>(null);
   const widthsRef = useRef<number[]>([]);
+  const measuredSignatureRef = useRef<string | null>(null);
   const moreWidthRef = useRef(MORE_BUTTON_FALLBACK_WIDTH_PX);
   // null renders every item so each one can be measured; a number is how
   // many fit before the "+N more" button.
@@ -216,8 +217,9 @@ export function PageStatusLine(props: {
     widthsRef.current = Array.from(
       line.querySelectorAll<HTMLElement>("[data-page-status-item]"),
     ).map((element) => element.offsetWidth);
+    measuredSignatureRef.current = signature;
     computeFit();
-  }, [computeFit, fitCount]);
+  }, [computeFit, fitCount, signature]);
 
   useLayoutEffect(() => {
     if (moreRef.current && moreRef.current.offsetWidth > 0) {
@@ -276,13 +278,57 @@ export function PageStatusLine(props: {
     };
   }, [closePopover, isPopoverOpen, isTopmost]);
 
+  const hideFocusRef = useRef<{
+    nextIds: string[];
+    header: HTMLElement | null;
+  } | null>(null);
+
   const hideItem = useCallback(
     (id: string) => {
+      const focused = document.activeElement;
+      if (
+        lineRef.current?.contains(focused) ||
+        popoverRef.current?.contains(focused)
+      ) {
+        hideFocusRef.current = {
+          nextIds: shownItems
+            .slice(shownItems.findIndex((item) => item.id === id) + 1)
+            .map((item) => item.id),
+          header:
+            lineRef.current
+              ?.closest("[data-page-header-stack]")
+              ?.querySelector<HTMLElement>("[data-page-header]") ?? null,
+        };
+      }
       setHiddenIds((current) => new Set([...current, id]));
       props.items.find((item) => item.id === id)?.onHide?.();
     },
-    [props.items],
+    [props.items, shownItems],
   );
+
+  useLayoutEffect(() => {
+    const pending = hideFocusRef.current;
+    if (
+      !pending ||
+      (shownItems.length > 0 &&
+        (fitCount === null || measuredSignatureRef.current !== signature))
+    )
+      return;
+    const nextItem = Array.from(
+      lineRef.current?.querySelectorAll<HTMLElement>(
+        "[data-page-status-item]",
+      ) ?? [],
+    ).find((element) =>
+      pending.nextIds.includes(element.dataset.pageStatusItem ?? ""),
+    );
+    const target =
+      nextItem?.querySelector<HTMLElement>("button, a") ??
+      moreRef.current ??
+      pending.header ??
+      lineRef.current;
+    target?.focus();
+    hideFocusRef.current = null;
+  }, [fitCount, signature, shownItems.length]);
 
   useEffect(() => {
     if (shownItems.length === 0 && isPopoverOpen) setPopoverOpen(false);
@@ -308,6 +354,7 @@ export function PageStatusLine(props: {
       data-page-header-status
       ref={lineRef}
       role="status"
+      tabIndex={-1}
     >
       {visibleItems.map((item, index) => (
         <span

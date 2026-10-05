@@ -1838,3 +1838,27 @@ it("hides a listing without optional reasons and lets a removed shortlist job be
     ),
   );
 });
+
+it("keeps long German listing words inside the shrinking detail column", () => {
+  cleanup();
+  const text = "EntwicklungszusammenarbeitundQualitaetssicherungsverantwortung";
+  render(
+    <MemoryRouter>
+      <DiscoveryDetailPanel
+        applicationRecords={[]}
+        discoveryTargets={[]}
+        isJobPending={() => false}
+        onDismissJob={vi.fn()}
+        onOpenApplication={vi.fn()}
+        onQueueJob={vi.fn()}
+        selectedJob={{ ...baseSelectedJob, description: text } as SavedJob}
+      />
+    </MemoryRouter>,
+  );
+  const listing = screen.getByTestId("discovery-detail-listing-text");
+  expect(listing.parentElement?.className).toContain("min-w-0");
+  expect(listing.parentElement?.className).toContain(
+    "[overflow-wrap:anywhere]",
+  );
+  expect(listing.textContent).toContain(text);
+});

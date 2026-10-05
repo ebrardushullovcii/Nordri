@@ -1031,7 +1031,7 @@ test("bulk controls use shared fields and offer only manually recorded stages", 
   expect(screen.getByRole("option", { name: "Interview" })).toBeTruthy();
 });
 
-test("gives role and employer more room than sparse tracker columns", () => {
+test("reserves one-line stage and narrow dates while truncating role and employer", () => {
   render(
     <ApplicationsCrmViews
       records={[
@@ -1044,14 +1044,28 @@ test("gives role and employer more room than sparse tracker columns", () => {
     />,
   );
   expect(screen.getByRole("columnheader", { name: "Job" }).className).toContain(
-    "w-[28%]",
+    "min-w-0",
   );
   expect(
     screen.getByRole("columnheader", { name: "Company" }).className,
-  ).toContain("w-[22%]");
+  ).toContain("min-w-0");
   expect(
     screen.getByRole("columnheader", { name: "Stage" }).className,
-  ).toContain("w-[1%]");
+  ).toContain("w-[8.5rem]");
+  expect(screen.getByRole("table").className).toContain("table-fixed");
+  expect(
+    screen.getByRole("columnheader", { name: "Updated" }).className,
+  ).toContain("w-[5.5rem]");
+  const job = screen.getByRole("button", {
+    name: "Senior Learning Coordinator",
+  });
+  expect(job.className).toContain("truncate");
+  expect(job.title).toBe("Senior Learning Coordinator");
+  expect(screen.getByText("Clientnest Cobalt").className).toContain("truncate");
+  expect(screen.getByText("Clientnest Cobalt").title).toBe("Clientnest Cobalt");
+  expect(screen.getAllByRole("row")[1]?.children[3]?.className).toContain(
+    "whitespace-nowrap",
+  );
 });
 
 test("keeps the tracker controls on one toolbar row under the page title", () => {

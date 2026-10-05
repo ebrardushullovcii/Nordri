@@ -675,7 +675,7 @@ it.each([
   ["planned", "Waiting its turn", "Application queued", 0],
   ["planned", "Waiting for a browser tab", "Waiting for a free browser tab", 0],
   ["awaiting_review", "Needs your answers", "Needs your answers", 2],
-  ["failed", "Prepare again", PREPARED_PAGE_CLOSED_SUMMARY, 0],
+  ["failed", "Could not apply", PREPARED_PAGE_CLOSED_SUMMARY, 0],
 ] as const)(
   "per-job run outcome uses the actual %s standing: %s",
   (state, label, summary, latestQuestionCount) => {
@@ -717,3 +717,27 @@ it.each([
     expect(entry?.textContent).not.toContain("Filling in");
   },
 );
+
+it("shows the site's captured confirmation reference on the submitted record", () => {
+  const result = buildResult({
+    state: "submitted",
+    privacyReceipt: {
+      finalSubmitOccurred: true,
+      submissionOutcome: {
+        outcome: "submitted",
+        evidence: [
+          {
+            id: "confirmation",
+            summary: "Application received. Reference NW-2048.",
+          },
+        ],
+      },
+    } as unknown as NonNullable<
+      Parameters<typeof buildResult>[0]["privacyReceipt"]
+    >,
+  });
+  const view = renderSection({ visibleApplyResult: result });
+  expect(
+    view.getByText("Application received. Reference NW-2048."),
+  ).toBeTruthy();
+});

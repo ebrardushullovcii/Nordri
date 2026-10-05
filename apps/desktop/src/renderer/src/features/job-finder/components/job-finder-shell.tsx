@@ -588,6 +588,11 @@ export function JobFinderShell({
   const moreMenuItemRefs = useRef<Array<HTMLElement | null>>([]);
   const moreMenuInitialFocusRef = useRef<"first" | "last">("first");
   const compactRouteScrollRef = useRef<HTMLDivElement | null>(null);
+  const compactMeasureRef = useRef<HTMLDivElement | null>(null);
+  const [compactVisibleCount, setCompactVisibleCount] = useState(5);
+  const [compactPreferredWidth, setCompactPreferredWidth] = useState<
+    number | null
+  >(null);
   const [compactRouteScrollEdges, setCompactRouteScrollEdges] =
     useState<CompactRouteScrollEdges>(NO_ROUTE_SCROLL_EDGES);
   // The palette index used to be rebuilt on every workspace commit even while
@@ -733,11 +738,55 @@ export function JobFinderShell({
   const actionScreen = screenDefinitions.find(
     (screen) => screen.id === "actions",
   );
-  const primaryScreens = screenDefinitions.filter((screen) =>
-    ["home", "profile", "discovery", "review-queue", "applications"].includes(
-      screen.id,
-    ),
+  const primaryScreens = useMemo(
+    () =>
+      screenDefinitions.filter((screen) =>
+        [
+          "home",
+          "profile",
+          "discovery",
+          "review-queue",
+          "applications",
+        ].includes(screen.id),
+      ),
+    [screenDefinitions],
   );
+  const compactPrimaryScreens = primaryScreens.slice(0, compactVisibleCount);
+  const compactHiddenScreens = primaryScreens.slice(compactVisibleCount);
+  useLayoutEffect(() => {
+    const scroll = compactRouteScrollRef.current;
+    const measurement = compactMeasureRef.current;
+    if (!scroll || !measurement) return undefined;
+    const measure = () => {
+      if (scroll.clientWidth <= 0) return;
+      const widths = Array.from(
+        measurement.children,
+        (child) => (child as HTMLElement).getBoundingClientRect().width,
+      );
+      const gap =
+        Number.parseFloat(getComputedStyle(measurement).columnGap) || 4;
+      setCompactPreferredWidth(
+        widths.reduce((sum, width) => sum + width, 0) +
+          gap * Math.max(0, widths.length - 1) +
+          (moreButtonRef.current?.getBoundingClientRect().width ?? 0) +
+          24,
+      );
+      let used = 0;
+      let count = 0;
+      for (const width of widths) {
+        used += width + (count > 0 ? gap : 0);
+        if (used > scroll.clientWidth - 8) break;
+        count += 1;
+      }
+      setCompactVisibleCount(Math.max(1, count));
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return undefined;
+    const observer = new ResizeObserver(measure);
+    observer.observe(scroll);
+    observer.observe(measurement);
+    return () => observer.disconnect();
+  }, [primaryScreens]);
   // Grouped by what each destination *is*, not by which part of the product
   // introduced it. The person's own files live under Profile › Files now, so
   // the workspace group is Settings alone.
@@ -746,6 +795,9 @@ export function JobFinderShell({
   const selectMenuScreens = (ids: readonly JobFinderScreen[]) =>
     ids.flatMap((id) => screenDefinitions.filter((screen) => screen.id === id));
   const menuGroups = [
+    ...(compactHiddenScreens.length > 0
+      ? [{ label: "Your job search", screens: compactHiddenScreens }]
+      : []),
     {
       label: "Workspace",
       screens: selectMenuScreens(["settings", "safeguards"]),
@@ -1323,8 +1375,36 @@ export function JobFinderShell({
             <div
               className="relative flex w-fit min-w-0 max-w-full flex-nowrap items-center gap-1 overflow-visible rounded-(--radius-panel) border border-(--surface-panel-border) bg-(--surface-panel) p-1 sm:gap-1.5"
               data-job-finder-compact-navigation
+              style={
+                compactPreferredWidth === null
+                  ? undefined
+                  : { width: compactPreferredWidth }
+              }
             >
               <div className="relative min-w-0 flex-1">
+                <div
+                  aria-hidden="true"
+                  className="pointer-events-none invisible absolute flex w-max gap-1 sm:gap-1.5"
+                  ref={compactMeasureRef}
+                >
+                  {primaryScreens.map((screen) => (
+                    <span
+                      className={cn(COMPACT_NAV_PILL_CLASS, "font-semibold")}
+                      key={screen.id}
+                    >
+                      <span className="shrink-0 whitespace-nowrap leading-tight">
+                        {screen.label}
+                      </span>
+                      {screen.count !== null ? (
+                        <ScreenCountBadge
+                          count={screen.count}
+                          kind={screen.countKind}
+                          noun={screen.countNoun}
+                        />
+                      ) : null}
+                    </span>
+                  ))}
+                </div>
                 <div
                   className="overflow-x-auto overscroll-x-contain px-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
                   data-job-finder-compact-navigation-scroll
@@ -1339,7 +1419,7 @@ export function JobFinderShell({
                     className="flex min-w-max flex-nowrap items-center gap-1 sm:gap-1.5"
                     data-job-finder-compact-navigation-content
                   >
-                    {primaryScreens.map((screen) => (
+                    {compactPrimaryScreens.map((screen) => (
                       <button
                         aria-current={
                           activeScreen === screen.id ? "page" : undefined
@@ -1950,7 +2030,9 @@ export function JobFinderShell({
       <div
         className={SHELL_CONTENT_CLASS}
         data-job-finder-shell-content
-        style={{ paddingRight: "var(--assistant-sidebar-reserved, 0px)" }}
+        style={{
+          paddingRight: "var(--assistant-sidebar-reserved, 0px)",
+        }}
       >
         <main
           aria-label={activeScreenLabel}
