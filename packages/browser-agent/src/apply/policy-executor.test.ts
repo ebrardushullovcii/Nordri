@@ -790,7 +790,7 @@ describe("apply policy executor", () => {
     expect(outcome.kind).toBe("filled");
     if (outcome.kind === "filled") {
       expect(outcome.filled.answer.provenanceLabel).toBe(
-        "a declaration you approved in advance",
+        "your Settings (on by default)",
       );
     }
   });
@@ -3347,4 +3347,299 @@ test("an exact multi-choice selection preserves option labels containing commas"
   );
   expect(result.kind).toBe("filled");
   expect(hands.setToggle).toHaveBeenCalledWith("c0", true);
+});
+
+test("a saved generic eligibility answer is checked again for this hiring country", async () => {
+  const page = rawPage({
+    controls: [
+      rawControl({
+        index: 0,
+        tagName: "select",
+        label: "Are you authorized to work here?",
+        options: ["Yes", "No"],
+        required: true,
+      }),
+    ],
+  });
+  const { config, hands } = configFor(page);
+  config.sources.posting.location = "Worldwide remote";
+  config.application.resultId = "current_result";
+  config.sources.reusableAnswers = [
+    {
+      id: "canadian_answer",
+      applicationScope: {
+        resultId: "other_result",
+        applicationRecordId: "other_application",
+        location: "Toronto, Canada",
+      },
+      kind: "work_authorization",
+      label: "Canada authorization",
+      question: "Are you authorized to work here?",
+      answer: "Yes",
+      roleFamilies: [],
+      proofEntryIds: [],
+    },
+  ];
+  const choose = vi.spyOn(hands, "chooseOption");
+  const check = vi.fn(async () => ({
+    supported: false,
+    reason:
+      "Which country will hire you? Canadian work rights do not establish worldwide permission.",
+  }));
+  const outcome = await executeApplyProposal(
+    { tool: "select", ref: "c0", option: "Yes" },
+    observationOf(page).signature,
+    {
+      config,
+      now,
+      guardState: createApplyGuardState(),
+      checkWrittenAnswer: check,
+      classifyQuestions: async () =>
+        new Map([
+          [
+            "Are you authorized to work here?",
+            {
+              asksAboutPay: false,
+              eligibilityKind: "work_authorization" as const,
+              declarationKind: null,
+            },
+          ],
+        ]),
+    },
+  );
+  expect(check).toHaveBeenCalledOnce();
+  expect(choose).not.toHaveBeenCalled();
+  expect(outcome.kind).toBe("suggestion");
+});
+
+test("private current salary is not filled or suggested from expected pay", async () => {
+  const page = rawPage({
+    controls: [
+      rawControl({ index: 0, label: "Current salary", required: true }),
+    ],
+  });
+  const { config, hands } = configFor(page);
+  config.sources.profile.answerBank.salaryExpectations = "EUR 60000";
+  const fill = vi.spyOn(hands, "fillText");
+  const check = vi.fn(async () => ({ supported: true, reason: "checked" }));
+  const outcome = await executeApplyProposal(
+    { tool: "type", ref: "c0", text: "60000" },
+    observationOf(page).signature,
+    {
+      config,
+      now,
+      guardState: createApplyGuardState(),
+      checkWrittenAnswer: check,
+      classifyQuestions: async () =>
+        new Map([
+          [
+            "Current salary",
+            { asksAboutPay: true, asksCurrentPay: true, declarationKind: null },
+          ],
+        ]),
+    },
+  );
+  expect(fill).not.toHaveBeenCalled();
+  expect(check).not.toHaveBeenCalled();
+  expect(outcome).toMatchObject({ kind: "suggestion", answer: null });
+});
+
+test.each([true, false])(
+  "checks eligibility checkboxes even if classified as a routine declaration (checked=%s)",
+  async (checked) => {
+    const page = rawPage({
+      controls: [
+        rawControl({
+          index: 0,
+          inputType: "checkbox",
+          label: "I certify that I am authorized to work in the hiring country",
+          required: true,
+        }),
+      ],
+    });
+    const { config, hands } = configFor(page);
+    config.authority.preApprovedAttestationKinds = [
+      "truthfulness_certification",
+    ];
+    const toggle = vi.spyOn(hands, "setToggle");
+    const check = vi.fn(() =>
+      Promise.resolve({
+        supported: false,
+        reason: "The hiring country and permit conditions need your review.",
+      }),
+    );
+    const outcome = await executeApplyProposal(
+      { tool: "set_checkbox", ref: "c0", checked },
+      observationOf(page).signature,
+      {
+        config,
+        now,
+        guardState: createApplyGuardState(),
+        checkWrittenAnswer: check,
+        classifyQuestions: () =>
+          Promise.resolve(
+            new Map([
+              [
+                "I certify that I am authorized to work in the hiring country",
+                {
+                  asksAboutPay: false,
+                  eligibilityKind: "work_authorization" as const,
+                  declarationKind: "truthfulness_certification" as const,
+                },
+              ],
+            ]),
+          ),
+      },
+    );
+    expect(check).toHaveBeenCalledWith(
+      "I certify that I am authorized to work in the hiring country",
+      checked ? "Yes" : "No",
+    );
+    expect(toggle).not.toHaveBeenCalled();
+    expect(outcome.kind).toBe("suggestion");
+  },
+);
+
+test.each([
+  ["Yes", "retained_result", "Worldwide", true],
+  ["No", "retained_result", "Worldwide", true],
+  ["Yes", "earlier_result", "Worldwide", true],
+  ["Yes", "earlier_result", "Different location", false],
+] as const)(
+  "eligibility choice %s from %s in %s is final=%s",
+  async (answer, resultId, location, final) => {
+    const page = rawPage({
+      controls: [
+        rawControl({
+          index: 0,
+          tagName: "select",
+          label: "Are you authorized to work here?",
+          options: ["Yes", "No"],
+          required: true,
+        }),
+      ],
+    });
+    const { config, hands } = configFor(page);
+    config.application.resultId = "retained_result";
+    config.application.applicationRecordId = "application";
+    config.sources.posting.location = "Worldwide";
+    config.sources.reusableAnswers = [
+      {
+        id: "own_answer",
+        kind: "work_authorization",
+        label: "Are you authorized to work here?",
+        question: "Are you authorized to work here?",
+        answer,
+        roleFamilies: [],
+        proofEntryIds: [],
+        applicationScope: {
+          resultId,
+          applicationRecordId: "application",
+          location,
+        },
+      },
+    ];
+    const check = vi.fn(() =>
+      Promise.resolve({
+        supported: false,
+        reason: "Hiring country is unknown",
+      }),
+    );
+    const choose = vi.spyOn(hands, "chooseOption");
+    const outcome = await executeApplyProposal(
+      { tool: "select", ref: "c0", option: answer },
+      observationOf(page).signature,
+      {
+        config,
+        now,
+        guardState: createApplyGuardState(),
+        checkWrittenAnswer: check,
+      },
+    );
+    expect(outcome.kind).toBe(final ? "filled" : "suggestion");
+    if (final) {
+      expect(choose).toHaveBeenCalledWith("c0", answer);
+      expect(check).not.toHaveBeenCalled();
+    } else {
+      expect(choose).not.toHaveBeenCalled();
+      expect(check).toHaveBeenCalled();
+    }
+  },
+);
+
+test.each([false, true])(
+  "a rejected or unavailable check explains the question (unavailable=%s)",
+  async (unavailable) => {
+    const page = rawPage({
+      controls: [
+        rawControl({ index: 0, label: "Why this role?", required: true }),
+      ],
+    });
+    const { config } = configFor(page);
+    const outcome = await executeApplyProposal(
+      { tool: "type", ref: "c0", text: "I led an unsupported project" },
+      observationOf(page).signature,
+      {
+        config,
+        now,
+        guardState: createApplyGuardState(),
+        checkWrittenAnswer: () =>
+          unavailable
+            ? Promise.reject(new Error("incomplete: max_output_tokens"))
+            : Promise.resolve({
+                supported: false,
+                reason: "That project is not in your resume.",
+              }),
+      },
+    );
+    expect(outcome.kind).toBe("suggestion");
+    if (outcome.kind === "suggestion") {
+      expect(outcome.question?.note).toContain(
+        unavailable ? "could not check this answer" : "That project",
+      );
+      expect(outcome.question?.note).not.toContain("max_output_tokens");
+    }
+  },
+);
+
+test("an optional letter that needs review pauses with its draft and reason", async () => {
+  const page = rawPage({
+    controls: [
+      rawControl({ index: 0, label: "Cover letter", tagName: "textarea" }),
+    ],
+  });
+  const { config, hands } = configFor(page);
+  config.writing = {
+    coverLetterPolicy: "when_possible",
+    writtenAnswerLength: "short",
+    preApprovedDeclarations: [],
+  };
+  config.letters = {
+    preference: {
+      tone: "direct",
+      length: "short",
+      language: null,
+      sample: null,
+    },
+    provide: () =>
+      Promise.resolve({
+        ok: false,
+        reason: "Agree how to handle the location mismatch before sending.",
+        draftText: "Please accommodate my location.",
+      }),
+  };
+  const write = vi.spyOn(hands, "fillText");
+  const outcome = await executeApplyProposal(
+    { tool: "type", ref: "c0", text: "Letter" },
+    observationOf(page).signature,
+    { config, now, guardState: createApplyGuardState() },
+  );
+  expect(outcome.kind).toBe("paused");
+  if (outcome.kind === "paused") {
+    expect(outcome.pause.reviewDraft?.text).toBe(
+      "Please accommodate my location.",
+    );
+    expect(outcome.pause.reviewDraft?.reason).toContain("location mismatch");
+  }
+  expect(write).not.toHaveBeenCalled();
 });

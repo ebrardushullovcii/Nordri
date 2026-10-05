@@ -570,3 +570,32 @@ describe("legacy saveSettings during desktop migration", () => {
     expect(settings.applicationCrm?.noResponseAutomation.afterDays).toBe(12);
   });
 });
+
+test("pay choice saves through the real workspace service without sending permission or answer approval", async () => {
+  const repository = createInMemoryJobFinderRepository(createSeed());
+  const service = createTestHarness(repository);
+  expect((await service.getWorkspaceSnapshot()).settings.salaryDisclosure).toBe(
+    "pause_for_user",
+  );
+  for (const applicationAutomationMode of [
+    "autonomous_submit",
+    "confirm_before_submit",
+    "prepare_only",
+  ] as const) {
+    const snapshot = await service.updateApplicationDefaults({
+      salaryDisclosure: "answer_from_profile",
+      applicationAutomationMode,
+    });
+    expect(snapshot.settings.salaryDisclosure).toBe("answer_from_profile");
+    expect((await repository.getSettings()).salaryDisclosure).toBe(
+      "answer_from_profile",
+    );
+    expect(await repository.listApplicationAuthorityEnvelopes({})).toEqual([]);
+  }
+  await service.updateApplicationDefaults({
+    salaryDisclosure: "pause_for_user",
+  });
+  expect((await service.getWorkspaceSnapshot()).settings.salaryDisclosure).toBe(
+    "pause_for_user",
+  );
+});

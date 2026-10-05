@@ -179,3 +179,34 @@ describe("application mode and daily limit save ordering", () => {
     await waitFor(() => expect(screen.getByLabelText("Most applications in one day")).toHaveProperty("disabled", false));
   });
 });
+
+it("keeps pay inside Applying and saves on toggle without another button", async () => {
+  const onSaveSalaryDisclosure = vi.fn(() => Promise.resolve());
+  renderSection({ onSaveSalaryDisclosure });
+  const toggle = screen.getByRole("switch", {
+    name: "Let Job Finder answer expected and current pay questions",
+  });
+  expect(toggle.getAttribute("aria-checked")).toBe("false");
+  expect(toggle.closest(".surface-panel-shell")?.textContent).toContain(
+    "Applying",
+  );
+  expect(screen.queryByRole("button", { name: "Save pay privacy" })).toBeNull();
+  fireEvent.click(toggle);
+  await waitFor(() =>
+    expect(onSaveSalaryDisclosure).toHaveBeenCalledWith("answer_from_profile"),
+  );
+  expect(toggle.getAttribute("aria-checked")).toBe("true");
+});
+
+it("a failed pay save restores the saved choice and explains the failure", async () => {
+  renderSection({
+    onSaveSalaryDisclosure: () => Promise.reject(new Error("Failed")),
+  });
+  const toggle = screen.getByRole("switch", {
+    name: "Let Job Finder answer expected and current pay questions",
+  });
+  fireEvent.click(toggle);
+  await screen.findByRole("alert");
+  expect(toggle.getAttribute("aria-checked")).toBe("false");
+  expect(screen.getByRole("alert").textContent).toContain("did not save");
+});

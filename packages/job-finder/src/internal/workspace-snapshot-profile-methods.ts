@@ -1,3 +1,4 @@
+import { readSalaryDisclosurePreference } from "./salary-disclosure-preference";
 import { hasVerifiedApplicationSubmission } from "./workspace-apply-run-support";
 import {
   isUnsentPreparedApplication,
@@ -991,7 +992,10 @@ export function createWorkspaceSnapshotProfileMethods(
 
     const availableResumeTemplates = ctx.documentManager.listResumeTemplates();
     const normalizedSettings = normalizeJobFinderSettings(
-      rawSettings,
+      {
+        ...rawSettings,
+        salaryDisclosure: await readSalaryDisclosurePreference(ctx.repository),
+      },
       availableResumeTemplates,
     );
     const settings: JobFinderSettings = normalizedSettings.applicationCrm
@@ -1381,7 +1385,10 @@ export function createWorkspaceSnapshotProfileMethods(
     ]);
     const availableResumeTemplates = ctx.documentManager.listResumeTemplates();
     const settings = normalizeJobFinderSettings(
-      rawSettings,
+      {
+        ...rawSettings,
+        salaryDisclosure: await readSalaryDisclosurePreference(ctx.repository),
+      },
       availableResumeTemplates,
     );
     const generatedAt = new Date().toISOString();
@@ -2020,6 +2027,7 @@ export function createWorkspaceSnapshotProfileMethods(
           coverLetter: parsedInput.coverLetter,
           applicationAutomationMode: parsedInput.applicationAutomationMode,
           maxApplicationsPerLocalDay: parsedInput.maxApplicationsPerLocalDay,
+          salaryDisclosure: parsedInput.salaryDisclosure,
         }),
       );
       return getWorkspaceSnapshot();

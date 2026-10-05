@@ -318,7 +318,7 @@ describe("written answer fact check recovery", () => {
       ),
     ).toBe(true);
     expect(lastCall?.[1].length).toBeGreaterThan(0);
-    expect(lastCall?.[2]?.maxOutputTokens).toBe(900);
+    expect(lastCall?.[2]?.maxOutputTokens).toBeGreaterThan(4_000);
   });
 
   test("refuses to enter an answer when both fact reports are unusable", async () => {
@@ -649,6 +649,7 @@ test("creates a grounded requested document and attaches the generated file", as
   });
   const baseHands = hands(source);
   let capturedGrounding: string[] = [];
+  let capturedPrompt = "";
   const result = await runApplyAgent(
     config(source, {
       hands: {
@@ -673,6 +674,7 @@ test("creates a grounded requested document and attaches the generated file", as
         },
         provide: (request) => {
           capturedGrounding = request.groundedIn;
+          capturedPrompt = request.prompt;
           return Promise.resolve({
             ok: true as const,
             text: "Dear Hiring Team,\n\nI am applying for the Platform Engineer role at Northwind Tools. My saved profile and resume show eight years of platform engineering and dependable internal-tool work. That experience aligns with your need for someone to own the internal platform.\n\nSincerely,\nRobin Ashford",
@@ -726,12 +728,11 @@ test("creates a grounded requested document and attaches the generated file", as
     "Created motivation letter motivation-letter.pdf for this application.",
   );
   expect(capturedGrounding.join("\n")).toContain(
-    '"summary": "Builds dependable internal tools."',
+    "Profile summary: Builds dependable internal tools.",
   );
-  expect(capturedGrounding.join("\n")).toContain(
-    "8 years of platform engineering.",
-  );
-  expect(capturedGrounding.join("\n")).toContain("Own the internal platform.");
+  expect(capturedPrompt).toContain("8 years of platform engineering.");
+  expect(capturedPrompt).toContain("Own the internal platform.");
+  expect(capturedGrounding.join("\n")).not.toContain("{\n");
 });
 
 describe("apply agent run endings", () => {
@@ -2660,4 +2661,28 @@ test("a filled invalid answer gets plain guidance instead of the browser validat
   expect(result.pauses[0]?.question?.note).toBe(
     "The site did not accept this value. Check it and try again.",
   );
+});
+
+test("Full written answers ask for supported specifics within the available limit", () => {
+  const input = config(page());
+  input.writing = {
+    coverLetterPolicy: "when_required",
+    writtenAnswerLength: "full",
+    preApprovedDeclarations: [],
+  };
+  const full = createApplySystemPrompt(input);
+  input.writing.writtenAnswerLength = "short";
+  const short = createApplySystemPrompt(input);
+  expect(full).toContain("limit hours, study status, dates or employer");
+  expect(full).toContain("facts for one hiring country");
+  expect(full).not.toMatch(
+    /German student permit|Canada.*Yes\/No|US.*No\/Yes/u,
+  );
+  expect(full).toContain("70–90%");
+  expect(full).toContain("no character limit");
+  expect(full).toContain("four to six developed sentences");
+  expect(full).toContain("concrete supported achievement");
+  expect(full).toContain("specific need in this job");
+  expect(full).toContain("Never invent a metric");
+  expect(short).not.toContain("70–90%");
 });

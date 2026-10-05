@@ -89,3 +89,10 @@ export type {
   ApplySafetyHooks,
   ApplyStepPosition,
 } from "./types";
+
+export {
+  checkWrittenApplicationAnswer,
+  checkWrittenApplicationAnswers,
+} from "./written-answer-grounding";
+
+export { applicationFacts } from "./application-facts";

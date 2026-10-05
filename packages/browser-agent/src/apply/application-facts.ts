@@ -20,7 +20,11 @@ export function applicationFacts(
 ) {
   void options;
   const profile = sources.profile;
-  const answerBank = { ...profile.answerBank };
+  const answerBank = {
+    ...profile.answerBank,
+    customAnswers: undefined,
+    ...(!options.payDisclosed ? { salaryExpectations: null } : {}),
+  };
   return {
     name: {
       full: profile.fullName,
@@ -47,15 +51,30 @@ export function applicationFacts(
       other: profile.links,
     },
     headline: profile.headline,
+    summary: profile.summary,
+    professionalSummary: profile.professionalSummary,
+    narrative: profile.narrative,
+    targetRoles: profile.targetRoles,
+    preferredLocations: profile.locations,
+    preferences: sources.preferences,
     yearsExperience: profile.yearsExperience,
     workEligibility: profile.workEligibility,
     answers: answerBank,
-    savedAnswers: sources.reusableAnswers.map((saved) => ({
-      question: saved.question,
-      answer: saved.answer,
-    })),
+    savedAnswers: sources.reusableAnswers
+      .filter(
+        (saved) => options.payDisclosed || saved.kind !== "salary_expectation",
+      )
+      .map((saved) => ({
+        kind: saved.kind,
+        label: saved.label,
+        question: saved.question,
+        answer: saved.answer,
+        applicationScope: saved.applicationScope,
+      })),
     spokenLanguages: profile.spokenLanguages,
     skills: profile.skills,
+    skillGroups: profile.skillGroups,
+    proofBank: profile.proofBank,
     experiences: profile.experiences.filter((entry) => entry.isDraft !== true),
     education: profile.education.filter((entry) => entry.isDraft !== true),
     certifications: profile.certifications,
@@ -185,9 +204,21 @@ export function storedFactFor(input: {
 }): ApplyAnswer | null {
   const wanted = normalizeSignal(input.value);
   if (!wanted || !isDistinctive(input.value)) return null;
+  // Eligibility needs its question and hiring context checked.
+  if (
+    input.control.questionKind === "work_authorization" ||
+    input.control.questionKind === "visa_sponsorship"
+  ) {
+    return null;
+  }
   const fact = storedFacts(input.sources, {
     payDisclosed: input.payDisclosed,
-  }).find((candidate) => normalizeSignal(candidate.value) === wanted);
+  }).find(
+    (candidate) =>
+      candidate.sourceId !== "profile.answerBank.workAuthorization" &&
+      candidate.sourceId !== "profile.answerBank.visaSponsorship" &&
+      normalizeSignal(candidate.value) === wanted,
+  );
   if (!fact) return null;
   return {
     value: input.value.trim(),
@@ -229,5 +260,21 @@ export function savedAnswerForQuestion(
       asked.has(normalizeSignal(saved.question)),
     ) ??
     null
+  );
+}
+
+/** An explicit answer on the retained application is the person's decision. */
+export function isAnswerFromThisApplication(
+  answer: CandidateReusableAnswer | null,
+  application: { resultId?: string; applicationRecordId?: string },
+  location: string | null,
+): boolean {
+  const scope = answer?.applicationScope;
+  if (!scope) return false;
+  if (scope.location && scope.location !== location) return false;
+  return Boolean(
+    (application.resultId && scope.resultId === application.resultId) ||
+    (application.applicationRecordId &&
+      scope.applicationRecordId === application.applicationRecordId),
   );
 }

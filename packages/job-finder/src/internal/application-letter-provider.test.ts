@@ -4,7 +4,10 @@ import {
 } from "@nordri/contracts";
 import { describe, expect, test, vi } from "vitest";
 
-import { createApplicationLetterProvider } from "./application-letter-provider";
+import {
+  ApplicationLetterGroundingError,
+  createApplicationLetterProvider,
+} from "./application-letter-provider";
 
 /**
  * One application, one letter.
@@ -265,4 +268,30 @@ describe("the saved letter preference", () => {
       CoverLetterPreferenceSchema.parse(older.coverLetter ?? {}).tone,
     ).toBe("plain_professional");
   });
+});
+
+test("an unsupported letter is handed back with its reason and is never rendered", async () => {
+  const renderLetter = vi.fn();
+  const letterProvider = provider({
+    writeLetter: async () => {
+      throw new ApplicationLetterGroundingError(
+        "The claimed result is not in your profile or resume.",
+        "Draft needing review",
+      );
+    },
+    renderLetter,
+  });
+  expect(
+    await letterProvider.provide({
+      ...REQUEST,
+      delivery: "file",
+      fileType: "pdf",
+    }),
+  ).toEqual({
+    ok: false,
+    reason:
+      "The letter needs your review: The claimed result is not in your profile or resume.",
+    draftText: "Draft needing review",
+  });
+  expect(renderLetter).not.toHaveBeenCalled();
 });

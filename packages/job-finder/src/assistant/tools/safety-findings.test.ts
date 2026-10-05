@@ -798,9 +798,9 @@ describe("R3 assistant safety findings", () => {
     );
     expect(ASSISTANT_SYSTEM_PROMPT).toContain("Settings > Applying");
     expect(ASSISTANT_SYSTEM_PROMPT).toContain(
-      "including salary expectations, current salary and pay history",
+      "expected and current pay questions",
     );
-    expect(ASSISTANT_SYSTEM_PROMPT).toContain(
+    expect(ASSISTANT_SYSTEM_PROMPT).not.toContain(
       "does not expose that pay control",
     );
   });

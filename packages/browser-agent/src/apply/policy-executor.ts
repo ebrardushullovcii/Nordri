@@ -3,7 +3,11 @@ import {
   type ApplicationAttemptQuestion,
 } from "@nordri/contracts";
 
-import { savedAnswerForQuestion, storedFactFor } from "./application-facts";
+import {
+  savedAnswerForQuestion,
+  storedFactFor,
+  isAnswerFromThisApplication,
+} from "./application-facts";
 import { normalizeSignal } from "./control-classification";
 import { matchOption } from "./option-match";
 import type { ApplyQuestionClassification } from "./question-classification";
@@ -361,11 +365,12 @@ async function withModelQuestionKinds(
   return {
     ...control,
     questionKind:
-      classification.asksAboutPay || payCurrency
+      classification.eligibilityKind ??
+      (classification.asksAboutPay || payCurrency
         ? "salary_expectation"
         : control.questionKind === "salary_expectation"
           ? "other"
-          : control.questionKind,
+          : control.questionKind),
     attestationKind: classification.declarationKind,
     ...(typeof classification.asksCurrentPay === "boolean"
       ? { asksCurrentPay: classification.asksCurrentPay }
@@ -462,7 +467,7 @@ async function decideAnswer(input: {
       reason: PAY_KEPT_PRIVATE_REASON,
       suggestion:
         saved ??
-        (savedPay
+        (savedPay && !control.asksCurrentPay
           ? {
               value: savedPay,
               kind: "salary_expectation",
@@ -475,7 +480,37 @@ async function decideAnswer(input: {
       permission: true,
     };
   }
-  if (saved && normalizeSignal(saved.value) === normalizeSignal(value)) {
+
+  const eligibilityQuestion =
+    control.questionKind === "work_authorization" ||
+    control.questionKind === "visa_sponsorship";
+  if (
+    eligibilityQuestion &&
+    saved &&
+    isAnswerFromThisApplication(
+      savedAnswerForQuestion(control, config.sources.reusableAnswers),
+      config.application,
+      config.sources.posting.location,
+    ) &&
+    normalizeSignal(saved.value) !== normalizeSignal(value)
+  ) {
+    return {
+      kind: "leave",
+      reason: `You answered this question ${saved.value}. Use that answer unchanged.`,
+      suggestion: saved,
+      permission: false,
+    };
+  }
+  if (
+    (!eligibilityQuestion ||
+      isAnswerFromThisApplication(
+        savedAnswerForQuestion(control, config.sources.reusableAnswers),
+        config.application,
+        config.sources.posting.location,
+      )) &&
+    saved &&
+    normalizeSignal(saved.value) === normalizeSignal(value)
+  ) {
     return { kind: "use", answer: { ...saved, value } };
   }
   // The person's own answer to this exact question, even a bare Yes or No.
@@ -496,7 +531,18 @@ async function decideAnswer(input: {
       permission: false,
     };
   }
-  const check = await deps.checkWrittenAnswer(questionPrompt(control), value);
+  let check;
+  try {
+    check = await deps.checkWrittenAnswer(questionPrompt(control), value);
+  } catch {
+    return {
+      kind: "leave",
+      reason:
+        "Job Finder could not check this answer right now. Please review it yourself or try again.",
+      suggestion: saved,
+      permission: false,
+    };
+  }
   if (!check.supported) {
     return {
       kind: "leave",
@@ -504,6 +550,9 @@ async function decideAnswer(input: {
       suggestion: savedSuggestion(control, config),
       permission: false,
     };
+  }
+  if (saved && normalizeSignal(saved.value) === normalizeSignal(value)) {
+    return { kind: "use", answer: { ...saved, value } };
   }
   return {
     kind: "use",
@@ -574,6 +623,7 @@ function unsupportedAnswer(input: {
           detectedAt: at,
           suggestion: input.suggestion,
           siblings: observation.controls,
+          reason: input.reason,
         })
       : null,
     controlRef: control.ref,
@@ -1531,13 +1581,23 @@ export async function executeApplyProposal(
       // stands when the person's facts support it (ADR 0041). A declaration
       // is settled by the person's approvals below instead.
       let radioAnswer: ApplyAnswer | null = null;
+      const eligibilityAnswer =
+        control.questionKind === "work_authorization" ||
+        control.questionKind === "visa_sponsorship";
       if (
-        (control.kind === "radio" ||
+        ((control.kind === "radio" ||
           control.answerControlType === "multi_choice") &&
-        proposal.checked &&
-        control.attestationKind === null
+          proposal.checked &&
+          control.attestationKind === null) ||
+        (eligibilityAnswer && (control.kind === "checkbox" || proposal.checked))
       ) {
-        const proposedOption = control.label || control.value;
+        // Eligibility is a factual answer even when worded as a declaration.
+        const proposedOption =
+          control.kind === "checkbox"
+            ? proposal.checked
+              ? "Yes"
+              : "No"
+            : control.label || control.value;
         const choice = await decideAnswer({
           deps,
           control,
@@ -1640,11 +1700,11 @@ export async function executeApplyProposal(
                     ? `authority.attestation.${control.attestationKind}`
                     : `chosen.${control.ref}`,
                   provenanceLabel: control.attestationKind
-                    ? "a declaration you approved in advance"
+                    ? "your Settings (on by default)"
                     : "chosen on the form by Job Finder",
                   groundedIn: [
                     control.attestationKind
-                      ? "a declaration you approved in advance"
+                      ? "your Settings (on by default)"
                       : "the form",
                   ],
                 }),
@@ -2029,11 +2089,21 @@ async function provideApplicationLetter(
       pause: {
         code: "document_needs_you",
         summary,
+        ...(!produced.ok && produced.draftText
+          ? {
+              reviewDraft: {
+                text: produced.draftText,
+                reason: produced.reason,
+                groundedIn: request.groundedIn,
+              },
+            }
+          : {}),
         question: buildPendingQuestion({
           control,
           jobId: config.application.jobId,
           detectedAt: deps.now().toISOString(),
           suggestion: null,
+          reason: summary,
         }),
         blocker: null,
       },

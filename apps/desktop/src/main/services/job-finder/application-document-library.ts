@@ -414,6 +414,9 @@ export class ApplicationDocumentLibrary {
   propose(input: {
     kind: ApplicationDocumentKind;
     documentId?: string;
+    /** Capture an attached or unchecked draft once without overwriting edits. */
+    createDocumentId?: string;
+    reviewReason?: string | null;
     expectedRevision?: number;
     grounding: ApplicationDocumentGrounding;
     /**
@@ -425,10 +428,24 @@ export class ApplicationDocumentLibrary {
     return this.runExclusive(async () => {
       const index = await this.readIndex();
       const documentId =
-        input.documentId ?? `application_document_${randomUUID()}`;
+        input.documentId ??
+        input.createDocumentId ??
+        `application_document_${randomUUID()}`;
       const latest = index.revisions
         .filter((revision) => revision.id === documentId)
         .sort((left, right) => right.revision - left.revision)[0];
+      if (input.createDocumentId && latest) {
+        if (
+          latest.job.jobId !== input.grounding.job.id ||
+          latest.job.applicationRecordId !==
+            input.grounding.applicationRecord.id
+        ) {
+          throw new ApplicationDocumentLibraryError(
+            "This document belongs to another application.",
+          );
+        }
+        return latest;
+      }
       if (input.documentId) {
         if (!latest || latest.revision !== input.expectedRevision) {
           throw new ApplicationDocumentLibraryError(
@@ -497,7 +514,8 @@ export class ApplicationDocumentLibrary {
         evidence,
         evidenceDigest: digest(evidence),
         authorship: "system_grounded",
-        requiresGroundingReview: false,
+        requiresGroundingReview: Boolean(input.reviewReason),
+        reviewReason: input.reviewReason?.slice(0, 2_000) ?? null,
         approvedAt: null,
         outputAsset: null,
         lastExportedAt: null,

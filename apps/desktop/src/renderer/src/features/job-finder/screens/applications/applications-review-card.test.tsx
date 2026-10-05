@@ -87,7 +87,7 @@ describe("ApplicationsReviewCard", () => {
 
     expect(
       screen.getByText(
-        /Written for this application written for this application, based on the resume sent with this application, the posting/i,
+        /Written for this application, based on the resume sent with this application, the posting/i,
       ),
     ).toBeTruthy();
   });
@@ -225,4 +225,24 @@ it.each([
   expect(
     screen.queryByText(/Written for this application chosen|From chosen/),
   ).toBeNull();
+});
+
+it("labels an unchecked letter as a draft and shows the review reason", () => {
+  render(
+    <ApplicationsReviewCard
+      card={card({
+        letter: {
+          text: "Letter draft",
+          groundedIn: ["Resume"],
+          reviewReason:
+            "Agree how to handle the location mismatch before sending.",
+        },
+        waitingOnYou: ["Review the draft"],
+      })}
+      onSubmit={vi.fn(() => Promise.resolve())}
+    />,
+  );
+  expect(screen.getByText("Letter draft for your review")).toBeTruthy();
+  expect(screen.getByRole("alert").textContent).toContain("location mismatch");
+  expect(screen.queryByText("The letter going with it")).toBeNull();
 });

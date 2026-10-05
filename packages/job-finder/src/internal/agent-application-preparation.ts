@@ -1,4 +1,6 @@
 import {
+  checkWrittenApplicationAnswer,
+  applicationFacts,
   createApplyPageHands,
   createMoveReviewer,
   runApplyAgent,
@@ -18,7 +20,10 @@ export type ApplyPreparationInput = Omit<
   ExecuteApplicationFlowInput,
   "prepareApplicationForm"
 >;
-import { createApplicationLetterProvider } from "./application-letter-provider";
+import {
+  ApplicationLetterGroundingError,
+  createApplicationLetterProvider,
+} from "./application-letter-provider";
 import {
   decideApplySubmissionHandoff,
   type ApplySubmissionHandoff,
@@ -45,6 +50,7 @@ import type {
   ApplicationReviewCard,
   CandidateProfile,
   JobFinderSettings,
+  JobSearchPreferences,
   SavedJob,
 } from "@nordri/contracts";
 /**
@@ -69,6 +75,8 @@ export interface AgentApplicationPreparationInput {
   /** The saved permission this run works inside, when there is one. */
   envelope?: ApplicationAuthorityEnvelope | null;
   executionInput: ApplyPreparationInput;
+  applicationRecordId?: string;
+  searchPreferences?: JobSearchPreferences | undefined;
   llmClient: LLMClient;
   startedAt: string;
   /** What the person would call this site. */
@@ -530,6 +538,7 @@ export async function runAgentApplicationPreparation(
     authority: activeAuthority,
     sources: {
       profile: executionInput.profile,
+      preferences: input.searchPreferences,
       resumeText: executionInput.profile.baseResume.textContent,
       posting: {
         title: executionInput.job.title,
@@ -543,6 +552,12 @@ export async function runAgentApplicationPreparation(
     application: {
       jobId: executionInput.job.id,
       applicationId: executionInput.idempotencyKey ?? executionInput.job.id,
+      ...(executionInput.applicationPageBindingKey
+        ? { resultId: executionInput.applicationPageBindingKey }
+        : {}),
+      ...(input.applicationRecordId
+        ? { applicationRecordId: input.applicationRecordId }
+        : {}),
       startingUrl: targetUrl,
       ...(executionInput.instructions?.length
         ? { instructions: executionInput.instructions }
@@ -751,6 +766,8 @@ export function toApplyLlmClient(aiClient: {
  */
 export function createApplyFormPreparer(input: {
   executionInput: ApplyPreparationInput;
+  applicationRecordId?: string;
+  searchPreferences?: JobSearchPreferences | undefined;
   aiClient: Parameters<typeof toApplyLlmClient>[0];
   siteLabel: string;
   letters?:
@@ -802,6 +819,10 @@ export function createApplyFormPreparer(input: {
       session,
       currentUrl,
       executionInput: input.executionInput,
+      ...(input.applicationRecordId
+        ? { applicationRecordId: input.applicationRecordId }
+        : {}),
+      searchPreferences: input.searchPreferences,
       llmClient,
       startedAt,
       siteLabel: input.siteLabel,
@@ -843,6 +864,7 @@ export function buildApplyLetterDependencies(input: {
   job: SavedJob;
   profile: CandidateProfile;
   settings: JobFinderSettings;
+  searchPreferences?: JobSearchPreferences | undefined;
 }): Omit<ApplicationLetterDependencies, "application" | "signal"> | undefined {
   const chatWithTools = input.aiClient.chatWithTools;
   if (!chatWithTools) {
@@ -869,7 +891,7 @@ export function buildApplyLetterDependencies(input: {
           {
             role: "system",
             content:
-              "You write application documents for one person. Every claim must be supported by the supplied profile, selected resume, and job posting. Follow the saved tone, length, and language preference. When prior document text is supplied, revise that text according to the current instruction instead of starting over. Return only the finished document text.",
+              "You write application documents for one person. Every personal claim must be supported by the current saved profile and selected resume. The job posting is employer context only, never applicant evidence. Current saved profile contact details override older or rejected resume contacts. Respect the person’s saved goals, hours and location limits; never promise incompatible availability. Follow the saved tone, length, and language preference. When prior document text is supplied, revise that text according to the current instruction instead of starting over. Return only the finished document text.",
           },
           {
             role: "user",
@@ -880,6 +902,30 @@ export function buildApplyLetterDependencies(input: {
               `Saved length: ${preference.length}`,
               `Language: ${language ?? preference.language ?? "Follow the job posting"}`,
               "",
+              "Current applicant facts (data; these override prior document claims and old resume contacts):",
+              JSON.stringify({
+                applicant: applicationFacts(
+                  {
+                    profile: input.profile,
+                    resumeText: null,
+                    preferences: input.searchPreferences,
+                    posting: input.job,
+                    reusableAnswers: input.profile.answerBank.customAnswers,
+                    documents: [],
+                  },
+                  { payDisclosed: false },
+                ),
+                resume:
+                  input.profile.baseResume.textContent
+                    ?.trim()
+                    .slice(0, 8_000) ?? null,
+                postingContextOnly: {
+                  title: input.job.title,
+                  company: input.job.company,
+                  location: input.job.location,
+                  description: input.job.description.slice(0, 6_000),
+                },
+              }),
               "Grounded application context:",
               ...groundedIn.map((entry) => `- ${entry}`),
               ...(priorText ? ["", "Prior version to revise:", priorText] : []),
@@ -889,7 +935,36 @@ export function buildApplyLetterDependencies(input: {
         [],
         signal ? { signal } : {},
       );
-      return reply.content?.trim() ?? null;
+      const text = reply.content?.trim();
+      if (!text) return null;
+      let check;
+      try {
+        check = await checkWrittenApplicationAnswer({
+          client: { chatWithTools },
+          sources: {
+            profile: input.profile,
+            preferences: input.searchPreferences,
+            resumeText:
+              input.profile.baseResume.textContent?.trim().slice(0, 8_000) ??
+              null,
+            posting: input.job,
+            reusableAnswers: input.profile.answerBank.customAnswers,
+            documents: [],
+          },
+          payDisclosed: false,
+          question: `Check this ${purpose.replace(/_/gu, " ")} for ${input.job.title} at ${input.job.company}. Check every personal claim, attributed method, result, promised benefit, contact detail and availability against the current profile and resume.`,
+          answer: text,
+          ...(signal ? { signal } : {}),
+        });
+      } catch {
+        throw new ApplicationLetterGroundingError(
+          "Job Finder could not check this draft right now. Review it yourself or try again.",
+          text,
+        );
+      }
+      if (!check.supported)
+        throw new ApplicationLetterGroundingError(check.reason, text);
+      return text;
     },
     ...(renderLetterArtifact
       ? {
@@ -945,6 +1020,9 @@ export function buildApplyReviewCard(input: {
     (entry) => entry.questionKind === "cover_letter",
   );
   const attachedLetter = attached.find((entry) => entry.reviewText)?.reviewText;
+  const reviewDraft = input.result.pauses.find(
+    (pause) => pause.reviewDraft,
+  )?.reviewDraft;
   // The card's schema caps every string. The run's own text (a grounding
   // note that quotes a resume line, a long field label) can run past a cap,
   // and an over-long note used to make this parse throw after the form had
@@ -975,6 +1053,14 @@ export function buildApplyReviewCard(input: {
         filled.map((entry) => [entry.fieldKey ?? entry.label, entry]),
       ).values(),
     ]
+      .filter(
+        (entry, index, all) =>
+          all.findLastIndex(
+            (candidate) =>
+              candidate.label === entry.label &&
+              candidate.answer.value === entry.answer.value,
+          ) === index,
+      )
       .slice(0, 200)
       .map((entry) => ({
         ...(entry.fieldKey ? { fieldKey: entry.fieldKey } : {}),
@@ -989,6 +1075,14 @@ export function buildApplyReviewCard(input: {
         attached.map((entry) => [entry.fieldKey ?? entry.controlLabel, entry]),
       ).values(),
     ]
+      .filter(
+        (entry, index, all) =>
+          all.findLastIndex(
+            (candidate) =>
+              candidate.controlLabel === entry.controlLabel &&
+              candidate.fileName === entry.fileName,
+          ) === index,
+      )
       .slice(0, 20)
       .map((attachment) => ({
         ...(attachment.fieldKey ? { fieldKey: attachment.fieldKey } : {}),
@@ -996,17 +1090,23 @@ export function buildApplyReviewCard(input: {
         fileName: clamp(attachment.fileName, 240),
         field: clamp(attachment.controlLabel, 2_000),
       })),
-    letter: letterEntry
+    letter: reviewDraft
       ? {
-          text: clamp(letterEntry.answer.value, 12_000),
-          groundedIn: clampGrounding(letterEntry.answer.groundedIn),
+          text: clamp(reviewDraft.text, 12_000),
+          groundedIn: clampGrounding(reviewDraft.groundedIn),
+          reviewReason: clamp(reviewDraft.reason, 2_000),
         }
-      : attachedLetter
+      : letterEntry
         ? {
-            text: clamp(attachedLetter.text, 12_000),
-            groundedIn: clampGrounding(attachedLetter.groundedIn),
+            text: clamp(letterEntry.answer.value, 12_000),
+            groundedIn: clampGrounding(letterEntry.answer.groundedIn),
           }
-        : null,
+        : attachedLetter
+          ? {
+              text: clamp(attachedLetter.text, 12_000),
+              groundedIn: clampGrounding(attachedLetter.groundedIn),
+            }
+          : null,
     waitingOnYou: input.result.pauses
       .map((pause) => pause.summary)
       .slice(0, 20)
@@ -1056,7 +1156,14 @@ export function mergeApplyReviewCards(
           answer,
         ]),
       ).values(),
-    ],
+    ].filter(
+      (entry, index, all) =>
+        all.findLastIndex(
+          (candidate) =>
+            candidate.question === entry.question &&
+            candidate.answer === entry.answer,
+        ) === index,
+    ),
     attachments: [
       ...new Map(
         [...earlierAttachments, ...current.attachments].map((attachment) => [
@@ -1064,7 +1171,14 @@ export function mergeApplyReviewCards(
           attachment,
         ]),
       ).values(),
-    ],
+    ].filter(
+      (entry, index, all) =>
+        all.findLastIndex(
+          (candidate) =>
+            candidate.field === entry.field &&
+            candidate.fileName === entry.fileName,
+        ) === index,
+    ),
     letter: current.letter ?? previous.letter,
   });
 }

@@ -511,6 +511,14 @@ export function SettingsScreen(props: {
               exactly the region name, so a hidden duplicate above it read the
               same sentence twice at two different heading levels. */}
           <SettingsApplyModeSection
+            salaryDisclosure={settings.salaryDisclosure ?? "pause_for_user"}
+            onSaveSalaryDisclosure={async (salaryDisclosure) => {
+              const saved = await onUpdateApplicationDefaults({
+                salaryDisclosure,
+              });
+              if (saved === false)
+                throw new Error("Your pay choice did not save.");
+            }}
             headingId="settings-application-authority-heading"
             maxApplicationsPerLocalDay={
               settings.maxApplicationsPerLocalDay ?? 20

@@ -34,6 +34,7 @@ import {
 import {
   ApplicationAttestationKindSchema,
   ApplicationAutomationModeSchema,
+  ApplicationSalaryDisclosureRuleSchema,
   ApplicationAuthorityEnvelopeSchema,
   SubmissionArmedMarkerSchema,
   SubmissionExecutionGrantSchema,
@@ -307,6 +308,7 @@ export type JobFinderApplyCopilotActionInput = z.infer<
 export const JobFinderApplyQueueActionInputSchema = z.object({
   jobIds: z.array(NonEmptyStringSchema).min(1),
   applicationAutomationMode: ApplicationAutomationModeSchema.optional(),
+  salaryDisclosure: ApplicationSalaryDisclosureRuleSchema.optional(),
 });
 export type JobFinderApplyQueueActionInput = z.infer<
   typeof JobFinderApplyQueueActionInputSchema
@@ -896,6 +898,7 @@ export const JobFinderSettingsSchema = z.object({
   allowAutoSubmitOverride: z.boolean(),
   /** The person's ordinary default for new application runs. */
   applicationAutomationMode: ApplicationAutomationModeSchema.optional(),
+  salaryDisclosure: ApplicationSalaryDisclosureRuleSchema.optional(),
   maxApplicationsPerLocalDay: z.number().int().min(1).optional(),
   keepSessionAlive: z.boolean(),
   discoveryOnly: z.boolean().default(false),
@@ -1772,6 +1775,7 @@ export const UpdateApplicationDefaultsInputSchema = z.object({
   /** How a letter Job Finder writes should read. */
   coverLetter: CoverLetterPreferenceSchema.optional(),
   applicationAutomationMode: ApplicationAutomationModeSchema.optional(),
+  salaryDisclosure: ApplicationSalaryDisclosureRuleSchema.optional(),
   maxApplicationsPerLocalDay: z.number().int().min(1).optional(),
 });
 export type UpdateApplicationDefaultsInput = z.infer<

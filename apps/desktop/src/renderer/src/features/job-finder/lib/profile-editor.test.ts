@@ -1679,3 +1679,33 @@ describe("profile editor application identity defaults", () => {
     expect(hasProfileDraftChanges(profile, result.payload)).toBe(false);
   });
 });
+
+test("saving Profile preserves a saved eligibility answer's application location scope", () => {
+  const profile = createProfile();
+  const applicationScope = {
+    resultId: "result_1",
+    applicationRecordId: "application_1",
+    location: "Berlin, Germany",
+  };
+  profile.answerBank.customAnswers = [
+    {
+      id: "eligibility",
+      kind: "work_authorization",
+      label: "Are you authorized?",
+      question: "Are you authorized?",
+      answer: "Yes",
+      roleFamilies: [],
+      proofEntryIds: [],
+      applicationScope,
+    },
+  ];
+  const values = createProfileEditorValues(profile);
+  values.identity.headline = "Edited headline";
+  const saved = buildProfilePayload(profile, values).payload;
+  expect(saved?.answerBank.customAnswers[0]?.applicationScope).toEqual(
+    applicationScope,
+  );
+  expect(saved?.answerBank.customAnswers[0]?.question).toBe(
+    "Are you authorized?",
+  );
+});

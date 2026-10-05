@@ -1595,3 +1595,193 @@ test("a refreshed review drops an answer and attachment cleared on the live form
   expect(merged?.answers).toEqual([]);
   expect(merged?.attachments).toEqual([]);
 });
+
+test("send review collapses identical answers and attachments from repeated form steps", () => {
+  const answer = {
+    question: "Email",
+    answer: "synthetic@example.test",
+    source: "your email address",
+    written: false,
+    groundedIn: [],
+  };
+  const attachment = {
+    label: "Your CV",
+    field: "Resume",
+    fileName: "synthetic.pdf",
+  };
+  const card = {
+    siteLabel: "Synthetic",
+    pageUrl: null,
+    answers: [answer],
+    attachments: [attachment],
+    letter: null,
+    waitingOnYou: [],
+    preparedAt: "2026-10-04T00:00:00.000Z",
+  };
+  const prior = {
+    ...card,
+    answers: ["1", "2", "3"].map((step) => ({
+      ...answer,
+      fieldKey: `${step}|email`,
+    })),
+    attachments: ["1", "2", "3"].map((step) => ({
+      ...attachment,
+      fieldKey: `${step}|resume`,
+    })),
+  };
+  const merged = mergeApplyReviewCards(prior, {
+    ...card,
+    answers: [{ ...answer, fieldKey: "4|email" }],
+    attachments: [{ ...attachment, fieldKey: "4|resume" }],
+  });
+  expect(merged?.answers).toHaveLength(1);
+  expect(merged?.attachments).toHaveLength(1);
+});
+
+test("a paused unchecked letter stays on the review card without an attachment", () => {
+  const card = buildApplyReviewCard({
+    siteLabel: "Synthetic",
+    preparedAt: "2026-10-04T12:00:00.000Z",
+    result: {
+      outcome: "paused",
+      reason: "Review the letter",
+      steps: 1,
+      finalUrl: null,
+      filled: [],
+      attachments: [],
+      notes: [],
+      timeline: [],
+      modelTurns: 1,
+      readyToSend: null,
+      pauses: [
+        {
+          code: "document_needs_you",
+          summary: "Agree how to handle the location mismatch.",
+          question: null,
+          blocker: null,
+          reviewDraft: {
+            text: "Letter awaiting your review.",
+            groundedIn: ["Resume"],
+            reason: "Agree how to handle the location mismatch.",
+          },
+        },
+      ],
+    },
+  });
+  expect(card.letter?.text).toBe("Letter awaiting your review.");
+  expect(card.letter?.reviewReason).toContain("location mismatch");
+  expect(card.attachments).toEqual([]);
+  expect(card.waitingOnYou).toContain(
+    "Agree how to handle the location mismatch.",
+  );
+});
+
+test("preparation honors an eligibility answer saved on an earlier attempt of this application", async () => {
+  const facts = executionInput();
+  facts.applicationPageBindingKey = "new_result";
+  facts.profile.answerBank.customAnswers = [
+    {
+      id: "own_answer",
+      kind: "work_authorization",
+      label: "Are you authorized to work here?",
+      question: "Are you authorized to work here?",
+      answer: "Yes",
+      roleFamilies: [],
+      proofEntryIds: [],
+      applicationScope: {
+        resultId: "old_result",
+        applicationRecordId: "same_application",
+        location: "Remote",
+      },
+    },
+  ];
+  const page = rawPage("Application");
+  page.controls = [
+    {
+      ...page.controls[0]!,
+      tagName: "select",
+      inputType: "",
+      label: "Are you authorized to work here?",
+      options: ["Yes", "No"],
+      required: true,
+    },
+  ];
+  const chooseOption = vi.fn<ApplyPageSession["chooseOption"]>(
+    (_ref, option) => {
+      page.controls[0]!.value = option;
+      page.controls[0]!.selectedOptionLabel = option;
+      return Promise.resolve({ ok: true, observedValue: option });
+    },
+  );
+  let calls = 0;
+  const chatWithTools = vi.fn<LLMClient["chatWithTools"]>(
+    (_messages, tools) => {
+      if (tools[0]?.function.name === "report_question_kinds") {
+        return Promise.resolve({
+          toolCalls: [
+            {
+              id: "classification",
+              type: "function",
+              function: {
+                name: "report_question_kinds",
+                arguments: JSON.stringify({
+                  questions: [
+                    {
+                      index: 0,
+                      eligibilityKind: "work_authorization",
+                      asksAboutPay: false,
+                      asksCurrentPay: false,
+                      required: true,
+                      declarationKind: null,
+                    },
+                  ],
+                }),
+              },
+            },
+          ],
+        });
+      }
+      calls += 1;
+      return Promise.resolve({
+        toolCalls: [
+          {
+            id: `call_${calls}`,
+            type: "function",
+            function: {
+              name: calls === 1 ? "select" : "finish",
+              arguments: JSON.stringify(
+                calls === 1
+                  ? { ref: "c0", option: "Yes" }
+                  : { reason: "The application is complete" },
+              ),
+            },
+          },
+        ],
+      });
+    },
+  );
+  const prepare = createApplyFormPreparer({
+    executionInput: facts,
+    applicationRecordId: "same_application",
+    aiClient: { chatWithTools },
+    siteLabel: "the careers site",
+  });
+  const result = await prepare({
+    session: {
+      ...session(),
+      readPage: () => Promise.resolve(page),
+      chooseOption,
+    },
+    currentUrl: PAGE_URL,
+    startedAt: "2026-09-14T10:00:00.000Z",
+  });
+  expect(chooseOption).toHaveBeenCalledWith("c0", "Yes");
+  expect(result.questions).toEqual([]);
+  expect(result.state).toBe("ready");
+  expect(calls).toBe(2);
+  expect(
+    chatWithTools.mock.calls.some(
+      ([, tools]) => tools[0]?.function.name === "report_answer_checks",
+    ),
+  ).toBe(false);
+});

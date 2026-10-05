@@ -161,6 +161,7 @@ import { JOB_FINDER_WORKSPACE_UPDATED_CHANNEL } from "../services/job-finder/wor
 import {
   RETIRED_CHAT_MESSAGE,
   registerJobFinderRouteHandlers,
+  syncApplicationAuthorityForSavedMode,
 } from "./job-finder";
 
 const packet = ApplicationPacketSchema.parse({
@@ -933,6 +934,103 @@ describe("job-finder apply entry-point resume approval and authority", () => {
   afterEach(() => {
     mockGetJobFinderRepositoryForWorkspaceService.mockReturnValue(null);
     mockGetJobFinderApplicationAuthorityService.mockReset();
+  });
+
+  it.each(["prepare_only", "confirm_before_submit"] as const)(
+    "preserves pay privacy when starting Fill-in only from %s",
+    async (priorMode) => {
+      const repository = {
+        getSettings: vi.fn(() =>
+          Promise.resolve({
+            applicationAutomationMode: "prepare_only",
+          }),
+        ),
+      };
+      const active = {
+        id: "existing_authority",
+        revision: 1,
+        mode: priorMode,
+        maxApplicationsPerRun: 10,
+        maxApplicationsPerLocalDay: 20,
+        decisionPolicy: {
+          answerPolicy: { salaryDisclosure: "answer_from_profile" },
+        },
+      };
+      const authorityService = {
+        list: vi.fn(() => Promise.resolve([active])),
+        replaceUsed: vi.fn(() => Promise.resolve({ status: "applied" })),
+        revoke: vi.fn(() => Promise.resolve({ status: "applied" })),
+      };
+      mockGetJobFinderRepositoryForWorkspaceService.mockReturnValue(
+        repository as never,
+      );
+      mockGetJobFinderApplicationAuthorityService.mockReturnValue(
+        authorityService,
+      );
+      await syncApplicationAuthorityForSavedMode({} as never, ["job"]);
+      expect(authorityService.replaceUsed).not.toHaveBeenCalled();
+      if (priorMode === "prepare_only") {
+        expect(authorityService.revoke).not.toHaveBeenCalled();
+      } else {
+        expect(authorityService.revoke).toHaveBeenCalledWith({
+          id: active.id,
+          expectedRevision: active.revision,
+        });
+      }
+    },
+  );
+
+  it("keeps the pay choice when changing to Ask before sending without carrying over old job scope", async () => {
+    const job = {
+      id: "new_job",
+      title: "Synthetic Analyst",
+      resumeApplicationMode: "original_resume",
+      applicationUrl: "https://jobs.example.test/new_job",
+    };
+    const repository = {
+      getSettings: vi.fn(() =>
+        Promise.resolve({
+          applicationAutomationMode: "confirm_before_submit",
+        }),
+      ),
+      getProfileWithRevision: vi.fn(() =>
+        Promise.resolve({
+          revision: 1,
+          profile: { baseResume: { sha256: "a".repeat(64) } },
+        }),
+      ),
+      listSavedJobs: vi.fn(() => Promise.resolve([job])),
+    };
+    const active = {
+      id: "existing_authority",
+      revision: 1,
+      mode: "prepare_only",
+      scope: { campaignId: null, jobIds: ["old_job"] },
+      decisionPolicy: {
+        answerPolicy: { salaryDisclosure: "answer_from_profile" },
+      },
+    };
+    const authorityService = {
+      list: vi.fn(() => Promise.resolve([active])),
+      approveCurrentAnswers: vi.fn(() =>
+        Promise.resolve({ status: "created" }),
+      ),
+      update: vi.fn(() => Promise.resolve({ status: "applied" })),
+    };
+    mockGetJobFinderRepositoryForWorkspaceService.mockReturnValue(
+      repository as never,
+    );
+    mockGetJobFinderApplicationAuthorityService.mockReturnValue(
+      authorityService,
+    );
+    await syncApplicationAuthorityForSavedMode({} as never, [job.id]);
+    expect(authorityService.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        salaryDisclosure: "answer_from_profile",
+        mode: "confirm_before_submit",
+        scope: { campaignId: null, jobIds: [job.id] },
+      }),
+    );
   });
 
   it.each(
@@ -3773,4 +3871,36 @@ describe("job-finder synthetic save failure route", () => {
     ).resolves.toEqual(snapshot);
     expect(saveProfile).toHaveBeenCalledTimes(1);
   });
+});
+
+it("Fill-in only retries a changed permission revision and revokes the broader permission", async () => {
+  const first = {
+    id: "authority",
+    revision: 1,
+    mode: "confirm_before_submit",
+    status: "active",
+  };
+  const latest = { ...first, revision: 2 };
+  const authorityService = {
+    list: vi
+      .fn()
+      .mockResolvedValueOnce([first])
+      .mockResolvedValueOnce([latest]),
+    revoke: vi
+      .fn()
+      .mockResolvedValueOnce({ status: "stale", current: latest })
+      .mockResolvedValueOnce({ status: "applied" }),
+    replaceUsed: vi.fn(),
+  };
+  mockGetJobFinderRepositoryForWorkspaceService.mockReturnValue({
+    getSettings: () =>
+      Promise.resolve({ applicationAutomationMode: "prepare_only" }),
+  } as never);
+  mockGetJobFinderApplicationAuthorityService.mockReturnValue(authorityService);
+  await syncApplicationAuthorityForSavedMode({} as never, ["job"]);
+  expect(authorityService.revoke).toHaveBeenNthCalledWith(2, {
+    id: "authority",
+    expectedRevision: 2,
+  });
+  expect(authorityService.replaceUsed).not.toHaveBeenCalled();
 });

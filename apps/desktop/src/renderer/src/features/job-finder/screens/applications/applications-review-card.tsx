@@ -127,7 +127,9 @@ export function ApplicationsReviewCard({
                   ? "Chosen on the form by Job Finder"
                   : answer.source === "your answer on the form"
                     ? "Your answer on the form"
-                    : `${answer.written ? "Written for this application" : "From"} ${answer.source}`}
+                    : answer.written
+                      ? "Written for this application"
+                      : `From ${answer.source}`}
                 {answer.written &&
                 answer.source !== "chosen on the form" &&
                 answer.source !== "chosen on the form by Job Finder" &&
@@ -143,7 +145,19 @@ export function ApplicationsReviewCard({
 
       {card.letter ? (
         <div className="grid gap-2">
-          <p className="label-mono-xs">The letter going with it</p>
+          <p className="label-mono-xs">
+            {card.letter.reviewReason
+              ? "Letter draft for your review"
+              : "The letter going with it"}
+          </p>
+          {card.letter.reviewReason ? (
+            <p
+              role="alert"
+              className="text-(length:--text-small) text-foreground-soft"
+            >
+              {card.letter.reviewReason}
+            </p>
+          ) : null}
           <p className="whitespace-pre-wrap rounded-(--radius-field) border border-(--surface-panel-border) bg-background/40 px-3 py-3 text-(length:--text-small) leading-6 text-foreground">
             {card.letter.text}
           </p>

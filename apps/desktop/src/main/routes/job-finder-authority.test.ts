@@ -1,7 +1,10 @@
 import type { IpcMain, IpcMainInvokeEvent } from "electron";
 import { describe, expect, it, vi } from "vitest";
 
-import { ApplicationAuthorityReadinessSchema } from "@nordri/contracts";
+import {
+  ApplicationAuthorityEnvelopeSchema,
+  ApplicationAuthorityReadinessSchema,
+} from "@nordri/contracts";
 import type { JobFinderApplicationAuthorityService } from "../services/job-finder";
 import { registerJobFinderAuthorityRouteHandlers } from "./job-finder-authority";
 
@@ -33,6 +36,54 @@ function createHarness() {
 }
 
 describe("Job Finder authority IPC routes", () => {
+  it.each(["pay_only", "stale_revision", "changed_send_scope"] as const)(
+    "pay changes through the authority editor never replace sending permission: %s",
+    async (scenario) => {
+      const { handlers, service } = createHarness();
+      const policy = {
+        mode: "prepare_only" as const,
+        scope: { campaignId: null, jobIds: [] },
+        maxApplicationsPerRun: 10,
+        maxApplicationsPerLocalDay: 20,
+        intermediateMutationsAuthorized: false,
+        allowedResumeSha256: [],
+        allowedOrigins: ["https://synthetic.example.test"],
+        expiresAt: null,
+      };
+      const current = ApplicationAuthorityEnvelopeSchema.parse({
+        ...policy,
+        id: "authority_used",
+        status: "active",
+        revision: 1,
+        accountCreationAuthorized: false,
+        createdAt: "2026-10-04T09:00:00.000Z",
+        revokedAt: null,
+        decisionPolicy: null,
+      });
+      const input = {
+        ...policy,
+        id: current.id,
+        expectedRevision: scenario === "stale_revision" ? 2 : 1,
+        preApprovedAttestationKinds: [],
+        salaryDisclosure: "answer_from_profile" as const,
+        ...(scenario === "changed_send_scope"
+          ? { scope: { campaignId: null, jobIds: ["another_job"] } }
+          : {}),
+      };
+      service.update.mockResolvedValueOnce({ status: "stale", current });
+      const replacement = { ...current, id: "authority_new" };
+      service.replaceUsed.mockResolvedValueOnce({
+        status: "applied",
+        envelope: replacement,
+      });
+      const result = await handlers.get(
+        "job-finder:update-application-authority-envelope",
+      )!({} as IpcMainInvokeEvent, input);
+      expect(service.replaceUsed).not.toHaveBeenCalled();
+      expect(result).toEqual({ status: "stale", current });
+    },
+  );
+
   it("exposes readiness and only accepts the literal current-answer approval", async () => {
     const { handlers, service } = createHarness();
     const readiness = ApplicationAuthorityReadinessSchema.parse({

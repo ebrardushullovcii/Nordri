@@ -387,6 +387,7 @@ function ActionCard(props: {
   isGroupedProjectPending: (groupKey: string) => boolean;
   isPending: boolean;
   jobLabel: string | null;
+  jobLocation?: string | undefined;
   /**
    * Returning a promise lets the question step wait for the bridge call and
    * say so when it is refused, instead of a click that records nothing.
@@ -675,6 +676,7 @@ function ActionCard(props: {
                 saveForFuture,
               });
             }}
+            jobLocation={props.jobLocation}
             questions={answerQuestions}
             requestId={request.id}
           />
@@ -1467,6 +1469,7 @@ export function ActionsScreen(props: {
                             onAnswerDraftChange={(draft) => {
                               answerDrafts.current.set(draftKey, draft);
                             }}
+                            jobLocation={job?.location}
                             jobLabel={
                               job ? `${job.title} at ${job.company}` : null
                             }
@@ -1557,6 +1560,7 @@ export type QuestionAnswerDraft = {
 };
 
 export function QuestionAnswerForm(props: {
+  jobLocation?: string | undefined;
   draft?: QuestionAnswerDraft;
   onDraftChange?: (draft: QuestionAnswerDraft) => void;
   isPending: boolean;
@@ -1655,6 +1659,17 @@ export function QuestionAnswerForm(props: {
         );
       }}
     >
+      {questions.some(
+        (question) =>
+          question.kind === "work_authorization" ||
+          question.kind === "visa_sponsorship",
+      ) ? (
+        <p className="text-(length:--text-small) text-foreground-soft">
+          Application location: {props.jobLocation?.trim() || "not specified"}.
+          Answer for the country that would hire you. Saved answers are used
+          again only for jobs in the same country.
+        </p>
+      ) : null}
       {questions.map((question) => {
         const answerId = `${requestId}-answer-${question.id}`;
         const label = formatQuestionPrompt(question.prompt);

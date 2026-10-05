@@ -5,6 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import {
   ApplicationDocumentRevisionSchema,
   ApplicationRecordSchema,
+  ApplyRunDetailsSchema,
 } from "@nordri/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApplicationsApplicationDocuments } from "./applications-application-documents";
@@ -64,6 +65,76 @@ describe("ApplicationsApplicationDocuments", () => {
     document.body.replaceChildren();
     root = null;
     vi.restoreAllMocks();
+  });
+
+  it("shows a background letter that arrives after the panel has loaded", async () => {
+    const listApplicationDocuments = vi
+      .fn()
+      .mockResolvedValueOnce({ documents: [] })
+      .mockResolvedValue({ documents: [proposed] });
+    Object.defineProperty(window, "nordri", {
+      configurable: true,
+      value: { jobFinder: { listApplicationDocuments } },
+    });
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () => {
+      root?.render(
+        <ApplicationsApplicationDocuments
+          applicationRecord={applicationRecord}
+          applyRunDetails={null}
+          demoteAsSecondary
+        />,
+      );
+      await Promise.resolve();
+    });
+    const details = ApplyRunDetailsSchema.parse({
+      run: {
+        id: "synthetic_run",
+        mode: "copilot",
+        state: "paused_for_user_review",
+        jobIds: [applicationRecord.jobId],
+        currentJobId: applicationRecord.jobId,
+        summary: "Waiting for answers",
+        detail: "Review the questions",
+        createdAt: proposed.createdAt,
+        updatedAt: proposed.updatedAt,
+      },
+      result: {
+        id: "synthetic_result",
+        runId: "synthetic_run",
+        jobId: applicationRecord.jobId,
+        applicationRecordId: applicationRecord.id,
+        state: "awaiting_review",
+        summary: "Letter attached",
+        detail: "Waiting for answers",
+        startedAt: proposed.createdAt,
+        updatedAt: proposed.updatedAt,
+        reviewCard: {
+          siteLabel: "Synthetic",
+          pageUrl: null,
+          preparedAt: proposed.createdAt,
+          answers: [],
+          attachments: [],
+          letter: { text: proposed.content, groundedIn: ["Profile summary"] },
+          waitingOnYou: ["Sponsorship"],
+        },
+      },
+      questionRecords: [],
+    });
+    await act(async () => {
+      root?.render(
+        <ApplicationsApplicationDocuments
+          applicationRecord={applicationRecord}
+          applyRunDetails={details}
+          demoteAsSecondary
+        />,
+      );
+      await Promise.resolve();
+    });
+    expect(listApplicationDocuments).toHaveBeenCalledTimes(2);
+    expect(container.querySelector("textarea")?.value).toBe(proposed.content);
   });
 
   it("saves a manual edit as a new revision before exact approval", async () => {
@@ -131,6 +202,7 @@ describe("ApplicationsApplicationDocuments", () => {
         <ApplicationsApplicationDocuments
           applicationRecord={applicationRecord}
           applyRunDetails={null}
+          demoteAsSecondary
         />,
       );
       await Promise.resolve();
@@ -143,6 +215,10 @@ describe("ApplicationsApplicationDocuments", () => {
       await Promise.resolve();
     });
 
+    expect(document.body.textContent).toContain(
+      "Read, edit and approve documents for this application",
+    );
+    expect(document.querySelector("details > summary")).not.toBeNull();
     expect(proposeApplicationDocument).toHaveBeenCalledWith(
       expect.objectContaining({
         jobId: "job_1",
@@ -430,4 +506,86 @@ describe("ApplicationsApplicationDocuments", () => {
     expect(textareas[0]?.className).toContain("min-h-64");
     expect(textareas[0]?.className).toContain("resize-y");
   });
+});
+
+it("shows a review reason without internal copy or IPC prefixes", async () => {
+  const draft = ApplicationDocumentRevisionSchema.parse({
+    ...proposed,
+    requiresGroundingReview: true,
+    reviewReason: "Agree how to handle the location mismatch before sending.",
+  });
+  Object.defineProperty(window, "nordri", {
+    configurable: true,
+    value: {
+      jobFinder: {
+        listApplicationDocuments: () => Promise.resolve({ documents: [draft] }),
+      },
+    },
+  });
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const mounted = createRoot(container);
+  try {
+    await act(async () => {
+      mounted.render(
+        <ApplicationsApplicationDocuments
+          applicationRecord={applicationRecord}
+          applyRunDetails={null}
+        />,
+      );
+      await Promise.resolve();
+    });
+    expect(container.textContent).toContain(
+      "Agree how to handle the location mismatch",
+    );
+    expect(container.textContent).not.toMatch(
+      /evidence-linked|grounding checker|while the form waits/,
+    );
+  } finally {
+    await act(async () => {
+      mounted.unmount();
+      await Promise.resolve();
+    });
+    container.remove();
+  }
+});
+
+it("strips the IPC prefix from a document failure", async () => {
+  Object.defineProperty(window, "nordri", {
+    configurable: true,
+    value: {
+      jobFinder: {
+        listApplicationDocuments: () =>
+          Promise.reject(
+            new Error(
+              "Error invoking remote method 'job-finder:list-application-documents': ApplicationDocumentLibraryError: Could not load the documents. Try again.",
+            ),
+          ),
+      },
+    },
+  });
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const mounted = createRoot(container);
+  try {
+    await act(async () => {
+      mounted.render(
+        <ApplicationsApplicationDocuments
+          applicationRecord={applicationRecord}
+          applyRunDetails={null}
+        />,
+      );
+      await Promise.resolve();
+    });
+    expect(container.textContent).toContain(
+      "Could not load the documents. Try again.",
+    );
+    expect(container.textContent).not.toContain("Error invoking remote method");
+  } finally {
+    await act(async () => {
+      mounted.unmount();
+      await Promise.resolve();
+    });
+    container.remove();
+  }
 });

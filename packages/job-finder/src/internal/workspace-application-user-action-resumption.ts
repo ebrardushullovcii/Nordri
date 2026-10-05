@@ -1342,6 +1342,7 @@ export function createApplicationUserActionResumer(
             }),
           prepareApplicationForm: createApplyFormPreparer({
             executionInput: applyFlowFacts,
+            applicationRecordId: scope.applicationRecordId,
             aiClient: ctx.aiClient,
             onProgress: (progress) =>
               persistApplicationPreparationProgress({

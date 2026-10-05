@@ -2408,6 +2408,8 @@ export function createWorkspaceApplicationMethods(
               }),
             prepareApplicationForm: createApplyFormPreparer({
               executionInput: applyFlowFactsRun,
+              applicationRecordId: exactApplicationRecordId,
+              searchPreferences,
               aiClient: ctx.aiClient,
               onProgress: (progress) =>
                 persistApplicationPreparationProgress({
@@ -2432,6 +2434,7 @@ export function createWorkspaceApplicationMethods(
                 job: applyFlowFactsRun.job,
                 profile: applyFlowFactsRun.profile,
                 settings: applyFlowFactsRun.settings,
+                searchPreferences,
               }),
               siteLabel: resolveApplySiteLabel({
                 targetLabel: provenanceTarget?.label ?? null,
@@ -6564,6 +6567,8 @@ export function createWorkspaceApplicationMethods(
             }),
           prepareApplicationForm: createApplyFormPreparer({
             executionInput: applyFlowFactsApproved,
+            applicationRecordId: selectedApplicationRecord.id,
+            searchPreferences,
             aiClient: ctx.aiClient,
             onProgress: (progress) =>
               persistApplicationPreparationProgress({
@@ -6582,6 +6587,7 @@ export function createWorkspaceApplicationMethods(
               job: applyFlowFactsApproved.job,
               profile: applyFlowFactsApproved.profile,
               settings: applyFlowFactsApproved.settings,
+              searchPreferences,
             }),
             siteLabel: resolveApplySiteLabel({
               targetLabel: provenanceTarget?.label ?? null,
@@ -7199,6 +7205,8 @@ export function createWorkspaceApplicationMethods(
             }),
           prepareApplicationForm: createApplyFormPreparer({
             executionInput: applyFlowFactsDirect,
+            applicationRecordId: selectedApplicationRecord.id,
+            searchPreferences,
             aiClient: ctx.aiClient,
             onProgress: (progress) =>
               persistApplicationPreparationProgress({
@@ -7219,6 +7227,7 @@ export function createWorkspaceApplicationMethods(
               job: applyFlowFactsDirect.job,
               profile: applyFlowFactsDirect.profile,
               settings: applyFlowFactsDirect.settings,
+              searchPreferences,
             }),
             siteLabel: resolveApplySiteLabel({
               targetLabel: provenanceTarget?.label ?? null,

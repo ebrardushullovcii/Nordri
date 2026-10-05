@@ -25,6 +25,7 @@ import {
 } from "../user-action-domain";
 import {
   createReusableAnswerForQuestion,
+  eligibilityAnswerScope,
   normalizeAnswerQuestion,
 } from "./workspace-answer-memory";
 import {
@@ -472,6 +473,11 @@ export async function findManualAnswerStepsCoveredBy(input: {
     const answers = waiting.flatMap((question) => {
       if (!payDisclosed && isPayQuestion(question)) return [];
       if (
+        question.kind === "work_authorization" ||
+        question.kind === "visa_sponsorship"
+      )
+        return [];
+      if (
         !input.savedForFuture &&
         /neither.*(?:country|region)|ambiguous|does not (?:identify|name).*country/iu.test(
           question.note ?? "",
@@ -526,10 +532,22 @@ async function persistOneManualAnswer(input: {
 
   if (input.command.saveForFuture) {
     const profile = await input.ctx.repository.getProfile();
+    const job = (await input.ctx.repository.listSavedJobs()).find(
+      (entry) => entry.id === question.jobId,
+    );
+    const applicationScope = eligibilityAnswerScope({
+      kind: question.kind,
+      resultId: question.resultId,
+      applicationRecordId: question.applicationRecordId ?? null,
+      location: job?.location,
+    });
     const normalizedPrompt = normalizeAnswerQuestion(question.prompt);
     const exactMatches = profile.answerBank.customAnswers.filter((candidate) =>
       [candidate.question, candidate.label].some(
-        (value) => normalizeAnswerQuestion(value) === normalizedPrompt,
+        (value) =>
+          normalizeAnswerQuestion(value) === normalizedPrompt &&
+          (candidate.applicationScope?.location ?? null) ===
+            (applicationScope?.location ?? null),
       ),
     );
     // The person kept "save for next time" on, so this answer becomes the
@@ -546,6 +564,7 @@ async function persistOneManualAnswer(input: {
             createReusableAnswerForQuestion({
               answer,
               prompt: question.prompt,
+              ...(applicationScope ? { applicationScope } : {}),
               kind: question.kind,
             }),
           ],

@@ -50,12 +50,20 @@ vi.mock("./settings-apply-mode-section", () => ({
   // instead of an sr-only h2 repeating the same sentence above it.
   SettingsApplyModeSection: ({
     headingId,
+    onSaveSalaryDisclosure,
   }: {
+    onSaveSalaryDisclosure?: (value: "answer_from_profile") => Promise<void>;
     headingId?: string;
   }) => (
     <section data-testid="panel-application-authority">
       <h3 id={headingId}>Applying</h3>
       Apply mode panel
+      <button
+        type="button"
+        onClick={() => void onSaveSalaryDisclosure?.("answer_from_profile")}
+      >
+        Change pay choice
+      </button>
     </section>
   ),
 }));
@@ -651,5 +659,24 @@ describe("SettingsScreen section anchor navigation", () => {
     } finally {
       Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
     }
+  });
+});
+
+it("puts pay privacy in the Applying section", () => {
+  render(
+    <MemoryRouter>
+      <SettingsScreen {...baseProps} />
+    </MemoryRouter>,
+  );
+  fireEvent.click(
+    within(screen.getByRole("region", { name: "Applying" })).getByRole(
+      "button",
+      {
+        name: "Change pay choice",
+      },
+    ),
+  );
+  expect(baseProps.onUpdateApplicationDefaults).toHaveBeenCalledWith({
+    salaryDisclosure: "answer_from_profile",
   });
 });

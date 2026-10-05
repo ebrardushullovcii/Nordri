@@ -21,6 +21,7 @@ export interface ApplicationAnswerStep {
   draft?: QuestionAnswerDraft;
   draftRestored?: boolean;
   onDraftChange?: (draft: QuestionAnswerDraft) => void;
+  jobLocation?: string | undefined;
   questions: readonly ApplicationAttemptQuestion[];
   isPending: boolean;
   waitingForTurn?: boolean;
@@ -61,6 +62,7 @@ export function ApplicationAnswerStepCard(props: {
         {...(props.step.onDraftChange
           ? { onDraftChange: props.step.onDraftChange }
           : {})}
+        jobLocation={props.step.jobLocation}
         isPending={isPending}
         onAnswer={async (answers, saveForFuture) => {
           const first = answers[0];

@@ -1,3 +1,4 @@
+import { applicationFacts } from "./application-facts";
 import type {
   CandidateProfile,
   CoverLetterPreference,
@@ -100,30 +101,7 @@ export interface CoverLetterRequest {
 export function buildApplicationProfileGrounding(
   profile: CandidateProfile,
 ): string {
-  return `Profile facts:\n${JSON.stringify(
-    {
-      name: profile.fullName,
-      headline: profile.headline,
-      summary: profile.summary,
-      location: profile.currentLocation,
-      yearsExperience: profile.yearsExperience,
-      professionalSummary: profile.professionalSummary,
-      narrative: profile.narrative,
-      proofBank: profile.proofBank,
-      skillGroups: profile.skillGroups,
-      targetRoles: profile.targetRoles,
-      preferredLocations: profile.locations,
-      skills: profile.skills,
-      experiences: profile.experiences,
-      education: profile.education,
-      certifications: profile.certifications,
-      projects: profile.projects,
-      spokenLanguages: profile.spokenLanguages,
-      workEligibility: profile.workEligibility,
-    },
-    null,
-    2,
-  )}`;
+  return `Profile facts:\n${JSON.stringify(applicationFacts({ profile, resumeText: null, posting: { title: "", company: "", location: "", description: "" }, reusableAnswers: profile.answerBank.customAnswers, documents: [] }, { payDisclosed: false }), null, 2)}`;
 }
 
 /**
@@ -166,12 +144,35 @@ export function buildCoverLetterRequest(input: {
   const resumeText =
     sources.resumeText ?? sources.profile.baseResume.textContent;
 
+  // Review evidence is readable source facts; full writer input stays in the prompt.
+  const profile = sources.profile;
   const groundedIn = [
-    resumeText ? `Resume sent with this application:\n${resumeText}` : null,
-    buildApplicationProfileGrounding(sources.profile),
-    `Job posting for ${sources.posting.title} at ${sources.posting.company}:\n${sources.posting.description}`,
-    preference.sample ? `Saved sample letter:\n${preference.sample}` : null,
-  ].filter((value): value is string => value !== null);
+    profile.summary ? `Profile summary: ${profile.summary}` : null,
+    ...profile.experiences
+      .filter((entry) => !entry.isDraft)
+      .map((entry) =>
+        [entry.title, entry.companyName, entry.summary, ...entry.achievements]
+          .filter(Boolean)
+          .map((part) => part!.replace(/[.\s]+$/u, ""))
+          .join(". "),
+      ),
+    ...profile.proofBank.map((entry) =>
+      [entry.title, entry.claim, entry.heroMetric, entry.supportingContext]
+        .filter(Boolean)
+        .map((part) => part!.replace(/[.\s]+$/u, ""))
+        .join(". "),
+    ),
+    ...profile.projects.map((entry) =>
+      [entry.name, entry.role, entry.summary, entry.outcome]
+        .filter(Boolean)
+        .map((part) => part!.replace(/[.\s]+$/u, ""))
+        .join(". "),
+    ),
+    profile.skills.length ? `Saved skills: ${profile.skills.join(", ")}` : null,
+    resumeText ? "Resume sent with this application" : null,
+    `Job context: ${sources.posting.title} at ${sources.posting.company}`,
+    preference.sample ? "Saved sample letter (voice only)" : null,
+  ].filter((value): value is string => Boolean(value));
 
   const prompt = [
     `Write a cover letter for ${sources.posting.title} at ${sources.posting.company}.`,
@@ -179,6 +180,8 @@ export function buildCoverLetterRequest(input: {
     "Rules:",
     "- Claims about the person's skills, experience, achievements, and qualifications must be supported by their resume or profile. The posting describes the employer and role; it is not evidence of the person's experience. Do not state anything else as fact.",
     "- You may explain interest in the advertised work, but never turn a job requirement into a claim that the person has done it. Leave unsupported candidate claims out.",
+    "- Use only the current saved profile name and contact details, even if the resume or sample has older or rejected details. Include the current saved email when one exists. Omit a missing contact detail; never recover it from the resume.",
+    "- Compare this role’s employment type, hours and location with the person’s goals and availability. Do not repeat an incompatible generic career goal or promise hours or relocation they have not agreed to. State known material limits plainly. Do not ask the employer to accommodate incompatible hours, location or employment type unless the person has agreed to that wording for this application. If the role needs a change of intent, flag it for the person rather than claiming that change.",
     "- No invented employers, dates, numbers, qualifications, or enthusiasm for things not in the posting.",
     "- Choose two or three supported examples and explain how each meets a stated need in the posting. Do not recap the full career or skills list.",
     "- Use the role dates and today’s date for any duration. If the dates do not establish it, omit the duration.",
@@ -194,12 +197,15 @@ export function buildCoverLetterRequest(input: {
     "",
     `Posting:\n${sources.posting.description.slice(0, 6_000)}`,
     "",
-    sources.resumeText
-      ? `Resume going out with this application:\n${sources.resumeText.slice(0, 6_000)}`
+    resumeText
+      ? `Resume going out with this application:\n${resumeText.trim().slice(0, 8_000)}`
       : null,
     "",
     `Today: ${input.today ?? new Date().toISOString().slice(0, 10)}`,
     buildApplicationProfileGrounding(sources.profile),
+    sources.preferences
+      ? `Saved work and location preferences:\n${JSON.stringify(sources.preferences)}`
+      : null,
     preference.sample
       ? `\nTheir own letter, for voice only:\n${preference.sample.slice(0, 4_000)}`
       : null,

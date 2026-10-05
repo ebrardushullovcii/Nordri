@@ -1285,3 +1285,36 @@ it("a delayed draft restore keeps the person's newer edits", async () => {
     false,
   );
 });
+
+it("shows application location and country-specific reuse on sponsorship cards, with saving on by default", () => {
+  const { getByText, getByLabelText } = render(
+    <QuestionAnswerForm
+      jobLocation="Toronto, Canada"
+      isPending={false}
+      onAnswer={vi.fn()}
+      requestId="country_scope"
+      questions={[
+        {
+          id: "sponsorship",
+          prompt: "Do you need sponsorship?",
+          kind: "visa_sponsorship",
+          answerControlType: "single_choice",
+          isRequired: true,
+          detectedAt: "2026-10-04T10:00:00.000Z",
+          answerOptions: ["Yes", "No"],
+          suggestedAnswers: [],
+          submittedAnswer: null,
+          status: "detected",
+        },
+      ]}
+    />,
+  );
+  expect(getByText(/Application location: Toronto, Canada/)).toBeTruthy();
+  expect(
+    getByText(/Saved answers are used again only for jobs in the same country/),
+  ).toBeTruthy();
+  expect(getByLabelText("Save this answer for next time")).toHaveProperty(
+    "checked",
+    true,
+  );
+});

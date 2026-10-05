@@ -216,11 +216,25 @@ export async function syncApplicationAuthorityForSavedMode(
   const active = (await authorityService.list({ status: "active" }))[0] ?? null;
 
   if (mode === "prepare_only") {
-    if (active) {
-      await authorityService.revoke({
-        id: active.id,
-        expectedRevision: active.revision,
-      });
+    if (active && active.mode !== "prepare_only") {
+      let current = active;
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const revoked = await authorityService.revoke({
+          id: current.id,
+          expectedRevision: current.revision,
+        });
+        if (
+          revoked.status === "applied" ||
+          revoked.status === "missing" ||
+          revoked.current?.status === "revoked"
+        )
+          return;
+        current =
+          (await authorityService.list({ status: "active" }))[0] ?? current;
+      }
+      throw new Error(
+        "Job Finder could not turn off sending. Try Fill-in only again.",
+      );
     }
     return;
   }
@@ -348,7 +362,7 @@ export async function syncApplicationAuthorityForSavedMode(
         sameMode?.decisionPolicy?.answerPolicy.preApprovedAttestationKinds ??
         [],
       salaryDisclosure:
-        sameMode?.decisionPolicy?.answerPolicy.salaryDisclosure ??
+        current?.decisionPolicy?.answerPolicy.salaryDisclosure ??
         "pause_for_user",
       allowedResumeSha256: [
         ...new Set([

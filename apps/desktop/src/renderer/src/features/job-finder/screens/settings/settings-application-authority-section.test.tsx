@@ -18,6 +18,11 @@ import {
   SettingsApplicationAuthoritySection,
 } from "./settings-application-authority-section";
 
+const { showToast } = vi.hoisted(() => ({ showToast: vi.fn() }));
+vi.mock("@renderer/components/ui/toast", () => ({
+  useToast: () => ({ showToast }),
+}));
+
 const createdAt = "2026-08-27T09:00:00.000Z";
 const origin = "https://jobs.example.com";
 
@@ -534,7 +539,7 @@ describe("SettingsApplicationAuthoritySection", () => {
     });
     expect(selfIdentification.getAttribute("aria-checked")).toBe("false");
     const payChoice = screen.getByRole<HTMLButtonElement>("switch", {
-      name: /answer pay questions from your profile/i,
+      name: /answer expected and current pay questions/i,
     });
     expect(payChoice.getAttribute("aria-checked")).toBe("false");
   });

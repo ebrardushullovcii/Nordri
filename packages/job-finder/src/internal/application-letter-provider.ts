@@ -57,6 +57,16 @@ export interface ApplicationLetterDependencies {
   signal?: AbortSignal;
 }
 
+export class ApplicationLetterGroundingError extends Error {
+  constructor(
+    reason: string,
+    readonly draftText: string,
+  ) {
+    super(`The letter needs your review: ${reason}`);
+    this.name = "ApplicationLetterGroundingError";
+  }
+}
+
 export function createApplicationLetterProvider(
   dependencies: ApplicationLetterDependencies,
 ): ApplyLetterProvider {
@@ -79,15 +89,31 @@ export function createApplicationLetterProvider(
       const requestKey = `${purpose}\n${request.prompt.trim()}`;
       let writtenVersion = versionsByRequest.get(requestKey) ?? null;
       if (!writtenVersion) {
-        const written = await dependencies.writeLetter({
-          prompt: request.prompt,
-          purpose,
-          groundedIn: request.groundedIn,
-          language: request.language,
-          preference: dependencies.preference,
-          priorText: latestByPurpose.get(purpose)?.text ?? null,
-          ...(dependencies.signal ? { signal: dependencies.signal } : {}),
-        });
+        let written: string | null;
+        try {
+          written = await dependencies.writeLetter({
+            prompt: request.prompt,
+            purpose,
+            groundedIn: request.groundedIn,
+            language: request.language,
+            preference: dependencies.preference,
+            priorText: latestByPurpose.get(purpose)?.text ?? null,
+            ...(dependencies.signal ? { signal: dependencies.signal } : {}),
+          });
+        } catch (error) {
+          if (error instanceof ApplicationLetterGroundingError) {
+            return {
+              ok: false,
+              reason: error.message,
+              draftText: error.draftText,
+            };
+          }
+          return {
+            ok: false,
+            reason:
+              "Job Finder could not write this draft right now. Try again.",
+          };
+        }
         if (!written?.trim()) {
           return {
             ok: false,

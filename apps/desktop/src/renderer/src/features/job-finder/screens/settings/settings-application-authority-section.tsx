@@ -413,10 +413,14 @@ export function SettingsApplicationAuthoritySection({
           : await api.createApplicationAuthorityEnvelope(
               parsed.data satisfies CreateApplicationAuthorityEnvelopeInput,
             );
-      setActionState({
-        message: mutationMessage(result, "saved"),
-        status: result.status === "applied" ? "ready" : "failed",
-      });
+      setActionState(
+        result.status === "applied"
+          ? {
+              message: mutationMessage(result, "saved"),
+              status: "ready",
+            }
+          : { message: mutationMessage(result, "saved"), status: "failed" },
+      );
       if (result.status === "applied") {
         setEnvelopes((current) => {
           const withoutOld = current.filter(
@@ -711,9 +715,9 @@ export function SettingsApplicationAuthoritySection({
           </div>
           <ToggleField
             checked={draft.salaryDisclosure === "answer_from_profile"}
-            description="Forms often ask what pay you expect. Left off, Job Finder stops and asks you each time, which is usually the safer choice."
+            description="Covers expected pay, current pay and pay history. Off: optional pay fields stay blank; required pay questions wait for you."
             disabled={selectedNonDraftable}
-            label="Let Job Finder answer pay questions from your profile"
+            label="Let Job Finder answer expected and current pay questions"
             onCheckedChange={(checked) =>
               setDraftValue(
                 "salaryDisclosure",

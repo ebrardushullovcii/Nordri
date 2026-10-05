@@ -74,6 +74,7 @@ export const ApplicationDocumentRevisionSchema = z.object({
     .enum(["system_grounded", "user_edited"])
     .default("system_grounded"),
   requiresGroundingReview: z.boolean().default(false),
+  reviewReason: NonEmptyStringSchema.max(2_000).nullable().default(null),
   approvedAt: IsoDateTimeSchema.nullable().default(null),
   outputAsset: CandidateAssetSchema.nullable().default(null),
   lastExportedAt: IsoDateTimeSchema.nullable().default(null),

@@ -9,6 +9,7 @@ import type {
   AppearanceTheme,
   CampaignRuleFunnelProjection,
   CandidateAnswerKind,
+  CandidateReusableAnswer,
   CandidateLinkKind,
   CandidateProfile,
   ClearApplicationAnswerCommandInput,
@@ -520,6 +521,7 @@ export type ProofBankEntryFormEntry = {
 };
 
 export type ReusableAnswerFormEntry = {
+  applicationScope?: CandidateReusableAnswer["applicationScope"];
   id: string;
   label: string;
   question: string;

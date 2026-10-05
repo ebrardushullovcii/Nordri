@@ -276,6 +276,7 @@ export function ApplicationsDetailPanel({
             ? { onDraftChange: onAnswerDraftChange }
             : {}),
           draftRestored: answerDraftRestored ?? false,
+          jobLocation: selectedRecordJob?.location,
           questions: pendingQuestions,
           isPending: isUserActionPending?.(answerRequest.id) ?? false,
           waitingForTurn: selectedRecordJob
@@ -432,16 +433,14 @@ export function ApplicationsDetailPanel({
         }
       : null;
 
-  // While the user is being sent to the browser to finish this application,
-  // an optional cover-letter block advertised a feature its own copy says to
-  // come back for later. It returns once the application is unblocked.
-  const documentsSection =
-    selectedRecord && !needsPrimaryRecovery ? (
-      <ApplicationsApplicationDocuments
-        applicationRecord={selectedRecord}
-        applyRunDetails={selectedApplyRunDetails}
-      />
-    ) : null;
+  // Existing drafts remain accessible while the form waits for answers.
+  const documentsSection = selectedRecord ? (
+    <ApplicationsApplicationDocuments
+      applicationRecord={selectedRecord}
+      applyRunDetails={selectedApplyRunDetails}
+      demoteAsSecondary={needsPrimaryRecovery}
+    />
+  ) : null;
 
   const recoverySection = selectedRecord ? (
     <ApplicationsDetailPanelRecoverySections

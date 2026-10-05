@@ -14,6 +14,7 @@ import type {
   CandidateProfile,
   CandidateAssetKind,
   CandidateReusableAnswer,
+  JobSearchPreferences,
 } from "@nordri/contracts";
 
 /**
@@ -271,6 +272,7 @@ export interface ApplyAnswer {
 
 export interface ApplyAnswerSources {
   profile: CandidateProfile;
+  preferences?: JobSearchPreferences | undefined;
   /** Plain text of the resume that goes with this application, when there is one. */
   resumeText: string | null;
   posting: {
@@ -336,7 +338,7 @@ export interface ApplyLetterProvider {
     fileType: "pdf" | "docx" | "txt" | null;
   }) => Promise<
     | { ok: true; text: string; document: ApplyDocument | null }
-    | { ok: false; reason: string }
+    | { ok: false; reason: string; draftText?: string }
   >;
 }
 
@@ -348,6 +350,7 @@ export type ApplyPauseCode =
   | "site_tried_to_send";
 
 export interface ApplyPause {
+  reviewDraft?: { text: string; reason: string; groundedIn: string[] };
   code: ApplyPauseCode;
   /** One plain sentence for the Needs you list. */
   summary: string;
@@ -470,6 +473,8 @@ export interface ApplyAgentConfig {
   application: {
     jobId: string;
     applicationId: string;
+    resultId?: string;
+    applicationRecordId?: string;
     startingUrl: string;
     /** Current application guidance and the person's exact answers on resumption. */
     instructions?: readonly string[];

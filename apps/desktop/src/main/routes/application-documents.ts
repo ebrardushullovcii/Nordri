@@ -1,3 +1,4 @@
+import { ApplicationLetterGroundingError } from "@nordri/job-finder";
 import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -35,7 +36,7 @@ interface ApplicationDocumentRouteDependencies {
     event: IpcMainInvokeEvent,
     defaultFileName: string,
   ) => Promise<string | null>;
-  /** Model-written draft text; null keeps the evidence-built draft. */
+  /** Model-written, fact-checked draft text. Null reports a failed draft. */
   writeDocumentText?: (input: {
     jobId: string;
     kind: "cover_letter" | "short_response";
@@ -91,9 +92,63 @@ export function registerApplicationDocumentRouteHandlers(
     async (_event, payload) => {
       try {
         const input = ListApplicationDocumentsInputSchema.parse(payload);
-        return ApplicationDocumentListResultSchema.parse(
-          await dependencies.library.list(input),
+        const listed = await dependencies.library.list(input);
+        const snapshot = await dependencies
+          .getWorkspaceSnapshot()
+          .catch(() => null);
+        if (!snapshot) return ApplicationDocumentListResultSchema.parse(listed);
+        const job = snapshot.discoveryJobs.find(
+          (entry) => entry.id === input.jobId,
         );
+        const applicationRecord = snapshot.applicationRecords.find(
+          (entry) =>
+            entry.id === input.applicationRecordId &&
+            entry.jobId === input.jobId,
+        );
+        const result = [...snapshot.applyJobResults]
+          .filter(
+            (entry) =>
+              entry.jobId === input.jobId &&
+              entry.applicationRecordId === input.applicationRecordId,
+          )
+          .sort(
+            (left, right) =>
+              Date.parse(right.updatedAt) - Date.parse(left.updatedAt),
+          )[0];
+        const letter = result?.reviewCard?.letter;
+        const documentId =
+          result && letter
+            ? `attached_letter_${result.id}_${createHash("sha256").update(letter.text).digest("hex").slice(0, 16)}`
+            : null;
+        if (
+          job &&
+          applicationRecord &&
+          letter &&
+          documentId &&
+          !listed.documents.some((entry) => entry.id === documentId)
+        ) {
+          try {
+            await dependencies.library.propose({
+              createDocumentId: documentId,
+              reviewReason: letter.reviewReason ?? null,
+              kind: "cover_letter",
+              writtenContent: letter.text,
+              grounding: {
+                profile: snapshot.profile,
+                job,
+                applicationRecord,
+                question: null,
+              },
+            });
+          } catch {
+            // A failed background capture must never hide existing drafts.
+            return ApplicationDocumentListResultSchema.parse(listed);
+          }
+          return ApplicationDocumentListResultSchema.parse(
+            await dependencies.library.list(input),
+          );
+        }
+        return ApplicationDocumentListResultSchema.parse(listed);
       } catch (error) {
         return wrapStorageError(error);
       }
@@ -156,19 +211,35 @@ export function registerApplicationDocumentRouteHandlers(
             ).documents.find((entry) => entry.id === input.documentId)
               ?.content ?? null)
           : null;
-        const writtenContent = dependencies.writeDocumentText
-          ? await dependencies
-              .writeDocumentText({
-                jobId: job.id,
-                kind: input.kind,
-                questionPrompt: question?.prompt ?? null,
-                priorText,
-              })
-              .catch(() => null)
-          : null;
+        let writtenContent: string | null = null;
+        let reviewReason: string | null = null;
+        if (dependencies.writeDocumentText) {
+          try {
+            writtenContent = await dependencies.writeDocumentText({
+              jobId: job.id,
+              kind: input.kind,
+              questionPrompt: question?.prompt ?? null,
+              priorText,
+            });
+          } catch (error) {
+            if (!(error instanceof ApplicationLetterGroundingError)) {
+              throw new ApplicationDocumentLibraryError(
+                "Job Finder could not write this draft right now. Try again.",
+              );
+            }
+            writtenContent = error.draftText;
+            reviewReason = error.message;
+          }
+        }
+        if (dependencies.writeDocumentText && !writtenContent?.trim()) {
+          throw new ApplicationDocumentLibraryError(
+            "Job Finder could not write and check this document. Try again; no draft was kept.",
+          );
+        }
         return ApplicationDocumentRevisionSchema.parse(
           await dependencies.library.propose({
             writtenContent,
+            reviewReason,
             kind: input.kind,
             ...(input.documentId ? { documentId: input.documentId } : {}),
             ...(input.expectedRevision

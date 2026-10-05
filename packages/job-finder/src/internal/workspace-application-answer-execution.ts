@@ -55,6 +55,11 @@ export function mergeApplicationAnswersIntoExecutionProfile(input: {
         prompt: question.prompt,
         kind: question.kind,
         idPrefix: input.idPrefix,
+        applicationScope: {
+          resultId: question.resultId,
+          applicationRecordId: question.applicationRecordId ?? null,
+          location: null,
+        },
       }),
     ];
   });

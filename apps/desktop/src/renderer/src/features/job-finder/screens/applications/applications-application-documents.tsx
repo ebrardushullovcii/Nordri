@@ -1,3 +1,4 @@
+import { getJobFinderErrorDetail } from "../../lib/describe-failure";
 import { useEffect, useMemo, useState } from "react";
 import type {
   ApplicationDocumentKind,
@@ -78,7 +79,7 @@ export function ApplicationsApplicationDocuments(props: {
       setStatus("error");
       setMessage(
         error instanceof Error
-          ? error.message
+          ? getJobFinderErrorDetail(error)
           : "Application documents could not be loaded.",
       );
     }
@@ -88,8 +89,15 @@ export function ApplicationsApplicationDocuments(props: {
     setDocuments([]);
     setSelectedDocumentId("");
     setQuestionId("");
-    void refresh();
   }, [applicationRecord.id, applicationRecord.jobId]);
+
+  useEffect(() => {
+    void refresh();
+  }, [
+    applicationRecord.id,
+    applicationRecord.jobId,
+    applyRunDetails?.result?.reviewCard?.letter?.text,
+  ]);
 
   useEffect(() => {
     if (
@@ -132,7 +140,9 @@ export function ApplicationsApplicationDocuments(props: {
     } catch (error) {
       setStatus("error");
       setMessage(
-        error instanceof Error ? error.message : "The proposal failed.",
+        error instanceof Error
+          ? getJobFinderErrorDetail(error)
+          : "The proposal failed.",
       );
     }
   }
@@ -177,7 +187,11 @@ export function ApplicationsApplicationDocuments(props: {
       );
     } catch (error) {
       setStatus("error");
-      setMessage(error instanceof Error ? error.message : "Approval failed.");
+      setMessage(
+        error instanceof Error
+          ? getJobFinderErrorDetail(error)
+          : "Approval failed.",
+      );
     }
   }
 
@@ -211,7 +225,9 @@ export function ApplicationsApplicationDocuments(props: {
     } catch (error) {
       setStatus("error");
       setMessage(
-        error instanceof Error ? error.message : "The edit could not be saved.",
+        error instanceof Error
+          ? getJobFinderErrorDetail(error)
+          : "The edit could not be saved.",
       );
     }
   }
@@ -235,7 +251,11 @@ export function ApplicationsApplicationDocuments(props: {
       setMessage(`Exported ${result.fileName}.`);
     } catch (error) {
       setStatus("error");
-      setMessage(error instanceof Error ? error.message : "Export failed.");
+      setMessage(
+        error instanceof Error
+          ? getJobFinderErrorDetail(error)
+          : "Export failed.",
+      );
     }
   }
 
@@ -252,7 +272,7 @@ export function ApplicationsApplicationDocuments(props: {
           <p className="mt-1 text-(length:--text-small) leading-6 text-foreground-soft">
             {/* Nothing on this page is called a "recovery step", and the
                 no-submit contract is already stated in the page banner. */}
-            Finish this application first. You can draft a cover letter later.
+            Read, edit and approve documents for this application.
           </p>
         </div>
       </div>
@@ -395,10 +415,8 @@ export function ApplicationsApplicationDocuments(props: {
                 />
               </label>
               <p className="text-(length:--text-small) leading-6 text-foreground-soft">
-                Generated text is evidence-linked. Any manual changes are
-                user-authored and may add claims the grounding checker cannot
-                verify; save them as a new revision and review every claim
-                before approval.
+                Check every claim against your profile and resume before
+                approving.
               </p>
               <Button
                 disabled={
@@ -420,8 +438,8 @@ export function ApplicationsApplicationDocuments(props: {
           )}
           {selectedDocument.requiresGroundingReview ? (
             <p className="rounded-(--radius-field) border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-(length:--text-small) leading-6 text-foreground">
-              User-authored revision: verify every edited claim against your
-              profile and source documents before approval.
+              {selectedDocument.reviewReason ??
+                "Check every edited claim against your profile and resume before approving."}
             </p>
           ) : null}
           <details>

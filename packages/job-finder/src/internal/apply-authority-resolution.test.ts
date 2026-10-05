@@ -1,3 +1,6 @@
+import { createInMemoryJobFinderRepository } from "@nordri/db";
+import { createSeed } from "../workspace-service.test-fixtures";
+import { readSalaryDisclosurePreference } from "./salary-disclosure-preference";
 import {
   ApplicationAuthorityEnvelopeSchema,
   serializeApplicationAuthorityDecisionPolicyForDigest,
@@ -9,6 +12,7 @@ import {
   authorizeReviewedApplicationOrigin,
   PREPARE_ONLY_AUTHORITY,
   resolveApplyAuthority,
+  resolveApplyAuthorityForJob,
 } from "./apply-authority-resolution";
 import { withApplicationAuthorityGate } from "./application-authority-gate";
 
@@ -83,6 +87,7 @@ function resolve(
   return resolveApplyAuthority(
     overrides ?? {
       envelope: envelope(),
+
       job: { id: "job_test" },
       resumeSha256: RESUME_DIGEST,
       applicationUrl: `${ORIGIN}/jobs/1/apply`,
@@ -111,7 +116,7 @@ describe("what one application may do", () => {
       mode: "autonomous_submit",
       submitAuthorized: true,
       preApprovedAttestationKinds: ["truthfulness_certification"],
-      salaryDisclosure: "answer_from_profile",
+      salaryDisclosure: "pause_for_user",
       allowedOrigins: [ORIGIN],
     });
   });
@@ -154,6 +159,7 @@ describe("what one application may do", () => {
   test("a job the permission does not name is filled in and left", () => {
     const result = resolve({
       envelope: envelope(),
+
       job: { id: "job_elsewhere" },
       resumeSha256: RESUME_DIGEST,
       applicationUrl: `${ORIGIN}/jobs/1/apply`,
@@ -179,6 +185,7 @@ describe("what one application may do", () => {
   test("a resume the person did not approve for sending is filled in and left", () => {
     const result = resolve({
       envelope: envelope(),
+
       job: { id: "job_test" },
       resumeSha256: "c".repeat(64),
       applicationUrl: `${ORIGIN}/jobs/1/apply`,
@@ -191,6 +198,7 @@ describe("what one application may do", () => {
   test("an application on another site is filled in and left", () => {
     const result = resolve({
       envelope: envelope(),
+
       job: { id: "job_test" },
       resumeSha256: RESUME_DIGEST,
       applicationUrl: "https://somewhere-else.example.test/apply",
@@ -260,6 +268,7 @@ describe("what one application may do", () => {
         authorizeReviewedApplicationOrigin({
           repository,
           envelope: envelope(),
+
           jobId: "job_test",
           origin,
           now: NOW,
@@ -379,4 +388,70 @@ describe("what one application may do", () => {
       }),
     ).toBeNull();
   });
+});
+
+test("the saved pay choice applies when filling only, without granting submission", () => {
+  const result = resolve({
+    envelope: envelope({ mode: "prepare_only" }),
+    salaryDisclosure: "answer_from_profile",
+    job: { id: "job_test" },
+    resumeSha256: RESUME_DIGEST,
+    applicationUrl: `${ORIGIN}/jobs/1/apply`,
+    now: NOW,
+  });
+  expect(result.authority.salaryDisclosure).toBe("answer_from_profile");
+  expect(result.authority.mode).toBe("prepare_only");
+  expect(result.authority.submitAuthorized).toBe(false);
+  expect(result.authority.allowedOrigins).toEqual([]);
+});
+
+test.each([
+  null,
+  { mode: "prepare_only" },
+  { status: "revoked", revokedAt: NOW },
+  { expiresAt: "2026-09-10T10:00:00.000Z" },
+  { scope: { jobIds: ["other"], campaignId: null } },
+])("pay choice is independent of the sending boundary %j", (change) => {
+  const result = resolveApplyAuthority({
+    envelope: change ? envelope(change) : null,
+    salaryDisclosure: "answer_from_profile",
+    job: { id: "job_test" },
+    resumeSha256: RESUME_DIGEST,
+    applicationUrl: `${ORIGIN}/jobs/1/apply`,
+    now: NOW,
+  });
+  expect(result.authority.salaryDisclosure).toBe("answer_from_profile");
+  expect(result.authority.submitAuthorized).toBe(false);
+});
+
+test("migrates the old envelope pay choice once and reads the durable value through authority resolution", async () => {
+  const seed = createSeed();
+  const repository = createInMemoryJobFinderRepository({
+    ...seed,
+    applicationAuthorityEnvelopes: [
+      envelope({ status: "revoked", revokedAt: NOW }),
+    ],
+  });
+  expect(await readSalaryDisclosurePreference(repository)).toBe(
+    "answer_from_profile",
+  );
+  expect((await repository.getSettings()).salaryDisclosure).toBe(
+    "answer_from_profile",
+  );
+  await repository.commitSettingsUpdate((current) => ({
+    ...current,
+    salaryDisclosure: "pause_for_user",
+  }));
+  expect(await readSalaryDisclosurePreference(repository)).toBe(
+    "pause_for_user",
+  );
+  const result = await resolveApplyAuthorityForJob({
+    repository,
+    job: { id: "job_test" },
+    resumeSha256: RESUME_DIGEST,
+    applicationUrl: `${ORIGIN}/jobs/1/apply`,
+    now: NOW,
+  });
+  expect(result.authority.salaryDisclosure).toBe("pause_for_user");
+  expect(result.authority.submitAuthorized).toBe(false);
 });

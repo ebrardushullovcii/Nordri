@@ -252,11 +252,32 @@ export async function runApplyAgent(
     (config.sources.resumeText ?? config.sources.profile.baseResume.textContent)
       ?.trim()
       .slice(0, 8_000) || null;
+  const currentFormContext = () => {
+    const observation = pageTools.state.observation;
+    return observation
+      ? {
+          pageText: observation.bodyTextExcerpt,
+          fields: observation.controls
+            .filter(
+              (control) =>
+                control.visible &&
+                !control.credentialRole &&
+                control.kind !== "file" &&
+                control.answered,
+            )
+            .map((control) => ({
+              question: questionPrompt(control),
+              value: control.selectedOptionLabel || control.value,
+            })),
+        }
+      : undefined;
+  };
   const checkOne = (question: string, answer: string) =>
     checkWrittenApplicationAnswer({
       client: llmClient,
       sources: runConfig.sources,
       payDisclosed,
+      formContext: currentFormContext(),
       question,
       answer,
       signal: config.signal,
@@ -1160,9 +1181,16 @@ export async function runApplyAgent(
         client: llmClient,
         sources: runConfig.sources,
         payDisclosed,
+        formContext: currentFormContext(),
         answers: toCheck,
         signal: config.signal,
-      });
+      }).catch(() =>
+        toCheck.map(() => ({
+          supported: false,
+          reason:
+            "Job Finder could not check this answer right now. Please review it yourself or try again.",
+        })),
+      );
       toCheck.forEach((entry, index) => {
         const verdict = verdicts[index];
         if (verdict) {
@@ -1290,7 +1318,7 @@ export async function runApplyAgent(
       });
       const created = await runConfig.letters.provide({
         purpose,
-        prompt: `${purpose.replace(/_/gu, " ")}: ${instructions}`,
+        prompt: `${grounding.prompt}\n\nRequested document: ${purpose.replace(/_/gu, " ")}\nForm request or revision: ${instructions}`,
         groundedIn: grounding.groundedIn,
         language: grounding.language,
         delivery: "file",

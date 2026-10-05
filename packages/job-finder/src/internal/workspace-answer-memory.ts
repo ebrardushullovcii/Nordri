@@ -48,14 +48,34 @@ export function createReusableAnswerForQuestion(input: {
   prompt: string;
   kind: ApplicationQuestionKind;
   idPrefix?: string;
+  applicationScope?: CandidateReusableAnswer["applicationScope"];
 }): CandidateReusableAnswer {
   return {
-    id: `${input.idPrefix ?? "answer_memory"}_${stableAnswerId(input.prompt)}`,
+    id: `${input.idPrefix ?? "answer_memory"}_${stableAnswerId(`${input.prompt}\n${input.applicationScope?.location ?? ""}`)}`,
     kind: mapQuestionKindToCandidateAnswerKind(input.kind),
     label: input.prompt.slice(0, 120),
     question: input.prompt,
     answer: input.answer,
     roleFamilies: [],
     proofEntryIds: [],
+    ...(input.applicationScope
+      ? { applicationScope: input.applicationScope }
+      : {}),
   };
+}
+
+export function eligibilityAnswerScope(input: {
+  kind: ApplicationQuestionKind;
+  resultId: string | null;
+  applicationRecordId: string | null;
+  location: string | null | undefined;
+}): CandidateReusableAnswer["applicationScope"] {
+  return input.kind === "work_authorization" ||
+    input.kind === "visa_sponsorship"
+    ? {
+        resultId: input.resultId,
+        applicationRecordId: input.applicationRecordId,
+        location: input.location?.trim() || null,
+      }
+    : undefined;
 }

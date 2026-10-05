@@ -933,6 +933,7 @@ export const ApplicationReviewCardSchema = z
     letter: z
       .object({
         text: NonEmptyStringSchema.max(12_000),
+        reviewReason: NonEmptyStringSchema.max(2_000).optional(),
         groundedIn: z.array(NonEmptyStringSchema.max(240)).max(8).default([]),
       })
       .strict()

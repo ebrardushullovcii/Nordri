@@ -14,6 +14,7 @@ import {
 } from "@nordri/contracts";
 import {
   createReusableAnswerForQuestion,
+  eligibilityAnswerScope,
   normalizeAnswerQuestion,
 } from "./workspace-answer-memory";
 import type { WorkspaceServiceContext } from "./workspace-service-context";
@@ -119,6 +120,7 @@ async function saveReusableAnswer(input: {
   command: SaveApplicationAnswerCommand;
   ctx: WorkspaceServiceContext;
   prompt: string;
+  applicationRecordId: string | null;
   questionKind: Parameters<typeof createReusableAnswerForQuestion>[0]["kind"];
   text: string;
 }) {
@@ -131,11 +133,23 @@ async function saveReusableAnswer(input: {
     );
   }
 
+  const job = (await input.ctx.repository.listSavedJobs()).find(
+    (entry) => entry.id === input.command.jobId,
+  );
+  const applicationScope = eligibilityAnswerScope({
+    kind: input.questionKind,
+    resultId: input.command.resultId,
+    applicationRecordId: input.applicationRecordId,
+    location: job?.location,
+  });
   const normalizedPrompt = normalizeAnswerQuestion(input.prompt);
   await input.ctx.repository.commitProfileUpdate((current) => {
     const exactMatches = current.answerBank.customAnswers.filter((candidate) =>
       [candidate.question, candidate.label].some(
-        (value) => normalizeAnswerQuestion(value) === normalizedPrompt,
+        (value) =>
+          normalizeAnswerQuestion(value) === normalizedPrompt &&
+          (candidate.applicationScope?.location ?? null) ===
+            (applicationScope?.location ?? null),
       ),
     );
     // Saving for next time replaces a different answer saved earlier for the
@@ -170,6 +184,7 @@ async function saveReusableAnswer(input: {
           createReusableAnswerForQuestion({
             answer: input.text,
             prompt: input.prompt,
+            ...(applicationScope ? { applicationScope } : {}),
             kind: input.questionKind,
           }),
         ],
@@ -334,6 +349,7 @@ export function createWorkspaceApplicationAnswerMethods(
       command: { ...command, value },
       ctx,
       prompt: question.prompt,
+      applicationRecordId: question.applicationRecordId ?? null,
       questionKind: question.kind,
       text,
     });

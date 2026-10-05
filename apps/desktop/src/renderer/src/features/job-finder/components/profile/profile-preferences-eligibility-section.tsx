@@ -478,9 +478,13 @@ export function ProfilePreferencesEligibilitySection(props: {
                   defaultOpen={index === 0}
                   forceOpenSignal={getAppendedRecordOpenSignal(entry.id)}
                   summary={
-                    watch(`answerBank.customAnswers.${index}.label`) ||
-                    watch(`answerBank.customAnswers.${index}.question`) ||
-                    ""
+                    watch(
+                      `answerBank.customAnswers.${index}.applicationScope.location`,
+                    )
+                      ? `Application location: ${watch(`answerBank.customAnswers.${index}.applicationScope.location`)}`
+                      : watch(`answerBank.customAnswers.${index}.label`) ||
+                        watch(`answerBank.customAnswers.${index}.question`) ||
+                        ""
                   }
                   title={
                     watch(`answerBank.customAnswers.${index}.label`)?.trim() ||

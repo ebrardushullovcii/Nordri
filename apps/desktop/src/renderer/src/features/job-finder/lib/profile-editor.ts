@@ -266,6 +266,9 @@ function toReusableAnswerFormEntries(
     question: entry.question,
     answer: entry.answer,
     kind: entry.kind,
+    ...(entry.applicationScope
+      ? { applicationScope: entry.applicationScope }
+      : {}),
     roleFamilies: joinListInput(entry.roleFamilies),
     proofEntryIds: joinListInput(entry.proofEntryIds),
   }));
@@ -776,6 +779,9 @@ export function buildProfilePayload(
           answer: entry.answer.trim(),
           roleFamilies: parseTokenListInput(entry.roleFamilies),
           proofEntryIds: parseListInput(entry.proofEntryIds),
+          ...(entry.applicationScope
+            ? { applicationScope: entry.applicationScope }
+            : {}),
         })),
     },
     professionalSummary: {

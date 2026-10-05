@@ -1,3 +1,4 @@
+import { readSalaryDisclosurePreference } from "./salary-disclosure-preference";
 import { randomUUID } from "node:crypto";
 
 import type { ApplyAuthority } from "@nordri/browser-agent";
@@ -65,7 +66,7 @@ function canonicalOrigins(values: readonly string[]): string[] {
     .filter((value): value is string => value !== null);
 }
 
-export function resolveApplyAuthority(input: {
+function resolveSendingAuthority(input: {
   envelope: ApplicationAuthorityEnvelope | null;
   job: { id: string; campaignId?: string | null };
   /** The digest of the resume going out with this application, when known. */
@@ -89,7 +90,15 @@ export function resolveApplyAuthority(input: {
   }
 
   if (envelope.mode === "prepare_only") {
-    return { authority: PREPARE_ONLY_AUTHORITY, narrowedBecause: null };
+    return {
+      authority: {
+        ...PREPARE_ONLY_AUTHORITY,
+        salaryDisclosure:
+          envelope.decisionPolicy?.answerPolicy.salaryDisclosure ??
+          "pause_for_user",
+      },
+      narrowedBecause: null,
+    };
   }
 
   const scopedToJob =
@@ -151,6 +160,21 @@ export function resolveApplyAuthority(input: {
   };
 }
 
+export function resolveApplyAuthority(
+  input: Parameters<typeof resolveSendingAuthority>[0] & {
+    salaryDisclosure?: ApplyAuthority["salaryDisclosure"];
+  },
+): ApplyAuthorityResolution {
+  const resolution = resolveSendingAuthority(input);
+  return {
+    ...resolution,
+    authority: {
+      ...resolution.authority,
+      salaryDisclosure: input.salaryDisclosure ?? "pause_for_user",
+    },
+  };
+}
+
 /**
  * Reads the saved permission that applies to this job, if there is one.
  *
@@ -159,8 +183,14 @@ export function resolveApplyAuthority(input: {
  */
 export async function resolveApplyAuthorityForJob(input: {
   repository: {
+    getSettings?: Parameters<
+      typeof readSalaryDisclosurePreference
+    >[0]["getSettings"];
+    commitSettingsUpdate?: Parameters<
+      typeof readSalaryDisclosurePreference
+    >[0]["commitSettingsUpdate"];
     listApplicationAuthorityEnvelopes: (filter: {
-      status: "active";
+      status?: "active";
     }) => Promise<readonly ApplicationAuthorityEnvelope[]>;
   };
   job: { id: string; campaignId?: string | null };
@@ -170,6 +200,17 @@ export async function resolveApplyAuthorityForJob(input: {
 }): Promise<
   ApplyAuthorityResolution & { envelope: ApplicationAuthorityEnvelope | null }
 > {
+  const { getSettings, commitSettingsUpdate } = input.repository;
+  const salaryDisclosure =
+    getSettings && commitSettingsUpdate
+      ? await readSalaryDisclosurePreference({
+          getSettings: () => getSettings.call(input.repository),
+          commitSettingsUpdate: (update) =>
+            commitSettingsUpdate.call(input.repository, update),
+          listApplicationAuthorityEnvelopes: (filter) =>
+            input.repository.listApplicationAuthorityEnvelopes(filter),
+        })
+      : "pause_for_user";
   let active: readonly ApplicationAuthorityEnvelope[] = [];
   try {
     active = await input.repository.listApplicationAuthorityEnvelopes({
@@ -177,7 +218,7 @@ export async function resolveApplyAuthorityForJob(input: {
     });
   } catch {
     return {
-      authority: PREPARE_ONLY_AUTHORITY,
+      authority: { ...PREPARE_ONLY_AUTHORITY, salaryDisclosure },
       narrowedBecause: null,
       envelope: null,
     };
@@ -185,6 +226,7 @@ export async function resolveApplyAuthorityForJob(input: {
 
   const envelope = active.length === 1 ? (active[0] ?? null) : null;
   const resolution = resolveApplyAuthority({
+    salaryDisclosure,
     envelope,
     job: input.job,
     resumeSha256: input.resumeSha256,
