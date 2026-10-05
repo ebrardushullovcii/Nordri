@@ -116,6 +116,7 @@ async function search(input: {
   selectivity: "best_matches" | "balanced" | "wide_net";
   remoteCountsAsAnyLocation: boolean;
   targetRoles?: string[];
+  planSelectivity?: "best_matches" | "balanced" | "wide_net";
 }) {
   const seed = createSeed();
   seed.savedJobs = [];
@@ -127,6 +128,7 @@ async function search(input: {
   seed.searchPreferences.locations = ["Berlin, Germany"];
   seed.searchPreferences.workModes = [];
   seed.searchPreferences.excludedLocations = [];
+  seed.searchPreferences.searchSelectivity = input.planSelectivity;
   seed.searchPreferences.companyWhitelist = [];
   seed.searchPreferences.companyBlacklist = [];
   // The Settings save mirrors Best matches only into the strict filter.
@@ -215,3 +217,18 @@ describe("saved search behavior changes what a search keeps", () => {
     60_000,
   );
 });
+
+test("R3-193 independent saved plan pickiness controls retention despite opposite Settings", async () => {
+  const strict = await search({
+    selectivity: "wide_net",
+    planSelectivity: "best_matches",
+    remoteCountsAsAnyLocation: true,
+  });
+  const broad = await search({
+    selectivity: "best_matches",
+    planSelectivity: "wide_net",
+    remoteCountsAsAnyLocation: true,
+  });
+  expect(Object.keys(strict).sort()).toEqual(["berlin", "europe", "worldwide"]);
+  expect(Object.keys(broad)).toHaveLength(CARDS.length);
+}, 60000);

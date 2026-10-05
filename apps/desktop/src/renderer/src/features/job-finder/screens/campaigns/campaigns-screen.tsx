@@ -681,6 +681,36 @@ function CampaignEditor(props: {
           </h2>
         </div>
 
+        <label className="grid gap-1 text-sm">
+          Search pickiness
+          <select
+            aria-label="Search pickiness"
+            className="h-11 rounded-(--radius-field) border border-(--field-border) bg-(--field) px-3.5 text-(length:--text-field) outline-none focus-visible:border-(--field-focus-border) focus-visible:bg-(--field-strong) focus-visible:shadow-[var(--field-focus-shadow)]"
+            value={draft.searchPreferences.searchSelectivity ?? ""}
+            onChange={(event) => {
+              const searchPreferences = { ...draft.searchPreferences };
+              if (event.target.value === "") {
+                delete searchPreferences.searchSelectivity;
+              } else {
+                searchPreferences.searchSelectivity = event.target.value as
+                  | "best_matches"
+                  | "balanced"
+                  | "wide_net";
+              }
+              setDraft({ ...draft, searchPreferences });
+            }}
+          >
+            <option value="">Use Settings</option>
+            <option value="best_matches">Best matches only</option>
+            <option value="balanced">Balanced</option>
+            <option value="wide_net">Cast a wide net</option>
+          </select>
+          <span className="text-xs text-foreground-muted">
+            {draft.searchPreferences.searchSelectivity
+              ? "This choice applies to every run of this plan, including scheduled searches."
+              : "This plan uses the search pickiness saved in Settings."}
+          </span>
+        </label>
         <div className="grid gap-4 sm:grid-cols-3">
           <label className="grid gap-1 text-sm">
             <span className="font-medium">Name</span>
@@ -1079,6 +1109,35 @@ function CampaignEditor(props: {
                   <option value="month">Monthly</option>
                   <option value="year">Yearly</option>
                 </select>
+              </label>
+              <label className="grid gap-1 text-sm">
+                Minimum pay counts as
+                <select
+                  aria-label="Minimum pay counts as"
+                  className="h-11 rounded-(--radius-field) border border-(--field-border) bg-(--field) px-3.5 text-(length:--text-field) outline-none focus-visible:border-(--field-focus-border) focus-visible:bg-(--field-strong) focus-visible:shadow-[var(--field-focus-shadow)]"
+                  value={draft.searchPreferences.compensation.basis ?? "base"}
+                  onChange={(event) =>
+                    setDraft({
+                      ...draft,
+                      searchPreferences: {
+                        ...draft.searchPreferences,
+                        compensation: {
+                          ...draft.searchPreferences.compensation,
+                          basis: event.target.value as "base" | "total_ote",
+                        },
+                      },
+                    })
+                  }
+                >
+                  <option value="base">Base salary</option>
+                  <option value="total_ote">
+                    Total pay including commission (OTE)
+                  </option>
+                </select>
+                <span className="text-xs text-foreground-muted">
+                  Job assessments compare pay on this basis. Unclear pay needs
+                  review.
+                </span>
               </label>
             </div>
           </div>

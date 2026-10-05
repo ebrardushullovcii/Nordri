@@ -59,6 +59,12 @@ export function applicationFacts(
     preferences: sources.preferences,
     yearsExperience: profile.yearsExperience,
     workEligibility: profile.workEligibility,
+    ...(profile.workEligibility.limitedWorkPermissions?.length
+      ? {
+          eligibilityInterpretation:
+            "Limited permissions establish present authorization only within their country and stated conditions. requiresFutureSponsorship describes future work, not a blanket answer for this application. Compare the job type, hours and dates; leave unresolved authorization and sponsorship questions for the person. Reusable answers cannot override permit conditions.",
+        }
+      : {}),
     answers: answerBank,
     savedAnswers: sources.reusableAnswers
       .filter(

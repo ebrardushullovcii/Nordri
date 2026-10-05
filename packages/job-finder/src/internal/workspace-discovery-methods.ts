@@ -1486,9 +1486,15 @@ export function createWorkspaceDiscoveryMethods(
       ),
       settings,
     );
-    const searchGuidance = AiBehaviorPreferenceSchema.parse(
+    const savedSearchGuidance = AiBehaviorPreferenceSchema.parse(
       settings.aiBehavior ?? {},
     ).jobSearch;
+    const searchGuidance = {
+      ...savedSearchGuidance,
+      selectivity:
+        enrichedPreferences.searchSelectivity ??
+        savedSearchGuidance.selectivity,
+    };
     // Explicit run budget resolution order: campaign limit first (the
     // campaign-scoped control), then the discovery preferences field. No
     // explicit budget means uncapped retention with normal safety ceilings.

@@ -28,7 +28,16 @@ test.each([
           claim: "Reduced reporting time by 20%",
         },
       ],
-      workEligibility: { authorizedWorkCountries: ["Lebanon", "Canada"] },
+      workEligibility: {
+        authorizedWorkCountries: ["Lebanon", "Canada"],
+        limitedWorkPermissions: [
+          {
+            country: "Germany",
+            conditions: "Student work only; 20 hours during term",
+            requiresFutureSponsorship: true,
+          },
+        ],
+      },
       baseResume: {
         id: "resume",
         fileName: "resume.txt",
@@ -36,26 +45,28 @@ test.each([
         extractionStatus: "ready",
       },
     });
-    const chatWithTools = vi.fn<LLMClient["chatWithTools"]>(async () => ({
-      toolCalls: [
-        {
-          id: "check",
-          type: "function",
-          function: {
-            name: "report_answer_checks",
-            arguments: JSON.stringify({
-              checks: answers.map((_, index) => ({
-                index,
-                supported,
-                reason: supported
-                  ? "Same country and conditions"
-                  : "Choose the hiring country or review the student permit",
-              })),
-            }),
+    const chatWithTools = vi.fn<LLMClient["chatWithTools"]>(() =>
+      Promise.resolve({
+        toolCalls: [
+          {
+            id: "check",
+            type: "function",
+            function: {
+              name: "report_answer_checks",
+              arguments: JSON.stringify({
+                checks: answers.map((_, index) => ({
+                  index,
+                  supported,
+                  reason: supported
+                    ? "Same country and conditions"
+                    : "Choose the hiring country or review the student permit",
+                })),
+              }),
+            },
           },
-        },
-      ],
-    }));
+        ],
+      }),
+    );
     const checks = await checkWrittenApplicationAnswers({
       client: { chatWithTools },
       sources: {
@@ -81,21 +92,35 @@ test.each([
       })),
     });
     expect(checks.every((check) => check.supported === supported)).toBe(true);
-    const [messages] = chatWithTools.mock.calls[0]!;
-    expect(String(messages[0]!.content)).toContain(
+    const [messages] = chatWithTools.mock.calls[0];
+    expect(String(messages[0].content)).toContain(
       "Reject both Yes and No when the country is unresolved",
     );
-    expect(String(messages[0]!.content)).toContain(
+    expect(String(messages[0].content)).toContain(
       "limit hours, study status, dates or employer",
     );
-    expect(String(messages[0]!.content)).not.toMatch(
+    expect(String(messages[0].content)).not.toMatch(
       /German|Canada|US sponsorship/u,
     );
-    const data = JSON.parse(String(messages[1]!.content));
-    expect(data.postingContextOnly.location).toBe(location);
-    expect(data.applicationFormContext.fields[0].value).toBe(location);
-    expect(data.applicant.summary).toContain("after graduation");
-    expect(data.applicant.proofBank[0].claim).toBe(
+    const data: unknown = JSON.parse(String(messages[1].content));
+    expect(data).toHaveProperty("postingContextOnly.location", location);
+    expect(data).toHaveProperty(
+      "applicationFormContext.fields.0.value",
+      location,
+    );
+    expect(data).toHaveProperty("applicant.summary", profile.summary);
+    expect(data).toHaveProperty(
+      "applicant.workEligibility.limitedWorkPermissions",
+      profile.workEligibility.limitedWorkPermissions,
+    );
+    expect(data).toHaveProperty(
+      "applicant.eligibilityInterpretation",
+      expect.stringContaining(
+        "requiresFutureSponsorship describes future work",
+      ),
+    );
+    expect(data).toHaveProperty(
+      "applicant.proofBank.0.claim",
       "Reduced reporting time by 20%",
     );
   },
@@ -154,9 +179,9 @@ test("budgets letters by text length and retries incomplete output once with mor
     }),
   ).resolves.toEqual([{ supported: true, reason: "Supported" }]);
   expect(chatWithTools).toHaveBeenCalledTimes(2);
-  const initial = chatWithTools.mock.calls[0]![2]!.maxOutputTokens!;
+  const initial = chatWithTools.mock.calls[0][2]!.maxOutputTokens!;
   expect(initial).toBeGreaterThan(6_000);
-  expect(chatWithTools.mock.calls[1]![2]!.maxOutputTokens).toBeGreaterThan(
+  expect(chatWithTools.mock.calls[1][2]!.maxOutputTokens).toBeGreaterThan(
     initial,
   );
 });

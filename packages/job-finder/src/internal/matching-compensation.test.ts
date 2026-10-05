@@ -265,3 +265,17 @@ describe("findSiteFurnitureSalaryTexts", () => {
     expect(isSiteFurnitureSalaryText(houseBand, furniture)).toBe(true);
   });
 });
+
+test("R3-138 leaves OTE comparison to the model instead of treating base as total pay", () => {
+  const result = evaluateCompensationFit("$80,000 base; $160,000 OTE per year", {
+    minimum: 160000,
+    maximum: null,
+    interval: "year",
+    currency: "USD",
+    currencyStatus: "explicit",
+    basis: "total_ote",
+  });
+  expect(result.state).toBe("unknown");
+  expect(result.explanation).toContain("total pay including commission");
+  expect(result.listingMinimumAnnualUsd).toBeNull();
+});

@@ -330,6 +330,14 @@ export function createProfileEditorValues(
       yearsExperience: profile.yearsExperience?.toString() ?? "",
     },
     eligibility: {
+      limitedWorkPermissions: (
+        profile.workEligibility.limitedWorkPermissions ?? []
+      ).map((permission) => ({
+        ...permission,
+        requiresFutureSponsorship: booleanToSelect(
+          permission.requiresFutureSponsorship,
+        ),
+      })),
       authorizedWorkCountries: joinListInput(
         profile.workEligibility.authorizedWorkCountries,
       ),
@@ -417,10 +425,16 @@ export function createSearchPreferencesEditorValues(
     collectOnlyHardCriteriaMatches:
       searchPreferences.discovery.collectOnlyHardCriteriaMatches ?? false,
     employmentTypes: joinListInput(searchPreferences.employmentTypes),
+    shiftPreference: searchPreferences.shiftPreference ?? "any",
+    minimumWeeklyHours:
+      searchPreferences.weeklyHours?.minimum?.toString() ?? "",
+    maximumWeeklyHours:
+      searchPreferences.weeklyHours?.maximum?.toString() ?? "",
     excludedLocations: joinListInput(searchPreferences.excludedLocations),
     jobFamilies: joinListInput(searchPreferences.jobFamilies),
     locations: joinListInput(searchPreferences.locations),
     minimumSalaryUsd: searchPreferences.compensation.minimum?.toString() ?? "",
+    compensationBasis: searchPreferences.compensation.basis ?? "base",
     compensationInterval: searchPreferences.compensation.interval,
     salaryCurrency: searchPreferences.compensation.currency ?? "",
     seniorityLevels: joinListInput(searchPreferences.seniorityLevels),
@@ -738,6 +752,19 @@ export function buildProfilePayload(
       textContent: values.identity.resumeText.trim() || null,
     },
     workEligibility: {
+      ...(values.eligibility.limitedWorkPermissions.length > 0 ||
+      profile.workEligibility.limitedWorkPermissions
+        ? {
+            limitedWorkPermissions:
+              values.eligibility.limitedWorkPermissions.map((permission) => ({
+                country: permission.country.trim(),
+                conditions: permission.conditions.trim(),
+                requiresFutureSponsorship: selectToBoolean(
+                  permission.requiresFutureSponsorship,
+                ),
+              })),
+          }
+        : {}),
       authorizedWorkCountries: parseListInput(
         values.eligibility.authorizedWorkCountries,
       ),
@@ -996,17 +1023,45 @@ export function buildSearchPreferencesPayload(
     targetIndustries: parseListInput(values.targetIndustries),
     targetCompanyStages: parseListInput(values.targetCompanyStages),
     employmentTypes: parseListInput(values.employmentTypes),
+    ...(values.shiftPreference !== "any" || searchPreferences.shiftPreference
+      ? { shiftPreference: values.shiftPreference }
+      : {}),
+    ...(values.minimumWeeklyHours.trim() ||
+    values.maximumWeeklyHours.trim() ||
+    searchPreferences.weeklyHours
+      ? {
+          weeklyHours: {
+            minimum: values.minimumWeeklyHours.trim()
+              ? Number(values.minimumWeeklyHours)
+              : null,
+            maximum: values.maximumWeeklyHours.trim()
+              ? Number(values.maximumWeeklyHours)
+              : null,
+          },
+        }
+      : {}),
     minimumSalaryUsd: parsedMinimumSalaryUsd,
     targetSalaryUsd: parsedTargetSalaryUsd,
     salaryCurrency: compensationCurrency,
     compensation: preserveBaselineCompensation
-      ? values.compensationInterval === searchPreferences.compensation.interval
+      ? values.compensationInterval ===
+          searchPreferences.compensation.interval &&
+        values.compensationBasis ===
+          (searchPreferences.compensation.basis ?? "base")
         ? searchPreferences.compensation
         : {
             ...searchPreferences.compensation,
+            ...(values.compensationBasis !== "base" ||
+            searchPreferences.compensation.basis
+              ? { basis: values.compensationBasis }
+              : {}),
             interval: values.compensationInterval,
           }
       : {
+          ...(values.compensationBasis !== "base" ||
+          searchPreferences.compensation.basis
+            ? { basis: values.compensationBasis }
+            : {}),
           minimum: parsedMinimumSalaryUsd,
           maximum: parsedTargetSalaryUsd,
           interval: values.compensationInterval,

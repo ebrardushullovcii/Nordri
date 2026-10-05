@@ -181,6 +181,7 @@ export type CompensationCurrencyStatus = z.infer<
 
 const CompensationAmountSchema = z.number().int().nonnegative().nullable();
 export const CompensationPreferenceObjectSchema = z.object({
+  basis: z.enum(["base", "total_ote"]).optional(),
   minimum: CompensationAmountSchema.default(null),
   maximum: CompensationAmountSchema.default(null),
   interval: CompensationIntervalSchema.default("year"),
@@ -273,6 +274,9 @@ export function applyCompensationPreferenceChange(
 }
 
 export const JobSearchPreferencesObjectSchema = z.object({
+  searchSelectivity: z
+    .enum(["best_matches", "balanced", "wide_net"])
+    .optional(),
   targetRoles: z.array(NonEmptyStringSchema).default([]),
   jobFamilies: z.array(NonEmptyStringSchema).default([]),
   locations: z.array(NonEmptyStringSchema).default([]),
@@ -282,6 +286,22 @@ export const JobSearchPreferencesObjectSchema = z.object({
   targetIndustries: z.array(NonEmptyStringSchema).default([]),
   targetCompanyStages: z.array(NonEmptyStringSchema).default([]),
   employmentTypes: z.array(NonEmptyStringSchema).default([]),
+  shiftPreference: z.enum(["day", "night", "any"]).optional(),
+  weeklyHours: z
+    .object({
+      minimum: z.number().min(0).max(168).nullable(),
+      maximum: z.number().min(0).max(168).nullable(),
+    })
+    .refine(
+      (hours) =>
+        hours.minimum === null ||
+        hours.maximum === null ||
+        hours.minimum <= hours.maximum,
+      {
+        message: "Maximum weekly hours must be at least the minimum.",
+      },
+    )
+    .optional(),
   minimumSalaryUsd: z.number().int().min(0).nullable(),
   targetSalaryUsd: z.number().int().min(0).nullable().default(null),
   salaryCurrency: NonEmptyStringSchema.nullable().default("USD"),
@@ -319,6 +339,9 @@ function normalizeCompensationCompatibility(
     ? value.compensation
     : value.minimumSalaryUsd !== null || value.targetSalaryUsd !== null
       ? {
+          ...(value.compensation.basis
+            ? { basis: value.compensation.basis }
+            : {}),
           minimum: value.minimumSalaryUsd,
           maximum: value.targetSalaryUsd,
           interval: "year" as const,

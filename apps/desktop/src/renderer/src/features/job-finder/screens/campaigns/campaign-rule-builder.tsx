@@ -1,4 +1,5 @@
 import {
+  annualizeCompensationAmount,
   campaignRuleFieldValues,
   campaignRuleOperatorsByField,
   type CampaignRule,
@@ -196,7 +197,11 @@ export function CampaignRuleBuilder(props: {
   const [draftOperator, setDraftOperator] =
     useState<CampaignRuleOperator>("contains");
   const [draftValue, setDraftValue] = useState("");
-  const [draftCurrency, setDraftCurrency] = useState("USD");
+  const [draftCurrency, setDraftCurrency] = useState(
+    props.campaign.searchPreferences.compensation.currency ??
+      props.campaign.searchPreferences.salaryCurrency ??
+      "",
+  );
   const [searchQuery, setSearchQuery] = useState("");
   const [ruleRemovalCandidateId, setRuleRemovalCandidateId] = useState<
     string | null
@@ -240,7 +245,29 @@ export function CampaignRuleBuilder(props: {
 
   const changeField = (field: CampaignRuleField) => {
     setDraftField(field);
+    if (field === "compensation" && draftField !== "compensation") {
+      const compensation = props.campaign.searchPreferences.compensation;
+      setDraftCurrency(
+        compensation.currency ??
+          props.campaign.searchPreferences.salaryCurrency ??
+          "",
+      );
+      setDraftValue(
+        compensation.minimum === null
+          ? ""
+          : String(
+              annualizeCompensationAmount(
+                compensation.minimum,
+                compensation.interval,
+              ),
+            ),
+      );
+    }
     const operators = campaignRuleOperatorsByField[field];
+    if (field === "compensation") {
+      setDraftOperator("greater_than_or_equal");
+      return;
+    }
     if (!operators.includes(draftOperator)) {
       setDraftOperator(operators[0] ?? "equals");
     }
@@ -465,7 +492,7 @@ export function CampaignRuleBuilder(props: {
                 needsNumeric
                   ? draftField === "travel"
                     ? "25"
-                    : "120000"
+                    : "Yearly amount"
                   : draftField === "work_mode"
                     ? "remote"
                     : "Example"
@@ -490,8 +517,22 @@ export function CampaignRuleBuilder(props: {
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
           <p className="text-xs text-foreground-muted">
-            Compensation and travel rules need a numeric value; compensation
-            also needs a currency code.
+            {needsCurrency ? (
+              <>
+                Compare yearly pay in the selected currency.{" "}
+                {draftOperator === "less_than_or_equal" ||
+                draftOperator === "less_than"
+                  ? "Compares the advertised maximum."
+                  : draftOperator === "equals"
+                    ? "Compares the advertised pay band."
+                    : "Compares the advertised minimum."}{" "}
+                Hourly pay uses 2,080 hours per year; weekly and monthly pay use
+                52 weeks and 12 months. Missing pay or a different currency stays
+                unknown.
+              </>
+            ) : (
+              "Compensation and travel rules need a numeric value; compensation also needs a currency code."
+            )}
           </p>
           <Button
             disabled={

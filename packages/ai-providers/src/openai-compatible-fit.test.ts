@@ -281,3 +281,45 @@ test("measures the twenty-job request against the previous uncapped shape", () =
   );
   expect(after).toBeLessThan(before);
 });
+
+test("R3-065, R3-105 and R3-138 give the judge permit, schedule and OTE facts", () => {
+  const profile = createProfile();
+  profile.workEligibility.limitedWorkPermissions = [
+    {
+      country: "Germany",
+      conditions: "Student work, 20 hours during term",
+      requiresFutureSponsorship: true,
+    },
+  ];
+  const preferences = createPreferences();
+  preferences.shiftPreference = "day";
+  preferences.weeklyHours = { minimum: 20, maximum: 30 };
+  preferences.compensation = {
+    ...preferences.compensation,
+    basis: "total_ote",
+    minimum: 160000,
+  };
+  const posting = createJobPosting();
+  posting.salaryText = "$80,000 base; $160,000 OTE";
+  const payload = buildJobFitJudgingPayload({
+    assessmentDate: "2026-10-05",
+    profile,
+    searchPreferences: preferences,
+    jobs: [{ jobId: "ote", posting }],
+  });
+  expect(payload.person.workEligibility.limitedWorkPermissions).toEqual(
+    profile.workEligibility.limitedWorkPermissions,
+  );
+  expect(payload.goals).toMatchObject({
+    shiftPreference: "day",
+    weeklyHours: { minimum: 20, maximum: 30 },
+    compensation: { basis: "total_ote", minimum: 160000 },
+  });
+  expect(payload.jobs[0]?.salaryText).toBe(posting.salaryText);
+  const instructions = buildFitEvidenceInstructions();
+  expect(instructions).toContain("requiresFutureSponsorship");
+  expect(instructions).toContain("Explain conflicting shifts or weekly hours");
+  expect(instructions).toContain(
+    "meets a 160,000 total_ote floor, but not a 160,000 base floor",
+  );
+});

@@ -167,6 +167,46 @@ export function ProfilePreferencesTargetingSection(props: {
             placeholder="Add full-time, part-time, contract…"
             values={parseListInput(watch("employmentTypes"))}
           />
+          <label className="grid gap-1 text-sm">
+            Shifts
+            <select
+              className={profileSelectTriggerClassName}
+              {...register("shiftPreference")}
+            >
+              <option value="any">Any shift</option>
+              <option value="day">Day shifts only</option>
+              <option value="night">Night shifts only</option>
+            </select>
+          </label>
+          <div className="grid gap-2">
+            <p className="text-sm font-medium">Hours per week</p>
+            <div className="grid grid-cols-2 gap-3">
+              <label className="grid gap-1 text-sm">
+                Minimum weekly hours
+                <ProfileInput
+                  type="number"
+                  min={0}
+                  max={168}
+                  step="any"
+                  {...register("minimumWeeklyHours")}
+                />
+              </label>
+              <label className="grid gap-1 text-sm">
+                Maximum weekly hours
+                <ProfileInput
+                  type="number"
+                  min={0}
+                  max={168}
+                  step="any"
+                  {...register("maximumWeeklyHours")}
+                />
+              </label>
+            </div>
+            <p className="text-xs text-foreground-muted">
+              Leave blank if flexible. Job assessments explain conflicts with
+              your shifts or hours.
+            </p>
+          </div>
         </div>
       </article>
 
@@ -376,6 +416,18 @@ export function ProfilePreferencesTargetingSection(props: {
               floor, and higher compensation is always welcome.
             </p>
           </div>
+          <label className="grid gap-1 text-sm">
+            Minimum pay counts as
+            <select
+              className={profileSelectTriggerClassName}
+              {...register("compensationBasis")}
+            >
+              <option value="base">Base salary</option>
+              <option value="total_ote">
+                Total pay including commission (OTE)
+              </option>
+            </select>
+          </label>
           <Controller
             control={control}
             name="compensationInterval"

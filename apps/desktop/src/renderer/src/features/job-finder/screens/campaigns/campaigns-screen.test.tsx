@@ -1815,7 +1815,7 @@ describe("CampaignsScreen", () => {
     const textareas = Array.from(container.querySelectorAll("textarea"));
     // Volume, Status, Pay interval (inside the closed compensation section),
     // and How often.
-    expect(selects).toHaveLength(4);
+    expect(selects).toHaveLength(6);
     // Plan purpose.
     expect(textareas).toHaveLength(1);
 
@@ -2630,4 +2630,31 @@ it("shows a plain timeout reason without terminal logs on the plan card", () => 
   expect(reason).toBeTruthy();
   expect(reason).not.toContain("page.goto");
   expect(reason).not.toContain("\u001b");
+});
+
+it("R3-193 and R3-138 save plan pickiness and OTE basis", () => {
+  const onSaveCampaign =
+    vi.fn<(campaign: SaveJobSearchCampaignInput) => Promise<boolean>>();
+  render(
+    <CampaignsScreen
+      activeCampaignId="one"
+      campaigns={[campaign("one", "Focused", "precision")]}
+      onSaveCampaign={onSaveCampaign}
+      onSelectCampaign={vi.fn()}
+      pending={false}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+  expect(screen.getByLabelText("Search pickiness")).toHaveProperty("value", "");
+  fireEvent.change(screen.getByLabelText("Search pickiness"), {
+    target: { value: "best_matches" },
+  });
+  fireEvent.change(screen.getByLabelText("Minimum pay counts as"), {
+    target: { value: "total_ote" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Save search plan" }));
+  expect(onSaveCampaign.mock.calls[0]?.[0].searchPreferences).toMatchObject({
+    searchSelectivity: "best_matches",
+    compensation: { basis: "total_ote" },
+  });
 });

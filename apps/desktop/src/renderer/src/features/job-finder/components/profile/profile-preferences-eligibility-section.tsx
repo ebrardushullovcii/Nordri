@@ -200,6 +200,92 @@ export function ProfilePreferencesEligibilitySection(props: {
             name="eligibility.remoteEligible"
           />
         </div>
+        <div className="grid gap-3">
+          <h4 className="text-sm font-medium">Limited work permission</h4>
+          <p className="text-xs text-foreground-muted">
+            Save student or other limited permits here. Job Finder checks these
+            limits against each job and leaves uncertain authorization and
+            sponsorship questions for you. Reusable answers do not override
+            these limits.
+          </p>
+          {watch("eligibility.limitedWorkPermissions").map(
+            (permission, index) => (
+              <div className="grid gap-3" key={index}>
+                <label className="grid gap-1 text-sm">
+                  Permit country
+                  <ProfileInput
+                    {...register(
+                      `eligibility.limitedWorkPermissions.${index}.country`,
+                    )}
+                    placeholder="Germany"
+                  />
+                </label>
+                <label className="grid gap-1 text-sm">
+                  Permit limits
+                  <ProfileTextarea
+                    {...register(
+                      `eligibility.limitedWorkPermissions.${index}.conditions`,
+                    )}
+                    placeholder="Student work permission; include hours, dates and other limits you know"
+                  />
+                </label>
+                <Controller
+                  control={profileControl}
+                  name={`eligibility.limitedWorkPermissions.${index}.requiresFutureSponsorship`}
+                  render={({ field }) => (
+                    <label className="grid gap-1 text-sm">
+                      Will you need sponsorship for future work in this country?
+                      <select
+                        className={profileSelectTriggerClassName}
+                        {...field}
+                      >
+                        <option value="">Not set</option>
+                        <option value="yes">Yes</option>
+                        <option value="no">No</option>
+                      </select>
+                    </label>
+                  )}
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() =>
+                    props.profileForm.setValue(
+                      "eligibility.limitedWorkPermissions",
+                      getValues("eligibility.limitedWorkPermissions").filter(
+                        (_, itemIndex) => itemIndex !== index,
+                      ),
+                      { shouldDirty: true },
+                    )
+                  }
+                >
+                  Remove permit
+                </Button>
+              </div>
+            ),
+          )}
+          <Button
+            disabled={props.busy}
+            type="button"
+            variant="secondary"
+            onClick={() =>
+              props.profileForm.setValue(
+                "eligibility.limitedWorkPermissions",
+                [
+                  ...getValues("eligibility.limitedWorkPermissions"),
+                  {
+                    country: "",
+                    conditions: "",
+                    requiresFutureSponsorship: "",
+                  },
+                ],
+                { shouldDirty: true },
+              )
+            }
+          >
+            Add limited permission
+          </Button>
+        </div>
       </article>
 
       <ProfileOptionalSection

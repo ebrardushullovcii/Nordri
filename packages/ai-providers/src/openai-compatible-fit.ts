@@ -22,8 +22,11 @@ export const JOB_FIT_JUDGING_BATCH_SIZE = 20;
 /** Shared by preliminary and full reads so a rescore keeps the same constraints. */
 export function buildFitEvidenceInstructions(): string {
   return [
+    "Read limitedWorkPermissions by country: conditions describe present permission, and requiresFutureSponsorship describes future work, not necessarily the present job. Compare the job type, hours and dates with every permit condition. Limited permission is neither unrestricted authorization nor absent permission. Unresolved conditions require review_before_applying with a clear question for the person.",
     "Compare country-limited remote work with the person's current location, authorizedWorkCountries, sponsorship needs and saved eligibility answers. Remote does not mean worldwide: remoteCountsAsAnyLocation never overrides a country restriction or work permission. Do not infer authorization from residence, education or past employers.",
     "For hybrid or onsite work, compare the actual office city and required attendance with saved locations and relocation facts. Willingness to relocate is not permission to work there. A material place or eligibility mismatch must appear in preferencesExplanation, gaps and summary, lower the score below comparable eligible jobs, and prevent an unqualified strong_fit or apply_with_original recommendation. If eligibility is not known, say what must be confirmed.",
+    "Compare pay using compensation.basis: base (also the default when absent) means guaranteed base salary, and total_ote means total on-target pay including commission. Keep base and OTE amounts separate. An 80,000 base / 160,000 OTE listing meets a 160,000 total_ote floor, but not a 160,000 base floor. Normalize the person's interval and listing pay to the same yearly basis and currency; compare the advertised minimum of the matching band, not its maximum. Unclear basis, interval or currency needs review; do not invent conversion rates or count OTE as guaranteed pay. Explain the comparison.",
+    "Compare shiftPreference (day or night means only those shifts; any or absent means flexible) and weeklyHours.minimum/maximum with the listing's schedule. Explain conflicting shifts or weekly hours in preferencesExplanation, gaps and summary and avoid an unqualified strong_fit. Missing schedule evidence is unknown, not alignment.",
     "Compare the listing's start date, immediate-start requirement, hours and availability window with availableStartDate, noticePeriodDays and saved availability/notice-period answers using assessmentDate. An ambiguous month without a year is uncertain: name the possible conflict and ask the person to confirm the year rather than claiming alignment.",
     "Title similarity is preliminary evidence, not checked requirements. With card-only or incomplete text, use review_before_applying and a provisional score; do not claim strong fit, a credible original resume or confirmed requirements. Name decisive unknowns. When the full text is provided, read all of it, including the final requirements, before recommending.",
     "Check every explicit language and proficiency level, specialist skill (including named programming languages), portfolio, licence, education and required experience against confirmed profile facts, projects and imported resume evidence. Distinguish direct support, transferable experience, partial support and missing evidence. Do not treat an unconfirmed generated resume claim as a fact.",
@@ -135,6 +138,8 @@ function compactGoals(preferences: JobSearchPreferences) {
     excludedLocations: preferences.excludedLocations,
     workModes: preferences.workModes,
     employmentTypes: preferences.employmentTypes,
+    shiftPreference: preferences.shiftPreference,
+    weeklyHours: preferences.weeklyHours,
     compensation: preferences.compensation,
     remoteCountsAsAnyLocation:
       preferences.discovery.remoteCountsAsAnyLocation !== false,

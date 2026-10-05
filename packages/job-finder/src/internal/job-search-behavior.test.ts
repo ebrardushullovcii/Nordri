@@ -30,3 +30,28 @@ describe("withSavedJobSearchBehavior", () => {
     ).toEqual(unset);
   });
 });
+
+test("R3-193 plan pickiness overrides global filtering without changing old plans", () => {
+  const { searchPreferences } = createSeed();
+  const strict = withSavedJobSearchBehavior(
+    { ...searchPreferences, searchSelectivity: "best_matches" },
+    {},
+  );
+  const broad = withSavedJobSearchBehavior(
+    {
+      ...searchPreferences,
+      searchSelectivity: "wide_net",
+      discovery: {
+        ...searchPreferences.discovery,
+        collectOnlyHardCriteriaMatches: true,
+      },
+    },
+    {},
+  );
+  expect(strict.discovery.collectOnlyHardCriteriaMatches).toBe(true);
+  expect(broad.discovery.collectOnlyHardCriteriaMatches).toBe(false);
+  expect(
+    withSavedJobSearchBehavior(searchPreferences, {}).discovery
+      .collectOnlyHardCriteriaMatches,
+  ).toBe(searchPreferences.discovery.collectOnlyHardCriteriaMatches);
+});

@@ -131,6 +131,15 @@ export type CandidateLanguage = z.infer<typeof CandidateLanguageSchema>;
 
 export const CandidateWorkEligibilitySchema = z.object({
   authorizedWorkCountries: z.array(NonEmptyStringSchema).default([]),
+  limitedWorkPermissions: z
+    .array(
+      z.object({
+        country: NonEmptyStringSchema,
+        conditions: NonEmptyStringSchema,
+        requiresFutureSponsorship: z.boolean().nullable().default(null),
+      }),
+    )
+    .optional(),
   requiresVisaSponsorship: z.boolean().nullable().default(null),
   willingToRelocate: z.boolean().nullable().default(null),
   preferredRelocationRegions: z.array(NonEmptyStringSchema).default([]),

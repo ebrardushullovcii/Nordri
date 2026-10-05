@@ -329,6 +329,24 @@ export function evaluateCompensationFit(
     };
   }
 
+  // The legacy numeric parser does not distinguish base from commission.
+  // An explicit OTE choice is judged from the listing by the model instead.
+  if (
+    compensation &&
+    "basis" in compensation &&
+    compensation.basis === "total_ote"
+  ) {
+    return {
+      state: "unknown",
+      confidence: "unavailable",
+      minimumSalaryUsd: null,
+      listingMinimumAnnualUsd: null,
+      listingCurrency: null,
+      explanation:
+        "Your minimum is total pay including commission (OTE). The job assessment compares the listing on that basis.",
+    };
+  }
+
   const normalized = parseNormalizedCompensation(salaryText);
   const preferenceCurrency = compensation?.currency?.toUpperCase() ?? null;
   const preferenceMinimumAnnualAmount = compensation

@@ -1709,3 +1709,69 @@ test("saving Profile preserves a saved eligibility answer's application location
     "Are you authorized?",
   );
 });
+
+test("R3-065 saves limited German permission and future sponsorship together", () => {
+  const profile = createProfile();
+  const values = createProfileEditorValues(profile);
+  values.eligibility.authorizedWorkCountries = "Lebanon";
+  values.eligibility.limitedWorkPermissions = [
+    {
+      country: "Germany",
+      conditions: "Student permission, at most 20 hours weekly during term",
+      requiresFutureSponsorship: "yes",
+    },
+  ];
+  const saved = buildProfilePayload(profile, values).payload!;
+  expect(saved.workEligibility.authorizedWorkCountries).toEqual(["Lebanon"]);
+  expect(saved.workEligibility.limitedWorkPermissions?.[0]).toMatchObject({
+    country: "Germany",
+    requiresFutureSponsorship: true,
+  });
+  expect(
+    createProfileEditorValues(saved).eligibility.limitedWorkPermissions,
+  ).toEqual(values.eligibility.limitedWorkPermissions);
+});
+
+test("R3-105 saves day shifts and a 20–30 hour week, rejecting reversed hours", () => {
+  const preferences = JobSearchPreferencesSchema.parse({
+    minimumSalaryUsd: null,
+    approvalMode: "review_before_submit",
+    tailoringMode: "balanced",
+  });
+  const values = createSearchPreferencesEditorValues(preferences);
+  values.shiftPreference = "day";
+  values.minimumWeeklyHours = "20";
+  values.maximumWeeklyHours = "30";
+  const saved = buildSearchPreferencesPayload(preferences, values).payload!;
+  expect(saved.shiftPreference).toBe("day");
+  expect(saved.weeklyHours).toEqual({ minimum: 20, maximum: 30 });
+  expect(createSearchPreferencesEditorValues(saved).maximumWeeklyHours).toBe(
+    "30",
+  );
+  values.maximumWeeklyHours = "10";
+  expect(
+    buildSearchPreferencesPayload(preferences, values).validationMessage,
+  ).toContain("Maximum weekly hours");
+});
+
+test("R3-138 saves an OTE pay floor and preserves it on unrelated edits", () => {
+  const preferences = JobSearchPreferencesSchema.parse({
+    minimumSalaryUsd: 160000,
+    approvalMode: "review_before_submit",
+    tailoringMode: "balanced",
+  });
+  const values = createSearchPreferencesEditorValues(preferences);
+  expect(values.compensationBasis).toBe("base");
+  values.compensationBasis = "total_ote";
+  const saved = buildSearchPreferencesPayload(preferences, values).payload!;
+  expect(saved.compensation).toMatchObject({
+    minimum: 160000,
+    basis: "total_ote",
+  });
+  expect(
+    buildSearchPreferencesPayload(
+      saved,
+      createSearchPreferencesEditorValues(saved),
+    ).payload?.compensation,
+  ).toEqual(saved.compensation);
+});
