@@ -81,6 +81,40 @@ const ResumeImportCandidateSetInputSchema = z.object({
   notes: z.array(z.string().trim().min(1)).default([]),
 });
 
+type ResumeImportCandidateSet = z.infer<
+  typeof ResumeImportCandidateSetInputSchema
+>;
+
+/**
+ * A save revises the candidates it names and keeps the rest. Each save used
+ * to replace the whole set, so a model that re-recorded one field (a region,
+ * say) wiped the name, email and phone it had recorded a turn earlier, and
+ * the import finished with an empty Basics section.
+ */
+export function mergeImportCandidateSets(
+  previous: ResumeImportCandidateSet,
+  next: ResumeImportCandidateSet,
+): ResumeImportCandidateSet {
+  const targetOf = (
+    candidate: ResumeImportCandidateSet["candidates"][number],
+  ) =>
+    [
+      candidate.target.section,
+      candidate.target.key,
+      candidate.target.recordId ?? "",
+    ].join("\u0000");
+  const revised = new Set(next.candidates.map(targetOf));
+  return {
+    candidates: [
+      ...previous.candidates.filter(
+        (candidate) => !revised.has(targetOf(candidate)),
+      ),
+      ...next.candidates,
+    ],
+    notes: [...new Set([...previous.notes, ...next.notes])],
+  };
+}
+
 const resumeImportTargetSectionsByStage = {
   identity_summary: ["identity", "contact", "location", "search_preferences"],
   experience: ["experience"],
@@ -998,7 +1032,7 @@ export async function runResumeImportStageAgentTask(input: {
       {
         name: "record_import_candidates",
         description:
-          "Write or revise the typed candidates extracted for this stage. Every candidate must cite real source block ids from the document.",
+          "Write or revise the typed candidates extracted for this stage. Candidates are kept per target: a candidate for a target you already recorded replaces it, and targets you leave out keep what you recorded before, so you can correct one field without repeating the others. Every candidate must cite real source block ids from the document.",
         inputSchema: ResumeImportCandidateSetInputSchema,
         parameters: jsonObject(
           {
@@ -1078,11 +1112,12 @@ export async function runResumeImportStageAgentTask(input: {
         permission: "draft_write",
         execute(toolInput, context) {
           const parsed = ResumeImportCandidateSetInputSchema.parse(toolInput);
+          const draft = mergeImportCandidateSets(context.draft, parsed);
           return {
-            draft: parsed,
-            summary: `${parsed.candidates.length} import candidate(s) recorded`,
+            draft,
+            summary: `${parsed.candidates.length} import candidate(s) recorded, ${draft.candidates.length} in total`,
             progressMade:
-              JSON.stringify(context.draft) !== JSON.stringify(parsed),
+              JSON.stringify(context.draft) !== JSON.stringify(draft),
           };
         },
       },

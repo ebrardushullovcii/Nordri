@@ -1592,8 +1592,12 @@ export async function executeApplyProposal(
         (eligibilityAnswer && (control.kind === "checkbox" || proposal.checked))
       ) {
         // Eligibility is a factual answer even when worded as a declaration.
+        // A box in a checkbox group is one option of the group's question,
+        // so it is matched by its option, like a radio button; the person's
+        // answer to that group lists the options they chose.
         const proposedOption =
-          control.kind === "checkbox"
+          control.kind === "checkbox" &&
+          control.answerControlType !== "multi_choice"
             ? proposal.checked
               ? "Yes"
               : "No"

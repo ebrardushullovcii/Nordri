@@ -763,6 +763,61 @@ describe("apply policy executor", () => {
     expect(setToggle).toHaveBeenCalledWith("c0", true);
   });
 
+  test("ticks each option the person chose for a required checkbox group", async () => {
+    const page = rawPage({
+      controls: ["Communication", "Planning", "Budgeting"].map((label, index) =>
+        rawControl({
+          index,
+          inputType: "checkbox",
+          name: "skills",
+          label,
+          // Like the replica sites: the group is required, its boxes are not.
+          groupLabel: "Select your skills",
+        }),
+      ),
+    });
+    const { config, hands } = configFor(page);
+    // The person's one-use answer from Needs you, as the run receives it.
+    config.sources.reusableAnswers = [
+      {
+        id: "application_request_skills_question_skills",
+        kind: "other",
+        label: "Select your skills",
+        question: "Select your skills",
+        answer: JSON.stringify(["Communication", "Planning"]),
+        roleFamilies: [],
+        proofEntryIds: [],
+      },
+    ];
+    const setToggle = vi.spyOn(hands, "setToggle");
+    const checkWrittenAnswer = vi.fn(() =>
+      Promise.resolve({ supported: false, reason: "Not in the facts." }),
+    );
+    const observation = observationOf(page);
+
+    const chosen = await executeApplyProposal(
+      { tool: "set_checkbox", ref: "c1", checked: true },
+      observation.signature,
+      { config, now, guardState: createApplyGuardState(), checkWrittenAnswer },
+    );
+    expect(chosen.kind).toBe("filled");
+    if (chosen.kind === "filled") {
+      expect(chosen.filled.answer.value).toBe("Planning");
+      expect(chosen.filled.answer.sourceKind).toBe("answer_library");
+    }
+    expect(setToggle).toHaveBeenCalledWith("c1", true);
+    expect(checkWrittenAnswer).not.toHaveBeenCalled();
+
+    // An option the person did not choose still goes through the fact check.
+    const other = await executeApplyProposal(
+      { tool: "set_checkbox", ref: "c2", checked: true },
+      observation.signature,
+      { config, now, guardState: createApplyGuardState(), checkWrittenAnswer },
+    );
+    expect(other.kind).not.toBe("filled");
+    expect(setToggle).not.toHaveBeenCalledWith("c2", true);
+  });
+
   test("a declaration the person pre-approved is ticked and recorded as theirs", async () => {
     const page = rawPage({
       controls: [

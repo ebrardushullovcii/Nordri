@@ -1,10 +1,12 @@
 import { describe, expect, test, vi } from "vitest";
 import {
   ResumeDraftSchema,
+  ResumeImportFieldCandidateDraftSchema,
   type ResumeDraftPatch,
 } from "@nordri/contracts";
 
 import {
+  mergeImportCandidateSets,
   runProfileCopilotAgentTask,
   runResumeEditAgentTask,
   runResumeGenerationAgentTask,
@@ -1136,6 +1138,39 @@ describe("tool-using AI capabilities", () => {
       });
     },
   );
+
+  test("a partial candidate save keeps the fields recorded earlier", () => {
+    const candidate = (section: string, key: string, value: string) =>
+      ResumeImportFieldCandidateDraftSchema.parse({
+        target: { section, key, recordId: null },
+        label: key,
+        value,
+        sourceBlockIds: ["block_1"],
+        confidence: 0.9,
+      });
+    const first = {
+      candidates: [
+        candidate("identity", "fullName", "Robin Ashford"),
+        candidate("contact", "email", "robin@example.test"),
+        candidate("location", "region", "Greater Manchester"),
+      ],
+      notes: ["header read"],
+    };
+    // The model corrects only the region on its next turn.
+    const merged = mergeImportCandidateSets(first, {
+      candidates: [candidate("location", "region", "Manchester")],
+      notes: ["header read", "region corrected"],
+    });
+
+    expect(
+      merged.candidates.map((entry) => [entry.target.key, entry.value]),
+    ).toEqual([
+      ["fullName", "Robin Ashford"],
+      ["email", "robin@example.test"],
+      ["region", "Manchester"],
+    ]);
+    expect(merged.notes).toEqual(["header read", "region corrected"]);
+  });
 
   test("Profile Copilot repairs an invalid patch group before finishing", async () => {
     const client = createToolClient([
