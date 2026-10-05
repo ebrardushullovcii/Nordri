@@ -1,3 +1,4 @@
+import { createApplyTiming } from "./apply-timing";
 import { resumeFormFileNames } from "@nordri/contracts";
 import {
   parseToolArguments,
@@ -18,6 +19,8 @@ import {
   createApplySystemPrompt,
   createApplyUserPrompt,
   describeObservation,
+  describeObservationUpdate,
+  applyStepShape,
 } from "./apply-prompts";
 import {
   FILL_FIELDS_TOOL_DEFINITION,
@@ -221,6 +224,23 @@ function canGenerateRequiredApplicationDocument(
 export async function runApplyAgent(
   config: ApplyAgentConfig,
   llmClient: LLMClient,
+): Promise<ApplyAgentResult> {
+  const timing = createApplyTiming(config.now ?? (() => new Date()));
+  try {
+    return await runMeasuredApplyAgent(
+      { ...config, hands: timing.hands(config.hands) },
+      timing.model(llmClient),
+      timing,
+    );
+  } finally {
+    config.onTiming?.(timing.snapshot());
+  }
+}
+
+async function runMeasuredApplyAgent(
+  config: ApplyAgentConfig,
+  llmClient: LLMClient,
+  timingRecord: ReturnType<typeof createApplyTiming>,
 ): Promise<ApplyAgentResult> {
   const now = config.now ?? (() => new Date());
   const filled: ApplyFilledControl[] = [];
@@ -577,14 +597,29 @@ export async function runApplyAgent(
     }
   };
 
+  let modelObservation: ApplyFormObservation | null = null;
+  let observationNeeded = false;
+  const renderObservation = (observation: ApplyFormObservation): string => {
+    const text = describeObservationUpdate(observation, modelObservation);
+    // Observations may be mutated by classification; retain an independent snapshot.
+    modelObservation = structuredClone(observation);
+    timingRecord.setObservationChars(text.length);
+    return text;
+  };
   let openingMessage: string;
+  const openingReadStartedAt = now().getTime();
   try {
     syncObservation(await pageTools.observe());
-    openingMessage = `The page you have landed on:\n\n${describeObservation(pageTools.state.observation!)}`;
+    openingMessage = `The page you have landed on:\n\n${renderObservation(pageTools.state.observation!)}`;
   } catch (error) {
     const detail = describeBrowserError(error, "The page did not open.");
     note(`The application page did not open. ${detail}`);
     openingMessage = `The first attempt to read the application page failed: ${detail} Use the browser tools to recover: wait, navigate to the starting address, or observe again.`;
+  } finally {
+    timingRecord.onToolTiming({
+      toolName: "observe_initial",
+      durationMs: Math.max(0, now().getTime() - openingReadStartedAt),
+    });
   }
 
   const definitions = new Map(
@@ -600,13 +635,13 @@ export async function runApplyAgent(
     outcome: ApplyExecutionOutcome,
     options: { withPage?: boolean } = {},
   ): Promise<AgentLoopToolOutcome> => {
-    const withPage = options.withPage !== false;
+    const withPage = options.withPage === true;
     switch (outcome.kind) {
       case "observed":
         syncObservation(outcome.observation);
         return {
           kind: "ok",
-          content: describeObservation(outcome.observation),
+          content: renderObservation(outcome.observation),
         };
       case "read":
         syncObservation(outcome.observation);
@@ -656,6 +691,7 @@ export async function runApplyAgent(
         return {
           kind: "ok",
           progress: outcome.progress,
+          stopBatch: true,
           content: withPage
             ? `${outcome.note}\n\nThe page now:\n\n${describeObservation(outcome.observation)}`
             : outcome.note,
@@ -671,11 +707,13 @@ export async function runApplyAgent(
             outcome.question,
           );
         }
-        return { kind: "ok", content: outcome.note };
+        return { kind: "ok", stopBatch: true, content: outcome.note };
       case "refused":
         syncObservation(outcome.observation);
         return {
           kind: "ok",
+          status: "refused",
+          stopBatch: true,
           content: withPage
             ? `${outcome.reason}\n\nThe page now:\n\n${describeObservation(outcome.observation)}`
             : outcome.reason,
@@ -734,6 +772,7 @@ export async function runApplyAgent(
         return {
           kind: "ok",
           progress: true,
+          stopBatch: true,
           content:
             "The form is complete and everything checks out. Nothing has been sent: call finish now.",
         };
@@ -1100,6 +1139,7 @@ export async function runApplyAgent(
     ) => Promise<WrittenAnswerCheck>,
   ): Promise<ApplyExecutionOutcome> => {
     const writeKey = controlWriteKey(proposal);
+    if (proposal.tool !== "finish") observationNeeded = true;
     const outcome = await executeApplyProposal(
       proposal,
       pageTools.state.observation?.signature ?? "",
@@ -1130,7 +1170,8 @@ export async function runApplyAgent(
           : describeBrowserError(error, "The browser did not respond."),
       execute: async (rawArguments) => {
         const parsed = parseApplyProposal(name, rawArguments);
-        if (!parsed.ok) return { kind: "ok", content: parsed.error };
+        if (!parsed.ok)
+          return { kind: "ok", status: "refused", content: parsed.error };
         const writeKey = controlWriteKey(parsed.proposal);
         const proposedRef =
           "ref" in parsed.proposal ? parsed.proposal.ref : null;
@@ -1144,11 +1185,21 @@ export async function runApplyAgent(
         ) {
           return {
             kind: "ok",
+            status: "refused",
             content:
               "That exact field was already completed on this page. Do not write it again; use the latest form observation and continue with a different empty field or finish.",
           };
         }
-        return outcomeToLoop(await runProposal(parsed.proposal, checkOne));
+        const before = applyStepShape(pageTools.state.observation);
+        const reported = await outcomeToLoop(
+          await runProposal(parsed.proposal, checkOne),
+        );
+        if (
+          reported.kind === "ok" &&
+          before !== applyStepShape(pageTools.state.observation)
+        )
+          reported.stopBatch = true;
+        return reported;
       },
     });
   }
@@ -1162,7 +1213,8 @@ export async function runApplyAgent(
         : describeBrowserError(error, "The browser did not respond."),
     execute: async (rawArguments) => {
       const parsed = parseFillFields(rawArguments);
-      if (!parsed.ok) return { kind: "ok", content: parsed.error };
+      if (!parsed.ok)
+        return { kind: "ok", status: "refused", content: parsed.error };
       const observation = pageTools.state.observation;
       if (!observation) {
         return { kind: "ok", content: "Look at the page first." };
@@ -1206,11 +1258,14 @@ export async function runApplyAgent(
       };
       const lines: string[] = [];
       let wrote = false;
+      let stopped = false;
       for (const step of steps) {
         if ("error" in step) {
           lines.push(step.error);
-          continue;
+          stopped = true;
+          break;
         }
+        const before = applyStepShape(pageTools.state.observation);
         const outcome = await runProposal(step.proposal, checkFromBatch);
         if (outcome.kind === "paused") {
           return outcomeToLoop(outcome);
@@ -1220,13 +1275,20 @@ export async function runApplyAgent(
         }
         const reported = await outcomeToLoop(outcome, { withPage: false });
         if (reported.kind === "ok") lines.push(reported.content);
+        if (
+          reported.kind !== "ok" ||
+          reported.stopBatch ||
+          before !== applyStepShape(pageTools.state.observation)
+        ) {
+          stopped = true;
+          break;
+        }
       }
-      const after = await pageTools.observe();
-      syncObservation(after);
       return {
         kind: "ok",
         progress: wrote,
-        content: `${lines.join("\n")}\n\nThe form now looks like this:\n\n${describeObservation(after)}`,
+        stopBatch: stopped,
+        content: `${lines.join("\n")}${stopped ? "\nRemaining fields in this batch were not attempted. Decide again from the fresh page." : ""}`,
       };
     },
   });
@@ -1289,6 +1351,7 @@ export async function runApplyAgent(
       if (!runConfig.letters) {
         return {
           kind: "ok",
+          status: "refused",
           content:
             "Document generation is unavailable in this run. Leave the field for the person and say what document the site requested.",
         };
@@ -1308,6 +1371,7 @@ export async function runApplyAgent(
       if (!instructions) {
         return {
           kind: "ok",
+          status: "refused",
           content:
             "Say what the application requests before creating a document.",
         };
@@ -1327,6 +1391,7 @@ export async function runApplyAgent(
       if (!created.ok || !created.document) {
         return {
           kind: "ok",
+          status: "failed",
           content: created.ok
             ? "The document text was created, but no attachable file could be rendered."
             : `The document could not be created: ${created.reason}`,
@@ -1373,6 +1438,29 @@ export async function runApplyAgent(
             const result = await tool.execute(rawArguments, context);
             const current = pageTools.state.observation;
             if (current) syncObservation(current);
+            if (
+              tool.definition.function.name === "observe" &&
+              current &&
+              result.kind === "ok"
+            ) {
+              observationNeeded = false;
+              return {
+                ...result,
+                content: renderObservation(current),
+                stopBatch: true,
+              };
+            }
+            if (
+              result.kind === "ok" &&
+              tool.definition.function.name !== "read_text"
+            ) {
+              modelObservation = null;
+              if (current)
+                timingRecord.setObservationChars(
+                  describeObservation(current).length,
+                );
+              return { ...result, stopBatch: true };
+            }
             return result;
           },
         })),
@@ -1393,7 +1481,25 @@ export async function runApplyAgent(
       pageTools.state.observation
         ? `The page is ${pageTools.state.observation.url ?? "open"}.`
         : null,
-    modelMaxOutputTokens: 4_096,
+    modelMaxOutputTokens: 8_192,
+    parallelToolCalls: true,
+    // Delta observations depend on earlier page facts until compaction refreshes them.
+    staleToolResultChars: null,
+    onToolTiming: timingRecord.onToolTiming,
+    afterToolBatch: async () => {
+      if (!observationNeeded) return null;
+      observationNeeded = false;
+      const after = await pageTools.observe();
+      syncObservation(after);
+      return `The page after your batch:\n\n${renderObservation(after)}`;
+    },
+    onHistoryCompacted: () => {
+      modelObservation = null;
+      const current = pageTools.state.observation;
+      return current
+        ? `Current page in full after earlier history was shortened:\n\n${renderObservation(current)}`
+        : null;
+    },
     ...(config.onProgress ? { onStep: config.onProgress } : {}),
     ...(config.signal ? { signal: config.signal } : {}),
     now,
@@ -1479,7 +1585,8 @@ export async function runApplyAgent(
     reason = loop.reason;
   }
 
-  const timing = `[apply] timing read=0ms entry=0ms fill=${loop.timing.toolMs}ms (${filled.length + attachments.length} writes) model=${loop.timing.modelTurns} turns ${loop.timing.modelMs}ms total=${loop.timing.totalMs}ms`;
+  const agentTiming = timingRecord.snapshot();
+  const timing = `[apply] timing read=${agentTiming.pageReadMs}ms (${agentTiming.pageReads} reads) fill=${agentTiming.writeMs}ms upload=${agentTiming.uploadMs}ms tools=${agentTiming.toolMs}ms model=${agentTiming.modelTurns} turns ${agentTiming.modelMs}ms checks=${agentTiming.auxiliaryModelCalls} calls ${agentTiming.auxiliaryModelMs}ms total=${agentTiming.totalMs}ms`;
   return {
     outcome,
     reason,
@@ -1493,7 +1600,8 @@ export async function runApplyAgent(
     pauses,
     notes: [...notes, ...guardState.notes, ...loop.turnNotes, timing],
     timeline,
-    modelTurns: loop.timing.modelTurns,
+    modelTurns: agentTiming.modelTurns + agentTiming.auxiliaryModelCalls,
+    timing: agentTiming,
     readyToSend,
   };
 }

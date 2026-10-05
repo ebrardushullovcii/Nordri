@@ -264,6 +264,9 @@ function createResumptionAttempt(input: {
       executionResult?.executionTimings ??
       input.existingAttempt?.executionTimings ??
       [],
+    agentTiming: executionResult
+      ? executionResult.agentTiming
+      : input.existingAttempt?.agentTiming,
     userActionResumption: {
       requestId: input.request.id,
       requestRevision: getResumptionRequestRevision(input.request),
@@ -1608,6 +1611,7 @@ export function createApplicationUserActionResumer(
       state: nextResultState,
       summary: finalExecutionResult.summary,
       detail: finalExecutionResult.detail,
+      agentTiming: finalExecutionResult.agentTiming,
       updatedAt: completedAt,
       completedAt: getResultCompletedAt({ executionResult, now: completedAt }),
       blockerReason: mapExecutionResultToApplyBlockerReason(

@@ -66,7 +66,11 @@ export interface AgentLoopModel {
   chatWithTools: (
     messages: AgentLoopMessage[],
     tools: AgentLoopToolDefinition[],
-    options?: { signal?: AbortSignal; maxOutputTokens?: number },
+    options?: {
+      signal?: AbortSignal;
+      maxOutputTokens?: number;
+      parallelToolCalls?: boolean;
+    },
   ) => Promise<{
     content?: string;
     toolCalls?: AgentLoopToolCall[];
@@ -92,6 +96,8 @@ export type AgentLoopToolOutcome =
        * failed attempt still hands its words back to the model.
        */
       status?: "done" | "failed" | "refused";
+      /** Remaining calls were proposed against a page or decision that is no longer current. */
+      stopBatch?: boolean;
     }
   /** The model finished. */
   | { kind: "finish"; finish: AgentLoopFinish }
@@ -167,6 +173,12 @@ export interface AgentLoopOptions {
   staleToolResultChars?: number | null;
   /** Output cap for one model turn. Omit to use the provider default. */
   modelMaxOutputTokens?: number;
+  parallelToolCalls?: boolean;
+  /** Host supplies a fresh observation after a response batch, if needed. */
+  afterToolBatch?: () => Promise<string | null>;
+  onHistoryCompacted?: () => string | null;
+  /** Called for every attempted tool, including failures. */
+  onToolTiming?: (step: { toolName: string; durationMs: number }) => void;
   signal?: AbortSignal;
   now?: () => Date;
 }
@@ -491,6 +503,9 @@ export async function runAgentLoop(
         response = await Promise.race([
           options.model.chatWithTools(messages, definitions, {
             signal: turnSignal,
+            ...(options.parallelToolCalls === undefined
+              ? {}
+              : { parallelToolCalls: options.parallelToolCalls }),
             ...(options.modelMaxOutputTokens
               ? { maxOutputTokens: options.modelMaxOutputTokens }
               : {}),
@@ -573,12 +588,15 @@ export async function runAgentLoop(
     });
 
     let ended: AgentLoopResult | null = null;
+    let batchStopped = false;
     for (const toolCall of toolCalls) {
-      if (ended) {
+      if (ended || batchStopped) {
         messages.push({
           role: "tool",
           toolCallId: toolCall.id,
-          content: "The run ended before this step was reached.",
+          content: ended
+            ? "The run ended before this step was reached."
+            : "This batch stopped before this call. Decide again from the fresh page observation.",
         });
         continue;
       }
@@ -609,6 +627,7 @@ export async function runAgentLoop(
       }
       const tool = toolsByName.get(toolCall.function.name);
       if (!tool) {
+        batchStopped = options.afterToolBatch !== undefined;
         messages.push({
           role: "tool",
           toolCallId: toolCall.id,
@@ -633,6 +652,7 @@ export async function runAgentLoop(
           consecutiveBrowserFailures = 0;
         }
       } catch (error) {
+        batchStopped = options.afterToolBatch !== undefined;
         if (
           (error instanceof DOMException && error.name === "AbortError") ||
           options.signal?.aborted
@@ -710,11 +730,20 @@ export async function runAgentLoop(
         });
         continue;
       } finally {
-        toolMs += now().getTime() - toolStartedAt;
+        const durationMs = Math.max(0, now().getTime() - toolStartedAt);
+        toolMs += durationMs;
+        options.onToolTiming?.({
+          toolName: toolCall.function.name,
+          durationMs,
+        });
       }
 
       switch (outcome.kind) {
         case "ok": {
+          batchStopped =
+            outcome.stopBatch === true ||
+            outcome.status === "refused" ||
+            outcome.status === "failed";
           if (outcome.progress) {
             markProgress();
           }
@@ -768,6 +797,30 @@ export async function runAgentLoop(
     if (ended) {
       return ended;
     }
+    let observation: string | null = null;
+    if (options.afterToolBatch) {
+      const start = now().getTime();
+      try {
+        observation = await withToolDeadline(
+          options.afterToolBatch(),
+          toolTimeoutMs,
+          options.signal,
+        );
+      } catch {
+        if (options.signal?.aborted)
+          return result(
+            "aborted",
+            `Job Finder stopped work on ${options.subjectLabel} before it was finished.`,
+          );
+        observation =
+          "The page could not be read after the batch. Observe again before any write.";
+      } finally {
+        const durationMs = Math.max(0, now().getTime() - start);
+        toolMs += durationMs;
+        options.onToolTiming?.({ toolName: "observe_after_batch", durationMs });
+      }
+    }
+    if (observation) messages.push({ role: "user", content: observation });
     if (staleToolResultChars !== null) {
       messages = shortenStaleToolResults(
         messages,
@@ -775,12 +828,17 @@ export async function runAgentLoop(
         staleToolResultChars,
       );
     }
+    const beforeCompaction = messages;
     messages = compactMessages(
       messages,
       openingCount,
       turnNotes,
       compactionMaxChars,
     );
+    if (messages !== beforeCompaction) {
+      const context = options.onHistoryCompacted?.();
+      if (context) messages.push({ role: "user", content: context });
+    }
   }
 
   return result(

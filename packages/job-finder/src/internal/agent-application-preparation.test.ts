@@ -478,6 +478,9 @@ describe("agent application preparation seam", () => {
       intermediateMutationsAuthorized: false,
       allowedOrigins: [],
     });
+    expect(result.agentTiming?.modelTurns).toBeGreaterThan(0);
+    expect(result.agentTiming?.pageReads).toBeGreaterThan(0);
+    expect(result.agentTiming?.totalMs).toBe(0);
     expect(result.state).toBe("ready");
     expect(result.submittedAt).toBeNull();
     expect(result.outcome).toBeNull();
@@ -1784,4 +1787,21 @@ test("preparation honors an eligibility answer saved on an earlier attempt of th
       ([, tools]) => tools[0]?.function.name === "report_answer_checks",
     ),
   ).toBe(false);
+});
+
+test("a failed provider call still returns typed timing for persistence", async () => {
+  const result = await runAgentApplicationPreparation({
+    session: session(),
+    executionInput: executionInput(),
+    llmClient: {
+      chatWithTools: () => {
+        return Promise.reject(new Error("Synthetic outage"));
+      },
+    },
+    startedAt: "2026-09-14T10:00:00.000Z",
+    siteLabel: "the careers site",
+    now: () => new Date("2026-09-14T10:05:00.000Z"),
+  });
+  expect(result.state).toBe("failed");
+  expect(result.agentTiming).toMatchObject({ modelTurns: 1, pageReads: 1 });
 });

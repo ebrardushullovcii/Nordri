@@ -34,6 +34,7 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 
 import {
+  type ApplyAgentTiming,
   AiBehaviorPreferenceSchema,
   ApplicationReviewCardSchema,
   CoverLetterPreferenceSchema,
@@ -424,10 +425,23 @@ async function runApplyAgentSafely(
   input: AgentApplicationPreparationInput,
   config: Parameters<typeof runApplyAgent>[0],
 ): Promise<
-  { ok: true; result: ApplyAgentResult } | { ok: false; detail: string }
+  | { ok: true; result: ApplyAgentResult }
+  | { ok: false; detail: string; timing?: ApplyAgentTiming }
 > {
+  let timing: ApplyAgentTiming | undefined;
   try {
-    return { ok: true, result: await runApplyAgent(config, input.llmClient) };
+    return {
+      ok: true,
+      result: await runApplyAgent(
+        {
+          ...config,
+          onTiming: (value) => {
+            timing = value;
+          },
+        },
+        input.llmClient,
+      ),
+    };
   } catch (error) {
     const reason =
       error instanceof Error && error.message.trim()
@@ -435,6 +449,7 @@ async function runApplyAgentSafely(
         : "Something went wrong while it was working through the form.";
     return {
       ok: false,
+      ...(timing ? { timing } : {}),
       detail: `Job Finder hit a problem on ${input.siteLabel} it could not work around. ${reason} Nothing was sent, and anything it filled in is still on the page.`,
     };
   }
@@ -626,7 +641,7 @@ export async function runAgentApplicationPreparation(
     // Whatever went wrong, this run ends as a recorded outcome rather than as
     // a thrown error: a run that disappears leaves the person with a button
     // that does nothing and a record that says it is still going.
-    return buildPreparationResult({
+    const failed = buildPreparationResult({
       executionInput,
       // A run the model or browser dropped is a failed attempt to try again,
       // not a step waiting on the person.
@@ -651,6 +666,7 @@ export async function runAgentApplicationPreparation(
       now: now().toISOString(),
       nextActionLabel: "Try this application again",
     });
+    return { ...failed, agentTiming: outcome.timing };
   }
 
   const result = outcome.result;
@@ -693,7 +709,7 @@ export async function runAgentApplicationPreparation(
           ? "ready"
           : "paused";
 
-  return buildPreparationResult({
+  const prepared = buildPreparationResult({
     executionInput,
     state: attemptState,
     summary: summaryFor(result),
@@ -710,6 +726,7 @@ export async function runAgentApplicationPreparation(
     externalWrites: toExternalWrites(result),
     modelUse: toModelUse(result, input, startedAt),
   });
+  return { ...prepared, agentTiming: result.timing };
 }
 
 /**

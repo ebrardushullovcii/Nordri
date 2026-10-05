@@ -1,0 +1,144 @@
+import type { ApplyAgentTiming } from "@nordri/contracts";
+import type { LLMClient } from "../agent/contracts";
+import type { ApplyPageHands } from "./types";
+
+/** Only sizes, counts and durations are retained, never page or candidate text. */
+export function createApplyTiming(now: () => Date) {
+  const startedAt = now().getTime();
+  const timing: ApplyAgentTiming = {
+    totalMs: 0,
+    modelMs: 0,
+    modelTurns: 0,
+    auxiliaryModelMs: 0,
+    auxiliaryModelCalls: 0,
+    toolMs: 0,
+    pageReadMs: 0,
+    pageReads: 0,
+    writeMs: 0,
+    uploadMs: 0,
+    longestSteps: [],
+    requests: [],
+  };
+  let observationChars = 0;
+  const activeTools = new Map<
+    object,
+    {
+      startedAt: number;
+      name: string;
+      key: "pageReadMs" | "writeMs" | "uploadMs";
+    }
+  >();
+  const activeModels = new Map<object, { startedAt: number; loop: boolean }>();
+  const step = (toolName: string, durationMs: number) => {
+    timing.longestSteps = [...timing.longestSteps, { toolName, durationMs }]
+      .sort((a, b) => b.durationMs - a.durationMs)
+      .slice(0, 5);
+  };
+  const measure = async <T>(
+    name: string,
+    key: "pageReadMs" | "writeMs" | "uploadMs",
+    work: () => Promise<T>,
+  ): Promise<T> => {
+    const start = now().getTime();
+    const activeKey = {};
+    activeTools.set(activeKey, { startedAt: start, name, key });
+    if (key === "pageReadMs") timing.pageReads += 1;
+    try {
+      return await work();
+    } finally {
+      const duration = Math.max(0, now().getTime() - start);
+      activeTools.delete(activeKey);
+      timing[key] += duration;
+    }
+  };
+  return {
+    setObservationChars: (chars: number) => {
+      observationChars = chars;
+    },
+    onToolTiming: ({
+      toolName,
+      durationMs,
+    }: {
+      toolName: string;
+      durationMs: number;
+    }) => {
+      timing.toolMs += durationMs;
+      step(toolName, durationMs);
+    },
+    hands: (hands: ApplyPageHands): ApplyPageHands => ({
+      ...hands,
+      observe: () => measure("observe", "pageReadMs", hands.observe),
+      readText: (ref) =>
+        measure("read_text", "pageReadMs", () => hands.readText(ref)),
+      fillText: (ref, value) =>
+        measure("type", "writeMs", () => hands.fillText(ref, value)),
+      chooseOption: (ref, value) =>
+        measure("select", "writeMs", () => hands.chooseOption(ref, value)),
+      setToggle: (ref, checked) =>
+        measure("set_checkbox", "writeMs", () => hands.setToggle(ref, checked)),
+      uploadFile: (ref, file) =>
+        measure("upload", "uploadMs", () => hands.uploadFile(ref, file)),
+    }),
+    model: (client: LLMClient): LLMClient => ({
+      chatWithTools: async (messages, tools, options) => {
+        const loop = options?.parallelToolCalls === true;
+        const start = now().getTime();
+        const key = {};
+        activeModels.set(key, { startedAt: start, loop });
+        if (loop) {
+          timing.modelTurns += 1;
+          timing.requests.push({
+            turn: timing.modelTurns,
+            historyChars: JSON.stringify(messages).length,
+            observationChars,
+          });
+        } else timing.auxiliaryModelCalls += 1;
+        try {
+          return await client.chatWithTools(messages, tools, options);
+        } finally {
+          const duration = Math.max(0, now().getTime() - start);
+          activeModels.delete(key);
+          timing[loop ? "modelMs" : "auxiliaryModelMs"] += duration;
+        }
+      },
+    }),
+    snapshot: (): ApplyAgentTiming => {
+      const current = now().getTime();
+      const active = [...activeModels.values()];
+      const pendingTools = [...activeTools.values()];
+      const pendingMs = (key: "pageReadMs" | "writeMs" | "uploadMs") =>
+        pendingTools
+          .filter((tool) => tool.key === key)
+          .reduce(
+            (sum, tool) => sum + Math.max(0, current - tool.startedAt),
+            0,
+          );
+      return {
+        ...timing,
+        totalMs: Math.max(0, current - startedAt),
+        modelMs:
+          timing.modelMs +
+          active
+            .filter((call) => call.loop)
+            .reduce(
+              (sum, call) => sum + Math.max(0, current - call.startedAt),
+              0,
+            ),
+        auxiliaryModelMs:
+          timing.auxiliaryModelMs +
+          active
+            .filter((call) => !call.loop)
+            .reduce(
+              (sum, call) => sum + Math.max(0, current - call.startedAt),
+              0,
+            ),
+        pageReadMs: timing.pageReadMs + pendingMs("pageReadMs"),
+        writeMs: timing.writeMs + pendingMs("writeMs"),
+        uploadMs: timing.uploadMs + pendingMs("uploadMs"),
+        // Record owning tool spans once, rather than their nested reads again.
+        longestSteps: [...timing.longestSteps],
+        requests: timing.requests.slice(0, 1000),
+      };
+    },
+  };
+}

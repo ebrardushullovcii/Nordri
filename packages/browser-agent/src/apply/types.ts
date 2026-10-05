@@ -1,3 +1,4 @@
+import type { ApplyAgentTiming } from "@nordri/contracts";
 import type {
   ApplicationAttemptQuestion,
   ApplyBlockedAttempt,
@@ -396,6 +397,7 @@ export type ApplyAgentOutcome =
   | "stuck";
 
 export interface ApplyAgentResult {
+  timing?: ApplyAgentTiming;
   outcome: ApplyAgentOutcome;
   /** One plain sentence about how the run ended. Shown to the person as-is. */
   reason: string;
@@ -498,6 +500,8 @@ export interface ApplyAgentConfig {
     /** How long the walk from a listing to the form may take. */
     applyEntryTimeBudgetMs?: number;
   };
+  /** Emitted even if a provider or tool throws. */
+  onTiming?: (timing: ApplyAgentTiming) => void;
   onProgress?: (progress: {
     step: number;
     note: string;

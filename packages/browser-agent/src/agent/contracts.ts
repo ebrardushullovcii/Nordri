@@ -14,6 +14,7 @@ export interface LLMClient {
     tools: AgentLoopToolDefinition[],
     options?: {
       signal?: AbortSignal
+      parallelToolCalls?: boolean
       maxOutputTokens?: number
     }
   ) => Promise<{

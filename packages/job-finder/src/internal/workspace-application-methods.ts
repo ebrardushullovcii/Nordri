@@ -2563,6 +2563,7 @@ export function createWorkspaceApplicationMethods(
             runId: run.id,
             jobId,
             reviewCard: preparedReviewCardRun,
+            agentTiming: normalizedExecutionResult.agentTiming,
             queuePosition: index,
             state: mapExecutionResultToApplyJobState({
               consentRequests: runArtifacts.consentRequests,
@@ -2735,6 +2736,7 @@ export function createWorkspaceApplicationMethods(
                 visualCheckpoints: normalizedExecutionResult.visualCheckpoints,
                 nextActionLabel: normalizedExecutionResult.nextActionLabel,
                 executionTimings: normalizedExecutionResult.executionTimings,
+                agentTiming: normalizedExecutionResult.agentTiming,
               });
               await ctx.repository.upsertApplicationAttempt(attempt);
 
@@ -6778,6 +6780,7 @@ export function createWorkspaceApplicationMethods(
           visualCheckpoints: executionResult.visualCheckpoints,
           nextActionLabel: executionResult.nextActionLabel,
           executionTimings: executionResult.executionTimings,
+          agentTiming: executionResult.agentTiming,
         });
 
         await withApplyRunTransition(claim.runId, async () => {
@@ -7398,6 +7401,7 @@ export function createWorkspaceApplicationMethods(
           visualCheckpoints: executionResult.visualCheckpoints,
           nextActionLabel: executionResult.nextActionLabel,
           executionTimings: executionResult.executionTimings,
+          agentTiming: executionResult.agentTiming,
         });
         const runArtifacts = buildApplyCopilotArtifacts({
           existingAnswerRecords:

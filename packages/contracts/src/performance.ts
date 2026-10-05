@@ -1,3 +1,4 @@
+import { ApplyAgentTimingSchema } from "./agent-timing";
 import { z } from "zod";
 
 import { IsoDateTimeSchema, NonEmptyStringSchema } from "./base";
@@ -93,6 +94,7 @@ export type PerformanceEvidenceBudgetStatus = z.infer<
 >;
 
 const PerformanceEvidenceMeasuredBaseSchema = z.object({
+  agentTiming: ApplyAgentTimingSchema.optional(),
   area: PerformanceEvidenceAreaSchema,
   recordedAt: IsoDateTimeSchema,
   sampleCount: z.number().int().positive(),

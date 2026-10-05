@@ -793,6 +793,7 @@ export function createOpenAiCompatibleJobFinderAiClient(
               },
             })),
             maxOutputTokens: options?.maxOutputTokens,
+            parallelToolCalls: options?.parallelToolCalls,
           }),
           apiMode,
           totalTimeoutMs: timeoutMs,

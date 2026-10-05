@@ -1855,3 +1855,52 @@ describe("openai-compatible chat and draft behavior", () => {
     }
   });
 });
+
+test("the provider forwards parallel tool proposals and returns both in order", async () => {
+  const mock = mockCapturingJsonFetch({
+    choices: [
+      {
+        message: {
+          tool_calls: ["first", "second"].map((id) => ({
+            id,
+            type: "function",
+            function: {
+              name: "type",
+              arguments: JSON.stringify({ ref: id, text: "Synthetic value" }),
+            },
+          })),
+        },
+      },
+    ],
+  });
+  try {
+    const client = createOpenAiCompatibleJobFinderAiClient({
+      apiKey: "test-key",
+      baseUrl: "https://example.test/v1",
+      model: "synthetic-model",
+      label: "Synthetic AI",
+    });
+    const result = await client.chatWithTools(
+      [{ role: "user", content: "Prepare the synthetic fields." }],
+      [
+        {
+          type: "function",
+          function: {
+            name: "type",
+            description: "Write one checked field",
+            parameters: { type: "object", properties: {} },
+          },
+        },
+      ],
+      { parallelToolCalls: true },
+    );
+    const body: unknown = JSON.parse(mock.getCapturedBody());
+    expect(body).toMatchObject({ parallel_tool_calls: true });
+    expect(result.toolCalls?.map((call) => call.id)).toEqual([
+      "first",
+      "second",
+    ]);
+  } finally {
+    mock.restore();
+  }
+});

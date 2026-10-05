@@ -1676,6 +1676,11 @@ describe("application login UserActionRequest adoption", () => {
       recordAttemptState: "ready",
       resultState: "awaiting_review",
     });
+    expect(resumed.applicationAttempts.at(-1)?.agentTiming?.modelTurns).toBe(1);
+    expect(resumed.applicationAttempts.at(-1)?.agentTiming?.pageReads).toBe(2);
+    expect(resumed.applyJobResults[0]?.agentTiming).toEqual(
+      resumed.applicationAttempts.at(-1)?.agentTiming,
+    );
     expect(resumed.applyJobResults[0]?.reviewCard).toMatchObject({
       pageUrl: "https://fixture.example/application",
       waitingOnYou: [],

@@ -741,3 +741,50 @@ it("keeps the original fingerprint for the byte-identical TXT copy", () => {
     sha256: "b".repeat(64),
   });
 });
+
+it("keeps agent timing on the persisted apply job result", () => {
+  const job = createSeed().savedJobs[0]!;
+  const at = "2026-07-30T10:00:00.000Z";
+  const agentTiming = {
+    totalMs: 2000,
+    modelMs: 1200,
+    modelTurns: 2,
+    auxiliaryModelMs: 100,
+    auxiliaryModelCalls: 1,
+    toolMs: 600,
+    pageReadMs: 200,
+    pageReads: 7,
+    writeMs: 100,
+    uploadMs: 50,
+    longestSteps: [],
+    requests: [],
+  };
+  const artifacts = buildApplyCopilotArtifacts({
+    applicationRecordId: "application_timing",
+    job,
+    detectedAt: at,
+    runId: "run_timing",
+    resultId: "result_timing",
+    resumeArtifact: ApplicationResumeArtifactSchema.parse({
+      id: "resume_timing",
+      jobId: job.id,
+      source: "original_upload",
+      sourceDocumentId: "document_timing",
+      exportArtifactId: null,
+      fileName: "synthetic.pdf",
+      filePath: "/tmp/synthetic.pdf",
+      sha256: "a".repeat(64),
+      approvedAt: at,
+    }),
+    executionResult: ApplyExecutionResultSchema.parse({
+      state: "ready",
+      summary: "Prepared.",
+      detail: "Nothing sent.",
+      submittedAt: null,
+      outcome: null,
+      nextActionLabel: null,
+      agentTiming,
+    }),
+  });
+  expect(artifacts.result.agentTiming).toEqual(agentTiming);
+});

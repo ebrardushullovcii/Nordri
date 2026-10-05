@@ -1,3 +1,4 @@
+import { ApplyAgentTimingSchema } from "./agent-timing";
 import { z } from "zod";
 
 import { SubmissionOutcomeRecordSchema } from "./application-authority";
@@ -948,6 +949,7 @@ export type ApplicationReviewCard = z.infer<typeof ApplicationReviewCardSchema>;
 
 export const ApplyJobResultSchema = z
   .object({
+    agentTiming: ApplyAgentTimingSchema.optional(),
     id: NonEmptyStringSchema,
     runId: NonEmptyStringSchema,
     jobId: NonEmptyStringSchema,

@@ -284,3 +284,32 @@ describe("buildJobFinderPerformanceSnapshot", () => {
     ).toBe(true);
   });
 });
+
+it("passes persisted form-agent timings to Settings beside the existing workflow stages", () => {
+  const workspace = createWorkspace();
+  const agentTiming = {
+    totalMs: 4200,
+    modelMs: 3000,
+    modelTurns: 3,
+    auxiliaryModelMs: 400,
+    auxiliaryModelCalls: 2,
+    toolMs: 1000,
+    pageReadMs: 300,
+    pageReads: 12,
+    writeMs: 100,
+    uploadMs: 50,
+    longestSteps: [{ toolName: "fill_fields", durationMs: 600 }],
+    requests: [{ turn: 1, historyChars: 15000, observationChars: 2000 }],
+  };
+  workspace.applicationAttempts[0]!.agentTiming = agentTiming;
+  const snapshot = buildJobFinderPerformanceSnapshot({
+    workspace,
+    latestSourceDebugRun: null,
+    generatedAt: completedAt,
+  });
+  const evidence = snapshot.evidence.find(
+    (entry) => entry.area === "application_preparation",
+  );
+  expect(evidence).toMatchObject({ durationMs: 8000, agentTiming });
+  expect(evidence?.stageDurations).toHaveLength(2);
+});

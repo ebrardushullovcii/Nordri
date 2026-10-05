@@ -59,6 +59,31 @@ function formatDuration(durationMs: number): string {
   return `${(durationMs / 1_000).toFixed(durationMs < 10_000 ? 1 : 0)} s`;
 }
 
+function timingStepLabel(name: string): string {
+  const labels: Record<string, string> = {
+    model_turn: "Assistant decision",
+    observe_after_batch: "Reading the page after answers",
+    observe_initial: "Reading the first page",
+    observe: "Reading the page",
+    read_text: "Reading page text",
+    type: "Entering an answer",
+    select: "Choosing an answer",
+    set_checkbox: "Ticking a box",
+    upload: "Attaching a file",
+    fill_fields: "Entering answers and checking facts",
+    report_answer_checks: "Checking answers",
+    report_question_classifications: "Checking questions",
+    report_question_kinds: "Checking questions",
+    finish: "Checking the completed form",
+    click: "Pressing a control",
+    navigate: "Opening a page",
+    follow_link: "Following a link",
+    wait: "Waiting for the page",
+    scroll: "Scrolling the page",
+  };
+  return labels[name] ?? "Application step";
+}
+
 export function SettingsPerformanceEvidence() {
   const [snapshot, setSnapshot] = useState<JobFinderPerformanceSnapshot | null>(
     null,
@@ -141,6 +166,77 @@ export function SettingsPerformanceEvidence() {
                       : "Not recorded"}
                 </strong>
               </div>
+
+              {"agentTiming" in entry && entry.agentTiming ? (
+                <details className="mt-3 border-t border-(--surface-panel-border) pt-2">
+                  <summary className="cursor-pointer text-sm font-medium">
+                    Form preparation details
+                  </summary>
+                  <dl className="mt-2 grid gap-1 text-sm text-foreground-muted">
+                    <div>
+                      <dt>Form agent total</dt>
+                      <dd>{formatDuration(entry.agentTiming.totalMs)}</dd>
+                    </div>
+                    <div>
+                      <dt>Assistant decisions</dt>
+                      <dd>
+                        {entry.agentTiming.modelTurns} turns ·{" "}
+                        {formatDuration(entry.agentTiming.modelMs)}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Answer and permission checks</dt>
+                      <dd>
+                        {entry.agentTiming.auxiliaryModelCalls} calls ·{" "}
+                        {formatDuration(entry.agentTiming.auxiliaryModelMs)}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Tools, including checks</dt>
+                      <dd>{formatDuration(entry.agentTiming.toolMs)}</dd>
+                    </div>
+                    <div>
+                      <dt>Page reads, including safety checks</dt>
+                      <dd>
+                        {entry.agentTiming.pageReads} reads ·{" "}
+                        {formatDuration(entry.agentTiming.pageReadMs)}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Entering answers</dt>
+                      <dd>{formatDuration(entry.agentTiming.writeMs)}</dd>
+                    </div>
+                    <div>
+                      <dt>Attaching files</dt>
+                      <dd>{formatDuration(entry.agentTiming.uploadMs)}</dd>
+                    </div>
+                  </dl>
+                  <p className="mt-2 text-sm text-foreground-muted">
+                    Checks can run while other work is happening. These times
+                    overlap.
+                  </p>
+                  <p className="mt-2 text-sm font-medium text-foreground-soft">
+                    Slowest steps
+                  </p>
+                  <ul className="mt-2 text-sm text-foreground-muted">
+                    {entry.agentTiming.longestSteps.map((step, index) => (
+                      <li key={index}>
+                        {timingStepLabel(step.toolName)}:{" "}
+                        {formatDuration(step.durationMs)}
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="mt-2 text-sm text-foreground-muted">
+                    Characters sent per assistant turn:{" "}
+                    {entry.agentTiming.requests
+                      .map(
+                        (request) =>
+                          `${request.historyChars} (page update ${request.observationChars})`,
+                      )
+                      .join(", ") || "No assistant turns"}
+                  </p>
+                </details>
+              ) : null}
 
               {entry.stageDurations.length > 0 ? (
                 <details className="mt-3 border-t border-(--surface-panel-border) pt-2">

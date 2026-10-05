@@ -2686,3 +2686,265 @@ test("Full written answers ask for supported specifics within the available limi
   expect(full).toContain("Never invent a metric");
   expect(short).not.toContain("70–90%");
 });
+
+describe("response batches", () => {
+  const textField = (index: number, label: string): RawApplyControl => ({
+    ...nameControl(),
+    index,
+    id: `f${index}`,
+    name: `f${index}`,
+    label,
+    value: "",
+  });
+  const call = (id: string, name: string, args: Record<string, unknown>) => ({
+    id,
+    type: "function" as const,
+    function: { name, arguments: JSON.stringify(args) },
+  });
+
+  test("executes all writes in order through policy, then supplies one page update", async () => {
+    const source = page({
+      controls: [textField(0, "Full name"), textField(1, "Email")],
+    });
+    const input = config(source);
+    input.sources.profile.email = "robin@example.test";
+    const writes: string[] = [];
+    input.hands.fillText = (ref, value) => {
+      writes.push(ref);
+      source.controls[Number(ref.slice(1))].value = value;
+      return Promise.resolve({ ok: true, observedValue: value });
+    };
+    let turns = 0;
+    let nextMessages: Parameters<LLMClient["chatWithTools"]>[0] = [];
+    const result = await runApplyAgent(input, {
+      chatWithTools: (messages, _tools, options) => {
+        expect(options?.parallelToolCalls).toBe(true);
+        turns += 1;
+        if (turns === 1)
+          return Promise.resolve({
+            toolCalls: [
+              call("name", "type", { ref: "c0", text: "Robin Ashford" }),
+              call("email", "type", { ref: "c1", text: "robin@example.test" }),
+            ],
+          });
+        nextMessages = structuredClone(messages);
+        return Promise.resolve({
+          toolCalls: [call("done", "finish", { reason: "Filled in." })],
+        });
+      },
+    });
+    expect(writes).toEqual(["c0", "c1"]);
+    const results = nextMessages.filter((message) => message.role === "tool");
+    expect(results).toHaveLength(2);
+    expect(
+      results.every((message) => !String(message.content).includes("Fields:")),
+    ).toBe(true);
+    expect(
+      nextMessages.filter((message) =>
+        String(message.content).includes("The page after your batch:"),
+      ),
+    ).toHaveLength(1);
+    expect(result.filled).toHaveLength(2);
+    expect(result.timing?.modelTurns).toBe(2);
+    expect(result.timing?.pageReads).toBe(7); // initial, two safety reads per write, batch, finish
+  });
+
+  test("a refusal stops later calls and never bypasses the executor", async () => {
+    const source = page({
+      controls: [textField(0, "Full name"), textField(1, "Email")],
+    });
+    const input = config(source);
+    input.hands.fillText = vi.fn(input.hands.fillText);
+    let turn = 0;
+    const result = await runApplyAgent(input, {
+      chatWithTools: () => {
+        turn += 1;
+        return Promise.resolve({
+          toolCalls:
+            turn === 1
+              ? [
+                  call("bad", "type", {
+                    ref: "missing",
+                    text: "Robin Ashford",
+                  }),
+                  call("later", "type", {
+                    ref: "c1",
+                    text: "robin@example.test",
+                  }),
+                ]
+              : [call("done", "finish", { reason: "Blocked.", stuck: true })],
+        });
+      },
+    });
+    expect(input.hands.fillText).not.toHaveBeenCalled();
+    expect(result.filled).toHaveLength(0);
+    expect(result.timing?.modelTurns).toBeGreaterThanOrEqual(2);
+  });
+
+  test("fill_fields stops at a refusal before later entries", async () => {
+    const source = page({ controls: [textField(0, "Full name")] });
+    const input = config(source);
+    input.hands.fillText = vi.fn(input.hands.fillText);
+    let turn = 0;
+    await runApplyAgent(input, {
+      chatWithTools: () =>
+        Promise.resolve({
+          toolCalls:
+            ++turn === 1
+              ? [
+                  call("fields", "fill_fields", {
+                    fields: [
+                      { ref: "missing", value: "Robin Ashford" },
+                      { ref: "c0", value: "Robin Ashford" },
+                    ],
+                  }),
+                ]
+              : [call("done", "finish", { reason: "Blocked.", stuck: true })],
+        }),
+    });
+    expect(input.hands.fillText).not.toHaveBeenCalled();
+  });
+
+  test("a revealed field stops the remaining calls until the model sees it", async () => {
+    const source = page({
+      controls: [textField(0, "Full name"), textField(1, "Email")],
+    });
+    const input = config(source);
+    input.sources.profile.email = "robin@example.test";
+    const writes: string[] = [];
+    input.hands.fillText = (ref, value) => {
+      writes.push(ref);
+      source.controls[Number(ref.slice(1))].value = value;
+      source.controls.push(textField(2, "New required question"));
+      return Promise.resolve({ ok: true, observedValue: value });
+    };
+    let turn = 0;
+    await runApplyAgent(input, {
+      chatWithTools: () =>
+        Promise.resolve({
+          toolCalls:
+            ++turn === 1
+              ? [
+                  call("name", "type", { ref: "c0", text: "Robin Ashford" }),
+                  call("later", "type", {
+                    ref: "c1",
+                    text: "robin@example.test",
+                  }),
+                ]
+              : [
+                  call("done", "finish", {
+                    reason: "Needs answers.",
+                    stuck: true,
+                  }),
+                ],
+        }),
+    });
+    expect(writes).toEqual(["c0"]);
+  });
+
+  test("persists measurements even when the provider throws", async () => {
+    const onTiming = vi.fn();
+    await expect(
+      runApplyAgent(config(page(), { onTiming }), {
+        chatWithTools: () => {
+          return Promise.reject(new Error("Unavailable"));
+        },
+      }),
+    ).rejects.toThrow("Unavailable");
+    expect(onTiming).toHaveBeenCalledWith(
+      expect.objectContaining({ modelTurns: 1, pageReads: 1 }),
+    );
+  });
+});
+
+test("one response can enter contact facts, tick an approved declaration and attach the selected resume", async () => {
+  const source = page({
+    controls: [
+      { ...nameControl(), value: "" },
+      {
+        ...nameControl(),
+        index: 1,
+        id: "truth",
+        name: "truth",
+        inputType: "checkbox",
+        label: "I certify that the information is true",
+        value: "on",
+        checked: false,
+      },
+      {
+        ...nameControl(),
+        index: 2,
+        id: "resume",
+        name: "resume",
+        inputType: "file",
+        label: "Resume / CV",
+        value: "",
+      },
+    ],
+  });
+  const input = config(source);
+  input.authority.preApprovedAttestationKinds = ["truthfulness_certification"];
+  input.sources.documents = [
+    {
+      id: "synthetic_resume",
+      fileName: "synthetic.pdf",
+      mimeType: "application/pdf",
+      label: "Synthetic CV",
+      kind: "resume",
+      loadBytes: () => Promise.resolve(new Uint8Array([1, 2, 3])),
+    },
+  ];
+  const writes: string[] = [];
+  input.hands.fillText = (ref, value) => {
+    writes.push(ref);
+    source.controls[0].value = value;
+    return Promise.resolve({ ok: true, observedValue: value });
+  };
+  input.hands.setToggle = (ref, checked) => {
+    writes.push(ref);
+    source.controls[1].checked = checked;
+    return Promise.resolve({
+      ok: true,
+      observedValue: checked ? "checked" : "unchecked",
+    });
+  };
+  input.hands.uploadFile = (ref, file) => {
+    writes.push(ref);
+    source.controls[2].value = file.name;
+    return Promise.resolve({ ok: true, observedValue: file.name });
+  };
+  let turns = 0;
+  let updates = 0;
+  const result = await runApplyAgent(input, {
+    chatWithTools: (messages) => {
+      turns += 1;
+      if (turns > 1)
+        updates = messages.filter((message) =>
+          String(message.content).startsWith("The page after your batch:"),
+        ).length;
+      const entries =
+        turns === 1
+          ? [
+              { name: "type", args: { ref: "c0", text: "Robin Ashford" } },
+              { name: "set_checkbox", args: { ref: "c1", checked: true } },
+              {
+                name: "upload",
+                args: { ref: "c2", documentId: "synthetic_resume" },
+              },
+            ]
+          : [{ name: "finish", args: { reason: "Filled in." } }];
+      return Promise.resolve({
+        toolCalls: entries.map((entry, index) => ({
+          id: `${turns}_${index}`,
+          type: "function" as const,
+          function: { name: entry.name, arguments: JSON.stringify(entry.args) },
+        })),
+      });
+    },
+  });
+  expect(writes).toEqual(["c0", "c1", "c2"]);
+  expect(result.filled).toHaveLength(2);
+  expect(result.attachments).toHaveLength(1);
+  expect(turns).toBe(2);
+  expect(updates).toBe(1);
+});

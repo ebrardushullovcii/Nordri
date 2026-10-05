@@ -1084,6 +1084,7 @@ export function buildApplyCopilotArtifacts(input: {
     queuePosition: 0,
     state: resultState,
     summary: input.executionResult.summary,
+    agentTiming: input.executionResult.agentTiming,
     detail: input.executionResult.detail,
     startedAt: replayableExecutionCheckpoints[0]?.at ?? input.detectedAt,
     updatedAt: input.detectedAt,

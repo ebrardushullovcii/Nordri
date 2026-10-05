@@ -1,3 +1,4 @@
+import { ApplyAgentTimingSchema } from "./agent-timing";
 import { z } from "zod";
 
 import { ApplicationAutomationModeSchema } from "./application-authority";
@@ -2048,6 +2049,7 @@ export const ApplicationAttemptSchema = z.object({
   visualCheckpoints: z.array(ApplyVisualCheckpointSchema).default([]),
   nextActionLabel: NonEmptyStringSchema.nullable(),
   executionTimings: z.array(ApplyExecutionTimingSchema).default([]),
+  agentTiming: ApplyAgentTimingSchema.optional(),
   userActionResumption: ApplicationUserActionResumptionSchema.optional(),
 });
 export type ApplicationAttempt = z.infer<typeof ApplicationAttemptSchema>;
@@ -2094,6 +2096,7 @@ export const ApplyExecutionResultSchema = z.object({
   visualCheckpoints: z.array(ApplyVisualCheckpointSchema).default([]),
   nextActionLabel: NonEmptyStringSchema.nullable(),
   executionTimings: z.array(ApplyExecutionTimingSchema).default([]),
+  agentTiming: ApplyAgentTimingSchema.optional(),
   externalWrites: z
     .array(ApplicationAttemptExternalWriteEvidenceSchema)
     .optional(),

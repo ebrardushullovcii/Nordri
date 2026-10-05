@@ -34,6 +34,22 @@ describe("SettingsPerformanceEvidence", () => {
         },
         {
           area: "application_preparation",
+          agentTiming: {
+            totalMs: 4200,
+            modelMs: 3000,
+            modelTurns: 3,
+            auxiliaryModelMs: 400,
+            auxiliaryModelCalls: 2,
+            toolMs: 1000,
+            pageReadMs: 300,
+            pageReads: 12,
+            writeMs: 100,
+            uploadMs: 50,
+            longestSteps: [{ toolName: "fill_fields", durationMs: 600 }],
+            requests: [
+              { turn: 1, historyChars: 15000, observationChars: 2000 },
+            ],
+          },
           measurementStatus: "partial",
           durationMs: null,
           recordedAt: generatedAt,
@@ -75,6 +91,14 @@ describe("SettingsPerformanceEvidence", () => {
     expect(getByText("Resume import")).toBeTruthy();
     expect(getAllByText("0 ms").length).toBeGreaterThanOrEqual(1);
     expect(getByText("Application preparation")).toBeTruthy();
+    expect(getByText("Form preparation details")).toBeTruthy();
+    expect(getByText("Slowest steps")).toBeTruthy();
+    expect(getByText("3 turns · 3.0 s")).toBeTruthy();
+    expect(getByText("12 reads · 300 ms")).toBeTruthy();
+    expect(
+      getByText("Entering answers and checking facts: 600 ms"),
+    ).toBeTruthy();
+    expect(getByText(/15000 \(page update 2000\)/u)).toBeTruthy();
     expect(getByText("Total not recorded")).toBeTruthy();
     expect(getByText("Renderer commit")).toBeTruthy();
     expect(getByText("Not recorded")).toBeTruthy();

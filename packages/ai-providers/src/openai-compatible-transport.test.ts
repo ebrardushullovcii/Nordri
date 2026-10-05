@@ -225,3 +225,33 @@ describe("Responses API transport", () => {
     ]);
   });
 });
+
+test.each(["chat_completions", "responses"] as const)(
+  "%s explicitly allows multiple ordered tool proposals",
+  (apiMode) => {
+    const body = buildModelRequestBody({
+      apiMode,
+      model: "synthetic-model",
+      messages: [],
+      parallelToolCalls: true,
+      tools: [
+        {
+          type: "function",
+          function: {
+            name: "fill_fields",
+            parameters: { type: "object", properties: {} },
+          },
+        },
+      ],
+    });
+    expect(body.parallel_tool_calls).toBe(true);
+    expect(
+      buildModelRequestBody({
+        apiMode,
+        model: "synthetic-model",
+        messages: [],
+        parallelToolCalls: true,
+      }).parallel_tool_calls,
+    ).toBeUndefined();
+  },
+);

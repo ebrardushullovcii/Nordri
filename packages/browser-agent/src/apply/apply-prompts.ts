@@ -59,7 +59,7 @@ export function createApplySystemPrompt(config: ApplyAgentConfig): string {
     "- A question the facts plainly answer is yours to answer, in the form's own terms: years of experience from the dated roles, highest education from the education section, a language the profile lists, a yes or no their work eligibility settles. A question the facts do not answer is left empty; when you finish, Job Finder hands it to the person with the form. Never guess.",
     "- Resolve the hiring country before answering authorization or sponsorship. Worldwide or remote alone is not a country. Read the person’s permit restrictions against this job. A permit may limit hours, study status, dates or employer; it does not prove permission outside those limits. A missing country in a list is not a No. When the hiring country or permit conditions are unclear, leave both eligibility answers blank and ask for a job-specific country or permit decision. Authorization and sponsorship facts for one hiring country must not be used as facts for another.",
     "- Respect saved goals, hours, location and availability in written answers. If this job conflicts, ask how the person wants to handle that conflict; do not silently change their intent or promise incompatible availability.",
-    "- Fill a page in one step: fill_fields takes every field you can answer at once (text, dropdowns, radio choices), then shows you the form. Use set_checkbox for checkboxes and upload for files.",
+    "- Fill every answerable field on the visible step in ONE response. Prefer one fill_fields call for text, dropdowns and radio choices so their fact checks run together; include set_checkbox and upload calls for the remaining boxes and files in that same response, in the order they should run. Calls execute in order, never concurrently. The run gives you one fresh page observation after the batch; do not request observe between writes. A refusal, a question left for the person, navigation, or a changed step stops the remaining calls: use the fresh page to decide again and carry on with the other fields. Never include navigation, Next, submit_application or finish after writes in the same response; decide those from the fresh page.",
     "- Use the person's saved expected salary for expected or desired compensation: split the amount, currency and annual/hourly period into the form's fields. Expected pay is not evidence of current pay or pay history; never put it in those fields. Use recorded employers, titles and employment dates from the selected resume and profile, retaining month precision. Ask only when a needed fact is missing or ambiguous.",
     "- Before handing back questions, collect all visible unresolved required fields and choice groups on this step, including skills groups marked required in their legend. Fill all known facts first; ask all remaining questions together. Re-read after a step changes: drop fields no longer on this step, and never ask about optional removed history rows. If answering one field reveals a new question, include it after observing the page; do not claim a future hidden question is already known.",
     "- When the form has rows for work history or education, enter each of the person's roles and schools from their facts, adding rows with the form's own button as needed; an attached resume does not fill those rows.",
@@ -109,7 +109,7 @@ export function createApplyUserPrompt(config: ApplyAgentConfig): string {
       : null,
     "",
     "Start by inspecting the form. Work through the fields that still need an answer, move between steps when the form has several, and finish when there is nothing left to fill in.",
-    "Each turn costs time: fill every field you can already answer in one fill_fields call, and look at the page again only after the batch. A field that already shows the right value is done; do not type it again.",
+    "Each turn costs time: return all answerable fields, declaration boxes and known file uploads on this step in one response. Prefer fill_fields for answers and include set_checkbox and upload beside it. The run reads the page for you after that batch. A field that already shows the right value is done; do not type it again.",
   ]
     .filter((line): line is string => line !== null)
     .join("\n");
@@ -274,4 +274,88 @@ export function buildStallWarning(input: {
   ]
     .filter((line): line is string => line !== null)
     .join("\n");
+}
+
+/** Exact equality only: no interpretation or selection of what a field means. */
+export function describeObservationUpdate(
+  observation: ApplyFormObservation,
+  previous: ApplyFormObservation | null,
+): string {
+  if (
+    !previous ||
+    observation.url !== previous.url ||
+    JSON.stringify(observation.step) !== JSON.stringify(previous.step)
+  ) {
+    return describeObservation(observation);
+  }
+  const previousControls = new Map(
+    previous.controls
+      .filter((control) => control.visible)
+      .map((control) => [control.ref, describeControl(control)]),
+  );
+  const controls = observation.controls.filter((control) => control.visible);
+  const changed = controls.filter(
+    (control) => previousControls.get(control.ref) !== describeControl(control),
+  );
+  const refs = new Set(controls.map((control) => control.ref));
+  const removed = [...previousControls.keys()].filter((ref) => !refs.has(ref));
+  const fields = `Fields:\n${controls.map(describeControl).join("\n")}`;
+  const nonFieldSections = (page: ApplyFormObservation) =>
+    describeObservation(page)
+      .split("\n\n")
+      .filter(
+        (section) =>
+          !section.startsWith("Fields:\n") &&
+          section !== "There are no fields on this page.",
+      );
+  const previousSections = nonFieldSections(previous);
+  const currentSections = nonFieldSections(observation);
+  const sections = currentSections.filter(
+    (section) => section !== fields && !previousSections.includes(section),
+  );
+  const header = (section: string) => section.split("\n")[0] ?? section;
+  const currentHeaders = new Set(currentSections.map(header));
+  const cleared = previousSections
+    .filter((section) => !currentHeaders.has(header(section)))
+    .map((section) => `${header(section)} (no longer shown).`);
+  return [
+    `Page update: ${observation.url ?? "open page"}. ${controls.length} visible fields; ${controls.filter((control) => !control.answered && !control.disabled).length} still empty. Unchanged fields and page text remain as last shown; use their earlier handles.`,
+    "Each new or changed entry replaces its previous description in full.",
+    changed.length
+      ? `New or changed fields:\n${changed.map(describeControl).join("\n")}`
+      : "No field changes.",
+    removed.length
+      ? `Removed fields (do not use these handles): ${removed.join(", ")}.`
+      : null,
+    ...sections,
+    ...cleared,
+  ]
+    .filter((section): section is string => section !== null)
+    .join("\n\n");
+}
+
+/** Only structural changes stop a batch; an ordinary entered value does not. */
+export function applyStepShape(
+  observation: ApplyFormObservation | null,
+): string {
+  if (!observation) return "";
+  return JSON.stringify({
+    url: observation.url,
+    step: observation.step,
+    blocker: observation.blocker,
+    loading: observation.loading,
+    tabs: observation.openedTabs,
+    controls: observation.controls.map((control) => ({
+      ...control,
+      value: "",
+      checked: false,
+      answered: false,
+      selectedOptionLabel: "",
+      invalid: false,
+      validationMessage: "",
+    })),
+    actions: observation.actions,
+    links: observation.links,
+    clickables: observation.clickables,
+  });
 }
