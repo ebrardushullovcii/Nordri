@@ -463,35 +463,52 @@ export function parseApplyProposal(
   }
 }
 
-/**
- * Fills many fields in one step. Each entry goes in exactly as a single
- * type, select or radio choice would, through the same checks; answers about
- * the person are fact-checked together in one pass.
- */
+/** A batch carries the same proposals as the single-field tools. */
 export const FILL_FIELDS_TOOL_DEFINITION: ApplyToolDefinition = {
   type: "function",
   function: {
     name: "fill_fields",
     description:
-      "Fill several fields in one step: text fields, dropdowns and radio choices. For a dropdown or radio question give the option's label as the value. Every answer about the person must come from their facts; Job Finder checks the answers before entering them and tells you which went in. Use set_checkbox for checkboxes and upload for files.",
+      "Fill every answerable field on the visible step in one call. Each entry uses the same arguments as type, select or set_checkbox; choose a radio option with set_checkbox on that option's ref. Entries run in order through the same answer, permission and send checks as single calls. A refusal, pause, navigation or changed step stops the rest. The result names every field, including those not attempted, followed by one fresh page observation. When every required field is answered, set thenContinue to the visible Continue or Next ref to fill and advance in one call. Otherwise omit it. Continue uses the normal click executor and send checks; a final submit is never pressed here. Validation errors or an unchanged step are reported with the fresh page.",
     parameters: {
       type: "object",
       properties: {
+        thenContinue: {
+          type: "string",
+          description:
+            "Optional ref of this step’s Continue or Next control. Use only when every required field is answered.",
+        },
         fields: {
           type: "array",
+          minItems: 1,
           items: {
             type: "object",
             properties: {
+              tool: {
+                type: "string",
+                enum: ["type", "select", "set_checkbox"],
+              },
               ref: { type: "string" },
-              value: { type: "string" },
+              text: {
+                type: "string",
+                description: "For type: the text to enter.",
+              },
+              option: {
+                type: "string",
+                description: "For select: the option's label.",
+              },
+              checked: {
+                type: "boolean",
+                description: "For set_checkbox: true or false.",
+              },
               groundedIn: {
                 type: "array",
                 items: { type: "string" },
                 description:
-                  "For text you wrote yourself: what you based it on, in plain words.",
+                  "For text you wrote: what you based it on, in plain words.",
               },
             },
-            required: ["ref", "value"],
+            required: ["tool", "ref"],
           },
         },
       },
@@ -500,15 +517,16 @@ export const FILL_FIELDS_TOOL_DEFINITION: ApplyToolDefinition = {
   },
 };
 
-export interface FillFieldsEntry {
-  ref: string;
-  value: string;
-  groundedIn?: string[];
-}
+export type FillFieldsEntry = Extract<
+  ApplyProposal,
+  { tool: "type" | "select" | "set_checkbox" }
+>;
 
 export function parseFillFields(
   rawArguments: string,
-): { ok: true; fields: FillFieldsEntry[] } | { ok: false; error: string } {
+):
+  | { ok: true; fields: FillFieldsEntry[]; thenContinue?: string }
+  | { ok: false; error: string } {
   let parsed: unknown;
   try {
     parsed = rawArguments.trim() ? JSON.parse(rawArguments) : {};
@@ -518,31 +536,60 @@ export function parseFillFields(
       error: "The arguments for fill_fields were not valid JSON.",
     };
   }
-  const entries = asRecord(parsed).fields;
+  const record = asRecord(parsed);
+  const thenContinue = record.thenContinue;
+  if (
+    thenContinue !== undefined &&
+    (typeof thenContinue !== "string" || !thenContinue.trim())
+  ) {
+    return {
+      ok: false,
+      error: "thenContinue needs the ref of Continue or Next.",
+    };
+  }
+  const entries = record.fields;
   if (!Array.isArray(entries) || entries.length === 0) {
     return {
       ok: false,
-      error: "fill_fields needs a list of fields, each with ref and value.",
+      error: "fill_fields needs a non-empty list of field actions.",
     };
   }
   const fields: FillFieldsEntry[] = [];
   for (const entry of entries) {
     const record = asRecord(entry);
-    const ref = asString(record.ref);
-    const value =
-      typeof record.value === "string"
-        ? record.value.trim()
-        : typeof record.value === "number" || typeof record.value === "boolean"
-          ? String(record.value)
-          : null;
-    if (!ref || !value) {
+    if (
+      record.tool !== "type" &&
+      record.tool !== "select" &&
+      record.tool !== "set_checkbox"
+    ) {
       return {
         ok: false,
-        error: "Every fill_fields entry needs a ref and a value.",
+        error:
+          "fill_fields accepts only type, select and set_checkbox actions. Use separate tools for files, navigation and sending.",
       };
     }
-    const groundedIn = asStringArray(record.groundedIn);
-    fields.push({ ref, value, ...(groundedIn ? { groundedIn } : {}) });
+    if (record.tool === "set_checkbox" && typeof record.checked !== "boolean") {
+      return {
+        ok: false,
+        error: "A set_checkbox field action needs checked: true or false.",
+      };
+    }
+    const result = parseApplyProposal(record.tool, JSON.stringify(record));
+    if (!result.ok) return result;
+    const proposal = result.proposal;
+    if (
+      proposal.tool === "type" ||
+      proposal.tool === "select" ||
+      proposal.tool === "set_checkbox"
+    ) {
+      fields.push(proposal);
+    }
   }
-  return { ok: true, fields };
+  return {
+    ok: true,
+    fields,
+    ...(typeof thenContinue === "string"
+      ? { thenContinue: thenContinue.trim() }
+      : {}),
+  };
 }

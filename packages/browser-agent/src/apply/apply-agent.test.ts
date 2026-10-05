@@ -3,6 +3,8 @@ import { describe, expect, test, vi } from "vitest";
 
 import type { LLMClient } from "../agent/contracts";
 import { runApplyAgent } from "./apply-agent";
+import { createApplyGuardState, executeApplyProposal } from "./policy-executor";
+import type { FillFieldsEntry } from "./apply-tools";
 import {
   createApplySystemPrompt,
   createApplyUserPrompt,
@@ -254,6 +256,14 @@ test("prose instructions separate candidate evidence from job requirements", () 
     "never turn a job requirement into a claim that the person has done it",
   );
   expect(prompt).toContain("Leave unsupported candidate claims out");
+  expect(prompt).toContain(
+    "EVERY field you can answer into ONE fill_fields call",
+  );
+  expect(prompt).toContain("read it before handling uploads");
+  expect(prompt).toContain("include thenContinue");
+  expect(prompt).toContain("Otherwise fill without continuing");
+  expect(prompt).toContain("Never use thenContinue for final submit");
+  expect(prompt).toContain("Single-field tools remain available");
 });
 
 test("a retained form receives current exact answers and only named corrections replace entered values", () => {
@@ -2261,12 +2271,13 @@ test("fill_fields fills a page in one step with one fact check for the answers t
               name: "fill_fields",
               args: {
                 fields: [
-                  { ref: "c0", value: "Robin Ashford" },
+                  { tool: "type", ref: "c0", text: "Robin Ashford" },
                   {
+                    tool: "type",
                     ref: "c1",
-                    value: "I want to keep building dependable internal tools.",
+                    text: "I want to keep building dependable internal tools.",
                   },
-                  { ref: "c2", value: "united kingdom" },
+                  { tool: "select", ref: "c2", option: "united kingdom" },
                 ],
               },
             }
@@ -2794,8 +2805,8 @@ describe("response batches", () => {
               ? [
                   call("fields", "fill_fields", {
                     fields: [
-                      { ref: "missing", value: "Robin Ashford" },
-                      { ref: "c0", value: "Robin Ashford" },
+                      { tool: "type", ref: "missing", text: "Robin Ashford" },
+                      { tool: "type", ref: "c0", text: "Robin Ashford" },
                     ],
                   }),
                 ]
@@ -2948,3 +2959,738 @@ test("one response can enter contact facts, tick an approved declaration and att
   expect(turns).toBe(2);
   expect(updates).toBe(1);
 });
+
+describe("fill_fields visible steps", () => {
+  const field = (index: number, label: string): RawApplyControl => ({
+    ...nameControl(),
+    index,
+    id: `f${index}`,
+    name: `f${index}`,
+    label,
+    value: "",
+    required: false,
+  });
+  const call = (name: string, args: Record<string, unknown>, id = name) => ({
+    id,
+    type: "function" as const,
+    function: { name, arguments: JSON.stringify(args) },
+  });
+  function writable(source: RawApplyPage) {
+    const input = config(source);
+    const writes: string[] = [];
+    const write = (ref: string, value: string) => {
+      writes.push(ref);
+      const target = source.controls[Number(ref.slice(1))];
+      target.value = value;
+      if (target.options.length) target.selectedOptionLabel = value;
+      return Promise.resolve({ ok: true as const, observedValue: value });
+    };
+    input.hands.fillText = write;
+    input.hands.chooseOption = write;
+    input.hands.setToggle = (ref, checked) => {
+      writes.push(ref);
+      source.controls[Number(ref.slice(1))].checked = checked;
+      return Promise.resolve({
+        ok: true,
+        observedValue: checked ? "checked" : "unchecked",
+      });
+    };
+    return { input, writes };
+  }
+  function modelFor(
+    fields: FillFieldsEntry[],
+    onNext: (
+      messages: Parameters<LLMClient["chatWithTools"]>[0],
+    ) => void = () => {},
+    thenContinue?: string,
+  ) {
+    let turn = 0;
+    return {
+      chatWithTools: (messages, definitions) => {
+        const check = supportedChecks(messages, definitions);
+        if (check) return check;
+        turn += 1;
+        if (turn > 1) onNext(messages);
+        return Promise.resolve({
+          toolCalls: [
+            turn === 1
+              ? call("fill_fields", {
+                  fields,
+                  ...(thenContinue ? { thenContinue } : {}),
+                })
+              : call(
+                  "finish",
+                  { reason: "Finished the fields I could answer." },
+                  `done_${turn}`,
+                ),
+          ],
+        });
+      },
+    } satisfies LLMClient;
+  }
+
+  test("six answerable steps take six fill decisions and a finish, with five steps advanced", async () => {
+    const source = page();
+    let step = 1;
+    const showStep = () => {
+      source.stepLabel = `Step ${step} of 6`;
+      source.controls = [
+        field(0, "Full name"),
+        field(1, "Email"),
+        field(2, "City"),
+      ];
+      source.actions = [
+        {
+          index: 0,
+          label: step < 6 ? "Continue" : "Submit application",
+          visible: true,
+          disabled: false,
+        },
+      ];
+    };
+    showStep();
+    const { input, writes } = writable(source);
+    input.sources.profile.email = "robin@example.test";
+    const click = vi.fn(() => {
+      step += 1;
+      showStep();
+      return Promise.resolve({ ok: true as const, observedValue: "clicked" });
+    });
+    input.hands.clickElement = click;
+    let turns = 0;
+    const result = await runApplyAgent(input, {
+      chatWithTools: (messages, definitions) => {
+        const check = supportedChecks(messages, definitions);
+        if (check) return check;
+        turns += 1;
+        if (turns > 1 && turns <= 6) {
+          const report = messages
+            .filter((message) => message.role === "tool")
+            .at(-1)?.content;
+          expect(report).toContain("Continue advanced to the next step.");
+          expect(report).toContain(`Step ${step} of 6`);
+          expect(report).toContain("The page after Continue:");
+        }
+        return Promise.resolve({
+          toolCalls: [
+            turns <= 6
+              ? call(
+                  "fill_fields",
+                  {
+                    fields: [
+                      { tool: "type", ref: "c0", text: "Robin Ashford" },
+                      { tool: "type", ref: "c1", text: "robin@example.test" },
+                      { tool: "type", ref: "c2", text: "Manchester" },
+                    ],
+                    ...(step < 6 ? { thenContinue: "a0" } : {}),
+                  },
+                  `step_${turns}`,
+                )
+              : call("finish", { reason: "All six steps are filled." }),
+          ],
+        });
+      },
+    });
+    expect(result.outcome).toBe("prepared");
+    expect(writes).toHaveLength(18);
+    expect(click).toHaveBeenCalledTimes(5);
+    expect(result.timing?.modelTurns).toBe(7);
+    expect(
+      result.timing?.requests.map((request) => request.stepsAdvanced),
+    ).toEqual([1, 1, 1, 1, 1, 0, 0]);
+    expect(result.notes.at(-1)).toContain(
+      "steps_advanced_per_turn=[1,1,1,1,1,0,0]",
+    );
+  });
+
+  test.each([
+    "refused",
+    "person",
+    "omitted required",
+    "step changed",
+    "navigation",
+    "new field",
+  ])("%s field prevents thenContinue", async (barrier) => {
+    const source = page({
+      controls: [field(0, "Full name")],
+      actions: [
+        { index: 0, label: "Continue", visible: true, disabled: false },
+      ],
+    });
+    const { input } = writable(source);
+    const click = vi.fn(input.hands.clickElement);
+    input.hands.clickElement = click;
+    let fields: FillFieldsEntry[] = [
+      { tool: "type", ref: "c0", text: "Robin Ashford" },
+    ];
+    if (barrier === "refused")
+      fields = [{ tool: "type", ref: "missing", text: "Robin Ashford" }];
+    if (barrier === "person") {
+      source.controls[0] = {
+        ...field(0, "I certify that the information is true"),
+        inputType: "checkbox",
+        value: "on",
+      };
+      fields = [{ tool: "set_checkbox", ref: "c0", checked: true }];
+    }
+    if (barrier === "omitted required")
+      source.controls.push({ ...field(1, "Email"), required: true });
+    if (["step changed", "navigation", "new field"].includes(barrier)) {
+      const fill = input.hands.fillText;
+      input.hands.fillText = async (ref, value) => {
+        const result = await fill(ref, value);
+        if (barrier === "step changed") source.stepLabel = "Step 2 of 6";
+        if (barrier === "navigation")
+          source.url = "https://apply.example.test/other";
+        if (barrier === "new field") source.controls.push(field(1, "Email"));
+        return result;
+      };
+    }
+    let report = "";
+    await runApplyAgent(
+      input,
+      modelFor(
+        fields,
+        (messages) => {
+          report =
+            messages.find((message) => message.role === "tool")?.content ?? "";
+        },
+        "a0",
+      ),
+    );
+    expect(click).not.toHaveBeenCalled();
+    expect(report).toContain("Continue was not pressed");
+  });
+
+  test.each([true, false])(
+    "Continue reports unchanged step and validation errors (%s) to the next decision",
+    async (invalid) => {
+      const source = page({
+        controls: [field(0, "Full name")],
+        stepLabel: "Step 1 of 6",
+        actions: [
+          { index: 0, label: "Continue", visible: true, disabled: false },
+        ],
+      });
+      const { input, writes } = writable(source);
+      const fill = input.hands.fillText;
+      input.hands.fillText = async (ref, value) => {
+        const result = await fill(ref, value);
+        source.controls[0].invalid = false;
+        source.controls[0].validationMessage = "";
+        source.validationErrors = [];
+        return result;
+      };
+      let clicks = 0;
+      input.hands.clickElement = vi.fn(() => {
+        if (++clicks === 1) {
+          if (invalid) {
+            source.validationErrors = ["Use your full legal name."];
+            source.controls[0].invalid = true;
+            source.controls[0].validationMessage = "Enter both names.";
+            source.controls.push(field(1, "Optional additional name"));
+          }
+        } else {
+          source.stepLabel = "Step 2 of 2";
+          source.actions[0].label = "Submit application";
+        }
+        return Promise.resolve({ ok: true as const, observedValue: "clicked" });
+      });
+      let turn = 0;
+      const result = await runApplyAgent(input, {
+        chatWithTools: (messages, definitions) => {
+          const check = supportedChecks(messages, definitions);
+          if (check) return check;
+          turn += 1;
+          if (turn === 2) {
+            const report = messages
+              .filter((message) => message.role === "tool")
+              .at(-1)?.content;
+            expect(report).toContain("Continue did not advance the step");
+            expect(report).toContain("The page after Continue:");
+            if (invalid) {
+              expect(report).toContain("Continue returned validation errors");
+              expect(report).toContain("Use your full legal name.");
+              expect(report).toContain("Full name: Enter both names.");
+            }
+          }
+          return Promise.resolve({
+            toolCalls: [
+              turn === 1
+                ? call("fill_fields", {
+                    fields: [{ tool: "type", ref: "c0", text: "Robin" }],
+                    thenContinue: "a0",
+                  })
+                : turn === 2
+                  ? invalid
+                    ? call(
+                        "fill_fields",
+                        {
+                          fields: [
+                            { tool: "type", ref: "c0", text: "Robin Ashford" },
+                          ],
+                          thenContinue: "a0",
+                        },
+                        "correction",
+                      )
+                    : call("click", { ref: "a0" })
+                  : call("finish", { reason: "The corrected form is ready." }),
+            ],
+          });
+        },
+      });
+      expect(input.hands.clickElement).toHaveBeenCalledTimes(2);
+      expect(writes).toHaveLength(invalid ? 2 : 1);
+      expect(source.controls[0].value).toBe(
+        invalid ? "Robin Ashford" : "Robin",
+      );
+      expect(result.outcome).toBe("prepared");
+      expect(
+        result.timing?.requests.map((request) => request.stepsAdvanced),
+      ).toEqual([0, 1, 0]);
+    },
+  );
+
+  test.each([
+    "prepare_only",
+    "confirm_before_submit",
+    "autonomous_submit",
+  ] as const)(
+    "thenContinue final submit matches a separate click in %s",
+    async (mode) => {
+      const source = page({ controls: [field(0, "Full name")] });
+      const { input } = writable(source);
+      input.authority.mode = mode;
+      input.authority.allowedOrigins = ["https://apply.example.test"];
+      input.authority.submitAuthorized = mode === "autonomous_submit";
+      input.hands.clickElement = vi.fn(input.hands.clickElement);
+      let report = "";
+      const result = await runApplyAgent(
+        input,
+        modelFor(
+          [{ tool: "type", ref: "c0", text: "Robin Ashford" }],
+          (messages) => {
+            report =
+              messages.find((message) => message.role === "tool")?.content ??
+              "";
+          },
+          "a0",
+        ),
+      );
+      const observation = await input.hands.observe();
+      const separate = await executeApplyProposal(
+        { tool: "click", ref: "a0" },
+        observation.signature,
+        { config: input, now: input.now!, guardState: createApplyGuardState() },
+      );
+      expect(input.hands.clickElement).not.toHaveBeenCalled();
+      if (separate.kind === "refused") {
+        expect(mode).toBe("prepare_only");
+        expect(report).toContain(separate.reason);
+      } else {
+        expect(separate.kind).toBe("ready_to_send");
+        expect(report).toContain("Nothing has been sent: call finish now.");
+      }
+      expect(result.timing?.requests[0]?.stepsAdvanced).toBe(0);
+    },
+  );
+
+  test("five mixed fields fill in one decision turn with one fresh observation", async () => {
+    const source = page({
+      controls: [
+        field(0, "Full name"),
+        field(1, "Email"),
+        {
+          ...field(2, "City"),
+          tagName: "select",
+          inputType: "select-one",
+          options: ["Manchester", "London"],
+        },
+        {
+          ...field(3, "I certify that the information is true"),
+          inputType: "checkbox",
+          value: "on",
+        },
+        {
+          ...field(4, "Yes"),
+          inputType: "radio",
+          groupLabel: "Open to remote work?",
+          value: "Yes",
+        },
+      ],
+    });
+    const { input, writes } = writable(source);
+    input.sources.profile.email = "robin@example.test";
+    input.authority.preApprovedAttestationKinds = [
+      "truthfulness_certification",
+    ];
+    input.sources.reusableAnswers = [
+      {
+        id: "remote",
+        kind: "other",
+        label: "Remote",
+        question: "Open to remote work? — Yes",
+        answer: "Yes",
+        roleFamilies: [],
+        proofEntryIds: [],
+      },
+    ];
+    let nextMessages: Parameters<LLMClient["chatWithTools"]>[0] = [];
+    const result = await runApplyAgent(
+      input,
+      modelFor(
+        [
+          { tool: "type", ref: "c0", text: "Robin Ashford" },
+          { tool: "type", ref: "c1", text: "robin@example.test" },
+          { tool: "select", ref: "c2", option: "Manchester" },
+          { tool: "set_checkbox", ref: "c3", checked: true },
+          { tool: "set_checkbox", ref: "c4", checked: true },
+        ],
+        (messages) => {
+          nextMessages = structuredClone(messages);
+        },
+      ),
+    );
+    expect(writes).toEqual(["c0", "c1", "c2", "c3", "c4"]);
+    expect(result.filled).toHaveLength(5);
+    expect(result.timing?.requests).toMatchObject([
+      { turn: 1, fieldsAttempted: 5, fieldsFilled: 5 },
+      { turn: 2, fieldsAttempted: 0, fieldsFilled: 0 },
+    ]);
+    expect(result.timing?.modelTurns).toBe(2); // one fill decision, then finish
+    const toolResults = nextMessages.filter(
+      (message) => message.role === "tool",
+    );
+    expect(toolResults).toHaveLength(1);
+    for (let i = 0; i < 5; i++)
+      expect(toolResults[0].content).toContain(`c${i}: Filled in`);
+    expect(toolResults[0].content).not.toContain("Fields:");
+    expect(
+      nextMessages.filter((message) =>
+        message.content?.startsWith("The page after your batch:"),
+      ),
+    ).toHaveLength(1);
+    expect(result.notes.at(-1)).toContain(
+      "fields_per_turn(filled/attempted)=[5/5,0/0]",
+    );
+    expect(result.timing?.pageReads).toBe(13); // safety reads retained per field
+  });
+
+  test("a refusal in the middle names both attempted and unattempted fields", async () => {
+    const source = page({
+      controls: [field(0, "Full name"), field(1, "Email"), field(2, "City")],
+    });
+    const { input, writes } = writable(source);
+    input.sources.profile.email = "robin@example.test";
+    const fill = input.hands.fillText;
+    input.hands.fillText = (ref, value) =>
+      ref === "c1"
+        ? Promise.resolve({ ok: false, error: "The field refused the write." })
+        : fill(ref, value);
+    let report = "";
+    const result = await runApplyAgent(
+      input,
+      modelFor(
+        [
+          { tool: "type", ref: "c0", text: "Robin Ashford" },
+          { tool: "type", ref: "c1", text: "robin@example.test" },
+          { tool: "type", ref: "c2", text: "Manchester" },
+        ],
+        (messages) => {
+          report =
+            messages.find((message) => message.role === "tool")?.content ?? "";
+        },
+      ),
+    );
+    expect(writes).toEqual(["c0"]);
+    expect(report).toContain('c0: Filled in "Full name".');
+    expect(report).toContain("c1: The field refused the write.");
+    expect(report).toContain("c2: not attempted (batch stopped).");
+    expect(result.timing?.requests[0]).toMatchObject({
+      fieldsAttempted: 2,
+      fieldsFilled: 1,
+    });
+  });
+
+  test.each(["navigation", "new field", "step"])(
+    "%s stops the remaining fields",
+    async (change) => {
+      const source = page({
+        controls: [field(0, "Full name"), field(1, "Email")],
+      });
+      const { input, writes } = writable(source);
+      input.sources.profile.email = "robin@example.test";
+      const fill = input.hands.fillText;
+      input.hands.fillText = async (ref, value) => {
+        const result = await fill(ref, value);
+        if (change === "navigation")
+          source.url = "https://apply.example.test/next";
+        if (change === "new field")
+          source.controls.push(field(2, "Another question"));
+        if (change === "step") source.stepLabel = "Step 2 of 6";
+        return result;
+      };
+      let report = "";
+      const result = await runApplyAgent(
+        input,
+        modelFor(
+          [
+            { tool: "type", ref: "c0", text: "Robin Ashford" },
+            { tool: "type", ref: "c1", text: "robin@example.test" },
+          ],
+          (messages) => {
+            report =
+              messages.find((message) => message.role === "tool")?.content ??
+              "";
+          },
+        ),
+      );
+      expect(writes).toEqual(["c0"]);
+      expect(report).toContain("c1: not attempted (batch stopped).");
+      expect(result.timing?.requests[0]).toMatchObject({
+        fieldsAttempted: 1,
+        fieldsFilled: 1,
+      });
+    },
+  );
+
+  test.each([
+    {
+      label: "I certify that the information is true",
+      tool: "set_checkbox" as const,
+      value: "Yes",
+      allowed: true,
+    },
+    {
+      label: "I certify that the information is true",
+      tool: "set_checkbox" as const,
+      value: "Yes",
+      allowed: false,
+    },
+    {
+      label: "Current salary",
+      tool: "type" as const,
+      value: "60000",
+      allowed: false,
+    },
+    {
+      label: "Are you legally authorized to work in this country?",
+      tool: "select" as const,
+      value: "Yes",
+      allowed: true,
+    },
+    {
+      label: "What is your notice period?",
+      tool: "type" as const,
+      value: "Two weeks",
+      allowed: true,
+    },
+  ])(
+    "$label (allowed=$allowed) has the same result as a single call",
+    async ({ label, tool, value, allowed }) => {
+      const source = page({
+        controls: [
+          {
+            ...field(0, label),
+            ...(tool === "set_checkbox"
+              ? { inputType: "checkbox", value: "on" }
+              : {}),
+            ...(tool === "select"
+              ? {
+                  tagName: "select",
+                  inputType: "select-one",
+                  options: ["Yes", "No"],
+                }
+              : {}),
+          },
+        ],
+      });
+      const prepare = () => {
+        const state = writable(structuredClone(source));
+        if (allowed && tool === "set_checkbox")
+          state.input.authority.preApprovedAttestationKinds = [
+            "truthfulness_certification",
+          ];
+        if (tool !== "set_checkbox")
+          state.input.sources.reusableAnswers = [
+            {
+              id: "person_answer",
+              kind: "other",
+              label,
+              question: label,
+              answer: value,
+              roleFamilies: [],
+              proofEntryIds: [],
+            },
+          ];
+        return state;
+      };
+      const proposal: FillFieldsEntry =
+        tool === "type"
+          ? { tool, ref: "c0", text: value }
+          : tool === "select"
+            ? { tool, ref: "c0", option: value }
+            : { tool, ref: "c0", checked: true };
+      const single = prepare();
+      const before = await single.input.hands.observe();
+      const outcome = await executeApplyProposal(proposal, before.signature, {
+        config: single.input,
+        now: single.input.now!,
+        guardState: createApplyGuardState(),
+        checkWrittenAnswer: () =>
+          Promise.resolve({
+            supported: true,
+            reason: "Synthetic supported answer.",
+          }),
+      });
+      const batch = prepare();
+      const result = await runApplyAgent(batch.input, modelFor([proposal]));
+      expect(batch.writes).toEqual(single.writes);
+      expect(batch.writes).toHaveLength(allowed ? 1 : 0);
+      if (outcome.kind === "filled")
+        expect(result.filled[0]).toEqual(outcome.filled);
+      else expect(result.filled).toHaveLength(0);
+    },
+  );
+});
+
+test.each([false, true])(
+  "a batch stops at the send guard even if its final read fails (%s)",
+  async (readFails) => {
+    const source = page({
+      controls: [
+        { ...nameControl(), value: "" },
+        {
+          ...nameControl(),
+          index: 1,
+          id: "email",
+          name: "email",
+          label: "Email",
+          value: "",
+        },
+      ],
+    });
+    const input = config(source);
+    input.sources.profile.email = "robin@example.test";
+    const writes: string[] = [];
+    input.hands.fillText = (ref, value) => {
+      writes.push(ref);
+      source.controls[Number(ref.slice(1))].value = value;
+      return Promise.resolve({ ok: true, observedValue: value });
+    };
+    input.hands.clickAction = vi.fn(input.hands.clickAction);
+    input.hands.clickElement = vi.fn(input.hands.clickElement);
+    const observe = input.hands.observe;
+    input.hands.observe = () =>
+      readFails && writes.length > 0
+        ? Promise.reject(new Error("Synthetic read failure"))
+        : observe();
+    input.safety = {
+      readBlockedAttempt: () =>
+        Promise.resolve(
+          writes.length > 0
+            ? {
+                kind: "form_submit",
+                method: "POST",
+                url: "https://apply.example.test/send",
+                at: "2026-09-14T10:00:01.000Z",
+              }
+            : null,
+        ),
+      registerPreparedValue: () => Promise.resolve(),
+      openIntermediateWriteWindow: () => Promise.resolve(),
+      closeIntermediateWriteWindow: () => Promise.resolve(),
+      checkServiceWorker: () => Promise.resolve(null),
+    };
+    let turns = 0;
+    const result = await runApplyAgent(input, {
+      chatWithTools: () => {
+        turns += 1;
+        return Promise.resolve({
+          toolCalls: [
+            {
+              id: "fields",
+              type: "function",
+              function: {
+                name: "fill_fields",
+                arguments: JSON.stringify({
+                  thenContinue: "a0",
+                  fields: [
+                    { tool: "type", ref: "c0", text: "Robin Ashford" },
+                    { tool: "type", ref: "c1", text: "robin@example.test" },
+                  ],
+                }),
+              },
+            },
+          ],
+        });
+      },
+    });
+    expect(turns).toBe(1);
+    expect(writes).toEqual(["c0"]);
+    expect(input.hands.clickAction).not.toHaveBeenCalled();
+    expect(input.hands.clickElement).not.toHaveBeenCalled();
+    expect(result.outcome).toBe("paused");
+    expect(result.pauses[0].code).toBe("site_tried_to_send");
+    expect(result.timing?.requests[0]).toMatchObject({
+      fieldsAttempted: 1,
+      fieldsFilled: 0,
+    });
+    expect(result.timing?.pageReads).toBe(3); // initial, executor pre-write, pause observation
+  },
+);
+
+test.each([1, 2])(
+  "Stop during a %s-field batch fences later fields and Continue",
+  async (count) => {
+    const source = page({
+      controls: [
+        { ...nameControl(), value: "" },
+        {
+          ...nameControl(),
+          index: 1,
+          id: "email",
+          name: "email",
+          label: "Email",
+          value: "",
+        },
+      ],
+    });
+    const controller = new AbortController();
+    const input = config(source, { signal: controller.signal });
+    input.sources.profile.email = "robin@example.test";
+    input.hands.clickElement = vi.fn(input.hands.clickElement);
+    const writes: string[] = [];
+    input.hands.fillText = (ref, value) => {
+      writes.push(ref);
+      source.controls[Number(ref.slice(1))].value = value;
+      controller.abort();
+      return Promise.resolve({ ok: true, observedValue: value });
+    };
+    await runApplyAgent(input, {
+      chatWithTools: () =>
+        Promise.resolve({
+          toolCalls: [
+            {
+              id: "fields",
+              type: "function",
+              function: {
+                name: "fill_fields",
+                arguments: JSON.stringify({
+                  thenContinue: "a0",
+                  fields: [
+                    { tool: "type", ref: "c0", text: "Robin Ashford" },
+                    { tool: "type", ref: "c1", text: "robin@example.test" },
+                  ].slice(0, count),
+                }),
+              },
+            },
+          ],
+        }),
+    });
+    // Let the already-started tool settle, so this catches late writes too.
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(writes).toEqual(["c0"]);
+    expect(input.hands.clickElement).not.toHaveBeenCalled();
+  },
+);

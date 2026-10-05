@@ -40,6 +40,9 @@ test("measures decisions, auxiliary checks, reads, writes, uploads and longest s
         { role: "user", content: "synthetic page" },
       ]).length,
       observationChars: 100,
+      fieldsAttempted: 0,
+      fieldsFilled: 0,
+      stepsAdvanced: 0,
     },
   ]);
   expect(snapshot.longestSteps[0]).toEqual({
@@ -159,4 +162,29 @@ test("counts every safety read and measures uploads, writes and failed reads", a
     uploadMs: 30,
     totalMs: 85,
   });
+});
+
+test("field counts belong to their decision turn and snapshots do not change later", async () => {
+  const timing = createApplyTiming(() => new Date(0));
+  const model = timing.model({ chatWithTools: () => Promise.resolve({}) });
+  await model.chatWithTools([], [], { parallelToolCalls: true });
+  timing.onFieldAttempt();
+  timing.onFieldFilled();
+  timing.onStepAdvanced();
+  const first = timing.snapshot();
+  timing.onFieldAttempt(); // refused field
+  await model.chatWithTools([], []); // auxiliary check is not a new turn
+  timing.onFieldAttempt();
+  timing.onFieldFilled();
+  await model.chatWithTools([], [], { parallelToolCalls: true });
+  const snapshot = ApplyAgentTimingSchema.parse(timing.snapshot());
+  expect(first.requests[0]).toMatchObject({
+    fieldsAttempted: 1,
+    fieldsFilled: 1,
+    stepsAdvanced: 1,
+  });
+  expect(snapshot.requests).toMatchObject([
+    { turn: 1, fieldsAttempted: 3, fieldsFilled: 2, stepsAdvanced: 1 },
+    { turn: 2, fieldsAttempted: 0, fieldsFilled: 0, stepsAdvanced: 0 },
+  ]);
 });

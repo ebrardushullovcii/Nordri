@@ -407,7 +407,7 @@ function createHarnessModel(
     );
     if (pending.length > 0) {
       const calls: ToolCall[] = [];
-      const fields: Array<{ ref: string; value: string }> = [];
+      const fields: Array<Record<string, unknown>> = [];
       for (const control of pending) {
         done.add(`${here}:${control.ref}`);
         if (control.kind === "file") {
@@ -415,7 +415,17 @@ function createHarnessModel(
             call("upload", { ref: control.ref, documentId: resumeDocumentId }),
           );
         } else {
-          fields.push({ ref: control.ref, value: answerFor(control) });
+          fields.push(
+            control.kind === "checkbox" || control.kind === "radio"
+              ? { tool: "set_checkbox", ref: control.ref, checked: true }
+              : control.kind === "select" || control.kind === "combobox"
+                ? {
+                    tool: "select",
+                    ref: control.ref,
+                    option: answerFor(control),
+                  }
+                : { tool: "type", ref: control.ref, text: answerFor(control) },
+          );
         }
       }
       if (fields.length > 0) calls.push(call("fill_fields", { fields }));

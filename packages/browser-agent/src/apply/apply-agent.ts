@@ -92,6 +92,26 @@ const PAGE_TOOL_NAMES = new Set([
   "go_back",
 ]);
 
+function formStepIdentity(observation: ApplyFormObservation): string {
+  return JSON.stringify({
+    url: observation.url,
+    step: observation.step,
+    // Prefer the site's step marker; errors can reveal extra fields on the same step.
+    controls:
+      observation.step.label !== null || observation.step.index !== null
+        ? undefined
+        : observation.controls.map(
+            ({ ref, kind, label, groupLabel, visible }) => ({
+              ref,
+              kind,
+              label,
+              groupLabel,
+              visible,
+            }),
+          ),
+  });
+}
+
 function originOf(url: string): string | null {
   try {
     return new URL(url).origin;
@@ -302,106 +322,63 @@ async function runMeasuredApplyAgent(
       answer,
       signal: config.signal,
     });
-  /**
-   * The single step a fill_fields entry stands for, and the answer the fact
-   * check will be asked about, worded exactly as that step asks it.
-   */
-  const fillFieldStep = (
-    entry: FillFieldsEntry,
+  // Precheck exactly the answer the executor will ask about. The executor
+  // still decides whether that answer and the person's permissions allow a write.
+  const fillFieldCheck = (
+    proposal: FillFieldsEntry,
     observation: ApplyFormObservation,
-  ):
-    | {
-        proposal: ApplyProposal;
-        check: { question: string; answer: string } | null;
-      }
-    | { error: string } => {
+  ): { question: string; answer: string } | null => {
     const control = observation.controls.find(
-      (candidate) => candidate.ref === entry.ref,
+      (candidate) => candidate.ref === proposal.ref,
     );
-    if (!control) return { error: `There is no ${entry.ref} on this page.` };
-    const needsCheck = (
-      target: ApplyFormObservation["controls"][number],
-      answer: string,
-    ) =>
-      target.attestationKind === null &&
-      !isCoverLetterControl(target) &&
+    if (!control) return null;
+    let answer: string | null;
+    switch (proposal.tool) {
+      case "type":
+        answer = proposal.text;
+        break;
+      case "select":
+        answer =
+          control.options.length > 0
+            ? matchOption(control.options, proposal.option)
+            : proposal.option;
+        break;
+      case "set_checkbox":
+        // Ordinary single boxes are settled by the executor's declaration
+        // checks, not by a written-answer check.
+        if (
+          control.kind === "checkbox" &&
+          control.answerControlType !== "multi_choice" &&
+          control.questionKind !== "work_authorization" &&
+          control.questionKind !== "visa_sponsorship"
+        )
+          return null;
+        answer =
+          control.kind === "checkbox" &&
+          control.answerControlType !== "multi_choice"
+            ? proposal.checked
+              ? "Yes"
+              : "No"
+            : proposal.checked
+              ? control.label || control.value
+              : null;
+        break;
+    }
+    return answer !== null &&
+      control.attestationKind === null &&
+      !isCoverLetterControl(control) &&
       normalizeSignal(
-        savedAnswerForQuestion(target, runConfig.sources.reusableAnswers)
+        savedAnswerForQuestion(control, runConfig.sources.reusableAnswers)
           ?.answer ?? "",
       ) !== normalizeSignal(answer) &&
       !storedFactFor({
         sources: runConfig.sources,
         payDisclosed,
-        control: target,
+        control,
         value: answer,
       })
-        ? { question: questionPrompt(target), answer }
-        : null;
-    switch (control.kind) {
-      case "file":
-        return {
-          error: `"${questionPrompt(control)}" takes a file: use upload.`,
-        };
-      case "checkbox":
-        return {
-          proposal: {
-            tool: "set_checkbox",
-            ref: control.ref,
-            checked: /^(?:yes|true|checked|on|1|tick|ticked|agree)$/iu.test(
-              entry.value,
-            ),
-          },
-          check: null,
-        };
-      case "radio": {
-        const group = observation.controls.filter(
-          (candidate) =>
-            candidate.kind === "radio" &&
-            (control.choiceGroupKey
-              ? candidate.choiceGroupKey === control.choiceGroupKey
-              : candidate.ref === control.ref),
-        );
-        const labels = group.map(
-          (candidate) => candidate.label || candidate.value,
-        );
-        const label = matchOption(labels, entry.value);
-        const chosen = label
-          ? group.find(
-              (candidate) => (candidate.label || candidate.value) === label,
-            )
-          : undefined;
-        if (!chosen) {
-          return {
-            error: `"${entry.value}" is not one of the choices for "${questionPrompt(control)}": ${labels.slice(0, 12).join(", ")}.`,
-          };
-        }
-        return {
-          proposal: { tool: "set_checkbox", ref: chosen.ref, checked: true },
-          check: needsCheck(chosen, chosen.label || chosen.value),
-        };
-      }
-      case "select":
-      case "combobox": {
-        const option =
-          control.options.length > 0
-            ? matchOption(control.options, entry.value)
-            : entry.value;
-        return {
-          proposal: { tool: "select", ref: control.ref, option: entry.value },
-          check: option ? needsCheck(control, option) : null,
-        };
-      }
-      default:
-        return {
-          proposal: {
-            tool: "type",
-            ref: control.ref,
-            text: entry.value,
-            ...(entry.groundedIn ? { groundedIn: entry.groundedIn } : {}),
-          },
-          check: needsCheck(control, entry.value),
-        };
-    }
+      ? { question: questionPrompt(control), answer }
+      : null;
   };
   let requiredEmptyNudged = false;
   let advanceFinishNudged = false;
@@ -1140,6 +1117,12 @@ async function runMeasuredApplyAgent(
   ): Promise<ApplyExecutionOutcome> => {
     const writeKey = controlWriteKey(proposal);
     if (proposal.tool !== "finish") observationNeeded = true;
+    const isField =
+      proposal.tool === "type" ||
+      proposal.tool === "select" ||
+      proposal.tool === "set_checkbox";
+    if (isField) timingRecord.onFieldAttempt();
+    const before = pageTools.state.observation;
     const outcome = await executeApplyProposal(
       proposal,
       pageTools.state.observation?.signature ?? "",
@@ -1151,6 +1134,18 @@ async function runMeasuredApplyAgent(
         checkWrittenAnswer,
       },
     );
+    if (isField && outcome.kind === "filled") timingRecord.onFieldFilled();
+    if (
+      proposal.tool === "click" &&
+      before &&
+      outcome.kind === "moved" &&
+      before.actions.some(
+        (action) => action.ref === proposal.ref && action.kind === "advance",
+      ) &&
+      formStepIdentity(before) !== formStepIdentity(outcome.observation)
+    ) {
+      timingRecord.onStepAdvanced();
+    }
     if (
       writeKey &&
       (outcome.kind === "filled" || outcome.kind === "attached")
@@ -1181,6 +1176,7 @@ async function runMeasuredApplyAgent(
         if (
           writeKey &&
           writeControl?.answered &&
+          !writeControl.invalid &&
           completedControlWrites.has(writeKey)
         ) {
           return {
@@ -1211,7 +1207,7 @@ async function runMeasuredApplyAgent(
       error instanceof WrittenAnswerCheckUnavailableError
         ? error.message
         : describeBrowserError(error, "The browser did not respond."),
-    execute: async (rawArguments) => {
+    execute: async (rawArguments, context) => {
       const parsed = parseFillFields(rawArguments);
       if (!parsed.ok)
         return { kind: "ok", status: "refused", content: parsed.error };
@@ -1219,15 +1215,15 @@ async function runMeasuredApplyAgent(
       if (!observation) {
         return { kind: "ok", content: "Look at the page first." };
       }
-      const steps = parsed.fields.map((entry) =>
-        fillFieldStep(entry, observation),
-      );
+      observationNeeded = true;
+      const steps = parsed.fields;
       // Answers about the person are checked together, in one call, before
       // any of them is entered. A value that is a stored fact word for word
       // needs no check; a declaration or a letter is settled elsewhere.
-      const toCheck = steps.flatMap((step) =>
-        "check" in step && step.check ? [step.check] : [],
-      );
+      const toCheck = steps.flatMap((step) => {
+        const check = fillFieldCheck(step, observation);
+        return check ? [check] : [];
+      });
       const prechecked = new Map<string, WrittenAnswerCheck>();
       const verdicts = await checkWrittenApplicationAnswers({
         client: llmClient,
@@ -1259,36 +1255,130 @@ async function runMeasuredApplyAgent(
       const lines: string[] = [];
       let wrote = false;
       let stopped = false;
+      let stopOutcome: AgentLoopToolOutcome | null = null;
       for (const step of steps) {
-        if ("error" in step) {
-          lines.push(step.error);
-          stopped = true;
-          break;
+        if (stopped) {
+          lines.push(`${step.ref}: not attempted (batch stopped).`);
+          continue;
         }
+        context.signal?.throwIfAborted();
         const before = applyStepShape(pageTools.state.observation);
-        const outcome = await runProposal(step.proposal, checkFromBatch);
-        if (outcome.kind === "paused") {
-          return outcomeToLoop(outcome);
-        }
-        if (outcome.kind === "filled" || outcome.kind === "attached") {
-          wrote = true;
-        }
+        const writeKey = controlWriteKey(step);
+        const currentControl = pageTools.state.observation?.controls.find(
+          (control) => control.ref === step.ref,
+        );
+        const outcome: ApplyExecutionOutcome =
+          writeKey &&
+          currentControl?.answered &&
+          !currentControl.invalid &&
+          completedControlWrites.has(writeKey)
+            ? {
+                kind: "refused",
+                reason:
+                  "That exact field was already completed on this page. Use the latest observation.",
+                observation: pageTools.state.observation!,
+              }
+            : await runProposal(step, checkFromBatch);
+        if (outcome.kind === "filled") wrote = true;
         const reported = await outcomeToLoop(outcome, { withPage: false });
-        if (reported.kind === "ok") lines.push(reported.content);
+        lines.push(
+          `${step.ref}: ${reported.kind === "ok" ? reported.content : reported.kind === "stop" ? reported.reason : "Stopped."}`,
+        );
+        if (reported.kind !== "ok") stopOutcome = reported;
         if (
+          outcome.kind !== "filled" ||
           reported.kind !== "ok" ||
           reported.stopBatch ||
+          reported.status === "refused" ||
+          reported.status === "failed" ||
           before !== applyStepShape(pageTools.state.observation)
-        ) {
+        )
           stopped = true;
-          break;
+      }
+      if (parsed.thenContinue) {
+        const current = pageTools.state.observation!;
+        const unresolved = unresolvedRequiredControls(current);
+        if (stopped || pendingQuestions.size > 0 || unresolved.length > 0) {
+          lines.push(
+            "Continue was not pressed: the batch stopped or fields still need an answer." +
+              (unresolved.length
+                ? ` Remaining fields: ${unresolved.map(questionPrompt).join(", ")}.`
+                : ""),
+          );
+          stopped = true;
+        } else {
+          context.signal?.throwIfAborted();
+          const before = formStepIdentity(current);
+          const outcome = await runProposal(
+            { tool: "click", ref: parsed.thenContinue },
+            checkOne,
+          );
+          const reported = await outcomeToLoop(outcome);
+          lines.push(
+            `Continue: ${reported.kind === "ok" ? reported.content : reported.kind === "stop" ? reported.reason : "Stopped."}`,
+          );
+          if (reported.kind !== "ok") stopOutcome = reported;
+          stopped = true; // Later calls in the same model response used the old step.
+          if (outcome.kind === "moved") {
+            const after = await pageTools.observe();
+            syncObservation(after);
+            observationNeeded = false;
+            const errors = [
+              ...new Set([
+                ...after.validationErrors,
+                ...after.controls
+                  .filter(
+                    (control) =>
+                      control.invalid && !control.disabled && control.visible,
+                  )
+                  .map(
+                    (control) =>
+                      `${questionPrompt(control)}: ${control.validationMessage || "This answer is invalid."}`,
+                  ),
+              ]),
+            ];
+            if (errors.length)
+              lines.push(
+                `Continue returned validation errors: ${errors.join("; ")}`,
+              );
+            if (before === formStepIdentity(after))
+              lines.push(
+                "Continue did not advance the step. Fix any errors or inspect the page before trying again.",
+              );
+            else lines.push("Continue advanced to the next step.");
+            lines.push(
+              `The page after Continue:\n\n${renderObservation(after)}`,
+            );
+          } else if (reported.kind === "ok") {
+            // Include the executor's fresh observation in this tool result too.
+            observationNeeded = false;
+            lines.push(
+              `The page after Continue:\n\n${renderObservation(pageTools.state.observation!)}`,
+            );
+          }
         }
+      }
+      if (stopOutcome?.kind === "stop") {
+        // The loop ends on a pause without calling afterToolBatch.
+        const observation = await pageTools
+          .observe()
+          .then((after) => {
+            syncObservation(after);
+            return renderObservation(after);
+          })
+          .catch(() => "The page could not be read after the batch stopped.");
+        observationNeeded = false;
+        return {
+          kind: "stop",
+          reason: stopOutcome.reason,
+          data: { pause: stopOutcome.data, fieldResults: lines, observation },
+        };
       }
       return {
         kind: "ok",
         progress: wrote,
         stopBatch: stopped,
-        content: `${lines.join("\n")}${stopped ? "\nRemaining fields in this batch were not attempted. Decide again from the fresh page." : ""}`,
+        content: lines.join("\n"),
       };
     },
   });
@@ -1586,7 +1676,16 @@ async function runMeasuredApplyAgent(
   }
 
   const agentTiming = timingRecord.snapshot();
-  const timing = `[apply] timing read=${agentTiming.pageReadMs}ms (${agentTiming.pageReads} reads) fill=${agentTiming.writeMs}ms upload=${agentTiming.uploadMs}ms tools=${agentTiming.toolMs}ms model=${agentTiming.modelTurns} turns ${agentTiming.modelMs}ms checks=${agentTiming.auxiliaryModelCalls} calls ${agentTiming.auxiliaryModelMs}ms total=${agentTiming.totalMs}ms`;
+  const fieldsPerTurn = agentTiming.requests
+    .map(
+      (request) =>
+        `${request.fieldsFilled ?? 0}/${request.fieldsAttempted ?? 0}`,
+    )
+    .join(",");
+  const stepsPerTurn = agentTiming.requests
+    .map((request) => request.stepsAdvanced ?? 0)
+    .join(",");
+  const timing = `[apply] timing read=${agentTiming.pageReadMs}ms (${agentTiming.pageReads} reads) fill=${agentTiming.writeMs}ms upload=${agentTiming.uploadMs}ms tools=${agentTiming.toolMs}ms model=${agentTiming.modelTurns} turns ${agentTiming.modelMs}ms checks=${agentTiming.auxiliaryModelCalls} calls ${agentTiming.auxiliaryModelMs}ms total=${agentTiming.totalMs}ms fields_per_turn(filled/attempted)=[${fieldsPerTurn}] steps_advanced_per_turn=[${stepsPerTurn}]`;
   return {
     outcome,
     reason,

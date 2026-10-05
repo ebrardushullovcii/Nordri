@@ -75,3 +75,44 @@ test("timing rejects invalid counts and retains only bounded longest steps", () 
     }).success,
   ).toBe(false);
 });
+
+test("per-turn field counts survive persistence without requiring them on older records", () => {
+  const measured = {
+    ...timing,
+    requests: [
+      {
+        ...timing.requests[0],
+        fieldsAttempted: 5,
+        fieldsFilled: 4,
+        stepsAdvanced: 1,
+      },
+    ],
+  };
+  expect(
+    ApplyExecutionResultSchema.parse({ ...result, agentTiming: measured })
+      .agentTiming,
+  ).toEqual(measured);
+  expect(
+    ApplyAgentTimingSchema.parse(timing).requests[0]?.fieldsFilled,
+  ).toBeUndefined();
+  expect(
+    ApplyAgentTimingSchema.safeParse({
+      ...measured,
+      requests: [{ ...measured.requests[0], fieldsAttempted: -1 }],
+    }).success,
+  ).toBe(false);
+});
+
+test("steps advanced is optional for old records and rejects invalid counts", () => {
+  expect(
+    ApplyAgentTimingSchema.parse(timing).requests[0]?.stepsAdvanced,
+  ).toBeUndefined();
+  for (const stepsAdvanced of [-1, 0.5]) {
+    expect(
+      ApplyAgentTimingSchema.safeParse({
+        ...timing,
+        requests: [{ ...timing.requests[0], stepsAdvanced }],
+      }).success,
+    ).toBe(false);
+  }
+});

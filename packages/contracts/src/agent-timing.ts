@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 /** Durations overlap: tool time includes checks; auxiliary model calls may run during tools. */
-export const ApplyAgentTimingSchema = z.object({
+const ApplyAgentTimingRecordSchema = z.object({
   totalMs: z.number().finite().nonnegative(),
   modelMs: z.number().finite().nonnegative(),
   modelTurns: z.number().int().nonnegative(),
@@ -26,8 +26,15 @@ export const ApplyAgentTimingSchema = z.object({
         turn: z.number().int().positive(),
         historyChars: z.number().int().nonnegative(),
         observationChars: z.number().int().nonnegative(),
+        // Optional so timing records from earlier runs still load.
+        fieldsAttempted: z.number().int().nonnegative().optional(),
+        fieldsFilled: z.number().int().nonnegative().optional(),
+        stepsAdvanced: z.number().int().nonnegative().optional(),
       }),
     )
     .max(1000),
 });
-export type ApplyAgentTiming = z.infer<typeof ApplyAgentTimingSchema>;
+export type ApplyAgentTiming = z.infer<typeof ApplyAgentTimingRecordSchema>;
+// Keep the timing schema from expanding through every workspace state schema.
+export const ApplyAgentTimingSchema: z.ZodType<ApplyAgentTiming> =
+  ApplyAgentTimingRecordSchema;

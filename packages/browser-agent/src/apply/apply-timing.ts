@@ -55,6 +55,18 @@ export function createApplyTiming(now: () => Date) {
     setObservationChars: (chars: number) => {
       observationChars = chars;
     },
+    onStepAdvanced: () => {
+      const request = timing.requests.at(-1);
+      if (request) request.stepsAdvanced = (request.stepsAdvanced ?? 0) + 1;
+    },
+    onFieldAttempt: () => {
+      const request = timing.requests.at(-1);
+      if (request) request.fieldsAttempted = (request.fieldsAttempted ?? 0) + 1;
+    },
+    onFieldFilled: () => {
+      const request = timing.requests.at(-1);
+      if (request) request.fieldsFilled = (request.fieldsFilled ?? 0) + 1;
+    },
     onToolTiming: ({
       toolName,
       durationMs,
@@ -91,6 +103,9 @@ export function createApplyTiming(now: () => Date) {
             turn: timing.modelTurns,
             historyChars: JSON.stringify(messages).length,
             observationChars,
+            fieldsAttempted: 0,
+            fieldsFilled: 0,
+            stepsAdvanced: 0,
           });
         } else timing.auxiliaryModelCalls += 1;
         try {
@@ -137,7 +152,9 @@ export function createApplyTiming(now: () => Date) {
         uploadMs: timing.uploadMs + pendingMs("uploadMs"),
         // Record owning tool spans once, rather than their nested reads again.
         longestSteps: [...timing.longestSteps],
-        requests: timing.requests.slice(0, 1000),
+        requests: timing.requests
+          .slice(0, 1000)
+          .map((request) => ({ ...request })),
       };
     },
   };
