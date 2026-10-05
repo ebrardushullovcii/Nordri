@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import {
   applicationSiteKey,
   createApplicationPreparationScheduler,
@@ -23,6 +23,66 @@ describe("application preparation ownership", () => {
     expect(started).toBe(true);
     second.release();
     thirdLease.release();
+  });
+
+  test("a redirect waiting on a busy site frees capacity for another site", async () => {
+    vi.useFakeTimers();
+    try {
+      const scheduler = createApplicationPreparationScheduler(2);
+      const first = await scheduler.acquire("https://one.example/apply");
+      const busy = await scheduler.acquire("https://two.test/apply");
+      let entered = false;
+      const redirected = first.moveTo("https://two.test/next").then(() => {
+        entered = true;
+      });
+      const other = await scheduler.acquire("https://three.example/apply");
+      expect(entered).toBe(false);
+      expect(vi.getTimerCount()).toBe(0);
+      // The redirected application takes the released destination and counts
+      // toward the worker limit again.
+      busy.release();
+      await redirected;
+      expect(entered).toBe(true);
+      let fourthStarted = false;
+      const fourth = scheduler
+        .acquire("https://four.test/apply")
+        .then((lease) => {
+          fourthStarted = true;
+          return lease;
+        });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fourthStarted).toBe(false);
+      other.release();
+      (await fourth).release();
+      first.release();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("stopping a redirect waiter does not reserve the destination or a worker", async () => {
+    vi.useFakeTimers();
+    try {
+      const scheduler = createApplicationPreparationScheduler(2);
+      const controller = new AbortController();
+      const first = await scheduler.acquire(
+        "https://one.example/apply",
+        controller.signal,
+      );
+      const busy = await scheduler.acquire("https://two.test/apply");
+      const redirected = first.moveTo("https://two.test/next");
+      controller.abort();
+      await expect(redirected).rejects.toMatchObject({ name: "AbortError" });
+      first.release();
+      const other = await scheduler.acquire("https://three.example/apply");
+      busy.release();
+      const next = await scheduler.acquire("https://two.test/apply");
+      expect(vi.getTimerCount()).toBe(0);
+      next.release();
+      other.release();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   test("subdomains of one site serialize", async () => {
