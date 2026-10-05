@@ -210,11 +210,14 @@ function isGroundedVisibleLanguage(
 }
 
 function isLanguageSection(
-  section: Pick<ResumeDraft["sections"][number], "kind" | "label">,
+  section: Pick<ResumeDraft["sections"][number], "kind" | "label"> & {
+    id?: string;
+  },
 ): boolean {
   return (
     section.kind === "skills" &&
-    normalizeText(section.label).includes("language")
+    (section.id === "section_languages" ||
+      normalizeText(section.label).includes("language"))
   );
 }
 
@@ -365,6 +368,9 @@ export function buildResumeDraftStateHash(draft: ResumeDraft): string {
       ...(draft.language ? { language: draft.language } : {}),
       ...(draft.writtenLanguage
         ? { writtenLanguage: draft.writtenLanguage }
+        : {}),
+      ...(draft.listingLanguage
+        ? { listingLanguage: draft.listingLanguage }
         : {}),
       identity: draft.identity,
       sections: draft.sections,
@@ -942,9 +948,17 @@ export function sanitizeResumeDraft(input: {
         if (section.kind === "skills" || section.kind === "keywords") {
           if (isLanguageSection(section)) {
             if (
-              isSpokenLanguageResumeChrome(bullet.text) ||
-              (!input.draft.writtenLanguage &&
-                !isGroundedVisibleLanguage(bullet.text, candidateLanguageBank))
+              !bullet.sourceRefs.some((ref) =>
+                input.profile?.spokenLanguages.some(
+                  (language) => ref.sourceId === `language:${language.id}`,
+                ),
+              ) &&
+              (isSpokenLanguageResumeChrome(bullet.text) ||
+                (!input.draft.writtenLanguage &&
+                  !isGroundedVisibleLanguage(
+                    bullet.text,
+                    candidateLanguageBank,
+                  )))
             ) {
               return false;
             }
@@ -1946,9 +1960,14 @@ function compareResumeTextSets(
   baseline: readonly string[],
   current: readonly string[],
 ): string[] {
-  const currentKeys = new Set(current.map((value) => normalizeText(value)));
+  const key = (value: string) =>
+    normalizeText(value)
+      .replace(/\s*[—–:-]\s*/gu, " ")
+      .replace(/\s+/gu, " ")
+      .trim();
+  const currentKeys = new Set(current.map(key));
   return uniqueStrings(baseline).filter(
-    (value) => !currentKeys.has(normalizeText(value)),
+    (value) => !currentKeys.has(key(value)),
   );
 }
 
@@ -2014,8 +2033,34 @@ export function buildResumeCoverageComparison(input: {
         tailoredClaims,
         originalClaims,
       );
+      const sourceAchievementIds = (text: string) =>
+        experience.achievements.flatMap((achievement, index) =>
+          resumeSentences(achievement).some(
+            (line) => normalizeText(line) === normalizeText(text),
+          )
+            ? [`experience:${experience.id}:achievement:${index}`]
+            : [],
+        );
+      const restatedSourceIds = (text: string) =>
+        entry?.bullets
+          .filter((bullet) => bullet.included && bullet.text === text)
+          .flatMap((bullet) =>
+            bullet.sourceRefs.flatMap((ref) =>
+              ref.sourceId &&
+              experience.achievements.some(
+                (_, index) =>
+                  ref.sourceId ===
+                  `experience:${experience.id}:achievement:${index}`,
+              )
+                ? [ref.sourceId]
+                : [],
+            ),
+          ) ?? [];
       const originalSummaryKey = normalizeText(experience.summary ?? "");
       const removedClaims = removedClaimText.map((text) => ({
+        ...(sourceAchievementIds(text).length
+          ? { sourceAchievementIds: sourceAchievementIds(text) }
+          : {}),
         field:
           originalSummaryKey && normalizeText(text) === originalSummaryKey
             ? ("summary" as const)
@@ -2024,6 +2069,9 @@ export function buildResumeCoverageComparison(input: {
         restorable: Boolean(entry && experienceSection && isVisible),
       }));
       const addedClaims = addedClaimText.map((text) => ({
+        ...(restatedSourceIds(text).length
+          ? { sourceAchievementIds: restatedSourceIds(text) }
+          : {}),
         field:
           entry?.summary && normalizeText(text) === normalizeText(entry.summary)
             ? ("summary" as const)
@@ -2032,8 +2080,11 @@ export function buildResumeCoverageComparison(input: {
         restorable: false,
       }));
       const reordered = match ? match.index !== originalIndex : false;
-      const retainedClaimCount = originalClaims.filter((claim) =>
-        resumeFactIsCovered(claim, tailoredClaims),
+      const retainedClaimCount = originalClaims.filter(
+        (claim) =>
+          sourceAchievementIds(claim).some((id) =>
+            tailoredClaims.some((text) => restatedSourceIds(text).includes(id)),
+          ) || resumeFactIsCovered(claim, tailoredClaims),
       ).length;
       const status = !entry
         ? ("missing" as const)
@@ -2099,7 +2150,14 @@ export function buildResumeCoverageComparison(input: {
         ...(section.text ? [section.text] : []),
         ...section.bullets
           .filter((bullet) => bullet.included)
-          .map((bullet) => bullet.text),
+          .map((bullet) =>
+            section.id === "section_languages" &&
+            bullet.origin === "ai_generated"
+              ? (bullet.sourceRefs.find((ref) =>
+                  ref.sourceId?.startsWith("language:"),
+                )?.snippet ?? bullet.text)
+              : bullet.text,
+          ),
         ...section.entries
           .filter((entry) => entry.included)
           .flatMap((entry) => [

@@ -429,6 +429,7 @@ function openEditorSection(sectionId: string): void {
 }
 
 function buildScreenElement(options?: {
+  actionMessage?: string | null;
   assistantMessages?: ResumeAssistantMessage[];
   assistantPending?: boolean;
   onApplyPatch?: (
@@ -468,7 +469,7 @@ function buildScreenElement(options?: {
 
   return (
     <ResumeWorkspaceScreen
-      actionMessage={null}
+      actionMessage={options?.actionMessage ?? null}
       assistantMessages={options?.assistantMessages ?? []}
       assistantPending={options?.assistantPending ?? false}
       availableResumeTemplates={availableResumeTemplates}
@@ -2254,5 +2255,43 @@ describe("ResumeWorkspaceScreen", () => {
     expect(
       screen.getByRole("button", { name: `Hide ${entry.title}` }),
     ).toBeTruthy();
+  });
+  it("offers Try again beside a failed language change and retries the same choice", () => {
+    const onSaveDraftAndThen = vi.fn();
+    const { rerender } = renderScreen({ onSaveDraftAndThen });
+    fireEvent.change(screen.getByLabelText("Resume language"), {
+      target: { value: "German" },
+    });
+    rerender(
+      buildScreenElement({
+        onSaveDraftAndThen,
+        actionMessage:
+          "The language change did not cover the whole resume. Your previous resume was kept; try again.",
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(onSaveDraftAndThen).toHaveBeenLastCalledWith(
+      expect.objectContaining({ language: "German" }),
+      expect.any(Function),
+      null,
+      expect.any(Function),
+    );
+  });
+
+  it("offers a full rewrite retry beside its saved failure reason", () => {
+    const workspace = buildWorkspace();
+    workspace.tailoredAsset = {
+      ...workspace.tailoredAsset!,
+      failureMessage:
+        "AI could not write the resume. Your previous resume was kept.",
+      failedAt: "2026-10-05T10:00:00.000Z",
+    };
+    const onRegenerateDraft = vi.fn();
+    renderScreen({ workspace, onRegenerateDraft });
+    expect(
+      screen.getByText(workspace.tailoredAsset.failureMessage!),
+    ).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(onRegenerateDraft).toHaveBeenCalledWith("job_ready");
   });
 });

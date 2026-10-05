@@ -1,3 +1,4 @@
+import { assertPersonAnswerAuthority } from "../person-answer-authority";
 import { projectWorkspaceAttention } from "../attention";
 import { readAssistantWorkState, runningSearchState } from "../work-state";
 import {
@@ -219,7 +220,7 @@ export const resolveNeedsYouTool = defineTool({
   name: "resolve_needs_you",
   group: "workspace",
   description:
-    "Acts on one Needs you step: answer its question(s) with what the person told you (answers tie each answer to its question id), open its page in the browser, mark it done after the person did it, or skip it. When the answer is a lasting fact about the person (work authorization, sponsorship, notice period), set saveForLater so later applications answer the same question themselves instead of stopping again. Never enter passwords or create accounts; those steps belong to the person.",
+    "Acts on one Needs you step: answer its question(s) with what the person told you (answers tie each answer to its question id), open its page in the browser, mark it done after the person did it, or skip it. Set saveForLater only when the person chose to save the answers for future applications. Never save an answer you inferred or chose as the person's own answer; get their approval first. Never enter passwords or create accounts; those steps belong to the person.",
   parameters: json.object(
     {
       requestId: json.string(),
@@ -293,6 +294,29 @@ export const resolveNeedsYouTool = defineTool({
           "Give the answer the person stated; ask them if they have not said it.",
         );
       }
+      const details =
+        request.scope.type === "application"
+          ? await service.getApplyRunDetails(
+              request.scope.runId,
+              request.scope.jobId,
+              request.scope.applicationRecordId ?? null,
+            )
+          : null;
+      const promptFor = (questionId?: string) =>
+        details?.questionRecords.find((question) =>
+          questionId
+            ? question.id === questionId
+            : question.status !== "answered",
+        )?.prompt ?? `${request.title}: ${request.summary ?? ""}`;
+      await assertPersonAnswerAuthority(session, {
+        answers: answers.length
+          ? answers.map((entry) => ({
+              question: promptFor(entry.questionId),
+              answer: entry.answer,
+            }))
+          : [{ question: promptFor(), answer }],
+        saveForFuture: input.saveForLater,
+      });
       pending =
         (await settle(
           service.performUserAction({

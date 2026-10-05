@@ -33,6 +33,7 @@ type DraftAcknowledgments = ResumeDraft["workHistoryReviewAcknowledgments"];
 
 interface ResumeWorkspaceEditorPanelProps {
   actionMessage: string | null;
+  onRetryAction?: (() => void) | undefined;
   /**
    * The file the message names, when an export just wrote one. C6 landed the
    * path sentence and left the person to find the file by hand.
@@ -446,6 +447,17 @@ export function ResumeWorkspaceEditorPanel(
             <p className="min-w-0 break-words text-(length:--text-small) leading-5 text-primary">
               {props.actionMessage}
             </p>
+            {props.onRetryAction ? (
+              <Button
+                disabled={props.isWorkspacePending}
+                onClick={props.onRetryAction}
+                size="compact"
+                type="button"
+                variant="outline"
+              >
+                Try again
+              </Button>
+            ) : null}
             {props.actionSavedFilePath && props.onOpenSavedFolder ? (
               <Button
                 onClick={() => {

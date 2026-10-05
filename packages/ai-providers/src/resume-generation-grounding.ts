@@ -13,6 +13,7 @@ const EvidenceLinkedTextSchema = z.object({
   text: z.string().trim().min(1).max(1_000),
   evidenceRefs: EvidenceReferenceListSchema,
   inferred: z.boolean().optional(),
+  sourceAchievementIds: z.array(EvidenceReferenceSchema).optional(),
 });
 
 export type ResumeGenerationInput = CreateResumeDraftInput | TailorResumeInput;
@@ -35,6 +36,7 @@ export interface ParsedEvidenceLinkedText {
   text: string;
   evidenceRefs: string[];
   inferred: boolean;
+  sourceAchievementIds: string[];
 }
 
 // Both sets are consulted with normalized tokens, so their entries are
@@ -310,6 +312,9 @@ export function parseEvidenceLinkedText(
       text: structured.data.text,
       evidenceRefs: Array.from(new Set(structured.data.evidenceRefs)),
       inferred: structured.data.inferred === true,
+      sourceAchievementIds: Array.from(
+        new Set(structured.data.sourceAchievementIds ?? []),
+      ),
     };
   }
 
@@ -327,6 +332,7 @@ export function parseEvidenceLinkedText(
       ? Array.from(new Set(parsedRefs.data))
       : [],
     inferred: false,
+    sourceAchievementIds: [],
   };
 }
 

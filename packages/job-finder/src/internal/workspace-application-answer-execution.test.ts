@@ -210,3 +210,60 @@ it("an application's own currency survives a newer library-seeded suggestion", (
     answer: "GBP",
   });
 });
+
+it("Prepare again keeps one-use eligibility on the same application even after a newer agent suggestion", () => {
+  const profile = createSeed().profile;
+  const before = structuredClone(profile);
+  const own = {
+    ...answer({
+      id: "own",
+      questionId: "eligibility",
+      text: "Yes",
+      revision: 1,
+    }),
+    applicationRecordId: "application_a",
+    saveScope: "application_once" as const,
+  };
+  const proposed = {
+    ...own,
+    id: "agent",
+    sourceKind: "profile" as const,
+    text: "No",
+    revision: 2,
+  };
+  const currentQuestion = {
+    ...question("eligibility", proposed.id),
+    kind: "work_authorization" as const,
+    applicationRecordId: "application_a",
+    resultId: "prepare_again",
+    prompt: "Are you authorized to work in Germany?",
+  };
+  const merged = mergeApplicationAnswersIntoExecutionProfile({
+    profile,
+    questionRecords: [currentQuestion],
+    answerRecords: [own, proposed],
+    idPrefix: "application_a",
+    applicationRecordId: "application_a",
+    jobLocation: "Hamburg, Germany",
+  });
+  expect(merged.answerBank.customAnswers[0]).toMatchObject({
+    question: currentQuestion.prompt,
+    answer: "Yes",
+    applicationScope: {
+      resultId: "prepare_again",
+      applicationRecordId: "application_a",
+      location: "Hamburg, Germany",
+    },
+  });
+  expect(profile).toEqual(before);
+  expect(
+    mergeApplicationAnswersIntoExecutionProfile({
+      profile,
+      questionRecords: [currentQuestion],
+      answerRecords: [own, proposed],
+      idPrefix: "application_b",
+      applicationRecordId: "application_b",
+      jobLocation: "Hamburg, Germany",
+    }),
+  ).toBe(profile);
+});

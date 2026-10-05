@@ -367,6 +367,7 @@ describe("profile editing rules", () => {
         service: workspaceService,
         session: {
           assertCurrent: () => undefined,
+          assertPersonAnswerAuthority: () => Promise.resolve(),
           recordChange: () =>
             Promise.resolve({
               receipt: {

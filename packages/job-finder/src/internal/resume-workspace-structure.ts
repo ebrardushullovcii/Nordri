@@ -1,4 +1,3 @@
-import { resumeFactIsCovered } from "./resume-content-comparison";
 import {
   filterCandidateFacingResumeKeywords,
   type TailoredResumeDraft,
@@ -22,6 +21,7 @@ import type {
 import { ResumeDraftSchema } from "@nordri/contracts";
 import { fnv1a32 } from "@nordri/core";
 import {
+  createBullet,
   createEntry,
   createSection,
   createSourceRef,
@@ -803,94 +803,59 @@ function selectEntrySummary(input: {
   return generated;
 }
 
-function splitResumeDetailLine(value: string): string[] {
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return [];
-  }
-
-  if (trimmed.length < 220 && !/[.!?]\s+\S/.test(trimmed)) {
-    return [trimmed];
-  }
-
-  const sentenceParts = trimmed
-    .split(/(?<=[.!?])\s+(?=[A-Z0-9])/)
-    .map((part) => part.trim())
-    .filter(Boolean);
-
-  if (sentenceParts.length > 1) {
-    return sentenceParts;
-  }
-
-  if (trimmed.length >= 260 && /;\s+/.test(trimmed)) {
-    return trimmed
-      .split(/;\s+/)
-      .map((part) => part.trim())
-      .filter(Boolean);
-  }
-
-  return [trimmed];
-}
-
-function mergeEntryBullets(
-  tailoredBullets: readonly string[],
-  profileBullets: readonly string[],
-  maxBullets = Number.POSITIVE_INFINITY,
-): string[] {
-  const normalizedTailoredBullets = tailoredBullets
-    .flatMap(splitResumeDetailLine)
-    .map(
-      (line) =>
-        profileBullets.find(
-          (saved) =>
-            resumeFactIsCovered(saved, [line]) &&
-            resumeFactIsCovered(line, [saved]),
-        ) ?? line,
+/** Source IDs carry the model's restatements across languages; no wording guess. */
+function mergeExperienceBullets(input: {
+  entryId: string;
+  recordId: string | null;
+  tailored: readonly string[];
+  sourceIds: readonly string[][] | undefined;
+  source: readonly string[];
+  updatedAt: string;
+  origin: ResumeDraftOrigin;
+  sharedRefs: readonly ResumeDraftSourceRef[];
+}): ResumeDraftBullet[] {
+  const sources = input.source.map((text, index) => ({
+    id: `experience:${input.recordId}:achievement:${index}`,
+    text,
+    index,
+  }));
+  const covered = new Set<string>();
+  const lines = input.tailored.flatMap((text, index) => {
+    const refs = sources.filter(
+      (source) =>
+        input.sourceIds?.[index]?.includes(source.id) ||
+        source.text.trim() === text.trim(),
     );
-  const normalizedProfileBullets = profileBullets.flatMap(
-    splitResumeDetailLine,
+    // Keep source facts once. A partly overlapping combined line is dropped;
+    // its uncovered facts are retained below and reach the language writer.
+    if (refs.some((source) => covered.has(source.id))) return [];
+    refs.forEach((source) => covered.add(source.id));
+    return [{ text, refs }];
+  });
+  lines.push(
+    ...sources
+      .filter((source) => !covered.has(source.id))
+      .map((source) => ({
+        text: source.text,
+        refs: [source],
+      })),
   );
-  const claimIsCoveredBy = (claim: string, cover: string) =>
-    resumeFactIsCovered(claim, [cover]);
-  // A provider that merges two achievements into one line often returns the
-  // merged line AND the two it was built from, so the same two claims read
-  // back twice within four lines. A claim a longer sibling already covers is
-  // dropped; the longest wording wins, and order is otherwise untouched.
-  const orderedByLengthDescending = [...normalizedTailoredBullets].sort(
-    (left, right) => right.length - left.length,
+  return lines.map(({ text, refs }, index) =>
+    createBullet(
+      refs[0]
+        ? `${input.entryId}_achievement_${refs[0].index}`
+        : `${input.entryId}_bullet_${index + 1}`,
+      text,
+      input.updatedAt,
+      input.origin,
+      [
+        ...input.sharedRefs,
+        ...refs.map((source) =>
+          createSourceRef("profile", source.id, source.text),
+        ),
+      ],
+    ),
   );
-  const coveringTailoredBullets: string[] = [];
-  for (const bullet of orderedByLengthDescending) {
-    if (
-      !coveringTailoredBullets.some((kept) => claimIsCoveredBy(bullet, kept))
-    ) {
-      coveringTailoredBullets.push(bullet);
-    }
-  }
-  const keptTailoredBullets = normalizedTailoredBullets.filter((bullet) =>
-    coveringTailoredBullets.includes(bullet),
-  );
-  const isCoveredByTailoredClaim = (profileClaim: string) =>
-    keptTailoredBullets.some((tailoredClaim) =>
-      claimIsCoveredBy(profileClaim, tailoredClaim),
-    );
-  // Keep canonical details that the provider returned too thinly, but do not
-  // append an original claim immediately after a grounded rewrite of it.
-  const uncoveredProfileBullets = normalizedProfileBullets.filter(
-    (bullet) => !isCoveredByTailoredClaim(bullet),
-  );
-  const canonicalBullets = uniqueStrings([
-    ...keptTailoredBullets,
-    ...uncoveredProfileBullets,
-  ]);
-  const narrativeBullets = canonicalBullets.filter(
-    (bullet) =>
-      !/^[^.!?]{2,80}\([^)]{2,80}\)\s*[–—]\s*[^.!?]{2,120}$/u.test(bullet),
-  );
-
-  return (
-    narrativeBullets.length > 0 ? narrativeBullets : canonicalBullets
-  ).slice(0, maxBullets);
 }
 
 function resolveCoverageMetadataByRecordId(draft: TailoredResumeDraft) {
@@ -1002,15 +967,22 @@ function buildDraftSectionsFromStructuredTailoredDraft(input: {
           location: canonicalLocation,
           dateRange: canonicalDateRange ?? entry.dateRange,
         }),
-        bullets: mergeEntryBullets(
-          entry.bullets,
-          profileExperience?.achievements ?? [],
-        ),
+        bullets: [],
         updatedAt: createdAt,
         origin,
         sortOrder: index,
         profileRecordId: entry.profileRecordId,
         sourceRefs: sharedRefs,
+      });
+      createdEntry.bullets = mergeExperienceBullets({
+        entryId: createdEntry.id,
+        recordId: entry.profileRecordId,
+        tailored: entry.bullets,
+        sourceIds: entry.bulletSourceAchievementIds,
+        source: profileExperience?.achievements ?? [],
+        updatedAt: createdAt,
+        origin,
+        sharedRefs,
       });
       const coverage = entry.profileRecordId
         ? coverageMetadataByRecordId.get(entry.profileRecordId)
@@ -1029,6 +1001,7 @@ function buildDraftSectionsFromStructuredTailoredDraft(input: {
   const hiddenProfileEntries = (profile?.experiences ?? [])
     .filter((experience) => !visibleExperienceRecordIds.has(experience.id))
     .map((profileExperience, index) => {
+      const entryId = `experience_${profileExperience.id}`;
       return {
         ...createEntry({
           id: `experience_${profileExperience.id}`,
@@ -1051,6 +1024,16 @@ function buildDraftSectionsFromStructuredTailoredDraft(input: {
           sortOrder: visibleExperienceEntries.length + index,
           profileRecordId: profileExperience.id,
           sourceRefs: sharedRefs,
+        }),
+        bullets: mergeExperienceBullets({
+          entryId,
+          recordId: profileExperience.id,
+          tailored: [],
+          sourceIds: undefined,
+          source: profileExperience.achievements,
+          updatedAt: createdAt,
+          origin,
+          sharedRefs,
         }),
         included: !["suggested_hidden", "omitted"].includes(
           coverageMetadataByRecordId.get(profileExperience.id)
@@ -1269,19 +1252,32 @@ function buildDraftSectionsFromStructuredTailoredDraft(input: {
     );
   }
 
-  if (draft.languages.length > 0) {
-    sections.push(
-      createSection({
-        id: "section_languages",
-        kind: "skills",
-        label: "Languages",
-        bullets: uniqueStrings(draft.languages).slice(0, 8),
-        updatedAt: createdAt,
-        origin,
-        sortOrder: sections.length,
-        sourceRefs: skillSourceRefs,
-      }),
-    );
+  const languages = profile?.spokenLanguages.length
+    ? profile.spokenLanguages
+        .map((language) =>
+          joinCompact([language.language, language.proficiency], " — "),
+        )
+        .filter((value): value is string => Boolean(value))
+    : draft.languages;
+  if (languages.length > 0) {
+    const languageSection = createSection({
+      id: "section_languages",
+      kind: "skills",
+      label: "Languages",
+      bullets: uniqueStrings(languages),
+      updatedAt: createdAt,
+      origin,
+      sortOrder: sections.length,
+      sourceRefs: skillSourceRefs,
+    });
+    languageSection.bullets.forEach((bullet, index) => {
+      const language = profile?.spokenLanguages[index];
+      if (language)
+        bullet.sourceRefs.push(
+          createSourceRef("profile", `language:${language.id}`, bullet.text),
+        );
+    });
+    sections.push(languageSection);
   }
 
   if (candidateFacingTargetedKeywords.length > 0) {

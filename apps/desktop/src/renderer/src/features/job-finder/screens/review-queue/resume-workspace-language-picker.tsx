@@ -19,11 +19,13 @@ const LANGUAGES = [
 export function ResumeWorkspaceLanguagePicker(props: {
   language: string | null;
   writtenLanguage: string | null;
+  listingLanguage?: string | null;
   disabled: boolean;
   onWrite: (language: string | null) => void;
 }) {
   const [custom, setCustom] = useState(false);
   const [customLanguage, setCustomLanguage] = useState("");
+  const listingLanguage = props.listingLanguage ?? null;
   const choices =
     props.language && !LANGUAGES.includes(props.language)
       ? [...LANGUAGES, props.language]
@@ -48,7 +50,7 @@ export function ResumeWorkspaceLanguagePicker(props: {
         >
           <option value="">
             Listing language
-            {props.writtenLanguage ? ` — ${props.writtenLanguage}` : ""}
+            {listingLanguage ? ` — ${listingLanguage}` : ""}
           </option>
           {choices.map((language) => (
             <option key={language} value={language}>

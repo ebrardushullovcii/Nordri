@@ -1,3 +1,4 @@
+import { assertPersonAnswerAuthority } from "../person-answer-authority";
 import { readAssistantWorkState } from "../work-state";
 import { profileProposalPreview } from "../proposal-preview";
 import { isResumeImportRunInProgress } from "@nordri/contracts";
@@ -976,6 +977,37 @@ export const editProfileTool = defineTool({
       };
     }
 
+    const savedAnswers = operations.flatMap((operation) => {
+      if (operation.operation === "upsert_reusable_answer") {
+        const existing = snapshot.profile.answerBank.customAnswers.find(
+          (answer) => answer.id === operation.record.id,
+        );
+        if (
+          operation.record.answer === undefined ||
+          existing?.answer === operation.record.answer
+        )
+          return [];
+        const question =
+          operation.record.question ??
+          operation.record.label ??
+          existing?.question ??
+          existing?.label;
+        const answer = operation.record.answer ?? existing?.answer;
+        return question && answer ? [{ question, answer }] : [];
+      }
+      if (operation.operation === "replace_answer_bank_fields")
+        return Object.entries(operation.value).flatMap(([question, answer]) =>
+          typeof answer === "string" && answer.trim()
+            ? [{ question, answer }]
+            : [],
+        );
+      return [];
+    });
+    if (savedAnswers.length)
+      await assertPersonAnswerAuthority(session, {
+        answers: savedAnswers,
+        saveForFuture: true,
+      });
     session.assertCurrent();
     const result = await service.applyAssistantProfileOperations({
       operations,

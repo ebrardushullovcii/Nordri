@@ -4,7 +4,10 @@ import {
   type ApplicationQuestionRecord,
   type CandidateProfile,
 } from "@nordri/contracts";
-import { createReusableAnswerForQuestion } from "./workspace-answer-memory";
+import {
+  createReusableAnswerForQuestion,
+  eligibilityAnswerScope,
+} from "./workspace-answer-memory";
 
 function isExecutableUserAnswer(
   answer: ApplicationAnswerRecord | undefined,
@@ -23,6 +26,8 @@ export function mergeApplicationAnswersIntoExecutionProfile(input: {
   questionRecords: readonly ApplicationQuestionRecord[];
   answerRecords: readonly ApplicationAnswerRecord[];
   idPrefix: string;
+  applicationRecordId?: string;
+  jobLocation?: string | null;
 }): CandidateProfile {
   const answerById = new Map(
     input.answerRecords.map((answer) => [answer.id, answer] as const),
@@ -35,15 +40,22 @@ export function mergeApplicationAnswersIntoExecutionProfile(input: {
   }
 
   const applicationAnswers = input.questionRecords.flatMap((question) => {
+    if (
+      input.applicationRecordId &&
+      question.applicationRecordId !== input.applicationRecordId
+    )
+      return [];
+    const belongsToQuestion = (answer: ApplicationAnswerRecord) =>
+      answer.sourceKind === "user" &&
+      !answer.sourceId?.startsWith("answerLibrary.") &&
+      answer.applicationRecordId === question.applicationRecordId;
     const selected = question.selectedAnswerId
       ? answerById.get(question.selectedAnswerId)
       : undefined;
     const latest =
-      (selected && !selected.sourceId?.startsWith("answerLibrary.")
-        ? selected
-        : undefined) ??
+      (selected && belongsToQuestion(selected) ? selected : undefined) ??
       [...(answersByQuestionId.get(question.id) ?? [])]
-        .filter((answer) => !answer.sourceId?.startsWith("answerLibrary."))
+        .filter(belongsToQuestion)
         .sort(compareApplicationAnswerRecency)[0];
     if (!isExecutableUserAnswer(latest)) {
       return [];
@@ -55,7 +67,12 @@ export function mergeApplicationAnswersIntoExecutionProfile(input: {
         prompt: question.prompt,
         kind: question.kind,
         idPrefix: input.idPrefix,
-        applicationScope: {
+        applicationScope: eligibilityAnswerScope({
+          kind: question.kind,
+          resultId: question.resultId,
+          applicationRecordId: question.applicationRecordId ?? null,
+          location: input.jobLocation,
+        }) ?? {
           resultId: question.resultId,
           applicationRecordId: question.applicationRecordId ?? null,
           location: null,

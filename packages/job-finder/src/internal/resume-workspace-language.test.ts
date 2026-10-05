@@ -1,4 +1,4 @@
-import { describe, expect, test, vi } from "vitest";
+import { expect, test, vi } from "vitest";
 import type { JobFinderAiClient } from "@nordri/ai-providers";
 import {
   createSeed,
@@ -28,16 +28,20 @@ function context() {
 
 test("translates every field together in one model call and keeps source structure", async () => {
   const { draft, job, profile } = context();
-  const chatWithTools: NonNullable<JobFinderAiClient["chatWithTools"]> = vi.fn(
-    async (messages) => {
+  const chatWithTools = vi.fn<NonNullable<JobFinderAiClient["chatWithTools"]>>(
+    (messages) => {
       const payload = JSON.parse(messages[1]!.content) as {
         language: string | null;
         fields: Array<{ id: string; text: string }>;
       };
       expect(payload.language).toBeNull();
-      return {
+      expect(messages[0]!.content).toContain(
+        "generic credential descriptions such as First aid",
+      );
+      return Promise.resolve({
         content: JSON.stringify({
           language: "German",
+          listingLanguage: "German",
           translations: payload.fields.map((field) => ({
             id: field.id,
             text: field.id.endsWith(":label")
@@ -47,7 +51,7 @@ test("translates every field together in one model call and keeps source structu
                 : field.text,
           })),
         }),
-      };
+      });
     },
   );
   const result = await writeResumeLanguage({
@@ -57,6 +61,7 @@ test("translates every field together in one model call and keeps source structu
   });
   expect(chatWithTools).toHaveBeenCalledTimes(1);
   expect(result.writtenLanguage).toBe("German");
+  expect(result.listingLanguage).toBe("German");
   const role = result.sections.find((section) => section.kind === "experience")!
     .entries[0]!;
   expect(role.profileRecordId).toBe(
@@ -72,12 +77,12 @@ test("translates every field together in one model call and keeps source structu
 
 test("a chosen language overrides the listing and rejects incomplete translation", async () => {
   const { draft, job } = context();
-  const chatWithTools: NonNullable<JobFinderAiClient["chatWithTools"]> = vi.fn(
-    async (messages) => {
+  const chatWithTools = vi.fn<NonNullable<JobFinderAiClient["chatWithTools"]>>(
+    (messages) => {
       expect(messages[1]!.content).toContain('"language":"English"');
-      return {
+      return Promise.resolve({
         content: JSON.stringify({ language: "English", translations: [] }),
-      };
+      });
     },
   );
   await expect(
@@ -158,25 +163,29 @@ test("changing an existing Light draft translates once, checks translated text a
       : job,
   );
   const base = createAiClient();
-  const createResumeDraft = vi.fn(base.createResumeDraft);
+  const createResumeDraft = vi.fn<JobFinderAiClient["createResumeDraft"]>(
+    (input) => base.createResumeDraft(input),
+  );
   const checkResumeClaims = vi.fn<
     NonNullable<JobFinderAiClient["checkResumeClaims"]>
-  >(async (input) =>
-    input.claims.map((claim) => ({
-      id: claim.id,
-      verdict: "supported",
-      reason: "Supported translated source facts",
-      evidenceIds: [],
-      style: null,
-      fix: null,
-    })),
+  >((input) =>
+    Promise.resolve(
+      input.claims.map((claim) => ({
+        id: claim.id,
+        verdict: "supported" as const,
+        reason: "Supported translated source facts",
+        evidenceIds: [],
+        style: null,
+        fix: null,
+      })),
+    ),
   );
   const chatWithTools = vi.fn<NonNullable<JobFinderAiClient["chatWithTools"]>>(
-    async (messages) => {
+    (messages) => {
       const payload = JSON.parse(messages[1]!.content) as {
         fields: Array<{ id: string; text: string }>;
       };
-      return {
+      return Promise.resolve({
         content: JSON.stringify({
           language: "German",
           translations: payload.fields.map((field) => ({
@@ -187,7 +196,7 @@ test("changing an existing Light draft translates once, checks translated text a
                 : field.text,
           })),
         }),
-      };
+      });
     },
   );
   const { workspaceService, repository } = createWorkspaceServiceHarness({

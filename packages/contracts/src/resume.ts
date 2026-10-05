@@ -726,6 +726,7 @@ export type ResumeBatchCheckpoint = z.infer<typeof ResumeBatchCheckpointSchema>;
 
 export const ResumeLanguageTranslationSchema = z.object({
   language: NonEmptyStringSchema,
+  listingLanguage: NonEmptyStringSchema.nullable().optional(),
   translations: z.array(
     z.object({ id: NonEmptyStringSchema, text: NonEmptyStringSchema }),
   ),
@@ -739,6 +740,7 @@ export const ResumeDraftSchema = z.object({
   /** Null follows the listing language; a value is the person’s choice. */
   language: NonEmptyStringSchema.nullable().optional(),
   writtenLanguage: NonEmptyStringSchema.nullable().optional(),
+  listingLanguage: NonEmptyStringSchema.nullable().optional(),
   identity: ResumeDraftIdentitySchema.nullable().default(null),
   sections: z.array(ResumeDraftSectionSchema).default([]),
   targetPageCount: z.number().int().min(1).max(3).default(2),
@@ -992,6 +994,7 @@ export type ResumeCoverageRoleStatus = z.infer<
 
 export const ResumeCoverageClaimChangeSchema = z.object({
   field: z.enum(["summary", "bullet"]),
+  sourceAchievementIds: z.array(NonEmptyStringSchema).optional(),
   text: NonEmptyStringSchema,
   restorable: z.boolean().default(false),
 });

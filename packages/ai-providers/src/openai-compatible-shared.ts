@@ -8,7 +8,6 @@ import {
 import {
   buildDeterministicStructuredResumeDraft,
   composeDeterministicFullText,
-  isSpokenLanguageResumeChrome,
   uniqueStrings,
   VISIBLE_ADDITIONAL_SKILL_LIMIT,
   VISIBLE_CORE_SKILL_LIMIT,
@@ -607,6 +606,23 @@ function normalizeExperienceEntries(
         allowedScope,
       }),
       bullets,
+      bulletSourceAchievementIds: bullets.map((text) => {
+        const sources = (matchedEntry.bullets ?? []).flatMap((value, index) => {
+          const parsed = parseEvidenceLinkedText(
+            value,
+            Array.isArray(matchedEntry.bulletEvidenceRefs)
+              ? matchedEntry.bulletEvidenceRefs[index]
+              : undefined,
+          );
+          return parsed?.text.trim() === text
+            ? parsed.sourceAchievementIds
+            : [];
+        });
+        return (canonicalEvidence?.bullets ?? []).flatMap((source, index) => {
+          const id = `experience:${fallbackEntry.profileRecordId}:achievement:${index}`;
+          return sources.includes(id) || source.trim() === text ? [id] : [];
+        });
+      }),
       profileRecordId: fallbackEntry.profileRecordId ?? null,
     };
   });
@@ -857,9 +873,7 @@ export function completeTailoredResumeDraft(
         )
       : fallback.projectEntries;
   const generationProvenance = describeModelDraftProvenance(quality, notes);
-  const languages = fallback.languages.filter(
-    (language) => !isSpokenLanguageResumeChrome(language),
-  );
+  const languages = fallback.languages;
   const fullText = composeDeterministicFullText({
     label,
     summary,

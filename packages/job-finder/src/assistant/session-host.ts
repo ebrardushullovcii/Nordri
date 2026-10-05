@@ -1,3 +1,4 @@
+import { verifyPersonAnswerAuthority } from "./person-answer-authority";
 import { readAssistantWorkState } from "./work-state";
 import { buildChangePreview } from "./change-diff";
 import { createHash, randomUUID } from "node:crypto";
@@ -1547,6 +1548,36 @@ export class AssistantSessionHost {
       },
       searchConversation: (query, limit) =>
         this.searchConversation(conversationId, query, limit),
+      assertPersonAnswerAuthority: async (input) => {
+        const page = await this.repository.listMessages(conversationId, {
+          limit: 20,
+        });
+        await verifyPersonAnswerAuthority({
+          ...input,
+          messages: page.messages,
+          sourceMessage: live.sourceMessage,
+          judge: handle.scripted
+            ? null
+            : async (prompt) => {
+                const result = await handle
+                  .createModel(conversationId)
+                  .chatWithTools(
+                    [
+                      {
+                        role: "system",
+                        content:
+                          "Check who supplied or approved the proposed answers. Return only the requested JSON, using the person's messages as authority.",
+                      },
+                      { role: "user", content: prompt },
+                    ],
+                    [],
+                    { signal: live.controller.signal, maxOutputTokens: 3_000 },
+                  );
+                return result.content ?? "";
+              },
+        });
+        session.assertCurrent();
+      },
       firstProfileRead: () => {
         if (this.profileReadDone.has(conversationId))
           return Promise.resolve(false);

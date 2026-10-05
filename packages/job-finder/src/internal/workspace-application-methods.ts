@@ -2365,6 +2365,8 @@ export function createWorkspaceApplicationMethods(
                 applicationRecordId: exactApplicationRecordId,
               }),
               idPrefix: `application_${exactApplicationRecordId}`,
+              applicationRecordId: exactApplicationRecordId,
+              jobLocation: job.location,
             }),
             ...(applicationAttachmentsRun.length > 0
               ? { applicationAttachments: applicationAttachmentsRun }
@@ -6622,6 +6624,8 @@ export function createWorkspaceApplicationMethods(
               applicationRecordId: selectedApplicationRecord.id,
             }),
             idPrefix: `application_${selectedApplicationRecord.id}`,
+            applicationRecordId: selectedApplicationRecord.id,
+            jobLocation: job.location,
           }),
           ...(applicationAttachmentsApproved.length > 0
             ? { applicationAttachments: applicationAttachmentsApproved }
@@ -7247,6 +7251,8 @@ export function createWorkspaceApplicationMethods(
               applicationRecordId: selectedApplicationRecord.id,
             }),
             idPrefix: `application_${selectedApplicationRecord.id}`,
+            applicationRecordId: selectedApplicationRecord.id,
+            jobLocation: job.location,
           }),
           ...(applicationAttachmentsDirect.length > 0
             ? { applicationAttachments: applicationAttachmentsDirect }

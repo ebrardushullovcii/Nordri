@@ -184,6 +184,11 @@ export interface AssistantTurnSession {
     { messageId: string; createdAt: string; role: string; excerpt: string }[]
   >;
   /** True the first time this conversation reads the profile. */
+  /** Checks conversation evidence before an assistant value is filed as the person's answer. */
+  assertPersonAnswerAuthority?(input: {
+    answers: readonly { question: string; answer: string }[];
+    saveForFuture: boolean;
+  }): Promise<void>;
   firstProfileRead(): Promise<boolean>;
   openInApp(route: string): Promise<AssistantNavigationDisplay | void> | void;
   /** The route can see images (screenshots are useful). */

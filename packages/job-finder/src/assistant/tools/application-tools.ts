@@ -1,3 +1,4 @@
+import { assertPersonAnswerAuthority } from "../person-answer-authority";
 import {
   ApplicationAnswerValueSchema,
   ApplicationCrmMutationSchema,
@@ -721,6 +722,24 @@ export const answerApplicationQuestionTool = defineTool({
     const current = details.answerRecords
       .filter((answer) => answer.questionId === input.questionId)
       .sort((left, right) => right.revision - left.revision)[0];
+    const question = details.questionRecords.find(
+      (entry) => entry.id === input.questionId,
+    );
+    if (!question)
+      throw new AssistantToolError(
+        "not_found",
+        "That application question is no longer available.",
+      );
+    const answer =
+      input.answer.type === "multi_choice"
+        ? input.answer.values.join(", ")
+        : input.answer.type === "asset_ref"
+          ? input.answer.assetId
+          : String(input.answer.value);
+    await assertPersonAnswerAuthority(session, {
+      answers: [{ question: question.prompt, answer }],
+      saveForFuture: input.saveForLater,
+    });
     session.assertCurrent();
     await service.saveApplicationAnswer({
       commandId: session.createId("assistant_answer"),

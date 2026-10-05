@@ -1125,6 +1125,10 @@ export function createApplicationUserActionResumer(
       answerRecords,
       questionRecords,
       idPrefix: `application_${request.id}`,
+      ...(scope.applicationRecordId
+        ? { applicationRecordId: scope.applicationRecordId }
+        : {}),
+      jobLocation: job.location,
     });
     const provenanceTargetId =
       selectApplicationSighting(job)?.targetId ??

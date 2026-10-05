@@ -10,6 +10,7 @@ test("shows the detected listing language and switches to English in one choice"
     <ResumeWorkspaceLanguagePicker
       language={null}
       writtenLanguage="German"
+      listingLanguage="German"
       disabled={false}
       onWrite={onWrite}
     />,
@@ -46,4 +47,44 @@ test("accepts a language outside the suggested list", () => {
     screen.getByRole("button", { name: "Write in this language" }),
   );
   expect(onWrite).toHaveBeenCalledWith("Swahili");
+});
+
+test.each(["German", null])(
+  "a chosen English resume does not label the listing English (listing %s)",
+  (listingLanguage) => {
+    render(
+      <ResumeWorkspaceLanguagePicker
+        language="English"
+        writtenLanguage="English"
+        listingLanguage={listingLanguage}
+        disabled={false}
+        onWrite={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByRole("option", {
+        name: listingLanguage
+          ? "Listing language — German"
+          : "Listing language",
+      }),
+    ).toBeTruthy();
+    expect(
+      screen.queryByRole("option", { name: "Listing language — English" }),
+    ).toBeNull();
+  },
+);
+
+test("an older English draft does not claim to know the German listing's language", () => {
+  render(
+    <ResumeWorkspaceLanguagePicker
+      language={null}
+      writtenLanguage="English"
+      disabled={false}
+      onWrite={vi.fn()}
+    />,
+  );
+  expect(screen.getByRole("option", { name: "Listing language" })).toBeTruthy();
+  expect(
+    screen.queryByRole("option", { name: "Listing language — English" }),
+  ).toBeNull();
 });

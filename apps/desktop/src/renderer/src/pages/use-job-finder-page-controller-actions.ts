@@ -2356,7 +2356,14 @@ export function createPrimaryPageActions(
     },
     onRegenerateResumeDraft: (jobId: string) =>
       void runResumeWorkspaceAction(
-        () => actions.regenerateResumeDraft(jobId),
+        async () => {
+          try {
+            return await actions.regenerateResumeDraft(jobId);
+          } catch (error) {
+            await refreshResumeWorkspace(jobId).catch(() => undefined);
+            throw error;
+          }
+        },
         async () => {
           await refreshResumeWorkspace(jobId);
         },

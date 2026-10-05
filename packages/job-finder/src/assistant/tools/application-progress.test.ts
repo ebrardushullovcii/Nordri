@@ -171,6 +171,7 @@ describe("answering an application's step", () => {
                 requests: [request],
               }),
             ),
+          getApplyRunDetails: () => Promise.resolve({ questionRecords: [] }),
           // The check waits on the site and does not come back.
           performUserAction: () => new Promise(() => undefined),
         } as never,
@@ -178,6 +179,7 @@ describe("answering an application's step", () => {
           assertCurrent: () => undefined,
           createId: () => "id_1",
           watchRun,
+          assertPersonAnswerAuthority: () => Promise.resolve(),
         } as unknown as AssistantTurnSession,
         ports: {} as AssistantHostPorts,
       },

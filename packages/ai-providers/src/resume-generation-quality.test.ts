@@ -1343,7 +1343,7 @@ describe("resume generation quality", () => {
     );
   });
 
-  test("enriches overlapping experience bullets with grounded proof metrics", () => {
+  test("adds grounded proof metrics while retaining the complete source achievement", () => {
     const baseProfile = createProfile();
     const profile: typeof baseProfile = {
       ...baseProfile,
@@ -1412,7 +1412,7 @@ describe("resume generation quality", () => {
     const result = buildDeterministicStructuredResumeDraft(input);
 
     expect(result.experienceEntries[0]?.bullets[0]).toBe(
-      "Led design-system rollout across core product surfaces used by design and operations teams. Adoption reached 80% of core product surfaces within two quarters.",
+      "Led design-system rollout across core surfaces. Adoption reached 80% of core product surfaces within two quarters.",
     );
   });
 
@@ -1562,4 +1562,103 @@ describe("resume generation quality", () => {
       "Project Lead (React, Next.js) – QA Management System",
     );
   });
+});
+
+test("keeps achievement source IDs and all saved language proficiencies for translated drafts", () => {
+  const profile = createProfile();
+  profile.spokenLanguages = [
+    {
+      id: "de",
+      language: "German",
+      proficiency: "C1 (proficient user)",
+      interviewPreference: false,
+      notes: null,
+    },
+    {
+      id: "en",
+      language: "English",
+      proficiency: "B1",
+      interviewPreference: false,
+      notes: null,
+    },
+  ];
+  profile.experiences = [
+    {
+      id: "warehouse",
+      companyName: "Example Logistics",
+      companyUrl: null,
+      title: "Warehouse lead",
+      employmentType: null,
+      location: null,
+      workMode: [],
+      startDate: "2020",
+      endDate: null,
+      isCurrent: true,
+      isDraft: false,
+      summary: null,
+      achievements: ["Reduced picking errors by 38%."],
+      skills: [],
+      domainTags: [],
+      peopleManagementScope: null,
+      ownershipScope: null,
+    },
+  ];
+  const experience = profile.experiences[0]!;
+  const id = `experience:${experience.id}:achievement:0`;
+  profile.proofBank = [
+    {
+      id: "errors",
+      title: "Picking errors",
+      claim: "Reduced picking errors across warehouse operations.",
+      heroMetric: "Maintained the reduction for two years.",
+      supportingContext: null,
+      roleFamilies: [],
+      projectIds: [],
+      linkIds: [],
+    },
+  ];
+  const builtIn = buildDeterministicStructuredResumeDraft({
+    profile,
+    job: createJobPosting(),
+    settings: createSettings(),
+    searchPreferences: createPreferences(),
+    resumeText: null,
+  });
+  const builtInEntry = builtIn.experienceEntries.find(
+    (entry) => entry.profileRecordId === experience.id,
+  )!;
+  expect(builtInEntry.bullets[0]).toContain("Reduced picking errors by 38%.");
+  expect(builtInEntry.bulletSourceAchievementIds?.[0]).toEqual([id]);
+  const draft = completeTailoredResumeDraft(
+    {
+      experienceEntries: [
+        {
+          profileRecordId: experience.id,
+          bullets: [
+            {
+              text: "Kommissionierfehler um 38 % reduziert.",
+              evidenceRefs: [id],
+              sourceAchievementIds: [id],
+            },
+          ],
+        },
+      ],
+    },
+    {
+      profile,
+      job: createJobPosting(),
+      settings: createSettings(),
+      searchPreferences: createPreferences(),
+      resumeText: null,
+    },
+  );
+  expect(
+    draft.experienceEntries.find(
+      (entry) => entry.profileRecordId === experience.id,
+    ),
+  ).toMatchObject({ bulletSourceAchievementIds: [[id]] });
+  expect(draft.languages).toEqual([
+    "German — C1 (proficient user)",
+    "English — B1",
+  ]);
 });

@@ -222,6 +222,9 @@ export const TailoredResumeDraftSchema = z.object({
         dateRange: NullableStringSchema,
         summary: NullableStringSchema,
         bullets: z.array(NonEmptyStringSchema).default([]),
+        bulletSourceAchievementIds: z
+          .array(z.array(NonEmptyStringSchema))
+          .optional(),
         profileRecordId: NullableStringSchema,
       }),
     )

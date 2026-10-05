@@ -1778,3 +1778,58 @@ test("unconfirmed import roles are excluded from seed, preview and comparison", 
       .originalRoleCount,
   ).toBe(profile.experiences.filter((role) => !role.isDraft).length);
 });
+
+test("comparison recognizes language name and level across separators and carries achievement source IDs", () => {
+  const seed = createSeed();
+  seed.profile.spokenLanguages = [
+    {
+      id: "pl",
+      language: "Polish",
+      proficiency: "Native",
+      interviewPreference: false,
+      notes: null,
+    },
+  ];
+  const draft = seedResumeDraft({
+    profile: seed.profile,
+    job: seed.savedJobs[0]!,
+    templateId: seed.settings.resumeTemplateId,
+  });
+  const role = draft.sections.find((section) => section.kind === "experience")!
+    .entries[0]!;
+  const source = seed.profile.experiences.find(
+    (experience) => experience.id === role.profileRecordId,
+  )!;
+  const bullet = role.bullets[0]!;
+  bullet.text =
+    "Kommissionierfehler um 38 % reduziert. Reduced picking errors by 38%.";
+  bullet.sourceRefs.push({
+    id: "source_fact",
+    sourceKind: "profile",
+    sourceId: `experience:${source.id}:achievement:0`,
+    snippet: source.achievements[0]!,
+  });
+  const language = draft.sections.find(
+    (section) => section.id === "section_languages",
+  )!.bullets[0]!;
+  language.text = "Polish: Native";
+  const comparison = buildResumeCoverageComparison({
+    profile: seed.profile,
+    draft,
+  });
+  expect(comparison.addedKeywords).not.toContain("Polish: Native");
+  expect(comparison.removedKeywords).not.toContain("Polish — Native");
+  const comparedRole = comparison.roles.find(
+    (entry) => entry.profileRecordId === source.id,
+  )!;
+  expect(
+    comparedRole.addedClaims.find((claim) => claim.text === bullet.text)
+      ?.sourceAchievementIds,
+  ).toEqual([`experience:${source.id}:achievement:0`]);
+  expect(
+    comparedRole.removedClaims.find(
+      (claim) => claim.text === source.achievements[0],
+    )?.sourceAchievementIds,
+  ).toEqual([`experience:${source.id}:achievement:0`]);
+  expect(comparedRole.retainedClaimCount).toBe(comparedRole.originalClaimCount);
+});

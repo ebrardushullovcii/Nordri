@@ -26,7 +26,6 @@ import {
 import {
   filterCandidateFacingResumeKeywords,
   filterGroundedVisibleSkills,
-  isSpokenLanguageResumeChrome,
 } from "./resume-skill-grounding";
 import { inferSkills } from "./resume-parser-skills";
 import { deriveResumeCoveragePlan } from "./resume-coverage";
@@ -340,6 +339,8 @@ function buildExperienceBullets(input: {
   maxBullets?: number;
   targetTerms?: readonly string[];
   usedBulletSignatures?: Set<string>;
+  sourceAchievements: readonly string[];
+  sourceIdsByText: Map<string, string[]>;
 }): string[] {
   const canonicalBullets = dropTruncatedVariants(
     input.experience.achievements.map(stripLeadingBulletGlyphs).filter(Boolean),
@@ -368,18 +369,34 @@ function buildExperienceBullets(input: {
         .filter(({ overlap }) => overlap >= QUALITY_OVERLAP_THRESHOLD)
         .sort((left, right) => right.overlap - left.overlap)[0]?.proof;
 
+      const sourceIds = input.sourceAchievements.flatMap((source, index) =>
+        stripLeadingBulletGlyphs(source) === bullet
+          ? [`experience:${input.experience.id}:achievement:${index}`]
+          : [],
+      );
       if (!matchingProof) {
+        input.sourceIdsByText.set(
+          normalizeTechnologyTokenSpacing(bullet),
+          sourceIds,
+        );
         return bullet;
       }
 
       usedProofIds.add(matchingProof.id);
       matchedProofs.push(matchingProof);
 
-      return buildProofBullet({
-        claim: matchingProof.claim,
+      // Keep the complete source clause when adding a saved metric. Coverage
+      // is bookkeeping of this transformation, never a wording comparison.
+      const enriched = buildProofBullet({
+        claim: bullet,
         heroMetric: matchingProof.heroMetric,
         fallback: bullet,
       });
+      input.sourceIdsByText.set(
+        normalizeTechnologyTokenSpacing(enriched),
+        sourceIds,
+      );
+      return enriched;
     }),
   );
 
@@ -887,8 +904,8 @@ export function buildDeterministicTailoredResume(
       .map((entry) =>
         [entry.language, entry.proficiency].filter(Boolean).join(" — "),
       )
-      .filter((value) => value && !isSpokenLanguageResumeChrome(value)),
-  ).slice(0, 6);
+      .filter(Boolean),
+  );
   const targetTerms = [
     input.job.title,
     ...input.job.keySkills,
@@ -934,8 +951,11 @@ export function buildDeterministicTailoredResume(
       if (!isCompact) {
         hasSeenDetailedRole = true;
       }
+      const sourceIdsByText = new Map<string, string[]>();
       const bullets = buildExperienceBullets({
         experience,
+        sourceAchievements: storedExperience.achievements,
+        sourceIdsByText,
         proofBank: input.profile.proofBank,
         maxBullets: isCompact ? 1 : isLeadDetailedRole ? 4 : 3,
         targetTerms,
@@ -965,6 +985,9 @@ export function buildDeterministicTailoredResume(
               ? candidateSummary
               : null,
           bullets,
+          bulletSourceAchievementIds: bullets.map(
+            (bullet) => sourceIdsByText.get(bullet) ?? [],
+          ),
           profileRecordId: experience.id,
         },
       ];

@@ -130,7 +130,10 @@ export function buildResumeCoverageComparisonRows(
     let bestIndex = -1;
     let bestScore = 0;
     addedClaims.forEach((added, index) => {
-      const score = scoreClaimOverlap(removed.text, added.text);
+      const sharesSource = removed.sourceAchievementIds?.some((id) =>
+        added.sourceAchievementIds?.includes(id),
+      );
+      const score = sharesSource ? 2 : scoreClaimOverlap(removed.text, added.text);
       if (score > bestScore) {
         bestScore = score;
         bestIndex = index;

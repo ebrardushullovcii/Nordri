@@ -101,6 +101,7 @@ function draftContentKey(draft: ResumeDraft): string {
     templateId: draft.templateId,
     language: draft.language ?? null,
     writtenLanguage: draft.writtenLanguage ?? null,
+    listingLanguage: draft.listingLanguage ?? null,
     identity: draft.identity,
     sections: draft.sections,
     targetPageCount: draft.targetPageCount,
@@ -1008,7 +1009,24 @@ export function ResumeWorkspaceScreen(props: ResumeWorkspaceScreenProps) {
 
   const editorPanel = (
     <ResumeWorkspaceEditorPanel
-      actionMessage={props.actionMessage}
+      actionMessage={
+        props.actionMessage ??
+        props.workspace.tailoredAsset?.failureMessage ??
+        null
+      }
+      onRetryAction={
+        draft.language !== props.workspace.draft.language && hasUnsavedChanges
+          ? () =>
+              props.onSaveDraftAndThen(
+                draft,
+                () => undefined,
+                null,
+                (updatedAt) => acknowledgeSave(draft, updatedAt),
+              )
+          : props.workspace.tailoredAsset?.failureMessage
+            ? () => props.onRegenerateDraft(props.jobId)
+            : undefined
+      }
       actionSavedFilePath={props.actionSavedFilePath ?? null}
       {...(props.onRevealSavedFile
         ? { onOpenSavedFolder: props.onRevealSavedFile }
@@ -1203,6 +1221,7 @@ export function ResumeWorkspaceScreen(props: ResumeWorkspaceScreenProps) {
             <ResumeWorkspaceLanguagePicker
               language={draft.language ?? null}
               writtenLanguage={draft.writtenLanguage ?? null}
+              listingLanguage={draft.listingLanguage ?? null}
               disabled={props.isWorkspacePending || backgroundDraft !== null}
               onWrite={(language) => {
                 const nextDraft = { ...draft, language };
