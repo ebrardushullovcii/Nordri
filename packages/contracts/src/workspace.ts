@@ -171,7 +171,7 @@ export type JobFinderJobResumeApplicationModeInput = z.infer<
 export const JobFinderDismissDiscoveryJobInputSchema = z
   .object({
     jobId: NonEmptyStringSchema,
-    reasons: z.array(DiscoveryFeedbackReasonSchema).min(1).max(9),
+    reasons: z.array(DiscoveryFeedbackReasonSchema).max(9),
     action: z.enum(["hide_job", "hide_and_exclude_employer"]).optional(),
     expectedNormalizedCompanyName: NonEmptyStringSchema.nullish(),
   })
@@ -1551,7 +1551,7 @@ export const JobFinderWorkspaceEntityMutationSchema = z.discriminatedUnion(
       .object({
         type: z.literal("dismiss_discovery_job"),
         jobId: NonEmptyStringSchema,
-        reasons: z.array(DiscoveryFeedbackReasonSchema).min(1).max(9),
+        reasons: z.array(DiscoveryFeedbackReasonSchema).max(9),
         action: z.enum(["hide_job", "hide_and_exclude_employer"]).optional(),
         expectedNormalizedCompanyName: NonEmptyStringSchema.nullish(),
       })

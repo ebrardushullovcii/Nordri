@@ -821,3 +821,12 @@ describe("getDiscoveryInspectedJob", () => {
     expect(getDiscoveryInspectedJob(ranked, "gone", "gone")).toBeNull();
   });
 });
+
+
+it("refreshes shortlist status and removes missing rows while assessments remain stable during a search", () => {
+  const job = createSavedJob("selected", "strong_fit", 80);
+  const snapshot = updateStableDiscoveryRunSnapshot({ current: null, jobs: [job], runId: "running" }).snapshot;
+  const refreshed = updateStableDiscoveryRunSnapshot({ current: snapshot, jobs: [{ ...job, status: "shortlisted" }], runId: "running" });
+  expect(refreshed.jobs[0]?.status).toBe("shortlisted");
+  expect(updateStableDiscoveryRunSnapshot({ current: refreshed.snapshot, jobs: [], runId: "running" }).jobs).toEqual([]);
+});

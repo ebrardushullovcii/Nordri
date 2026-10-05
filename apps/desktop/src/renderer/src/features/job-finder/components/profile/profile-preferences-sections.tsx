@@ -125,6 +125,7 @@ export function ProfilePreferencesTargetingSection(props: {
           <ProfileListEditor
             inputId="profile-setup-field-search-preferences-target-roles"
             label="Target roles"
+            draftParser={parseProfileLocationDraft}
             onChange={(values) =>
               setValue("targetRoles", joinListInput(values), listFieldOptions)
             }

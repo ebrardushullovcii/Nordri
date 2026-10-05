@@ -554,6 +554,29 @@ describe("ProfileScreen ready-state density and save-bar footprint", () => {
     ).toBe(false);
   });
 
+  it("splits semicolon roles in Profile and wraps chips within their column", () => {
+    renderProfileScreen({
+      initialEntry: "/job-finder/profile?section=preferences",
+    });
+    const field = screen.getByRole("textbox", { name: "Target roles" });
+    fireEvent.change(field, {
+      target: {
+        value:
+          "Junior Data Analyst; Junior Data Scientist; Working Student Data Analytics",
+      },
+    });
+    fireEvent.keyDown(field, { key: "Enter" });
+    for (const role of [
+      "Junior Data Analyst",
+      "Junior Data Scientist",
+      "Working Student Data Analytics",
+    ]) {
+      const chip = screen.getByText(role);
+      expect(chip.className).toContain("whitespace-normal");
+      expect(chip.closest("section")?.className).toContain("min-w-0");
+    }
+  });
+
   it("marks the section panel scroller as the single locked pane scroll region", () => {
     renderProfileScreen();
 

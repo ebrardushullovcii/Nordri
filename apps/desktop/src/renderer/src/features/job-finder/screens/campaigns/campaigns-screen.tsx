@@ -1,7 +1,10 @@
+import { discoverySourceFailureCopy } from "../discovery/discovery-source-failure-copy";
+import { describeFailure } from "../../lib/describe-failure";
 import {
   DISCOVERY_RUN_ALREADY_ACTIVE_MESSAGE,
   describeDiscoveryRunFailureReason,
   getDefaultCampaignConfiguration,
+  resolveCampaignSourceTargetIds,
   type CampaignDigest,
   type CampaignPauseWindow,
   type CampaignRuleFunnelProjection,
@@ -38,7 +41,10 @@ import {
   isSupportedTimeZone,
   resolvePlanTimeZone,
 } from "../../lib/job-finder-timestamp-format";
-import { jobSourceLabel } from "../../lib/job-source-display-name";
+import {
+  jobSourceLabel,
+  deriveJobSourceLabel,
+} from "../../lib/job-source-display-name";
 import {
   formatDiscoveryRunReportLabel,
   getDiscoveryRunReportCounts,
@@ -48,11 +54,19 @@ import {
   type DiscoveryRunReportCounts,
 } from "../../lib/discovery-run-count-label";
 
+function isHostOnlySourceLabel(label: string, startingUrl: string): boolean {
+  try {
+    return label === new URL(startingUrl).hostname;
+  } catch {
+    return false;
+  }
+}
+
 const jobFinderDateInputLocale = getJobFinderDateInputLocale();
 
 const splitList = (value: string) =>
   value
-    .split(",")
+    .split(/[,;\r\n]+/u)
     .map((item) => item.trim())
     .filter(Boolean);
 
@@ -63,20 +77,35 @@ function ListTextInput(props: {
   onChange: (values: string[]) => void;
   placeholder: string;
   values: readonly string[];
+  preserveCommas?: boolean;
+  title?: string;
 }) {
-  const joined = props.values.join(", ");
+  const parse = useCallback(
+    (value: string) =>
+      props.preserveCommas
+        ? value
+            .split(/[;\r\n]+/u)
+            .map((item) => item.trim())
+            .filter(Boolean)
+        : splitList(value),
+    [props.preserveCommas],
+  );
+  const joined = props.values.join(props.preserveCommas ? "; " : ", ");
   const [text, setText] = useState(joined);
   useEffect(() => {
     setText((current) =>
-      splitList(current).join(", ") === joined ? current : joined,
+      parse(current).join(props.preserveCommas ? "; " : ", ") === joined
+        ? current
+        : joined,
     );
-  }, [joined]);
+  }, [joined, parse, props.preserveCommas]);
   return (
     <Input
+      title={props.title}
       onBlur={() => setText(joined)}
       onChange={(event) => {
         setText(event.target.value);
-        props.onChange(splitList(event.target.value));
+        props.onChange(parse(event.target.value));
       }}
       placeholder={props.placeholder}
       value={text}
@@ -234,7 +263,15 @@ export function describePlanRunFailure(
     return "This search was interrupted when the app closed.";
   if (digest?.outcome === "stopped" || run?.state === "cancelled")
     return "This search was stopped before all sources finished.";
-  return describeDiscoveryRunFailureReason(run ?? null);
+  const reason = describeDiscoveryRunFailureReason(run ?? null);
+  return reason
+    ? describeFailure(reason, {
+        unknownSentence:
+          reason.includes("page.") || reason.includes("\u001b")
+            ? "The source could not be read. Try again."
+            : reason,
+      }).sentence
+    : null;
 }
 
 /**
@@ -382,6 +419,7 @@ function campaignToInput(
     status: campaign.status,
     searchPreferences: campaign.searchPreferences,
     sourceTargetIds: campaign.sourceTargetIds,
+    sourceSelectionMode: campaign.sourceSelectionMode,
     minimumFitScore: campaign.minimumFitScore,
     limits: campaign.limits,
     stopRules: campaign.stopRules,
@@ -434,6 +472,9 @@ function newCampaignFrom(
     status: "active",
     searchPreferences,
     sourceTargetIds: campaign?.sourceTargetIds ?? [],
+    sourceSelectionMode:
+      campaign?.sourceSelectionMode ??
+      (campaign?.sourceTargetIds.length ? "selected" : "profile"),
     minimumFitScore: campaign?.minimumFitScore ?? null,
     limits: defaults.limits,
     stopRules: defaults.stopRules,
@@ -483,14 +524,12 @@ function CampaignEditor(props: {
   const [draft, setDraft] = useState(props.campaign);
   // The same rule the run uses: the plan's own selection, or Profile's
   // Include in search when the plan has not chosen any.
-  const plannedSourceCount =
-    draft.sourceTargetIds.length > 0
-      ? draft.searchPreferences.discovery.targets.filter((target) =>
-          draft.sourceTargetIds.includes(target.id),
-        ).length
-      : draft.searchPreferences.discovery.targets.filter(
-          (target) => target.enabled,
-        ).length;
+  const includedSourceIds = resolveCampaignSourceTargetIds(draft);
+  const plannedSourceCount = includedSourceIds.length;
+  const followsProfileSources =
+    draft.sourceSelectionMode === "profile" ||
+    (draft.sourceSelectionMode === undefined &&
+      draft.sourceTargetIds.length === 0);
   // The baseline a dirty check compares against moves forward on every
   // successful save, so a saved plan is never treated as an unsaved draft.
   const [baselineCampaign, setBaselineCampaign] = useState(props.campaign);
@@ -793,7 +832,9 @@ function CampaignEditor(props: {
                     },
                   })
                 }
-                placeholder="Worldwide remote, Prishtina"
+                preserveCommas
+                placeholder="Seattle, WA; Portland, OR"
+                title="Separate places with semicolons. Commas stay within a place."
                 values={draft.searchPreferences.locations}
               />
             </label>
@@ -809,7 +850,8 @@ function CampaignEditor(props: {
                     },
                   })
                 }
-                placeholder="Locations that cannot work"
+                preserveCommas
+                placeholder="Paris; Berlin"
                 values={draft.searchPreferences.excludedLocations}
               />
             </label>
@@ -877,10 +919,27 @@ function CampaignEditor(props: {
             <fieldset className="grid gap-2">
               <legend className="text-sm">Included sources</legend>
               <p className="text-xs leading-5 text-foreground-muted">
-                This is the live source list from Profile. New sources follow
-                Profile&apos;s Include in search setting until you change this
-                plan.
+                These sources control new searches. Saved jobs may be shared
+                with other plans. When using Profile, newly enabled sources are
+                included automatically. Choosing individual sources keeps that
+                list.
               </p>
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={followsProfileSources}
+                  onChange={(event) =>
+                    setDraft({
+                      ...draft,
+                      sourceSelectionMode: event.target.checked
+                        ? "profile"
+                        : "selected",
+                      sourceTargetIds: includedSourceIds,
+                    })
+                  }
+                />
+                Use enabled sources from Profile
+              </label>
               <div className="grid max-h-44 gap-2 overflow-y-auto rounded-(--radius-field) border border-border-subtle p-3 sm:grid-cols-2">
                 {draft.searchPreferences.discovery.targets.map((target) => (
                   <label
@@ -888,28 +947,40 @@ function CampaignEditor(props: {
                     key={target.id}
                   >
                     <input
-                      checked={draft.sourceTargetIds.includes(target.id)}
+                      aria-label={
+                        isHostOnlySourceLabel(target.label, target.startingUrl)
+                          ? deriveJobSourceLabel(target.startingUrl)
+                          : target.label
+                      }
+                      checked={includedSourceIds.includes(target.id)}
                       onChange={(event) => {
                         setDraft({
                           ...draft,
                           // A plan owns only its selected ids. The source's
                           // Profile-level Include flag is a separate choice
                           // and must not be rewritten by this checkbox.
+                          sourceSelectionMode: "selected",
                           sourceTargetIds: event.target.checked
                             ? [
-                                ...new Set([
-                                  ...draft.sourceTargetIds,
-                                  target.id,
-                                ]),
+                                ...new Set([...includedSourceIds, target.id]),
                               ]
-                            : draft.sourceTargetIds.filter(
+                            : includedSourceIds.filter(
                                 (candidateId) => candidateId !== target.id,
                               ),
                         });
                       }}
                       type="checkbox"
                     />
-                    {target.label}
+                    <span className="min-w-0">
+                      <span className="block">
+                        {isHostOnlySourceLabel(target.label, target.startingUrl)
+                          ? deriveJobSourceLabel(target.startingUrl)
+                          : target.label}
+                      </span>
+                      <span className="block break-all text-xs text-foreground-muted">
+                        {target.startingUrl}
+                      </span>
+                    </span>
                   </label>
                 ))}
               </div>
@@ -1360,7 +1431,11 @@ function CampaignEditor(props: {
               </dl>
               {draft.schedule.runFacts.lastRunSummary ? (
                 <p className="text-xs text-foreground-muted">
-                  {draft.schedule.runFacts.lastRunSummary}
+                  {draft.schedule.runFacts.lastRunSummary.includes("page.") ||
+                  draft.schedule.runFacts.lastRunSummary.includes("\u001b")
+                    ? describeFailure(draft.schedule.runFacts.lastRunSummary)
+                        .sentence
+                    : draft.schedule.runFacts.lastRunSummary}
                 </p>
               ) : null}
               {draft.schedule.runFacts.consecutiveFailures > 0 ? (
@@ -2008,14 +2083,8 @@ export function CampaignsScreen(props: {
                     {campaign.description || "No description yet."}
                   </p>
                   <p className="text-sm text-foreground-soft">
-                    Uses {campaign.sourceTargetIds.length} of your{" "}
-                    {
-                      new Set(
-                        props.campaigns.flatMap(
-                          (entry) => entry.sourceTargetIds,
-                        ),
-                      ).size
-                    }{" "}
+                    Uses {resolveCampaignSourceTargetIds(campaign).length} of your{" "}
+                    {campaign.searchPreferences.discovery.targets.length}{" "}
                     job sites.
                   </p>
                   {describeScheduleStart(campaign.schedule) ? (
@@ -2156,7 +2225,7 @@ export function CampaignsScreen(props: {
                           completed
                           {campaign.latestDigest.failedSources.map(
                             (source) =>
-                              ` · ${jobSourceLabel(source.sourceTargetId, campaign.searchPreferences.discovery.targets)} failed (${source.reason})`,
+                              ` · ${jobSourceLabel(source.sourceTargetId, campaign.searchPreferences.discovery.targets)} failed (${discoverySourceFailureCopy(source.reason)})`,
                           )}
                         </p>
                       ) : null}
@@ -2227,7 +2296,7 @@ export function CampaignsScreen(props: {
                                   campaign.searchPreferences.discovery.targets,
                                 )}
                               </span>{" "}
-                              — {source.reason}
+                              — {discoverySourceFailureCopy(source.reason)}
                             </li>
                           ))}
                         </ul>

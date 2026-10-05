@@ -256,7 +256,7 @@ describe("DiscoveryResultsPanel triage filters", () => {
         ),
         (button) => button.dataset.jobResultId,
       ),
-    ).toEqual(["strong-remote", "review-remote"]);
+    ).toEqual(["review-remote", "strong-remote"]);
   });
 
   it("shows a truthful no-results state and clears every filter", () => {
@@ -319,8 +319,12 @@ describe("DiscoveryResultsPanel triage filters", () => {
 
     const groups = screen.getByTestId("discovery-results-filter-groups");
     expect(groups.querySelectorAll("fieldset")).toHaveLength(1);
+    expect(groups.className).not.toContain("max-h-40");
+    expect(
+      groups.closest("[data-job-results-scroll-region]")?.className,
+    ).toContain("overflow-y-auto");
     expect(groups.className).toContain(
-      "grid-cols-[repeat(auto-fit,minmax(15rem,1fr))]",
+      "grid-cols-[repeat(auto-fit,minmax(12rem,1fr))]",
     );
     expect(groups.className).not.toContain("xl:grid-cols-4");
   });

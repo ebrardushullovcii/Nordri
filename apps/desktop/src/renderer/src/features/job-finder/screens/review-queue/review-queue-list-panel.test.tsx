@@ -71,6 +71,16 @@ function renderPanel(
 }
 
 describe("ReviewQueueListPanel", () => {
+  it("shows background listing assessment until the saved result arrives", () => {
+    renderPanel({
+      queue: [
+        { ...createEligibleItem("reading"), listingAssessmentPending: true },
+      ],
+    });
+    expect(screen.getByText("Assessing listing")).toBeTruthy();
+    expect(screen.queryByText("Resume not started")).toBeNull();
+  });
+
   it("creates only selected missing resumes, preserves choices across filtering, and leaves ready jobs alone", () => {
     const onPrepareTailoredDrafts = vi.fn();
     renderPanel({
@@ -569,4 +579,15 @@ it("does not keep a progress indicator beside a saved rewrite failure", () => {
   });
   expect(screen.getByText("Resume failed")).toBeTruthy();
   expect(screen.queryByRole("progressbar")).toBeNull();
+});
+
+it("states that bulk actions include jobs hidden by a shortlist filter", () => {
+  renderPanel({
+    queue: [createEligibleItem("one"), createEligibleItem("two")],
+    onPrepareTailoredDrafts: vi.fn(),
+  });
+  fireEvent.change(screen.getByRole("searchbox"), { target: { value: "one" } });
+  expect(
+    screen.getByTestId("shortlist-bulk-filter-scope").textContent,
+  ).toContain("including 1 hidden by this filter");
 });

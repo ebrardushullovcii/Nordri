@@ -383,6 +383,16 @@ export function ReviewQueueListPanel({
               </>
             ) : (
               <>
+                {visibleQueue.length < queue.length ? (
+                  <p
+                    className="text-xs text-foreground-muted"
+                    data-testid="shortlist-bulk-filter-scope"
+                  >
+                    Bulk actions use this plan’s full shortlist of{" "}
+                    {queue.length} jobs, including{" "}
+                    {queue.length - visibleQueue.length} hidden by this filter.
+                  </p>
+                ) : null}
                 {draftEligibleCount > 0 ? (
                   <Button
                     className="whitespace-normal text-sm font-medium normal-case tracking-normal"
@@ -498,7 +508,7 @@ export function ReviewQueueListPanel({
         <div className="flex min-h-0 flex-1 items-center justify-center px-5 pb-5 pt-4">
           <div className="grid w-full max-w-136 justify-items-center gap-4">
             <EmptyState
-              title="No shortlisted jobs yet"
+              title="No shortlisted jobs in this plan"
               description="Shortlist a job from Find jobs. It shows up here, ready for a resume and an application."
             />
             <Button asChild size="lg">
@@ -570,7 +580,11 @@ export function ReviewQueueListPanel({
                 }
                 selected={selectedItem?.jobId === item.jobId}
                 showProgress={workflowStatus.label === "Writing resume"}
-                statusLabel={workflowStatus.label}
+                statusLabel={
+                  item.listingAssessmentPending
+                    ? "Assessing listing"
+                    : workflowStatus.label
+                }
                 statusTone={workflowStatus.tone}
                 title={item.title}
               />

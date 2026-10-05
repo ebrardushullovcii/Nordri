@@ -1,4 +1,5 @@
 import { projectApplicationRecordsActivity } from "@nordri/contracts";
+import type { ReactNode } from "react";
 import { useQuestionAnswerDrafts } from "../actions/use-question-answer-drafts";
 import { isSameSiteApplicationActive } from "../actions/actions-screen";
 import { formatElapsedMinutes } from "./applications-recovery-state";
@@ -83,6 +84,7 @@ const OUTCOME_STATUSES = new Set<string>([
 
 export function ApplicationsScreen(props: {
   homeTimeZone?: string;
+  scopeControl?: ReactNode;
   actionMessage?: string | null;
   searchPlanName?: string | undefined;
   hasOtherPlanApplications?: boolean;
@@ -948,6 +950,7 @@ export function ApplicationsScreen(props: {
               destination reached by name, not a peer tab that renders a CRM
               beside a single record. */}
           <PageHeaderStack
+            subnav={props.scopeControl}
             actions={
               workspaceView === "crm" ? (
                 <Button

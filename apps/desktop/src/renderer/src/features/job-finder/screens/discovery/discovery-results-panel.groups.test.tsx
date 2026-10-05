@@ -1,7 +1,14 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react";
 import { SavedJobSchema, type SavedJob } from "@nordri/contracts";
+import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -116,7 +123,7 @@ describe("discovery result bands", () => {
     expect(banner.headline).toContain(runReportLabel);
   });
 
-  it("keeps one whole-set location count while the visible scope changes", () => {
+  it("keeps location counts within the visible result set", () => {
     const inArea = {
       ...job({ id: "chicago", score: 72 }),
       location: "Chicago, IL",
@@ -137,7 +144,9 @@ describe("discovery result bands", () => {
       />,
     );
 
-    expect(screen.getByText(/2 of 15 in or near Chicago, IL/u)).toBeTruthy();
+    expect(
+      screen.getByText(/1 of 1 assessed jobs in or near Chicago, IL/u),
+    ).toBeTruthy();
   });
 
   it("bands rows by verified score and never demotes a withheld one", () => {
@@ -363,15 +372,14 @@ describe("discovery result bands", () => {
         .getAllByTestId(/^discovery-results-group-/u)
         .map((heading) => heading.textContent?.split(")")[0] ?? ""),
     ).toEqual([
-      "Not yet assessed (1",
       "Weaker matches (1",
       "Clear mismatches (1",
+      "Not yet assessed (1",
     ]);
-    // Each divider sits inside the row it heads, so the resumed band is no
-    // longer drawn underneath the weaker divider.
-    const titleOnlyRow = screen
-      .getByTestId("discovery-results-group-unchecked")
-      .closest("li");
+    // Each stable divider immediately precedes the first row it heads.
+    const titleOnlyRow = screen.getByTestId(
+      "discovery-results-group-unchecked",
+    ).nextElementSibling;
     expect(
       titleOnlyRow
         ?.querySelector("[data-job-result-id]")
@@ -387,17 +395,17 @@ describe("discovery result bands", () => {
     ]);
 
     expect(ordered.map((entry) => entry.id)).toEqual([
+      "weaker",
       "unchecked_high",
       "unchecked_low",
-      "weaker",
     ]);
     expect(
       [...buildDiscoveryResultGroupHeadings(ordered, true).values()].map(
         (heading) => [heading.label, heading.count],
       ),
     ).toEqual([
-      ["Not yet assessed", 2],
       ["Weaker matches", 1],
+      ["Not yet assessed", 2],
     ]);
   });
 
@@ -651,9 +659,7 @@ describe("discovery three-band result counts", () => {
     // Exactly one, at the top, covering every row.
     expect(headings).toHaveLength(1);
     expect(headings[0]!.textContent).toContain("Not yet assessed (14)");
-    expect(headings[0]!.textContent).toContain(
-      "The full requirements have not been assessed. Check the role and level before applying.",
-    );
+    expect(headings[0]!.textContent).not.toContain("The full requirements");
     expect(screen.getByTestId("discovery-result-count").textContent).toContain(
       "14 jobs",
     );
@@ -800,9 +806,7 @@ describe("discovery three-band result counts", () => {
 
     const heading = screen.getByTestId("discovery-results-group-unchecked");
     expect(heading.textContent).toContain("Not yet assessed (1)");
-    expect(heading.textContent).toContain(
-      "The full requirements have not been assessed. Check the role and level before applying.",
-    );
+    expect(heading.textContent).not.toContain("The full requirements");
   });
 
   it("heads the band on a page that opens mid-list even when it is the main band", () => {
@@ -869,7 +873,7 @@ describe("discovery three-band result counts", () => {
         ?.getAttribute("data-job-result-id") ?? null;
 
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    expect(firstRowId()).toBe("strong_50");
+    expect(firstRowId()).toBe("strong_54");
 
     rerender(
       <DiscoveryResultsPanel
@@ -972,4 +976,192 @@ describe("stacked-width detail affordance", () => {
       Reflect.deleteProperty(Element.prototype, "scrollIntoView");
     }
   });
+});
+
+it("offers Show after all weaker results have been hidden", () => {
+  const onShowAlsoFound = vi.fn();
+  render(
+    <DiscoveryResultsPanel
+      browserSession={browserSession}
+      hasCompletedSearch
+      jobs={[]}
+      selectedJob={null}
+      onSelectJob={vi.fn()}
+      alsoFoundCount={31}
+      hiddenAlsoFoundCount={31}
+      areAlsoFoundShown={false}
+      onToggleAlsoFound={onShowAlsoFound}
+      onShowAlsoFound={onShowAlsoFound}
+    />,
+  );
+  fireEvent.click(
+    screen.getByRole("button", { name: "Show weaker matches (31)" }),
+  );
+  expect(onShowAlsoFound).toHaveBeenCalledOnce();
+});
+
+it("offers wider places and an area source before shortlisting outside-area jobs", () => {
+  const outside = job({ id: "outside", score: 72 });
+  render(
+    <MemoryRouter>
+      <DiscoveryResultsPanel
+        browserSession={browserSession}
+        jobs={[outside]}
+        selectedJob={null}
+        onSelectJob={vi.fn()}
+        preferredLocations={["Bristol", "Bath"]}
+        remoteIncluded={false}
+        inAreaJobCount={0}
+        hasCompletedSearch
+        editPlanHref="/job-finder/search-plans?edit=plan"
+      />
+    </MemoryRouter>,
+  );
+  expect(screen.getByRole("link", { name: "Widen your places" })).toBeTruthy();
+  expect(
+    screen.getByRole("link", { name: "add a source for your area" }),
+  ).toBeTruthy();
+});
+
+it("separates pending place checks from assessed location totals", () => {
+  render(
+    <MemoryRouter>
+      <DiscoveryResultsPanel
+        browserSession={browserSession}
+        jobs={[
+          job({ id: "read", score: 72 }),
+          job({ id: "pending", score: 0, titleOnly: true }),
+        ]}
+        selectedJob={null}
+        onSelectJob={vi.fn()}
+        preferredLocations={["Bradford"]}
+        remoteIncluded={false}
+        inAreaJobCount={0}
+        totalLocationJobCount={42}
+        pendingLocationJobCount={40}
+      />
+    </MemoryRouter>,
+  );
+  expect(
+    screen.getByText(
+      /0 of 1 assessed jobs in or near Bradford · 1 awaiting place checks/,
+    ),
+  ).toBeTruthy();
+});
+
+it("sorts comparable Best match scores highest first and explains the priority", () => {
+  render(
+    <DiscoveryResultsPanel
+      browserSession={browserSession}
+      jobs={[
+        job({ id: "lower", score: 84 }),
+        job({ id: "highest", score: 92 }),
+      ]}
+      onSelectJob={vi.fn()}
+      selectedJob={null}
+    />,
+  );
+  expect(
+    screen
+      .getByText("Role highest")
+      .compareDocumentPosition(screen.getByText("Role lower")) &
+      Node.DOCUMENT_POSITION_FOLLOWING,
+  ).not.toBe(0);
+  expect(
+    screen
+      .getByRole("combobox", { name: "Sort results" })
+      .getAttribute("title"),
+  ).toContain("reachable places come first, then fit score");
+});
+
+it("assesses the ranked unjudged listings on the current page first, inside their group", () => {
+  const jobs = Array.from({ length: 70 }, (_, index) =>
+    job({ id: `unread_${index}`, score: 0, titleOnly: true }),
+  );
+  const onAssess = vi.fn(() => new Promise<void>(() => undefined));
+  render(
+    <DiscoveryResultsPanel
+      browserSession={browserSession}
+      jobs={jobs}
+      selectedJob={null}
+      onSelectJob={vi.fn()}
+      onAssessJobListing={onAssess}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Next" }));
+  const firstId = document
+    .querySelector("[data-job-result-id]")
+    ?.getAttribute("data-job-result-id");
+  const button = screen.getByRole("button", {
+    name: "Assess next 20 listings",
+  });
+  expect(
+    screen.getByTestId("discovery-results-group-unchecked").contains(button),
+  ).toBe(true);
+  expect(screen.queryByTestId("discovery-best-match-order")).toBeNull();
+  fireEvent.click(button);
+  expect(onAssess).toHaveBeenCalledWith(firstId);
+  expect(
+    screen.getByRole("region", { name: "Job results list" }).className,
+  ).toContain("min-h-[360px]");
+});
+
+it("counts places from the visible result set and does not offer widening mid-search", () => {
+  const local = job({ id: "local", score: 85 });
+  local.matchAssessment.locationReach = "in_area";
+  const unread = job({ id: "unread", score: 0, titleOnly: true });
+  render(
+    <DiscoveryResultsPanel
+      browserSession={browserSession}
+      jobs={[local, unread]}
+      selectedJob={null}
+      onSelectJob={vi.fn()}
+      preferredLocations={["Bristol"]}
+      totalLocationJobCount={715}
+      inAreaJobCount={19}
+      pendingLocationJobCount={591}
+      isSearchInProgress
+    />,
+  );
+  expect(screen.getByTestId("discovery-result-count").textContent).toContain(
+    "1 of 1 assessed jobs in or near Bristol · 1 awaiting place checks",
+  );
+  expect(screen.queryByTestId("discovery-no-area-matches")).toBeNull();
+});
+
+it("keeps the assessment batch running when an assessed row moves out of the unchecked group", async () => {
+  const first = job({ id: "first", score: 0, titleOnly: true });
+  const second = job({ id: "second", score: 0, titleOnly: true });
+  let release!: () => void;
+  const onAssess = vi.fn(
+    () =>
+      new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+  );
+  const props = {
+    browserSession,
+    selectedJob: null,
+    onSelectJob: vi.fn(),
+    onAssessJobListing: onAssess,
+  };
+  const view = render(
+    <DiscoveryResultsPanel {...props} jobs={[first, second]} />,
+  );
+  fireEvent.click(
+    screen.getByRole("button", { name: "Assess next 2 listings" }),
+  );
+  expect(onAssess).toHaveBeenCalledWith("first");
+  view.rerender(
+    <DiscoveryResultsPanel
+      {...props}
+      jobs={[job({ id: "first", score: 85 }), second]}
+    />,
+  );
+  expect(screen.getByText(/Assessing listings · 0 of 2 finished/)).toBeTruthy();
+  await act(async () => {
+    release();
+    await Promise.resolve();
+  });
+  expect(onAssess).toHaveBeenCalledWith("second");
 });

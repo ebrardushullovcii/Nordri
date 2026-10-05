@@ -1143,7 +1143,7 @@ describe("DiscoveryDetailPanel", () => {
     const selectedJob = createSelectedJob({
       id: "job_shortlisted",
       title: "Senior Frontend Engineer",
-      status: "shortlisted",
+      status: "drafting",
     });
     const onQueueJob = vi.fn();
 
@@ -1161,7 +1161,7 @@ describe("DiscoveryDetailPanel", () => {
 
     expect(screen.queryByRole("button", { name: "Shortlist job" })).toBeNull();
     expect(screen.queryByText("Already shortlisted")).toBeNull();
-    expect(screen.getByText("Shortlisted")).toBeTruthy();
+    expect(screen.getByText("No resume yet")).toBeTruthy();
     const openLink = screen.getByRole("link", { name: "Open in Shortlisted" });
     expect(
       screen.getByTestId("discovery-detail-primary-action").contains(openLink),
@@ -1804,4 +1804,37 @@ describe("requested listing assessment", () => {
     fireEvent.click(screen.getByRole("button", { name: "Back to results" }));
     expect(onBackToResults).toHaveBeenCalledOnce();
   });
+});
+
+it("hides a listing without optional reasons and lets a removed shortlist job be added again", async () => {
+  const onDismiss = vi.fn().mockResolvedValue(undefined);
+  const onQueue = vi.fn();
+  render(
+    <MemoryRouter>
+      <DiscoveryDetailPanel
+        discoveryTargets={[]}
+        isJobPending={() => false}
+        onDismissJob={onDismiss}
+        onQueueJob={onQueue}
+        selectedJob={createSelectedJob({
+          id: "returned_job",
+          status: "shortlisted",
+        })}
+      />
+    </MemoryRouter>,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Shortlist job" }));
+  expect(onQueue).toHaveBeenCalledWith("returned_job");
+  expect(screen.queryByText("Open in Shortlisted")).toBeNull();
+  expect(screen.queryByText("Shortlisted")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Not interested" }));
+  fireEvent.click(screen.getByRole("button", { name: "Hide this job only" }));
+  await waitFor(() =>
+    expect(onDismiss).toHaveBeenCalledWith(
+      "returned_job",
+      [],
+      "hide_job",
+      null,
+    ),
+  );
 });

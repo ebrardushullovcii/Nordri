@@ -14,7 +14,10 @@ import type {
   ProofBankEntryFormEntry,
   ReusableAnswerFormEntry,
 } from "./job-finder-types";
-import { deriveJobSourceLabel } from "./job-source-display-name";
+import {
+  deriveJobSourceLabel,
+  isGeneratedJobSourceLabel,
+} from "./job-source-display-name";
 import {
   booleanToSelect,
   buildFullName,
@@ -194,8 +197,9 @@ function toDiscoveryTargets(
     const label = target.label.trim();
     const keptGeneratedLabel =
       startingUrlChanged &&
-      persistedTarget?.label.trim() ===
-        deriveJobSourceLabel(persistedTarget.startingUrl);
+      persistedTarget !== undefined &&
+      label === persistedTarget.label.trim() &&
+      isGeneratedJobSourceLabel(label, persistedTarget.startingUrl);
 
     return {
       instructionStatus: startingUrlChanged ? "missing" : instructionStatus,

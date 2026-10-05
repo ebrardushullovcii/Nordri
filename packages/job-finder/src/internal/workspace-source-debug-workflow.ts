@@ -1169,6 +1169,7 @@ export async function runSourceDebugWorkflow(
       currentUrl: normalizedTarget.startingUrl,
       jobsFound: successfulAttemptCount,
     });
+    executionSignal.throwIfAborted();
     const finalizationStartedAtMs = Date.now();
     await ctx.repository.upsertSourceInstructionArtifact(instructionToPersist);
     await ctx.saveDiscoveryTargetUpdate(
@@ -1228,7 +1229,8 @@ export async function runSourceDebugWorkflow(
     await ctx.persistSourceDebugRun(run);
   } catch (error) {
     const interrupted =
-      error instanceof DOMException && error.name === "AbortError";
+      executionSignal.aborted ||
+      (error instanceof Error && error.name === "AbortError");
     const openFailure = interrupted
       ? null
       : describeSourceDebugOpenFailure(error, normalizedTarget.label);

@@ -20,6 +20,7 @@ import { createJobFinderWorkspaceService } from "./index";
 import { buildInstructionGuidance } from "./internal/workspace-helpers";
 import {
   createSavedJob,
+  createSavedJobDiscoveryProvenance,
   createSeed,
   createSourceInstructionArtifact,
 } from "./workspace-service.test-fixtures";
@@ -1311,7 +1312,7 @@ describe("workspace source-target metadata mirror integrity", () => {
     expect(pointed.id).toBe(planB.id);
     expect(
       targetIn(pointed.searchPreferences).validatedInstructionId,
-    ).toBeNull();
+    ).not.toBeNull();
 
     // ...but plan A's stored snapshot kept the validation, so switching back
     // restores all six fields instead of reverting them.
@@ -1489,6 +1490,58 @@ describe("workspace source-target metadata mirror integrity", () => {
     expect(updatedSnapshots.length).toBeGreaterThanOrEqual(1);
   });
 
+  test("Find jobs searches exactly the current plan's explicit two-of-five sources", async () => {
+    const captured: {
+      siteLabel: string;
+      startingUrls: readonly string[];
+      siteInstructions: readonly string[];
+    }[] = [];
+    const harness = createConcurrencyHarness({
+      browserRuntime: createCapturingAgentRuntime(captured),
+      aiClient: createAgentAiClient(),
+    });
+    const active = await getActiveCampaign(harness.service);
+    const target = active.searchPreferences.discovery.targets[0]!;
+    const targets = Array.from({ length: 5 }, (_, index) => ({
+      ...target,
+      id: index === 0 ? target.id : `subset_${index}`,
+      label: `Source ${index}`,
+      startingUrl: `https://sources.example.test/${index}`,
+      enabled: true,
+    }));
+    await harness.service.saveSearchPreferences({
+      ...active.searchPreferences,
+      discovery: { ...active.searchPreferences.discovery, targets },
+    });
+    const updated = await getActiveCampaign(harness.service);
+    await harness.service.saveCampaign({
+      ...toCampaignInput(updated),
+      sourceSelectionMode: "selected",
+      sourceTargetIds: targets.slice(0, 2).map((source) => source.id),
+      searchPreferences: {
+        ...active.searchPreferences,
+        discovery: { ...active.searchPreferences.discovery, targets },
+      },
+    });
+    // Profile keeps all five enabled; it must not determine this plan's run.
+    expect(
+      (
+        await harness.repository.getSearchPreferences()
+      ).discovery.targets.filter((source) => source.enabled),
+    ).toHaveLength(5);
+    captured.length = 0;
+    await harness.service.runAgentDiscovery();
+    expect(captured.map((call) => call.siteLabel)).toEqual([
+      "Source 0",
+      "Source 1",
+    ]);
+    const run = (await harness.repository.getDiscoveryState()).recentRuns[0]!;
+    expect(run.summary.targetsPlanned).toBe(2);
+    expect(run.targetExecutions.map((execution) => execution.targetId)).toEqual(
+      targets.slice(0, 2).map((source) => source.id),
+    );
+  });
+
   test("an excluded source is not discovered by the run owned by its plan", async () => {
     const captured: {
       siteLabel: string;
@@ -1570,6 +1623,7 @@ describe("workspace source-target metadata mirror integrity", () => {
       toCampaignInput(planA, {
         id: null,
         name: "Plan B",
+        sourceSelectionMode: "selected",
         sourceTargetIds: [],
         searchPreferences: {
           ...planA.searchPreferences,
@@ -1618,8 +1672,8 @@ describe("workspace source-target metadata mirror integrity", () => {
     }
     expect(
       state?.campaigns.find((campaign) => campaign.name === "Plan B")
-        ?.searchPreferences.discovery.targets[0]?.enabled,
-    ).toBe(false);
+        ?.sourceTargetIds,
+    ).toEqual([]);
   });
 
   test("profile edits keep both plans' explicit source scopes and their next runs", async () => {
@@ -1719,7 +1773,7 @@ describe("workspace source-target metadata mirror integrity", () => {
 
     const profileSourceBefore = (await repository.getSearchPreferences())
       .discovery.targets[0];
-    await service.saveCampaign(toCampaignInput(planA, { sourceTargetIds: [] }));
+    await service.saveCampaign(toCampaignInput(planA, { sourceTargetIds: [], sourceSelectionMode: "selected" }));
 
     const profileSourceAfter =
       (await repository.getSearchPreferences()).discovery.targets[0];
@@ -1734,4 +1788,83 @@ describe("workspace source-target metadata mirror integrity", () => {
         ?.sourceTargetIds,
     ).toEqual(planB.sourceTargetIds);
   });
+});
+
+test("adding sources to a default plan preserves all Profile switches across plan changes", async () => {
+  const { repository, service } = createConcurrencyHarness();
+  const defaultPlan = await getActiveCampaign(service);
+  const oldSource = defaultPlan.searchPreferences.discovery.targets[0]!;
+  // Older callers omit sourceSelectionMode when changing only a plan name.
+  const renamed = await service.saveCampaign(
+    toCampaignInput(defaultPlan, { name: "Renamed default" }),
+  );
+  expect(
+    renamed.campaigns.find((plan) => plan.id === defaultPlan.id)
+      ?.sourceSelectionMode,
+  ).toBe("profile");
+  const added = Array.from({ length: 5 }, (_, index) => ({
+    ...oldSource,
+    id: `new_${index}`,
+    startingUrl: `https://new-${index}.example.test/jobs`,
+    enabled: true,
+  }));
+  await service.saveSearchPreferences({
+    ...defaultPlan.searchPreferences,
+    discovery: {
+      ...defaultPlan.searchPreferences.discovery,
+      targets: [oldSource, ...added],
+    },
+  });
+  const snapshot = await service.getWorkspaceSnapshot();
+  expect(
+    snapshot.campaigns.find((plan) => plan.id === defaultPlan.id)?.sourceTargetIds,
+  ).toEqual([oldSource.id, ...added.map((source) => source.id)]);
+  const second = await service.saveCampaign(
+    toCampaignInput(
+      snapshot.campaigns.find((plan) => plan.id === defaultPlan.id)!,
+      {
+        id: null,
+        name: "Local only",
+        sourceTargetIds: [added[0]!.id],
+        sourceSelectionMode: "selected",
+      },
+    ),
+  );
+  const local = second.campaigns.find((plan) => plan.name === "Local only")!;
+  await service.selectCampaign(local.id);
+  await service.selectCampaign(defaultPlan.id);
+  expect(
+    (await repository.getSearchPreferences()).discovery.targets.map(
+      (source) => source.enabled,
+    ),
+  ).toEqual(Array(6).fill(true));
+  expect(
+    (await repository.getCampaignState())?.campaigns.find(
+      (plan) => plan.id === defaultPlan.id,
+    )?.sourceTargetIds,
+  ).toHaveLength(6);
+});
+
+test("removing a source retains its saved label and URL on existing jobs", async () => {
+  const seed = createSeed();
+  const source = seed.searchPreferences.discovery.targets[0]!;
+  const original = seed.savedJobs![0]!;
+  seed.savedJobs = [{
+    ...original,
+    provenance: [createSavedJobDiscoveryProvenance({
+      targetId: source.id,
+      startingUrl: source.startingUrl,
+      adapterKind: "auto",
+      discoveredAt: "2026-10-04T12:00:00.000Z",
+    })],
+  }];
+  const { repository, service } = createConcurrencyHarness({ seed });
+  await service.saveProfileAndSearchPreferences(seed.profile!, {
+    ...seed.searchPreferences,
+    discovery: { ...seed.searchPreferences.discovery, targets: [] },
+  });
+  expect(
+    (await repository.listSavedJobs()).find((job) => job.id === original.id)
+      ?.provenance[0],
+  ).toMatchObject({ sourceLabel: source.label, startingUrl: source.startingUrl });
 });

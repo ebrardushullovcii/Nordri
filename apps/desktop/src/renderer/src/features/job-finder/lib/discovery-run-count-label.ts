@@ -364,11 +364,9 @@ export function formatDiscoveryResultBandLabel(
     // headline says that instead of leading with a zero that reads as "we
     // found you nothing".
     if (worthOpening === 0) {
-      return `${titleMatches} matched your role, not scored yet · ${alsoFound} also found`;
+      return `${titleMatches} awaiting assessment · ${alsoFound} also found`;
     }
-    return `${worthOpening} worth opening · ${titleMatches} title ${
-      titleMatches === 1 ? "match" : "matches"
-    } · ${alsoFound} also found`;
+    return `${worthOpening} worth opening · ${titleMatches} awaiting assessment · ${alsoFound} also found`;
   }
 
   if (alsoFound > 0) {

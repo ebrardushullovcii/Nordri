@@ -662,6 +662,7 @@ export function createWorkspaceApplicationMethods(
       if (options.throwOnFailure) throw error;
       // The shortlist itself succeeded; the body stays unread for now and the
       // job records nothing, so the next look can try again.
+      console.warn("[shortlist] Listing assessment failed", error);
     }
   }
 
@@ -4527,9 +4528,14 @@ export function createWorkspaceApplicationMethods(
         }));
       }
 
-      await readListingDetailForShortlistedJob(jobId);
-
-      return ctx.getWorkspaceSnapshot();
+      // Saving a shortlist choice must not wait for a full listing read.
+      ctx.listingAssessmentJobIds?.add(jobId);
+      const snapshot = await ctx.getWorkspaceSnapshot();
+      void readListingDetailForShortlistedJob(jobId).finally(() => {
+        ctx.listingAssessmentJobIds?.delete(jobId);
+        ctx.onListingAssessmentFinished?.();
+      });
+      return snapshot;
     },
     async setJobResumeApplicationMode(
       jobId,

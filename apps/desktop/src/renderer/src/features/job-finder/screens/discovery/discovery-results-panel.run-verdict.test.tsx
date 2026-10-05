@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
+import { DiscoveryRunRecordSchema } from "@nordri/contracts";
 import type { BrowserSessionState } from "@nordri/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -237,4 +238,178 @@ describe("DiscoveryResultsPanel newest-run empty-state verdicts", () => {
     expect(screen.queryByText("Ready for your first search")).toBeNull();
     expect(screen.queryByText("No matches from this search")).toBeNull();
   });
+});
+
+it("keeps recorded source explanations and coverage after a no-match search", () => {
+  const run = DiscoveryRunRecordSchema.parse({
+    id: "empty",
+    state: "completed",
+    scope: "run_all",
+    startedAt: "2026-08-23T10:00:00.000Z",
+    completedAt: "2026-08-23T10:01:00.000Z",
+    targetIds: ["empty", "populated"],
+    targetExecutions: [
+      { targetId: "empty", adapterKind: "auto", state: "completed" },
+      {
+        targetId: "populated",
+        adapterKind: "auto",
+        state: "completed",
+        jobsReviewed: 12,
+      },
+    ],
+    activity: [
+      {
+        id: "empty-note",
+        runId: "empty",
+        timestamp: "2026-08-23T10:01:00.000Z",
+        kind: "progress",
+        stage: "target",
+        targetId: "empty",
+        terminalState: "completed",
+        message: "No listings were published.",
+      },
+      {
+        id: "populated-note",
+        runId: "empty",
+        timestamp: "2026-08-23T10:01:00.000Z",
+        kind: "progress",
+        stage: "target",
+        targetId: "populated",
+        terminalState: "completed",
+        message: "No project management roles in the listings read.",
+      },
+    ],
+    summary: { outcome: "completed", targetsPlanned: 2, targetsCompleted: 2 },
+  });
+  render(
+    <MemoryRouter>
+      <DiscoveryResultsPanel
+        browserSession={browserSession}
+        jobs={[]}
+        onSelectJob={vi.fn()}
+        selectedJob={null}
+        hasCompletedSearch
+        latestRun={run}
+      />
+    </MemoryRouter>,
+  );
+  expect(screen.getByText("No listings were published.")).toBeTruthy();
+  expect(
+    screen.getByText("No project management roles in the listings read."),
+  ).toBeTruthy();
+  expect(screen.getByText(/12 listings recorded/)).toBeTruthy();
+  expect(
+    screen.getByTestId("discovery-source-summaries").hasAttribute("open"),
+  ).toBe(false);
+});
+
+it("shows partial results and retries the failed source directly", () => {
+  const run = DiscoveryRunRecordSchema.parse({
+    id: "partial",
+    state: "completed",
+    scope: "run_all",
+    startedAt: "2026-08-23T10:00:00.000Z",
+    completedAt: "2026-08-23T10:01:00.000Z",
+    targetIds: ["blocked"],
+    targetExecutions: [
+      { targetId: "blocked", adapterKind: "auto", state: "failed" },
+    ],
+    summary: { outcome: "completed", targetsPlanned: 1, targetsCompleted: 1 },
+  });
+  const onRetrySource = vi.fn();
+  render(
+    <MemoryRouter>
+      <DiscoveryResultsPanel
+        browserSession={browserSession}
+        jobs={[]}
+        onSelectJob={vi.fn()}
+        selectedJob={null}
+        latestRun={run}
+        onRetrySource={onRetrySource}
+      />
+    </MemoryRouter>,
+  );
+  expect(screen.getByText(/Partial results · 1 source failed/)).toBeTruthy();
+  expect(
+    screen.getByTestId("discovery-source-summaries").hasAttribute("open"),
+  ).toBe(false);
+  fireEvent.click(screen.getByText(/Partial results · 1 source failed/));
+  fireEvent.click(screen.getByRole("button", { name: "Retry A job source" }));
+  expect(onRetrySource).toHaveBeenCalledWith("blocked");
+});
+
+it.each(["running", "cancelled"] as const)(
+  "uses accurate source status for a %s run, with plain errors and singular counts",
+  (state) => {
+    const run = DiscoveryRunRecordSchema.parse({
+      id: "source-copy",
+      state,
+      scope: "run_all",
+      startedAt: "2026-08-23T10:00:00.000Z",
+      targetIds: ["failed", "waiting"],
+      targetExecutions: [
+        {
+          targetId: "failed",
+          adapterKind: "auto",
+          state: "failed",
+          warning:
+            "page.goto: Timeout 30000ms exceeded. Call log: \u001b[2m waiting",
+          jobsReviewed: 1,
+          jobsPersisted: 1,
+          duplicatesMerged: 1,
+        },
+        { targetId: "waiting", adapterKind: "auto", state: "planned" },
+      ],
+      summary: {
+        outcome: state === "cancelled" ? "cancelled" : "running",
+        targetsPlanned: 2,
+        targetsCompleted: 1,
+      },
+    });
+    render(
+      <MemoryRouter>
+        <DiscoveryResultsPanel
+          browserSession={browserSession}
+          jobs={[]}
+          selectedJob={null}
+          onSelectJob={vi.fn()}
+          latestRun={run}
+          isSearchInProgress={state === "running"}
+        />
+      </MemoryRouter>,
+    );
+    const summary = screen.getByTestId("discovery-source-summaries");
+    expect(summary.hasAttribute("open")).toBe(false);
+    fireEvent.click(summary.querySelector("summary")!);
+    expect(
+      screen.getByText(
+        state === "running" ? /1 source failed so far/ : /Search stopped/,
+      ),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(
+        "1 listing recorded · 1 job saved · 1 duplicate merged.",
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByText(/page.goto/)).toBeNull();
+    if (state === "cancelled")
+      expect(screen.getByText(/Not searched/)).toBeTruthy();
+  },
+);
+
+it("names a background plan even while the current plan has no results", () => {
+  render(
+    <MemoryRouter>
+      <DiscoveryResultsPanel
+        browserSession={browserSession}
+        jobs={[]}
+        selectedJob={null}
+        onSelectJob={vi.fn()}
+        liveStatusLine="Local B is searching in the background, started 2:08 AM."
+      />
+    </MemoryRouter>,
+  );
+  expect(
+    screen.getByTestId("discovery-results-status-line").textContent,
+  ).toContain("Local B is searching in the background");
 });

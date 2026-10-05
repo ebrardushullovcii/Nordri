@@ -531,7 +531,9 @@ export function DiscoveryDetailPanel({
     employerExclusionPreview?.jobId === selectedJob?.id
       ? employerExclusionPreview
       : null;
-  const isAlreadyShortlisted = selectedJob?.status !== "discovered";
+  const isAlreadyShortlisted =
+    selectedJob !== null &&
+    !["discovered", "shortlisted"].includes(selectedJob.status);
   const existingNeedsYouApplication = selectedJob
     ? applicationRecords.find(
         (record) =>
@@ -846,7 +848,9 @@ export function DiscoveryDetailPanel({
             only earns its place once the job has moved on to Shortlisted. */}
         {selectedJob &&
         readinessStatus &&
-        selectedJob.status !== "discovered" ? (
+        ["drafting", "ready_for_review", "approved", "submitted"].includes(
+          selectedJob.status,
+        ) ? (
           <StatusBadge tone={readinessStatus.tone}>
             {readinessStatus.label}
           </StatusBadge>
@@ -1477,7 +1481,7 @@ export function DiscoveryDetailPanel({
                 ) : null}
                 <div className="flex flex-wrap gap-2">
                   <Button
-                    disabled={isFeedbackPending || feedbackReasons.length === 0}
+                    disabled={isFeedbackPending}
                     onClick={() => {
                       void dismissSelectedJob(selectedJob.id);
                     }}

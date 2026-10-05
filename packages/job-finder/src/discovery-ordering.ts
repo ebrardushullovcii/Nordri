@@ -211,7 +211,8 @@ export function compareDiscoveryFitTieBreaks(
  * the rediscovery rank audit and the Find jobs screen. The chain is total and
  * ends in the job id, so the sequence is a pure function of the candidate set:
  *
- * 0. listings reported closed sink below every listing still open;
+ * 0. model-judged rows outrank unjudged listings;
+ * 0a. within that band, closed listings sink below listings still open;
  * 1. clear mismatches (`recommendation: "skip"`) sink below reviewable jobs;
  * 2. authoritative assessments outrank provisional/unbound assessments;
  * 2a. an on-site role outside every saved area sinks below in-area and remote
@@ -227,8 +228,11 @@ export function compareDiscoveryJobs(
   left: OrderableDiscoveryJob,
   right: OrderableDiscoveryJob,
 ): number {
-  // A listing reported closed never outranks one a person can still apply to,
-  // however well it scores.
+  const judgedDelta =
+    Number(!left.matchAssessment.judgment) -
+    Number(!right.matchAssessment.judgment);
+  if (judgedDelta !== 0) return judgedDelta;
+  // Within the same assessment band, closed listings sink below open ones.
   const closedDelta =
     getClosedListingPenalty(left) - getClosedListingPenalty(right);
   if (closedDelta !== 0) {

@@ -761,3 +761,20 @@ describe("AI timeout recovery", () => {
     expect(recovery?.headline).not.toBe("The AI service stopped responding.");
   });
 });
+
+it("says a completed run is partial in both its headline and toast", () => {
+  const feedback = createDiscoveryRunSucceededFeedback(
+    null,
+    "12 seen · 8 unique · 6 new · 8 kept",
+    6,
+    2,
+  );
+  expect(feedback.headline).toContain("Search finished, 2 sources failed");
+  expect(feedback.toast?.title).toBe("Search finished, 2 sources failed");
+  expect(feedback.partial).toBe(true);
+});
+
+it("describes new jobs as saved rather than promising all are visible matches", () => {
+  const feedback = createDiscoveryRunSucceededFeedback(null, null, 3);
+  expect(feedback.toast?.description).toBe("3 new jobs saved to this plan.");
+});

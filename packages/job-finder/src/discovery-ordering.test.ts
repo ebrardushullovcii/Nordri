@@ -378,3 +378,27 @@ describe("equal displayed fit ordering", () => {
     ]);
   });
 });
+
+it("puts model-judged jobs above unjudged listings even when an old unjudged score was higher", () => {
+  const unjudged = {
+    id: "unread",
+    title: "Overseas unrelated role",
+    company: "Synthetic",
+    matchAssessment: {
+      score: 99,
+      recommendation: "strong_fit",
+      judgment: null,
+    },
+  } as SavedJob;
+  const judged = {
+    ...unjudged,
+    id: "judged",
+    title: "UK data engineer",
+    matchAssessment: {
+      ...unjudged.matchAssessment,
+      score: 84,
+      judgment: { source: "batch" },
+    },
+  } as SavedJob;
+  expect(compareDiscoveryJobs(judged, unjudged)).toBeLessThan(0);
+});

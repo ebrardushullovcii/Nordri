@@ -281,7 +281,11 @@ export function ApplicationsRecordsPanel({
           {/* A panel title, not an eyebrow: the base heading scale already
               gives it 19px/600, and the previous bold uppercase primary
               treatment made it heavier than the page's own H1. */}
-          <h2 className="min-w-0">All applications</h2>
+          <h2 className="min-w-0">
+            {searchPlanName
+              ? `${searchPlanName} applications`
+              : "All applications"}
+          </h2>
           <Badge variant="section">
             {recordCount} {recordCount === 1 ? "application" : "applications"}
           </Badge>

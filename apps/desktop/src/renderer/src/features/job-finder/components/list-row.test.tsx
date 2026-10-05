@@ -59,7 +59,7 @@ function createBadgeHeavyJob(): SavedJob {
     ...createSavedJob(),
     id: "list_row_badge_heavy_01",
     sourceJobId: "list_row_badge_heavy_source_01",
-    status: "shortlisted",
+    status: "drafting",
     listingActivity: {
       status: "inactive",
       observedAt: "2026-07-30T10:00:00.000Z",

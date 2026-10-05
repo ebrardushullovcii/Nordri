@@ -234,11 +234,11 @@ export function buildLiveRunRecord(
     scope: isSingleTargetRun ? "single_target" : "run_all",
     startedAt: firstEvent.timestamp,
     completedAt: null,
-    targetIds: enabledTargets.map((target) => target.id),
+    targetIds: targetExecutions.map((execution) => execution.targetId),
     targetExecutions,
     activity: runEvents,
     summary: {
-      targetsPlanned: enabledTargets.length,
+      targetsPlanned: targetExecutions.length,
       targetsCompleted,
       validJobsFound: targetExecutions.reduce(
         (total, execution) => total + execution.jobsFound,

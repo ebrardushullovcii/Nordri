@@ -86,6 +86,33 @@ export function parseJobSourceUrls(input: string): {
   for (const rawValue of input.split(/[\n,]+/u)) {
     const value = rawValue.trim();
     if (!value) continue;
+    // Addresses cannot contain literal spaces. A list entered without a
+    // paste event uses the same parser as pasted input.
+    if (/\s/u.test(value)) {
+      const entries = value.split(/\s+/u);
+      let invalidWords: string[] = [];
+      const flushInvalid = () => {
+        if (invalidWords.length) invalid.push(invalidWords.join(" "));
+        invalidWords = [];
+      };
+      for (const entry of entries) {
+        const address =
+          /^https?:\/\//iu.test(entry) || entry.includes(".")
+            ? canonicalSourceUrl(entry)
+            : null;
+        if (!address) {
+          invalidWords.push(entry);
+          continue;
+        }
+        flushInvalid();
+        if (!seen.has(address)) {
+          seen.add(address);
+          urls.push(address);
+        }
+      }
+      flushInvalid();
+      continue;
+    }
     const url = canonicalSourceUrl(value);
     if (!url) {
       invalid.push(value);

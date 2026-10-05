@@ -219,7 +219,7 @@ export function describeScheduledRunCompletion(
   if (kept === 0) {
     return "Your scheduled search finished and kept nothing new this time.";
   }
-  const newCount = report.new;
+  const newCount = report.new === null ? null : Math.min(report.new, kept);
   const newClause =
     newCount === null || newCount === 0
       ? ""
@@ -503,6 +503,9 @@ export async function commitCampaignRunTerminal(input: {
       ...(latestRun.summary.report ??
         buildDiscoveryRunReport(latestRun, measuredAt)),
       alreadyHere: retentionCounts.alreadyHere,
+      new: retainedRunJobs.filter(
+        (job) => !input.beforeJobProvenanceFingerprints.has(job.id),
+      ).length,
       retained: retentionCounts.retained,
       worthOpening: retentionCounts.worthOpening,
       retentionLimitApplied: campaign.limits.retainedJobTarget,
@@ -1069,10 +1072,31 @@ export function createWorkspaceCampaignMethods(input: {
               );
             }
 
+            const existingSourceIds = new Set(existing?.sourceTargetIds ?? []);
+            const sourceChoicesUnchanged =
+              normalizedSourceTargetIds.length === existingSourceIds.size &&
+              normalizedSourceTargetIds.every((id) =>
+                existingSourceIds.has(id),
+              );
             const campaign = existing
               ? {
                   ...existing,
                   ...campaignInput,
+                  sourceSelectionMode:
+                    campaignInput.sourceSelectionMode ??
+                    (sourceChoicesUnchanged
+                      ? existing.sourceSelectionMode
+                      : undefined) ??
+                    (normalizedSourceTargetIds.length === 0
+                      ? "profile"
+                      : "selected"),
+                  searchPreferences: {
+                    ...campaignInput.searchPreferences,
+                    discovery: {
+                      ...campaignInput.searchPreferences.discovery,
+                      targets: current.searchPreferences.discovery.targets,
+                    },
+                  },
                   sourceTargetIds: normalizedSourceTargetIds,
                   id: existing.id,
                   createdAt: existing.createdAt,
@@ -1109,6 +1133,18 @@ export function createWorkspaceCampaignMethods(input: {
                     now,
                   }),
                   ...campaignInput,
+                  sourceSelectionMode:
+                    campaignInput.sourceSelectionMode ??
+                    (normalizedSourceTargetIds.length === 0
+                      ? "profile"
+                      : "selected"),
+                  searchPreferences: {
+                    ...campaignInput.searchPreferences,
+                    discovery: {
+                      ...campaignInput.searchPreferences.discovery,
+                      targets: current.searchPreferences.discovery.targets,
+                    },
+                  },
                   sourceTargetIds: normalizedSourceTargetIds,
                   id: newCampaignId,
                   createdAt: now,
@@ -1155,7 +1191,13 @@ export function createWorkspaceCampaignMethods(input: {
               campaignState: nextState,
               searchPreferences:
                 nextState.activeCampaignId === scheduledCampaign.id
-                  ? scheduledCampaign.searchPreferences
+                  ? {
+                      ...scheduledCampaign.searchPreferences,
+                      discovery: {
+                        ...scheduledCampaign.searchPreferences.discovery,
+                        targets: current.searchPreferences.discovery.targets,
+                      },
+                    }
                   : current.searchPreferences,
             };
           },
@@ -1210,7 +1252,13 @@ export function createWorkspaceCampaignMethods(input: {
             return {
               result: null,
               campaignState: nextState,
-              searchPreferences: selected.searchPreferences,
+              searchPreferences: {
+                ...selected.searchPreferences,
+                discovery: {
+                  ...selected.searchPreferences.discovery,
+                  targets: current.searchPreferences.discovery.targets,
+                },
+              },
             };
           },
         );

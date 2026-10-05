@@ -1318,6 +1318,7 @@ export const SavedJobDiscoveryProvenanceSchema = z.object({
   providerKey: SourceIntelligenceProviderKeySchema.nullable().default(null),
   providerBoardToken: NonEmptyStringSchema.nullable().default(null),
   titleTriageOutcome: DiscoveryTitleTriageOutcomeSchema.default("pass"),
+  sourceLabel: NonEmptyStringSchema.optional(),
   // What this one source showed for the job. A job seen on several sources is
   // built from exactly one of these sightings (ADR 0030), so each keeps its own
   // listing and application link instead of the latest one overwriting the job.
@@ -1380,7 +1381,7 @@ export type EmployerExclusionReference = z.infer<
 const DiscoveryFeedbackObjectSchema = z.object({
   version: z.literal(1),
   revision: z.number().int().positive(),
-  reasons: z.array(DiscoveryFeedbackReasonSchema).min(1).max(9),
+  reasons: z.array(DiscoveryFeedbackReasonSchema).max(9),
   recordedAt: IsoDateTimeSchema,
   // Status the job held when it was hidden, so "Show again" can undo the
   // dismissal exactly instead of downgrading every hidden job to discovered.
@@ -1633,6 +1634,7 @@ export type ReviewQueueResumeReviewState = z.infer<
 >;
 
 export const ReviewQueueItemSchema = z.object({
+  listingAssessmentPending: z.boolean().optional(),
   jobId: NonEmptyStringSchema,
   title: NonEmptyStringSchema,
   company: NonEmptyStringSchema,

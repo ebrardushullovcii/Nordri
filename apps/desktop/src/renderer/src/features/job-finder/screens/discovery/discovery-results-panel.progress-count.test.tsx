@@ -63,7 +63,7 @@ function renderStreamingResults(jobs: readonly SavedJob[]) {
 /** The count sentence that leads the results status line while a run streams. */
 function getProgressCount(): string {
   const line = screen.getByTestId("discovery-results-status-line");
-  return /^.*?ready to review\./.exec(line.textContent ?? "")?.[0] ?? "";
+  return /^.*?(?:found|shown)\./.exec(line.textContent ?? "")?.[0] ?? "";
 }
 
 afterEach(() => {
@@ -93,13 +93,13 @@ describe("DiscoveryResultsPanel streaming progress count", () => {
       createJob("beta", "Designer beta"),
     ]);
 
-    expect(getProgressCount()).toBe("2 matches ready to review.");
+    expect(getProgressCount()).toBe("2 listings found.");
   });
 
   it("singularizes a single streaming match", () => {
     renderStreamingResults([createJob("alpha", "Engineer alpha")]);
 
-    expect(getProgressCount()).toBe("1 match ready to review.");
+    expect(getProgressCount()).toBe("1 listing found.");
   });
 
   it("reports the visible subset when a persisted query hides results", () => {
@@ -118,7 +118,7 @@ describe("DiscoveryResultsPanel streaming progress count", () => {
 
     // The persisted query survives remounts, so the callout must never claim
     // the raw total while the visible list is narrower.
-    expect(getProgressCount()).toBe("1 of 2 matches ready to review.");
+    expect(getProgressCount()).toBe("1 of 2 listings shown.");
     expect(screen.getByText("Designer beta")).toBeTruthy();
     expect(screen.queryByText("Engineer alpha")).toBeNull();
   });
@@ -136,39 +136,27 @@ describe("DiscoveryResultsPanel streaming progress count", () => {
       createJob("alpha", "Engineer alpha"),
       createJob("beta", "Designer beta"),
     ]);
-    expect(getProgressCount()).toBe("1 of 2 matches ready to review.");
+    expect(getProgressCount()).toBe("1 of 2 listings shown.");
 
     fireEvent.change(screen.getByLabelText("Find a job"), {
       target: { value: "" },
     });
 
-    expect(getProgressCount()).toBe("2 matches ready to review.");
+    expect(getProgressCount()).toBe("2 listings found.");
     expect(screen.getByText("Engineer alpha")).toBeTruthy();
   });
 });
 
 describe("getDiscoveryProgressCountLabel", () => {
   it("keeps identical totals phrased as the full result set", () => {
-    expect(getDiscoveryProgressCountLabel(0, 0)).toBe(
-      "0 matches ready to review.",
-    );
-    expect(getDiscoveryProgressCountLabel(1, 1)).toBe(
-      "1 match ready to review.",
-    );
-    expect(getDiscoveryProgressCountLabel(7, 7)).toBe(
-      "7 matches ready to review.",
-    );
+    expect(getDiscoveryProgressCountLabel(0, 0)).toBe("0 listings found.");
+    expect(getDiscoveryProgressCountLabel(1, 1)).toBe("1 listing found.");
+    expect(getDiscoveryProgressCountLabel(7, 7)).toBe("7 listings found.");
   });
 
   it("phrases filtered subsets as visible-of-total", () => {
-    expect(getDiscoveryProgressCountLabel(0, 2)).toBe(
-      "0 of 2 matches ready to review.",
-    );
-    expect(getDiscoveryProgressCountLabel(1, 2)).toBe(
-      "1 of 2 matches ready to review.",
-    );
-    expect(getDiscoveryProgressCountLabel(3, 4)).toBe(
-      "3 of 4 matches ready to review.",
-    );
+    expect(getDiscoveryProgressCountLabel(0, 2)).toBe("0 of 2 listings shown.");
+    expect(getDiscoveryProgressCountLabel(1, 2)).toBe("1 of 2 listings shown.");
+    expect(getDiscoveryProgressCountLabel(3, 4)).toBe("3 of 4 listings shown.");
   });
 });

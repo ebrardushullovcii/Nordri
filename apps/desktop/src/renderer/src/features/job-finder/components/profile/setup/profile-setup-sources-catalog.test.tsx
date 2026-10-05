@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import {
+  cleanup,
   fireEvent,
   render,
   screen,
@@ -26,6 +27,8 @@ import {
 } from "../../../lib/profile-editor";
 import type { DiscoveryTargetEditorValue } from "../../../lib/job-finder-types";
 import { ProfileSetupTargetingStep } from "./profile-setup-step-sections";
+
+afterEach(cleanup);
 
 const profile = CandidateProfileSchema.parse({
   id: "candidate_setup_sources_catalog",
@@ -519,9 +522,7 @@ describe("ProfileSetupTargetingStep guided source catalog", () => {
       target: { value: "example.com/careers" },
     });
     expect(
-      await screen.findByText(
-        "Enter a complete http or https URL before this source can be used.",
-      ),
+      await screen.findByText("Enter a complete http or https URL."),
     ).toBeTruthy();
     expect(urlInput.getAttribute("aria-invalid")).toBe("true");
     expect(addButton.hasAttribute("disabled")).toBe(true);
@@ -607,26 +608,29 @@ describe("ProfileSetupTargetingStep guided source catalog", () => {
     expect(getDiscoveryReady()).toBe(true);
   });
 
-  it("splits a multiline clipboard paste into nine separately enabled sources", () => {
+  it("splits a multiline clipboard paste into twelve separately enabled sources", () => {
     render(<SetupCatalogHarness targets={[]} />);
     const urls = Array.from(
-      { length: 9 },
+      { length: 12 },
       (_, index) => `https://source-${index}.example.test/jobs`,
     );
-    const input = screen.getByLabelText("Careers or job-board URL");
+    const input = screen.getByLabelText<HTMLInputElement>(
+      "Careers or job-board URL",
+    );
     fireEvent.paste(input, {
       clipboardData: { getData: () => urls.join("\n") },
     });
+    expect(input.checkValidity()).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: "Add and turn on" }));
-    expect(screen.getByText("9 sources")).toBeTruthy();
-    expect(screen.getByText(/Added 9 sources and turned them on/)).toBeTruthy();
+    expect(screen.getByText("12 sources")).toBeTruthy();
+    expect(screen.getByText(/Added 12 sources and turned them on/)).toBeTruthy();
     const cards = Array.from(
       document.querySelectorAll("[data-profile-setup-source-card]"),
     );
-    expect(cards).toHaveLength(9);
+    expect(cards).toHaveLength(12);
     for (const [index, url] of urls.entries())
       expect(cards[index]?.textContent).toContain(new URL(url).host);
-    expect(screen.getByText("9 of 9 sources enabled for search")).toBeTruthy();
+    expect(screen.getByText("12 of 12 sources enabled for search")).toBeTruthy();
   });
 
   it("rejects a multiline paste containing an invalid address", () => {
@@ -795,4 +799,46 @@ describe("ProfileSetupTargetingStep guided source catalog", () => {
     expect(onRunSourceDebug).not.toHaveBeenCalled();
     expect(screen.getByText("Acme careers")).toBeTruthy();
   });
+});
+
+it("splits pasted roles using the same semicolon separator as places", () => {
+  render(<SetupCatalogHarness targets={[]} />);
+  const input = screen.getByPlaceholderText("Add a target role");
+  fireEvent.change(input, {
+    target: {
+      value: "Junior Data Analyst; Junior Data Scientist; Working Student Data Analytics",
+    },
+  });
+  fireEvent.keyDown(input, { key: "Enter" });
+  for (const role of [
+    "Junior Data Analyst",
+    "Junior Data Scientist",
+    "Working Student Data Analytics",
+  ]) {
+    expect(screen.getByText(role)).toBeTruthy();
+  }
+});
+
+it("validates and splits URL lists filled without a paste event", () => {
+  render(<SetupCatalogHarness targets={[]} />);
+  const field = screen.getByLabelText("Careers or job-board URL");
+  fireEvent.change(field, {
+    target: { value: "https://one.example/careers https://two.example/jobs" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Add and turn on" }));
+  expect(screen.getAllByText("one.example/careers").length).toBeGreaterThan(0);
+  expect(screen.getAllByText("two.example/jobs").length).toBeGreaterThan(0);
+  fireEvent.change(field, {
+    target: {
+      value:
+        "https://one.example/careers not a web address https://two.example/jobs",
+    },
+  });
+  expect(screen.getByText(/is not a web address/)).toBeTruthy();
+  expect(
+    screen
+      .getByRole("button", { name: "Add and turn on" })
+      .hasAttribute("disabled"),
+  ).toBe(true);
+  expect(screen.queryByText(/Added 2 sources and turned them on/)).toBeNull();
 });

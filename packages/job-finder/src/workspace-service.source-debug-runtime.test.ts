@@ -1072,3 +1072,25 @@ describe("createJobFinderWorkspaceService", () => {
   });
 
 });
+
+test("cancellation with an ordinary runtime error does not mark a healthy source broken", async () => {
+  const controller = new AbortController();
+  const base = createCatalogBrowserSessionRuntime({ sessions: [], catalog: [] });
+  const { workspaceService } = createWorkspaceServiceHarness({
+    seed: createSeed(),
+    aiClient: createAgentAiClient(),
+    browserRuntime: {
+      ...base,
+      runAgentDiscovery: async () => {
+        controller.abort();
+        throw new Error("The operation was stopped");
+      },
+    },
+  });
+  const snapshot = await workspaceService.runSourceDebug(
+    "target_linkedin_default",
+    controller.signal,
+  );
+  expect(snapshot.recentSourceDebugRuns[0]?.state).toBe("cancelled");
+  expect(snapshot.searchPreferences.discovery.targets[0]?.staleReason).toBeNull();
+});

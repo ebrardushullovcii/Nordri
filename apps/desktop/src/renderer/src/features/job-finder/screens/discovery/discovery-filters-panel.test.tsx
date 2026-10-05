@@ -1434,7 +1434,7 @@ describe("DiscoveryFiltersPanel", () => {
     );
 
     // One plain status line under the Results header (ADR 0042).
-    expect(getByText(/^1 match ready to review\./)).toBeTruthy();
+    expect(getByText(/^1 listing found\./)).toBeTruthy();
     expect(getByText(/remaining sources/i)).toBeTruthy();
     expect(getByText("Senior Product Designer")).toBeTruthy();
     expect(queryByRole("listbox")).toBeNull();

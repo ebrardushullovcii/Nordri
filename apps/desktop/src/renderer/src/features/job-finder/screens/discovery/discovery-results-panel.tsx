@@ -23,6 +23,9 @@ import {
   getDiscoveryRunPhase,
   workModeValues,
 } from "@nordri/contracts";
+import { DiscoveryAssessmentContinuation } from "./discovery-assessment-continuation";
+import { jobSourceLabel } from "../../lib/job-source-display-name";
+import { discoverySourceFailureCopy } from "./discovery-source-failure-copy";
 import { ChevronDown, LoaderCircle } from "lucide-react";
 import { Badge } from "@renderer/components/ui/badge";
 import { Button } from "@renderer/components/ui/button";
@@ -57,6 +60,7 @@ import {
 } from "@renderer/features/job-finder/lib/job-employer-location-display";
 import { cn } from "@renderer/lib/cn";
 import {
+  formatTimestamp,
   formatStatusLabel,
   formatWorkModeLabel,
   getApplicationTone,
@@ -100,6 +104,8 @@ import {
 } from "./discovery-search-readiness";
 
 interface DiscoveryResultsPanelProps {
+  planName?: string | null;
+  onAssessJobListing?: (jobId: string) => Promise<void>;
   alsoFoundCount?: number;
   areAlsoFoundShown?: boolean;
   browserSession: BrowserSessionState;
@@ -112,6 +118,7 @@ interface DiscoveryResultsPanelProps {
   hasCompletedSearch?: boolean;
   hiddenAlsoFoundCount?: number;
   inAreaJobCount?: number;
+  pendingLocationJobCount?: number;
   isSearchInProgress?: boolean;
   /**
    * What the running search is doing right now, in the agent's words: the
@@ -131,7 +138,15 @@ interface DiscoveryResultsPanelProps {
    * band it was written for, and read as a denial that 35 results had
    * vanished.
    */
-  latestRun?: Pick<DiscoveryRunRecord, "runPhase" | "state" | "summary"> | null;
+  latestRun?:
+    | (Pick<DiscoveryRunRecord, "runPhase" | "state" | "summary"> &
+        Partial<
+          Pick<
+            DiscoveryRunRecord,
+            "targetExecutions" | "activity" | "startedAt"
+          >
+        >)
+    | null;
   latestRunVerdict?: DiscoveryLatestRunVerdict | null;
   /**
    * The run-failure callout above the results names the cause and the next
@@ -141,6 +156,7 @@ interface DiscoveryResultsPanelProps {
   failureCalloutShown?: boolean;
   /** Starts a fresh search from where the interrupted one stopped. */
   onSearchAgain?: (() => void) | null;
+  onRetrySource?: (sourceId: string) => void;
   onDisplayedSelectedJobIdChange?: (selectedJobId: string | null) => void;
   onRecoveryAction?: (() => void) | null;
   onShowAlsoFound?: (() => void) | null;
@@ -434,10 +450,10 @@ export function getDiscoveryProgressCountLabel(
   visibleCount: number,
   totalCount: number,
 ): string {
-  const noun = totalCount === 1 ? "match" : "matches";
+  const noun = totalCount === 1 ? "listing" : "listings";
   return visibleCount === totalCount
-    ? `${totalCount} ${noun} ready to review.`
-    : `${visibleCount} of ${totalCount} ${noun} ready to review.`;
+    ? `${totalCount} ${noun} found.`
+    : `${visibleCount} of ${totalCount} ${noun} shown.`;
 }
 
 /**
@@ -585,6 +601,8 @@ export function ResultsEmptyState(props: {
 }
 
 export function DiscoveryResultsPanel({
+  planName = null,
+  onAssessJobListing,
   alsoFoundCount = 0,
   areAlsoFoundShown = false,
   browserSession,
@@ -593,18 +611,18 @@ export function DiscoveryResultsPanel({
   facetScopeId = null,
   hasCompletedSearch = false,
   hiddenAlsoFoundCount = 0,
-  inAreaJobCount: completeInAreaJobCount,
+
   isSearchInProgress = false,
   liveStatusLine = null,
   jobs,
   preferredLocations = [],
   remoteIncluded = false,
-  totalLocationJobCount,
   editPlanHref = null,
   latestRun = null,
   latestRunVerdict = null,
   failureCalloutShown = false,
   onSearchAgain = null,
+  onRetrySource,
   onDisplayedSelectedJobIdChange,
   onRecoveryAction,
   onShowAlsoFound,
@@ -839,7 +857,11 @@ export function DiscoveryResultsPanel({
   // skip re-sorting (and re-allocating) the full result set entirely.
   const orderedJobs = useMemo(() => {
     if (sortDirection === "desc" && sortField === "fit") {
-      return orderDiscoveryResultsByGroup(filteredJobs);
+      return orderDiscoveryResultsByGroup(
+        [...filteredJobs].sort((left, right) =>
+          compareDiscoveryResults(left, right, resultsSort.sort, 0, 0),
+        ),
+      );
     }
     return filteredJobs
       .map((job, sourceIndex) => ({ job, sourceIndex }))
@@ -878,15 +900,21 @@ export function DiscoveryResultsPanel({
     }
     return shared;
   }, [orderedJobs]);
+  const failedSourceCount =
+    latestRun?.targetExecutions?.filter((source) => source.state === "failed")
+      .length ?? 0;
   const jobCount = filteredJobs.length;
-  const locationPopulationCount = totalLocationJobCount ?? jobs.length;
-  const inAreaJobCount =
-    completeInAreaJobCount ??
-    jobs.filter((job) => job.matchAssessment.locationReach === "in_area")
-      .length;
+  const pendingLocationJobCount = filteredJobs.filter(
+    (job) => !job.matchAssessment.judgment,
+  ).length;
+  const inAreaJobCount = filteredJobs.filter(
+    (job) =>
+      Boolean(job.matchAssessment.judgment) &&
+      job.matchAssessment.locationReach === "in_area",
+  ).length;
   const locationCountLabel =
     preferredLocations.length > 0 && !remoteIncluded
-      ? `${inAreaJobCount} of ${locationPopulationCount} in or near ${preferredLocations.join(" or ")}`
+      ? `${inAreaJobCount} of ${filteredJobs.length - pendingLocationJobCount} assessed jobs in or near ${preferredLocations.join(" or ")}${pendingLocationJobCount > 0 ? ` · ${pendingLocationJobCount} awaiting place checks` : ""}`
       : null;
   const pageCount = Math.max(
     1,
@@ -913,7 +941,7 @@ export function DiscoveryResultsPanel({
   >(() => new Set());
   const shortlistableJobs = visibleJobs.filter(
     (job) =>
-      job.status !== "shortlisted" &&
+      !["drafting", "ready_for_review", "approved"].includes(job.status) &&
       job.status !== "submitted" &&
       getListingActivity(job).status !== "closed",
   );
@@ -989,12 +1017,9 @@ export function DiscoveryResultsPanel({
       ),
     [groupHeadingOptions, orderedJobs],
   );
-  // The inspector is a sibling pane, so this panel owns the truth about which
-  // job is actually on screen. When the selection falls off the visible page
-  // through pagination, search, or sorting, the displayed (inspected) job
-  // synchronizes to the top of what is actually shown instead of silently
-  // describing a row the user cannot see.
-  const displayedSelectedJobId = visibleJobs.some(
+  // Arriving results, sorting and pagination must not change the action target.
+  // Only filtering the selected job out requires a replacement selection.
+  const displayedSelectedJobId = orderedJobs.some(
     (job) => job.id === selectedJobId,
   )
     ? selectedJobId
@@ -1098,18 +1123,20 @@ export function DiscoveryResultsPanel({
           liveStatusLine ?? "Still checking the remaining sources.",
         ].join(" "),
       }
-    : sessionWaitingOnRuntime
-      ? {
-          busy: true,
-          text: "Showing results from the last search while the browser gets ready.",
-        }
-      : isOfflineRuntime
+    : liveStatusLine
+      ? { busy: true, text: liveStatusLine }
+      : sessionWaitingOnRuntime
         ? {
-            busy: false,
-            id: DISCOVERY_OFFLINE_CATALOG_NOTICE_ID,
-            text: `${DISCOVERY_OFFLINE_RUNTIME_LABEL}. ${DISCOVERY_OFFLINE_SETUP_NOTICE}`,
+            busy: true,
+            text: "Showing results from the last search while the browser gets ready.",
           }
-        : null;
+        : isOfflineRuntime
+          ? {
+              busy: false,
+              id: DISCOVERY_OFFLINE_CATALOG_NOTICE_ID,
+              text: `${DISCOVERY_OFFLINE_RUNTIME_LABEL}. ${DISCOVERY_OFFLINE_SETUP_NOTICE}`,
+            }
+          : null;
   const allResultsHidden = jobs.length === 0 && hiddenAlsoFoundCount > 0;
   // One number: the jobs on this list. The band arithmetic ("6 worth opening
   // · 3 title matches · 2 also found · 11 kept in this search plan") now
@@ -1175,6 +1202,9 @@ export function DiscoveryResultsPanel({
           >
             Results
           </h2>
+          {planName ? (
+            <span className="text-xs text-foreground-muted">{planName}</span>
+          ) : null}
           {/* An empty list explains itself below; "0 jobs" beside "Ready for
               your first search" only repeats the empty state as a number. */}
           {jobs.length > 0 ? (
@@ -1213,7 +1243,7 @@ export function DiscoveryResultsPanel({
             header instead of a tinted box above the list (ADR 0042): a
             search still running, saved results shown while the browser gets
             ready, or live search being unavailable. */}
-        {jobs.length > 0 && resultsStatusLine ? (
+        {resultsStatusLine && (jobs.length > 0 || liveStatusLine) ? (
           <p
             aria-atomic="true"
             aria-live="polite"
@@ -1234,858 +1264,1008 @@ export function DiscoveryResultsPanel({
           </p>
         ) : null}
       </header>
-
-      {jobs.length > 0 ? (
-        <>
-          <CollectionSearchToolbar
-            compact
-            hideCompactCount
-            label="Find a job"
-            onQueryChange={(query) => {
-              view.setQuery(query);
-              moveToPage(0);
-            }}
-            placeholder="Search results"
-            placement="panel"
-            query={view.query}
-            totalCount={jobs.length}
-            visibleCount={filteredJobs.length}
-          />
-          {/* Two control groups on one row instead of four spread over two:
-              the filter disclosure no longer sits alone with ~940px of empty
-              row beside it, and sorting is where the filtering is. */}
-          <div
-            className="flex min-w-0 flex-wrap items-start justify-between gap-2 border-b border-(--surface-panel-border) px-4 py-2"
-            data-testid="discovery-results-toolbar"
-          >
-            {hasFilterGroups ? (
-              <details className="group relative min-w-0 [&[open]]:w-full [&[open]]:order-last">
-                {/* `--control-border` rather than the inert
+      <div
+        className="min-h-[360px] overflow-y-auto overscroll-contain xl:flex-1"
+        data-locked-pane-scroll-region
+        data-job-results-scroll-region
+        ref={resultsScrollRegionRef}
+        role="region"
+        aria-label="Job results list"
+        tabIndex={0}
+      >
+        {jobs.length > 0 ? (
+          <>
+            <CollectionSearchToolbar
+              compact
+              hideCompactCount
+              label="Find a job"
+              onQueryChange={(query) => {
+                view.setQuery(query);
+                moveToPage(0);
+              }}
+              placeholder="Search results"
+              placement="panel"
+              query={view.query}
+              totalCount={jobs.length}
+              visibleCount={filteredJobs.length}
+              viewActions={
+                <div
+                  className="flex min-w-0 flex-wrap items-start justify-between gap-2"
+                  data-testid="discovery-results-toolbar"
+                >
+                  {hasFilterGroups ? (
+                    <details className="group relative min-w-0">
+                      {/* `--control-border` rather than the inert
                   `--surface-panel-border`: this border is the disclosure's
                   entire boundary, so it has to read as a control beside the
                   sort field. */}
-                <summary
-                  className={cn(
-                    DISCOVERY_RESULTS_TOOLBAR_CONTROL_CLASS,
-                    "flex w-fit cursor-pointer list-none items-center gap-2 whitespace-nowrap border border-(--control-border) px-3 text-foreground-soft outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/30 [&::-webkit-details-marker]:hidden",
-                  )}
-                >
-                  Filters
-                  {activeFilterCount > 0 ? (
-                    <span
-                      aria-label={`${activeFilterCount} active ${activeFilterCount === 1 ? "filter" : "filters"}`}
-                      className="rounded-full bg-accent px-1.5 py-0.5 tabular-nums text-accent-foreground"
-                    >
-                      {activeFilterCount}
-                    </span>
-                  ) : null}
-                </summary>
-                {/* Columns follow the groups actually shown: a lone Source group
+                      <summary
+                        className={cn(
+                          DISCOVERY_RESULTS_TOOLBAR_CONTROL_CLASS,
+                          "flex w-fit cursor-pointer list-none items-center gap-2 whitespace-nowrap border border-(--control-border) px-3 text-foreground-soft outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/30 [&::-webkit-details-marker]:hidden",
+                        )}
+                      >
+                        Filters
+                        {activeFilterCount > 0 ? (
+                          <span
+                            aria-label={`${activeFilterCount} active ${activeFilterCount === 1 ? "filter" : "filters"}`}
+                            className="rounded-full bg-accent px-1.5 py-0.5 tabular-nums text-accent-foreground"
+                          >
+                            {activeFilterCount}
+                          </span>
+                        ) : null}
+                      </summary>
+                      {/* Columns follow the groups actually shown: a lone Source group
                   used to get a quarter of the row and broke source addresses
                   mid-word. */}
-                <div
-                  className="mt-2 grid grid-cols-[repeat(auto-fit,minmax(15rem,1fr))] gap-3 rounded-(--radius-field) border border-(--surface-panel-border) bg-(--surface-panel-raised) p-3"
-                  data-testid="discovery-results-filter-groups"
-                >
-                  {filterGroups.recommendation ? (
-                    <fieldset className="min-w-0">
-                      <legend className="mb-2 text-xs font-semibold text-foreground">
-                        Fit
-                      </legend>
-                      <div className="grid gap-2">
-                        {recommendationOptions.map((recommendation) => (
-                          <label
-                            className="flex min-w-0 items-start gap-2 text-xs leading-6 text-foreground-soft"
-                            key={recommendation}
-                          >
-                            <input
-                              checked={recommendationFilters.has(
-                                recommendation,
-                              )}
-                              className="size-6 shrink-0 accent-current"
-                              onChange={() => {
-                                setRecommendationFilters((current) =>
-                                  toggleFilterValue(current, recommendation),
-                                );
-                                moveToPage(0);
-                              }}
-                              type="checkbox"
-                            />
-                            <span className="min-w-0 break-words">
-                              {fitRecommendationCopy[recommendation].label}
-                            </span>
-                          </label>
-                        ))}
-                      </div>
-                    </fieldset>
-                  ) : null}
-                  {filterGroups.source ? (
-                    <fieldset className="min-w-0">
-                      <legend className="mb-2 text-xs font-semibold text-foreground">
-                        Source
-                      </legend>
-                      <div className="grid max-h-32 gap-2 overflow-y-auto">
-                        {sourceOptions.map((source) => (
-                          <label
-                            className="flex min-w-0 items-start gap-2 text-xs leading-6 text-foreground-soft"
-                            key={source}
-                            title={source}
-                          >
-                            <input
-                              checked={sourceFilters.has(source)}
-                              className="size-6 shrink-0 accent-current"
-                              onChange={() => {
-                                setSourceFilters((current) =>
-                                  toggleFilterValue(current, source),
-                                );
-                                moveToPage(0);
-                              }}
-                              type="checkbox"
-                            />
-                            <span className="min-w-0 break-words">
-                              {source}
-                            </span>
-                          </label>
-                        ))}
-                      </div>
-                    </fieldset>
-                  ) : null}
-                  {filterGroups.workMode ? (
-                    <fieldset className="min-w-0">
-                      <legend className="mb-2 text-xs font-semibold text-foreground">
-                        Work mode
-                      </legend>
-                      <div className="grid gap-2">
-                        {workModeOptions.map((workMode) => (
-                          <label
-                            className="flex min-w-0 items-start gap-2 text-xs leading-6 text-foreground-soft"
-                            key={workMode}
-                          >
-                            <input
-                              checked={workModeFilters.has(workMode)}
-                              className="size-6 shrink-0 accent-current"
-                              onChange={() => {
-                                setWorkModeFilters((current) =>
-                                  toggleFilterValue(current, workMode),
-                                );
-                                moveToPage(0);
-                              }}
-                              type="checkbox"
-                            />
-                            <span className="min-w-0 break-words">
-                              {workMode === WORK_MODE_UNSPECIFIED_FILTER
-                                ? workMode
-                                : formatWorkModeLabel(workMode as WorkMode)}
-                            </span>
-                          </label>
-                        ))}
-                      </div>
-                    </fieldset>
-                  ) : null}
-                  {filterGroups.activity ? (
-                    <fieldset className="min-w-0">
-                      <legend className="mb-2 text-xs font-semibold text-foreground">
-                        Listing status
-                      </legend>
-                      <div className="grid gap-2">
-                        {activityOptions.map((status) => (
-                          <label
-                            className="flex min-w-0 items-start gap-2 text-xs leading-6 text-foreground-soft"
-                            key={status}
-                          >
-                            <input
-                              checked={activityFilters.has(status)}
-                              className="size-6 shrink-0 accent-current"
-                              onChange={() => {
-                                setActivityFilters((current) =>
-                                  toggleFilterValue(current, status),
-                                );
-                                moveToPage(0);
-                              }}
-                              type="checkbox"
-                            />
-                            <span>{formatStatusLabel(status)}</span>
-                          </label>
-                        ))}
-                      </div>
-                    </fieldset>
-                  ) : null}
-                  {activeFilterCount > 0 ? (
-                    <div className="sm:col-span-2 xl:col-span-4">
-                      <Button
-                        onClick={clearFilters}
-                        size="xs"
-                        type="button"
-                        variant="ghost"
-                      >
-                        Clear filters
-                      </Button>
-                    </div>
-                  ) : null}
-                </div>
-              </details>
-            ) : (
-              <span />
-            )}
-            <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">
-              <select
-                aria-label="Sort results"
-                className={cn(
-                  DISCOVERY_RESULTS_TOOLBAR_CONTROL_CLASS,
-                  "min-w-0 max-w-full border border-(--field-border) bg-(--field) px-2 text-foreground-soft outline-none focus-visible:border-(--field-focus-border) focus-visible:bg-(--field-strong) focus-visible:shadow-[var(--field-focus-shadow)]",
-                )}
-                onChange={(event) => {
-                  const match = DISCOVERY_RESULTS_SORT_OPTIONS.find(
-                    (option) => option.field === event.target.value,
-                  );
-                  if (!match) return;
-                  resultsSort.setSortField(match.field);
-                  moveToPage(0);
-                }}
-                value={sortField}
-              >
-                {DISCOVERY_RESULTS_SORT_OPTIONS.map((option) => (
-                  <option key={option.field} value={option.field}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-        </>
-      ) : null}
-
-      {/* What the close actually did to the run, in the run's own frozen
-          numbers. It sits above the list because it explains the list. */}
-      {latestRun && getDiscoveryRunPhase(latestRun) === "interrupted" ? (
-        <div className="px-5 pt-4">
-          <div
-            className="flex flex-wrap items-center justify-between gap-3 rounded-(--radius-field) border border-(--warning-border) bg-(--warning-surface) px-4 py-3 text-(length:--text-small) leading-6 text-(--warning-text)"
-            data-testid="discovery-interrupted-run-banner"
-            role="status"
-          >
-            <p className="min-w-0">
-              {describeInterruptedDiscoveryRun(latestRun)}
-            </p>
-            {onSearchAgain ? (
-              <Button
-                onClick={onSearchAgain}
-                size="compact"
-                type="button"
-                variant="secondary"
-              >
-                Search again from here
-              </Button>
-            ) : null}
-          </div>
-        </div>
-      ) : null}
-
-      {allResultsHidden ? (
-        <div className="px-5 pt-4">
-          <ResultsEmptyState
-            className={emptyClassName ?? "min-h-56"}
-            description={`The ${hiddenAlsoFoundCount === 1 ? "result scored" : `${hiddenAlsoFoundCount} results scored`} well below your saved targets, or conflict with them. Nothing was deleted.`}
-            {...(onShowAlsoFound !== undefined
-              ? { onRecoveryAction: onShowAlsoFound }
-              : {})}
-            recoveryActionLabel={`Show weaker matches (${hiddenAlsoFoundCount})`}
-            recoveryActionNextStep="Open a job to judge it yourself; a low score alone is not a reason to skip it."
-            title="Nothing scored close to your targets"
-          />
-        </div>
-      ) : null}
-
-      {!allResultsHidden && searchSetupBlocker && jobs.length === 0 ? (
-        <div className="px-5 pt-4" id={DISCOVERY_SEARCH_SETUP_BLOCKER_ID}>
-          <ResultsEmptyState
-            actionHref={
-              searchSetupBlocker.actionHref ?? JOB_FINDER_ROUTE_PATHS.profile
-            }
-            className={emptyClassName ?? "min-h-56"}
-            description={searchSetupBlocker.description}
-            recoveryActionLabel={
-              searchSetupBlocker.actionLabel ?? "Edit search in Profile"
-            }
-            recoveryActionNextStep={
-              searchSetupBlocker.nextStep ?? "Then search again."
-            }
-            title={searchSetupBlocker.title}
-          />
-        </div>
-      ) : null}
-
-      {!allResultsHidden &&
-      !searchSetupBlocker &&
-      showSearchingEmptyState &&
-      jobs.length === 0 ? (
-        <div className="px-5 pt-4">
-          <ResultsEmptyState
-            className={emptyClassName ?? "min-h-56"}
-            description={
-              liveStatusLine ??
-              "Results will appear here as each source finishes."
-            }
-            title="Searching your sources"
-          />
-        </div>
-      ) : null}
-
-      {!allResultsHidden &&
-      !searchSetupBlocker &&
-      !showSearchingEmptyState &&
-      isOfflineRuntime &&
-      jobs.length === 0 ? (
-        <div className="px-5 pt-4">
-          <ResultsEmptyState
-            actionHref={JOB_FINDER_ROUTE_PATHS.profileSources}
-            className="min-h-0 py-4"
-            description={DISCOVERY_OFFLINE_SETUP_NOTICE}
-            recoveryActionLabel="Review job sources"
-            recoveryActionNextStep="Check your saved job sites in Profile, then try searching again."
-            title="Job Finder cannot search right now"
-          />
-        </div>
-      ) : null}
-
-      {!allResultsHidden &&
-      !searchSetupBlocker &&
-      !isSearchInProgress &&
-      sessionNeedsAttention &&
-      jobs.length === 0 ? (
-        <div className="px-5 pt-4">
-          <ResultsEmptyState
-            className={emptyClassName ?? "min-h-56"}
-            description={`Open ${JOB_FINDER_BROWSER_NAME}, sign in or fix the issue, then search again.`}
-            title="Search blocked by browser"
-            {...(onRecoveryAction !== undefined ? { onRecoveryAction } : {})}
-            {...(recoveryActionLabel !== undefined
-              ? { recoveryActionLabel }
-              : {})}
-            {...(recoveryActionNextStep !== undefined
-              ? { recoveryActionNextStep }
-              : {})}
-            {...(recoveryActionPending ? { recoveryActionPending: true } : {})}
-          />
-        </div>
-      ) : null}
-
-      {!allResultsHidden &&
-      !searchSetupBlocker &&
-      !isSearchInProgress &&
-      sessionWaitingOnRuntime &&
-      jobs.length === 0 ? (
-        <div className="px-5 pt-4">
-          <ResultsEmptyState
-            className={emptyClassName ?? "min-h-56"}
-            description="New results will appear here after browser-based sources are ready."
-            title="Browser is starting"
-          />
-        </div>
-      ) : null}
-
-      {sessionNeedsAttention && jobs.length > 0 ? (
-        <div className="px-5 py-4">
-          <RecoveryCallout
-            description={`You're viewing results from the last completed search. Open ${JOB_FINDER_BROWSER_NAME} when you're ready to run a new one.`}
-            {...(onRecoveryAction !== undefined ? { onRecoveryAction } : {})}
-            {...(recoveryActionLabel !== undefined
-              ? { recoveryActionLabel }
-              : {})}
-            {...(recoveryActionNextStep !== undefined
-              ? { recoveryActionNextStep }
-              : {})}
-            {...(recoveryActionPending ? { recoveryActionPending: true } : {})}
-          />
-        </div>
-      ) : null}
-
-      {!allResultsHidden &&
-      !searchSetupBlocker &&
-      !showSearchingEmptyState &&
-      !isOfflineRuntime &&
-      !sessionNeedsAttention &&
-      !sessionWaitingOnRuntime &&
-      emptyRunVerdict.kind === "interrupted" &&
-      jobs.length === 0 ? (
-        <div className="px-5 pt-4">
-          <ResultsEmptyState
-            className={emptyClassName ?? "min-h-56"}
-            description={`${
-              emptyRunVerdict.interruptState === "cancelled"
-                ? "The newest search was cancelled before every enabled source was checked. An empty list here does not prove your sources have no matches."
-                : emptyRunVerdict.interruptState === "sources_failed"
-                  ? "The newest search finished, but at least one enabled source failed, so an empty list here does not prove your sources have no matches."
-                  : "The newest search stopped before every enabled source was checked. An empty list here does not prove your sources have no matches."
-            } ${
-              // The callout above already says what to do; a second, generic
-              // "Search now" beside it pointed at the wrong fix when the cause
-              // was an address to correct.
-              failureCalloutShown
-                ? "The message above says what to do next."
-                : "Select Search now to try again."
-            }`}
-            title={
-              emptyRunVerdict.interruptState === "cancelled"
-                ? "The last search was cancelled"
-                : emptyRunVerdict.interruptState === "sources_failed"
-                  ? "The last search finished, but sources failed"
-                  : "The last search stopped before finishing"
-            }
-          />
-        </div>
-      ) : null}
-
-      {!allResultsHidden &&
-      !searchSetupBlocker &&
-      !showSearchingEmptyState &&
-      !sessionNeedsAttention &&
-      !sessionWaitingOnRuntime &&
-      !isOfflineRuntime &&
-      emptyRunVerdict.kind === "completed" &&
-      jobs.length === 0 ? (
-        <div className="px-5 pt-4">
-          <ResultsEmptyState
-            actionHref={editPlanHref ?? JOB_FINDER_ROUTE_PATHS.profileWorkModes}
-            className={emptyClassName ?? "min-h-56"}
-            description="No saved source returned a role that met this search. Broaden a role or location, enable another source, then run it again."
-            recoveryActionLabel="Edit your places"
-            recoveryActionNextStep="Review your places and work modes on Profile, then return here and search again."
-            title="No matches from this search"
-          />
-        </div>
-      ) : null}
-
-      {!allResultsHidden &&
-      !searchSetupBlocker &&
-      !showSearchingEmptyState &&
-      !sessionNeedsAttention &&
-      !sessionWaitingOnRuntime &&
-      !isOfflineRuntime &&
-      emptyRunVerdict.kind === "none" &&
-      jobs.length === 0 ? (
-        <div className="px-5 pt-4">
-          <ResultsEmptyState
-            className={emptyClassName ?? "min-h-56"}
-            description="Press Search now. Job Finder searches every enabled source using your profile, then lists what it found here. Shortlist the jobs you want to apply to."
-            title="Ready for your first search"
-          />
-        </div>
-      ) : null}
-
-      {jobs.length > 0 && filteredJobs.length === 0 && activeFilterCount > 0 ? (
-        <div className="px-5 pt-4">
-          <ResultsEmptyState
-            className={emptyClassName ?? "min-h-48"}
-            description="No saved result meets every active filter. Nothing was removed."
-            onRecoveryAction={clearFilters}
-            recoveryActionLabel="Clear filters"
-            recoveryActionNextStep="Review the complete result list, then apply a broader filter if needed."
-            title="No jobs match these filters"
-          />
-        </div>
-      ) : jobs.length > 0 && filteredJobs.length === 0 ? (
-        <CollectionNoMatches
-          // "No jobs match 'Akron'" over eleven kept results read as a search
-          // that found nothing. It found eleven; none of them answer this
-          // word, and saying both is the only true version.
-          description={`This search kept ${jobs.length} ${
-            jobs.length === 1 ? "job" : "jobs"
-          }, found elsewhere. Clear the search to see ${
-            jobs.length === 1 ? "it" : "them"
-          }.`}
-          noun="jobs"
-          onClear={() => view.setQuery("")}
-          query={view.query}
-        />
-      ) : null}
-
-      {filteredJobs.length > 0 ? (
-        // Below the two-pane breakpoint the results panel and the inspector
-        // share one page scroller, so the list must take its content height:
-        // a short result set that stretches to the viewport leaves hundreds of
-        // pixels of empty bordered area that reads as a loading failure and
-        // pushes the inspector — and its primary action — off screen.
-        <div
-          className="flex min-h-0 flex-col overflow-hidden xl:flex-1"
-          data-job-results-stack
-        >
-          {onShortlistJobs && shortlistableJobs.length > 0 ? (
-            <div
-              aria-label="Bulk shortlist actions"
-              className="flex flex-wrap items-center gap-2 border-b border-(--surface-panel-border) px-4 py-2.5"
-              role="group"
-            >
-              <Button
-                disabled={bulkSelectedJobIds.size === 0}
-                onClick={() => void shortlistSelected()}
-                size="sm"
-                type="button"
-                variant="secondary"
-              >
-                {bulkSelectedJobIds.size > 0
-                  ? `Shortlist ${bulkSelectedJobIds.size} selected`
-                  : "Shortlist selected"}
-              </Button>
-              <Button
-                onClick={() => void shortlistAllShown()}
-                size="sm"
-                type="button"
-                variant="outline"
-              >
-                Shortlist all {shortlistableJobs.length} shown
-              </Button>
-            </div>
-          ) : null}
-          <div
-            aria-label="Job results list"
-            // The scroll padding keeps the last card clear of the two-pane
-            // scroller's bottom edge. Below that breakpoint the list has no
-            // scroller of its own and takes its content height, so the same
-            // padding is only an empty grey strip under the last result.
-            className="min-h-0 overflow-y-auto overscroll-contain xl:flex-1 xl:pb-8"
-            data-locked-pane-scroll-region
-            data-job-results-scroll-region
-            ref={resultsScrollRegionRef}
-            role="region"
-            tabIndex={0}
-          >
-            <ul
-              aria-label="Results"
-              className={cn(jobFinderListRegionClassName, "xl:min-h-full")}
-            >
-              {visibleJobs.map((job) => {
-                const isSelected = displayedSelectedJobId === job.id;
-                const recommendation =
-                  fitRecommendationCopy[
-                    job.matchAssessment.recommendation ??
-                      "review_before_applying"
-                  ];
-                const assessment = getMatchAssessmentPresentation(job);
-                // A title-only row sitting under the rendered "Title matches ·
-                // not yet checked" divider would otherwise repeat that exact
-                // claim twice more — "Title match only" plus a two-line
-                // caption — on every row of a band that can be the whole list.
-                // The divider states it once for the run; the row drops the
-                // visible restatement and keeps an assistive-technology line,
-                // because a row button is reachable by keyboard without ever
-                // reading the divider. Provisional rows share this band but
-                // not its claim, so they keep their own verdict, and a
-                // title-only row banded as a mismatch keeps it too: no divider
-                // above it says the title was all that was read.
-                const isCoveredByUncheckedBand =
-                  assessment.isNotJudged &&
-                  // An unbound assessment is title-only by evidence depth but
-                  // presents as "Fit not assessed", which is a different claim
-                  // from the one the divider makes; it keeps its own verdict.
-                  !assessment.isProvisional &&
-                  headedGroupByJobId.get(job.id) === "unchecked";
-                // One sentence on the row saying why: what is missing when the
-                // score is withheld, otherwise the hard-conflict reason. Rows
-                // whose score stands on its own evidence stay quiet.
-                const rowReason =
-                  (job.matchAssessment.recommendation === "skip"
-                    ? scrubJobAbsencePlaceholders(
-                        job.matchAssessment.recommendationRationale ?? "",
-                      ) || null
-                    : null) ??
-                  (job.matchAssessment.dimensions?.roleSuitability?.state !==
-                    undefined &&
-                  job.matchAssessment.dimensions.roleSuitability.state !==
-                    "exact"
-                    ? job.matchAssessment.gaps[0]
-                    : null) ??
-                  assessment.withheldReason ??
-                  // Rows that share a printed percentage state the one
-                  // strongest fact behind their place, so the order between
-                  // equal numbers is something the person can read.
-                  (tiedScores.has(job.matchAssessment.score)
-                    ? describeMatchTieBreakReason(job)
-                    : null);
-                const listingDateBadge = getDiscoveryListingDateBadge(job);
-                const listingDateExplanation = listingDateBadge.shown
-                  ? listingDateBadge.rankable
-                    ? undefined
-                    : "The source shows a posting label without a full date, so Newest cannot rank this listing by its posting date."
-                  : undefined;
-                const sourceLabels = sourceLabelsByJobId.get(job.id) ?? [];
-                const sourceText =
-                  sourceLabels.length > 0
-                    ? sourceLabels.join(", ")
-                    : "Source unavailable";
-                // A careers-site source repeats the employer's own name; the
-                // meta line then read "Canonical • Remote · Canonical".
-                const sourceRepeatsEmployer =
-                  sourceLabels.length === 1 &&
-                  Boolean(job.company) &&
-                  sourceLabels[0]?.trim().toLowerCase() ===
-                    job.company?.trim().toLowerCase();
-                const listingActivity = getListingActivity(job);
-                const activity = presentListingActivity(listingActivity);
-                const activityDescription =
-                  listingActivity.status === "inactive"
-                    ? `Not found in a source inventory observation on ${activity.observedDate}. This does not prove the listing is closed. ${listingActivity.explanation}`
-                    : activity.description;
-
-                const groupHeading = groupHeadingsByJobId.get(job.id);
-                const wasRescoredAfterRead =
-                  !acknowledgedRescoreJobIds.has(job.id) &&
-                  Boolean(
-                    job.latestMatchAssessmentAudit?.inputChanges.some(
-                      (change) => change.code === "listing_evidence_changed",
-                    ) &&
-                    job.latestMatchAssessmentAudit.outputChanges.some(
-                      (change) => change.code === "score_changed",
-                    ),
-                  );
-
-                return (
-                  <li key={job.id} className="relative min-w-0 pl-10">
-                    {groupHeading ? (
                       <div
+                        className="mt-2 grid grid-cols-[repeat(auto-fit,minmax(12rem,1fr))] gap-3 rounded-(--radius-field) border border-(--surface-panel-border) bg-(--surface-panel-raised) p-3"
+                        data-testid="discovery-results-filter-groups"
+                      >
+                        {filterGroups.recommendation ? (
+                          <fieldset className="min-w-0">
+                            <legend className="mb-2 text-xs font-semibold text-foreground">
+                              Fit
+                            </legend>
+                            <div className="grid gap-2">
+                              {recommendationOptions.map((recommendation) => (
+                                <label
+                                  className="flex min-w-0 items-start gap-2 text-xs leading-6 text-foreground-soft"
+                                  key={recommendation}
+                                >
+                                  <input
+                                    checked={recommendationFilters.has(
+                                      recommendation,
+                                    )}
+                                    className="size-6 shrink-0 accent-current"
+                                    onChange={() => {
+                                      setRecommendationFilters((current) =>
+                                        toggleFilterValue(
+                                          current,
+                                          recommendation,
+                                        ),
+                                      );
+                                      moveToPage(0);
+                                    }}
+                                    type="checkbox"
+                                  />
+                                  <span className="min-w-0 break-words">
+                                    {
+                                      fitRecommendationCopy[recommendation]
+                                        .label
+                                    }
+                                  </span>
+                                </label>
+                              ))}
+                            </div>
+                          </fieldset>
+                        ) : null}
+                        {filterGroups.source ? (
+                          <fieldset className="min-w-0">
+                            <legend className="mb-2 text-xs font-semibold text-foreground">
+                              Source
+                            </legend>
+                            <div className="grid gap-2">
+                              {sourceOptions.map((source) => (
+                                <label
+                                  className="flex min-w-0 items-start gap-2 text-xs leading-6 text-foreground-soft"
+                                  key={source}
+                                  title={source}
+                                >
+                                  <input
+                                    checked={sourceFilters.has(source)}
+                                    className="size-6 shrink-0 accent-current"
+                                    onChange={() => {
+                                      setSourceFilters((current) =>
+                                        toggleFilterValue(current, source),
+                                      );
+                                      moveToPage(0);
+                                    }}
+                                    type="checkbox"
+                                  />
+                                  <span className="min-w-0 break-words">
+                                    {source}
+                                  </span>
+                                </label>
+                              ))}
+                            </div>
+                          </fieldset>
+                        ) : null}
+                        {filterGroups.workMode ? (
+                          <fieldset className="min-w-0">
+                            <legend className="mb-2 text-xs font-semibold text-foreground">
+                              Work mode
+                            </legend>
+                            <div className="grid gap-2">
+                              {workModeOptions.map((workMode) => (
+                                <label
+                                  className="flex min-w-0 items-start gap-2 text-xs leading-6 text-foreground-soft"
+                                  key={workMode}
+                                >
+                                  <input
+                                    checked={workModeFilters.has(workMode)}
+                                    className="size-6 shrink-0 accent-current"
+                                    onChange={() => {
+                                      setWorkModeFilters((current) =>
+                                        toggleFilterValue(current, workMode),
+                                      );
+                                      moveToPage(0);
+                                    }}
+                                    type="checkbox"
+                                  />
+                                  <span className="min-w-0 break-words">
+                                    {workMode === WORK_MODE_UNSPECIFIED_FILTER
+                                      ? workMode
+                                      : formatWorkModeLabel(
+                                          workMode as WorkMode,
+                                        )}
+                                  </span>
+                                </label>
+                              ))}
+                            </div>
+                          </fieldset>
+                        ) : null}
+                        {filterGroups.activity ? (
+                          <fieldset className="min-w-0">
+                            <legend className="mb-2 text-xs font-semibold text-foreground">
+                              Listing status
+                            </legend>
+                            <div className="grid gap-2">
+                              {activityOptions.map((status) => (
+                                <label
+                                  className="flex min-w-0 items-start gap-2 text-xs leading-6 text-foreground-soft"
+                                  key={status}
+                                >
+                                  <input
+                                    checked={activityFilters.has(status)}
+                                    className="size-6 shrink-0 accent-current"
+                                    onChange={() => {
+                                      setActivityFilters((current) =>
+                                        toggleFilterValue(current, status),
+                                      );
+                                      moveToPage(0);
+                                    }}
+                                    type="checkbox"
+                                  />
+                                  <span>{formatStatusLabel(status)}</span>
+                                </label>
+                              ))}
+                            </div>
+                          </fieldset>
+                        ) : null}
+                        {activeFilterCount > 0 ? (
+                          <div className="sm:col-span-2 xl:col-span-4">
+                            <Button
+                              onClick={clearFilters}
+                              size="xs"
+                              type="button"
+                              variant="ghost"
+                            >
+                              Clear filters
+                            </Button>
+                          </div>
+                        ) : null}
+                      </div>
+                    </details>
+                  ) : (
+                    <span />
+                  )}
+                  <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">
+                    <select
+                      aria-label="Sort results"
+                      title="Best match shows assessed jobs first. Within each group, reachable places come first, then fit score."
+                      className={cn(
+                        DISCOVERY_RESULTS_TOOLBAR_CONTROL_CLASS,
+                        "min-w-0 max-w-full border border-(--field-border) bg-(--field) px-2 text-foreground-soft outline-none focus-visible:border-(--field-focus-border) focus-visible:bg-(--field-strong) focus-visible:shadow-[var(--field-focus-shadow)]",
+                      )}
+                      onChange={(event) => {
+                        const match = DISCOVERY_RESULTS_SORT_OPTIONS.find(
+                          (option) => option.field === event.target.value,
+                        );
+                        if (!match) return;
+                        resultsSort.setSortField(match.field);
+                        moveToPage(0);
+                      }}
+                      value={sortField}
+                    >
+                      {DISCOVERY_RESULTS_SORT_OPTIONS.map((option) => (
+                        <option key={option.field} value={option.field}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              }
+            />
+            {/* Two control groups on one row instead of four spread over two:
+              the filter disclosure no longer sits alone with ~940px of empty
+              row beside it, and sorting is where the filtering is. */}
+          </>
+        ) : null}
+
+        {latestRun?.targetExecutions?.length ? (
+          <details
+            className="shrink-0 px-5 py-2 text-xs text-foreground-soft"
+            data-testid="discovery-source-summaries"
+          >
+            <summary className="cursor-pointer">
+              {latestRun.state === "cancelled" ||
+              getDiscoveryRunPhase(latestRun) === "interrupted"
+                ? "Search stopped"
+                : failedSourceCount > 0
+                  ? `${isSearchInProgress ? "Searching" : "Partial results"} · ${failedSourceCount} ${failedSourceCount === 1 ? "source failed" : "sources failed"}${isSearchInProgress ? " so far" : ""}`
+                  : "What each source found"}
+              {latestRun.startedAt
+                ? ` · ${formatTimestamp(latestRun.startedAt)}`
+                : ""}
+            </summary>
+            <ul className="mt-2 grid gap-2">
+              {latestRun.targetExecutions.map((source) => {
+                const label = jobSourceLabel(source.targetId, discoveryTargets);
+                const note = latestRun.activity?.findLast(
+                  (event) =>
+                    event.targetId === source.targetId &&
+                    event.terminalState === "completed",
+                )?.message;
+                return (
+                  <li key={source.targetId}>
+                    <p className="font-medium">
+                      {label}:{" "}
+                      {source.state === "failed"
+                        ? "Could not finish"
+                        : source.state === "cancelled"
+                          ? "Stopped"
+                          : source.state === "completed"
+                            ? "Completed"
+                            : latestRun.state === "cancelled" ||
+                                getDiscoveryRunPhase(latestRun) ===
+                                  "interrupted"
+                              ? "Not searched"
+                              : "Waiting"}
+                    </p>
+                    <p>
+                      {source.jobsReviewed}{" "}
+                      {source.jobsReviewed === 1 ? "listing" : "listings"}{" "}
+                      recorded · {source.jobsPersisted + source.jobsStaged}{" "}
+                      {source.jobsPersisted + source.jobsStaged === 1
+                        ? "job"
+                        : "jobs"}{" "}
+                      saved · {source.duplicatesMerged}{" "}
+                      {source.duplicatesMerged === 1
+                        ? "duplicate"
+                        : "duplicates"}{" "}
+                      merged.
+                    </p>
+                    {note ? <p className="break-words">{note}</p> : null}
+                    {source.state === "failed" ? (
+                      <div className="flex items-center gap-2">
+                        <span>
+                          {discoverySourceFailureCopy(source.warning)}
+                        </span>
+                        {onRetrySource ? (
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            disabled={isSearchInProgress}
+                            onClick={() => onRetrySource(source.targetId)}
+                          >
+                            Retry {label}
+                          </Button>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </li>
+                );
+              })}
+            </ul>
+          </details>
+        ) : null}
+
+        {/* What the close actually did to the run, in the run's own frozen
+          numbers. It sits above the list because it explains the list. */}
+        {!isSearchInProgress &&
+        latestRun &&
+        getDiscoveryRunPhase(latestRun) === "interrupted" ? (
+          <div className="px-5 pt-4">
+            <div
+              className="flex flex-wrap items-center justify-between gap-3 rounded-(--radius-field) border border-(--warning-border) bg-(--warning-surface) px-4 py-3 text-(length:--text-small) leading-6 text-(--warning-text)"
+              data-testid="discovery-interrupted-run-banner"
+              role="status"
+            >
+              <p className="min-w-0">
+                {describeInterruptedDiscoveryRun(latestRun)}
+              </p>
+              {onSearchAgain ? (
+                <Button
+                  onClick={onSearchAgain}
+                  size="compact"
+                  type="button"
+                  variant="secondary"
+                >
+                  Search again from here
+                </Button>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
+
+        {preferredLocations.length > 0 &&
+        !remoteIncluded &&
+        jobs.length > 0 &&
+        !isSearchInProgress &&
+        (hasCompletedSearch || latestRun?.state === "completed") &&
+        inAreaJobCount === 0 &&
+        jobs.every((job) => Boolean(job.matchAssessment.judgment)) ? (
+          <p
+            className="px-5 py-2 text-xs text-foreground-soft"
+            data-testid="discovery-no-area-matches"
+          >
+            No assessed jobs are in your preferred places.{" "}
+            {editPlanHref ? (
+              <Link className="underline" to={editPlanHref}>
+                Widen your places
+              </Link>
+            ) : (
+              "Widen your places"
+            )}
+            {" or "}
+            <Link
+              className="underline"
+              to={JOB_FINDER_ROUTE_PATHS.profileSources}
+            >
+              add a source for your area
+            </Link>
+            , then search again.
+          </p>
+        ) : null}
+        {allResultsHidden ? (
+          <div className="px-5 pt-4">
+            <ResultsEmptyState
+              className={emptyClassName ?? "min-h-56"}
+              description={`The ${hiddenAlsoFoundCount === 1 ? "result scored" : `${hiddenAlsoFoundCount} results scored`} well below your saved targets, or conflict with them. Nothing was deleted.`}
+              {...(onShowAlsoFound !== undefined
+                ? { onRecoveryAction: onShowAlsoFound }
+                : {})}
+              recoveryActionLabel={`Show weaker matches (${hiddenAlsoFoundCount})`}
+              recoveryActionNextStep="Open a job to judge it yourself; a low score alone is not a reason to skip it."
+              title="Nothing scored close to your targets"
+            />
+          </div>
+        ) : null}
+
+        {!allResultsHidden && searchSetupBlocker && jobs.length === 0 ? (
+          <div className="px-5 pt-4" id={DISCOVERY_SEARCH_SETUP_BLOCKER_ID}>
+            <ResultsEmptyState
+              actionHref={
+                searchSetupBlocker.actionHref ?? JOB_FINDER_ROUTE_PATHS.profile
+              }
+              className={emptyClassName ?? "min-h-56"}
+              description={searchSetupBlocker.description}
+              recoveryActionLabel={
+                searchSetupBlocker.actionLabel ?? "Edit search in Profile"
+              }
+              recoveryActionNextStep={
+                searchSetupBlocker.nextStep ?? "Then search again."
+              }
+              title={searchSetupBlocker.title}
+            />
+          </div>
+        ) : null}
+
+        {!allResultsHidden &&
+        !searchSetupBlocker &&
+        showSearchingEmptyState &&
+        jobs.length === 0 ? (
+          <div className="px-5 pt-4">
+            <ResultsEmptyState
+              className={emptyClassName ?? "min-h-56"}
+              description={
+                liveStatusLine ??
+                "Results will appear here as each source finishes."
+              }
+              title="Searching your sources"
+            />
+          </div>
+        ) : null}
+
+        {!allResultsHidden &&
+        !searchSetupBlocker &&
+        !showSearchingEmptyState &&
+        isOfflineRuntime &&
+        jobs.length === 0 ? (
+          <div className="px-5 pt-4">
+            <ResultsEmptyState
+              actionHref={JOB_FINDER_ROUTE_PATHS.profileSources}
+              className="min-h-0 py-4"
+              description={DISCOVERY_OFFLINE_SETUP_NOTICE}
+              recoveryActionLabel="Review job sources"
+              recoveryActionNextStep="Check your saved job sites in Profile, then try searching again."
+              title="Job Finder cannot search right now"
+            />
+          </div>
+        ) : null}
+
+        {!allResultsHidden &&
+        !searchSetupBlocker &&
+        !isSearchInProgress &&
+        sessionNeedsAttention &&
+        jobs.length === 0 ? (
+          <div className="px-5 pt-4">
+            <ResultsEmptyState
+              className={emptyClassName ?? "min-h-56"}
+              description={`Open ${JOB_FINDER_BROWSER_NAME}, sign in or fix the issue, then search again.`}
+              title="Search blocked by browser"
+              {...(onRecoveryAction !== undefined ? { onRecoveryAction } : {})}
+              {...(recoveryActionLabel !== undefined
+                ? { recoveryActionLabel }
+                : {})}
+              {...(recoveryActionNextStep !== undefined
+                ? { recoveryActionNextStep }
+                : {})}
+              {...(recoveryActionPending
+                ? { recoveryActionPending: true }
+                : {})}
+            />
+          </div>
+        ) : null}
+
+        {!allResultsHidden &&
+        !searchSetupBlocker &&
+        !isSearchInProgress &&
+        sessionWaitingOnRuntime &&
+        jobs.length === 0 ? (
+          <div className="px-5 pt-4">
+            <ResultsEmptyState
+              className={emptyClassName ?? "min-h-56"}
+              description="New results will appear here after browser-based sources are ready."
+              title="Browser is starting"
+            />
+          </div>
+        ) : null}
+
+        {sessionNeedsAttention && jobs.length > 0 ? (
+          <div className="px-5 py-4">
+            <RecoveryCallout
+              description={`You're viewing results from the last completed search. Open ${JOB_FINDER_BROWSER_NAME} when you're ready to run a new one.`}
+              {...(onRecoveryAction !== undefined ? { onRecoveryAction } : {})}
+              {...(recoveryActionLabel !== undefined
+                ? { recoveryActionLabel }
+                : {})}
+              {...(recoveryActionNextStep !== undefined
+                ? { recoveryActionNextStep }
+                : {})}
+              {...(recoveryActionPending
+                ? { recoveryActionPending: true }
+                : {})}
+            />
+          </div>
+        ) : null}
+
+        {!allResultsHidden &&
+        !searchSetupBlocker &&
+        !showSearchingEmptyState &&
+        !isOfflineRuntime &&
+        !sessionNeedsAttention &&
+        !sessionWaitingOnRuntime &&
+        emptyRunVerdict.kind === "interrupted" &&
+        jobs.length === 0 ? (
+          <div className="px-5 pt-4">
+            <ResultsEmptyState
+              className={emptyClassName ?? "min-h-56"}
+              description={`${
+                emptyRunVerdict.interruptState === "cancelled"
+                  ? "The newest search was cancelled before every enabled source was checked. An empty list here does not prove your sources have no matches."
+                  : emptyRunVerdict.interruptState === "sources_failed"
+                    ? "The newest search finished, but at least one enabled source failed, so an empty list here does not prove your sources have no matches."
+                    : "The newest search stopped before every enabled source was checked. An empty list here does not prove your sources have no matches."
+              } ${
+                // The callout above already says what to do; a second, generic
+                // "Search now" beside it pointed at the wrong fix when the cause
+                // was an address to correct.
+                failureCalloutShown
+                  ? "The message above says what to do next."
+                  : "Select Search now to try again."
+              }`}
+              title={
+                emptyRunVerdict.interruptState === "cancelled"
+                  ? "The last search was cancelled"
+                  : emptyRunVerdict.interruptState === "sources_failed"
+                    ? "The last search finished, but sources failed"
+                    : "The last search stopped before finishing"
+              }
+            />
+          </div>
+        ) : null}
+
+        {!allResultsHidden &&
+        !searchSetupBlocker &&
+        !showSearchingEmptyState &&
+        !sessionNeedsAttention &&
+        !sessionWaitingOnRuntime &&
+        !isOfflineRuntime &&
+        emptyRunVerdict.kind === "completed" &&
+        jobs.length === 0 ? (
+          <div className="px-5 pt-4">
+            <ResultsEmptyState
+              actionHref={
+                editPlanHref ?? JOB_FINDER_ROUTE_PATHS.profileWorkModes
+              }
+              className={emptyClassName ?? "min-h-56"}
+              description="No saved source returned a role that met this search. Broaden a role or location, enable another source, then run it again."
+              recoveryActionLabel="Edit your places"
+              recoveryActionNextStep="Review this plan’s places and work modes, then search again."
+              title="No matches from this search"
+            />
+          </div>
+        ) : null}
+
+        {!allResultsHidden &&
+        !searchSetupBlocker &&
+        !showSearchingEmptyState &&
+        !sessionNeedsAttention &&
+        !sessionWaitingOnRuntime &&
+        !isOfflineRuntime &&
+        emptyRunVerdict.kind === "none" &&
+        jobs.length === 0 ? (
+          <div className="px-5 pt-4">
+            <ResultsEmptyState
+              className={emptyClassName ?? "min-h-56"}
+              description="Press Search now. Job Finder searches the sources chosen for this plan using your profile, then lists what it found here. Shortlist the jobs you want to apply to."
+              title="Ready for your first search"
+            />
+          </div>
+        ) : null}
+
+        {jobs.length > 0 &&
+        filteredJobs.length === 0 &&
+        activeFilterCount > 0 ? (
+          <div className="px-5 pt-4">
+            <ResultsEmptyState
+              className={emptyClassName ?? "min-h-48"}
+              description="No saved result meets every active filter. Nothing was removed."
+              onRecoveryAction={clearFilters}
+              recoveryActionLabel="Clear filters"
+              recoveryActionNextStep="Review the complete result list, then apply a broader filter if needed."
+              title="No jobs match these filters"
+            />
+          </div>
+        ) : jobs.length > 0 && filteredJobs.length === 0 ? (
+          <CollectionNoMatches
+            // "No jobs match 'Akron'" over eleven kept results read as a search
+            // that found nothing. It found eleven; none of them answer this
+            // word, and saying both is the only true version.
+            description={`This search kept ${jobs.length} ${
+              jobs.length === 1 ? "job" : "jobs"
+            }, found elsewhere. Clear the search to see ${
+              jobs.length === 1 ? "it" : "them"
+            }.`}
+            noun="jobs"
+            onClear={() => view.setQuery("")}
+            query={view.query}
+          />
+        ) : null}
+
+        {filteredJobs.length > 0 ? (
+          // Below the two-pane breakpoint the results panel and the inspector
+          // share one page scroller, so the list must take its content height:
+          // a short result set that stretches to the viewport leaves hundreds of
+          // pixels of empty bordered area that reads as a loading failure and
+          // pushes the inspector — and its primary action — off screen.
+          <div className="flex min-h-0 flex-col" data-job-results-stack>
+            {onShortlistJobs && shortlistableJobs.length > 0 ? (
+              <div
+                aria-label="Bulk shortlist actions"
+                className="flex flex-wrap items-center gap-2 border-b border-(--surface-panel-border) px-4 py-2.5"
+                role="group"
+              >
+                <Button
+                  disabled={bulkSelectedJobIds.size === 0}
+                  onClick={() => void shortlistSelected()}
+                  size="sm"
+                  type="button"
+                  variant="secondary"
+                >
+                  {bulkSelectedJobIds.size > 0
+                    ? `Shortlist ${bulkSelectedJobIds.size} selected`
+                    : "Shortlist selected"}
+                </Button>
+                <Button
+                  onClick={() => void shortlistAllShown()}
+                  size="sm"
+                  type="button"
+                  variant="outline"
+                >
+                  Shortlist all {shortlistableJobs.length} shown
+                </Button>
+              </div>
+            ) : null}
+            <div
+              // The scroll padding keeps the last card clear of the two-pane
+              // scroller's bottom edge. Below that breakpoint the list has no
+              // scroller of its own and takes its content height, so the same
+              // padding is only an empty grey strip under the last result.
+              className="min-h-[320px] xl:pb-8"
+            >
+              <ul
+                aria-label="Results"
+                className={cn(jobFinderListRegionClassName, "xl:min-h-full")}
+              >
+                {visibleJobs.flatMap((job) => {
+                  const isSelected = displayedSelectedJobId === job.id;
+                  const recommendation =
+                    fitRecommendationCopy[
+                      job.matchAssessment.recommendation ??
+                        "review_before_applying"
+                    ];
+                  const assessment = getMatchAssessmentPresentation(job);
+                  // A title-only row sitting under the rendered "Title matches ·
+                  // not yet checked" divider would otherwise repeat that exact
+                  // claim twice more — "Title match only" plus a two-line
+                  // caption — on every row of a band that can be the whole list.
+                  // The divider states it once for the run; the row drops the
+                  // visible restatement and keeps an assistive-technology line,
+                  // because a row button is reachable by keyboard without ever
+                  // reading the divider. Provisional rows share this band but
+                  // not its claim, so they keep their own verdict, and a
+                  // title-only row banded as a mismatch keeps it too: no divider
+                  // above it says the title was all that was read.
+                  const isCoveredByUncheckedBand =
+                    assessment.isNotJudged &&
+                    // An unbound assessment is title-only by evidence depth but
+                    // presents as "Fit not assessed", which is a different claim
+                    // from the one the divider makes; it keeps its own verdict.
+                    !assessment.isProvisional &&
+                    headedGroupByJobId.get(job.id) === "unchecked";
+                  // One sentence on the row saying why: what is missing when the
+                  // score is withheld, otherwise the hard-conflict reason. Rows
+                  // whose score stands on its own evidence stay quiet.
+                  const rowReason =
+                    (job.matchAssessment.recommendation === "skip"
+                      ? scrubJobAbsencePlaceholders(
+                          job.matchAssessment.recommendationRationale ?? "",
+                        ) || null
+                      : null) ??
+                    (job.matchAssessment.dimensions?.roleSuitability?.state !==
+                      undefined &&
+                    job.matchAssessment.dimensions.roleSuitability.state !==
+                      "exact"
+                      ? job.matchAssessment.gaps[0]
+                      : null) ??
+                    assessment.withheldReason ??
+                    // Rows that share a printed percentage state the one
+                    // strongest fact behind their place, so the order between
+                    // equal numbers is something the person can read.
+                    (tiedScores.has(job.matchAssessment.score)
+                      ? describeMatchTieBreakReason(job)
+                      : null);
+                  const listingDateBadge = getDiscoveryListingDateBadge(job);
+                  const listingDateExplanation = listingDateBadge.shown
+                    ? listingDateBadge.rankable
+                      ? undefined
+                      : "The source shows a posting label without a full date, so Newest cannot rank this listing by its posting date."
+                    : undefined;
+                  const sourceLabels = sourceLabelsByJobId.get(job.id) ?? [];
+                  const sourceText =
+                    sourceLabels.length > 0
+                      ? sourceLabels.join(", ")
+                      : "Source unavailable";
+                  // A careers-site source repeats the employer's own name; the
+                  // meta line then read "Canonical • Remote · Canonical".
+                  const sourceRepeatsEmployer =
+                    sourceLabels.length === 1 &&
+                    Boolean(job.company) &&
+                    sourceLabels[0]?.trim().toLowerCase() ===
+                      job.company?.trim().toLowerCase();
+                  const listingActivity = getListingActivity(job);
+                  const activity = presentListingActivity(listingActivity);
+                  const activityDescription =
+                    listingActivity.status === "inactive"
+                      ? `Not found in a source inventory observation on ${activity.observedDate}. This does not prove the listing is closed. ${listingActivity.explanation}`
+                      : activity.description;
+
+                  const groupHeading = groupHeadingsByJobId.get(job.id);
+                  const wasRescoredAfterRead =
+                    !acknowledgedRescoreJobIds.has(job.id) &&
+                    Boolean(
+                      job.latestMatchAssessmentAudit?.inputChanges.some(
+                        (change) => change.code === "listing_evidence_changed",
+                      ) &&
+                      job.latestMatchAssessmentAudit.outputChanges.some(
+                        (change) => change.code === "score_changed",
+                      ),
+                    );
+
+                  return [
+                    groupHeading ? (
+                      <li
+                        key={`group-${facetScopeKey}-${groupHeading.id}`}
                         className="grid gap-1 border-y border-(--surface-panel-border) bg-(--surface-panel-raised) px-4 py-2.5"
                         data-testid={`discovery-results-group-${groupHeading.id}`}
                       >
                         <span className="text-(length:--text-small) font-semibold text-(--text-headline)">
                           {groupHeading.label} ({groupHeading.count})
                         </span>
-                        <span className="text-(length:--text-tiny) leading-5 text-foreground-soft">
-                          {groupHeading.description}
-                        </span>
-                      </div>
-                    ) : null}
-                    {onShortlistJobs &&
-                    job.status !== "shortlisted" &&
-                    job.status !== "submitted" ? (
-                      <label className="absolute left-3 top-4 z-10 inline-flex size-7 items-center justify-center rounded-(--radius-small) focus-within:ring-[3px] focus-within:ring-ring/40">
-                        <span className="sr-only">Select {job.title}</span>
-                        <input
-                          aria-label={`Select ${job.title}`}
-                          checked={bulkSelectedJobIds.has(job.id)}
-                          onChange={(event) => {
-                            setBulkSelectedJobIds((current) => {
-                              const next = new Set(current);
-                              if (event.target.checked) next.add(job.id);
-                              else next.delete(job.id);
-                              return next;
-                            });
-                          }}
-                          type="checkbox"
-                        />
-                      </label>
-                    ) : null}
-                    <SelectableRow
-                      aria-controls={DISCOVERY_DETAIL_REGION_ID}
-                      data-job-result-id={job.id}
-                      className={baseButtonClasses}
-                      aria-keyshortcuts="ArrowUp ArrowDown Home End"
-                      data-collection-item-id={job.id}
-                      onClick={(event) => {
-                        if (wasRescoredAfterRead) {
-                          setAcknowledgedRescoreJobIds((current) =>
-                            new Set(current).add(job.id),
-                          );
-                        }
-                        onSelectJob(job.id);
-                        if (event.detail === 0) {
-                          focusDiscoveryDetailAfterKeyboardSelection();
-                        } else {
-                          revealDiscoveryDetailAfterPointerSelection();
-                        }
-                      }}
-                      onKeyDown={(event) => handleListKeyDown(event, job.id)}
-                      selected={isSelected}
-                    >
-                      {/* One shared line rhythm for all three lists: title line (with
+                        {groupHeading.id === "unchecked" &&
+                        onAssessJobListing ? (
+                          <DiscoveryAssessmentContinuation
+                            jobs={[
+                              ...visibleJobs,
+                              ...orderedJobs.filter(
+                                (entry) =>
+                                  !visibleJobs.some(
+                                    (visible) => visible.id === entry.id,
+                                  ),
+                              ),
+                            ]}
+                            isSearchRunning={isSearchInProgress}
+                            onAssess={onAssessJobListing}
+                          />
+                        ) : null}
+                      </li>
+                    ) : null,
+                    <li key={job.id} className="relative min-w-0 pl-10">
+                      {onShortlistJobs &&
+                      !["drafting", "ready_for_review", "approved"].includes(
+                        job.status,
+                      ) &&
+                      job.status !== "submitted" ? (
+                        <label className="absolute left-3 top-4 z-10 inline-flex size-7 items-center justify-center rounded-(--radius-small) focus-within:ring-[3px] focus-within:ring-ring/40">
+                          <span className="sr-only">Select {job.title}</span>
+                          <input
+                            aria-label={`Select ${job.title}`}
+                            checked={bulkSelectedJobIds.has(job.id)}
+                            onChange={(event) => {
+                              setBulkSelectedJobIds((current) => {
+                                const next = new Set(current);
+                                if (event.target.checked) next.add(job.id);
+                                else next.delete(job.id);
+                                return next;
+                              });
+                            }}
+                            type="checkbox"
+                          />
+                        </label>
+                      ) : null}
+                      <SelectableRow
+                        aria-controls={DISCOVERY_DETAIL_REGION_ID}
+                        data-job-result-id={job.id}
+                        className={baseButtonClasses}
+                        aria-keyshortcuts="ArrowUp ArrowDown Home End"
+                        data-collection-item-id={job.id}
+                        onClick={(event) => {
+                          if (wasRescoredAfterRead) {
+                            setAcknowledgedRescoreJobIds((current) =>
+                              new Set(current).add(job.id),
+                            );
+                          }
+                          onSelectJob(job.id);
+                          if (event.detail === 0) {
+                            focusDiscoveryDetailAfterKeyboardSelection();
+                          } else {
+                            revealDiscoveryDetailAfterPointerSelection();
+                          }
+                        }}
+                        onKeyDown={(event) => handleListKeyDown(event, job.id)}
+                        selected={isSelected}
+                      >
+                        {/* One shared line rhythm for all three lists: title line (with
                           the one trailing badge slot), then meta, then status. */}
-                      <div className={jobFinderListRowLinesClassName}>
-                        <div className={jobFinderListRowTitleLineClassName}>
-                          <strong
-                            className={jobFinderListRowTitleClassName}
-                            title={job.title}
-                          >
-                            {job.title}
-                          </strong>
-                          <div className={jobFinderListRowBadgeSlotClassName}>
-                            {isCoveredByUncheckedBand ? null : (
-                              <span
-                                aria-label={assessment.headlineScoreAriaLabel}
-                                className={cn(
-                                  "text-(length:--text-small) font-semibold tabular-nums",
-                                  assessment.isScoreWithheld
-                                    ? "text-foreground-soft"
-                                    : "text-(--text-headline)",
-                                )}
-                                data-testid={`discovery-result-fit-${job.id}`}
-                              >
-                                {assessment.headlineScoreLabel}
-                              </span>
-                            )}
-                            {/* The default "review before applying" verdict is the
+                        <div className={jobFinderListRowLinesClassName}>
+                          <div className={jobFinderListRowTitleLineClassName}>
+                            <strong
+                              className={jobFinderListRowTitleClassName}
+                              title={job.title}
+                            >
+                              {job.title}
+                            </strong>
+                            <div className={jobFinderListRowBadgeSlotClassName}>
+                              {isCoveredByUncheckedBand ? null : (
+                                <span
+                                  aria-label={assessment.headlineScoreAriaLabel}
+                                  className={cn(
+                                    "text-(length:--text-small) font-semibold tabular-nums",
+                                    assessment.isScoreWithheld
+                                      ? "text-foreground-soft"
+                                      : "text-(--text-headline)",
+                                  )}
+                                  data-testid={`discovery-result-fit-${job.id}`}
+                                >
+                                  {assessment.headlineScoreLabel}
+                                </span>
+                              )}
+                              {/* The default "review before applying" verdict is the
                                 baseline for every row, so only a stronger or
                                 weaker verdict earns a badge in the list; the
                                 inspector keeps the full assessment. */}
-                            {job.matchAssessment.recommendation !==
-                            "review_before_applying" ? (
-                              <StatusBadge
-                                tone={
-                                  assessment.isProvisional
-                                    ? "neutral"
-                                    : recommendation.tone
-                                }
-                              >
-                                {recommendation.label}
-                              </StatusBadge>
-                            ) : null}
-                            {/* No "Provisional assessment" badge: the headline
+                              {job.matchAssessment.recommendation !==
+                              "review_before_applying" ? (
+                                <StatusBadge
+                                  tone={
+                                    assessment.isProvisional
+                                      ? "neutral"
+                                      : recommendation.tone
+                                  }
+                                >
+                                  {recommendation.label}
+                                </StatusBadge>
+                              ) : null}
+                              {/* No "Provisional assessment" badge: the headline
                                 already reads "Fit not assessed" and the row's
                                 reason line says why. */}
-                            {listingActivity.status !== "active" ? (
-                              <Badge
-                                aria-label={`${activity.label} listing status${activity.observedDate ? ` observed ${activity.observedDate}` : ""}. ${activityDescription}`}
-                                title={activityDescription}
-                                variant="outline"
-                              >
-                                {activity.label}
-                                {activity.observedDate
-                                  ? ` · ${activity.observedDate}`
-                                  : ""}
-                              </Badge>
-                            ) : (
-                              <span className="sr-only">
-                                {`${activity.label} listing status${activity.observedDate ? ` observed ${activity.observedDate}` : ""}. ${activityDescription}`}
-                              </span>
-                            )}
-                            {job.status === "shortlisted" ||
-                            job.status === "submitted" ? (
-                              <StatusBadge
-                                tone={getApplicationTone(job.status)}
-                              >
-                                {formatStatusLabel(job.status)}
-                              </StatusBadge>
-                            ) : null}
-                            {listingDateBadge.shown ? (
-                              <Badge
-                                {...(listingDateExplanation
-                                  ? { title: listingDateExplanation }
-                                  : {})}
-                                variant="outline"
-                              >
-                                {listingDateBadge.text}
-                              </Badge>
-                            ) : null}
-                          </div>
-                        </div>
-                        {(() => {
-                          const employerLocationLine =
-                            formatJobEmployerLocationLine({
-                              company: job.company,
-                              location: job.location,
-                              canonicalUrl: job.canonicalUrl,
-                              separator: " • ",
-                            });
-                          // One meta line: employer and location, then the
-                          // source it was found on. A source on its own line
-                          // read as a second, unexplained company name.
-                          // Exactly one accessible source mention per row:
-                          // the visible separator is decorative and the
-                          // sr-only prefix completes the sentence.
-                          return (
-                            <span
-                              className={cn(
-                                jobFinderListRowMetaClassName,
-                                "flex min-w-0 items-baseline gap-1.5",
+                              {listingActivity.status !== "active" ? (
+                                <Badge
+                                  aria-label={`${activity.label} listing status${activity.observedDate ? ` observed ${activity.observedDate}` : ""}. ${activityDescription}`}
+                                  title={activityDescription}
+                                  variant="outline"
+                                >
+                                  {activity.label}
+                                  {activity.observedDate
+                                    ? ` · ${activity.observedDate}`
+                                    : ""}
+                                </Badge>
+                              ) : (
+                                <span className="sr-only">
+                                  {`${activity.label} listing status${activity.observedDate ? ` observed ${activity.observedDate}` : ""}. ${activityDescription}`}
+                                </span>
                               )}
-                              {...(employerLocationLine
-                                ? {}
-                                : {
-                                    "data-testid": `discovery-result-source-${job.id}`,
-                                    title: `Employer not listed · ${sourceText}`,
-                                  })}
-                            >
+                              {[
+                                "drafting",
+                                "ready_for_review",
+                                "approved",
+                                "submitted",
+                              ].includes(job.status) ? (
+                                <StatusBadge
+                                  tone={getApplicationTone(job.status)}
+                                >
+                                  {job.status === "submitted"
+                                    ? formatStatusLabel(job.status)
+                                    : "Shortlisted"}
+                                </StatusBadge>
+                              ) : null}
+                              {listingDateBadge.shown ? (
+                                <Badge
+                                  {...(listingDateExplanation
+                                    ? { title: listingDateExplanation }
+                                    : {})}
+                                  variant="outline"
+                                >
+                                  {listingDateBadge.text}
+                                </Badge>
+                              ) : null}
+                            </div>
+                          </div>
+                          {(() => {
+                            const employerLocationLine =
+                              formatJobEmployerLocationLine({
+                                company: job.company,
+                                location: job.location,
+                                canonicalUrl: job.canonicalUrl,
+                                separator: " • ",
+                              });
+                            // One meta line: employer and location, then the
+                            // source it was found on. A source on its own line
+                            // read as a second, unexplained company name.
+                            // Exactly one accessible source mention per row:
+                            // the visible separator is decorative and the
+                            // sr-only prefix completes the sentence.
+                            return (
                               <span
                                 className={cn(
-                                  "min-w-0 break-words",
-                                  employerLocationLine
-                                    ? "font-medium"
-                                    : "shrink-0",
-                                )}
-                                data-testid={`discovery-result-employer-${job.id}`}
-                                title={employerLocationLine || undefined}
-                              >
-                                {employerLocationLine || "Employer not listed"}
-                                {indistinguishableJobIds.has(job.id)
-                                  ? ` · Reference ${job.sourceJobId}`
-                                  : ""}
-                              </span>
-                              <span
-                                aria-hidden="true"
-                                className={cn(
-                                  "shrink-0",
-                                  sourceRepeatsEmployer &&
-                                    employerLocationLine &&
-                                    "sr-only",
-                                )}
-                              >
-                                {" · "}
-                              </span>
-                              <span
-                                className={cn(
-                                  "flex min-w-0 max-w-[45%] shrink-0",
-                                  sourceRepeatsEmployer &&
-                                    employerLocationLine &&
-                                    "sr-only",
+                                  jobFinderListRowMetaClassName,
+                                  "flex min-w-0 items-baseline gap-1.5",
                                 )}
                                 {...(employerLocationLine
-                                  ? {
+                                  ? {}
+                                  : {
                                       "data-testid": `discovery-result-source-${job.id}`,
-                                      title: `Found on ${sourceText}`,
-                                    }
-                                  : {})}
+                                      title: `Employer not listed · ${sourceText}`,
+                                    })}
                               >
-                                <span className="sr-only">Found on </span>
-                                <span className="min-w-0 truncate">
-                                  {sourceText}
+                                <span
+                                  className={cn(
+                                    "min-w-0 break-words",
+                                    employerLocationLine
+                                      ? "font-medium"
+                                      : "shrink-0",
+                                  )}
+                                  data-testid={`discovery-result-employer-${job.id}`}
+                                  title={employerLocationLine || undefined}
+                                >
+                                  {employerLocationLine ||
+                                    "Employer not listed"}
+                                  {indistinguishableJobIds.has(job.id)
+                                    ? ` · Reference ${job.sourceJobId}`
+                                    : ""}
+                                </span>
+                                <span
+                                  aria-hidden="true"
+                                  className={cn(
+                                    "shrink-0",
+                                    sourceRepeatsEmployer &&
+                                      employerLocationLine &&
+                                      "sr-only",
+                                  )}
+                                >
+                                  {" · "}
+                                </span>
+                                <span
+                                  className={cn(
+                                    "flex min-w-0 max-w-[45%] shrink-0",
+                                    sourceRepeatsEmployer &&
+                                      employerLocationLine &&
+                                      "sr-only",
+                                  )}
+                                  {...(employerLocationLine
+                                    ? {
+                                        "data-testid": `discovery-result-source-${job.id}`,
+                                        title: `Found on ${sourceText}`,
+                                      }
+                                    : {})}
+                                >
+                                  <span className="sr-only">Found on </span>
+                                  <span className="min-w-0 truncate">
+                                    {sourceText}
+                                  </span>
                                 </span>
                               </span>
-                            </span>
-                          );
-                        })()}
+                            );
+                          })()}
 
-                        {/* The fit verdict sits on the title line beside its
+                          {/* The fit verdict sits on the title line beside its
                           badge (see the badge slot above). The reason behind
                           it is a comfortable-density line only; compact rows
                           stay two lines. When the evidence behind the number
                           is only the listing title the number is withheld and
                           kept inside "How this was scored" with its evidence. */}
-                        {isCoveredByUncheckedBand ? (
-                          <span
-                            className="sr-only"
-                            data-testid={`discovery-result-fit-sr-${job.id}`}
-                          >
-                            {rowReason
-                              ? `${assessment.headlineScoreAriaLabel}. ${rowReason}`
-                              : assessment.headlineScoreAriaLabel}
-                          </span>
-                        ) : rowReason ? (
-                          <span
-                            className={cn(
-                              jobFinderListRowStatusClassName,
-                              "text-foreground-soft",
-                            )}
-                            data-testid={`discovery-result-fit-reason-${job.id}`}
-                          >
-                            {rowReason}
-                          </span>
-                        ) : null}
-                        {wasRescoredAfterRead ? (
-                          <span className="text-(length:--text-tiny) text-foreground-soft">
-                            Rescored after reading the listing
-                          </span>
-                        ) : null}
-                      </div>
+                          {isCoveredByUncheckedBand ? (
+                            <span
+                              className="sr-only"
+                              data-testid={`discovery-result-fit-sr-${job.id}`}
+                            >
+                              {rowReason
+                                ? `${assessment.headlineScoreAriaLabel}. ${rowReason}`
+                                : assessment.headlineScoreAriaLabel}
+                            </span>
+                          ) : rowReason ? (
+                            <span
+                              className={cn(
+                                jobFinderListRowStatusClassName,
+                                "text-foreground-soft",
+                              )}
+                              data-testid={`discovery-result-fit-reason-${job.id}`}
+                            >
+                              {rowReason}
+                            </span>
+                          ) : null}
+                          {wasRescoredAfterRead ? (
+                            <span className="text-(length:--text-tiny) text-foreground-soft">
+                              Rescored after reading the listing
+                            </span>
+                          ) : null}
+                        </div>
 
-                      {/* Below xl the inspector stacks under this list, so a
+                        {/* Below xl the inspector stacks under this list, so a
                           highlighted row is the only sign that anything more
                           exists — and it sits past the fold. This names the
                           pane by its own visible heading; it does not promise
@@ -2111,57 +2291,61 @@ export function DiscoveryResultsPanel({
                           second time. Nothing here scrolls — the default
                           selection is not a user action, and only an explicit
                           click reveals the detail region. */}
-                      <span
-                        aria-hidden="true"
-                        className="invisible flex items-center gap-1 text-(length:--text-tiny) font-medium text-foreground-soft data-[details-cue=visible]:visible xl:hidden"
-                        data-details-cue={isSelected ? "visible" : "hidden"}
-                        data-testid={`discovery-result-details-below-${job.id}`}
-                      >
-                        <ChevronDown aria-hidden="true" className="size-3.5" />
-                        Job details below
-                      </span>
-                    </SelectableRow>
-                  </li>
-                );
-              })}
-            </ul>
+                        <span
+                          aria-hidden="true"
+                          className="invisible flex items-center gap-1 text-(length:--text-tiny) font-medium text-foreground-soft data-[details-cue=visible]:visible xl:hidden"
+                          data-details-cue={isSelected ? "visible" : "hidden"}
+                          data-testid={`discovery-result-details-below-${job.id}`}
+                        >
+                          <ChevronDown
+                            aria-hidden="true"
+                            className="size-3.5"
+                          />
+                          Job details below
+                        </span>
+                      </SelectableRow>
+                    </li>,
+                  ];
+                })}
+              </ul>
+            </div>
+            {pageCount > 1 ? (
+              <nav
+                aria-label="Job result pages"
+                className="sticky bottom-0 z-10 flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-(--surface-panel-border) bg-(--surface-panel) px-5 py-3"
+                data-job-results-pagination
+              >
+                <Button
+                  disabled={currentPage === 0}
+                  onClick={() => moveToPage(Math.max(0, currentPage - 1))}
+                  size="sm"
+                  type="button"
+                  variant="outline"
+                >
+                  Previous
+                </Button>
+                <span
+                  aria-live="polite"
+                  className="text-center text-(length:--text-small) text-foreground-muted"
+                >
+                  {firstVisibleJobNumber}–{lastVisibleJobNumber} of {jobCount}
+                </span>
+                <Button
+                  disabled={currentPage >= pageCount - 1}
+                  onClick={() =>
+                    moveToPage(Math.min(pageCount - 1, currentPage + 1))
+                  }
+                  size="sm"
+                  type="button"
+                  variant="outline"
+                >
+                  Next
+                </Button>
+              </nav>
+            ) : null}
           </div>
-          {pageCount > 1 ? (
-            <nav
-              aria-label="Job result pages"
-              className="relative z-10 flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-(--surface-panel-border) bg-(--surface-panel) px-5 py-3"
-              data-job-results-pagination
-            >
-              <Button
-                disabled={currentPage === 0}
-                onClick={() => moveToPage(Math.max(0, currentPage - 1))}
-                size="sm"
-                type="button"
-                variant="outline"
-              >
-                Previous
-              </Button>
-              <span
-                aria-live="polite"
-                className="text-center text-(length:--text-small) text-foreground-muted"
-              >
-                {firstVisibleJobNumber}–{lastVisibleJobNumber} of {jobCount}
-              </span>
-              <Button
-                disabled={currentPage >= pageCount - 1}
-                onClick={() =>
-                  moveToPage(Math.min(pageCount - 1, currentPage + 1))
-                }
-                size="sm"
-                type="button"
-                variant="outline"
-              >
-                Next
-              </Button>
-            </nav>
-          ) : null}
-        </div>
-      ) : null}
+        ) : null}
+      </div>
     </section>
   );
 }

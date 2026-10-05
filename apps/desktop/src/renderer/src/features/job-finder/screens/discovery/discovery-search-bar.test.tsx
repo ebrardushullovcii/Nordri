@@ -394,3 +394,14 @@ it("links directly to Search plans beside search controls", () => {
     screen.getByRole("link", { name: "Search plans" }).getAttribute("href"),
   ).toBe("/job-finder/campaigns");
 });
+
+it("names the background plan on its Stop button", () => {
+  const onStopSearch = vi.fn();
+  renderBar({
+    isSearchRunning: true,
+    backgroundPlanName: "Local B",
+    onStopSearch,
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Stop Local B search" }));
+  expect(onStopSearch).toHaveBeenCalledOnce();
+});

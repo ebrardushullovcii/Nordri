@@ -63,7 +63,9 @@ export function getDiscoverySourceLabels(
     }
 
     return (
-      getSafeHostname(entry.startingUrl) ?? getProvenanceFallbackLabel(entry)
+      entry.sourceLabel ??
+      getSafeHostname(entry.startingUrl) ??
+      getProvenanceFallbackLabel(entry)
     );
   });
 

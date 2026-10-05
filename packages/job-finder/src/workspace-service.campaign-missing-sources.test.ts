@@ -21,6 +21,10 @@ describe("running a plan whose sources are gone", () => {
     if (!campaign) throw new Error("Expected an active campaign fixture.");
 
     // The plan still exists; the sources behind it are gone.
+    await workspaceService.saveSearchPreferences({
+      ...campaign.searchPreferences,
+      discovery: { ...campaign.searchPreferences.discovery, targets: [] },
+    });
     await workspaceService.saveCampaign({
       id: campaign.id,
       name: campaign.name,
@@ -82,6 +86,10 @@ describe("running a plan whose sources are gone", () => {
         ?.schedule.runFacts.lastRunOutcome,
     ).toBe("success");
 
+    await workspaceService.saveSearchPreferences({
+      ...campaign.searchPreferences,
+      discovery: { ...campaign.searchPreferences.discovery, targets: [] },
+    });
     await workspaceService.saveCampaign({
       id: campaign.id,
       name: campaign.name,

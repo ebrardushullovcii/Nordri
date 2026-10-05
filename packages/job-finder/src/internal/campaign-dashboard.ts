@@ -2,6 +2,7 @@ import {
   JobFinderDashboardSummarySchema,
   JobSearchCampaignCollectionSchema,
   JobSearchCampaignSchema,
+  resolveCampaignSourceTargetIds,
   JobSearchPreferencesSchema,
   getDefaultCampaignConfiguration,
   type ApplyJobResult,
@@ -117,8 +118,9 @@ function createDefaultCampaign(
   return JobSearchCampaignSchema.parse({
     id,
     name: "My job search",
+    sourceSelectionMode: "profile",
     description:
-      "Your main search. Uses the job sites selected for this plan.",
+      "Your main search. Follows the job sites switched on in Profile.",
     mode: "precision",
     status: "active",
     createdAt: now,
@@ -250,6 +252,53 @@ export function reconcileCampaignState(input: {
   );
   let changed = false;
   const campaigns = input.state.campaigns.map((campaign) => {
+    // Old default plans follow Profile until the person edits the plan.
+    const untouchedDefault =
+      isAdoptionLineageCampaign(campaign) &&
+      !campaign.history.some(
+        (entry) =>
+          entry.kind === "updated" &&
+          entry.id !== RETENTION_RECONCILED_HISTORY_ID,
+      );
+    const sourceSelectionMode =
+      campaign.sourceSelectionMode ??
+      (untouchedDefault || campaign.sourceTargetIds.length === 0
+        ? "profile"
+        : "selected");
+    const sourceTargetIds =
+      sourceSelectionMode === "profile"
+        ? enabledSourceTargetIds
+        : campaign.sourceTargetIds.filter((id) =>
+            availableSourceTargetIds.has(id),
+          );
+    const livePreferences = {
+      ...campaign.searchPreferences,
+      discovery: {
+        ...campaign.searchPreferences.discovery,
+        targets: searchPreferences.discovery.targets,
+      },
+    };
+    const sourcesChanged =
+      !sameStringValues(sourceTargetIds, campaign.sourceTargetIds) ||
+      JSON.stringify(livePreferences) !==
+        JSON.stringify(campaign.searchPreferences);
+    // Removing the last explicitly chosen source must not turn an old plan
+    // into Profile inheritance on the next snapshot.
+    const persistedSourceSelectionMode =
+      campaign.sourceSelectionMode ??
+      (untouchedDefault || sourcesChanged ? sourceSelectionMode : undefined);
+    if (
+      campaign.sourceSelectionMode !== persistedSourceSelectionMode ||
+      sourcesChanged
+    ) {
+      changed = true;
+      campaign = JobSearchCampaignSchema.parse({
+        ...campaign,
+        sourceSelectionMode: persistedSourceSelectionMode,
+        sourceTargetIds,
+        searchPreferences: livePreferences,
+      });
+    }
     if (campaign.id !== input.state.activeCampaignId) return campaign;
     if (campaign.status !== "active" && campaign.status !== "paused") {
       return campaign;
@@ -260,13 +309,6 @@ export function reconcileCampaignState(input: {
     // Only the untouched adoption record predates an explicit per-plan source
     // choice. Once a plan has been edited, preserve its own include list and
     // merely discard source ids that no longer exist in Profile.
-    const sourceTargetIds = campaign.history[0]?.id.startsWith(
-      "campaign_history_default_created",
-    )
-      ? enabledSourceTargetIds
-      : campaign.sourceTargetIds.filter((targetId) =>
-          availableSourceTargetIds.has(targetId),
-        );
     const unchanged =
       sameStringValues(savedJobIds, campaign.jobIds) &&
       sameStringValues(sourceTargetIds, campaign.sourceTargetIds) &&
@@ -336,10 +378,12 @@ export async function ensureCampaignState(input: {
  * plan that has never chosen sources follows Profile, as its editor says.
  */
 export function searchPreferencesForCampaignRun(
-  campaign: Pick<JobSearchCampaign, "searchPreferences" | "sourceTargetIds">,
+  campaign: Pick<
+    JobSearchCampaign,
+    "searchPreferences" | "sourceTargetIds" | "sourceSelectionMode"
+  >,
 ): JobSearchCampaign["searchPreferences"] {
-  if (campaign.sourceTargetIds.length === 0) return campaign.searchPreferences;
-  const selected = new Set(campaign.sourceTargetIds);
+  const selected = new Set(resolveCampaignSourceTargetIds(campaign));
   return {
     ...campaign.searchPreferences,
     discovery: {

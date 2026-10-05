@@ -43,7 +43,30 @@ function createDetailReadingAiClient() {
     },
   );
   return {
-    aiClient: { ...aiClient, extractJobsFromPage },
+    aiClient: {
+      ...aiClient,
+      extractJobsFromPage,
+      assessJobFit: async () => ({
+        score: 80,
+        reasons: ["Design systems experience"],
+        gaps: [],
+        recommendation: "strong_fit" as const,
+        role: "exact" as const,
+        roleExplanation: "Design systems role.",
+        requirements: [
+          {
+            id: "design",
+            label: "Design systems",
+            status: "supported" as const,
+            category: "skill" as const,
+            importance: "required" as const,
+            jobEvidence: "Lead the design system roadmap",
+            resumeEvidence: [],
+            explanation: "Synthetic assessment.",
+          },
+        ],
+      }),
+    },
     extractJobsFromPage,
   };
 }
@@ -176,39 +199,54 @@ describe("listing detail enrichment inside a discovery run", () => {
     ).toBe(true);
   }, 30_000);
 
-  test("a rate-limited listing is read on shortlist once the site's wait has passed", async () => {
-    let limited = true;
-    const fetchListingHtml: ListingHtmlFetcher = (url) =>
-      Promise.resolve(
-        limited
-          ? { status: 429, html: "", finalUrl: url, retryAfterMs: 0 }
-          : {
-              status: 200,
-              html: RECORD_PAGE(null, "Signal Systems"),
-              finalUrl: url,
-            },
-      );
-    const { aiClient, extractJobsFromPage } = createDetailReadingAiClient();
+  test("shortlisting returns before its background listing read and persists the later assessment", async () => {
+    let release!: (result: Awaited<ReturnType<ListingHtmlFetcher>>) => void;
+    const fetchListingHtml = vi.fn<ListingHtmlFetcher>(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    const { aiClient } = createDetailReadingAiClient();
+    const seed = createSeed();
+    const job = seed.savedJobs[0]!;
+    job.detailQuality = "card_only";
+    job.listingDetailFetch = null;
+    job.matchAssessment.judgment = null;
+    const onListingAssessmentFinished = vi.fn();
     const { repository, workspaceService } = createWorkspaceServiceHarness({
+      seed,
       fetchListingHtml,
       aiClient,
+      onListingAssessmentFinished,
     });
-
-    await workspaceService.runDiscovery();
-    const blocked = (await repository.listSavedJobs()).find(
-      (job) => job.listingDetailFetch?.outcome === "blocked",
-    );
-    expect(blocked?.listingDetailFetch?.retryAfterAt).toBeTruthy();
-    expect(extractJobsFromPage).not.toHaveBeenCalled();
-
-    limited = false;
-    await workspaceService.queueJobForReview(blocked!.id);
-
-    const read = (await repository.listSavedJobs()).find(
-      (job) => job.id === blocked!.id,
-    );
-    expect(read?.listingDetailFetch?.outcome).toBe("enriched");
-    expect(read?.listingDetailCapture?.state).toBe("captured");
-    expect(extractJobsFromPage).toHaveBeenCalledTimes(1);
-  }, 30_000);
+    const snapshot = await workspaceService.queueJobForReview(job.id);
+    expect(
+      snapshot.reviewQueue.find((item) => item.jobId === job.id)
+        ?.listingAssessmentPending,
+    ).toBe(true);
+    await vi.waitFor(() => expect(fetchListingHtml).toHaveBeenCalled());
+    expect(
+      (await repository.listSavedJobs()).find((entry) => entry.id === job.id)
+        ?.listingDetailFetch,
+    ).toBeNull();
+    release({
+      status: 200,
+      html: RECORD_PAGE(null, "Signal Systems"),
+      finalUrl: job.canonicalUrl,
+    });
+    await vi.waitFor(async () => {
+      const read = (await repository.listSavedJobs()).find(
+        (entry) => entry.id === job.id,
+      )!;
+      expect(read.listingDetailFetch?.outcome).toBe("enriched");
+      expect(read.matchAssessment.judgment).toBeTruthy();
+      expect(onListingAssessmentFinished).toHaveBeenCalledOnce();
+      expect(
+        (await workspaceService.getWorkspaceSnapshot()).reviewQueue.find(
+          (item) => item.jobId === job.id,
+        )?.listingAssessmentPending,
+      ).toBe(false);
+    });
+  });
 });

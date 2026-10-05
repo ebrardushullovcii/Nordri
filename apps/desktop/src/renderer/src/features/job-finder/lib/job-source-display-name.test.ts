@@ -17,9 +17,9 @@ describe("deriveJobSourceLabel", () => {
     );
   });
 
-  test("uses the hostname for ordinary public sources", () => {
+  test("includes a path so employers on the same host are distinguishable", () => {
     expect(deriveJobSourceLabel("https://www.example.com/jobs")).toBe(
-      "example.com",
+      "example.com/jobs",
     );
   });
 });
@@ -60,4 +60,13 @@ describe("recordedJobSourceName", () => {
     );
     expect(recordedJobSourceName("")).toBe(UNNAMED_JOB_SOURCE_NAME);
   });
+});
+
+test("distinguishes two employers on one public host", () => {
+  expect(deriveJobSourceLabel("https://jobs.lever.co/moneyboxapp")).toBe(
+    "jobs.lever.co/moneyboxapp",
+  );
+  expect(deriveJobSourceLabel("https://jobs.lever.co/another-employer")).toBe(
+    "jobs.lever.co/another-employer",
+  );
 });

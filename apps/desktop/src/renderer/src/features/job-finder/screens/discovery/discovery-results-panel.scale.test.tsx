@@ -254,7 +254,7 @@ describe("DiscoveryResultsPanel workspace scale", () => {
     ).toContain("The AI judges each job against your profile");
     const heading = screen.getByTestId("discovery-results-group-unchecked");
     expect(heading.textContent).toContain("Not yet assessed (1)");
-    expect(heading.textContent).toContain(
+    expect(heading.textContent).not.toContain(
       "The full requirements have not been assessed. Check the role and level before applying.",
     );
     expect(row.textContent).toContain("Overall fit: not judged yet");
@@ -434,7 +434,7 @@ describe("DiscoveryResultsPanel workspace scale", () => {
     expect(screen.getByText("51–100 of 1000")).toBeTruthy();
   });
 
-  it("keeps pagination outside the scrolling result region", () => {
+  it("keeps pagination sticky within the shared results and filters scroller", () => {
     const jobs = createJobs();
     const { container } = renderResults(jobs, null);
     const scrollRegion = container.querySelector(
@@ -444,16 +444,18 @@ describe("DiscoveryResultsPanel workspace scale", () => {
     const pagination = container.querySelector("[data-job-results-pagination]");
 
     expect(resultStack).toBeTruthy();
-    expect(resultStack?.className).toContain("overflow-hidden");
+    expect(resultStack?.className).not.toContain("overflow-hidden");
     expect(scrollRegion).toBeTruthy();
     expect(scrollRegion).toBe(
       screen.getByRole("region", { name: "Job results list" }),
     );
     expect(scrollRegion?.getAttribute("tabindex")).toBe("0");
-    expect(scrollRegion?.className).toContain("pb-8");
+    expect(scrollRegion?.className).toContain("min-h-[360px]");
+    expect(scrollRegion?.className).toContain("overflow-y-auto");
     expect(pagination).toBeTruthy();
-    expect(scrollRegion?.contains(pagination)).toBe(false);
-    expect(pagination?.className).not.toContain("sticky");
+    expect(scrollRegion?.contains(pagination)).toBe(true);
+    expect(pagination?.className).toContain("sticky");
+    expect(pagination?.className).toContain("bottom-0");
     expect(pagination?.className).toContain("shrink-0");
     expect(pagination?.className).toContain("bg-(--surface-panel)");
   });

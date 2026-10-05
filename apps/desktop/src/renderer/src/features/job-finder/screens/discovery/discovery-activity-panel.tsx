@@ -178,8 +178,11 @@ export function DiscoveryHistoryModal(props: {
   const eventStreamEndRef = useRef<HTMLDivElement | null>(null);
   const wasOpenRef = useRef(false);
   const liveRun = useMemo(
-    () => buildLiveRunRecord(props.liveEvents, props.targets),
-    [props.liveEvents, props.targets],
+    () =>
+      props.activeRun?.state === "running"
+        ? props.activeRun
+        : buildLiveRunRecord(props.liveEvents, []),
+    [props.liveEvents, props.activeRun],
   );
   const runOptions = useMemo(
     () => getRunOptions(liveRun, props.activeRun, props.recentRuns),

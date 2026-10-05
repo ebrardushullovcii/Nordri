@@ -503,6 +503,10 @@ describe("campaign workspace core", () => {
 
     const state = await repository.getCampaignState();
     expect(state?.campaigns[0]?.jobIds).toEqual(["high", "mid"]);
+    expect(state?.campaigns[0]?.latestDigest?.report).toMatchObject({
+      new: 2,
+      retained: 2,
+    });
     expect(state?.campaigns[0]?.history[0]?.discoveryRunId).toBe("run_1");
   });
 
@@ -1244,8 +1248,8 @@ describe("campaign retention reconciliation", () => {
         savedJobs: [savedJob("job_a", 90)],
         searchPreferences: seed.searchPreferences,
         now: "2026-08-15T11:00:00.000Z",
-      }),
-    ).toBeNull();
+      })?.campaigns[0]?.jobIds,
+    ).toEqual([]);
   });
 
   test("leaves user-created empty campaigns untouched to keep zero-sample funnels honest", () => {

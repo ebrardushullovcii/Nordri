@@ -26,6 +26,24 @@ const legacyJob = {
 };
 
 describe("discovery feedback contracts", () => {
+  it("persists reason-free hiding through the input and saved feedback schemas", () => {
+    expect(
+      JobFinderDismissDiscoveryJobInputSchema.parse({
+        jobId: "job_1",
+        reasons: [],
+        action: "hide_job",
+      }).reasons,
+    ).toEqual([]);
+    expect(
+      DiscoveryFeedbackSchema.parse({
+        version: 1,
+        revision: 1,
+        reasons: [],
+        recordedAt: "2026-07-31T12:00:00.000Z",
+      }).reasons,
+    ).toEqual([]);
+  });
+
   it("parses a bounded set of fact-neutral reason chips", () => {
     expect(
       JobFinderDismissDiscoveryJobInputSchema.parse({
@@ -35,13 +53,13 @@ describe("discovery feedback contracts", () => {
     ).toEqual({ jobId: "job_1", reasons: ["role", "location"] });
   });
 
-  it("rejects empty and unknown feedback", () => {
-    expect(() =>
+  it("accepts empty feedback and rejects unknown reasons", () => {
+    expect(
       JobFinderDismissDiscoveryJobInputSchema.parse({
         jobId: "job_1",
         reasons: [],
-      }),
-    ).toThrow();
+      }).reasons,
+    ).toEqual([]);
     expect(() =>
       DiscoveryFeedbackSchema.parse({
         version: 1,

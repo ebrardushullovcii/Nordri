@@ -1,3 +1,4 @@
+import { campaignPlanEditorHref } from "../../lib/job-finder-route-hrefs";
 import {
   useCallback,
   useEffect,
@@ -25,7 +26,10 @@ import type {
   SourceAccessPrompt,
   SavedJob,
 } from "@nordri/contracts";
-import { isListableCompanyName } from "@nordri/contracts";
+import {
+  resolveCampaignSourceTargetIds,
+  isListableCompanyName,
+} from "@nordri/contracts";
 import { PauseCircle, Play, X } from "lucide-react";
 import { Button } from "@renderer/components/ui/button";
 import { useToast } from "@renderer/components/ui/toast";
@@ -61,6 +65,7 @@ import {
   DiscoverySearchBar,
 } from "./discovery-search-bar";
 import { DiscoveryDetailPanel } from "./discovery-detail-panel";
+
 import { formatDiscoveryHideReason } from "./discovery-hide-reason-options";
 import { DiscoveryFiltersPanel } from "./discovery-filters-panel";
 import {
@@ -140,7 +145,7 @@ export function getNewestRunForCampaign(
 ): DiscoveryRunRecord | null {
   return (
     [...recentRuns]
-      .filter((run) => run.campaignId === campaignId)
+      .filter((run) => (run.campaignId ?? null) === campaignId)
       .sort(
         (left, right) =>
           Date.parse(right.startedAt) - Date.parse(left.startedAt),
@@ -256,10 +261,14 @@ export function updateStableDiscoveryRunSnapshot(input: {
             ...appended.map((job) => [job.id, job] as const),
           ]),
         };
+  const currentJobsById = new Map(input.jobs.map((job) => [job.id, job]));
   return {
     jobs: snapshot.jobIds.flatMap((id) => {
-      const job = snapshot.jobsById.get(id);
-      return job ? [job] : [];
+      const currentJob = currentJobsById.get(id);
+      const frozenJob = snapshot.jobsById.get(id);
+      return currentJob && frozenJob
+        ? [{ ...currentJob, matchAssessment: frozenJob.matchAssessment }]
+        : [];
     }),
     snapshot,
   };
@@ -437,13 +446,41 @@ export function DiscoveryScreen(props: {
     onRunAgentDiscovery,
     onSelectJob,
     recentRuns,
-    searchPreferences,
+    searchPreferences: workspaceSearchPreferences,
     searchSelectivity = null,
     preserveSelectedJob,
     selectedJob,
     selectedSourceTargetId,
     sourceAccessPrompts,
   } = props;
+  const selectedCampaign = campaigns?.find(
+    (plan) => plan.id === activeCampaignId,
+  );
+  const effectiveSourceIds = selectedCampaign
+    ? new Set(
+        resolveCampaignSourceTargetIds({
+          ...selectedCampaign,
+          searchPreferences: {
+            ...selectedCampaign.searchPreferences,
+            discovery: workspaceSearchPreferences.discovery,
+          },
+        }),
+      )
+    : null;
+  const searchPreferences = effectiveSourceIds
+    ? {
+        ...workspaceSearchPreferences,
+        discovery: {
+          ...workspaceSearchPreferences.discovery,
+          targets: workspaceSearchPreferences.discovery.targets.map(
+            (target) => ({
+              ...target,
+              enabled: effectiveSourceIds.has(target.id),
+            }),
+          ),
+        },
+      }
+    : workspaceSearchPreferences;
   const activeCampaignMode =
     campaigns?.find((campaign) => campaign.id === activeCampaignId)?.mode ??
     "precision";
@@ -466,6 +503,7 @@ export function DiscoveryScreen(props: {
   const [displayedSelection, setDisplayedSelection] = useState<{
     jobId: string | null;
   } | null>(null);
+  useEffect(() => setDisplayedSelection(null), [activeCampaignId]);
   // Results-mode feedback for the Shortlist decision, keyed by the exact
   // clicked job. Each `onQueueJob` call resolves its own awaited outcome, so
   // overlapping shortlists resolving out of order, search completions, and
@@ -513,9 +551,20 @@ export function DiscoveryScreen(props: {
   // now are the whole setup a person needs; the defaults panel is one click.
   const [openSetupChipId, setOpenSetupChipId] = useState<string | null>(null);
   const isSetupOpen = openSetupChipId !== null;
-  const selectedPlanLatestRun = useMemo(
-    () => getNewestRunForCampaign(recentRuns, activeCampaignId),
+  const selectedPlanRuns = useMemo(
+    () =>
+      activeCampaignId === null
+        ? recentRuns
+        : recentRuns.filter((run) => run.campaignId === activeCampaignId),
     [activeCampaignId, recentRuns],
+  );
+  const selectedPlanLatestRun = useMemo(
+    () =>
+      [...selectedPlanRuns].sort(
+        (left, right) =>
+          Date.parse(right.startedAt) - Date.parse(left.startedAt),
+      )[0] ?? null,
+    [selectedPlanRuns],
   );
   const selectedPlanSafeguardRoute =
     safeguardPauses.find((pause) => pause.campaignId === activeCampaignId)
@@ -548,16 +597,19 @@ export function DiscoveryScreen(props: {
             getDiscoveryRunCountEvidence(selectedPlanLatestRun, null),
           ),
         getDiscoveryRunReportCounts(selectedPlanLatestRun).new,
+        selectedPlanLatestRun.targetExecutions?.filter(
+          (source) => source.state === "failed",
+        ).length ?? 0,
       );
     }
     if (selectedPlanLatestRun.state === "cancelled") {
       return createDiscoveryRunCancelledFeedback({
-        savedJobCount: selectedPlanLatestRun.summary.validJobsFound,
+        savedJobCount: selectedPlanLatestRun.summary?.validJobsFound,
       });
     }
     if (selectedPlanLatestRun.state === "failed") {
       return createDiscoveryRunInterruptedFeedback({
-        detail: selectedPlanLatestRun.summary.warnings.at(-1) ?? null,
+        detail: selectedPlanLatestRun.summary?.warnings?.at(-1) ?? null,
       });
     }
     return null;
@@ -620,7 +672,8 @@ export function DiscoveryScreen(props: {
       title: toast.title,
       ...(toast.description ? { description: toast.description } : {}),
       tone:
-        currentDiscoveryRunFeedback?.status === "succeeded"
+        currentDiscoveryRunFeedback?.status === "succeeded" &&
+        !currentDiscoveryRunFeedback.partial
           ? "success"
           : "neutral",
     });
@@ -671,13 +724,20 @@ export function DiscoveryScreen(props: {
     const done = activeRun.summary?.targetsCompleted ?? 0;
     const planned = activeRun.summary?.targetsPlanned ?? 0;
     const line = [
-      target ? `Checking ${target.label}.` : null,
+      target && done < planned ? `Checking ${target.label}.` : null,
       planned > 0 ? `${done} of ${planned} sources done.` : null,
+      `${campaigns?.find((plan) => plan.id === activeRun.campaignId)?.name ?? "Job search"} · started ${new Date(activeRun.startedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}${activeRun.campaignId !== activeCampaignId ? " · running in the background" : ""}.`,
     ]
       .filter(Boolean)
       .join(" ");
     return line.length > 0 ? line : null;
-  }, [activeRun, liveEvents, searchPreferences.discovery.targets]);
+  }, [
+    activeRun,
+    liveEvents,
+    searchPreferences.discovery.targets,
+    campaigns,
+    activeCampaignId,
+  ]);
   const workspaceMode: "results" | "setup" = isSetupOpen ? "setup" : "results";
   const setWorkspaceMode = useCallback((mode: "results" | "setup") => {
     setOpenSetupChipId(mode === "setup" ? "roles" : null);
@@ -832,27 +892,20 @@ export function DiscoveryScreen(props: {
         )?.id ?? null)
       : null;
   const hiddenJobCount = resultVisibility.hiddenAlsoFoundCount;
-  // A focused view with nothing in it and results behind the reveal is a
-  // list lying about a search that found jobs. Show them.
-  const focusedViewIsEmpty =
-    !showAlsoFound && hiddenJobCount > 0 && resultVisibility.jobs.length === 0;
-  useEffect(() => {
-    if (focusedViewIsEmpty) setShowAlsoFound(true);
-  }, [focusedViewIsEmpty]);
 
   const showEmptyDiscoveryState = jobs.length === 0;
   // Newest-run truth for the results panel's empty states, so a failed or
   // cancelled latest attempt never renders as "no matches" or "first search".
   const latestRunVerdict = useMemo(
-    () => getDiscoveryLatestRunVerdict(recentRuns),
-    [recentRuns],
+    () => getDiscoveryLatestRunVerdict(selectedPlanRuns),
+    [selectedPlanRuns],
   );
   // Run-level warnings the newest run recorded about its own evidence (for
   // example: only listing cards were read). They are printed verbatim beside
   // the run outcome instead of being re-derived from the results on screen.
   const latestRunNotices = useMemo(
-    () => getDiscoveryLatestRunNotices(recentRuns),
-    [recentRuns],
+    () => getDiscoveryLatestRunNotices(selectedPlanRuns),
+    [selectedPlanRuns],
   );
   const enabledTargetIds = new Set(
     searchPreferences.discovery.targets
@@ -1126,13 +1179,7 @@ export function DiscoveryScreen(props: {
       )}
       id="discovery-workspace-content"
     >
-      <div
-        className={
-          dismissedJobs.length > 0
-            ? "grid min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)] gap-2"
-            : "min-h-0 min-w-0"
-        }
-      >
+      <div className="flex min-h-0 min-w-0 flex-col gap-2">
         {dismissedJobs.length > 0 ? (
           <details className="rounded-(--radius-field) border border-(--surface-panel-border) bg-(--surface-panel) px-3 py-2">
             <summary className="cursor-pointer text-(length:--text-small) font-medium text-foreground-soft">
@@ -1193,6 +1240,11 @@ export function DiscoveryScreen(props: {
           </details>
         ) : null}
         <DiscoveryResultsPanel
+          {...(onAssessJobListing ? { onAssessJobListing } : {})}
+          planName={
+            campaigns?.find((plan) => plan.id === activeCampaignId)?.name ??
+            null
+          }
           alsoFoundCount={resultVisibility.alsoFoundCount}
           areAlsoFoundShown={showAlsoFound}
           browserSession={browserSession}
@@ -1201,25 +1253,28 @@ export function DiscoveryScreen(props: {
           // Active search plan identity: the running run's campaign, else the
           // most recent run's, else the shared default scope. Facet filters
           // persist per plan so switching plans never leaks selections.
-          facetScopeId={
-            activeRun?.campaignId ?? recentRuns[0]?.campaignId ?? null
-          }
-          hasCompletedSearch={recentRuns.some(
-            (run) => run.state === "completed",
-          )}
+          facetScopeId={activeCampaignId}
+          hasCompletedSearch={selectedPlanLatestRun?.state === "completed"}
           isSearchInProgress={
-            activeRun?.state === "running" ||
-            discoveryRunFeedback?.status === "started"
+            activeRun?.state === "running" &&
+            activeRun.campaignId === activeCampaignId
           }
           liveStatusLine={liveStatusLine}
           hiddenAlsoFoundCount={hiddenJobCount}
           inAreaJobCount={
             stableJobs.filter(
-              (job) => job.matchAssessment.locationReach === "in_area",
+              (job) =>
+                Boolean(job.matchAssessment.judgment) &&
+                job.matchAssessment.locationReach === "in_area",
             ).length
           }
           jobs={resultVisibility.jobs}
-          latestRun={selectedPlanLatestRun}
+          latestRun={
+            activeRun?.state === "running" &&
+            activeRun.campaignId === activeCampaignId
+              ? activeRun
+              : selectedPlanLatestRun
+          }
           latestRunVerdict={latestRunVerdict}
           failureCalloutShown={
             visibleDiscoveryRunFeedback?.status === "failed" &&
@@ -1228,8 +1283,18 @@ export function DiscoveryScreen(props: {
           preferredLocations={searchPreferences.locations}
           remoteIncluded={searchPreferences.workModes.includes("remote")}
           totalLocationJobCount={stableJobs.length}
-          editPlanHref={JOB_FINDER_ROUTE_PATHS.profileWorkModes}
+          pendingLocationJobCount={
+            stableJobs.filter((job) => !job.matchAssessment.judgment).length
+          }
+          editPlanHref={
+            activeCampaignId
+              ? campaignPlanEditorHref(activeCampaignId)
+              : JOB_FINDER_ROUTE_PATHS.campaigns
+          }
           onSearchAgain={onRunAgentDiscovery ?? null}
+          {...(props.onRunDiscoveryForTarget
+            ? { onRetrySource: props.onRunDiscoveryForTarget }
+            : {})}
           onDisplayedSelectedJobIdChange={(jobId) =>
             setDisplayedSelection({ jobId })
           }
@@ -1363,6 +1428,16 @@ export function DiscoveryScreen(props: {
                           : DISCOVERY_SEARCH_SETUP_BLOCKER_ID
                   }
                   searchPreferences={searchPreferences}
+                  backgroundPlanName={
+                    activeRun?.state === "running" &&
+                    Boolean(activeRun.campaignId) &&
+                    Boolean(activeCampaignId) &&
+                    activeRun.campaignId !== activeCampaignId
+                      ? (campaigns?.find(
+                          (plan) => plan.id === activeRun.campaignId,
+                        )?.name ?? "background")
+                      : null
+                  }
                   searchProgressLabel={liveSearchProgressLabel}
                   searchStartedAt={activeRun?.startedAt ?? null}
                   {...(onCancelDiscovery

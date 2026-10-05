@@ -219,6 +219,7 @@ export interface DiscoveryRunFeedback {
    * the results (ADR 0042); `headline` stays the full sentence for Home,
    * Search history and tests.
    */
+  partial?: boolean;
   toast?: { title: string; description: string | null };
 }
 
@@ -394,27 +395,37 @@ export function createDiscoveryRunSucceededFeedback(
   runCountLabel: string | null = null,
   /** Jobs new to the person, for the toast's one short line. */
   newJobCount: number | null = null,
+  failedSourceCount = 0,
 ): DiscoveryRunFeedback {
-  const finished = targetLabel
-    ? `Search finished for ${targetLabel} and results were saved on this device.`
-    : "Search finished and results were saved on this device.";
+  const partialTitle =
+    failedSourceCount > 0
+      ? `Search finished, ${failedSourceCount} ${failedSourceCount === 1 ? "source failed" : "sources failed"}`
+      : null;
+  const finished = partialTitle
+    ? `${partialTitle}. Results from the other sources are saved.`
+    : targetLabel
+      ? `Search finished for ${targetLabel} and results were saved on this device.`
+      : "Search finished and results were saved on this device.";
 
   return {
     status: "succeeded",
     detail: null,
     headline: runCountLabel ? `${finished} ${runCountLabel}.` : finished,
+    partial: failedSourceCount > 0,
     recovery: null,
     targetLabel,
     toast: {
-      title: targetLabel
-        ? `Search finished for ${targetLabel}`
-        : "Search finished",
+      title:
+        partialTitle ??
+        (targetLabel
+          ? `Search finished for ${targetLabel}`
+          : "Search finished"),
       description:
         newJobCount === null
           ? runCountLabel
           : newJobCount === 0
             ? "No new jobs this time."
-            : `${newJobCount} new ${newJobCount === 1 ? "job" : "jobs"} to review.`,
+            : `${newJobCount} new ${newJobCount === 1 ? "job" : "jobs"} saved to this plan.`,
     },
   };
 }

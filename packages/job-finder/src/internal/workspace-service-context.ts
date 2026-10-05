@@ -72,6 +72,8 @@ export interface WorkspaceServiceContext {
   exportFileVerifier?: ResumeExportFileVerifier;
   researchAdapter?: ResumeResearchAdapter;
   repository: JobFinderRepository;
+  listingAssessmentJobIds?: Set<string>;
+  onListingAssessmentFinished?: () => void;
   activeDiscoveryAbortControllerRef: MutableRef<AbortController | null>;
   /**
    * The run id the in-flight discovery pipeline belongs to. A stop request

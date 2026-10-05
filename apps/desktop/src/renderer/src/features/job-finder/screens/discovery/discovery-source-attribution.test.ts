@@ -95,3 +95,11 @@ describe("getDiscoverySourceLabels", () => {
     ).toEqual(["Renamed configured label"]);
   });
 });
+
+it("keeps the saved source label and URL after a source is deleted", () => {
+  const sighting = { ...provenance, sourceLabel: "Lantern Services careers" };
+  expect(getDiscoverySourceLabels([sighting], [])).toEqual([
+    "Lantern Services careers",
+  ]);
+  expect(sighting.startingUrl).toBe(provenance.startingUrl);
+});

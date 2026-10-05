@@ -682,13 +682,13 @@ describe("ReviewQueueScreen job details honesty", () => {
     expect(screen.getByTestId("review-queue-fit-score").textContent).toBe(
       "Not judged yet",
     );
-    // Once beside the score, once inside the breakdown that would otherwise
-    // read as five contradictions of it.
+    // The preview points to the available full-details control; the stored
+    // assessment explanation remains inside its breakdown.
     expect(
       screen.getAllByText(
         "The AI judges each job against your profile and goals after a search. Choose Read and assess listing to judge this one now.",
       ),
-    ).toHaveLength(2);
+    ).toHaveLength(1);
     expect(
       screen.getByText(
         "The listing text was not captured. Open the full job details to read it.",

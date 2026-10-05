@@ -328,3 +328,35 @@ describe("DiscoveryHistoryModal", () => {
     expect(screen.queryByText(/No jobs matched this plan/u)).toBeNull();
   });
 });
+
+it("keeps a live run's captured sources when Profile adds another source", () => {
+  const activeRun = DiscoveryRunRecordSchema.parse({
+    ...failedRun,
+    id: "live-run",
+    state: "running",
+    completedAt: null,
+    targetExecutions: failedRun.targetExecutions.map((execution) => ({
+      ...execution,
+      state: "running",
+      completedAt: null,
+    })),
+    summary: { ...failedRun.summary, targetsCompleted: 0, outcome: "running" },
+  });
+  render(
+    <DiscoveryHistoryModal
+      activeRun={activeRun}
+      isDiscoveryPending
+      isTargetPending={() => false}
+      liveEvents={[liveEvent]}
+      onClose={vi.fn()}
+      open
+      recentRuns={[]}
+      targets={[
+        ...targets,
+        { ...targets[0]!, id: "new-source", label: "Added later" },
+      ]}
+    />,
+  );
+  expect(screen.queryByText("Added later")).toBeNull();
+  expect(screen.getAllByText(/0\/1 sources/).length).toBeGreaterThan(0);
+});

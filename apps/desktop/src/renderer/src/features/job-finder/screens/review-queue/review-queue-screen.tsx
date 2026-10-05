@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type {
   BrowserSessionState,
   ApplicationAutomationMode,
@@ -50,6 +57,7 @@ import type { TailoredDraftPreparationViewState } from "./review-queue-status";
 const workspacePanelId = "review-queue-workspace-panel";
 
 export function ReviewQueueScreen(props: {
+  scopeControl?: ReactNode;
   resumeOperationStarts?: Readonly<Record<string, number>> | undefined;
   actionState: { message: string | null };
   applicationRecords: readonly ApplicationRecord[];
@@ -362,6 +370,7 @@ export function ReviewQueueScreen(props: {
       topContent={
         <PageHeaderStack
           title="Shortlisted"
+          subnav={props.scopeControl}
           description="The jobs you want. Pick a resume level for each, get the resume ready, then press Apply."
         />
       }
@@ -540,12 +549,18 @@ export function ReviewQueueScreen(props: {
                         className="text-(length:--text-body) text-(--text-headline)"
                         data-testid="review-queue-fit-score"
                       >
-                        {selectedJobAssessment?.headlineScoreLabel}
+                        {selectedItem.listingAssessmentPending
+                          ? "Assessing listing"
+                          : selectedJobAssessment?.headlineScoreLabel}
                       </strong>
                       <span className="min-w-0 text-(length:--text-small) leading-6 text-foreground-soft">
-                        {selectedJobAssessment?.withheldReason ??
-                          selectedJobFitReasons[0] ??
-                          "Estimated from the listing and your approved profile."}
+                        {selectedItem.listingAssessmentPending
+                          ? "Reading and assessing this listing in the background."
+                          : selectedJobAssessment?.isNotJudged
+                            ? "Open full job details to read and assess this listing."
+                            : (selectedJobAssessment?.withheldReason ??
+                              selectedJobFitReasons[0] ??
+                              "Estimated from the listing and your approved profile.")}
                       </span>
                     </div>
                     <Button

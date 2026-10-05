@@ -1,3 +1,5 @@
+import { JobSearchPreferencesSchema } from "./discovery";
+import { resolveCampaignSourceTargetIds } from "./job-search-campaigns";
 import { describe, expect, test } from "vitest";
 
 import {
@@ -125,4 +127,44 @@ describe("JobSearchCampaignSchema", () => {
       }),
     ).toThrow();
   });
+});
+
+test("effective source selection distinguishes Profile inheritance from explicitly choosing none", () => {
+  const preferences = JobSearchPreferencesSchema.parse({
+    ...searchPreferences,
+    discovery: {
+      targets: [
+        {
+          id: "on",
+          label: "On",
+          startingUrl: "https://on.example.test",
+          enabled: true,
+        },
+        {
+          id: "off",
+          label: "Off",
+          startingUrl: "https://off.example.test",
+          enabled: false,
+        },
+      ],
+    },
+  });
+  const plan = {
+    searchPreferences: preferences,
+    sourceTargetIds: [] as string[],
+  };
+  expect(resolveCampaignSourceTargetIds(plan)).toEqual(["on"]);
+  expect(
+    resolveCampaignSourceTargetIds({
+      ...plan,
+      sourceSelectionMode: "selected",
+    }),
+  ).toEqual([]);
+  expect(
+    resolveCampaignSourceTargetIds({
+      ...plan,
+      sourceSelectionMode: "selected",
+      sourceTargetIds: ["off", "deleted"],
+    }),
+  ).toEqual(["off"]);
 });

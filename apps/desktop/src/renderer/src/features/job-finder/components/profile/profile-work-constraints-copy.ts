@@ -14,7 +14,7 @@ export const PROFILE_WORK_CONSTRAINT_COPY = {
   preferredRelocationRegions: {
     description: "A preference, not a work-authorization answer.",
     label: "Places you would consider relocating to",
-    placeholder: "Example: Austin, TX, Berlin",
+    placeholder: "Example: Austin, TX; Berlin",
   },
   requiresVisaSponsorship: {
     description: "Yes only if an employer must sponsor you.",

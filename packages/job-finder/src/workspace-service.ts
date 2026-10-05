@@ -257,6 +257,7 @@ export function createJobFinderWorkspaceService(
     onActivityControlChanged,
     onDetachedApplyRunFinished,
     onResumeEvidenceFinished,
+    onListingAssessmentFinished,
     onExplicitUserStart,
   } = options;
   const activeDiscoveryAbortControllerRef = {
@@ -391,6 +392,8 @@ export function createJobFinderWorkspaceService(
     documentManager,
     ...(exportFileVerifier ? { exportFileVerifier } : {}),
     repository,
+    listingAssessmentJobIds: new Set<string>(),
+    ...(onListingAssessmentFinished ? { onListingAssessmentFinished } : {}),
     activeDiscoveryAbortControllerRef,
     activeDiscoveryRunIdRef,
     activeDiscoveryPromiseRef,

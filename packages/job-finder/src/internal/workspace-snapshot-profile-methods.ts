@@ -398,23 +398,7 @@ export function createWorkspaceSnapshotProfileMethods(
       await ctx.repository.saveCampaignState({
         ...campaignState,
         campaigns: campaignState.campaigns.map((campaign) => {
-          const existingTargets = new Map(
-            campaign.searchPreferences.discovery.targets.map((target) => [
-              target.id,
-              target,
-            ]),
-          );
-          const liveTargets = searchPreferences.discovery.targets.map(
-            (target) => ({
-              ...target,
-              // Plans own only the on/off choice. A source newly added in
-              // Profile follows Profile's current setting in every plan until
-              // the person changes that plan.
-              enabled: existingTargets.has(target.id)
-                ? campaign.sourceTargetIds.includes(target.id)
-                : target.enabled,
-            }),
-          );
+          const liveTargets = searchPreferences.discovery.targets;
           const campaignPreferences =
             campaign.id === campaignState.activeCampaignId
               ? {
@@ -434,9 +418,7 @@ export function createWorkspaceSnapshotProfileMethods(
           return {
             ...campaign,
             searchPreferences: campaignPreferences,
-            sourceTargetIds: liveTargets
-              .filter((target) => target.enabled)
-              .map((target) => target.id),
+            sourceTargetIds: campaign.sourceTargetIds,
             updatedAt: now,
           };
         }),
@@ -1113,7 +1095,11 @@ export function createWorkspaceSnapshotProfileMethods(
       setupContext.profile,
       settings,
       linesToDecideByDraftId,
-    );
+    ).map((item) => ({
+      ...item,
+      listingAssessmentPending:
+        ctx.listingAssessmentJobIds?.has(item.jobId) ?? false,
+    }));
     const reconciledApplicationRecords =
       await reconcileStaleMissingResumeBlockers(ctx.repository, {
         applicationRecords,
@@ -1538,6 +1524,43 @@ export function createWorkspaceSnapshotProfileMethods(
       commitApplicationDefaultFields({ resumeApplicationMode }),
   });
 
+  async function preserveRemovedSourceLabels(
+    currentSearchPreferences: JobSearchPreferences,
+    nextSearchPreferences: JobSearchPreferences,
+  ): Promise<void> {
+    const removedSourceLabels = new Map(
+      currentSearchPreferences.discovery.targets
+        .filter(
+          (target) =>
+            !nextSearchPreferences.discovery.targets.some(
+              (next) => next.id === target.id,
+            ),
+        )
+        .map((target) => [target.id, target.label]),
+    );
+    if (removedSourceLabels.size > 0) {
+      const preserveLabels = (job: SavedJob): SavedJob => ({
+        ...job,
+        provenance: job.provenance.map((entry) =>
+          entry.sourceLabel || !removedSourceLabels.has(entry.targetId)
+            ? entry
+            : {
+                ...entry,
+                sourceLabel: removedSourceLabels.get(entry.targetId),
+              },
+        ),
+      });
+      await ctx.repository.commitSavedJobDelta({
+        update: preserveLabels,
+        updateDiscoveryState: (current) => ({
+          ...current,
+          pendingDiscoveryJobs:
+            current.pendingDiscoveryJobs.map(preserveLabels),
+        }),
+      });
+    }
+  }
+
   async function persistSearchPreferences(
     searchPreferences: JobSearchPreferences,
     options: { preserveAiBehaviorOwnedFields: boolean },
@@ -1572,6 +1595,10 @@ export function createWorkspaceSnapshotProfileMethods(
     const nextSearchPreferences = invalidateChangedSourceGuidance(
       currentSearchPreferences,
       ownedFieldsPreservedSearchPreferences,
+    );
+    await preserveRemovedSourceLabels(
+      currentSearchPreferences,
+      nextSearchPreferences,
     );
     await ctx.repository.saveSearchPreferences(nextSearchPreferences);
     await syncActiveCampaignPreferences(nextSearchPreferences);
@@ -1798,6 +1825,10 @@ export function createWorkspaceSnapshotProfileMethods(
         );
       }
 
+      await preserveRemovedSourceLabels(
+        currentSearchPreferences,
+        nextSearchPreferences,
+      );
       await ctx.repository.saveProfileAndSearchPreferences(
         nextProfile,
         nextSearchPreferences,

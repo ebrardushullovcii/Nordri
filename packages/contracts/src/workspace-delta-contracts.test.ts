@@ -57,7 +57,7 @@ describe("workspace delta contracts", () => {
           reasons: [],
         },
       }).success,
-    ).toBe(false);
+    ).toBe(true);
     expect(
       JobFinderWorkspaceEntityMutationInputSchema.safeParse({
         baseRevision: 4,

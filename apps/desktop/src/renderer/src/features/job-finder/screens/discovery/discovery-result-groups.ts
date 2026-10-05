@@ -87,9 +87,9 @@ export function countDiscoveryUncheckedResults(
 
 const DISCOVERY_RESULT_GROUP_ORDER: Record<DiscoveryResultGroupId, number> = {
   matches: 0,
-  unchecked: 1,
-  weaker: 2,
-  mismatches: 3,
+  weaker: 1,
+  mismatches: 2,
+  unchecked: 3,
 };
 
 /**

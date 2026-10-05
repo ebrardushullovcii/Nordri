@@ -1052,7 +1052,7 @@ describe("profile editor application identity defaults", () => {
         },
         generatedLabelValues,
       ).payload?.discovery.targets[0]?.label,
-    ).toBe("jobs.example.com");
+    ).toBe("jobs.example.com/careers");
 
     const whitespaceOnlyValues =
       createSearchPreferencesEditorValues(searchPreferences);

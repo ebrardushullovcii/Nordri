@@ -164,6 +164,7 @@ export function DiscoverySearchBar(props: {
    */
   searchStartedAt?: string | null;
   /** Live "n new jobs saved" style progress for the run in progress. */
+  backgroundPlanName?: string | null;
   searchProgressLabel?: string | null;
   isStopPending?: boolean;
   /**
@@ -192,6 +193,7 @@ export function DiscoverySearchBar(props: {
     isSearchRunning,
     isSetupOpen,
     searchStartedAt = null,
+    backgroundPlanName = null,
     searchProgressLabel = null,
     isStopPending = false,
     stoppedNotice = null,
@@ -458,7 +460,11 @@ export function DiscoverySearchBar(props: {
             type="button"
             variant="outline"
           >
-            {isStopPending ? "Stopping" : "Stop search"}
+            {isStopPending
+              ? "Stopping"
+              : backgroundPlanName
+                ? `Stop ${backgroundPlanName} search`
+                : "Stop search"}
           </Button>
         ) : null}
         {!isSearchRunning && stoppedNotice ? (

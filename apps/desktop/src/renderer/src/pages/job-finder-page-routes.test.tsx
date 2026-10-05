@@ -2,6 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -9,6 +10,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { MemoryRouter, Outlet, Route, Routes } from "react-router-dom";
+import type { ReactElement } from "react";
 import type {
   JobFinderWorkspaceSnapshot,
   UserActionCommandInput,
@@ -44,6 +46,11 @@ describe("getUnavailableApplicationMessage", () => {
 const { applicationsScreenProps } = vi.hoisted(() => ({
   applicationsScreenProps: {
     current: null as {
+      scopeControl?: ReactElement<{
+        onSelect: (id: string) => Promise<boolean>;
+      }>;
+      searchPlanName?: string;
+      applicationRecords?: { id: string }[];
       canConfirmFinishedInBrowser?: boolean;
       onConfirmFinishedInBrowser?: (input: FinishInBrowserInput) => void;
       onSubmitPreparedApplication?: (jobId: string) => Promise<void>;
@@ -724,6 +731,31 @@ describe("Applications browser-step confirmation", () => {
     cleanup();
     applicationsScreenProps.current = null;
     vi.unstubAllGlobals();
+  });
+
+  it("switches the Applications view without changing the app's current plan", async () => {
+    const saved = selectedRecordWorkspace([]);
+    saved.campaigns.push({
+      ...saved.campaigns[0]!,
+      id: "campaign_empty",
+      name: "Empty plan",
+      jobIds: [],
+    });
+    const onSelectCampaign = vi.fn();
+    renderApplicationsRoute({
+      workspace: saved,
+      onPerformUserAction: vi.fn(),
+      onSelectCampaign,
+    });
+    await act(async () => {
+      await applicationsScreenProps.current?.scopeControl?.props.onSelect(
+        "campaign_empty",
+      );
+    });
+    expect(applicationsScreenProps.current?.searchPlanName).toBe("Empty plan");
+    expect(applicationsScreenProps.current?.applicationRecords).toEqual([]);
+    expect(onSelectCampaign).not.toHaveBeenCalled();
+    expect(saved.activeCampaignId).toBe("campaign_1");
   });
 
   it("shows the start failure and retries the exact job with one press when no record was created", () => {

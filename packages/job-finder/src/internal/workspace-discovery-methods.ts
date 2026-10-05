@@ -1,3 +1,4 @@
+import { searchPreferencesForCampaignRun } from "./campaign-dashboard";
 import {
   JobSearchCampaignCollectionSchema,
   DISCOVERY_NO_JOB_SITES_MESSAGE,
@@ -874,7 +875,7 @@ export function resolvePostingProducingTarget(
   posting: JobPosting,
   activeTarget: JobDiscoveryTarget,
   targets: readonly JobDiscoveryTarget[],
-): Pick<JobDiscoveryTarget, "id" | "adapterKind" | "startingUrl"> {
+): Pick<JobDiscoveryTarget, "id" | "label" | "adapterKind" | "startingUrl"> {
   if (!posting.producingPageUrl) return activeTarget;
   const page = new URL(posting.producingPageUrl);
   const candidates = targets
@@ -897,6 +898,7 @@ export function resolvePostingProducingTarget(
     return activeTarget;
   return {
     id: `page:${page.origin}`,
+    label: page.hostname,
     adapterKind: "auto",
     startingUrl: posting.producingPageUrl,
   };
@@ -1457,9 +1459,29 @@ export function createWorkspaceDiscoveryMethods(
       clearActiveController();
       throw error;
     });
+    const campaignState =
+      options.scope === "run_all" && !options.campaign
+        ? await ctx.repository.getCampaignState().catch((error: unknown) => {
+            clearActiveController();
+            throw error;
+          })
+        : null;
+    const currentPlan = campaignState?.campaigns.find(
+      (plan) => plan.id === campaignState.activeCampaignId,
+    );
+    const effectiveCampaign =
+      options.campaign ??
+      (currentPlan
+        ? {
+            campaignId: currentPlan.id,
+            searchPreferences: searchPreferencesForCampaignRun(currentPlan),
+            runJobBudget: currentPlan.limits.discoveryRunJobBudget ?? null,
+            mode: currentPlan.mode,
+          }
+        : undefined);
     const enrichedPreferences = withSavedJobSearchBehavior(
       enrichSearchPreferencesFromProfile(
-        options.campaign?.searchPreferences ?? searchPreferences,
+        effectiveCampaign?.searchPreferences ?? searchPreferences,
         profile,
       ),
       settings,
@@ -1471,7 +1493,7 @@ export function createWorkspaceDiscoveryMethods(
     // campaign-scoped control), then the discovery preferences field. No
     // explicit budget means uncapped retention with normal safety ceilings.
     const runJobBudget =
-      options.campaign?.runJobBudget ??
+      effectiveCampaign?.runJobBudget ??
       enrichedPreferences.discovery.runJobBudget ??
       null;
     const assessmentSession = createMatchAssessmentSession({
@@ -1506,7 +1528,7 @@ export function createWorkspaceDiscoveryMethods(
       let emptyRun = createInitialRunRecord({
         id: emptyRunId,
         campaignId:
-          options.campaign?.campaignId ?? (await ctx.getActiveCampaignId()),
+          effectiveCampaign?.campaignId ?? (await ctx.getActiveCampaignId()),
         targets: [],
         scope: options.scope,
         activeRun: startingDiscovery.activeRun,
@@ -1677,7 +1699,7 @@ export function createWorkspaceDiscoveryMethods(
     let activeRun = createInitialRunRecord({
       id: runId,
       campaignId:
-        options.campaign?.campaignId ?? (await ctx.getActiveCampaignId()),
+        effectiveCampaign?.campaignId ?? (await ctx.getActiveCampaignId()),
       targets,
       scope: options.scope,
       activeRun: startingDiscovery.activeRun,
@@ -2161,6 +2183,7 @@ export function createWorkspaceDiscoveryMethods(
               );
               return createDiscoveryProvenance({
                 targetId: producingTarget.id,
+                sourceLabel: producingTarget.label,
                 adapterKind: producingTarget.adapterKind,
                 resolvedAdapterKind:
                   producingTarget.id === target.id
@@ -2639,7 +2662,7 @@ export function createWorkspaceDiscoveryMethods(
                     ? "scale"
                     : searchGuidance.selectivity === "best_matches"
                       ? "precision"
-                      : (options.campaign?.mode ?? "precision"),
+                      : (effectiveCampaign?.mode ?? "precision"),
             searchGuidance,
             ...(options.searchRequest
               ? { searchRequest: options.searchRequest }

@@ -33,6 +33,7 @@ export function createWorkspaceServiceHarness(
     researchAdapter?: ReturnType<typeof createResearchAdapter>;
     fetchListingHtml?: ListingHtmlFetcher;
     onResumeEvidenceFinished?: () => void;
+    onListingAssessmentFinished?: () => void;
   } = {},
 ) {
   const repository = createInMemoryJobFinderRepository(
@@ -58,6 +59,9 @@ export function createWorkspaceServiceHarness(
     documentManager,
     exportFileVerifier,
     researchAdapter,
+    ...(options.onListingAssessmentFinished
+      ? { onListingAssessmentFinished: options.onListingAssessmentFinished }
+      : {}),
     ...(options.fetchListingHtml
       ? { fetchListingHtml: options.fetchListingHtml }
       : {}),

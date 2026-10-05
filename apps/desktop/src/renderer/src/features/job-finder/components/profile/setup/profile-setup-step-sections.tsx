@@ -719,8 +719,8 @@ export function ProfileSetupTargetingStep(props: {
     parsedManualSources.urls.length > 0 &&
     parsedManualSources.invalid.length === 0 &&
     manualSourceUrl
-      .split(/[\n,]+/u)
-      .filter((url) => url.trim())
+      .split(/[\s,]+/u)
+      .filter(Boolean)
       .every(isValidProfileSetupSourceUrl);
   const isManualSourceUrlInvalid =
     manualSourceUrl.trim().length > 0 && !isManualSourceComplete;
@@ -880,6 +880,7 @@ export function ProfileSetupTargetingStep(props: {
         <ProfileListEditor
           inputId={targetRolesId}
           label="Target roles"
+          draftParser={parseProfileLocationDraft}
           onChange={(values) =>
             props.preferencesForm.setValue(
               "targetRoles",
@@ -1301,7 +1302,9 @@ export function ProfileSetupTargetingStep(props: {
                 </Button>
               )}
             </div>
-            {lastAddedSources !== null && isManualSourceOpen ? (
+            {lastAddedSources !== null &&
+            isManualSourceOpen &&
+            !isManualSourceUrlInvalid ? (
               <p
                 aria-live="polite"
                 className="text-sm leading-6 text-foreground-soft"
@@ -1370,7 +1373,7 @@ export function ProfileSetupTargetingStep(props: {
                         setManualSourceUrl(event.target.value)
                       }
                       placeholder="https://company.example/careers"
-                      type="url"
+                      type="text"
                       value={manualSourceUrl}
                     />
                   </div>
@@ -1381,8 +1384,9 @@ export function ProfileSetupTargetingStep(props: {
                     id={manualSourceUrlErrorId}
                     role="status"
                   >
-                    Enter a complete http or https URL before this source can be
-                    used.
+                    {parsedManualSources.invalid[0]
+                      ? `“${parsedManualSources.invalid[0]}” is not a web address. Use complete http or https URLs, separated by spaces or new lines.`
+                      : "Enter a complete http or https URL."}
                   </p>
                 ) : null}
                 <div className="flex flex-wrap items-center gap-2">

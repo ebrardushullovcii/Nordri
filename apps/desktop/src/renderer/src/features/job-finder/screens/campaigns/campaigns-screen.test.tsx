@@ -16,7 +16,7 @@ import type {
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { resetJobFinderOverlaysForTests } from "../../lib/job-finder-overlay-ownership";
 import { deviceTimeZone } from "../../lib/job-finder-timestamp-format";
-import { CampaignsScreen } from "./campaigns-screen";
+import { describePlanRunFailure, CampaignsScreen } from "./campaigns-screen";
 
 afterEach(() => {
   cleanup();
@@ -186,6 +186,17 @@ it("names each plan's selected share of job sites", () => {
   const first = {
     ...campaign("one", "First", "precision"),
     sourceTargetIds: ["source-1", "source-2"],
+    searchPreferences: {
+      ...campaign("one", "First", "precision").searchPreferences,
+      discovery: {
+        historyLimit: 5,
+        targets: [1, 2, 3].map((index) => ({
+          ...campaign("one", "First", "precision").searchPreferences.discovery
+            .targets[0]!,
+          id: `source-${index}`,
+        })),
+      },
+    },
   } as JobSearchCampaign;
   const second = {
     ...campaign("two", "Second", "precision"),
@@ -2503,4 +2514,120 @@ it("reports dirty plan edits to the navigation guard and clears them after save 
   expect(onDirtyChange).toHaveBeenLastCalledWith(true);
   view.unmount();
   expect(onDirtyChange).toHaveBeenLastCalledWith(false);
+});
+
+it("shows inherited enabled sources, and unchecking the last one saves an empty explicit selection", () => {
+  const existing = {
+    ...campaign("inherit", "Inherited", "precision"),
+    sourceTargetIds: [],
+    sourceSelectionMode: "profile" as const,
+  } as JobSearchCampaign;
+  const onSave = vi.fn().mockResolvedValue(true);
+  render(
+    <CampaignsScreen
+      activeCampaignId="inherit"
+      campaigns={[existing]}
+      pending={false}
+      onSaveCampaign={onSave}
+      onSelectCampaign={vi.fn()}
+    />,
+  );
+  expect(screen.getByText("Uses 1 of your 1 job sites.")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+  expect(screen.getByLabelText<HTMLInputElement>("Example jobs").checked).toBe(
+    true,
+  );
+  expect(screen.getByText(/These sources control new searches/)).toBeTruthy();
+  fireEvent.click(screen.getByLabelText("Example jobs"));
+  fireEvent.click(screen.getByRole("button", { name: "Save search plan" }));
+  expect(onSave.mock.calls[0]?.[0]).toMatchObject({
+    sourceSelectionMode: "selected",
+    sourceTargetIds: [],
+  });
+});
+
+it("keeps city and state together when saving plan locations", () => {
+  const onSave = vi
+    .fn<(input: SaveJobSearchCampaignInput) => Promise<boolean>>()
+    .mockResolvedValue(true);
+  render(
+    <CampaignsScreen
+      activeCampaignId="one"
+      campaigns={[campaign("one", "Seattle plan", "precision")]}
+      pending={false}
+      onSaveCampaign={onSave}
+      onSelectCampaign={vi.fn()}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+  fireEvent.change(screen.getByPlaceholderText("Seattle, WA; Portland, OR"), {
+    target: { value: "Seattle, WA; Portland, OR" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Save search plan" }));
+  expect(onSave.mock.calls[0]?.[0].searchPreferences.locations).toEqual([
+    "Seattle, WA",
+    "Portland, OR",
+  ]);
+});
+
+it("distinguishes two unnamed sources on one host in the plan picker", () => {
+  const plan = campaign("employers", "Employer sources", "precision");
+  const original = plan.searchPreferences.discovery.targets[0]!;
+  const sources = ["gong", "glean"].map((employer) => ({
+    ...original,
+    id: employer,
+    label: "job-boards.greenhouse.io",
+    startingUrl: `https://job-boards.greenhouse.io/${employer}/jobs/123`,
+  }));
+  render(
+    <CampaignsScreen
+      activeCampaignId={plan.id}
+      campaigns={[
+        {
+          ...plan,
+          searchPreferences: {
+            ...plan.searchPreferences,
+            discovery: {
+              ...plan.searchPreferences.discovery,
+              targets: sources,
+            },
+          },
+        },
+      ]}
+      pending={false}
+      onSaveCampaign={vi.fn()}
+      onSelectCampaign={vi.fn()}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+  for (const employer of ["gong", "glean"]) {
+    expect(
+      screen.getByRole("checkbox", {
+        name: `job-boards.greenhouse.io/${employer}`,
+      }),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(`https://job-boards.greenhouse.io/${employer}/jobs/123`),
+    ).toBeTruthy();
+  }
+});
+
+it("shows a plain timeout reason without terminal logs on the plan card", () => {
+  const plan = campaign("one", "First", "precision");
+  const raw =
+    "page.goto: Timeout 30000ms exceeded. Call log: \u001b[2m waiting for navigation";
+  const run = {
+    id: "timeout",
+    state: "failed",
+    summary: { warnings: [raw] },
+  } as DiscoveryRunRecord;
+  const digest = {
+    ...plan.latestDigest,
+    discoveryRunId: "timeout",
+    outcome: "failed",
+  } as NonNullable<JobSearchCampaign["latestDigest"]>;
+  const reason = describePlanRunFailure([run], digest);
+  expect(reason).toBeTruthy();
+  expect(reason).not.toContain("page.goto");
+  expect(reason).not.toContain("\u001b");
 });
