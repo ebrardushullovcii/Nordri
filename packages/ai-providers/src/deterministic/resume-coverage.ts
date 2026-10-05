@@ -269,7 +269,7 @@ function buildExperienceText(
 function hasUsableWorkHistory(
   experience: CandidateProfile["experiences"][number],
 ): boolean {
-  return Boolean(experience.title?.trim() && experience.companyName?.trim());
+  return Boolean(experience.title?.trim());
 }
 
 function hasSkillPhraseOverlap(input: {

@@ -387,7 +387,7 @@ describe("ReviewQueueListPanel", () => {
 
     const message = screen.getByRole("status").textContent ?? "";
     expect(message).toContain("Wrote 2 resumes; 1 failed.");
-    expect(message).toContain("Nothing was sent.");
+    expect(message).not.toContain("Nothing was sent.");
     expect(message).not.toMatch(/approved|queued|submitted/i);
   });
 
@@ -533,4 +533,40 @@ describe("ReviewQueueListPanel", () => {
         ?.getAttribute("data-selected"),
     ).toBe("true");
   });
+});
+
+it("excludes a locally pending rewrite from the bulk ready count", () => {
+  const items = [createReadyItem("pending"), createReadyItem("ready")];
+  renderPanel({
+    queue: items,
+    isJobPending: (jobId) => jobId === "pending",
+    onApplyToAllReady: vi.fn(),
+  });
+  expect(
+    screen.getByRole("button", { name: "Apply to the 1 ready job" }),
+  ).toBeTruthy();
+});
+
+it("shows listing assessment without a writing indicator for Original", () => {
+  renderPanel({
+    queue: [
+      {
+        ...createReadyItem("original"),
+        resumeApplicationMode: "original_resume",
+      },
+    ],
+    isJobPending: () => true,
+  });
+  expect(screen.getByText("Reading the listing")).toBeTruthy();
+  expect(screen.queryByText(/Writing the resume/)).toBeNull();
+  expect(screen.queryByRole("progressbar")).toBeNull();
+});
+
+it("does not keep a progress indicator beside a saved rewrite failure", () => {
+  renderPanel({
+    queue: [{ ...createReadyItem("failed"), assetStatus: "failed" }],
+    isJobPending: () => true,
+  });
+  expect(screen.getByText("Resume failed")).toBeTruthy();
+  expect(screen.queryByRole("progressbar")).toBeNull();
 });

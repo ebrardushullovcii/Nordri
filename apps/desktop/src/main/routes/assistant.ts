@@ -1,3 +1,4 @@
+import { getJobFinderWorkspaceService } from "../services/job-finder/workspace-service";
 import { BrowserWindow, dialog } from "electron";
 import type { IpcMain, IpcMainInvokeEvent } from "electron";
 import {
@@ -71,7 +72,7 @@ export function registerAssistantRouteHandlers(ipcMain: IpcMain): void {
   let queueOwnerId: number | null = null;
   ipcMain.handle(
     "job-finder:assistant:sync-resume-batch",
-    (event, payload: unknown) => {
+    async (event, payload: unknown) => {
       assertAppWindow(event);
       queueOwnerId = event.sender.id;
       if (!queueOwners.has(event.sender)) {
@@ -86,9 +87,13 @@ export function registerAssistantRouteHandlers(ipcMain: IpcMain): void {
         event.sender.on("render-process-gone", clearOwnedQueue);
         event.sender.on("did-finish-load", clearOwnedQueue);
       }
-      return AssistantResumeBatchStateSchema.parse(
+      const batch = AssistantResumeBatchStateSchema.parse(
         syncUiResumeBatch(AssistantResumeBatchStateSchema.parse(payload)),
       );
+      await (
+        await getJobFinderWorkspaceService()
+      ).saveResumeBatchCheckpoint(batch);
+      return batch;
     },
   );
   ipcMain.handle("job-finder:assistant:get-status", async () => {

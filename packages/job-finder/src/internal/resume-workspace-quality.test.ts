@@ -887,7 +887,7 @@ ${ownSentence}`,
     );
   });
 
-  test("keeps thin generated fallback empty of search metadata and blocks approval", () => {
+  test("fills a thin generation with saved work without adding search metadata", () => {
     const seed = createSeed();
     const job = seed.savedJobs[0]!;
     const draft = buildResumeDraftFromTailoredDraft({
@@ -932,10 +932,12 @@ ${ownSentence}`,
     const factualReviewIssue = validation.issues.find(
       (issue) => issue.category === "low_confidence_fact",
     );
-    expect(factualReviewIssue?.severity).toBe("error");
-    expect(factualReviewIssue?.message).toMatch(
-      /needs factual review before approval/i,
-    );
+    expect(factualReviewIssue).toBeUndefined();
+    expect(
+      draft.sections
+        .find((section) => section.kind === "experience")
+        ?.entries.some((entry) => entry.included),
+    ).toBe(true);
   });
 
   test("blocks an untraceable generated summary when another section is grounded", () => {

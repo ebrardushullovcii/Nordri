@@ -1387,6 +1387,12 @@ export function createPrimaryPageActions(
                 ) {
                   return "original";
                 }
+                if (
+                  generated?.reviewQueue &&
+                  !generated.reviewQueue.some((item) => item.jobId === jobId)
+                ) {
+                  return "cancelled";
+                }
                 // A finished generation counts as written unless its asset
                 // says the AI was unavailable and the saved wording was kept.
                 const asset = generated?.tailoredAssets?.find(
@@ -1409,6 +1415,7 @@ export function createPrimaryPageActions(
                 completedCount,
                 fallbackCount,
                 originalChoiceCount,
+                cancelledCount,
                 currentIndex,
                 failedCount,
                 totalCount,
@@ -1421,6 +1428,7 @@ export function createPrimaryPageActions(
                   completedCount,
                   ...(fallbackCount ? { fallbackCount } : {}),
                   ...(originalChoiceCount ? { originalChoiceCount } : {}),
+                  ...(cancelledCount ? { cancelledCount } : {}),
                   failedCount,
                   currentIndex,
                   totalCount,
@@ -1466,6 +1474,9 @@ export function createPrimaryPageActions(
               : {}),
             ...(result.originalChoiceCount
               ? { originalChoiceCount: result.originalChoiceCount }
+              : {}),
+            ...(result.cancelledCount
+              ? { cancelledCount: result.cancelledCount }
               : {}),
             currentIndex: null,
             eligibleRemainingCount: Math.max(

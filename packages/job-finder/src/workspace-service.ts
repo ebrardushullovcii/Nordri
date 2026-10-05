@@ -584,21 +584,21 @@ export function createJobFinderWorkspaceService(
       staleReason: string,
       jobIds?: readonly string[],
     ): Promise<void> {
-      const [drafts, tailoredAssets] = await Promise.all([
+      const [drafts, tailoredAssets, applicationRecords] = await Promise.all([
         repository.listResumeDrafts(),
         repository.listTailoredAssets(),
+        repository.listApplicationRecords(),
       ]);
 
       const targetJobIds = jobIds ? new Set(jobIds) : null;
 
+      const submittedJobIds = new Set(
+        applicationRecords
+          .filter((record) => record.status === "submitted")
+          .map((record) => record.jobId),
+      );
       for (const draft of drafts) {
-        if (
-          !draft.approvedAt &&
-          !draft.approvedExportId &&
-          draft.status !== "approved"
-        ) {
-          continue;
-        }
+        if (submittedJobIds.has(draft.jobId)) continue;
 
         if (targetJobIds && !targetJobIds.has(draft.jobId)) {
           continue;
@@ -1647,13 +1647,13 @@ export function createJobFinderWorkspaceService(
     ...applicationMethods,
     recordApplicationsSentByPerson: () =>
       recordApplicationsSentByPerson(context),
-    generateResume: (jobId) =>
+    generateResume: (jobId, options) =>
       trackWorkspaceOperation("resume generation", () =>
-        applicationMethods.generateResume(jobId),
+        applicationMethods.generateResume(jobId, options),
       ),
-    regenerateResumeDraft: (jobId) =>
+    regenerateResumeDraft: (jobId, options) =>
       trackWorkspaceOperation("resume generation", () =>
-        applicationMethods.regenerateResumeDraft(jobId),
+        applicationMethods.regenerateResumeDraft(jobId, options),
       ),
     regenerateResumeSection: (jobId, sectionId) =>
       trackWorkspaceOperation("resume generation", () =>

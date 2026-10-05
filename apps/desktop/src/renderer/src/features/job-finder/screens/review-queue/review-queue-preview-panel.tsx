@@ -76,7 +76,9 @@ export function ReviewQueuePreviewPanel({
     selectedAsset,
   );
   const isGenerating =
-    isResumeGenerationInProgress(selectedItem) || isSelectedJobPending;
+    selectedItem?.resumeApplicationMode !== "original_resume" &&
+    !hasGenerationFailure &&
+    (isResumeGenerationInProgress(selectedItem) || isSelectedJobPending);
   const showGenerationState =
     needsGeneration || isGenerating || hasGenerationFailure;
   const workflowStatus = getReviewQueueWorkflowStatus(

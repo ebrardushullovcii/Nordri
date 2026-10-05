@@ -195,6 +195,7 @@ export function JobSearchHomeScreen(props: JobSearchHomeScreenProps) {
   const model = buildJobSearchHomeModel({
     workspace: props.workspace,
     tasks,
+    tailoredDraftPreparation: props.tailoredDraftPreparation,
     discoveryRunPending: props.discoveryRunPending ?? false,
     canRunDiscovery: Boolean(props.onRunDiscovery),
     applicationAutomationMode:

@@ -72,6 +72,7 @@ export async function withResumeClaimChecks(input: {
   // resume stretch. A change to either has the lines checked again.
   const evidenceKey = fnv1a32(
     JSON.stringify([
+      "resume-fact-check-2026-10-05",
       evidence.map((entry) => entry.text),
       profile?.baseResume.textContent ?? "",
       tailoringStrength,

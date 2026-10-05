@@ -93,6 +93,7 @@ function createOriginalResume(): ResumeSourceDocument {
 }
 
 function renderScreen(props: {
+  resumeBatchCheckpoint?: Parameters<typeof ReviewQueueScreen>[0]["resumeBatchCheckpoint"];
   applicationAutomationMode?: ApplicationAutomationMode;
   applicationRecords?: readonly ApplicationRecord[];
   dailyCapacity?: GlobalDailyApplicationPreparationCapacity;
@@ -128,6 +129,7 @@ function renderScreen(props: {
         actionState={{ message: null }}
         browserSession={props.browserSession ?? createBrowserSession()}
         campaignId={props.campaignId ?? "campaign_1"}
+        resumeBatchCheckpoint={props.resumeBatchCheckpoint}
         draftPreparation={
           props.draftPreparation ?? createIdleDraftPreparation()
         }
@@ -222,7 +224,7 @@ describe("ReviewQueueScreen tailored draft preparation (controlled)", () => {
       expect(
         document.querySelector("[data-resume-draft-expected-wait]")
           ?.textContent,
-      ).toBe("Usually 40-70 seconds for a tailored draft.");
+      ).toBe("Writing and checking the facts can take a few minutes, especially for Aggressive resumes.");
 
       act(() => {
         vi.advanceTimersByTime(3_000);
@@ -922,4 +924,32 @@ describe("ReviewQueueScreen readiness agreement", () => {
     expect(badges.length).toBeGreaterThanOrEqual(2);
     expect(screen.queryByText("Ready to apply")).toBeNull();
   });
+});
+it("lists unfinished jobs after restart and continues only their batch", () => {
+  const onPrepareTailoredDrafts = vi.fn();
+  renderScreen({
+    queue: [
+      createEligibleItem("unfinished"),
+      createEligibleItem("untouched"),
+    ],
+    resumeBatchCheckpoint: {
+      id: "batch",
+      jobIds: ["finished", "unfinished"],
+      activeJobIds: ["unfinished"],
+      completedJobIds: ["finished"],
+      done: false,
+      stopRequested: false,
+    },
+    onPrepareTailoredDrafts,
+  });
+  expect(
+    screen.getByText(
+      "The previous resume batch stopped when the app closed. Finished resumes were kept.",
+    ),
+  ).toBeTruthy();
+  expect(
+    screen.getByText("Still need resumes: Role unfinished at Acme."),
+  ).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Continue batch" }));
+  expect(onPrepareTailoredDrafts).toHaveBeenCalledWith(["unfinished"]);
 });

@@ -575,6 +575,24 @@ describe("ResumeWorkspaceScreen", () => {
     vi.clearAllMocks();
   });
 
+  it("language picker saves the language change without regenerating the draft", () => {
+    const onRegenerateDraft = vi.fn();
+    const onSaveDraftAndThen = vi.fn((_draft: ResumeDraft, next: () => void) =>
+      next(),
+    );
+    renderScreen({ onRegenerateDraft, onSaveDraftAndThen });
+    fireEvent.change(screen.getByLabelText("Resume language"), {
+      target: { value: "German" },
+    });
+    expect(onSaveDraftAndThen).toHaveBeenCalledWith(
+      expect.objectContaining({ language: "German" }),
+      expect.any(Function),
+      null,
+      expect.any(Function),
+    );
+    expect(onRegenerateDraft).not.toHaveBeenCalled();
+  });
+
   it("opens the one mounted proof disclosure from Review 1 line at desktop width", async () => {
     // Both studio layouts used to mount at once, so `id="resume-proof-details"`
     // existed twice and `getElementById` always returned the CSS-hidden

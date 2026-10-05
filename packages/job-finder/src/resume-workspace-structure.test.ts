@@ -807,7 +807,7 @@ describe("buildResumeRenderDocument", () => {
       entries.find(
         (entry) => entry.profileRecordId === "experience_missing_from_provider",
       )?.included,
-    ).toBe(false);
+    ).toBe(true);
   });
 
   test("buildResumeDraftFromTailoredDraft preserves imported dates and detail when tailored entries are thin", () => {
@@ -1042,6 +1042,7 @@ describe("buildResumeRenderDocument", () => {
       "React and WebSockets",
       "Engineered a real-time restaurant order platform with React, Next.js, TailwindCSS & WebSockets, synchronizing POS and kitchen screens and eliminating manual order calls.",
       "Improved release confidence across kitchen workflows.",
+      profile.experiences[0]!.achievements[2],
     ]);
   });
 

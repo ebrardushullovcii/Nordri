@@ -1574,6 +1574,9 @@ function JobFinderReviewQueueRouteContent() {
         campaignId={activeCampaign?.id ?? ""}
         resumeOperationStarts={context.resumeOperationStarts}
         draftPreparation={context.tailoredDraftPreparation}
+        resumeBatchCheckpoint={
+          context.workspace.intelligence.resumeBatchCheckpoint
+        }
         globalDailyApplicationPreparationCapacity={
           context.workspace.dashboard
             ?.globalDailyApplicationPreparationCapacity ?? null

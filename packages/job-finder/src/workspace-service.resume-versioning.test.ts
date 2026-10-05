@@ -1182,8 +1182,7 @@ describe("resume draft versioning", () => {
     });
     expect(reApproved.tailoredAsset?.storagePath).toBeTruthy();
 
-    // A failed regenerate changes nothing (ADR 0041): the approved resume
-    // stays approved and ready, and the error tells the person.
+    // A failed regenerate keeps the approved file and saves its failure notice.
     const approvedAsset = (await repository.listTailoredAssets()).find(
       (asset) => asset.jobId === "job_ready",
     )!;
@@ -1195,7 +1194,11 @@ describe("resume draft versioning", () => {
       (await repository.listTailoredAssets()).find(
         (asset) => asset.jobId === "job_ready",
       ),
-    ).toEqual(approvedAsset);
+    ).toEqual({
+      ...approvedAsset,
+      failureMessage: expect.stringContaining("Your previous resume was kept"),
+      failedAt: expect.any(String),
+    });
     expect(
       (await workspaceService.getResumeWorkspace("job_ready")).draft,
     ).toMatchObject({

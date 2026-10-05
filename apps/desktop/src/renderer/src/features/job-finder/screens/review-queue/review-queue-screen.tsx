@@ -18,8 +18,10 @@ import {
   APPLICATION_PREPARATION_BATCH_LIMIT,
   collectInProgressApplicationJobIds,
   getReviewQueueWorkflowStatus,
+  hasResumeGenerationFailure,
   isQueueStageReady,
   isResumeGenerationInProgress,
+  isTailoredDraftPreparationEligible,
 } from "./review-queue-status";
 import { LockedScreenLayout } from "../../components/locked-screen-layout";
 import { PageHeaderStack } from "../../components/page-header";
@@ -55,6 +57,7 @@ export function ReviewQueueScreen(props: {
   browserSession: BrowserSessionState;
   campaignId: string;
   draftPreparation: TailoredDraftPreparationViewState;
+  resumeBatchCheckpoint?: JobFinderWorkspaceSnapshot["intelligence"]["resumeBatchCheckpoint"];
   globalDailyApplicationPreparationCapacity: GlobalDailyApplicationPreparationCapacity | null;
   isApplyPending: boolean;
   /**
@@ -151,7 +154,8 @@ export function ReviewQueueScreen(props: {
   const [selectedJobPendingTooLong, setSelectedJobPendingTooLong] =
     useState(false);
   const isSelectedJobPreparing =
-    selectedJobPending || isResumeGenerationInProgress(selectedItem);
+    !hasResumeGenerationFailure(selectedItem, selectedAsset) &&
+    (selectedJobPending || isResumeGenerationInProgress(selectedItem));
   const [pendingElapsedSeconds, setPendingElapsedSeconds] = useState(0);
   const actionMessageScopeRef = useRef<{
     jobId: string | null;
@@ -293,7 +297,10 @@ export function ReviewQueueScreen(props: {
       ...applicationPreparingJobIds,
     ]);
     const readyJobIds = queue
-      .filter((item) => isQueueStageReady(item, unavailable))
+      .filter(
+        (item) =>
+          !isJobPending(item.jobId) && isQueueStageReady(item, unavailable),
+      )
       .map((item) => item.jobId)
       .slice(0, applicationBatchLimit);
     if (readyJobIds.length === 0) {
@@ -310,10 +317,21 @@ export function ReviewQueueScreen(props: {
     applicationPreparingJobIds,
     applicationAutomationMode,
     onStartAutoApplyQueue,
+    isJobPending,
     preparedJobIds,
     queue,
   ]);
 
+  const interruptedJobs =
+    props.draftPreparation.status === "idle" &&
+    props.resumeBatchCheckpoint &&
+    !props.resumeBatchCheckpoint.done
+      ? queue.filter(
+          (item) =>
+            props.resumeBatchCheckpoint!.jobIds.includes(item.jobId) &&
+            isTailoredDraftPreparationEligible(item, preparedJobIds),
+        )
+      : [];
   // Below the `xl` two-pane breakpoint the job column stacks under the list,
   // so selecting a job moved the one next action below the fold with nothing
   // saying so. Find jobs and Applications both reveal their stacked detail
@@ -348,6 +366,33 @@ export function ReviewQueueScreen(props: {
         />
       }
     >
+      {interruptedJobs.length > 0 ? (
+        <div
+          className="mb-3 rounded-(--radius-field) border border-warning/30 px-4 py-3 text-sm"
+          role="status"
+        >
+          <p>
+            The previous resume batch stopped when the app closed. Finished
+            resumes were kept.
+          </p>
+          <p className="text-foreground-muted">
+            Still need resumes:{" "}
+            {interruptedJobs
+              .map((item) => `${item.title} at ${item.company}`)
+              .join("; ")}
+            .
+          </p>
+          <Button
+            onClick={() =>
+              onPrepareTailoredDrafts(interruptedJobs.map((item) => item.jobId))
+            }
+            size="sm"
+            type="button"
+          >
+            Continue batch
+          </Button>
+        </div>
+      ) : null}
       <div className="grid min-w-0 items-stretch gap-4 xl:h-full xl:min-h-0 xl:grid-cols-[minmax(24rem,0.72fr)_minmax(34rem,1fr)] assistant-docked:xl:grid-cols-[minmax(16rem,0.72fr)_minmax(0,1fr)] xl:overflow-hidden">
         <ReviewQueueListPanel
           key={props.campaignId}

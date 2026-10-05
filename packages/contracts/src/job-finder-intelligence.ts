@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ResumeBatchCheckpointSchema } from "./resume";
 
 import {
   IsoDateTimeSchema,
@@ -1878,6 +1879,7 @@ export const JobFinderIntelligenceStateSchema = z
     outcomeEvents: z.array(OutcomeEventSchema).max(100_000).default([]),
     outcomeAnalytics: OutcomeAnalyticsOverviewSchema.nullable().default(null),
     resumeStrategies: z.array(ResumeStrategySchema).max(200).default([]),
+    resumeBatchCheckpoint: ResumeBatchCheckpointSchema.nullable().optional(),
     resumeStrategySelections: z
       .array(ResumeStrategySelectionSchema)
       .max(10_000)

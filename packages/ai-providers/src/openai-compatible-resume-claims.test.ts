@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 
 import {
   buildResumeClaimCheckPayload,
+  buildResumeClaimCheckPrompt,
   normalizeResumeClaimChecks,
 } from "./openai-compatible-resume-claims";
 
@@ -113,4 +114,33 @@ describe("resume claim checks", () => {
     expect(payload.evidence).toEqual(input.evidence);
     expect(payload.job.title).toBe("Data Analyst");
   });
+});
+
+test("checks mixed claims and role-specific details without dropping qualifiers", () => {
+  const prompt = buildResumeClaimCheckPrompt();
+  for (const detail of [
+    "every factual part",
+    "particular implementation detail",
+    "basic or still learning",
+    "seasonal or partial dates",
+    "credential years and renewal dates",
+    "quantified results",
+    "no word limit",
+  ]) {
+    expect(prompt).toContain(detail);
+  }
+});
+
+test("fact-check instructions contain general rules without tester facts", () => {
+  const prompt = buildResumeClaimCheckPrompt();
+  for (const fact of [
+    "Workday",
+    "Excel (advanced)",
+    "Articulate Rise",
+    "settlement offsets",
+    "Dallas",
+    "IFRS",
+    "CFO",
+  ])
+    expect(prompt).not.toContain(fact);
 });

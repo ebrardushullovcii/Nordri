@@ -1,3 +1,4 @@
+import { ResumeLanguageTranslationSchema } from "@nordri/contracts";
 import { buildResumeSkillContextFilter } from "./resume-skill-context";
 import {
   TailoredResumeDraftSchema,
@@ -876,6 +877,12 @@ export function completeTailoredResumeDraft(
 
   return TailoredResumeDraftSchema.parse({
     ...fallback,
+    languagePresentation:
+      "language" in fallbackInput
+        ? ResumeLanguageTranslationSchema.parse(
+            normalizedPrimary.languagePresentation,
+          )
+        : normalizedPrimary.languagePresentation,
     label,
     summary,
     experienceHighlights,

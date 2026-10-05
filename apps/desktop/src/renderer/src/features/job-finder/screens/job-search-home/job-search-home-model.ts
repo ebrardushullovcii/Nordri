@@ -53,6 +53,7 @@ import {
   countResumeLinesToDecide,
   countTailoredDraftPreparationEligible,
   isQueueStageReady,
+  type TailoredDraftPreparationViewState,
   needsPersonResumeReview,
 } from "../review-queue/review-queue-status";
 import { buildResumeWorkspaceRoute } from "../../lib/resume-workspace-route";
@@ -165,6 +166,7 @@ interface JobSearchHomeModel {
 export interface BuildJobSearchHomeModelInput {
   workspace: JobFinderWorkspaceSnapshot;
   tasks: JobFinderTaskCenterModel;
+  tailoredDraftPreparation?: TailoredDraftPreparationViewState | null | undefined;
   /** A search request is in flight but the run has not been recorded yet. */
   discoveryRunPending: boolean;
   /** Whether Home may start a search itself. */
@@ -925,6 +927,34 @@ export function buildJobSearchHomeModel(
   ).length;
   const shortlisted = countShortlistedJobs(workspace, jobIds);
   const shortlist = countShortlist(queue, workspace);
+  const resumeBatch =
+    input.tailoredDraftPreparation?.status === "running"
+      ? input.tailoredDraftPreparation
+      : null;
+  const resumeBatchJobIds = new Set(
+    resumeBatch && !workspace.intelligence.resumeBatchCheckpoint?.done
+      ? workspace.intelligence.resumeBatchCheckpoint?.jobIds
+      : [],
+  );
+  const untouchedResumes =
+    resumeBatchJobIds.size > 0
+      ? countTailoredDraftPreparationEligible(
+          queue.filter((item) => !resumeBatchJobIds.has(item.jobId)),
+          collectPreparedApplicationJobIds(workspace.applicationRecords),
+        )
+      : shortlist.missingResumes;
+  const activeResumes = resumeBatch
+    ? Math.max(
+        0,
+        resumeBatch.attemptedCount -
+          resumeBatch.completedCount -
+          resumeBatch.failedCount,
+      )
+    : shortlist.writing;
+  const queuedResumes =
+    resumeBatch && !resumeBatch.stopRequested
+      ? Math.max(0, resumeBatch.totalCount - resumeBatch.attemptedCount)
+      : 0;
   const applicationCount = countApplicationRecords(workspace, jobIds);
   const applications = countApplications(
     workspace,
@@ -1919,15 +1949,12 @@ export function buildJobSearchHomeModel(
             label: "Shortlisted",
             count: shortlisted,
             detail: joinParts([
-              // A running batch writes the missing ones; they are not
-              // waiting on the person while it does.
-              shortlist.missingResumes > 0 && !resumesWriting
-                ? `${shortlist.missingResumes} need a resume`
+              untouchedResumes > 0
+                ? `${untouchedResumes} need a resume`
                 : null,
-              shortlist.writing +
-                (resumesWriting ? shortlist.missingResumes : 0) >
-              0
-                ? `${shortlist.writing + (resumesWriting ? shortlist.missingResumes : 0)} being written`
+              queuedResumes > 0 ? `${queuedResumes} queued` : null,
+              activeResumes > 0
+                ? `${activeResumes} being written`
                 : null,
               shortlist.reviewResumes > 0
                 ? `${shortlist.reviewResumes} to review`

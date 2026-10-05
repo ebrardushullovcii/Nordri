@@ -42,7 +42,6 @@ import {
   getReviewQueueResumePolicyCaption,
   getReviewQueueWorkflowStatus,
   getTailoredDraftPreparationResultMessage,
-  isResumeGenerationInProgress,
   isTailoredDraftPreparationEligible,
   type TailoredDraftPreparationViewState,
 } from "./review-queue-status";
@@ -246,10 +245,13 @@ export function ReviewQueueListPanel({
   const readyToApplyCount = useMemo(
     () =>
       Math.min(
-        countQueueStageReady(queue, unavailableApplicationJobIds),
+        countQueueStageReady(
+          queue.filter((item) => !isJobPending(item.jobId)),
+          unavailableApplicationJobIds,
+        ),
         applicationBatchLimit,
       ),
-    [applicationBatchLimit, queue, unavailableApplicationJobIds],
+    [applicationBatchLimit, isJobPending, queue, unavailableApplicationJobIds],
   );
   const safeguardBlockerSentence = safeguardBlocker?.trim()
     ? stripInternalCodeParenthetical(safeguardBlocker)
@@ -567,7 +569,7 @@ export function ReviewQueueListPanel({
                       )
                 }
                 selected={selectedItem?.jobId === item.jobId}
-                showProgress={isResumeGenerationInProgress(item) || isPending}
+                showProgress={workflowStatus.label === "Writing resume"}
                 statusLabel={workflowStatus.label}
                 statusTone={workflowStatus.tone}
                 title={item.title}

@@ -512,3 +512,40 @@ describe("ReviewQueueMissionPanel", () => {
     expect(screen.getByRole("button", { name: "Edit resume" })).toBeTruthy();
   });
 });
+
+it("explains that changing a written level starts a draft before the click", () => {
+  renderPanel();
+  expect(
+    screen.getByText(
+      "Choosing another level writes a new draft. Original uses your file unchanged.",
+    ),
+  ).toBeTruthy();
+});
+
+it("lets a person remove a job during writing and explains remaining AI work", () => {
+  const props = renderPanel({ isJobPending: () => true });
+  fireEvent.click(
+    screen.getByRole("button", { name: "Remove from shortlist" }),
+  );
+  expect(props.onRemoveReviewJob).toHaveBeenCalledWith("job_1");
+  expect(screen.getByText(/Removing this job stops the draft/)).toBeTruthy();
+});
+
+it("never describes an Original listing assessment as resume writing", () => {
+  renderPanel({
+    selectedItem: createItem({
+      resumeApplicationMode: "original_resume",
+      assetStatus: "ready",
+      resumeAssetId: "original",
+      resumeReview: {
+        status: "original_resume",
+        fileName: "synthetic.pdf",
+        filePath: "/tmp/synthetic.pdf",
+        sourceDocumentId: "synthetic",
+      },
+    }),
+    isJobPending: () => true,
+  });
+  expect(screen.queryByText(/Writing resume/i)).toBeNull();
+  expect(screen.queryByText(/Writing and checking/i)).toBeNull();
+});

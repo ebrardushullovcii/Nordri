@@ -31,6 +31,8 @@ function compactDraft(draft: ResumeDraft, sectionId?: string | null) {
     status: draft.status,
     templateId: draft.templateId,
     targetPageCount: draft.targetPageCount,
+    language: draft.language ?? null,
+    writtenLanguage: draft.writtenLanguage ?? null,
     sections: draft.sections
       .filter((section) => !sectionId || section.id === sectionId)
       .map((section) => ({
@@ -527,11 +529,14 @@ export const generateResumesTool = defineTool({
   name: "generate_resumes",
   group: "resume",
   description:
-    "Writes missing tailored resumes for the requested jobs, two at a time, in the background. Original jobs, completed drafts (unless regenerate or level is requested), and jobs in Applications are skipped and reported. Work overlapping a UI or assistant writer queues behind it; initial deterministic drafts are not completed rewrites. Pass level for a requested rewrite at a particular level; it is set only after earlier writers finish. Each job keeps its saved level and settings. The conversation continues when all are done. Stop or cancel_resumes prevents further jobs from starting; active drafts finish.",
+    "Writes missing tailored resumes for the requested jobs, two at a time, in the background. Original jobs, completed drafts (unless regenerate or level is requested), and jobs in Applications are skipped and reported. Work overlapping a UI or assistant writer queues behind it; initial deterministic drafts are not completed rewrites. Pass language to translate an existing draft, headings and credentials together in one pass without regenerating it. With regenerate or level, the writer uses that language for the new draft. Pass level for a requested rewrite at a particular level; it is set only after earlier writers finish. Each job keeps its saved level and settings. The conversation continues when all are done. Stop or cancel_resumes prevents further jobs from starting; active drafts finish.",
   parameters: json.object(
     {
       jobIds: json.ids(),
       regenerate: json.boolean("Rewrite existing drafts from scratch."),
+      language: json.string(
+        "Language for the whole resume, such as German; preserves the chosen rewrite level.",
+      ),
       level: json.enumOf(
         ["light", "tailored", "aggressive"],
         "Requested level for this batch; waits for earlier writers and rewrites existing drafts.",
@@ -542,6 +547,7 @@ export const generateResumesTool = defineTool({
   input: z.object({
     jobIds: z.array(Id).min(1).max(100),
     regenerate: z.boolean().default(false),
+    language: z.string().trim().min(1).max(120).optional(),
     level: z.enum(["light", "tailored", "aggressive"]).optional(),
   }),
   label: (input) =>
@@ -561,7 +567,7 @@ export const generateResumesTool = defineTool({
       const reason = resumeBatchSkipReason(
         snapshot,
         jobId,
-        input.regenerate || !!input.level,
+        input.regenerate || !!input.level || input.language !== undefined,
         undefined,
         input.level,
       );
@@ -644,7 +650,7 @@ export const generateResumesTool = defineTool({
           const reason = resumeBatchSkipReason(
             current,
             jobId,
-            input.regenerate || !!input.level,
+            input.regenerate || !!input.level || input.language !== undefined,
             runId,
             input.level,
           );
@@ -669,16 +675,35 @@ export const generateResumesTool = defineTool({
               },
             );
           }
-          const written =
-            input.regenerate ||
-            input.level ||
+          let translated: JobFinderWorkspaceSnapshot | null = null;
+          if (
+            input.language !== undefined &&
+            !input.regenerate &&
+            !input.level &&
             current.resumeDrafts.some((draft) => draft.jobId === jobId)
-              ? await service.regenerateResumeDraft(jobId)
-              : await service.generateResume(jobId);
+          ) {
+            const workspace = await service.getResumeWorkspace(jobId);
+            translated = await service.saveResumeDraft({
+              ...workspace.draft,
+              language: input.language,
+            });
+          }
+          const generationArgs: [string, { language: string }?] =
+            input.language !== undefined
+              ? [jobId, { language: input.language }]
+              : [jobId];
+          const written =
+            translated && !input.regenerate && !input.level
+              ? translated
+              : input.regenerate ||
+                  input.level ||
+                  current.resumeDrafts.some((draft) => draft.jobId === jobId)
+                ? await service.regenerateResumeDraft(...generationArgs)
+                : await service.generateResume(...generationArgs);
           const savedDraft = written.resumeDrafts.find(
             (draft) => draft.jobId === jobId,
           );
-          if (savedDraft?.generationMethod !== "ai") {
+          if (!translated && savedDraft?.generationMethod !== "ai") {
             throw new Error(
               "The draft was saved, but the AI rewrite did not complete. Retry with generate_resumes regenerate true; do not call it a completed rewrite.",
             );

@@ -57,7 +57,10 @@ describe("aggressive resume review routing", () => {
         createResumeDraft(input) {
           return Promise.resolve(
             completeTailoredResumeDraft(
-              { coreSkills: [...skills, "United", "States", "Terraform"] },
+              {
+                coreSkills: [...skills, "United", "States", "Terraform"],
+                languagePresentation: { language: "English", translations: [] },
+              },
               input,
             ),
           );
@@ -304,6 +307,7 @@ describe("aggressive resume review routing", () => {
           return Promise.resolve(
             completeTailoredResumeDraft(
               {
+                languagePresentation: { language: "English", translations: [] },
                 summary: invented,
                 coreSkills: [...seed.profile.skills, "Terraform"],
               },

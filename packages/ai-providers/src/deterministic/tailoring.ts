@@ -996,7 +996,7 @@ export function buildDeterministicTailoredResume(
       bullets: [],
       profileRecordId: project.id,
     }));
-  const educationEntries = input.profile.education.slice(0, 2).map((entry) => ({
+  const educationEntries = input.profile.education.map((entry) => ({
     school: entry.schoolName,
     degree: entry.degree,
     fieldOfStudy: entry.fieldOfStudy,
@@ -1005,14 +1005,12 @@ export function buildDeterministicTailoredResume(
     summary: entry.summary,
     profileRecordId: entry.id,
   }));
-  const certificationEntries = input.profile.certifications
-    .slice(0, 3)
-    .map((entry) => ({
-      name: entry.name,
-      issuer: entry.issuer,
-      dateRange: formatDateRange(entry.issueDate, entry.expiryDate),
-      profileRecordId: null,
-    }));
+  const certificationEntries = input.profile.certifications.map((entry) => ({
+    name: entry.name,
+    issuer: entry.issuer,
+    dateRange: formatDateRange(entry.issueDate, entry.expiryDate),
+    profileRecordId: entry.id,
+  }));
   const fullText = buildDeterministicResumeText(
     input.profile,
     input.job,

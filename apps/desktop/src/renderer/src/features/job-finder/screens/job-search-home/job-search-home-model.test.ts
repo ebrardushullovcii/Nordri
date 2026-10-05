@@ -445,7 +445,7 @@ describe("buildJobSearchHomeModel · while something runs", () => {
       count: 3,
       // The running batch writes the two not started yet; they are not
       // waiting on the person.
-      detail: "3 being written",
+      detail: "2 need a resume · 1 being written",
     });
   });
 
@@ -1847,7 +1847,7 @@ describe("buildJobSearchHomeModel · round 2 matrix fixes", () => {
       },
     ]);
     expect(model.stages?.[1]?.detail).toBe(
-      "2 being written · 1 ready to apply",
+      "1 need a resume · 1 being written · 1 ready to apply",
     );
   });
 
@@ -2205,4 +2205,46 @@ describe("buildJobSearchHomeModel · applications the person stopped or may have
     expect(model.stages?.[2]?.detail).toBe("1 needs Prepare again");
 
   });
+});
+it("separates untouched jobs, queued drafts and active writers in a ten-job batch", () => {
+  const ws = withShortlist(
+    withJobs(workspace(), 32),
+    Array.from({ length: 32 }, (_, index) =>
+      queueItem(
+        `job_${index}`,
+        index < 8
+          ? {
+              assetStatus: "ready",
+              resumeAssetId: `asset_${index}`,
+              resumeReview: { status: "needs_review" },
+            }
+          : {},
+      ),
+    ),
+  );
+  ws.intelligence.resumeBatchCheckpoint = {
+    id: "batch",
+    jobIds: Array.from({ length: 10 }, (_, index) => `job_${index + 2}`),
+    activeJobIds: ["job_8", "job_9"],
+    completedJobIds: Array.from(
+      { length: 6 },
+      (_, index) => `job_${index + 2}`,
+    ),
+    done: false,
+    stopRequested: false,
+  };
+  const model = build(ws, {
+    tailoredDraftPreparation: {
+      status: "running",
+      totalCount: 10,
+      attemptedCount: 8,
+      completedCount: 6,
+      failedCount: 0,
+      eligibleRemainingCount: 20,
+      currentIndex: 8,
+    },
+  });
+  expect(
+    model.stages?.find((stage) => stage.label === "Shortlisted")?.detail,
+  ).toContain("20 need a resume · 2 queued · 2 being written");
 });

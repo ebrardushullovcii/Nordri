@@ -270,6 +270,15 @@ export function buildGroundedResumeRewriteModelPayload(
       ? { strategy: input.strategy }
       : {}),
     ...(input.resumeText?.trim() ? { baseResumeText: input.resumeText } : {}),
+    ...("language" in input
+      ? {
+          targetLanguage:
+            input.language ?? "the language the listing is written in",
+        }
+      : {}),
+    ...("languageFields" in input
+      ? { languageFields: input.languageFields }
+      : {}),
     targetJob: {
       title: input.job.title,
       company: input.job.company,

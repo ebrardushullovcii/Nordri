@@ -713,11 +713,31 @@ export const ResumeClaimCheckSchema = z.object({
 });
 export type ResumeClaimCheck = z.infer<typeof ResumeClaimCheckSchema>;
 
+export const ResumeBatchCheckpointSchema = z.object({
+  id: NonEmptyStringSchema,
+  jobIds: z.array(NonEmptyStringSchema),
+  activeJobIds: z.array(NonEmptyStringSchema),
+  completedJobIds: z.array(NonEmptyStringSchema),
+  done: z.boolean(),
+  stopRequested: z.boolean(),
+});
+export type ResumeBatchCheckpoint = z.infer<typeof ResumeBatchCheckpointSchema>;
+
+export const ResumeLanguageTranslationSchema = z.object({
+  language: NonEmptyStringSchema,
+  translations: z.array(
+    z.object({ id: NonEmptyStringSchema, text: NonEmptyStringSchema }),
+  ),
+});
+
 export const ResumeDraftSchema = z.object({
   id: NonEmptyStringSchema,
   jobId: NonEmptyStringSchema,
   status: ResumeDraftStatusSchema,
   templateId: ResumeTemplateIdSchema,
+  /** Null follows the listing language; a value is the person’s choice. */
+  language: NonEmptyStringSchema.nullable().optional(),
+  writtenLanguage: NonEmptyStringSchema.nullable().optional(),
   identity: ResumeDraftIdentitySchema.nullable().default(null),
   sections: z.array(ResumeDraftSectionSchema).default([]),
   targetPageCount: z.number().int().min(1).max(3).default(2),

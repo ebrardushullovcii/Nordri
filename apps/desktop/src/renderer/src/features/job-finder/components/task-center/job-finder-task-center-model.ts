@@ -999,7 +999,7 @@ function buildTailoredDraftsTask(
       ? "Stopping · finishing the resumes already started"
       : "Preparing shortlisted resumes",
     sourceLabel: "Shortlisted jobs",
-    countLabel: `${completedCount} of ${totalCount} prepared${
+    countLabel: `${completedCount} of ${totalCount} ${preparation.cancelledCount ? `finished · ${preparation.cancelledCount} removed` : "prepared"}${
       failedCount > 0 ? ` · ${failedCount} failed` : ""
     }`,
     historyEstimateLabel: null,

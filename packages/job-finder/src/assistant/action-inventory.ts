@@ -772,6 +772,7 @@ export const SERVICE_METHOD_COVERAGE: Record<
 > = {
   assessJobListing: "assess_job_listing",
   shutdown: "internal",
+  saveResumeBatchCheckpoint: "internal",
   getWorkspaceSnapshot: "get_workspace_summary",
   getWorkspaceBootstrap: "internal",
   getResumeImportState: "internal",

@@ -1,5 +1,6 @@
 import {
   AssetGenerationReasonSchema,
+  ResumeLanguageTranslationSchema,
   JobRequirementAssessmentSchema,
   type AiProfileAssistantBehavior,
   type AgentProviderStatus,
@@ -204,6 +205,7 @@ export type TailoredResumeGenerationProvenance = z.infer<
 >;
 
 export const TailoredResumeDraftSchema = z.object({
+  languagePresentation: ResumeLanguageTranslationSchema.optional(),
   recommendedTemplateId: ResumeTemplateIdSchema.nullable().optional(),
   label: NullableStringSchema,
   // A candidate without a saved summary may omit it in a fallback.
@@ -383,6 +385,9 @@ export interface CreateResumeDraftInput extends TailorResumeInput {
   availableTemplates?: readonly ResumeTemplateDefinition[];
   selectedTemplateId?: string | null;
   templateSelectionLocked?: boolean;
+  /** Null asks the writer to follow the actual listing language. */
+  language?: string | null;
+  languageFields?: Array<{ id: string; text: string }>;
   renderPreview?: (input: {
     draft: TailoredResumeDraft;
     templateId: string;
@@ -393,6 +398,7 @@ export interface CreateResumeDraftInput extends TailorResumeInput {
     fileName: string | null;
     requiredModelRepairs?: readonly ResumeValidationIssue[];
     personConfirmationCount?: number;
+    languageFields?: Array<{ id: string; text: string }>;
   }>;
   strategy?: ResumeGenerationStrategyPolicy | null;
   evidence?: {

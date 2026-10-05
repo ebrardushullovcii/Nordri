@@ -344,3 +344,40 @@ describe("sidebar resume batches", () => {
     await Promise.all(ctx.runs.map(finished));
   });
 });
+
+it("passes a language to the writer for a missing resume without translating or changing its level", async () => {
+  const ctx = await world(1);
+  const save = vi
+    .spyOn(ctx.service, "saveResumeDraft")
+    .mockResolvedValue(ctx.snapshot);
+  const setLevel = vi.spyOn(ctx.service, "setJobResumeApplicationMode");
+  await generateResumesTool.execute(
+    { jobIds: ctx.ids, regenerate: false, language: "German" },
+    ctx,
+  );
+  await finished(ctx.runs[0]!);
+  expect(save).not.toHaveBeenCalled();
+  expect(ctx.generate).toHaveBeenCalledWith(ctx.ids[0], { language: "German" });
+  expect(ctx.regenerate).not.toHaveBeenCalled();
+  expect(setLevel).not.toHaveBeenCalled();
+});
+
+it("language-only assistant action saves a translated existing draft without regenerating", async () => {
+  const ctx = await world(1);
+  const workspace = await ctx.service.getResumeWorkspace(ctx.ids[0]!);
+  const save = vi
+    .spyOn(ctx.service, "saveResumeDraft")
+    .mockResolvedValue(ctx.written(ctx.ids[0]!));
+  const setLevel = vi.spyOn(ctx.service, "setJobResumeApplicationMode");
+  await generateResumesTool.execute(
+    { jobIds: ctx.ids, regenerate: false, language: "German" },
+    ctx,
+  );
+  await finished(ctx.runs[0]!);
+  expect(save).toHaveBeenCalledWith(
+    expect.objectContaining({ id: workspace.draft.id, language: "German" }),
+  );
+  expect(ctx.generate).not.toHaveBeenCalled();
+  expect(ctx.regenerate).not.toHaveBeenCalled();
+  expect(setLevel).not.toHaveBeenCalled();
+});

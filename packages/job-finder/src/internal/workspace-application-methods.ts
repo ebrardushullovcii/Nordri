@@ -1,3 +1,9 @@
+import { completeTailoredResumeDraft } from "@nordri/ai-providers";
+import {
+  applyResumeLanguage,
+  collectResumeLanguageFields,
+  writeResumeLanguage,
+} from "./resume-workspace-language";
 import { mergeApplicationAnswersIntoExecutionProfile } from "./workspace-application-answer-execution";
 import {
   describeApplicationPreparation,
@@ -318,6 +324,7 @@ type WorkspaceApplicationMethods = Omit<
     | "assessJobListing"
     | "queueJobForReview"
     | "setJobResumeApplicationMode"
+    | "saveResumeBatchCheckpoint"
     | "removeJobFromReview"
     | "dismissDiscoveryJob"
     | "previewEmployerExclusion"
@@ -484,6 +491,7 @@ async function assertCurrentResumeProfile(
 export function createWorkspaceApplicationMethods(
   ctx: WorkspaceServiceContext,
 ): WorkspaceApplicationMethods {
+  const removedResumeJobIds = new Set<string>();
   /**
    * Shortlisting is the moment the job's body starts to matter: the tailored
    * resume is written toward it and the fit score gates "Prepare". If the
@@ -3528,7 +3536,14 @@ export function createWorkspaceApplicationMethods(
    */
   async function runGenerateResume(
     jobId: string,
+    options?: { language?: string | null },
   ): Promise<JobFinderWorkspaceSnapshot> {
+    const requestedJob = (await ctx.repository.listSavedJobs()).find(
+      (entry) => entry.id === jobId,
+    );
+    if (requestedJob?.status !== "shortlisted")
+      removedResumeJobIds.delete(jobId);
+    if (removedResumeJobIds.has(jobId)) return ctx.getWorkspaceSnapshot();
     // A resume is written toward the listing, so read the listing first when
     // the search only kept the card (or an earlier read failed).
     await readListingDetailForShortlistedJob(jobId, { force: true });
@@ -3572,6 +3587,14 @@ export function createWorkspaceApplicationMethods(
     }
 
     const existingAsset = tailoredAssets.find((asset) => asset.jobId === jobId);
+    if (existingAsset?.failureMessage || existingAsset?.failedAt) {
+      await ctx.repository.upsertTailoredAsset({
+        ...existingAsset,
+        failureMessage: null,
+        failedAt: null,
+      });
+    }
+
     const existingDraft = await ctx.repository.getResumeDraftByJobId(jobId);
     const templates = ctx.documentManager.listResumeTemplates();
     const strategyContext = buildResumeStrategyContext({
@@ -3655,6 +3678,29 @@ export function createWorkspaceApplicationMethods(
         research,
       });
       const researchContext = collectResearchContext(research);
+      const targetLanguage =
+        options?.language !== undefined
+          ? options.language
+          : (existingDraft?.language ?? null);
+      const baseDraft = buildResumeDraftFromTailoredDraft({
+        job,
+        profile,
+        research,
+        templateId: settings.resumeTemplateId,
+        draft: completeTailoredResumeDraft(
+          {},
+          {
+            profile,
+            job,
+            settings,
+            searchPreferences: generationSearchPreferences,
+            resumeText,
+            strategy: generationStrategyPolicy,
+          },
+        ),
+        createdAt: new Date().toISOString(),
+        generationMethod: "ai",
+      });
       const draft = await ctx.aiClient.createResumeDraft({
         profile,
         searchPreferences: generationSearchPreferences,
@@ -3671,6 +3717,8 @@ export function createWorkspaceApplicationMethods(
           strategyContext.templateId ??
           settings.resumeTemplateId,
         templateSelectionLocked: lockedTemplateId !== null,
+        language: targetLanguage,
+        languageFields: collectResumeLanguageFields(baseDraft),
         renderPreview: async ({ draft: previewDraft, templateId }) => {
           const template =
             templates.find((candidate) => candidate.id === templateId) ?? null;
@@ -3680,20 +3728,26 @@ export function createWorkspaceApplicationMethods(
             );
           }
           const previewAt = new Date().toISOString();
+          const assembledPreviewDraft = buildResumeDraftFromTailoredDraft({
+            job,
+            templateId: template.id,
+            draft: previewDraft,
+            createdAt: previewAt,
+            updatedAt: previewAt,
+            existingDraftId: existingDraft?.id ?? null,
+            previousWorkHistoryReviewAcknowledgments:
+              existingDraft?.workHistoryReviewAcknowledgments ?? [],
+            generationMethod: "ai",
+            profile,
+            research,
+          });
           const previewResumeDraft = await sanitizeAndCheckResumeDraft(ctx, {
-            draft: buildResumeDraftFromTailoredDraft({
-              job,
-              templateId: template.id,
-              draft: previewDraft,
-              createdAt: previewAt,
-              updatedAt: previewAt,
-              existingDraftId: existingDraft?.id ?? null,
-              previousWorkHistoryReviewAcknowledgments:
-                existingDraft?.workHistoryReviewAcknowledgments ?? [],
-              generationMethod: "ai",
-              profile,
-              research,
-            }),
+            draft: previewDraft.languagePresentation
+              ? applyResumeLanguage(
+                  assembledPreviewDraft,
+                  previewDraft.languagePresentation,
+                )
+              : assembledPreviewDraft,
             job,
             profile,
             ...(generationStrategyPolicy
@@ -3752,6 +3806,7 @@ export function createWorkspaceApplicationMethods(
                 ),
             ),
             personConfirmationCount: personConfirmationAssessmentIds.size,
+            languageFields: collectResumeLanguageFields(previewResumeDraft),
           };
         },
       });
@@ -3792,7 +3847,7 @@ export function createWorkspaceApplicationMethods(
         strategyContext.selectedStrategyName ??
         strategyContext.recommendedStrategyName ??
         null;
-      const resumeDraft = buildResumeDraftFromTailoredDraft({
+      const sourceDraft = buildResumeDraftFromTailoredDraft({
         job,
         templateId: strategyTemplateId ?? settings.resumeTemplateId,
         draft,
@@ -3814,6 +3869,10 @@ export function createWorkspaceApplicationMethods(
                 ? job.title
                 : undefined,
       });
+      const languageDraft = { ...sourceDraft, language: targetLanguage };
+      const resumeDraft = draft.languagePresentation
+        ? applyResumeLanguage(languageDraft, draft.languagePresentation)
+        : languageDraft;
       const sanitizedResumeDraft = await sanitizeAndCheckResumeDraft(
         ctx,
         {
@@ -3979,6 +4038,12 @@ export function createWorkspaceApplicationMethods(
         profile,
       );
 
+      const latestJob = (await ctx.repository.listSavedJobs()).find(
+        (entry) => entry.id === jobId,
+      );
+      if (!latestJob || removedResumeJobIds.has(jobId))
+        return ctx.getWorkspaceSnapshot();
+
       if (
         existingDraft &&
         buildResumeDraftStateHash(existingDraft) !==
@@ -4018,20 +4083,30 @@ export function createWorkspaceApplicationMethods(
       }
       await ctx.updateJob(jobId, (currentJob) => ({
         ...currentJob,
-        status: "ready_for_review",
+        status: removedResumeJobIds.has(jobId)
+          ? currentJob.status
+          : "ready_for_review",
       }));
 
       return ctx.getWorkspaceSnapshot();
     } catch (error) {
       // A failed run changes nothing (ADR 0041): a job that already had a
       // resume keeps it as it was, ready or approved, and the error tells the
-      // person. Only a job with no resume yet records the failure, so it shows
-      // a retryable failure instead of silently dropping back to "No resume
-      // yet". A draft that appeared during the run belongs to a newer edit and
-      // is not marked failed either.
+      // person. The failure notice is saved beside the retained file, or on a
+      // failed asset when no draft exists. A newer edit keeps its own state.
       try {
         const latestDraft = await ctx.repository.getResumeDraftByJobId(jobId);
-        if (existingDraft === null && latestDraft === null) {
+        if (
+          existingAsset &&
+          existingDraft &&
+          latestDraft?.updatedAt === existingDraft.updatedAt
+        ) {
+          await ctx.repository.upsertTailoredAsset({
+            ...existingAsset,
+            failureMessage: `${sanitizeTailoredAssetFailureMessage(error)} Your previous resume was kept.`,
+            failedAt: new Date().toISOString(),
+          });
+        } else if (existingDraft === null && latestDraft === null) {
           await ctx.repository.upsertTailoredAsset(
             buildFailedTailoredAsset({
               jobId,
@@ -4471,7 +4546,17 @@ export function createWorkspaceApplicationMethods(
 
       return ctx.getWorkspaceSnapshot();
     },
+    async saveResumeBatchCheckpoint(checkpoint) {
+      await ctx.withIntelligenceTransition(async () => {
+        const current = await ctx.repository.getIntelligenceState();
+        await ctx.repository.saveIntelligenceState({
+          ...current,
+          resumeBatchCheckpoint: checkpoint,
+        });
+      });
+    },
     async removeJobFromReview(jobId) {
+      removedResumeJobIds.add(jobId);
       await ctx.updateJob(jobId, (job) =>
         SavedJobSchema.parse({
           ...job,
@@ -4770,7 +4855,7 @@ export function createWorkspaceApplicationMethods(
       });
       return ctx.getWorkspaceSnapshot();
     },
-    async generateResume(jobId) {
+    async generateResume(jobId, options) {
       // A second "Create the resume" / "Try again" press while this job's
       // resume is still being written joins that run instead of queueing a
       // second full AI generation behind it.
@@ -4783,7 +4868,7 @@ export function createWorkspaceApplicationMethods(
       // serializes those writes against saves, exports, approvals, and other
       // generation runs so neither side can race or clobber the other.
       const run = withResumeDraftTransition(jobId, () =>
-        runGenerateResume(jobId),
+        runGenerateResume(jobId, options),
       ).finally(() => {
         if (inFlightResumeGenerations.get(jobId) === run) {
           inFlightResumeGenerations.delete(jobId);
@@ -4842,8 +4927,17 @@ export function createWorkspaceApplicationMethods(
             : null,
           updatedAt: now,
         });
+        const languageChanged =
+          (parsedDraft.language ?? null) !== (currentDraft.language ?? null);
+        const editedDraft = languageChanged
+          ? await writeResumeLanguage({
+              aiClient: ctx.aiClient,
+              draft: nextDraft,
+              job,
+            })
+          : nextDraft;
         const sanitizedDraft = await sanitizeAndCheckResumeDraft(ctx, {
-          draft: nextDraft,
+          draft: editedDraft,
           job,
           profile,
         });
@@ -5104,7 +5198,7 @@ export function createWorkspaceApplicationMethods(
 
       return ctx.getWorkspaceSnapshot();
     },
-    async regenerateResumeDraft(jobId) {
+    async regenerateResumeDraft(jobId, options) {
       // The locked-content gate reads persisted state, so it must share the
       // same per-job transition as the generation it guards; otherwise a
       // save or pin change could land after the check but before generation
@@ -5119,7 +5213,7 @@ export function createWorkspaceApplicationMethods(
           );
         }
 
-        return runGenerateResume(jobId);
+        return runGenerateResume(jobId, options);
       });
     },
     async regenerateResumeSection(jobId, sectionId) {

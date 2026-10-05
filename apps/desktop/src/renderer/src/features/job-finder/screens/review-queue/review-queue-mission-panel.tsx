@@ -312,6 +312,11 @@ export function ReviewQueueMissionPanel({
   const untailorableListingReasonId = "resume-choice-untailorable-listing";
   const resumeChoiceFieldset = selectedItem ? (
     <div className="grid gap-2">
+      <p className="text-xs text-foreground-muted">
+        {selectedItem.assetStatus === "ready"
+          ? "Choosing another level writes a new draft. Original uses your file unchanged."
+          : "Choose a level, then create the resume."}
+      </p>
       <div
         aria-describedby={
           untailorableListing ? untailorableListingReasonId : undefined
@@ -714,9 +719,14 @@ export function ReviewQueueMissionPanel({
         >
           Open the listing
         </Button>
+        {isGenerating ? (
+          <p className="text-xs text-foreground-muted">
+            Removing this job stops the draft from being saved. An AI request
+            already running may finish.
+          </p>
+        ) : null}
         <Button
           className={quietActionClassName}
-          disabled={isSelectedJobPending}
           onClick={() => onRemoveReviewJob(selectedItem.jobId)}
           size="compact"
           type="button"

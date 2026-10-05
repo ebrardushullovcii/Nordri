@@ -362,6 +362,10 @@ export function buildResumeDraftStateHash(draft: ResumeDraft): string {
   return fnv1a32(
     stringifyResumeVersionState({
       templateId: draft.templateId,
+      ...(draft.language ? { language: draft.language } : {}),
+      ...(draft.writtenLanguage
+        ? { writtenLanguage: draft.writtenLanguage }
+        : {}),
       identity: draft.identity,
       sections: draft.sections,
       targetPageCount: draft.targetPageCount,
@@ -939,7 +943,8 @@ export function sanitizeResumeDraft(input: {
           if (isLanguageSection(section)) {
             if (
               isSpokenLanguageResumeChrome(bullet.text) ||
-              !isGroundedVisibleLanguage(bullet.text, candidateLanguageBank)
+              (!input.draft.writtenLanguage &&
+                !isGroundedVisibleLanguage(bullet.text, candidateLanguageBank))
             ) {
               return false;
             }
@@ -1978,8 +1983,7 @@ export function buildResumeCoverageComparison(input: {
       (experience) =>
         !experience.isDraft &&
         Boolean(experience.id) &&
-        Boolean(experience.title?.trim()) &&
-        Boolean(experience.companyName?.trim()),
+        Boolean(experience.title?.trim()),
     )
     .map((experience, originalIndex) => {
       const match = entriesByRecordId.get(experience.id) ?? null;
@@ -2002,8 +2006,9 @@ export function buildResumeCoverageComparison(input: {
               ].filter((value): value is string => Boolean(value?.trim())),
             )
           : [];
-      const removedClaimText = originalClaims.filter(
-        (claim) => !resumeFactIsCovered(claim, tailoredClaims),
+      const removedClaimText = compareResumeTextSets(
+        originalClaims,
+        tailoredClaims.flatMap(resumeSentences),
       );
       const addedClaimText = compareResumeTextSets(
         tailoredClaims,
@@ -2034,13 +2039,15 @@ export function buildResumeCoverageComparison(input: {
         ? ("missing" as const)
         : !isVisible
           ? ("hidden" as const)
-          : metadata?.classification === "compact" ||
-              (originalClaims.length > 0 &&
-                tailoredClaims.length < originalClaims.length)
-            ? ("compacted" as const)
-            : addedClaims.length > 0 || removedClaims.length > 0
-              ? ("rewritten" as const)
-              : ("unchanged" as const);
+          : addedClaims.length === 0 && removedClaims.length === 0
+            ? ("unchanged" as const)
+            : metadata?.classification === "compact" ||
+                (originalClaims.length > 0 &&
+                  tailoredClaims.length < originalClaims.length)
+              ? ("compacted" as const)
+              : addedClaims.length > 0 || removedClaims.length > 0
+                ? ("rewritten" as const)
+                : ("unchanged" as const);
       const reasons = uniqueStrings([
         ...(metadata?.reasons ?? []),
         ...(metadata?.reviewGuidance ?? []),
@@ -2060,7 +2067,7 @@ export function buildResumeCoverageComparison(input: {
       return {
         profileRecordId: experience.id,
         title: experience.title as string,
-        employer: experience.companyName as string,
+        employer: experience.companyName ?? "",
         sectionId: experienceSection?.id ?? null,
         entryId: entry?.id ?? null,
         status,
@@ -2075,7 +2082,12 @@ export function buildResumeCoverageComparison(input: {
         reasons,
       };
     });
-  const originalKeywords = buildCandidateSkillBank(input.profile);
+  const originalKeywords = [
+    ...buildCandidateSkillBank(input.profile),
+    ...input.profile.spokenLanguages.map((entry) =>
+      [entry.language, entry.proficiency].filter(Boolean).join(" — "),
+    ),
+  ];
   const tailoredKeywords = uniqueStrings(
     input.draft.sections
       .filter(

@@ -1,3 +1,4 @@
+import type { ResumeBatchCheckpoint } from "@nordri/contracts";
 import type {
   JobFinderAiClient,
   ResumeVisionProvider,
@@ -372,6 +373,7 @@ export interface JobFinderWorkspaceService {
   ): Promise<JobFinderWorkspaceSnapshot>;
   assessJobListing(jobId: string): Promise<JobFinderWorkspaceSnapshot>;
   queueJobForReview(jobId: string): Promise<JobFinderWorkspaceSnapshot>;
+  saveResumeBatchCheckpoint(checkpoint: ResumeBatchCheckpoint): Promise<void>;
   setJobResumeApplicationMode(
     jobId: string,
     resumeApplicationMode: ResumeApplicationMode,
@@ -445,7 +447,10 @@ export interface JobFinderWorkspaceService {
   setCampaignResumeStrategyDefault(
     input: SetCampaignResumeStrategyDefaultInput,
   ): Promise<JobFinderWorkspaceSnapshot>;
-  generateResume(jobId: string): Promise<JobFinderWorkspaceSnapshot>;
+  generateResume(
+    jobId: string,
+    options?: { language?: string | null },
+  ): Promise<JobFinderWorkspaceSnapshot>;
   getResumeWorkspace(jobId: string): Promise<JobFinderResumeWorkspace>;
   previewResumeDraft(
     draft: ResumeDraft,
@@ -464,7 +469,10 @@ export interface JobFinderWorkspaceService {
     jobId: string,
     revisionId: string,
   ): Promise<JobFinderWorkspaceSnapshot>;
-  regenerateResumeDraft(jobId: string): Promise<JobFinderWorkspaceSnapshot>;
+  regenerateResumeDraft(
+    jobId: string,
+    options?: { language?: string | null },
+  ): Promise<JobFinderWorkspaceSnapshot>;
   regenerateResumeSection(
     jobId: string,
     sectionId: string,

@@ -112,6 +112,28 @@ describe("configured resume strategy request boundary", () => {
           }),
         ]),
       );
+      for (const rule of [
+        "every stated skill level and limit",
+        "basic or still learning",
+        "seasonal or partial dates",
+        "credential years and renewal dates",
+        "quantified results",
+        "Each achievement and qualification appears once",
+        "Summaries lead with supported results",
+      ])
+        expect(systemPrompt).toContain(rule);
+      for (const personaFact of [
+        "Workday",
+        "Excel (advanced)",
+        "Articulate Rise",
+        "IFRS",
+        "CFO",
+        "Mentored 5 engineers",
+        "Mentored 4 SDRs",
+        "Fachkraft",
+        "ILS renewed 2025",
+      ])
+        expect(systemPrompt).not.toContain(personaFact);
       expect(systemPrompt).toContain(
         'Apply the named resume strategy "Frontend platform" for the Frontend Platform Engineering role family.',
       );
@@ -201,3 +223,65 @@ describe("configured resume strategy request boundary", () => {
     }
   });
 });
+
+test.each([null, "German"])(
+  "writer receives target language %s and returns the language in the same response",
+  async (language) => {
+    const fetchMock = mockCapturingJsonFetch({
+      choices: [
+        {
+          message: {
+            content: JSON.stringify({
+              languagePresentation: {
+                language: "German",
+                translations: [
+                  { id: "section_experience:label", text: "Berufserfahrung" },
+                ],
+              },
+            }),
+          },
+        },
+      ],
+    });
+    try {
+      const client = createOpenAiCompatibleJobFinderAiClient({
+        apiKey: "test-key",
+        baseUrl: "https://example.com/v1",
+        model: "test-model",
+      });
+      const draft = await client.createResumeDraft({
+        profile: createProfile(),
+        searchPreferences: createPreferences(),
+        settings: createSettings(),
+        job: createJobPosting(),
+        resumeText: "Resume text",
+        language,
+        languageFields: [
+          { id: "section_experience:label", text: "Experience" },
+        ],
+      });
+      const body = JSON.parse(fetchMock.getCapturedBody()) as {
+        messages: Array<{ content: string }>;
+      };
+      const payload = JSON.parse(body.messages[1]!.content) as {
+        targetLanguage: string;
+        languageFields: Array<{ id: string; text: string }>;
+      };
+      expect(payload.targetLanguage).toBe(
+        language ?? "the language the listing is written in",
+      );
+      expect(payload.languageFields).toEqual([
+        { id: "section_experience:label", text: "Experience" },
+      ]);
+      expect(body.messages[0]!.content).toContain(
+        "write the resume in that language in this writing pass",
+      );
+      expect(body.messages[0]!.content).toContain(
+        "When all displayed fields already use the target language, return an empty translations array",
+      );
+      expect(draft.languagePresentation?.language).toBe("German");
+    } finally {
+      fetchMock.restore();
+    }
+  },
+);

@@ -87,7 +87,11 @@ describe("tailored resume generation failure durability", () => {
       (await repository.listTailoredAssets()).find(
         (asset) => asset.jobId === "job_ready",
       ),
-    ).toEqual(before.asset);
+    ).toMatchObject({
+      ...before.asset,
+      failureMessage: expect.stringContaining("Your previous resume was kept."),
+      failedAt: expect.any(String),
+    });
     expect(await repository.getResumeDraftByJobId("job_ready")).toEqual(
       before.draft,
     );
@@ -343,4 +347,41 @@ test("a saved hidden role stays out of preview and rendering after reload and ca
       .find((item) => item.id === section.id)
       ?.entries.find((entry) => entry.id === role.id)?.included,
   ).toBe(true);
+});
+
+test("removing a job during writing keeps it removed and discards the finished draft", async () => {
+  const base = createAiClient();
+  let release!: () => void;
+  let writing!: () => void;
+  const started = new Promise<void>((resolve) => {
+    writing = resolve;
+  });
+  const waiting = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const { repository, workspaceService } = createWorkspaceServiceHarness({
+    aiClient: {
+      ...base,
+      async createResumeDraft(input) {
+        writing();
+        await waiting;
+        return base.createResumeDraft(input);
+      },
+    },
+  });
+  const pending = workspaceService.generateResume("job_ready");
+  await started;
+  await workspaceService.removeJobFromReview("job_ready");
+  release();
+  await pending;
+  expect(
+    (await repository.listSavedJobs()).find((job) => job.id === "job_ready")
+      ?.status,
+  ).toBe("shortlisted");
+  expect(await repository.getResumeDraftByJobId("job_ready")).toBeNull();
+  expect(
+    (await workspaceService.getWorkspaceSnapshot()).reviewQueue.some(
+      (item) => item.jobId === "job_ready",
+    ),
+  ).toBe(false);
 });

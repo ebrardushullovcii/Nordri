@@ -372,7 +372,7 @@ function formatDateRange(
     if (namedMonthMatch) {
       const month =
         monthByName[namedMonthMatch[1]?.toLowerCase() ?? ""] ?? null;
-      return month ? formatByMonth(month, namedMonthMatch[2] ?? "") : null;
+      return month ? formatByMonth(month, namedMonthMatch[2] ?? "") : trimmed;
     }
 
     return trimmed;
@@ -441,12 +441,16 @@ function parseResumeDateRange(value: string | null | undefined): {
   };
 }
 
-function formatEntryDateRange(entry: {
-  dateRange?: string | null;
-  endDate?: string | null;
-  isCurrent?: boolean;
-  startDate?: string | null;
-}): string | null {
+function formatEntryDateRange(
+  entry: {
+    dateRange?: string | null;
+    endDate?: string | null;
+    isCurrent?: boolean;
+    startDate?: string | null;
+  },
+  preferDisplayedDate = false,
+): string | null {
+  if (preferDisplayedDate && entry.dateRange) return entry.dateRange;
   return (
     formatDateRange(entry.startDate, entry.endDate, entry.isCurrent) ??
     entry.dateRange ??
@@ -454,7 +458,10 @@ function formatEntryDateRange(entry: {
   );
 }
 
-function toSectionPreviewLines(section: ResumeDraftSection): string[] {
+function toSectionPreviewLines(
+  section: ResumeDraftSection,
+  preferDisplayedDate = false,
+): string[] {
   const lines: string[] = [];
   const orderedSection = normalizeResumeDraftSectionEntryOrdering(section);
 
@@ -465,7 +472,7 @@ function toSectionPreviewLines(section: ResumeDraftSection): string[] {
   for (const entry of orderedSection.entries
     .filter((item) => item.included)
     .sort((left, right) => left.sortOrder - right.sortOrder)) {
-    const entryDateRange = formatEntryDateRange(entry);
+    const entryDateRange = formatEntryDateRange(entry, preferDisplayedDate);
     const heading = joinCompact(
       [
         joinCompact([entry.title, entry.subtitle], " — "),
@@ -549,15 +556,13 @@ function buildCoreAndAdditionalSkills(
   ]);
 
   return {
-    coreSkills: uniqueStrings(draftSkills).slice(0, 10),
-    additionalSkills: allSkills
-      .filter(
-        (skill) =>
-          !new Set(
-            uniqueStrings(draftSkills).map((entry) => normalizeText(entry)),
-          ).has(normalizeText(skill)),
-      )
-      .slice(0, 10),
+    coreSkills: uniqueStrings(draftSkills),
+    additionalSkills: allSkills.filter(
+      (skill) =>
+        !new Set(
+          uniqueStrings(draftSkills).map((entry) => normalizeText(entry)),
+        ).has(normalizeText(skill)),
+    ),
   };
 }
 
@@ -830,7 +835,7 @@ function splitResumeDetailLine(value: string): string[] {
 function mergeEntryBullets(
   tailoredBullets: readonly string[],
   profileBullets: readonly string[],
-  maxBullets = 3,
+  maxBullets = Number.POSITIVE_INFINITY,
 ): string[] {
   const normalizedTailoredBullets = tailoredBullets
     .flatMap(splitResumeDetailLine)
@@ -845,48 +850,8 @@ function mergeEntryBullets(
   const normalizedProfileBullets = profileBullets.flatMap(
     splitResumeDetailLine,
   );
-  const ignoredClaimTokens = new Set([
-    "and",
-    "for",
-    "from",
-    "into",
-    "the",
-    "that",
-    "this",
-    "through",
-    "using",
-    "with",
-  ]);
-  const claimTokens = (value: string) =>
-    new Set(
-      normalizeText(value)
-        .split(/[^\p{L}\p{N}+#.]+/u)
-        .filter((token) => token.length >= 3 && !ignoredClaimTokens.has(token)),
-    );
-  const claimIsCoveredBy = (claim: string, cover: string) => {
-    const normalizedClaim = normalizeText(claim);
-    const normalizedCover = normalizeText(cover);
-    if (normalizedCover === normalizedClaim) {
-      return true;
-    }
-    if (
-      normalizedClaim.length >= 36 &&
-      (normalizedCover.includes(normalizedClaim) ||
-        normalizedClaim.includes(normalizedCover))
-    ) {
-      return true;
-    }
-    const tokens = claimTokens(claim);
-    if (tokens.size < 4) {
-      return false;
-    }
-
-    const coverTokens = claimTokens(cover);
-    const sharedTokenCount = [...tokens].filter((token) =>
-      coverTokens.has(token),
-    ).length;
-    return sharedTokenCount / tokens.size >= 0.67;
-  };
+  const claimIsCoveredBy = (claim: string, cover: string) =>
+    resumeFactIsCovered(claim, [cover]);
   // A provider that merges two achievements into one line often returns the
   // merged line AND the two it was built from, so the same two claims read
   // back twice within four lines. A claim a longer sibling already covers is
@@ -1087,7 +1052,10 @@ function buildDraftSectionsFromStructuredTailoredDraft(input: {
           profileRecordId: profileExperience.id,
           sourceRefs: sharedRefs,
         }),
-        included: false,
+        included: !["suggested_hidden", "omitted"].includes(
+          coverageMetadataByRecordId.get(profileExperience.id)
+            ?.classification ?? "",
+        ),
       };
     });
   const experienceEntries = orderEntriesNewestFirst([
@@ -1285,7 +1253,7 @@ function buildDraftSectionsFromStructuredTailoredDraft(input: {
   const additionalSkills = uniqueStrings([
     ...draft.additionalSkills,
     ...draftSkills.additionalSkills,
-  ]).slice(0, 10);
+  ]);
   if (additionalSkills.length > 0) {
     sections.push(
       createSection({
@@ -1352,7 +1320,7 @@ export function buildPreviewSectionsFromResumeDraft(
     .sort((left, right) => left.sortOrder - right.sortOrder)
     .map((section) => ({
       heading: section.label,
-      lines: toSectionPreviewLines(section),
+      lines: toSectionPreviewLines(section, Boolean(draft.writtenLanguage)),
     }))
     .filter((section) => section.lines.length > 0);
 }
@@ -1420,7 +1388,10 @@ export function buildResumeRenderDocument(
           .filter((entry) => entry.included)
           .sort((left, right) => left.sortOrder - right.sortOrder)
           .map((entry) => {
-            const dateRange = formatEntryDateRange(entry);
+            const dateRange = formatEntryDateRange(
+              entry,
+              Boolean(draft.writtenLanguage),
+            );
 
             return {
               id: entry.id,

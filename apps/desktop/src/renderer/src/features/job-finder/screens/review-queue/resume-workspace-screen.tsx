@@ -1,3 +1,4 @@
+import { ResumeWorkspaceLanguagePicker } from "./resume-workspace-language-picker";
 import { OriginalResumeFilePanel } from "./original-resume-file-panel";
 import {
   useCallback,
@@ -98,6 +99,8 @@ function draftContentKey(draft: ResumeDraft): string {
     id: draft.id,
     jobId: draft.jobId,
     templateId: draft.templateId,
+    language: draft.language ?? null,
+    writtenLanguage: draft.writtenLanguage ?? null,
     identity: draft.identity,
     sections: draft.sections,
     targetPageCount: draft.targetPageCount,
@@ -1196,6 +1199,24 @@ export function ResumeWorkspaceScreen(props: ResumeWorkspaceScreenProps) {
             jobTitle={job.title}
             onBack={props.onBack}
           />
+          {!props.originalResumeRoute ? (
+            <ResumeWorkspaceLanguagePicker
+              language={draft.language ?? null}
+              writtenLanguage={draft.writtenLanguage ?? null}
+              disabled={props.isWorkspacePending || backgroundDraft !== null}
+              onWrite={(language) => {
+                const nextDraft = { ...draft, language };
+                setDraft(nextDraft);
+                props.onDraftEdited?.();
+                props.onSaveDraftAndThen(
+                  nextDraft,
+                  () => undefined,
+                  null,
+                  (updatedAt) => acknowledgeSave(nextDraft, updatedAt),
+                );
+              }}
+            />
+          ) : null}
           {backgroundDraft ? (
             <div
               className="mt-2 flex flex-wrap items-center gap-3 rounded-(--radius-field) border border-(--control-border) bg-(--surface-panel) px-3 py-2 text-(length:--text-small)"

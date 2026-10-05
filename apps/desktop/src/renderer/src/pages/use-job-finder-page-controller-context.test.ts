@@ -579,7 +579,7 @@ describe("buildJobFinderPageContext tailored draft batch", () => {
       totalCount: 3,
     });
     expect(getPendingActionState()).toEqual({});
-    expect(batchMessages[0]).toMatch(/nothing was sent/i);
+    expect(batchMessages[0]).not.toMatch(/nothing was sent/i);
   });
 
   it("keeps per-job pending scopes active without touching review selection", async () => {
@@ -980,7 +980,7 @@ describe("buildJobFinderPageContext tailored draft batch", () => {
         message !== null && /^(Wrote|Stopped after) \d+ resume/i.test(message),
     );
     expect(batchMessage).toMatch(/Wrote 10 resumes/);
-    expect(batchMessage).toMatch(/2 more jobs still need a resume/);
+    expect(batchMessage).not.toMatch(/more jobs still need a resume/);
   });
 
   it("treats a start with no eligible jobs as a deterministic no-op", async () => {
@@ -1220,7 +1220,7 @@ describe("buildJobFinderPageContext tailored draft batch", () => {
           /^(Wrote|Stopped after) \d+ resume/i.test(message),
       );
     expect(batchMessage).toMatch(/Wrote 3 resumes/);
-    expect(batchMessage).toMatch(/1 more job still needs a resume/);
+    expect(batchMessage).not.toMatch(/more job still needs a resume/);
   });
 });
 
@@ -1553,4 +1553,24 @@ describe("Applications browser hand-off failure reporting", () => {
       "The browser runtime is disabled",
     );
   });
+});
+
+it("does not count a removed in-flight job as a written resume", async () => {
+  const generateResume = vi
+    .fn<JobFinderShellActions["generateResume"]>()
+    .mockResolvedValue(createBatchWorkspace([]));
+  const { context, getTailoredDraftPreparation, getActionState } = buildContext(
+    {
+      actions: { generateResume },
+      workspace: createBatchWorkspace([createReviewQueueItem("removed")]),
+    },
+  );
+  context.onPrepareTailoredDrafts();
+  await vi.waitFor(() =>
+    expect(getTailoredDraftPreparation().status).toBe("completed"),
+  );
+  expect(getTailoredDraftPreparation().cancelledCount).toBe(1);
+  expect(getActionState().message).toBe(
+    "Wrote 0 resumes · 1 removed from the shortlist.",
+  );
 });

@@ -35,6 +35,7 @@ import {
   type JobSearchPreferences,
   type JobSource,
   isBlockingResumeClaimAssessment,
+  isBlockingResumeValidationIssue,
   isListableCompanyName,
   type ProfileSetupState,
   type ResumeApplicationMode,
@@ -1096,9 +1097,12 @@ export function createWorkspaceSnapshotProfileMethods(
       const latestValidation =
         (await ctx.repository.listResumeValidationResults(draft.id))[0] ?? null;
       if (!latestValidation) continue;
-      const count = latestValidation.claimAssessments.filter((assessment) =>
-        isBlockingResumeClaimAssessment({ assessment, draft }),
-      ).length;
+      const count = Math.max(
+        latestValidation.claimAssessments.filter((assessment) =>
+          isBlockingResumeClaimAssessment({ assessment, draft }),
+        ).length,
+        latestValidation.issues.filter(isBlockingResumeValidationIssue).length,
+      );
       if (count > 0) linesToDecideByDraftId.set(draft.id, count);
     }
     const reviewQueue = buildReviewQueue(
