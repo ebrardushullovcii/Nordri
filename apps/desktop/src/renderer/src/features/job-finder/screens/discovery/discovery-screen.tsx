@@ -1180,66 +1180,68 @@ export function DiscoveryScreen(props: {
       id="discovery-workspace-content"
     >
       <div className="flex min-h-0 min-w-0 flex-col gap-2">
-        {dismissedJobs.length > 0 ? (
-          <details className="rounded-(--radius-field) border border-(--surface-panel-border) bg-(--surface-panel) px-3 py-2">
-            <summary className="cursor-pointer text-(length:--text-small) font-medium text-foreground-soft">
-              Hidden by you ({dismissedJobs.length})
-            </summary>
-            <p className="mt-2 text-(length:--text-small) leading-5 text-foreground-muted">
-              Hidden jobs stay on this device and do not change fit scores.
-            </p>
-            <ul className="mt-3 grid gap-2">
-              {dismissedJobs.map((job) => (
-                <li
-                  className="flex min-w-0 flex-wrap items-center justify-between gap-2 border-t border-(--surface-panel-border) pt-2"
-                  key={job.id}
-                >
-                  <div className="min-w-0">
-                    <p className="truncate text-(length:--text-small) font-medium text-foreground">
-                      {job.title}
-                    </p>
-                    <p className="text-(length:--text-tiny) text-foreground-muted">
-                      {job.discoveryFeedback?.reasons
-                        .map(formatDiscoveryHideReason)
-                        .join(" · ") ?? "Hidden without saved reasons"}
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {job.discoveryFeedback?.employerExclusion &&
-                    onRemoveEmployerExclusion ? (
-                      <Button
-                        disabled={isJobPending(job.id)}
-                        onClick={() =>
-                          onRemoveEmployerExclusion({
-                            jobId: job.id,
-                            normalizedCompanyName:
-                              job.discoveryFeedback!.employerExclusion!
-                                .normalizedCompanyName,
-                          })
-                        }
-                        size="sm"
-                        type="button"
-                        variant="ghost"
-                      >
-                        Allow this employer in future searches
-                      </Button>
-                    ) : null}
-                    <Button
-                      disabled={isJobPending(job.id)}
-                      onClick={() => onRestoreDismissedJob(job.id)}
-                      size="sm"
-                      type="button"
-                      variant="ghost"
-                    >
-                      Show again
-                    </Button>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </details>
-        ) : null}
         <DiscoveryResultsPanel
+          hiddenJobsControl={
+            dismissedJobs.length > 0 ? (
+              <details className="text-sm open:w-full">
+                <summary className="cursor-pointer font-medium text-foreground-soft">
+                  Hidden by you ({dismissedJobs.length})
+                </summary>
+                <p className="mt-2 text-(length:--text-small) leading-5 text-foreground-muted">
+                  Hidden jobs stay on this device and do not change fit scores.
+                </p>
+                <ul className="mt-3 grid gap-2">
+                  {dismissedJobs.map((job) => (
+                    <li
+                      className="flex min-w-0 flex-wrap items-center justify-between gap-2 border-t border-(--surface-panel-border) pt-2"
+                      key={job.id}
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate text-(length:--text-small) font-medium text-foreground">
+                          {job.title}
+                        </p>
+                        <p className="text-(length:--text-tiny) text-foreground-muted">
+                          {job.discoveryFeedback?.reasons
+                            .map(formatDiscoveryHideReason)
+                            .join(" · ") ?? "Hidden without saved reasons"}
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {job.discoveryFeedback?.employerExclusion &&
+                        onRemoveEmployerExclusion ? (
+                          <Button
+                            disabled={isJobPending(job.id)}
+                            onClick={() =>
+                              onRemoveEmployerExclusion({
+                                jobId: job.id,
+                                normalizedCompanyName:
+                                  job.discoveryFeedback!.employerExclusion!
+                                    .normalizedCompanyName,
+                              })
+                            }
+                            size="sm"
+                            type="button"
+                            variant="ghost"
+                          >
+                            Allow this employer in future searches
+                          </Button>
+                        ) : null}
+                        <Button
+                          disabled={isJobPending(job.id)}
+                          onClick={() => onRestoreDismissedJob(job.id)}
+                          size="sm"
+                          type="button"
+                          variant="ghost"
+                        >
+                          Show again
+                        </Button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            ) : null
+          }
           {...(onAssessJobListing ? { onAssessJobListing } : {})}
           planName={
             campaigns?.find((plan) => plan.id === activeCampaignId)?.name ??

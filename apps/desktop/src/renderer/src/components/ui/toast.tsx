@@ -107,7 +107,8 @@ function ToastCard({
   toast: ToastEntry;
 }) {
   const [held, setHeld] = React.useState(false);
-  const duration = toast.duration ?? DEFAULT_DURATION_MS;
+  const duration =
+    toast.duration ?? (toast.action ? 20_000 : DEFAULT_DURATION_MS);
   // The provider hands a fresh closure on every render; the timer must not
   // restart each time another toast arrives.
   const dismissRef = React.useRef(onDismiss);

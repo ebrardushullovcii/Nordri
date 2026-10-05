@@ -168,6 +168,7 @@ export function ApplicationsDetailPanelRecoveryActionsSection(props: {
    * unearned success claim.
    */
   onFinishInBrowser?: FinishInBrowserHandler;
+  onReviewBeforeSending?: () => void;
   /**
    * Runs the exact verification Needs you runs for the pending browser step on
    * this result. Without it the loop had two homes: Applications sent the user
@@ -220,6 +221,7 @@ export function ApplicationsDetailPanelRecoveryActionsSection(props: {
     answerStep = null,
     onAllowSiteSaves,
     onFinishInBrowser,
+    onReviewBeforeSending,
     onConfirmFinishedInBrowser,
     canConfirmFinishedInBrowser,
     browserStepContinuesOnItsOwn = false,
@@ -317,7 +319,8 @@ export function ApplicationsDetailPanelRecoveryActionsSection(props: {
   // The site-saves state keeps the browser hand-off as its secondary way out,
   // for a person who would rather finish it there than grant the permission.
   const showSecondaryOpenBrowser =
-    presentation.state === "site_saves_as_you_go" &&
+    (presentation.state === "site_saves_as_you_go" ||
+      Boolean(onReviewBeforeSending)) &&
     Boolean(onFinishInBrowser && visibleApplyResult);
   const hasSecondaryActions =
     showSecondaryRunAgain ||
@@ -552,8 +555,20 @@ export function ApplicationsDetailPanelRecoveryActionsSection(props: {
                   {presentation.primaryActionLabel}
                 </Button>
               ) : null}
-              {primaryAction === "open_browser" ||
-              primaryAction === "open_listing" ? (
+              {onReviewBeforeSending ? (
+                <Button
+                  className={RECOVERY_PRIMARY_ACTION_CLASS_NAME}
+                  data-testid="applications-recovery-primary-action-button"
+                  onClick={onReviewBeforeSending}
+                  type="button"
+                  variant="primary"
+                >
+                  Review before sending
+                </Button>
+              ) : null}
+              {!onReviewBeforeSending &&
+              (primaryAction === "open_browser" ||
+                primaryAction === "open_listing") ? (
                 <Button
                   aria-describedby={
                     canFinishInBrowser
@@ -765,7 +780,8 @@ export function ApplicationsDetailPanelRecoveryActionsSection(props: {
         ) : null}
         {(primaryAction === "open_browser" ||
           primaryAction === "open_listing") &&
-        !canFinishInBrowser ? (
+        !canFinishInBrowser &&
+        !onReviewBeforeSending ? (
           <p
             className="text-(length:--text-small) leading-6 text-foreground-soft"
             data-testid="manual-field-finish-unavailable-note"

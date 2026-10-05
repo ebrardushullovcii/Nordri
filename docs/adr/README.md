@@ -41,14 +41,15 @@ ADRs capture durable decisions and rejected alternatives. Use them to avoid reop
 | [0033](0033-person-finishes-on-the-kept-page.md)                     | accepted   | The person finishes on the kept page; hand-offs carry on by themselves                          |
 | [0034](0034-stepping-in-hands-over-one-tab.md)                        | accepted; lent tabs for the assistant by 0038 | Stepping into the browser hands over one tab; handing it back carries on                        |
 
-| [0035](0035-selected-resume-batches.md) | accepted | Temporary job selection and two concurrent resume generations per batch |
+| [0035](0035-selected-resume-batches.md) | accepted; ten-job cap removed by 0043 | Temporary job selection and two concurrent resume generations per batch |
 | [0036](0036-parallel-application-preparation.md) | accepted | Owned application tabs, bounded parallel preparation, and serialized sending |
 | [0037](0037-one-assistant-in-a-side-chat.md) | accepted | One app-wide assistant in a side chat replaces the Profile and Resume chats |
 | [0038](0038-the-assistant-works-in-the-tab-you-lend-it.md) | accepted | The assistant works only in the browser tab lent to it; a click takes it back |
 | [0039](0039-written-instructions-authorize.md) | accepted | Written sidebar instructions authorize their steps, sending included, through recorded grants |
 | [0040](0040-nordri-rebrand.md) | accepted | UnEmployed becomes Nordri and Interview Helper becomes Live Assistant; existing data moves once |
 | [0041](0041-the-model-reads-the-page.md) | accepted | The model reads the page and returns job details; scripts keep safety and mechanics, not interpretation |
-| [0042](0042-toasts-for-news-boxes-for-action.md) | accepted | Toasts for news; tinted boxes only when the person must act; status in the control that owns it |
+| [0042](0042-toasts-for-news-boxes-for-action.md) | accepted; action toasts lengthened by 0043 | Toasts for news; tinted boxes only when the person must act; status in the control that owns it |
+| [0043](0043-bulk-work-queues-the-whole-selection.md) | accepted | Bulk work queues the whole selection or says what remains; toasts with Undo stay about twenty seconds |
 
 ## Policy
 

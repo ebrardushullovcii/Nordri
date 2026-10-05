@@ -7,7 +7,6 @@ import type {
 } from "@nordri/contracts";
 import {
   APPLICATION_CRM_STAGE_NAMES,
-  APPLICATION_CRM_STAGE_NAMES as APPLICATION_CRM_STAGE_LABELS,
   inferApplicationActivityStage,
   isApplicationTrackedAsSentByPerson,
   isApplicationWithdrawnByPerson,
@@ -41,7 +40,11 @@ export {
   APPLICATION_CRM_STAGE_NAMES,
   APPLICATION_CRM_MANUAL_STAGES,
 } from "@nordri/contracts";
-export { APPLICATION_CRM_STAGE_NAMES as APPLICATION_CRM_STAGE_LABELS } from "@nordri/contracts";
+export const APPLICATION_CRM_STAGE_LABELS = {
+  ...APPLICATION_CRM_STAGE_NAMES,
+  preparing: "Preparing",
+  failed: "Could not apply",
+};
 
 export function inferApplicationCrmStageForView(
   record: ApplicationRecord,
@@ -140,9 +143,7 @@ export function applicationCrmStageLabelForView(
   // "(local historical inference)" is implementation vocabulary inside a
   // table cell. The provenance stays visible as its own badge and tooltip;
   // the cell just names the stage.
-  const baseLabel = record.crm
-    ? APPLICATION_CRM_STAGE_LABELS[stage]
-    : APPLICATION_CRM_STAGE_NAMES[stage];
+  const baseLabel = APPLICATION_CRM_STAGE_LABELS[stage];
   // A stage the person named themselves keeps its name everywhere, beside
   // the standard step it counts as.
   const custom = record.crm?.customStageId

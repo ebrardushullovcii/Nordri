@@ -1,3 +1,4 @@
+import { joinUniqueSentences } from "../../lib/sentence-copy";
 import {
   useCallback,
   useDeferredValue,
@@ -104,6 +105,7 @@ import {
 } from "./discovery-search-readiness";
 
 interface DiscoveryResultsPanelProps {
+  hiddenJobsControl?: React.ReactNode;
   planName?: string | null;
   onAssessJobListing?: (jobId: string) => Promise<void>;
   alsoFoundCount?: number;
@@ -601,6 +603,7 @@ export function ResultsEmptyState(props: {
 }
 
 export function DiscoveryResultsPanel({
+  hiddenJobsControl,
   planName = null,
   onAssessJobListing,
   alsoFoundCount = 0,
@@ -1263,9 +1266,10 @@ export function DiscoveryResultsPanel({
             </span>
           </p>
         ) : null}
+        {hiddenJobsControl}
       </header>
       <div
-        className="min-h-[360px] overflow-y-auto overscroll-contain xl:flex-1"
+        className="overscroll-contain xl:min-h-[360px] xl:flex-1 xl:overflow-y-auto"
         data-locked-pane-scroll-region
         data-job-results-scroll-region
         ref={resultsScrollRegionRef}
@@ -1905,7 +1909,7 @@ export function DiscoveryResultsPanel({
               // scroller's bottom edge. Below that breakpoint the list has no
               // scroller of its own and takes its content height, so the same
               // padding is only an empty grey strip under the last result.
-              className="min-h-[320px] xl:pb-8"
+              className="xl:min-h-[320px] xl:pb-8"
             >
               <ul
                 aria-label="Results"
@@ -1943,7 +1947,9 @@ export function DiscoveryResultsPanel({
                   const rowReason =
                     (job.matchAssessment.recommendation === "skip"
                       ? scrubJobAbsencePlaceholders(
-                          job.matchAssessment.recommendationRationale ?? "",
+                          joinUniqueSentences([
+                            job.matchAssessment.recommendationRationale ?? "",
+                          ]),
                         ) || null
                       : null) ??
                     (job.matchAssessment.dimensions?.roleSuitability?.state !==

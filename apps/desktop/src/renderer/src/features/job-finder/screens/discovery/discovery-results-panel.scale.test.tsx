@@ -592,3 +592,13 @@ describe("DiscoveryResultsPanel workspace scale", () => {
     expect(onShowAlsoFound).toHaveBeenCalledTimes(1);
   });
 });
+
+it("lets a short result list take its content height below the split-pane width", () => {
+  renderResults(createJobs(2), null);
+  const scroller = document.querySelector("[data-job-results-scroll-region]")!;
+  expect(scroller.className).not.toMatch(/(?:^|\s)min-h-\[/u);
+  const stack = document.querySelector("[data-job-results-stack]")!;
+  expect(stack.querySelector("ul")?.parentElement?.className).not.toMatch(
+    /(?:^|\s)min-h-\[/u,
+  );
+});

@@ -1,3 +1,4 @@
+import { joinUniqueSentences } from "../../lib/sentence-copy";
 import { StatusBadge } from "../../components/status-badge";
 import { fitRecommendationCopy } from "../../lib/match-assessment-presentation";
 import { Check, ChevronDown, Pencil } from "lucide-react";
@@ -561,7 +562,9 @@ export function ReviewQueueMissionPanel({
               className="basis-full text-(length:--text-small) text-foreground-soft"
               data-testid="queue-full-assessment-reason"
             >
-              {selectedJob.matchAssessment.recommendationRationale}
+              {joinUniqueSentences([
+                selectedJob.matchAssessment.recommendationRationale,
+              ])}
             </p>
           ) : null}
           {existingApplication ? (

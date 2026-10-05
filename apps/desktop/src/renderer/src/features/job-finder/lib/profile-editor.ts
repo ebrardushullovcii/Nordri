@@ -385,7 +385,9 @@ export function createProfileEditorValues(
       nextChapterSummary: profile.narrative.nextChapterSummary ?? "",
       professionalStory: profile.narrative.professionalStory ?? "",
     },
-    profileSkills: joinListInput(profile.skills),
+    profileSkills: joinListInput(
+      profile.skills.map((skill) => skill.replace(/\.+$/u, "")),
+    ),
     proofBank: toProofBankFormEntries(profile),
     projects: toProjectFormEntries(profile),
     records: {
@@ -649,7 +651,9 @@ export function buildProfilePayload(
   // resurrect a skill the user deleted from this field just because it also
   // appears in a skill group. Downstream consumers that need the full skill
   // pool derive that union themselves from `skills` plus `skillGroups`.
-  const mainSkills = parseListInput(values.profileSkills);
+  const mainSkills = parseListInput(values.profileSkills).map((skill) =>
+    skill.replace(/\.+$/u, ""),
+  );
   const dedupedExperienceEntries = dedupeImportCandidatesByFingerprint(
     values.records.experiences.filter((entry) =>
       shouldPersistReviewCandidateEntry({
@@ -743,7 +747,7 @@ export function buildProfilePayload(
     email: values.identity.email.trim() || null,
     secondaryEmail: values.identity.secondaryEmail.trim() || null,
     phone: values.identity.phone.trim() || null,
-    portfolioUrl: values.identity.portfolioUrl.trim() || null,
+    portfolioUrl: normalizePublicLinkUrl(values.identity.portfolioUrl) || null,
     linkedinUrl: values.identity.linkedinUrl.trim() || null,
     githubUrl: values.identity.githubUrl.trim() || null,
     personalWebsiteUrl: values.identity.personalWebsiteUrl.trim() || null,

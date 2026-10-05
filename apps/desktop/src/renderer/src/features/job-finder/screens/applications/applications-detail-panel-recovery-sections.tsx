@@ -36,6 +36,7 @@ export function ApplicationsDetailPanelRecoverySections(props: {
    * be under-reported at every intermediate hop.
    */
   onFinishInBrowser?: FinishInBrowserHandler;
+  onReviewBeforeSending?: () => void;
   onConfirmFinishedInBrowser?: (input: FinishInBrowserInput) => void;
   canConfirmFinishedInBrowser?: boolean;
   browserStepContinuesOnItsOwn?: boolean;
@@ -71,6 +72,7 @@ export function ApplicationsDetailPanelRecoverySections(props: {
     answerStep = null,
     onAllowSiteSaves,
     onFinishInBrowser,
+    onReviewBeforeSending,
     onConfirmFinishedInBrowser,
     canConfirmFinishedInBrowser,
     browserStepContinuesOnItsOwn,
@@ -105,6 +107,7 @@ export function ApplicationsDetailPanelRecoverySections(props: {
       answerStep={answerStep}
       {...(onAllowSiteSaves ? { onAllowSiteSaves } : {})}
       {...(onFinishInBrowser ? { onFinishInBrowser } : {})}
+      {...(onReviewBeforeSending ? { onReviewBeforeSending } : {})}
       {...(onConfirmFinishedInBrowser ? { onConfirmFinishedInBrowser } : {})}
       canConfirmFinishedInBrowser={canConfirmFinishedInBrowser ?? false}
       browserStepContinuesOnItsOwn={browserStepContinuesOnItsOwn ?? false}

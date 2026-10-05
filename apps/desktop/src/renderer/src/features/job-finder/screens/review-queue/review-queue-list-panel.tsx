@@ -35,7 +35,6 @@ import { Link } from "react-router-dom";
 import { buildJobFinderContextRoute } from "../../lib/job-finder-context-navigation";
 import {
   APPLICATION_PREPARATION_BATCH_LIMIT,
-  TAILORED_DRAFT_PREPARATION_LIMIT,
   countQueueStageReady,
   countTailoredDraftPreparationEligible,
   describeTailoredDraftPreparationBlocker,
@@ -239,19 +238,20 @@ export function ReviewQueueListPanel({
     if (!eligibleResumeIds.has(jobId)) return;
     const next = new Set(selectedResumeIds);
     if (next.has(jobId)) next.delete(jobId);
-    else if (next.size < TAILORED_DRAFT_PREPARATION_LIMIT) next.add(jobId);
+    else next.add(jobId);
     setResumeSelection({ campaignId, jobIds: [...next] });
   });
-  const readyToApplyCount = useMemo(
+  const totalReadyToApplyCount = useMemo(
     () =>
-      Math.min(
-        countQueueStageReady(
-          queue.filter((item) => !isJobPending(item.jobId)),
-          unavailableApplicationJobIds,
-        ),
-        applicationBatchLimit,
+      countQueueStageReady(
+        queue.filter((item) => !isJobPending(item.jobId)),
+        unavailableApplicationJobIds,
       ),
-    [applicationBatchLimit, isJobPending, queue, unavailableApplicationJobIds],
+    [isJobPending, queue, unavailableApplicationJobIds],
+  );
+  const readyToApplyCount = Math.min(
+    totalReadyToApplyCount,
+    applicationBatchLimit,
   );
   const safeguardBlockerSentence = safeguardBlocker?.trim()
     ? stripInternalCodeParenthetical(safeguardBlocker)
@@ -267,10 +267,7 @@ export function ReviewQueueListPanel({
   const isDraftPreparationRunning = draftPreparation.status === "running";
   const draftPreparationResultMessage =
     getTailoredDraftPreparationResultMessage(draftPreparation);
-  const draftRunCount = Math.min(
-    draftEligibleCount,
-    TAILORED_DRAFT_PREPARATION_LIMIT,
-  );
+  const draftRunCount = draftEligibleCount;
   // The three row handlers keep one identity for the life of the panel. Each
   // closes over the queue, so a `useCallback` on it would be rebuilt whenever
   // any job changed and every row would re-render with it — which is exactly
@@ -419,6 +416,14 @@ export function ReviewQueueListPanel({
                     Choose jobs
                   </Button>
                 ) : null}
+                {totalReadyToApplyCount > readyToApplyCount ? (
+                  <p className="text-sm text-foreground-soft">
+                    {totalReadyToApplyCount} ready jobs. Up to{" "}
+                    {applicationBatchLimit} start at a time;{" "}
+                    {totalReadyToApplyCount - readyToApplyCount} remain after
+                    this batch.
+                  </p>
+                ) : null}
                 {readyToApplyCount > 0 && onApplyToAllReady ? (
                   safeguardBlockerSentence ? (
                     <Button
@@ -444,7 +449,9 @@ export function ReviewQueueListPanel({
                     >
                       {readyToApplyCount === 1
                         ? "Apply to the 1 ready job"
-                        : `Apply to all ${readyToApplyCount} ready jobs`}
+                        : totalReadyToApplyCount > readyToApplyCount
+                          ? `Apply to next ${readyToApplyCount} ready jobs`
+                          : `Apply to all ${readyToApplyCount} ready jobs`}
                     </Button>
                   )
                 ) : null}
@@ -458,16 +465,12 @@ export function ReviewQueueListPanel({
             </p>
           ) : choosingResumes ? (
             <p className="m-0 text-xs text-foreground-muted">
-              {selectedResumeIds.size} selected. Choose up to{" "}
-              {TAILORED_DRAFT_PREPARATION_LIMIT} jobs. Existing resumes are
-              kept.
+              {selectedResumeIds.size} selected. Select the jobs you want.
+              Existing resumes are kept.
             </p>
           ) : draftEligibleCount > 0 ? (
             <p className="m-0 text-xs text-foreground-muted">
               Up to two at once. Stop any time; finished resumes are kept.
-              {draftEligibleCount > TAILORED_DRAFT_PREPARATION_LIMIT
-                ? ` ${TAILORED_DRAFT_PREPARATION_LIMIT} per batch; ${draftEligibleCount - TAILORED_DRAFT_PREPARATION_LIMIT} more after that.`
-                : ""}
             </p>
           ) : null}
           {!isDraftPreparationRunning &&
@@ -557,11 +560,7 @@ export function ReviewQueueListPanel({
                 })}
                 choosingResumes={choosingResumes && !isDraftPreparationRunning}
                 resumeSelected={selectedResumeIds.has(item.jobId)}
-                resumeSelectionDisabled={
-                  !eligibleResumeIds.has(item.jobId) ||
-                  (!selectedResumeIds.has(item.jobId) &&
-                    selectedResumeIds.size >= TAILORED_DRAFT_PREPARATION_LIMIT)
-                }
+                resumeSelectionDisabled={!eligibleResumeIds.has(item.jobId)}
                 onToggleResume={toggleResume}
                 jobId={item.jobId}
                 key={item.jobId}

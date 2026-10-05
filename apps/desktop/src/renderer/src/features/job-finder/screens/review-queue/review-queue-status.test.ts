@@ -194,16 +194,16 @@ describe("tailored draft preparation", () => {
     }
   });
 
-  it("deduplicates in stable order and never returns more than ten jobs", () => {
+  it("deduplicates in stable order and queues every missing resume", () => {
     const queue = [
-      ...Array.from({ length: 12 }, (_, index) => createItem(`job-${index}`)),
+      ...Array.from({ length: 33 }, (_, index) => createItem(`job-${index}`)),
       createItem("job-0"),
     ];
 
     expect(
       getTailoredDraftPreparationCandidates(queue).map((item) => item.jobId),
-    ).toEqual(Array.from({ length: 10 }, (_, index) => `job-${index}`));
-    expect(getTailoredDraftPreparationCandidates(queue, 50)).toHaveLength(10);
+    ).toEqual(Array.from({ length: 33 }, (_, index) => `job-${index}`));
+    expect(getTailoredDraftPreparationCandidates(queue, 50)).toHaveLength(33);
   });
 
   it("runs at most two drafts, accounts for out-of-order failures, and stops new work", async () => {
@@ -947,4 +947,28 @@ it("reports a removed active draft separately from written resumes", async () =>
       status: "completed",
     }),
   ).toBe("Wrote 0 resumes · 1 removed from the shortlist.");
+});
+
+it("finishes all 33 missing resumes from one queue while keeping two active", async () => {
+  const candidates = getTailoredDraftPreparationCandidates(
+    Array.from({ length: 33 }, (_, i) => createItem(`batch_${i}`)),
+  );
+  let active = 0;
+  let maxActive = 0;
+  const generate = vi.fn(async () => {
+    active++;
+    maxActive = Math.max(maxActive, active);
+    await Promise.resolve();
+    active--;
+    return true;
+  });
+  const result = await prepareTailoredDraftBatch(candidates, generate);
+  expect(result).toMatchObject({
+    totalCount: 33,
+    completedCount: 33,
+    stopped: false,
+    failedCount: 0,
+  });
+  expect(generate).toHaveBeenCalledTimes(33);
+  expect(maxActive).toBeLessThanOrEqual(2);
 });

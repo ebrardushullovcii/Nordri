@@ -89,6 +89,7 @@ interface ApplicationsRecordsPanelProps {
   discoveryJobs?: ReadonlyArray<{
     id: string;
     canonicalUrl: string;
+    location?: string;
   }>;
   filterCounts: Record<ApplicationsViewFilter, number>;
   hasAnyApplications: boolean;
@@ -304,7 +305,7 @@ export function ApplicationsRecordsPanel({
               size="toolbar"
               className="w-40 flex-1"
               aria-label="Search applications"
-              placeholder="Search company or role"
+              placeholder="Search applications"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
             />
@@ -491,19 +492,29 @@ export function ApplicationsRecordsPanel({
                 : applicationCrmStageLabelForView(record, customStages);
             const recordStateDescriptionId = `applications-record-${record.id}-state-description`;
             const relatedJob = relatedJobsById.get(record.jobId);
-            const employerLine = formatApplicationEmployerLine({
-              company: record.company,
-              ...(relatedJob?.canonicalUrl
-                ? { canonicalUrl: relatedJob.canonicalUrl }
-                : {}),
-            });
-            const employerAriaLabel = formatApplicationEmployerAriaLabel({
-              title: record.title,
-              company: record.company,
-              ...(relatedJob?.canonicalUrl
-                ? { canonicalUrl: relatedJob.canonicalUrl }
-                : {}),
-            });
+            const employerLine = [
+              formatApplicationEmployerLine({
+                company: record.company,
+                ...(relatedJob?.canonicalUrl
+                  ? { canonicalUrl: relatedJob.canonicalUrl }
+                  : {}),
+              }),
+              relatedJob?.location,
+            ]
+              .filter(Boolean)
+              .join(" · ");
+            const employerAriaLabel = [
+              formatApplicationEmployerAriaLabel({
+                title: record.title,
+                company: record.company,
+                ...(relatedJob?.canonicalUrl
+                  ? { canonicalUrl: relatedJob.canonicalUrl }
+                  : {}),
+              }),
+              relatedJob?.location,
+            ]
+              .filter(Boolean)
+              .join(" · ");
 
             return (
               <li key={record.id} className="min-w-0">

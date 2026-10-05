@@ -228,3 +228,11 @@ it("reports the current revision after resume writing and keeps an old approval 
     resumes: [{ mode: "original_resume", level: "original", approved: false }],
   });
 });
+
+it("gives the assistant ordinary eligibility wording and the text-size route", () => {
+  expect(ASSISTANT_SYSTEM_PROMPT).toContain("View → Zoom In");
+  expect(ASSISTANT_SYSTEM_PROMPT).toContain("Translate browser failures");
+  expect(ASSISTANT_SYSTEM_PROMPT).toContain(
+    "Supporting facts are named achievements",
+  );
+});

@@ -48,10 +48,12 @@ vi.mock("./discovery-results-panel", () => ({
   DISCOVERY_SEARCH_SETUP_BLOCKER_ID: "discovery-search-setup-blocker",
   DiscoveryResultsPanel: ({
     browserSession,
+    hiddenJobsControl,
     jobs,
     searchSetupBlocker,
   }: {
     browserSession: BrowserSessionState;
+    hiddenJobsControl?: ReactNode;
     jobs: readonly SavedJob[];
     searchSetupBlocker?: {
       actionLabel?: string | null;
@@ -60,6 +62,7 @@ vi.mock("./discovery-results-panel", () => ({
   }) => (
     <section aria-label="Job results">
       Job results
+      {hiddenJobsControl}
       {searchSetupBlocker ? (
         <div id="discovery-search-setup-blocker">
           <p>{searchSetupBlocker.title}</p>

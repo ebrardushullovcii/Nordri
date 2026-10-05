@@ -254,7 +254,7 @@ export function resolveApplyStatePresentation(input: {
     const elapsed = formatElapsedMinutes(result?.startedAt, now);
     return {
       kind: "filling_in",
-      title: elapsed ? `Filling in (${elapsed})` : "Filling in",
+      title: elapsed ? `Preparing (${elapsed})` : "Preparing",
       sentence: result?.detail ?? null,
       action: "none",
       actionLabel: null,

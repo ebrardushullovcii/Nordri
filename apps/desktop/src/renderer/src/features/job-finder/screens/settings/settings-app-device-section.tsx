@@ -214,6 +214,14 @@ export function SettingsAppDeviceSection({
         })}
       </div>
 
+      <div className="grid gap-1">
+        <h4 className="font-medium">Text size</h4>
+        <p className="text-sm text-foreground-soft">
+          Use View → Zoom In to make text bigger, Zoom Out to make it smaller,
+          or Actual Size to reset it. Your chosen size is remembered when you
+          reopen Nordri.
+        </p>
+      </div>
       {onUpdateWorkspaceBehavior ? (
         <ToggleField
           checked={draftCollapseSideMenu}

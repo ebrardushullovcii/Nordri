@@ -14,7 +14,6 @@ import {
 } from "./resume-workspace-utils";
 
 export const APPLICATION_PREPARATION_BATCH_LIMIT = 10;
-export const TAILORED_DRAFT_PREPARATION_LIMIT = 10;
 
 export type TailoredDraftPreparationStatus =
   | "idle"
@@ -488,13 +487,10 @@ export function describeTailoredDraftPreparationBlocker(
 
 export function getTailoredDraftPreparationCandidates(
   queue: readonly ReviewQueueItem[],
-  limit = TAILORED_DRAFT_PREPARATION_LIMIT,
+  limit = queue.length,
   preparedJobIds?: ReadonlySet<string>,
 ): ReviewQueueItem[] {
-  const boundedLimit = Math.min(
-    Math.max(0, limit),
-    TAILORED_DRAFT_PREPARATION_LIMIT,
-  );
+  const boundedLimit = Math.max(0, limit);
 
   if (boundedLimit === 0) {
     return [];

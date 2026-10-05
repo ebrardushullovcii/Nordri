@@ -1,3 +1,5 @@
+import { useToast } from "@renderer/components/ui/toast";
+import { isActionNews } from "./action-news-toast";
 import { stopAssistantUiResumeBatch } from "./use-job-finder-page-controller-actions";
 import { useResumeOperationStarts } from "./use-resume-operation-starts";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -244,6 +246,7 @@ export function useJobFinderPageController() {
     [routerNavigate],
   );
   const workspaceState = useJobFinderWorkspace();
+  const { showToast } = useToast();
   const [actionState, setActionState] = useState<ActionState>({
     message: null,
   });
@@ -260,6 +263,13 @@ export function useJobFinderPageController() {
     (next: SetStateAction<ActionState>, ownerPathOverride?: string | null) => {
       const resolved =
         typeof next === "function" ? next(actionStateRef.current) : next;
+      if (isActionNews(resolved.message)) {
+        showToast({ title: resolved.message! });
+        actionStateRef.current = { message: null };
+        actionMessageOwnerPathRef.current = null;
+        setActionState({ message: null });
+        return;
+      }
       actionStateRef.current = resolved;
 
       if (resolved.message === null) {
@@ -276,7 +286,7 @@ export function useJobFinderPageController() {
       const cleanState = stripActionStateOwner(carried);
       setActionState(cleanState);
     },
-    [setActionState],
+    [setActionState, showToast],
   );
   const [initialSaveReceipt] = useState(() =>
     loadJobFinderSaveReceipt(window.localStorage),

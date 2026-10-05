@@ -1,3 +1,4 @@
+import { Button } from "@renderer/components/ui/button";
 import type {
   ApplicationAttemptQuestion,
   UserActionCommandInput,
@@ -80,6 +81,18 @@ export function ApplicationAnswerStepCard(props: {
         questions={questions}
         requestId={request.id}
       />
+      <Button
+        type="button"
+        variant="ghost"
+        pending={isPending}
+        onClick={() => void onCommand(createCommand(request, "cancel"))}
+      >
+        Skip this job
+      </Button>
+      <p className="text-xs text-foreground-muted">
+        Stops this application without sending it. Its history is kept, and you
+        can try again later.
+      </p>
     </div>
   );
 }

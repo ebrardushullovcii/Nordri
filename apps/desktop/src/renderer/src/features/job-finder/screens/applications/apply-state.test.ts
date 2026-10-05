@@ -91,7 +91,7 @@ describe("the five apply states (ADR 0022)", () => {
       {
         expected: {
           kind: "filling_in",
-          title: "Filling in (3 min)",
+          title: "Preparing (3 min)",
           actionLabel: null,
         },
         result: buildResult({
@@ -492,7 +492,7 @@ describe("a planned job is never Filling in", () => {
         }),
         run: { state: "running", activityPaused: true, started: true },
       }),
-    ).toMatchObject({ kind: "filling_in", title: "Filling in (3 min)" });
+    ).toMatchObject({ kind: "filling_in", title: "Preparing (3 min)" });
   });
 });
 

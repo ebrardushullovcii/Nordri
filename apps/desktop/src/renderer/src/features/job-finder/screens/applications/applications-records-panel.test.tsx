@@ -189,7 +189,7 @@ describe("ApplicationsRecordsPanel", () => {
       )?.textContent;
       expect(description).toContain(
         state === "filling"
-          ? "Preparation attempt Filling in"
+          ? "Preparation attempt Preparing"
           : "Preparation attempt Applied",
       );
       expect(description).not.toMatch(
@@ -1305,4 +1305,49 @@ it("counts chips from unarchived search and stage matches and keeps filters in o
     screen.getByRole("button", { name: "Submitted: 1 application" }),
   ).toBeTruthy();
   expect(screen.getByText("1 application")).toBeTruthy();
+});
+
+it("distinguishes equal titles and companies by location in rows and accessible names", () => {
+  const records = ["Beirut/MENA", "Manchester"].map((location, i) =>
+    ApplicationRecordSchema.parse({
+      id: `app_${i}`,
+      jobId: `job_${i}`,
+      title: "Senior Accountant",
+      company: "Spool Hushmeadow",
+      status: "approved",
+      lastActionLabel: "Prepared",
+      nextActionLabel: "Review",
+      lastUpdatedAt: "2026-10-05T10:00:00.000Z",
+    }),
+  );
+  render(
+    <MemoryRouter>
+      <ApplicationsRecordsPanel
+        activeFilter="all"
+        applicationRecords={records}
+        discoveryJobs={records.map((record, i) => ({
+          id: record.jobId,
+          canonicalUrl: `https://example.test/jobs/${i}`,
+          location: i === 0 ? "Beirut/MENA" : "Manchester",
+        }))}
+        filterCounts={{
+          all: 2,
+          needs_action: 0,
+          in_progress: 0,
+          submitted: 0,
+          manual_only: 0,
+        }}
+        hasAnyApplications
+        onFilterChange={vi.fn()}
+        onSelectRecord={vi.fn()}
+        selectedRecord={null}
+      />
+    </MemoryRouter>,
+  );
+  for (const location of ["Beirut/MENA", "Manchester"])
+    expect(
+      screen.getByRole("button", {
+        name: new RegExp(`View details for.*${location}`),
+      }),
+    ).toBeTruthy();
 });

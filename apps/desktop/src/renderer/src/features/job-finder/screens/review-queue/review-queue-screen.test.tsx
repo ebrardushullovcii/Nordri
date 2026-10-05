@@ -341,7 +341,7 @@ describe("ReviewQueueScreen tailored draft preparation (controlled)", () => {
     expect(screen.getByText(/Wrote 3 resumes/)).toBeTruthy();
   });
 
-  it("caps one create-all run at ten and says how many are left", () => {
+  it("offers the full missing-resume queue in one start", () => {
     const onPrepareTailoredDrafts = vi.fn();
     const queue = Array.from({ length: 12 }, (_, index) =>
       createEligibleItem(`job_${index}`),
@@ -350,9 +350,9 @@ describe("ReviewQueueScreen tailored draft preparation (controlled)", () => {
     renderScreen({ onPrepareTailoredDrafts, queue });
 
     fireEvent.click(
-      screen.getByRole("button", { name: "Create 10 missing resumes" }),
+      screen.getByRole("button", { name: "Create 12 missing resumes" }),
     );
-    expect(screen.getByText(/2 more after that/)).toBeTruthy();
+    expect(screen.queryByText(/more after that/)).toBeNull();
     expect(onPrepareTailoredDrafts).toHaveBeenCalledTimes(1);
   });
 

@@ -323,7 +323,7 @@ export function ApplicationsScreen(props: {
       if (result.state !== "filling" && result.state !== "submitting") continue;
       lines.set(
         result.jobId,
-        `Filling in${elapsed ? ` (${elapsed})` : ""}${result.detail?.trim() ? ` · ${result.detail.trim()}` : ""}`,
+        `Preparing${elapsed ? ` (${elapsed})` : ""}${result.detail?.trim() ? ` · ${result.detail.trim()}` : ""}`,
       );
     }
     const jobsById = new Map(discoveryJobs.map((job) => [job.id, job]));
@@ -451,7 +451,7 @@ export function ApplicationsScreen(props: {
         jobIds.push(record.jobId);
       }
     }
-    return jobIds.slice(0, APPLICATION_PREPARATION_BATCH_LIMIT);
+    return jobIds;
   }, [
     applicationRecords,
     applyRuns,
@@ -969,12 +969,15 @@ export function ApplicationsScreen(props: {
                   retryableJobIds.length > 1 ? (
                     <section
                       aria-label="Retry applications that could not be applied"
-                      className="flex items-center gap-2"
+                      className="flex flex-wrap items-center gap-2"
                       data-testid="applications-bulk-retry"
                     >
-                      <p className="sr-only">
-                        {retryableJobIds.length} applications could not be
-                        applied and can be tried again.
+                      <p className="text-sm text-foreground-soft">
+                        {retryableJobIds.length} applications need another try.
+                        {retryableJobIds.length >
+                        APPLICATION_PREPARATION_BATCH_LIMIT
+                          ? ` Up to ${APPLICATION_PREPARATION_BATCH_LIMIT} start at a time; ${retryableJobIds.length - APPLICATION_PREPARATION_BATCH_LIMIT} remain after this batch.`
+                          : ""}
                       </p>
                       <Button
                         disabled={
@@ -984,7 +987,10 @@ export function ApplicationsScreen(props: {
                         }
                         onClick={() =>
                           onStartAutoApplyQueue(
-                            [...retryableJobIds],
+                            retryableJobIds.slice(
+                              0,
+                              APPLICATION_PREPARATION_BATCH_LIMIT,
+                            ),
                             props.applicationAutomationMode ?? "prepare_only",
                           )
                         }
@@ -992,7 +998,10 @@ export function ApplicationsScreen(props: {
                         type="button"
                         variant="secondary"
                       >
-                        Try again for all {retryableJobIds.length}
+                        {retryableJobIds.length >
+                        APPLICATION_PREPARATION_BATCH_LIMIT
+                          ? `Retry next ${APPLICATION_PREPARATION_BATCH_LIMIT}`
+                          : `Try again for all ${retryableJobIds.length}`}
                       </Button>
                     </section>
                   ) : null}

@@ -1129,9 +1129,9 @@ export type AssistantMentionSearchResult = z.infer<
 export const AssistantResumeBatchStateSchema = z
   .object({
     id: IdSchema,
-    jobIds: z.array(IdSchema).max(30),
+    jobIds: z.array(IdSchema),
     activeJobIds: z.array(IdSchema).max(2),
-    completedJobIds: z.array(IdSchema).max(30),
+    completedJobIds: z.array(IdSchema),
     done: z.boolean(),
     stopRequested: z.boolean(),
   })

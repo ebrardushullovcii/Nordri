@@ -248,9 +248,12 @@ export function ProfileSetupScreen(props: {
     return () => onProfileSurfaceDirtyChange(false);
   }, [hasUserAuthoredSetupChanges, onProfileSurfaceDirtyChange]);
 
+  const previousStepRef = useRef(profileSetupState.currentStep);
   useEffect(() => {
+    const advancing = previousStepRef.current !== profileSetupState.currentStep;
+    previousStepRef.current = profileSetupState.currentStep;
     const frameId = window.requestAnimationFrame(() => {
-      focusProfileSetupStepHeading();
+      focusProfileSetupStepHeading(document, advancing);
     });
 
     return () => window.cancelAnimationFrame(frameId);

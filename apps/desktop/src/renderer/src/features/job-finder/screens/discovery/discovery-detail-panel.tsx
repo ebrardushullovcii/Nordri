@@ -1,3 +1,4 @@
+import { joinUniqueSentences } from "../../lib/sentence-copy";
 import {
   discoveryFeedbackOptions,
   formatDiscoveryHideReason,
@@ -667,7 +668,9 @@ export function DiscoveryDetailPanel({
   const whyItFitsLine = selectedJob
     ? selectedJob.matchAssessment.recommendation === "skip"
       ? scrubJobAbsencePlaceholders(
-          selectedJob.matchAssessment.recommendationRationale ?? "",
+          joinUniqueSentences([
+            selectedJob.matchAssessment.recommendationRationale ?? "",
+          ]),
         ) || "This listing conflicts with your saved profile."
       : (assessmentPresentation?.withheldReason ??
         (scrubJobAbsencePlaceholders(

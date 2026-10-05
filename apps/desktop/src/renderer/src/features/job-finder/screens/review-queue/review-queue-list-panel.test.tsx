@@ -139,7 +139,7 @@ describe("ReviewQueueListPanel", () => {
     ]);
   });
 
-  it("caps a selection at ten and lets a person cancel without generating", () => {
+  it("lets a person select more than ten and cancel without generating", () => {
     const onPrepareTailoredDrafts = vi.fn();
     renderPanel({
       onPrepareTailoredDrafts,
@@ -156,7 +156,7 @@ describe("ReviewQueueListPanel", () => {
       screen
         .getByRole("checkbox", { name: "Create resume for Role 10" })
         .hasAttribute("disabled"),
-    ).toBe(true);
+    ).toBe(false);
     fireEvent.click(
       screen.getByRole("checkbox", { name: "Create resume for Role 0" }),
     );
@@ -318,7 +318,7 @@ describe("ReviewQueueListPanel", () => {
     expect(screen.getByText("In Applications")).toBeTruthy();
   });
 
-  it("caps one create-all run at ten and says how many are left", () => {
+  it("queues all missing resumes in one run", () => {
     renderPanel({
       onPrepareTailoredDrafts: vi.fn(),
       queue: Array.from({ length: 12 }, (_, index) =>
@@ -327,9 +327,9 @@ describe("ReviewQueueListPanel", () => {
     });
 
     expect(
-      screen.getByRole("button", { name: "Create 10 missing resumes" }),
+      screen.getByRole("button", { name: "Create 12 missing resumes" }),
     ).toBeTruthy();
-    expect(screen.getByText(/10 per batch; 2 more after that/)).toBeTruthy();
+    expect(screen.queryByText(/per batch/)).toBeNull();
   });
 
   it("swaps the create-all action for live progress and a stop while resumes are written", () => {
@@ -590,4 +590,20 @@ it("states that bulk actions include jobs hidden by a shortlist filter", () => {
   expect(
     screen.getByTestId("shortlist-bulk-filter-scope").textContent,
   ).toContain("including 1 hidden by this filter");
+});
+
+it("explains the next ten out of 53 ready applications before starting", () => {
+  const onApplyToAllReady = vi.fn();
+  renderPanel({
+    queue: Array.from({ length: 53 }, (_, i) => createReadyItem(`ready_${i}`)),
+    applicationBatchLimit: 10,
+    onApplyToAllReady,
+  });
+  expect(
+    screen.getByText(/53 ready jobs.*43 remain after this batch/),
+  ).toBeTruthy();
+  fireEvent.click(
+    screen.getByRole("button", { name: "Apply to next 10 ready jobs" }),
+  );
+  expect(onApplyToAllReady).toHaveBeenCalledWith(10);
 });

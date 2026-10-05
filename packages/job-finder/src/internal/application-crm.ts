@@ -1395,7 +1395,10 @@ export function exportApplicationCrm(input: {
   ];
   const rows = records.map((record) => {
     const crm = getApplicationCrmData(record);
-    const provenance = applicationCrmProvenance(record);
+    const provenance =
+      applicationCrmProvenance(record) === "user_recorded_local"
+        ? "Recorded by you"
+        : "Recorded by Nordri";
     const nextReminder = crm.reminders
       .filter((reminder) => reminder.status === "pending")
       .sort((left, right) => left.dueAt.localeCompare(right.dueAt))[0];
@@ -1413,7 +1416,7 @@ export function exportApplicationCrm(input: {
       crm.tags.join("; "),
       crm.appliedAt,
       crm.appliedAt ? provenance : null,
-      "not_verified_with_employer_or_ats",
+      "Not checked with the employer",
       nextReminder?.dueAt ?? null,
       nextInterview?.startsAt ?? null,
       record.lastUpdatedAt,

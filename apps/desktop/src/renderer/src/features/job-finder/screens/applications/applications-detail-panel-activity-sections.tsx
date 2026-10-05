@@ -1,3 +1,4 @@
+import { withPersonAnswerSources } from "./application-review-source";
 import { ApplicationsDisclosureSummary } from "./applications-disclosure-summary";
 import type {
   ApplicationAttempt,
@@ -92,7 +93,12 @@ export function ApplicationsDetailPanelActivitySections(props: {
 
   // What the run that filled this in actually recorded, rather than a later
   // reconstruction from the individual records.
-  const reviewCard = selectedApplyRunDetails?.reviewCard ?? null;
+  const reviewCard = selectedApplyRunDetails?.reviewCard
+    ? withPersonAnswerSources(
+        selectedApplyRunDetails.reviewCard,
+        selectedApplyRunDetails,
+      )
+    : null;
   const reviewCardMatchesVisibleResult =
     selectedApplyRunDetails?.result?.id === visibleApplyResult?.id;
 

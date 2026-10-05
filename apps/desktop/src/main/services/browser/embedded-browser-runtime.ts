@@ -324,7 +324,7 @@ export function withEmbeddedBrowserActivity(
                     ...formInput,
                     onProgress: (progress) =>
                       updateActivity(
-                        `Preparing application · Step ${progress.step}: ${describeApplicationPreparationProgress(progress.note)}`,
+                        `Preparing application: ${describeApplicationPreparationProgress(progress.note)}`,
                       ),
                   }),
               },
@@ -332,6 +332,12 @@ export function withEmbeddedBrowserActivity(
             )
             .then(async (result) => {
               const tabs = await claimedTabs();
+              for (const tabId of tabs)
+                browser.setApplicationTabLabel(
+                  tabId,
+                  input.job.title,
+                  input.job.company,
+                );
               if (result.state === "failed" || result.state === "submitted")
                 browser.markFinishedTabs(tabs);
               return flagResult(result, tabs.at(-1) ?? null, input.job.company);

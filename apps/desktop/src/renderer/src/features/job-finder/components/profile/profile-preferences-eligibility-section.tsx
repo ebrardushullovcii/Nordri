@@ -1,4 +1,5 @@
 import { useId } from "react";
+import { SupportingFactsField } from "./supporting-facts-field";
 import { candidateAnswerKindValues } from "@nordri/contracts";
 import type {
   Control,
@@ -664,18 +665,15 @@ export function ProfilePreferencesEligibilitySection(props: {
                       />
                     </div>
                     <div className="grid min-w-0 content-start gap-(--gap-field) h-full">
-                      <FieldLabel
-                        htmlFor={buildAnswerFieldId("proof-entry-ids")}
-                      >
-                        Supporting proof IDs
-                      </FieldLabel>
-                      <ProfileTextarea
-                        id={buildAnswerFieldId("proof-entry-ids")}
-                        className="min-h-(--textarea-compact) max-h-(--textarea-compact)"
-                        placeholder="Copy proof bank entry IDs from the Background tab, one per line"
-                        rows={4}
-                        {...register(
-                          `answerBank.customAnswers.${index}.proofEntryIds`,
+                      <Controller
+                        control={profileControl}
+                        name={`answerBank.customAnswers.${index}.proofEntryIds`}
+                        render={({ field }) => (
+                          <SupportingFactsField
+                            facts={watch("proofBank")}
+                            onChange={field.onChange}
+                            value={field.value}
+                          />
                         )}
                       />
                     </div>

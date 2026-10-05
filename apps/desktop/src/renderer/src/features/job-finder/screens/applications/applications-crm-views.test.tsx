@@ -1032,3 +1032,26 @@ test("bulk controls use shared fields and offer only manually recorded stages", 
   expect(screen.queryByRole("option", { name: "Could not apply" })).toBeNull();
   expect(screen.getByRole("option", { name: "Interview" })).toBeTruthy();
 });
+
+test("gives role and employer more room than sparse tracker columns", () => {
+  render(
+    <ApplicationsCrmViews
+      records={[
+        record("one", "Senior Learning Coordinator", "Clientnest Cobalt"),
+      ]}
+      selectedRecordId={null}
+      view="table"
+      onSelectRecord={vi.fn()}
+      onViewChange={vi.fn()}
+    />,
+  );
+  expect(screen.getByRole("columnheader", { name: "Job" }).className).toContain(
+    "w-[28%]",
+  );
+  expect(
+    screen.getByRole("columnheader", { name: "Company" }).className,
+  ).toContain("w-[22%]");
+  expect(
+    screen.getByRole("columnheader", { name: "Stage" }).className,
+  ).toContain("w-[1%]");
+});

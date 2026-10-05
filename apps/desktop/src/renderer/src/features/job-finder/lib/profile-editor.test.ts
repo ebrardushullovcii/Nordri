@@ -1775,3 +1775,13 @@ test("R3-138 saves an OTE pay floor and preserves it on unrelated edits", () => 
     ).payload?.compensation,
   ).toEqual(saved.compensation);
 });
+
+test("normalizes a bare portfolio domain and removes trailing skill punctuation", () => {
+  const profile = createProfile();
+  const values = createProfileEditorValues(profile);
+  values.identity.portfolioUrl = "portfolio.example.test";
+  values.profileSkills = "SAP EWM.\nSQL";
+  const result = buildProfilePayload(profile, values);
+  expect(result.payload?.portfolioUrl).toBe("https://portfolio.example.test/");
+  expect(result.payload?.skills).toEqual(["SAP EWM", "SQL"]);
+});

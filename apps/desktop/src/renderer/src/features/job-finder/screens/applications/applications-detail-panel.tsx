@@ -1,10 +1,11 @@
 import type { QuestionAnswerDraft } from "../actions/actions-screen";
 import { isSameSiteApplicationActive } from "../actions/actions-screen";
 import {
+  applicationCrmStageLabelForView,
   inferApplicationCrmStageForView,
   trackedHiringStageBadge,
 } from "./applications-crm-model";
-import { useMemo } from "react";
+import { useMemo, useRef } from "react";
 import {
   isApplicationTrackedAsSentByPerson,
   type ApplicationCrmStageDefinition,
@@ -442,6 +443,7 @@ export function ApplicationsDetailPanel({
     />
   ) : null;
 
+  const reviewTargetRef = useRef<HTMLDivElement>(null);
   const recoverySection = selectedRecord ? (
     <ApplicationsDetailPanelRecoverySections
       canRestageAutoRun={canRestageAutoRun}
@@ -452,6 +454,17 @@ export function ApplicationsDetailPanel({
       onStartApplyCopilot={onStartApplyCopilot}
       {...(onReviewResumePdf ? { onReviewResumePdf } : {})}
       onStartAutoApplyQueue={onStartAutoApplyQueue}
+      {...(applyPresentation?.state === "awaiting_your_review"
+        ? {
+            onReviewBeforeSending: () => {
+              reviewTargetRef.current?.scrollIntoView({
+                block: "start",
+                behavior: "smooth",
+              });
+              reviewTargetRef.current?.focus({ preventScroll: true });
+            },
+          }
+        : {})}
       {...(onOpenSafeguards ? { onOpenSafeguards } : {})}
       {...(onOpenNeedsYou ? { onOpenNeedsYou } : {})}
       answerStep={answerStep}
@@ -600,7 +613,15 @@ export function ApplicationsDetailPanel({
           ) : null}
           {!showNotSubmittedPill ? (
             <StatusBadge tone={selectedStage ? selectedStage.tone : "muted"}>
-              {selectedRecord ? selectedStage?.label : "Nothing selected"}
+              {selectedRecord
+                ? (selectedHiringStage?.label ??
+                  (visibleApplyResult
+                    ? selectedApplyStage?.label
+                    : applicationCrmStageLabelForView(
+                        selectedRecord,
+                        customStages,
+                      )))
+                : "Nothing selected"}
             </StatusBadge>
           ) : null}
         </div>
@@ -671,37 +692,43 @@ export function ApplicationsDetailPanel({
           {applyPresentation?.state === "awaiting_your_review"
             ? null
             : documentsSection}
-          <ApplicationsDetailPanelActivitySections
-            applyRunDetailsError={applyRunDetailsError}
-            applyRunDetailsStatus={applyRunDetailsStatus}
-            applyRunHistory={applyRunHistory}
-            isApplyRequestPending={isApplyRequestPending}
-            onResolveApplyConsentRequest={onResolveApplyConsentRequest}
-            onExportApplicationPacket={onExportApplicationPacket}
-            {...(onResolveSubmissionOutcome
-              ? { onResolveSubmissionOutcome }
-              : {})}
-            onSaveApplicationAnswer={onSaveApplicationAnswer}
-            onClearApplicationAnswer={onClearApplicationAnswer}
-            onSelectApplyRun={onSelectApplyRun}
-            {...(onSubmitPreparedApplication
-              ? { onSubmitPreparedApplication }
-              : {})}
-            awaitsYourReview={
-              applyPresentation?.state === "awaiting_your_review"
-            }
-            {...(onPrepareApplicationAgain
-              ? { onPrepareApplicationAgain }
-              : {})}
-            applicationPageClosed={
-              selectedRecord?.nextActionLabel === "Prepare again"
-            }
-            selectedApplyRunDetails={selectedApplyRunDetails}
-            selectedApplyRunId={selectedApplyRunId}
-            selectedAttempt={selectedAttempt}
-            selectedRecord={selectedRecord}
-            visibleApplyResult={visibleApplyResult}
-          />
+          <div
+            data-application-review-target
+            ref={reviewTargetRef}
+            tabIndex={-1}
+          >
+            <ApplicationsDetailPanelActivitySections
+              applyRunDetailsError={applyRunDetailsError}
+              applyRunDetailsStatus={applyRunDetailsStatus}
+              applyRunHistory={applyRunHistory}
+              isApplyRequestPending={isApplyRequestPending}
+              onResolveApplyConsentRequest={onResolveApplyConsentRequest}
+              onExportApplicationPacket={onExportApplicationPacket}
+              {...(onResolveSubmissionOutcome
+                ? { onResolveSubmissionOutcome }
+                : {})}
+              onSaveApplicationAnswer={onSaveApplicationAnswer}
+              onClearApplicationAnswer={onClearApplicationAnswer}
+              onSelectApplyRun={onSelectApplyRun}
+              {...(onSubmitPreparedApplication
+                ? { onSubmitPreparedApplication }
+                : {})}
+              awaitsYourReview={
+                applyPresentation?.state === "awaiting_your_review"
+              }
+              {...(onPrepareApplicationAgain
+                ? { onPrepareApplicationAgain }
+                : {})}
+              applicationPageClosed={
+                selectedRecord?.nextActionLabel === "Prepare again"
+              }
+              selectedApplyRunDetails={selectedApplyRunDetails}
+              selectedApplyRunId={selectedApplyRunId}
+              selectedAttempt={selectedAttempt}
+              selectedRecord={selectedRecord}
+              visibleApplyResult={visibleApplyResult}
+            />
+          </div>
           {applyPresentation?.state === "awaiting_your_review"
             ? documentsSection
             : null}

@@ -1,3 +1,4 @@
+import { joinUniqueSentences } from "../lib/sentence-copy";
 import type {
   ApplicationEffortLevel,
   CompensationFitState,
@@ -346,7 +347,7 @@ export function MatchEvidenceMatrix({
   const hasDetailedFitEvidence =
     assessment.scorerVersion >= 3 || requirements.length > 0;
   const legacyReasons = scrubJobAbsencePlaceholdersList(
-    assessment.reasons.filter((reason) => reason.trim().length > 0),
+    [...new Set(assessment.reasons.map((reason) => joinUniqueSentences([reason])).filter(Boolean))],
   );
   const legacyGaps = scrubJobAbsencePlaceholdersList(
     assessment.gaps.filter((gap) => gap.trim().length > 0),
@@ -483,7 +484,7 @@ export function MatchEvidenceMatrix({
         ) : null}
         <p className="text-(length:--text-small) leading-6 text-foreground-soft">
           {scrubJobAbsencePlaceholders(
-            assessment.recommendationRationale ??
+            joinUniqueSentences([assessment.recommendationRationale ?? ""]) ||
               "Review the listing and resume evidence before applying.",
           ) || "Review the listing and resume evidence before applying."}
         </p>

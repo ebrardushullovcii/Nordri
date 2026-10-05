@@ -950,7 +950,14 @@ export function ApplicationsCrmViews(props: {
                 </th>
                 {columnValues.filter(columnVisible).map((column) => (
                   <th
-                    className="label-mono-xs px-2 @[54rem]/tracker:px-4 py-3 capitalize"
+                    className={cn(
+                      "label-mono-xs px-2 py-3 capitalize",
+                      column === "job"
+                        ? "w-[28%]"
+                        : column === "company"
+                          ? "w-[22%]"
+                          : "w-[1%] whitespace-nowrap",
+                    )}
                     key={column}
                     scope="col"
                     title={
@@ -1024,7 +1031,7 @@ export function ApplicationsCrmViews(props: {
                     {columnVisible("job") ? (
                       <td
                         className={cn(
-                          "px-2 @[54rem]/tracker:px-4 font-semibold text-foreground",
+                          "px-2 font-semibold text-foreground",
                           rowPadding,
                         )}
                       >
@@ -1039,10 +1046,7 @@ export function ApplicationsCrmViews(props: {
                     ) : null}
                     {columnVisible("company") ? (
                       <td
-                        className={cn(
-                          "px-2 @[54rem]/tracker:px-4 text-foreground-soft",
-                          rowPadding,
-                        )}
+                        className={cn("px-2 text-foreground-soft", rowPadding)}
                       >
                         {employerLine ?? "—"}
                       </td>

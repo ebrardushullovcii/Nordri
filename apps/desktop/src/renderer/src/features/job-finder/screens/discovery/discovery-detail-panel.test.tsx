@@ -469,7 +469,7 @@ describe("DiscoveryDetailPanel", () => {
     expect(getByText("Location and work mode")).toBeTruthy();
     expect(getByLabelText("Overall fit: not assessed")).toBeTruthy();
     expect(getByText("Review before applying")).toBeTruthy();
-    expect(getByText("Duplicate role reason")).toBeTruthy();
+    expect(getByText("Duplicate role reason.")).toBeTruthy();
     fireEvent.click(getByRole("button", { name: "Not interested" }));
     expect(
       getByText(

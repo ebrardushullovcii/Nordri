@@ -541,7 +541,7 @@ export function DiscoveryHistoryModal(props: {
             </div>
           </aside>
 
-          <div className="grid min-h-0 grid-rows-[auto_minmax(12rem,auto)_auto_minmax(16rem,1fr)] gap-4 overflow-y-auto px-4 py-4">
+          <div className="grid min-h-0 content-start gap-4 overflow-y-auto px-4 py-4">
             {selectedRun ? (
               <div className="grid gap-3 rounded-(--radius-panel) border border-(--surface-panel-border) bg-(--surface-panel-raised) px-4 py-4 sm:grid-cols-4">
                 <div>
@@ -633,7 +633,7 @@ export function DiscoveryHistoryModal(props: {
             ) : null}
 
             {selectedRun ? (
-              <div className="grid max-h-60 gap-4 overflow-y-auto pr-1">
+              <div className="grid gap-4">
                 <section
                   aria-labelledby={`${dialogTitleId}-changes`}
                   className="grid gap-2"
@@ -907,7 +907,7 @@ export function DiscoveryHistoryModal(props: {
                 }
                 aria-live="polite"
                 aria-relevant="additions"
-                className="grid min-h-0 gap-3 overflow-y-auto pr-2 pb-6"
+                className="grid gap-3 pb-6"
                 onScroll={handleEventStreamScroll}
                 ref={eventStreamRef}
                 role="log"

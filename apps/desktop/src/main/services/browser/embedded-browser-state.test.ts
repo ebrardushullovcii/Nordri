@@ -310,3 +310,19 @@ test("handing a native-owned form back closes its person guard before automation
   );
   expect(await browser.readApplicationPageWithPerson("result")).toBeNull();
 });
+
+test("prepared tabs identify the job even when the site gives them identical titles", () => {
+  const { browser, pages } = makeBrowser();
+  browser.setApplicationTabLabel(
+    "prepared",
+    "Senior Learning Coordinator",
+    "Clientnest Cobalt",
+  );
+  expect(
+    browser.getState().tabs.find((tab) => tab.id === "prepared")?.title,
+  ).toBe("Senior Learning Coordinator · Clientnest Cobalt");
+  pages.get("prepared")!.getURL = () => "https://example.test/another-page";
+  expect(
+    browser.getState().tabs.find((tab) => tab.id === "prepared")?.title,
+  ).toBe("prepared");
+});

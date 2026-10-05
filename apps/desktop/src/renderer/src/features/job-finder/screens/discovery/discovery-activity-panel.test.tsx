@@ -111,6 +111,7 @@ describe("DiscoveryHistoryModal", () => {
       recentRuns={[run]} targets={targets} />);
     const sourceCard = screen.getByText(/^No jobs collected/u).closest("article");
     expect(sourceCard).not.toBeNull();
+    expect(sourceCard!.parentElement!.className).not.toContain("max-h-60");
     expect(within(sourceCard!).getByText(reason)).toBeTruthy();
     expect(within(sourceCard!).queryByText("Reading another page.")).toBeNull();
   });
@@ -158,6 +159,7 @@ describe("DiscoveryHistoryModal", () => {
     expect(document.getElementById(descriptionId ?? "")?.textContent).toContain(
       "Follow the current search here while new activity arrives.",
     );
+    expect(activityLog.className).not.toContain("overflow-y-auto");
     expect(activityLog.getAttribute("aria-live")).toBe("polite");
     expect(activityLog.getAttribute("aria-relevant")).toBe("additions");
     expect(activityLog.getAttribute("aria-atomic")).toBe("false");

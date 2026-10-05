@@ -98,6 +98,21 @@ export class EmbeddedBrowser {
   private readonly pageListeners = new Set<(page: BrowserCdpPage) => void>();
   private stateListeners = new Set<(state: DesktopBrowserState) => void>();
   private activeTabId: string | null = null;
+  private applicationTabLabels = new Map<
+    string,
+    { title: string; url: string }
+  >();
+
+  setApplicationTabLabel(tabId: string, title: string, company: string): void {
+    const page = this.pageMap.get(tabId);
+    if (!page || page.contents.isDestroyed()) return;
+    this.applicationTabLabels.set(tabId, {
+      title: `${title} · ${company}`.slice(0, 300),
+      url: page.contents.getURL(),
+    });
+    this.emit();
+  }
+
   private automationPlaceholderTabId: string | null = null;
   private presentation: DesktopBrowserState["presentation"] = "minimized";
   private closed = true;
@@ -400,7 +415,14 @@ export class EmbeddedBrowser {
         .filter((page) => !page.contents.isDestroyed())
         .map((page) => ({
           id: page.id,
-          title: (page.contents.getTitle() || "New tab").slice(0, 300),
+          title: (
+            (this.applicationTabLabels.get(page.id)?.url ===
+            page.contents.getURL()
+              ? this.applicationTabLabels.get(page.id)?.title
+              : null) ||
+            page.contents.getTitle() ||
+            "New tab"
+          ).slice(0, 300),
           url: browserDisplayUrl(page.contents.getURL()),
           loading: page.contents.isLoading(),
           canGoBack: page.contents.navigationHistory.canGoBack(),

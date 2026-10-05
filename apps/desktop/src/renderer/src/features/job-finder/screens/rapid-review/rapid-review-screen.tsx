@@ -1,3 +1,4 @@
+import { joinUniqueSentences } from "../../lib/sentence-copy";
 import {
   useCallback,
   useEffect,
@@ -595,7 +596,11 @@ export function RapidReviewScreen(props: {
                     activeJob.matchAssessment.recommendation,
                   )}
                 </p>
-                <p>{activeJob.matchAssessment.recommendationRationale}</p>
+                <p>
+                  {joinUniqueSentences([
+                    activeJob.matchAssessment.recommendationRationale ?? "",
+                  ])}
+                </p>
                 <p>
                   <strong>Strongest reason:</strong>{" "}
                   {activeJob.matchAssessment.reasons[0] ??

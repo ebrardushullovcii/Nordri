@@ -6,6 +6,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import type { ComponentProps } from "react";
@@ -501,6 +502,118 @@ describe("ApplicationsScreen", () => {
     expect(screen.queryByText("2 finished")).toBeNull();
   });
 
+  it("leads an Ask-mode ready application straight to its review", () => {
+    vi.stubGlobal("ResizeObserver", ResizeObserverMock);
+    stubCandidateAssetsBridge();
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+    const record = createTrackedApplication({
+      automationMode: "confirm_before_submit",
+      lastAttemptState: "ready",
+    });
+    const at = "2026-10-05T10:00:00.000Z";
+    const result = ApplyJobResultSchema.parse({
+      id: "ready_result",
+      runId: "ready_run",
+      jobId: record.jobId,
+      applicationRecordId: record.id,
+      state: "awaiting_review",
+      summary: "Ready to send",
+      detail: "Form filled",
+      startedAt: at,
+      updatedAt: at,
+    });
+    render(
+      <MemoryRouter>
+        <ApplicationsScreen
+          {...buildCrmScreenProps({
+            applicationRecords: [record],
+            selectedRecord: record,
+            onSelectRecord: vi.fn(),
+          })}
+          applyJobResults={[result]}
+          dailyPreparationCapacity={null}
+          onFinishInBrowser={vi.fn()}
+          onGetApplyRunDetails={vi.fn(
+            () => new Promise<ApplyRunDetails>(() => {}),
+          )}
+        />
+      </MemoryRouter>,
+    );
+    expect(
+      within(
+        screen.getByTestId("applications-recovery-primary-action"),
+      ).getByRole("button", { name: "Review before sending" }),
+    ).toBeTruthy();
+    expect(
+      within(
+        screen.getByTestId("applications-recovery-secondary-action-list"),
+      ).getByRole("button", { name: "Open the Job Finder browser" }),
+    ).toBeTruthy();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Review before sending" }),
+    );
+    expect(
+      document.activeElement?.hasAttribute("data-application-review-target"),
+    ).toBe(true);
+    expect(scrollIntoView).toHaveBeenCalledWith({
+      block: "start",
+      behavior: "smooth",
+    });
+  });
+  it("shows fourteen outstanding retries and starts only the next ten", () => {
+    vi.stubGlobal("ResizeObserver", ResizeObserverMock);
+    stubCandidateAssetsBridge();
+    const records = Array.from({ length: 14 }, (_, i) =>
+      createTrackedApplication({
+        id: `app_${i}`,
+        jobId: `job_${i}`,
+        lastAttemptState: "failed",
+        lastActionLabel: "Could not apply",
+      }),
+    );
+    const onStartAutoApplyQueue = vi.fn();
+    render(
+      <MemoryRouter>
+        <ApplicationsScreen
+          {...buildCrmScreenProps({
+            applicationRecords: records,
+            onSelectRecord: vi.fn(),
+            selectedRecord: records[0] ?? null,
+          })}
+          applyJobResults={records.map((record, i) =>
+            ApplyJobResultSchema.parse({
+              id: `result_${i}`,
+              runId: "failed_run",
+              jobId: record.jobId,
+              applicationRecordId: record.id,
+              state: "failed",
+              summary: "Could not apply",
+              detail: "Page unavailable",
+              blockerReason: "application_page_unreachable",
+              startedAt: "2026-10-05T10:00:00.000Z",
+              updatedAt: "2026-10-05T10:00:00.000Z",
+            }),
+          )}
+          onStartAutoApplyQueue={onStartAutoApplyQueue}
+          dailyPreparationCapacity={null}
+          onGetApplyRunDetails={vi.fn(
+            () => new Promise<ApplyRunDetails>(() => {}),
+          )}
+        />
+      </MemoryRouter>,
+    );
+    expect(
+      screen.getByText(
+        /14 applications need another try.*4 remain after this batch/,
+      ),
+    ).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Retry next 10" }));
+    expect(onStartAutoApplyQueue).toHaveBeenCalledWith(
+      records.slice(0, 10).map((record) => record.jobId),
+      "prepare_only",
+    );
+  });
   it.each([false, true])(
     "retries only failures with the saved Send mode (cancelled sibling: %s)",
     (includeCancelled) => {
@@ -595,7 +708,7 @@ describe("ApplicationsScreen", () => {
 
       expect(
         screen.getByTestId("applications-bulk-retry").textContent,
-      ).toContain("2 applications could not be applied");
+      ).toContain("2 applications need another try");
       expect(
         screen.getByTestId("applications-bulk-retry").closest("header"),
       ).toBeTruthy();

@@ -950,7 +950,7 @@ describe("buildJobFinderPageContext tailored draft batch", () => {
     });
   });
 
-  it("caps a run at ten candidates from the existing helpers and reports the remainder", async () => {
+  it("queues all missing resumes in one run", async () => {
     const generateResume = vi
       .fn<JobFinderShellActions["generateResume"]>()
       .mockResolvedValue({} as JobFinderWorkspaceSnapshot);
@@ -970,17 +970,17 @@ describe("buildJobFinderPageContext tailored draft batch", () => {
       expect(getTailoredDraftPreparation().status).toBe("completed"),
     );
 
-    expect(generateResume).toHaveBeenCalledTimes(10);
+    expect(generateResume).toHaveBeenCalledTimes(12);
     expect(getTailoredDraftPreparation()).toMatchObject({
-      completedCount: 10,
-      eligibleRemainingCount: 2,
-      totalCount: 10,
+      completedCount: 12,
+      eligibleRemainingCount: 0,
+      totalCount: 12,
     });
     const batchMessage = getActionMessages().find(
       (message) =>
         message !== null && /^(Wrote|Stopped after) \d+ resume/i.test(message),
     );
-    expect(batchMessage).toMatch(/Wrote 10 resumes/);
+    expect(batchMessage).toMatch(/Wrote 12 resumes/);
     expect(batchMessage).not.toMatch(/more jobs still need a resume/);
   });
 

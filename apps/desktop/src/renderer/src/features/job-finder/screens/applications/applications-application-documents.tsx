@@ -444,7 +444,7 @@ export function ApplicationsApplicationDocuments(props: {
           ) : null}
           <details>
             <summary className="cursor-pointer text-(length:--text-small) font-semibold">
-              Grounding evidence ({selectedDocument.evidence.length})
+              Supporting facts ({selectedDocument.evidence.length})
             </summary>
             <ul className="mt-2 grid gap-2 text-(length:--text-small) leading-6 text-foreground-soft">
               {selectedDocument.evidence.map((evidence) => (

@@ -342,3 +342,8 @@ test("sorts the whole tracker by company or applied date before paging", () => {
     ),
   ).toEqual(["b", "a"]);
 });
+
+test("uses the same state vocabulary as the preparation list", () => {
+  expect(APPLICATION_CRM_STAGE_LABELS.failed).toBe("Could not apply");
+  expect(APPLICATION_CRM_STAGE_LABELS.preparing).toBe("Preparing");
+});
