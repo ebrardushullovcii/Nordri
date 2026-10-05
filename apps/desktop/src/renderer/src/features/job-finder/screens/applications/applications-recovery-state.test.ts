@@ -753,3 +753,17 @@ it("shows the exact validation rejection ahead of stale ready wording", () => {
     primaryActionLabel: "Correct the fields in the browser",
   });
 });
+
+it("shows a repeated stop sentence only once in Next step", () => {
+  const result = buildResult({
+    state: "failed",
+    summary: "Could not finish",
+    detail:
+      "The listing has no application form. The listing has no application form.",
+    startedAt: "2026-10-05T10:00:00.000Z",
+    updatedAt: "2026-10-05T10:00:00.000Z",
+  });
+  expect(getApplicationStopReasonSentence(result)).toBe(
+    "The listing has no application form.",
+  );
+});

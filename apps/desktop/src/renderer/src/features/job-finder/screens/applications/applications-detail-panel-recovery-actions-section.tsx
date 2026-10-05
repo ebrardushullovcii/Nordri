@@ -141,6 +141,7 @@ const READY_PAGE_OPENED_STATUS =
   "Opened in the Job Finder browser. Read the form over and press the site's own send button there.";
 
 export function ApplicationsDetailPanelRecoveryActionsSection(props: {
+  progressNow?: number | undefined;
   canRestageAutoRun: boolean;
   canRestageQueueRun: boolean;
   dailyPreparationCapacity: GlobalDailyApplicationPreparationCapacity | null;
@@ -243,6 +244,7 @@ export function ApplicationsDetailPanelRecoveryActionsSection(props: {
   // below is chosen here rather than by six overlapping booleans, so the panel
   // can no longer show a "Try again" pair beside a third automation button.
   const presentation = resolveApplicationRecoveryPresentation({
+    ...(props.progressNow === undefined ? {} : { now: props.progressNow }),
     canOpenSafeguards: Boolean(onOpenSafeguards),
     destinationUrl: getApplyResultDestinationUrl(
       visibleApplyResult?.privacyReceipt,

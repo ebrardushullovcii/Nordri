@@ -2809,21 +2809,39 @@ export function createPrimaryPageActions(
         const jobId = draft.jobId;
         let saveSucceeded = false;
 
-        await runSaveAction({
-          action: async () => {
-            try {
-              return await actions.saveResumeDraft(draft);
-            } catch (error) {
-              if (
-                (draft.language ?? null) !==
-                (activeRouteResumeWorkspace?.draft.language ?? null)
-              )
+        // A language rewrite is AI work, not an unsaved editor draft. Its
+        // failure and retry belong to Resume Studio, never the global save notice.
+        if (
+          (draft.language ?? null) !==
+          (activeRouteResumeWorkspace?.draft.language ?? null)
+        ) {
+          await runResumeWorkspaceAction(
+            async () => {
+              try {
+                return await actions.saveResumeDraft(draft);
+              } catch (error) {
                 throw new Error(FAILURE_SENTENCES.assistant_unavailable, {
                   cause: error,
                 });
-              throw error;
-            }
-          },
+              }
+            },
+            async (snapshot) => {
+              const savedDraft = snapshot.resumeDrafts.find(
+                (entry) => entry.id === draft.id,
+              );
+              if (savedDraft) onSaved?.(savedDraft.updatedAt);
+              saveSucceeded = await refreshResumeWorkspace(jobId);
+              if (saveSucceeded && isCurrentResumeWorkspaceJob(jobId))
+                await next();
+            },
+            successMessage ?? "Changes saved.",
+            { scope: jobFinderPendingActions.resumeJob(jobId) },
+          );
+          return;
+        }
+
+        await runSaveAction({
+          action: () => actions.saveResumeDraft(draft),
           dedupeKey: createSaveDedupeKey("resume", draft),
           failedFallback:
             "Resume draft was not saved. Retry before continuing.",

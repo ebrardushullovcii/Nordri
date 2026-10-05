@@ -46,26 +46,27 @@ function createDetailReadingAiClient() {
     aiClient: {
       ...aiClient,
       extractJobsFromPage,
-      assessJobFit: async () => ({
-        score: 80,
-        reasons: ["Design systems experience"],
-        gaps: [],
-        recommendation: "strong_fit" as const,
-        role: "exact" as const,
-        roleExplanation: "Design systems role.",
-        requirements: [
-          {
-            id: "design",
-            label: "Design systems",
-            status: "supported" as const,
-            category: "skill" as const,
-            importance: "required" as const,
-            jobEvidence: "Lead the design system roadmap",
-            resumeEvidence: [],
-            explanation: "Synthetic assessment.",
-          },
-        ],
-      }),
+      assessJobFit: () =>
+        Promise.resolve({
+          score: 80,
+          reasons: ["Design systems experience"],
+          gaps: [],
+          recommendation: "strong_fit" as const,
+          role: "exact" as const,
+          roleExplanation: "Design systems role.",
+          requirements: [
+            {
+              id: "design",
+              label: "Design systems",
+              status: "supported" as const,
+              category: "skill" as const,
+              importance: "required" as const,
+              jobEvidence: "Lead the design system roadmap",
+              resumeEvidence: [],
+              explanation: "Synthetic assessment.",
+            },
+          ],
+        }),
     },
     extractJobsFromPage,
   };
@@ -249,4 +250,17 @@ describe("listing detail enrichment inside a discovery run", () => {
       ).toBe(false);
     });
   });
+});
+
+test("an explicit listing read reports a job outside saved and pending lists", async () => {
+  const fetchListingHtml = vi.fn<ListingHtmlFetcher>();
+  const { workspaceService } = createWorkspaceServiceHarness({
+    fetchListingHtml,
+  });
+  await expect(
+    workspaceService.assessJobListing("missing_synthetic_job"),
+  ).rejects.toThrow(
+    "This job is not in the saved or pending list. Use Assess next 1 listings in Find jobs to assess the search results.",
+  );
+  expect(fetchListingHtml).not.toHaveBeenCalled();
 });

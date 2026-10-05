@@ -81,6 +81,7 @@ import {
 } from "./applications-status";
 
 interface ApplicationsRecordsPanelProps {
+  progressNow?: number | undefined;
   activeFilter: ApplicationsViewFilter;
   applicationRecords: readonly ApplicationRecord[];
   /** Stages the person named in the tracker, shown by those names. */
@@ -126,6 +127,7 @@ export function ApplicationsRecordsPanel({
   activeFilter,
   applicationRecords: sourceRecords,
   customStages,
+  progressNow,
   discoveryJobs = [],
   hasAnyApplications,
   hasUnassignedLegacyHistory = false,
@@ -144,6 +146,7 @@ export function ApplicationsRecordsPanel({
     const result = latestApplyResultByRecordId?.get(record.id) ?? null;
     return result
       ? resolveApplyStatePresentation({
+          ...(progressNow === undefined ? {} : { now: progressNow }),
           mode:
             record.automationMode === "autonomous_submit"
               ? "apply_for_me"
@@ -409,6 +412,7 @@ export function ApplicationsRecordsPanel({
               latestApplyResultByRecordId?.get(record.id) ?? null;
             const applyState = latestResult
               ? resolveApplyStatePresentation({
+                  ...(progressNow === undefined ? {} : { now: progressNow }),
                   recordCrm: record.crm,
                   recordLatestBlocker: record.latestBlocker,
                   mode:

@@ -784,6 +784,13 @@ export const continueApplicationTool = defineTool({
         resultId: result.id,
         applicationRecordId: record.id,
       });
+      if (!ports.browser?.show) {
+        return {
+          summary:
+            "The application tab is selected. Open the Job Finder browser to see it.",
+        };
+      }
+      await ports.browser.show();
       return { summary: "The application page is open in the browser." };
     }
     const outcome = await applyToJobsTool.execute(

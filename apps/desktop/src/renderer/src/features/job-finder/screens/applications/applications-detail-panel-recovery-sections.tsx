@@ -18,6 +18,7 @@ import {
  * the collapsed Technical details block rendered by the activity sections.
  */
 export function ApplicationsDetailPanelRecoverySections(props: {
+  progressNow?: number | undefined;
   canRestageAutoRun: boolean;
   canRestageQueueRun: boolean;
   dailyPreparationCapacity: GlobalDailyApplicationPreparationCapacity | null;
@@ -94,6 +95,7 @@ export function ApplicationsDetailPanelRecoverySections(props: {
 
   return (
     <ApplicationsDetailPanelRecoveryActionsSection
+      progressNow={props.progressNow}
       canRestageAutoRun={canRestageAutoRun}
       canRestageQueueRun={canRestageQueueRun}
       dailyPreparationCapacity={dailyPreparationCapacity}

@@ -428,6 +428,7 @@ export function ApplicationsScreen(props: {
       if (result.blockerSummary === PREPARED_PAGE_CLOSED_SUMMARY) continue;
       if (isApplicationTrackedAsSentByPerson(record.crm)) continue;
       const presentation = resolveApplyStatePresentation({
+        now: progressNow,
         recordCrm: record.crm,
         recordLatestBlocker: record.latestBlocker,
         mode:
@@ -472,6 +473,7 @@ export function ApplicationsScreen(props: {
               filter,
               latestApplyResultByRecordId.has(record.id)
                 ? resolveApplyStatePresentation({
+                    now: progressNow,
                     recordCrm: record.crm,
                     recordLatestBlocker: record.latestBlocker,
                     mode:
@@ -574,6 +576,7 @@ export function ApplicationsScreen(props: {
           activeFilter,
           latestApplyResultByRecordId.has(record.id)
             ? resolveApplyStatePresentation({
+                now: progressNow,
                 recordCrm: record.crm,
                 recordLatestBlocker: record.latestBlocker,
                 mode:
@@ -617,6 +620,7 @@ export function ApplicationsScreen(props: {
       : null;
     const state = result
       ? resolveApplyStatePresentation({
+          now: progressNow,
           mode: applyMode,
           result,
           run: readApplyRunContext(result),
@@ -1128,6 +1132,7 @@ export function ApplicationsScreen(props: {
           />
         ) : (
           <ApplicationsRecordsPanel
+            progressNow={progressNow}
             {...(props.crmSettings
               ? { customStages: props.crmSettings.customStages }
               : {})}
@@ -1223,6 +1228,7 @@ export function ApplicationsScreen(props: {
           </section>
         ) : (
           <ApplicationsDetailPanel
+            progressNow={progressNow}
             {...(props.crmSettings
               ? { customStages: props.crmSettings.customStages }
               : {})}

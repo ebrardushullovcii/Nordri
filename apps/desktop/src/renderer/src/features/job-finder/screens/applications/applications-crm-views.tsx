@@ -621,10 +621,10 @@ export function ApplicationsCrmViews(props: {
     );
     const label =
       action === "stage"
-        ? `Move ${selectedIds.length} applications to ${custom?.label ?? APPLICATION_CRM_STAGE_NAMES[bulkStage as ApplicationCrmStage]}?`
+        ? `Move ${selectedIds.length} ${selectedIds.length === 1 ? "application" : "applications"} to ${custom?.label ?? APPLICATION_CRM_STAGE_NAMES[bulkStage as ApplicationCrmStage]}?`
         : action === "tags"
-          ? `Add tags to ${selectedIds.length} applications?`
-          : `${action === "archive" ? "Archive" : "Restore"} ${selectedIds.length} applications?`;
+          ? `Add tags to ${selectedIds.length} ${selectedIds.length === 1 ? "application" : "applications"}?`
+          : `${action === "archive" ? "Archive" : "Restore"} ${selectedIds.length} ${selectedIds.length === 1 ? "application" : "applications"}?`;
     setConfirmation({
       action,
       ids: [...selectedIds],
@@ -694,7 +694,7 @@ export function ApplicationsCrmViews(props: {
           }),
         };
         showToast({
-          title: `${selected.length} applications moved`,
+          title: `${selected.length} ${selected.length === 1 ? "application" : "applications"} moved`,
           action: {
             label: "Undo",
             onClick: () => {
@@ -702,7 +702,10 @@ export function ApplicationsCrmViews(props: {
             },
           },
         });
-      } else showToast({ title: `${selected.length} applications updated` });
+      } else
+        showToast({
+          title: `${selected.length} ${selected.length === 1 ? "application" : "applications"} updated`,
+        });
       setSelectedIds([]);
       setConfirmation(null);
     } catch {

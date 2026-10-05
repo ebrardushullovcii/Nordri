@@ -466,8 +466,8 @@ export function DiscoveryScreen(props: {
   // jobId means the panel is showing no results at all.
   const [displayedSelection, setDisplayedSelection] = useState<{
     jobId: string | null;
+    campaignId: string | null | undefined;
   } | null>(null);
-  useEffect(() => setDisplayedSelection(null), [activeCampaignId]);
   // Results-mode feedback for the Shortlist decision, keyed by the exact
   // clicked job. Each `onQueueJob` call resolves its own awaited outcome, so
   // overlapping shortlists resolving out of order, search completions, and
@@ -794,7 +794,9 @@ export function DiscoveryScreen(props: {
   const inspectedJob = getDiscoveryInspectedJob(
     resultVisibility.jobs,
     selectedJob?.id ?? null,
-    displayedSelection?.jobId,
+    displayedSelection?.campaignId === activeCampaignId
+      ? displayedSelection?.jobId
+      : undefined,
   );
   // What "this job" means for the assistant (ADR 0037): the inspected row is
   // focus. The results panel publishes the list and the ticked rows.
@@ -1278,7 +1280,7 @@ export function DiscoveryScreen(props: {
             ? { onRetrySource: props.onRunDiscoveryForTarget }
             : {})}
           onDisplayedSelectedJobIdChange={(jobId) =>
-            setDisplayedSelection({ jobId })
+            setDisplayedSelection({ jobId, campaignId: activeCampaignId })
           }
           onShowAlsoFound={() => setShowAlsoFound(true)}
           onToggleAlsoFound={() => setShowAlsoFound((current) => !current)}

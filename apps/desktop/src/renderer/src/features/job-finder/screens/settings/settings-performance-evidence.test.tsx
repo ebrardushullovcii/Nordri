@@ -47,7 +47,21 @@ describe("SettingsPerformanceEvidence", () => {
             uploadMs: 50,
             longestSteps: [{ toolName: "fill_fields", durationMs: 600 }],
             requests: [
-              { turn: 1, historyChars: 15000, observationChars: 2000 },
+              {
+                turn: 1,
+                historyChars: 15000,
+                observationChars: 2000,
+                fieldsFilled: 4,
+                stepsAdvanced: 1,
+              },
+              {
+                turn: 2,
+                historyChars: 15000,
+                observationChars: 2000,
+                fieldsFilled: 0,
+                stepsAdvanced: 0,
+              },
+              { turn: 3, historyChars: 15000, observationChars: 2000 },
             ],
           },
           measurementStatus: "partial",
@@ -99,6 +113,15 @@ describe("SettingsPerformanceEvidence", () => {
       getByText("Entering answers and checking facts: 600 ms"),
     ).toBeTruthy();
     expect(getByText(/15000 \(page update 2000\)/u)).toBeTruthy();
+    expect(getByText(/Turn 1: 4 fields filled; 1 step advanced/u)).toBeTruthy();
+    expect(
+      getByText(/Turn 2: 0 fields filled; 0 steps advanced/u),
+    ).toBeTruthy();
+    expect(
+      getByText(
+        /Turn 3: fields filled not recorded; steps advanced not recorded/u,
+      ),
+    ).toBeTruthy();
     expect(getByText("Total not recorded")).toBeTruthy();
     expect(getByText("Renderer commit")).toBeTruthy();
     expect(getByText("Not recorded")).toBeTruthy();

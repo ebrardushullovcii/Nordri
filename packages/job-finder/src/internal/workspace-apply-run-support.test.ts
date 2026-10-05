@@ -502,6 +502,8 @@ describe("buildApplyCopilotArtifacts", () => {
     });
 
     expect(artifacts.result.reviewCard).toEqual(reviewCard);
+    expect(artifacts.result.latestQuestionCount).toBe(1);
+    expect(artifacts.result.latestAnswerCount).toBe(1);
   });
 });
 

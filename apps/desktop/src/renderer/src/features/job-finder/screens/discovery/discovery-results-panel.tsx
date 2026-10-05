@@ -1049,7 +1049,9 @@ export function DiscoveryResultsPanel({
 
   // Report after the page-snap effect so a freshly opened deep-linked page is
   // reported in its final position.
-  const reportedDisplayedSelectionRef = useRef<string | null>(null);
+  const reportedDisplayedSelectionRef = useRef<string | null | undefined>(
+    undefined,
+  );
   useLayoutEffect(() => {
     if (!onDisplayedSelectedJobIdChange) {
       return;

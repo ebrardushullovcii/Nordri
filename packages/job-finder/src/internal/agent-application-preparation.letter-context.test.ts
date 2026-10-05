@@ -167,7 +167,7 @@ test.each([true, false])(
       "Part-time",
     ]);
     expect(checked.applicant.preferences.locations).toEqual(["London"]);
-    expect(checked.applicant.answers.availability).toBe(
+    expect(checked.applicant.answers["Availability answer"]).toBe(
       "20–30 hours, London only",
     );
     expect(String(calls[1]![0][0]!.content)).toContain(

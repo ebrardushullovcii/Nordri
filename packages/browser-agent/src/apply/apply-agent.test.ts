@@ -389,7 +389,8 @@ describe("written answer fact check recovery", () => {
     expect(facts).toMatchObject({
       applicant: {
         answers: {
-          visaSponsorship: request.sources.profile.answerBank.visaSponsorship,
+          "Visa sponsorship answer":
+            request.sources.profile.answerBank.visaSponsorship,
         },
       },
     });

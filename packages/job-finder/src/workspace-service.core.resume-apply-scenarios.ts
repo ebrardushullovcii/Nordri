@@ -933,7 +933,8 @@ describe("createJobFinderWorkspaceService", () => {
       state: "awaiting_review",
       blockerReason: "required_human_input",
       latestQuestionCount: 2,
-      latestAnswerCount: 3,
+      // Only the selected answer was filled; the other two are suggestions.
+      latestAnswerCount: 1,
     });
     expect(questions.map((question) => question.kind)).toEqual(
       expect.arrayContaining(["resume", "work_authorization"]),

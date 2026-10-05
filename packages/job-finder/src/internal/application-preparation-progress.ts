@@ -61,7 +61,7 @@ export async function persistApplicationPreparationProgress(input: {
     const next = ApplyJobResultSchema.parse({
       ...current,
       state: "filling",
-      summary: `Filling in application · Step ${input.progress.step}`,
+      summary: "Filling in application",
       detail: describeApplicationPreparationProgress(input.progress.note),
       updatedAt: now,
       completedAt: null,

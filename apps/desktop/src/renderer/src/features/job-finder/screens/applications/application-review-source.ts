@@ -11,10 +11,19 @@ export function withPersonAnswerSources(
       const question = details.questionRecords.find(
         (entry) => entry.prompt === answer.question,
       );
-      const recorded = details.answerRecords.find(
-        (entry) => entry.id === question?.selectedAnswerId,
-      );
-      if (!recorded || recorded.sourceKind !== "user") return answer;
+      const recorded = details.answerRecords
+        .filter(
+          (entry) =>
+            entry.questionId === question?.id &&
+            entry.sourceKind === "user" &&
+            entry.status !== "rejected" &&
+            entry.status !== "skipped",
+        )
+        .sort(
+          (a, b) =>
+            b.revision - a.revision || b.createdAt.localeCompare(a.createdAt),
+        )[0];
+      if (!recorded) return answer;
       const same =
         recorded.text === answer.answer ||
         (question?.answerControlType === "multi_choice" &&

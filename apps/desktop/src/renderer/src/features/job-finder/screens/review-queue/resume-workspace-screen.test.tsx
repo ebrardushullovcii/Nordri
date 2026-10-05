@@ -429,6 +429,7 @@ function openEditorSection(sectionId: string): void {
 }
 
 function buildScreenElement(options?: {
+  isWorkspacePending?: boolean;
   actionMessage?: string | null;
   assistantMessages?: ResumeAssistantMessage[];
   assistantPending?: boolean;
@@ -473,7 +474,7 @@ function buildScreenElement(options?: {
       assistantMessages={options?.assistantMessages ?? []}
       assistantPending={options?.assistantPending ?? false}
       availableResumeTemplates={availableResumeTemplates}
-      isWorkspacePending={false}
+      isWorkspacePending={options?.isWorkspacePending ?? false}
       jobId="job_ready"
       onApplyPatch={options?.onApplyPatch ?? vi.fn()}
       onApproveCurrentResume={vi.fn()}
@@ -2289,6 +2290,25 @@ describe("ResumeWorkspaceScreen", () => {
       ),
     ).toBeTruthy();
     expect(screen.queryByText(/did not cover the whole resume/)).toBeNull();
+    rerender(
+      buildScreenElement({
+        onSaveDraftAndThen,
+        isWorkspacePending: true,
+        actionMessage: "Saving resume draft…",
+      }),
+    );
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+    expect(screen.getByText("Saving resume draft…")).toBeTruthy();
+    rerender(
+      buildScreenElement({
+        onSaveDraftAndThen,
+        actionMessage:
+          "The writing assistant did not answer. Try again in a few minutes.",
+      }),
+    );
+    expect(screen.getAllByRole("button", { name: "Try again" })).toHaveLength(
+      1,
+    );
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(onSaveDraftAndThen).toHaveBeenLastCalledWith(
       expect.objectContaining({ language: "German" }),
@@ -2307,7 +2327,7 @@ describe("ResumeWorkspaceScreen", () => {
       failedAt: "2026-10-05T10:00:00.000Z",
     };
     const onRegenerateDraft = vi.fn();
-    renderScreen({ workspace, onRegenerateDraft });
+    const { rerender } = renderScreen({ workspace, onRegenerateDraft });
     expect(
       screen.getByText(
         "The writing assistant did not answer. Try again in a few minutes.",
@@ -2315,5 +2335,20 @@ describe("ResumeWorkspaceScreen", () => {
     ).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(onRegenerateDraft).toHaveBeenCalledWith("job_ready");
+    rerender(
+      buildScreenElement({
+        workspace,
+        onRegenerateDraft,
+        isWorkspacePending: true,
+        actionMessage: "Saving resume draft…",
+      }),
+    );
+    expect(screen.getByText("Saving resume draft…")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+    expect(
+      screen.queryByText(
+        "The writing assistant did not answer. Try again in a few minutes.",
+      ),
+    ).toBeNull();
   });
 });

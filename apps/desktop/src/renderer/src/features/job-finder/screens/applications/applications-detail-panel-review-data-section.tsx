@@ -89,11 +89,21 @@ export function ApplicationsDetailPanelReviewDataSection(props: {
     [
       {
         label: "Questions",
-        value: selectedApplyRunDetails?.questionRecords.length ?? 0,
+        value: Math.max(
+          selectedApplyRunDetails?.questionRecords.length ?? 0,
+          selectedApplyRunDetails?.reviewCard?.answers.length ?? 0,
+        ),
       },
       {
         label: "Answers filled in",
-        value: selectedApplyRunDetails?.answerRecords.length ?? 0,
+        value: Math.max(
+          selectedApplyRunDetails?.answerRecords.filter(
+            (answer) => answer.status === "filled",
+          ).length ?? 0,
+          selectedApplyRunDetails?.reviewCard?.answers.filter((answer) =>
+            answer.answer.trim(),
+          ).length ?? 0,
+        ),
       },
       { label: "Artifacts", value: retainedArtifacts.length },
       {

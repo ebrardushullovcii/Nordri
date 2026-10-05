@@ -161,7 +161,7 @@ describe("assistant browser tab safety", () => {
     const ctx = world();
     const lease = await lend(ctx, "original");
     expect(lease.borrowed).toBe(true);
-    expect(await lease.isApplicationBound!()).toBe(false);
+    expect(await lease.isApplicationBound()).toBe(false);
     await lease.hands.clickElement("expand");
     await lease.hands.fillText("name", "Synthetic");
     await lease.hands.uploadFile("file", {
@@ -239,4 +239,13 @@ describe("assistant browser tab safety", () => {
     await expect(loan.hands.fillText("field", "late write")).rejects.toThrow();
     await loan.release("taken back");
   });
+});
+
+it("shows a focused retained tab through the browser open command", async () => {
+  const command = vi.fn().mockResolvedValue(undefined);
+  const browser = { command } as unknown as EmbeddedBrowser;
+  const readWorkspace = vi.fn();
+  await createAssistantBrowserPort(browser, readWorkspace).show?.();
+  expect(command).toHaveBeenCalledWith({ type: "open" });
+  expect(readWorkspace).not.toHaveBeenCalled();
 });

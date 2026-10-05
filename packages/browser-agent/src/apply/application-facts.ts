@@ -88,6 +88,52 @@ export function applicationFacts(
   };
 }
 
+/** Plain labels for the independent answer check's person-facing notes. */
+export function plainAnswerCheckFacts(
+  facts: ReturnType<typeof applicationFacts>,
+) {
+  const eligibility = facts.workEligibility;
+  const yesNo = (value: boolean | null) =>
+    value === null ? "Not known" : value ? "Yes" : "No";
+  const answers = facts.answers;
+  return {
+    ...facts,
+    workEligibility: {
+      "Countries where you can work": eligibility.authorizedWorkCountries,
+      "Limited work permissions": (
+        eligibility.limitedWorkPermissions ?? []
+      ).map((permit) => ({
+        Country: permit.country,
+        Conditions: permit.conditions,
+        "Will need sponsorship later": yesNo(permit.requiresFutureSponsorship),
+      })),
+      "Need visa sponsorship": yesNo(eligibility.requiresVisaSponsorship),
+      "Willing to relocate": yesNo(eligibility.willingToRelocate),
+      "Preferred places to relocate": eligibility.preferredRelocationRegions,
+      "Willing to travel": yesNo(eligibility.willingToTravel),
+      "Can work remotely": yesNo(eligibility.remoteEligible),
+      "Notice period in days": eligibility.noticePeriodDays,
+      "Available start date": eligibility.availableStartDate,
+      "Security clearance": eligibility.securityClearance,
+    },
+    eligibilityInterpretation: facts.eligibilityInterpretation?.replace(
+      "requiresFutureSponsorship",
+      "Will need sponsorship later",
+    ),
+    answers: {
+      "Work authorization answer": answers.workAuthorization,
+      "Visa sponsorship answer": answers.visaSponsorship,
+      "Relocation answer": answers.relocation,
+      "Travel answer": answers.travel,
+      "Notice period answer": answers.noticePeriod,
+      "Availability answer": answers.availability,
+      Introduction: answers.selfIntroduction,
+      "Career change answer": answers.careerTransition,
+      "Expected pay answer": answers.salaryExpectations,
+    },
+  };
+}
+
 interface StoredFact {
   value: string;
   sourceKind: ApplyAnswer["sourceKind"];

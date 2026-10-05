@@ -94,6 +94,8 @@ export interface AssistantBrowserLease {
 }
 
 export interface AssistantBrowserPort {
+  /** Shows the focused tab without lending it or taking it over. */
+  show?(): Promise<void>;
   /** The tab on screen now, if the browser is open. */
   visibleTab(): { tabId: string; url: string; title: string | null } | null;
   lease(input: {

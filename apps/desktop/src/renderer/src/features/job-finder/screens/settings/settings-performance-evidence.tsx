@@ -227,6 +227,15 @@ export function SettingsPerformanceEvidence() {
                     ))}
                   </ul>
                   <p className="mt-2 text-sm text-foreground-muted">
+                    Answers and progress per turn:{" "}
+                    {entry.agentTiming.requests
+                      .map(
+                        (request) =>
+                          `Turn ${request.turn}: ${request.fieldsFilled === undefined ? "fields filled not recorded" : `${request.fieldsFilled} ${request.fieldsFilled === 1 ? "field" : "fields"} filled`}; ${request.stepsAdvanced === undefined ? "steps advanced not recorded" : `${request.stepsAdvanced} ${request.stepsAdvanced === 1 ? "step" : "steps"} advanced`}`,
+                      )
+                      .join(" · ") || "No assistant turns"}
+                  </p>
+                  <p className="mt-2 text-sm text-foreground-muted">
                     Characters sent per assistant turn:{" "}
                     {entry.agentTiming.requests
                       .map(

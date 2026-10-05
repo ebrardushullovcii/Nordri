@@ -1030,17 +1030,21 @@ export function ResumeWorkspaceScreen(props: ResumeWorkspaceScreenProps) {
   const editorPanel = (
     <ResumeWorkspaceEditorPanel
       actionMessage={
-        (languageRequest && props.actionMessage && !props.isWorkspacePending) ||
-        props.workspace.tailoredAsset?.failureMessage
-          ? FAILURE_SENTENCES.assistant_unavailable
-          : (props.actionMessage ?? null)
+        props.isWorkspacePending
+          ? (props.actionMessage ?? null)
+          : (languageRequest && props.actionMessage) ||
+              props.workspace.tailoredAsset?.failureMessage
+            ? FAILURE_SENTENCES.assistant_unavailable
+            : (props.actionMessage ?? null)
       }
       onRetryAction={
-        languageRequest
-          ? () => writeLanguage(languageRequest.language)
-          : props.workspace.tailoredAsset?.failureMessage
-            ? () => props.onRegenerateDraft(props.jobId)
-            : undefined
+        props.isWorkspacePending
+          ? undefined
+          : languageRequest
+            ? () => writeLanguage(languageRequest.language)
+            : props.workspace.tailoredAsset?.failureMessage
+              ? () => props.onRegenerateDraft(props.jobId)
+              : undefined
       }
       actionSavedFilePath={props.actionSavedFilePath ?? null}
       {...(props.onRevealSavedFile

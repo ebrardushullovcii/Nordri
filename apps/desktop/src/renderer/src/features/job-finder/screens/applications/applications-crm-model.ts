@@ -144,14 +144,11 @@ export function applicationCrmStageLabelForView(
   // table cell. The provenance stays visible as its own badge and tooltip;
   // the cell just names the stage.
   const baseLabel = APPLICATION_CRM_STAGE_LABELS[stage];
-  // A stage the person named themselves keeps its name everywhere, beside
-  // the standard step it counts as.
+  // A stage the person named themselves keeps the same name in list and detail.
   const custom = record.crm?.customStageId
     ? customStages.find((entry) => entry.id === record.crm?.customStageId)
     : undefined;
-  return custom && custom.label !== baseLabel
-    ? `${custom.label} (${baseLabel})`
-    : baseLabel;
+  return custom?.label ?? baseLabel;
 }
 
 export function applicationCrmStageProvenanceForView(

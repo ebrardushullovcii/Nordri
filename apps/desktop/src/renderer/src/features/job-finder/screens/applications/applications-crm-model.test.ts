@@ -215,6 +215,18 @@ describe("an application the person moved on in the tracker", () => {
         },
       ]),
     ).toEqual({ label: "Panel interview", tone: "positive" });
+    expect(
+      applicationCrmStageLabelForView(tracked(), [
+        {
+          id: "stage_panel",
+          label: "Technical interview",
+          baseStage: "interview",
+          color: "violet",
+          position: 0,
+          isTerminal: false,
+        },
+      ]),
+    ).toBe("Technical interview");
     expect(trackedHiringStageBadge(tracked({ customStageId: null }))).toEqual({
       label: APPLICATION_CRM_STAGE_LABELS.interview,
       tone: "positive",

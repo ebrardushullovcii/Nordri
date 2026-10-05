@@ -3174,3 +3174,38 @@ it.each([true, false])(
     expect(startApplyCopilotRun).not.toHaveBeenCalled();
   },
 );
+
+it("keeps a language rewrite outage out of the global resume save notice", async () => {
+  const saveResumeDraft = vi
+    .fn()
+    .mockRejectedValue(new Error("Synthetic AI outage"));
+  const runSaveAction = vi.fn();
+  const setActionState = vi.fn();
+  const setPendingActionState = vi.fn();
+  const runners = createActionRunners({
+    setActionState,
+    setPendingActionState,
+  });
+  const pageActions = createPrimaryPageActions({
+    ...runners,
+    runSaveAction,
+    setActionState,
+    setPendingActionState,
+    actions: { saveResumeDraft },
+    activeRouteResumeWorkspace: { draft: { language: "English" } },
+  } as unknown as Parameters<typeof createPrimaryPageActions>[0]);
+  pageActions.onSaveResumeDraftAndThen(
+    { jobId: "job_synthetic", language: "German" } as ResumeDraft,
+    vi.fn(),
+  );
+  await vi.waitFor(() => expect(saveResumeDraft).toHaveBeenCalledOnce());
+  await vi.waitFor(() =>
+    expect(setActionState).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message:
+          "The writing assistant did not answer. Try again in a few minutes.",
+      }),
+    ),
+  );
+  expect(runSaveAction).not.toHaveBeenCalled();
+});

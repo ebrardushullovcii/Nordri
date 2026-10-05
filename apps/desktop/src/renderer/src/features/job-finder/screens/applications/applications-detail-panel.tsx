@@ -98,6 +98,7 @@ function buildLiveAssistantApplicationHref(input: {
 }
 
 interface ApplicationsDetailPanelProps {
+  progressNow?: number | undefined;
   answerDraft?: QuestionAnswerDraft | undefined;
   answerDraftRestored?: boolean;
   onAnswerDraftChange?: (draft: QuestionAnswerDraft) => void;
@@ -190,6 +191,7 @@ interface ApplicationsDetailPanelProps {
 }
 
 export function ApplicationsDetailPanel({
+  progressNow,
   activeFilter,
   customStages,
   readApplyRunContext,
@@ -358,6 +360,7 @@ export function ApplicationsDetailPanel({
   const selectedApplyState =
     selectedRecord && visibleApplyResult
       ? resolveApplyStatePresentation({
+          ...(progressNow === undefined ? {} : { now: progressNow }),
           recordCrm: selectedRecord.crm,
           recordLatestBlocker: selectedRecord.latestBlocker,
           mode:
@@ -447,6 +450,7 @@ export function ApplicationsDetailPanel({
   const reviewTargetRef = useRef<HTMLDivElement>(null);
   const recoverySection = selectedRecord ? (
     <ApplicationsDetailPanelRecoverySections
+      progressNow={progressNow}
       canRestageAutoRun={canRestageAutoRun}
       canRestageQueueRun={canRestageQueueRun}
       dailyPreparationCapacity={dailyPreparationCapacity}

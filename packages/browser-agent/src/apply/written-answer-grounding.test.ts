@@ -109,14 +109,28 @@ test.each([
       location,
     );
     expect(data).toHaveProperty("applicant.summary", profile.summary);
+    expect(String(messages[1].content)).not.toMatch(
+      /authorizedWorkCountries|requiresVisaSponsorship|requiresFutureSponsorship/u,
+    );
+    expect(String(messages[0].content)).toContain(
+      "Never quote camelCase field names, key=value text",
+    );
+    for (const check of checks)
+      expect(check.reason).not.toMatch(/[a-z][A-Z]|=/u);
     expect(data).toHaveProperty(
-      "applicant.workEligibility.limitedWorkPermissions",
-      profile.workEligibility.limitedWorkPermissions,
+      "applicant.workEligibility.Limited work permissions",
+      [
+        {
+          Country: "Germany",
+          Conditions: "Student work only; 20 hours during term",
+          "Will need sponsorship later": "Yes",
+        },
+      ],
     );
     expect(data).toHaveProperty(
       "applicant.eligibilityInterpretation",
       expect.stringContaining(
-        "requiresFutureSponsorship describes future work",
+        "Will need sponsorship later describes future work",
       ),
     );
     expect(data).toHaveProperty(

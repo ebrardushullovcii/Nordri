@@ -143,6 +143,62 @@ describe("ApplicationsScreen", () => {
     };
   }
 
+  it("uses the same elapsed clock in the list and detail", () => {
+    vi.stubGlobal("ResizeObserver", ResizeObserverMock);
+    stubCandidateAssetsBridge();
+    const record = createTrackedApplication({
+      lastAttemptState: "in_progress",
+      crm: null,
+    });
+    const at = "2026-10-05T10:00:00.000Z";
+    const result = ApplyJobResultSchema.parse({
+      id: "clock-result",
+      runId: "clock-run",
+      jobId: record.jobId,
+      applicationRecordId: record.id,
+      state: "filling",
+      summary: "Filling in application",
+      detail: "Reading the form",
+      startedAt: at,
+      updatedAt: at,
+    });
+    const run = ApplyRunSchema.parse({
+      id: "clock-run",
+      state: "running",
+      jobIds: [record.jobId],
+      createdAt: at,
+      updatedAt: at,
+      summary: "Preparing",
+      detail: "Reading the form",
+    });
+    vi.spyOn(Date, "now")
+      .mockReturnValueOnce(Date.parse("2026-10-05T10:01:30.000Z"))
+      .mockReturnValue(Date.parse("2026-10-05T10:02:30.000Z"));
+    render(
+      <MemoryRouter>
+        <ApplicationsScreen
+          {...buildCrmScreenProps({
+            applicationRecords: [record],
+            onSelectRecord: vi.fn(),
+            selectedRecord: record,
+            includeTrackerControls: false,
+          })}
+          dailyPreparationCapacity={null}
+          applyRuns={[run]}
+          applyJobResults={[result]}
+          onGetApplyRunDetails={vi
+            .fn()
+            .mockResolvedValue(ApplyRunDetailsSchema.parse({ run, result }))}
+        />
+      </MemoryRouter>,
+    );
+    expect(
+      screen.getAllByText(/Preparing \(1 min\)/u).length,
+    ).toBeGreaterThanOrEqual(2);
+    expect(screen.queryByText(/Preparing \(2 min\)/u)).toBeNull();
+    vi.restoreAllMocks();
+  });
+
   it("opens the page bound to the selected result when an older result has the same URL", async () => {
     vi.stubGlobal("ResizeObserver", ResizeObserverMock);
     stubCandidateAssetsBridge();

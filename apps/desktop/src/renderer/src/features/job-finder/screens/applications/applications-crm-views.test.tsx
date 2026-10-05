@@ -1107,3 +1107,33 @@ test("keeps the tracker controls on one toolbar row under the page title", () =>
     document.getElementById("application-tracker-stage-help")?.textContent,
   ).toMatch(/one you recorded or one Job Finder worked out/);
 });
+
+test("uses singular wording when tagging one application", async () => {
+  const onBulkChange = vi.fn().mockResolvedValue(undefined);
+  render(
+    <ToastProvider>
+      <ApplicationsCrmViews
+        records={[record("one", "Analyst", "Synthetic")]}
+        selectedRecordId={null}
+        onSelectRecord={vi.fn()}
+        onViewChange={vi.fn()}
+        onBulkChange={onBulkChange}
+        view="table"
+      />
+    </ToastProvider>,
+  );
+  fireEvent.click(
+    screen.getByRole("checkbox", { name: "Select all matching applications" }),
+  );
+  fireEvent.change(screen.getByPlaceholderText("Tags, separated by commas"), {
+    target: { value: "follow up" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Add tags" }));
+  expect(screen.getByRole("alertdialog").textContent).toContain(
+    "Add tags to 1 application?",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Confirm change" }));
+  await waitFor(() =>
+    expect(screen.getByText("1 application updated")).toBeTruthy(),
+  );
+});

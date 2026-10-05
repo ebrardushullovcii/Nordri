@@ -360,7 +360,7 @@ export function getApplicationStopReasonSentence(
     const text = getCustomerFacingApplyText(candidate, result.privacyReceipt);
     const stripped = text?.replace(STUCK_PREFIX_PATTERN, "").trim();
     if (stripped && !GENERIC_SUMMARY_PATTERN.test(stripped)) {
-      return stripped;
+      return [...new Set(stripped.split(/(?<=[.!?])\s+/u))].join(" ");
     }
   }
 

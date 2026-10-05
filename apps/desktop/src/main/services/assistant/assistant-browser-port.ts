@@ -55,6 +55,9 @@ export function createAssistantBrowserPort(
   readWorkspace: () => Promise<JobFinderWorkspaceSnapshot>,
 ): AssistantBrowserPort {
   return {
+    async show() {
+      await browser.command({ type: "open" });
+    },
     visibleTab() {
       const state = browser.getState();
       if (state.phase === "closed" || state.presentation === "minimized")

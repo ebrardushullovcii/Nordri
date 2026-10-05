@@ -1103,8 +1103,15 @@ export function buildApplyCopilotArtifacts(input: {
     listingSignalEvidence: input.executionResult.listingSignalEvidence,
     visualObservationSets: input.executionResult.visualObservationSets,
     visualCheckpoints: input.executionResult.visualCheckpoints,
-    latestQuestionCount: questionRecords.length,
-    latestAnswerCount: answerRecords.length,
+    latestQuestionCount: Math.max(
+      questionRecords.length,
+      input.reviewCard?.answers.length ?? 0,
+    ),
+    latestAnswerCount: Math.max(
+      answerRecords.filter((answer) => answer.status === "filled").length,
+      input.reviewCard?.answers.filter((answer) => answer.answer.trim())
+        .length ?? 0,
+    ),
     pendingConsentRequestCount: consentRequests.length,
     artifactCount: artifactRefs.length,
     latestCheckpointId: checkpoints.at(-1)?.id ?? null,

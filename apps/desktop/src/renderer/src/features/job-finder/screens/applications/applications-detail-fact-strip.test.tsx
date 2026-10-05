@@ -997,3 +997,47 @@ it("labels a cancelled preparation history entry as cancelled by the person", ()
   expect(screen.getAllByText("Cancelled by you")).toHaveLength(2);
   expect(screen.queryByText("Cancelled")).toBeNull();
 });
+
+it("counts answers from a Ready review card when legacy counters are zero", () => {
+  renderStrip({
+    record: {
+      ...baseRecord,
+      questionSummary: {
+        total: 0,
+        required: 0,
+        answered: 0,
+        unansweredRequired: 0,
+      },
+    },
+    visibleApplyResult: {
+      ...baseApplyResult,
+      state: "awaiting_review",
+      latestQuestionCount: 0,
+      latestAnswerCount: 0,
+      reviewCard: {
+        siteLabel: "Synthetic",
+        pageUrl: "https://example.test/apply",
+        preparedAt: baseApplyResult.updatedAt,
+        answers: [
+          {
+            question: "Name",
+            answer: "Synthetic Person",
+            source: "your profile",
+            written: false,
+            groundedIn: [],
+          },
+        ],
+        attachments: [],
+        letter: null,
+        waitingOnYou: [],
+      },
+    },
+  });
+  fireEvent.click(screen.getByText("More about this application"));
+  expect(screen.getByText(/1 question found.*1 answer filled/u)).toBeTruthy();
+  expect(screen.queryByText(/0 questions found/u)).toBeNull();
+  expect(screen.getByText("1 answered • 0 required left")).toBeTruthy();
+  expect(
+    screen.getByText("Form questions").nextElementSibling?.textContent,
+  ).toContain("1");
+});

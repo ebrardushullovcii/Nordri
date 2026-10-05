@@ -242,15 +242,30 @@ export function ApplicationsDetailFactStrip(props: {
         preparationStatusFact,
       ];
 
+  const formQuestionCount = Math.max(
+    questionSummary.total,
+    visibleApplyResult?.latestQuestionCount ?? 0,
+    visibleApplyResult?.reviewCard?.answers.length ?? 0,
+  );
+  const formAnswerCount = Math.min(
+    formQuestionCount,
+    Math.max(
+      questionSummary.answered,
+      visibleApplyResult?.latestAnswerCount ?? 0,
+      visibleApplyResult?.reviewCard?.answers.filter((answer) =>
+        answer.answer.trim(),
+      ).length ?? 0,
+    ),
+  );
   const detailFacts: DetailFact[] = [
     {
       content: formatTimestamp(selectedRecord.lastUpdatedAt),
       label: "Last updated",
     },
     {
-      content: questionSummary.total,
+      content: formQuestionCount,
       label: "Form questions",
-      note: `${questionSummary.answered} answered • ${questionSummary.unansweredRequired} required left`,
+      note: `${formAnswerCount} answered • ${questionSummary.unansweredRequired} required left`,
     },
     {
       content: formatStatusLabel(consentSummary.status),
@@ -276,10 +291,20 @@ export function ApplicationsDetailFactStrip(props: {
   ];
 
   if (visibleApplyResult) {
+    const questionsFound = Math.max(
+      visibleApplyResult.latestQuestionCount,
+      visibleApplyResult.reviewCard?.answers.length ?? 0,
+    );
+    const answersFilled = Math.max(
+      visibleApplyResult.latestAnswerCount,
+      visibleApplyResult.reviewCard?.answers.filter((answer) =>
+        answer.answer.trim(),
+      ).length ?? 0,
+    );
     const runNote = [
       resolvedRunId ? `Run ${formatVisibleRunId(resolvedRunId)}` : null,
-      `${visibleApplyResult.latestQuestionCount} questions found`,
-      `${visibleApplyResult.latestAnswerCount} answers filled`,
+      `${questionsFound} ${questionsFound === 1 ? "question" : "questions"} found`,
+      `${answersFilled} ${answersFilled === 1 ? "answer" : "answers"} filled`,
       // The autosave pause already has its cause stated once above; repeating
       // the runtime sentence here made the same event read four ways.
       visibleApplyResult.blockerSummary && !isFieldSavePause

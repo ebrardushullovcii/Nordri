@@ -19,7 +19,11 @@ import {
 import type { AssistantBrowserLease, AssistantHostPorts } from "../ports";
 import { ASSISTANT_SYSTEM_PROMPT } from "../prompt";
 import type { AssistantTurnSession } from "../tool-kit";
-import { listApplicationsTool, getApplicationTool } from "./application-tools";
+import {
+  continueApplicationTool,
+  listApplicationsTool,
+  getApplicationTool,
+} from "./application-tools";
 import {
   browserOpenTool,
   browserUseApplicationTool,
@@ -1030,5 +1034,67 @@ it("chat and the queue retain existing display rules for a legacy quoted questio
       applications: [expect.objectContaining({ id: record.id })],
     },
     readyToSend: [],
+  });
+});
+
+describe("opening a retained application", () => {
+  it("shows the browser after focusing, without borrowing a tab", async () => {
+    const ctx = world();
+    const snapshot = await ctx.service.getWorkspaceSnapshot();
+    snapshot.applyJobResults = [
+      ApplyJobResultSchema.parse({
+        id: "result",
+        jobId: "job_ready",
+        runId: "run",
+        applicationRecordId: "record",
+        state: "awaiting_review",
+        summary: "Ready",
+        detail: "Synthetic form",
+        startedAt: "2026-10-04T12:00:00.000Z",
+        updatedAt: "2026-10-04T12:00:00.000Z",
+      }),
+    ];
+    snapshot.applicationRecords = [
+      ApplicationRecordSchema.parse({
+        id: "record",
+        jobId: "job_ready",
+        status: "approved",
+        lastActionLabel: "Prepared",
+        nextActionLabel: "Send",
+        company: "Synthetic",
+        title: "Analyst",
+        lastUpdatedAt: "2026-10-04T12:00:00.000Z",
+      }),
+    ];
+    vi.spyOn(ctx.service, "getWorkspaceSnapshot").mockResolvedValue(snapshot);
+    const order: string[] = [];
+    vi.spyOn(ctx.service, "focusPreparedApplicationPage").mockImplementation(
+      () => {
+        order.push("focus");
+        return Promise.resolve(snapshot);
+      },
+    );
+    const show = vi.fn(() => {
+      order.push("show");
+      return Promise.resolve();
+    });
+    const lease = vi.fn();
+    ctx.ports.browser = { show, visibleTab: vi.fn(() => null), lease };
+    const outcome = await continueApplicationTool.execute(
+      { jobId: "job_ready", openPage: true },
+      ctx,
+    );
+    expect(order).toEqual(["focus", "show"]);
+    expect(lease).not.toHaveBeenCalled();
+    expect(outcome.summary).toBe(
+      "The application page is open in the browser.",
+    );
+    show.mockRejectedValueOnce(new Error("Browser could not open"));
+    await expect(
+      continueApplicationTool.execute(
+        { jobId: "job_ready", openPage: true },
+        ctx,
+      ),
+    ).rejects.toThrow("Browser could not open");
   });
 });

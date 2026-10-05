@@ -154,9 +154,16 @@ describe("OutcomeAnalyticsScreen", () => {
       screen.getByRole("heading", { name: "No outcomes recorded yet" }),
     ).toBeTruthy();
     expect(
-      screen.getByText(/Suggestions never apply themselves/i),
+      screen.getByText(
+        /Response and interview rates from your recorded outcomes/i,
+      ),
     ).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Outcomes" })).toBeTruthy();
+    expect(
+      screen.getByText(
+        "Response and interview rates from your recorded outcomes.",
+      ).textContent.length,
+    ).toBeLessThanOrEqual(90);
   });
 
   it("links the all-time empty state to the Applications Tracker", () => {

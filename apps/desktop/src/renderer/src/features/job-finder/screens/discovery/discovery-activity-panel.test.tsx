@@ -123,11 +123,21 @@ describe("DiscoveryHistoryModal", () => {
     const run = DiscoveryRunRecordSchema.parse({
       ...failedRun,
       targetExecutions: failedRun.targetExecutions.map((execution) => ({
-        ...execution, state: "completed", warning: null, jobsPersisted: 1, jobsStaged: 2, jobsFound: 3,
+        ...execution,
+        state: "completed",
+        warning: "Could not read this source",
+        jobsPersisted: 1,
+        jobsStaged: 2,
+        jobsFound: 3,
       })),
       summary: {
         ...failedRun.summary,
-        sourceHealth: [{ targetId: "greenhouse-source", health: "healthy", durationMs: 4000, warnings: [] }],
+        sourceHealth: [{
+          targetId: "greenhouse-source",
+          health: "healthy",
+          durationMs: 4000,
+          warnings: ["Could not read this source"],
+        }],
         warnings: [],
       },
     });
@@ -136,6 +146,9 @@ describe("DiscoveryHistoryModal", () => {
       recentRuns={[run]} targets={targets} />);
     expect(screen.getByText("Contributed 3 new jobs to this run.")).toBeTruthy();
     expect(screen.getByText("By source: Greenhouse roles — 3 jobs.")).toBeTruthy();
+    expect(
+      screen.getByText("Could not read this source").closest("details"),
+    ).not.toBeNull();
   });
 
   it("describes the dialog and exposes current activity as an additions-only log", () => {

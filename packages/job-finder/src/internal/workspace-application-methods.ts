@@ -523,6 +523,11 @@ export function createWorkspaceApplicationMethods(
         savedJobs.find((entry) => entry.id === jobId) ??
         discoveryState.pendingDiscoveryJobs.find((entry) => entry.id === jobId);
       if (!job) {
+        if (options.throwOnFailure) {
+          throw new Error(
+            "This job is not in the saved or pending list. Use Assess next 1 listings in Find jobs to assess the search results.",
+          );
+        }
         return;
       }
       const alreadyRead =
@@ -2606,8 +2611,8 @@ export function createWorkspaceApplicationMethods(
             visualObservationSets:
               normalizedExecutionResult.visualObservationSets,
             visualCheckpoints: normalizedExecutionResult.visualCheckpoints,
-            latestQuestionCount: runArtifacts.questionRecords.length,
-            latestAnswerCount: runArtifacts.answerRecords.length,
+            latestQuestionCount: runArtifacts.result.latestQuestionCount,
+            latestAnswerCount: runArtifacts.result.latestAnswerCount,
             pendingConsentRequestCount: runArtifacts.consentRequests.length,
             artifactCount: runArtifacts.artifactRefs.length,
             latestCheckpointId: runArtifacts.checkpoints.at(-1)?.id ?? null,

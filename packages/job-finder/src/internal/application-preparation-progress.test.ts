@@ -46,7 +46,7 @@ describe("application preparation progress", () => {
     });
     expect(result).toMatchObject({
       state: "filling",
-      summary: "Filling in application · Step 7",
+      summary: "Filling in application",
       detail: "Filling a text field",
       updatedAt: "2026-09-16T10:00:12.000Z",
     });

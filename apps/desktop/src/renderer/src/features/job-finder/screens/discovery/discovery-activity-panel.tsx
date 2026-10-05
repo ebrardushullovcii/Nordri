@@ -870,13 +870,16 @@ export function DiscoveryHistoryModal(props: {
                                 </Button>
                               ) : null}
                             </div>
-                            {source.warnings.length > 0 ? (
+                            {source.warnings.length > 0 &&
+                            execution?.state !== "completed" ? (
                               <>
                                 <p className="text-[0.82rem] leading-5 text-foreground-soft">
                                   {
-                                    describeFailure(source.warnings[0], {
-                                      action: "read this source",
-                                    }).userMessage
+                                    contributed > 0
+                                      ? "Some jobs were collected, but this source did not finish."
+                                      : describeFailure(source.warnings[0], {
+                                          action: "read this source",
+                                        }).userMessage
                                   }
                                 </p>
                               </>

@@ -10,6 +10,7 @@ import {
 import {
   JobDiscoveryTargetSchema,
   SavedJobSchema,
+  JobSearchCampaignSchema,
   type BrowserSessionState,
   type JobSearchPreferences,
   type SavedJob,
@@ -137,6 +138,8 @@ function createJobs(count = JOB_COUNT): SavedJob[] {
 
 function renderScreen(options?: {
   jobs?: readonly SavedJob[];
+  campaigns?: Parameters<typeof DiscoveryScreen>[0]["campaigns"];
+  activeCampaignId?: string;
   onSelectJob?: (jobId: string) => void;
   searchPreferences?: JobSearchPreferences;
   selectedJob?: SavedJob | null;
@@ -147,6 +150,10 @@ function renderScreen(options?: {
       <DiscoveryScreen
         actionState={{ message: null }}
         activeRun={null}
+        {...(options?.campaigns ? { campaigns: options.campaigns } : {})}
+        {...(options?.activeCampaignId
+          ? { activeCampaignId: options.activeCampaignId }
+          : {})}
         browserSession={browserSession}
         discoverySessions={[]}
         isBrowserSessionPending={false}
@@ -362,4 +369,29 @@ describe("DiscoveryScreen inspector sync across pagination and search", () => {
       "true",
     );
   });
+});
+
+it("keeps the initial filtered row and inspector together", async () => {
+  const jobs = createJobs(2);
+  jobs[1]!.workMode = ["hybrid"];
+  const view = renderScreen({
+    jobs,
+    selectedJob: jobs[0]!,
+    activeCampaignId: "sync-plan",
+  });
+  fireEvent.click(screen.getByText("Filters"));
+  fireEvent.click(screen.getByRole("checkbox", { name: "Hybrid" }));
+  await waitFor(() =>
+    expect(detailProbe.latest?.selectedJob?.id).toBe(jobs[1]!.id),
+  );
+  expect(getResultButton(jobs[1]!.id).getAttribute("aria-current")).toBe(
+    "true",
+  );
+  // A parent remount must not reset the inspector to the hidden requested job.
+  view.unmount();
+  renderScreen({ jobs, selectedJob: jobs[0]!, activeCampaignId: "sync-plan" });
+  expect(detailProbe.latest?.selectedJob?.id).toBe(jobs[1]!.id);
+  expect(getResultButton(jobs[1]!.id).getAttribute("aria-current")).toBe(
+    "true",
+  );
 });
