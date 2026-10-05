@@ -1,9 +1,6 @@
 // @vitest-environment jsdom
 
-import type {
-  BrowserSessionState,
-  JobFinderSettings,
-} from "@nordri/contracts";
+import type { BrowserSessionState, JobFinderSettings } from "@nordri/contracts";
 import { ApplicationCrmSettingsSchema } from "@nordri/contracts";
 import {
   act,
@@ -237,7 +234,32 @@ describe("SettingsScreen information architecture", () => {
     ).toBe(`${SETTINGS_SUBNAV_SCROLL_OFFSET_FALLBACK_PX}px`);
   });
 
-  it("keeps the subnav sticky and wrap-capable, and raises the fallback clearance above the old fixed offset", () => {
+  it("styles the section links like the Profile tabs: an icon each and an underline on the current one", () => {
+    render(
+      <MemoryRouter>
+        <SettingsScreen {...baseProps} />
+      </MemoryRouter>,
+    );
+
+    const nav = screen.getByRole("navigation", {
+      name: "Settings sections",
+    });
+    const links = within(nav).getAllByRole("link");
+    for (const link of links) {
+      expect(link.querySelector("svg[aria-hidden='true']")).not.toBeNull();
+      expect(link.className).toContain("text-(length:--text-body)");
+      // No filled box for the current section any more.
+      expect(link.className).not.toContain("bg-(--nav-active-surface)");
+    }
+    const current = links.find(
+      (link) => link.getAttribute("aria-current") === "location",
+    );
+    expect(current?.textContent).toBe("App & device");
+    expect(current?.className).toContain("after:bg-primary");
+    expect(current?.className).toContain("after:opacity-100");
+  });
+
+  it("keeps the subnav sticky as one sideways-scrolling row, and raises the fallback clearance above the old fixed offset", () => {
     render(
       <MemoryRouter>
         <SettingsScreen {...baseProps} />
@@ -250,7 +272,6 @@ describe("SettingsScreen information architecture", () => {
     for (const token of [
       "sticky",
       "top-0",
-      "flex-wrap",
       "z-30",
       // Opaque, with an edge: content must never be visible through the
       // sticky band or appear sliced by it.
@@ -259,6 +280,12 @@ describe("SettingsScreen information architecture", () => {
     ]) {
       expect(nav.className).toContain(token);
     }
+    // One row like the Profile section tabs: it scrolls sideways rather than
+    // wrapping, without a scrollbar drawn under the tabs.
+    const row = nav.querySelector("[data-settings-subnav-row]");
+    expect(row?.className).toContain("overflow-x-auto");
+    expect(row?.className).toContain("[scrollbar-width:none]");
+    expect(row?.className).not.toContain("flex-wrap");
     expect(nav.className).not.toContain("bg-(--background)/95");
     expect(nav.className).not.toContain("backdrop-blur");
 
@@ -585,9 +612,7 @@ describe("SettingsScreen section anchor navigation", () => {
     });
     render(
       <MemoryRouter
-        initialEntries={[
-          "/job-finder/settings#settings-application-authority",
-        ]}
+        initialEntries={["/job-finder/settings#settings-application-authority"]}
       >
         <SettingsScreen {...baseProps} />
       </MemoryRouter>,

@@ -10,6 +10,16 @@ import type {
   UpdateWorkspaceBehaviorInput,
 } from "@nordri/contracts";
 import { ApplicationCrmSettingsSchema } from "@nordri/contracts";
+import {
+  Activity,
+  AppWindow,
+  MonitorSmartphone,
+  Palette,
+  Send,
+  Sparkles,
+  SquareKanban,
+  Trash2,
+} from "lucide-react";
 import type { CSSProperties, MouseEvent } from "react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
@@ -51,6 +61,7 @@ const settingsSections = [
   {
     headingId: "settings-app-device-heading",
     href: "#settings-app-device",
+    icon: MonitorSmartphone,
     id: "settings-app-device",
     label: "App & device",
     tone: "default",
@@ -58,6 +69,7 @@ const settingsSections = [
   {
     headingId: "settings-ai-behavior-heading",
     href: "#settings-ai-behavior",
+    icon: Sparkles,
     id: "settings-ai-behavior",
     label: SETTINGS_AI_BEHAVIOR_LABEL,
     tone: "default",
@@ -65,6 +77,7 @@ const settingsSections = [
   {
     headingId: "settings-application-defaults-heading",
     href: "#settings-application-defaults",
+    icon: Palette,
     id: "settings-application-defaults",
     label: SETTINGS_RESUME_LOOK_LABEL,
     tone: "default",
@@ -72,6 +85,7 @@ const settingsSections = [
   {
     headingId: "settings-application-authority-heading",
     href: "#settings-application-authority",
+    icon: Send,
     id: "settings-application-authority",
     label: SETTINGS_APPLICATION_AUTHORITY_LABEL,
     tone: "default",
@@ -79,6 +93,7 @@ const settingsSections = [
   {
     headingId: "settings-workspace-behavior-heading",
     href: "#settings-workspace-behavior",
+    icon: AppWindow,
     id: "settings-workspace-behavior",
     label: SETTINGS_WORKSPACE_BEHAVIOR_LABEL,
     tone: "default",
@@ -86,6 +101,7 @@ const settingsSections = [
   {
     headingId: "settings-tracker-heading",
     href: "#settings-tracker",
+    icon: SquareKanban,
     id: "settings-tracker",
     label: "Tracker",
     tone: "default",
@@ -93,6 +109,7 @@ const settingsSections = [
   {
     headingId: "settings-diagnostics-heading",
     href: "#settings-diagnostics",
+    icon: Activity,
     id: "settings-diagnostics",
     label: "Diagnostics",
     tone: "default",
@@ -100,6 +117,7 @@ const settingsSections = [
   {
     headingId: "settings-danger-zone-heading",
     href: "#settings-danger-zone",
+    icon: Trash2,
     id: "settings-danger-zone",
     label: "Delete everything",
     // The only section that can destroy work says so before it is opened.
@@ -122,6 +140,23 @@ export const SETTINGS_SUBNAV_SCROLL_OFFSET_FALLBACK_PX =
   SETTINGS_SUBNAV_VERTICAL_PADDING_PX +
   SETTINGS_SUBNAV_BOTTOM_GAP_PX;
 export const SETTINGS_SUBNAV_OFFSET_VARIABLE = "--settings-subnav-offset";
+
+const SUBNAV_EDGE_FADE = "2.5rem";
+
+function subnavEdgeMask(edges: {
+  after: boolean;
+  before: boolean;
+}): CSSProperties | undefined {
+  if (!edges.before && !edges.after) return undefined;
+  const start = edges.before
+    ? `transparent, black ${SUBNAV_EDGE_FADE}`
+    : "black";
+  const end = edges.after
+    ? `black calc(100% - ${SUBNAV_EDGE_FADE}), transparent`
+    : "black";
+  const mask = `linear-gradient(to right, ${start}, ${end})`;
+  return { maskImage: mask, WebkitMaskImage: mask };
+}
 
 // The unsaved-changes bar is sticky to the bottom of the same scroller, so the
 // last card needs at least the bar's own height of clearance beneath it —
@@ -184,6 +219,22 @@ export function SettingsScreen(props: {
   } = props;
 
   const subnavRef = useRef<HTMLElement | null>(null);
+  const subnavRowRef = useRef<HTMLDivElement | null>(null);
+  const [subnavEdges, setSubnavEdges] = useState({
+    after: false,
+    before: false,
+  });
+  const measureSubnavEdges = () => {
+    const row = subnavRowRef.current;
+    if (!row) return;
+    const before = row.scrollLeft > 1;
+    const after = row.scrollLeft + row.clientWidth < row.scrollWidth - 1;
+    setSubnavEdges((current) =>
+      current.before === before && current.after === after
+        ? current
+        : { after, before },
+    );
+  };
   const unsavedBarRef = useRef<HTMLDivElement | null>(null);
   const [sectionScrollOffsetPx, setSectionScrollOffsetPx] = useState(
     SETTINGS_SUBNAV_SCROLL_OFFSET_FALLBACK_PX,
@@ -281,6 +332,9 @@ export function SettingsScreen(props: {
     }
 
     const measureSubnavOffset = () => {
+      // The row inside resizes with the band, so its faded edges are
+      // re-measured here too.
+      measureSubnavEdges();
       const height = subnav.getBoundingClientRect().height;
       // Unmeasured layouts (jsdom, pre-first-paint) report 0px; keep the
       // raised wrap-aware floor so a wrapped subnav can never cover the
@@ -301,6 +355,24 @@ export function SettingsScreen(props: {
     observer.observe(subnav);
     return () => observer.disconnect();
   }, []);
+
+  // The row scrolls sideways when it is wider than the page, so the current
+  // section's link is brought into view as the page scrolls. Only the row's
+  // own scrollLeft moves; the page's vertical scroll is never touched.
+  useEffect(() => {
+    const row = subnavRowRef.current;
+    const link = row?.querySelector<HTMLElement>('[aria-current="location"]');
+    if (row && link) {
+      const start = link.offsetLeft - row.offsetLeft;
+      const end = start + link.offsetWidth;
+      if (start < row.scrollLeft) {
+        row.scrollLeft = start;
+      } else if (end > row.scrollLeft + row.clientWidth) {
+        row.scrollLeft = end - row.clientWidth;
+      }
+    }
+    measureSubnavEdges();
+  }, [activeSectionId]);
 
   useLayoutEffect(() => {
     const bar = unsavedBarRef.current;
@@ -412,41 +484,62 @@ export function SettingsScreen(props: {
         // header height a second time, so at scroll 0 the band was pushed 33px
         // past its own flow box and painted over the first card's top border,
         // padding and heading. Do not reintroduce a header-height offset here.
-        className="sticky top-0 z-30 -mx-1 flex flex-wrap items-center gap-1 border-b border-(--surface-panel-border) bg-(--background) px-1 py-1.5 shadow-[0_6px_16px_rgba(0,0,0,0.12)]"
+        //
+        // The links use the same look as the Profile section tabs (the shared
+        // `line` tabs): body-size labels with an icon, a hover fill, and the
+        // primary underline on the current section. One row that scrolls
+        // sideways, like Profile's strip, so the band never wraps into a
+        // second row of underlined tabs.
+        className="sticky top-0 z-30 -mx-1 min-w-0 border-b border-(--surface-panel-border) bg-(--background) px-1 shadow-[0_6px_16px_rgba(0,0,0,0.12)]"
         ref={subnavRef}
       >
-        {settingsSections.map((section) => {
-          const isActive = section.id === activeSectionId;
-          const isDestructive = section.tone === "destructive";
+        <div
+          // The row hides its scrollbar (it sat under the tabs like a second
+          // rule) and fades the edge that has more sections past it instead.
+          // `min-w-0` here and on the band keeps the row's full width from
+          // stretching the page; only the row scrolls.
+          className="flex min-w-0 items-center gap-1 overflow-x-auto overflow-y-hidden [scrollbar-width:none]"
+          data-settings-subnav-row
+          data-more-after={subnavEdges.after || undefined}
+          data-more-before={subnavEdges.before || undefined}
+          onScroll={measureSubnavEdges}
+          ref={subnavRowRef}
+          style={subnavEdgeMask(subnavEdges)}
+        >
+          {settingsSections.map((section) => {
+            const isActive = section.id === activeSectionId;
+            const isDestructive = section.tone === "destructive";
 
-          return (
-            <a
-              // A transparent border on every state keeps the box metrics
-              // identical, so the current item never nudges its neighbours.
-              aria-current={isActive ? "location" : undefined}
-              className={cn(
-                "inline-flex min-h-10 min-w-10 items-center justify-center rounded-(--radius-button) border px-3 text-xs font-medium whitespace-nowrap transition-colors outline-none focus-visible:ring-[3px] focus-visible:ring-ring/40",
-                isActive &&
-                  !isDestructive &&
-                  "border-(--nav-active-surface) bg-(--nav-active-surface) text-(--nav-active-foreground) shadow-[inset_0_-2px_0_0_var(--nav-active-bar)]",
-                isActive &&
-                  isDestructive &&
-                  "border-(--destructive) bg-(--destructive)/18 text-(--destructive) shadow-[inset_0_-2px_0_0_var(--destructive)]",
-                !isActive &&
-                  !isDestructive &&
-                  "border-transparent text-foreground-soft hover:border-(--surface-panel-border) hover:bg-secondary hover:text-foreground focus-visible:text-foreground",
-                !isActive &&
-                  isDestructive &&
-                  "border-transparent text-(--destructive) hover:border-(--destructive) hover:bg-(--destructive)/10",
-              )}
-              href={section.href}
-              key={section.id}
-              onClick={handleSectionAnchorClick}
-            >
-              {section.label}
-            </a>
-          );
-        })}
+            return (
+              <a
+                aria-current={isActive ? "location" : undefined}
+                className={cn(
+                  "relative inline-flex min-h-10 min-w-10 flex-none items-center justify-center gap-2 rounded-t-(--radius-small) px-3.5 py-2.5 text-(length:--text-body) font-medium whitespace-nowrap transition-colors outline-none focus-visible:ring-[3px] focus-visible:ring-ring/40 [&_svg]:size-4 [&_svg]:shrink-0",
+                  // The current-section underline, drawn like the line tabs'.
+                  "after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:opacity-0 after:transition-opacity",
+                  isActive &&
+                    !isDestructive &&
+                    "text-foreground after:bg-primary after:opacity-100",
+                  isActive &&
+                    isDestructive &&
+                    "text-(--destructive) after:bg-(--destructive) after:opacity-100",
+                  !isActive &&
+                    !isDestructive &&
+                    "text-muted-foreground hover:bg-secondary hover:text-foreground focus-visible:text-foreground",
+                  !isActive &&
+                    isDestructive &&
+                    "text-(--destructive) hover:bg-(--destructive)/10",
+                )}
+                href={section.href}
+                key={section.id}
+                onClick={handleSectionAnchorClick}
+              >
+                <section.icon aria-hidden="true" />
+                {section.label}
+              </a>
+            );
+          })}
+        </div>
       </nav>
 
       <SettingsDirtySectionsProvider registry={registry}>
