@@ -1862,3 +1862,30 @@ it("keeps long German listing words inside the shrinking detail column", () => {
   );
   expect(listing.textContent).toContain(text);
 });
+
+it("wraps a long employer name in the Companies button instead of widening the column", () => {
+  cleanup();
+  render(
+    <MemoryRouter>
+      <DiscoveryDetailPanel
+        applicationRecords={[]}
+        discoveryTargets={[]}
+        isJobPending={() => false}
+        onDismissJob={vi.fn()}
+        onOpenApplication={vi.fn()}
+        onOpenCompany={vi.fn()}
+        onQueueJob={vi.fn()}
+        selectedJob={
+          {
+            ...baseSelectedJob,
+            company: "Nordlicht Logistik Speditionsgesellschaft mbH",
+          } as SavedJob
+        }
+        selectedJobCompanyId="company_long"
+      />
+    </MemoryRouter>,
+  );
+  const button = screen.getByRole("button", { name: /in Companies$/ });
+  expect(button.className).toContain("whitespace-normal");
+  expect(button.className).toContain("max-w-full");
+});

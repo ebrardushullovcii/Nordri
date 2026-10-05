@@ -732,6 +732,9 @@ export function ApplicationsDetailPanel({
                         throw new Error(
                           "The application page could not be opened. Prepare it again.",
                         );
+                      // The page is focused, but the browser may be minimized:
+                      // show it, as Open the Job Finder browser does.
+                      void window.nordri?.browser?.command({ type: "open" });
                     }
                   : undefined
               }

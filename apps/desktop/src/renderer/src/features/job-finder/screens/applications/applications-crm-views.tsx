@@ -947,7 +947,9 @@ export function ApplicationsCrmViews(props: {
                           ? "w-[8.5rem] whitespace-nowrap"
                           : column === "tags"
                             ? "w-20 whitespace-nowrap"
-                            : "w-[5.5rem] whitespace-nowrap",
+                            : // Date columns: "Oct 3, 12:37 PM" and the
+                              // "Next reminder" heading fit without cutting.
+                              "w-[7.5rem] whitespace-nowrap",
                     )}
                     key={column}
                     scope="col"

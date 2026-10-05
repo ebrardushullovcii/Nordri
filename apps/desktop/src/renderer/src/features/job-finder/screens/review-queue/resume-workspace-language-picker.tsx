@@ -31,7 +31,12 @@ export function ResumeWorkspaceLanguagePicker(props: {
       ? [...LANGUAGES, props.language]
       : LANGUAGES;
   return (
-    <div className="flex flex-wrap items-center gap-2 text-sm">
+    // Sits between the header panel and the status strip: the same 8px gap
+    // the other rows here use, and inset to line up with the header's text.
+    <div
+      className="mt-2 flex flex-wrap items-center gap-2 px-5 text-sm"
+      data-resume-language-picker
+    >
       <label className="flex items-center gap-2">
         Resume language
         <select

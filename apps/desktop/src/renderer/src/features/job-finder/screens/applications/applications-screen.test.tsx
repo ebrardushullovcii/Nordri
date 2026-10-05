@@ -221,6 +221,11 @@ describe("ApplicationsScreen", () => {
         />
       </MemoryRouter>,
     );
+    const command = vi.fn(() => Promise.resolve());
+    vi.stubGlobal("nordri", {
+      ...(window as unknown as { nordri?: object }).nordri,
+      browser: { command },
+    });
     fireEvent.click(
       await screen.findByRole("button", { name: "Open this page" }),
     );
@@ -233,6 +238,9 @@ describe("ApplicationsScreen", () => {
         destinationUrl: url,
       }),
     );
+    // The bound tab is focused first, then the browser is shown (it may be
+    // minimized while the person reads the record).
+    await waitFor(() => expect(command).toHaveBeenCalledWith({ type: "open" }));
   });
 
   it("hides completed run furniture after all records are marked Applied", () => {

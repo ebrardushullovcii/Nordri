@@ -88,3 +88,18 @@ test("an older English draft does not claim to know the German listing's languag
     screen.queryByRole("option", { name: "Listing language — English" }),
   ).toBeNull();
 });
+
+test("keeps a gap below the header and lines up with its text", () => {
+  render(
+    <ResumeWorkspaceLanguagePicker
+      disabled={false}
+      language={null}
+      listingLanguage="German"
+      writtenLanguage="German"
+      onWrite={vi.fn()}
+    />,
+  );
+  const row = document.querySelector("[data-resume-language-picker]");
+  expect(row?.className).toContain("mt-2");
+  expect(row?.className).toContain("px-5");
+});

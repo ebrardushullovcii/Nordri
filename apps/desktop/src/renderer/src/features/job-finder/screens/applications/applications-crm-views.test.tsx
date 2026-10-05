@@ -1055,7 +1055,7 @@ test("reserves one-line stage and narrow dates while truncating role and employe
   expect(screen.getByRole("table").className).toContain("table-fixed");
   expect(
     screen.getByRole("columnheader", { name: "Updated" }).className,
-  ).toContain("w-[5.5rem]");
+  ).toContain("w-[7.5rem]");
   const job = screen.getByRole("button", {
     name: "Senior Learning Coordinator",
   });

@@ -1226,7 +1226,9 @@ export function DiscoveryDetailPanel({
                     screen, so it sits below the listing rather than above it. */}
                 {selectedJobCompanyId && onOpenCompany && employerDisplay ? (
                   <Button
-                    className="justify-self-start"
+                    // A long employer name wraps inside the column instead of
+                    // widening it and clipping the listing text beside it.
+                    className="h-auto min-h-8 max-w-full justify-self-start whitespace-normal py-1.5 text-left"
                     onClick={() => onOpenCompany(selectedJobCompanyId)}
                     size="sm"
                     type="button"
