@@ -247,6 +247,7 @@ export const assistantChangeTargetValues = [
   "search_preferences",
   "settings",
   "resume_draft",
+  "search_plan",
 ] as const;
 export const AssistantChangeTargetSchema = z.enum(assistantChangeTargetValues);
 export type AssistantChangeTarget = z.infer<typeof AssistantChangeTargetSchema>;

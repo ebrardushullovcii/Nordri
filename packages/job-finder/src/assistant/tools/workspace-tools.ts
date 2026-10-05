@@ -9,7 +9,10 @@ import {
 import { z } from "zod";
 
 import { AssistantToolError, argText, defineTool, json } from "../tool-kit";
-import { getAssistantSearchReadiness } from "../prompt";
+import {
+  getAssistantSavedSearch,
+  getAssistantSearchReadiness,
+} from "../prompt";
 import {
   allJobs,
   compactApplication,
@@ -68,8 +71,8 @@ export const getWorkspaceSummaryTool = defineTool({
         searchPlanCapabilities: {
           namedPlans: true,
           recurringSchedules: true,
-          assistantCanCreate: false,
-          manageWith: "open_in_app",
+          assistantCanCreate: true,
+          manageWith: "save_search_plan",
           screen: "search_plans",
         },
         profile: {
@@ -90,6 +93,7 @@ export const getWorkspaceSummaryTool = defineTool({
           jobIds: run.jobIds,
         })),
         search: {
+          latestSavedSearch: getAssistantSavedSearch(snapshot),
           state: snapshot.discoveryRunState,
           activeRunId: snapshot.activeDiscoveryRun?.id ?? null,
           running: runningSearchState(snapshot),
@@ -683,11 +687,11 @@ export const reportMissingCapabilityTool = defineTool({
   name: "report_missing_capability",
   group: "workspace",
   description:
-    "Records that the person asked for something none of your tools can do, so it can be added. Then tell the person plainly what you could not do; never claim it was done.",
+    "Records an action the person asked you to perform that none of your tools can do, so it can be added. This is a write, not a lookup. Never call for advice-only questions, privacy explanations, or when the person says not to change anything. Then tell the person plainly what you could not do; never claim it was done.",
   parameters: json.object({ description: json.string() }, ["description"]),
   input: z.object({ description: z.string().trim().min(1).max(1_000) }),
   label: () => "Noting something I cannot do yet",
-  effect: "read",
+  effect: "local_write",
   async execute(input, { session }) {
     await session.reportGap(input.description);
     return { summary: "Recorded." };
@@ -711,7 +715,7 @@ export const openInAppTool = defineTool({
   name: "open_in_app",
   group: "workspace",
   description:
-    "Opens a screen or a record in the app for the person. Use screen tracker for saved interviews, reminders and stages, optionally with applicationRecordId. When asked to create or schedule a search plan, open search_plans in the same reply and explain that named plans and recurring schedules exist there, but your tools cannot create or schedule them directly. Otherwise open screens only when asked to see them.",
+    "Opens a screen or a record in the app for the person. Use screen tracker for saved interviews, reminders and stages, optionally with applicationRecordId. Create or schedule a named search plan with save_search_plan, then open search_plans if they ask to see it. Open screens only when asked to see them.",
   parameters: json.object({
     screen: json.enumOf(Object.keys(APP_ROUTES)),
     jobId: json.string("Opens that job (its resume when resume is true)."),

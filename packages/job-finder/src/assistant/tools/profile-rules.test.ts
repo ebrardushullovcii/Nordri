@@ -579,7 +579,7 @@ describe("sidebar resume import outcomes", () => {
       )
       .catch((caught: unknown) => caught as Error);
     expect((error as Error).message).toContain("read_profile section review");
-    expect((error as Error).message).toContain("PDF, DOCX and TXT");
+    expect((error as Error).message).toContain("PDF, DOCX, TXT and Markdown");
     expect((error as Error).message).toContain(
       "PNG/JPG images are unsupported",
     );

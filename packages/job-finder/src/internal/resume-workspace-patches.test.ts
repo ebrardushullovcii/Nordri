@@ -406,3 +406,55 @@ describe("resume workspace patch generated-claim provenance", () => {
     ).toBe(true);
   });
 });
+
+describe("R3-118 seasonal date wording", () => {
+  test("restores the summers qualifier without changing dates or generated claim origins", () => {
+    const draft = createDraft();
+    Object.assign(draft.sections[0]!.entries[0]!, {
+      dateRange: "June 2019 – August 2022",
+      startDate: "June 2019",
+      endDate: "August 2022",
+      isCurrent: false,
+    });
+    const entry = draft.sections[0]!.entries[0]!;
+    const next = applyPatchToResumeDraft({
+      draft,
+      patch: createPatch({
+        operation: "replace_entry_date_range",
+        origin: "assistant",
+        newText: "June 2019 – August 2022 (summers)",
+      }),
+      updatedAt,
+    });
+    expect(next.sections[0]!.entries[0]).toEqual({
+      ...entry,
+      dateRange: "June 2019 – August 2022 (summers)",
+      updatedAt,
+    });
+    expect(next.sections[0]!.origin).toBe(draft.sections[0]!.origin);
+  });
+  test("rejects date wording edits without an entry or on locked content", () => {
+    const draft = createDraft();
+    expect(() =>
+      applyPatchToResumeDraft({
+        draft,
+        patch: createPatch({
+          operation: "replace_entry_date_range",
+          targetEntryId: null,
+        }),
+        updatedAt,
+      }),
+    ).toThrow("requires a target resume entry");
+    draft.sections[0]!.entries[0]!.locked = true;
+    expect(() =>
+      applyPatchToResumeDraft({
+        draft,
+        patch: createPatch({
+          operation: "replace_entry_date_range",
+          origin: "assistant",
+        }),
+        updatedAt,
+      }),
+    ).toThrow("locked resume content");
+  });
+});

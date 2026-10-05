@@ -59,8 +59,15 @@ export function compactJob(job: SavedJob | DiscoveryJobView) {
     fit: fitLabel(job),
     recommendation: job.matchAssessment.recommendation,
     postedAt: job.postedAt,
+    lastSeenAt: job.lastSeenAt,
+    lastVerifiedActiveAt: job.lastVerifiedActiveAt,
     salary: job.salaryText,
     url: job.applicationUrl ?? job.canonicalUrl,
+    listingUrl: job.canonicalUrl,
+    sourceIds:
+      "provenance" in job
+        ? [...new Set(job.provenance.map((entry) => entry.targetId))]
+        : [],
     listing:
       "listingActivity" in job && job.listingActivity
         ? job.listingActivity.status
@@ -74,6 +81,21 @@ export function jobEvidence(job: SavedJob | DiscoveryJobView) {
     reasons: job.matchAssessment.reasons.slice(0, 6),
     gaps: job.matchAssessment.gaps.slice(0, 6),
     rationale: job.matchAssessment.recommendationRationale,
+    locationReach: job.matchAssessment.locationReach,
+    remoteGeographies: job.screeningHints.remoteGeographies,
+    sponsorshipText: job.screeningHints.sponsorshipText,
+    judgedAt: job.matchAssessment.judgment?.judgedAt ?? null,
+    minimumQualifications: job.minimumQualifications.slice(0, 15),
+    preferredQualifications: job.preferredQualifications.slice(0, 15),
+    requirements: job.matchAssessment.requirements
+      .slice(0, 20)
+      .map((requirement) => ({
+        label: requirement.label,
+        importance: requirement.importance,
+        status: requirement.status,
+        jobEvidence: requirement.jobEvidence,
+        explanation: requirement.explanation,
+      })),
     keySkills: job.keySkills.slice(0, 20),
     seniority: job.seniority,
     employmentType: job.employmentType,
@@ -86,10 +108,8 @@ export function jobDetail(job: SavedJob | DiscoveryJobView) {
   return {
     ...jobEvidence(job),
     summary: job.summary,
-    description: job.description.slice(0, 6_000),
+    description: job.description,
     responsibilities: job.responsibilities.slice(0, 15),
-    minimumQualifications: job.minimumQualifications.slice(0, 15),
-    preferredQualifications: job.preferredQualifications.slice(0, 15),
     benefits: job.benefits.slice(0, 10),
   };
 }

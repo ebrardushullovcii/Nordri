@@ -218,6 +218,7 @@ export const SaveJobSearchCampaignInputSchema = JobSearchCampaignSchema.omit({
   jobIds: true,
 }).extend({
   id: NonEmptyStringSchema.nullable().default(null),
+  expectedUpdatedAt: IsoDateTimeSchema.optional(),
 });
 export type SaveJobSearchCampaignInput = z.infer<
   typeof SaveJobSearchCampaignInputSchema

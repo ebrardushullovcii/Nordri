@@ -48,6 +48,7 @@ import {
   type ToggleCampaignRuleInput,
 } from "@nordri/contracts";
 
+import { createMonotonicTimestamp } from "./resume-draft-commit-support";
 import { countDiscoveryStrongMatches } from "../discovery-result-bands";
 import { deriveDiscoverySourceOutcome } from "../source-health";
 import {
@@ -1026,7 +1027,8 @@ export function createWorkspaceCampaignMethods(input: {
     async saveCampaign(
       rawCampaign: SaveJobSearchCampaignInput,
     ): Promise<JobFinderWorkspaceSnapshot> {
-      const campaignInput = SaveJobSearchCampaignInputSchema.parse(rawCampaign);
+      const { expectedUpdatedAt, ...campaignInput } =
+        SaveJobSearchCampaignInputSchema.parse(rawCampaign);
       // The whole collection is rewritten from the state read here, so the
       // read-modify-write must hold the campaign transition or a concurrent
       // scheduled-run commit (run facts, rule effects, notifications, active
@@ -1055,6 +1057,14 @@ export function createWorkspaceCampaignMethods(input: {
             if (campaignInput.id && !existing) {
               throw new Error(
                 "The requested job search campaign no longer exists.",
+              );
+            }
+            if (
+              expectedUpdatedAt &&
+              existing?.updatedAt !== expectedUpdatedAt
+            ) {
+              throw new Error(
+                "This search plan changed while it was being edited. Read it again before saving.",
               );
             }
             if (
@@ -1100,7 +1110,7 @@ export function createWorkspaceCampaignMethods(input: {
                   sourceTargetIds: normalizedSourceTargetIds,
                   id: existing.id,
                   createdAt: existing.createdAt,
-                  updatedAt: now,
+                  updatedAt: createMonotonicTimestamp(existing.updatedAt),
                   progress: existing.progress,
                   history: [
                     {
@@ -1286,6 +1296,11 @@ export function createWorkspaceCampaignMethods(input: {
           (candidate) => candidate.id === request.campaignId,
         );
         if (!campaign) return false;
+        if (
+          request.expectedUpdatedAt &&
+          campaign.updatedAt !== request.expectedUpdatedAt
+        )
+          return false;
         const remaining = state.campaigns.filter(
           (candidate) => candidate.id !== campaign.id,
         );

@@ -163,13 +163,11 @@ it("exposes the existing schedule screen and answers questions in prose", async 
     searchPlanCapabilities: {
       namedPlans: true,
       recurringSchedules: true,
-      assistantCanCreate: false,
+      assistantCanCreate: true,
       screen: "search_plans",
     },
   });
-  expect(openInAppTool.description).toContain(
-    "open search_plans in the same reply",
-  );
+  expect(openInAppTool.description).toContain("save_search_plan");
   await openInAppTool.execute(
     { screen: "search_plans" },
     { service: workspaceService, session, ports },

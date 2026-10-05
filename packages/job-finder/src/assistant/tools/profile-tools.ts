@@ -57,7 +57,7 @@ export const PROFILE_EDITING_RULES = [
   "Setup readiness comes from the setup data returned by read_profile and edit_profile. Before saying setup is finished, check its blockers and required review items. Fill a missing headline from the person's stated target focus when setting up their profile; do not invent past experience. Tell them any remaining required step plainly; a phone number is not required when an email is saved. When the person asks to finish a ready setup, call finish_profile_setup; it saves completion without starting a search.",
   "For setup eligibility, ask only for setup.missingWorkEligibilityAnswers: where the person is legally authorized to work and whether employer visa sponsorship is needed. Existing explicit saved answers count; never ask for an answered item again. Relocation, notice period, availability, remote eligibility and work-mode preferences are optional and must never be described as required setup answers.",
   "For a scanned resume, read_profile section review returns the visual extraction's values and evidence for both saved and pending details, even when read_document has no text. Inspect those results before saying the scan is unreadable. Zero pending suggestions means none needs review; inspect the current import outcome counts and saved profile before reporting what was extracted. Use resolve_import_suggestion for explicit authorized, unambiguous confirmations; leave conflicts or uncertain values for the person rather than accepting every scan suggestion automatically.",
-  "Resume import supports PDF, DOCX and TXT, including scanned PDFs through visual extraction. Standalone PNG/JPG images are not supported resume imports. For an unsupported or empty import, ask for a supported file or pasted text, not another photo.",
+  "Resume import supports PDF, DOCX, TXT and Markdown. Scanned image PDFs have no readable text; visual extraction may read them when available but is not guaranteed. Standalone PNG/JPG images are not supported resume imports. For an unsupported or empty import, ask for a supported file or pasted text, not another photo.",
   'Exact shapes (field replacements take a value object of only the fields that change; set_resume_approach takes a scalar string): {"operation":"replace_identity_fields","value":{"headline":"Staff designer"}}; {"operation":"replace_profile_list_fields","value":{"skills":["Figma","Accessibility"]}} (send the whole new list); {"operation":"replace_profile_list_fields","value":{"targetRoles":["Frontend Engineer","Platform Engineer"]}}; {"operation":"remove_profile_list_entries","field":"skills","values":["Sketch"]}; {"operation":"replace_work_eligibility_fields","value":{"requiresVisaSponsorship":false}}; {"operation":"replace_professional_summary_fields","value":{"fullSummary":"…"}}; {"operation":"set_resume_approach","value":"aggressive"}; {"operation":"upsert_reusable_answer","record":{"kind":"other","label":"Street address","question":"What is your street address?","answer":"14 Fiction Lane"}}; {"operation":"upsert_experience_record","record":{"id":"<card id>","endDate":"2024-06","isCurrent":false}}; {"operation":"remove_experience_record","recordId":"<card id>"}.',
 ].join(" ");
 
@@ -1069,7 +1069,12 @@ export async function undoReceipt(
       .map((entry) => ({ ...entry, path: entry.path.slice(1) }));
   let undone: string[] = [];
   let conflicts: string[] = [];
-  if (receipt.target === "resume_draft") {
+  if (receipt.target === "search_plan") {
+    const { undoSearchPlanChange } = await import("./search-plan-tools");
+    const result = await undoSearchPlanChange(context, receipt);
+    undone = result.undoneLabels;
+    conflicts = result.conflictLabels;
+  } else if (receipt.target === "resume_draft") {
     const result = await service.undoAssistantResumeChange({
       jobId: receipt.targetId ?? "",
       entries: receipt.entries,
@@ -1187,7 +1192,7 @@ export const readDocumentTool = defineTool({
   name: "read_document",
   group: "files",
   description:
-    "Reads the text of one of the person's files by id (bounded). Resume import supports PDF, DOCX and TXT. A scanned PDF may have no text but have visual extraction evidence available in read_profile section review. Standalone PNG/JPG images are not supported resume imports; recommend a supported file or pasted text when unsupported or empty.",
+    "Reads the text of one of the person's files by id (bounded). Resume import supports PDF, DOCX, TXT and Markdown. Scanned image PDFs have no readable text; visual extraction may be available in read_profile section review, but is not guaranteed. Standalone PNG/JPG images are not supported resume imports; recommend a text-based file, pasted text or manual entry when unreadable.",
   parameters: json.object({ documentId: json.string() }, ["documentId"]),
   input: z.object({ documentId: Id }),
   label: () => "Reading a file",
@@ -1197,7 +1202,7 @@ export const readDocumentTool = defineTool({
     if (text === null) {
       throw new AssistantToolError(
         "not_found",
-        "That file has no readable text. For an imported scanned PDF, inspect read_profile section review for extracted values and visual evidence. Resume import supports PDF, DOCX and TXT; standalone PNG/JPG images are unsupported. If no usable extraction exists, use a supported file or pasted text.",
+        "That file has no readable text. For an imported scanned PDF, inspect read_profile section review for extracted values and visual evidence. Resume import supports PDF, DOCX, TXT and Markdown; standalone PNG/JPG images are unsupported. If no usable extraction exists, use a supported file or pasted text.",
       );
     }
     return {
@@ -1211,7 +1216,7 @@ export const importResumeTool = defineTool({
   name: "import_resume",
   group: "files",
   description:
-    "Imports a PDF, DOCX or TXT file by id as the person's resume: its details fill the profile, with suggestions left for review. Scanned PDFs use visual extraction; standalone PNG/JPG images are unsupported resume imports. Empty or unsupported imports need a supported file or pasted text. Only when the person asks to use the file for their profile.",
+    "Imports a PDF, DOCX, TXT or Markdown file by id as the person's resume: usable details fill the profile, with suggestions left for review. Scanned image PDFs have no readable text; visual extraction may read them when available, but success is not guaranteed. Check the result before claiming anything was extracted. Standalone PNG/JPG images are unsupported resume imports. Empty or unsupported imports need a text-based file, pasted text or manual entry. Only when the person asks to use the file for their profile.",
   parameters: json.object({ documentId: json.string() }, ["documentId"]),
   input: z.object({ documentId: Id }),
   label: () => "Importing the resume into your profile",

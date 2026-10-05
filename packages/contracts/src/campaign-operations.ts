@@ -293,6 +293,7 @@ export type ProjectCampaignRuleFunnelInput = z.infer<
 export const DeleteJobSearchCampaignInputSchema = z
   .object({
     campaignId: NonEmptyStringSchema,
+    expectedUpdatedAt: IsoDateTimeSchema.optional(),
   })
   .strict();
 export type DeleteJobSearchCampaignInput = z.infer<

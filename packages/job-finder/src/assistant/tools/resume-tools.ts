@@ -265,7 +265,7 @@ export const editResumeTool = defineTool({
   name: "edit_resume",
   group: "resume",
   description:
-    "Makes targeted edits to one job's resume draft against the revision from read_resume: replace_section_text, replace_entry_summary, insert_bullet (text, anchorBulletId/position), update_bullet, remove_bullet, move_bullet, move_entry, toggle_include, set_lock, reset_entry_order. mode apply commits all edits as one change with Undo; mode suggest leaves a proposal. For a large rewrite use revise_resume instead. An edit on an Original job switches that job to an editable draft at its saved level by itself; say so in a sentence, don't ask first. Report what the result says was saved, not what you intended.",
+    "Makes targeted edits to one job's resume draft against the revision from read_resume: replace_section_text, replace_entry_summary, replace_entry_date_range (text restores factual date wording such as '(summers)' without changing startDate/endDate/isCurrent), insert_bullet (text, anchorBulletId/position), update_bullet, remove_bullet, move_bullet, move_entry, toggle_include, set_lock, reset_entry_order. mode apply commits all edits as one change with Undo; mode suggest leaves a proposal. Preserve seasonal qualifiers and use the person's words or saved evidence, never invent dates. For a large rewrite use revise_resume instead. An edit on an Original job switches that job to an editable draft at its saved level by itself; say so in a sentence, don't ask first. Report what the result says was saved, not what you intended.",
   parameters: json.object(
     {
       jobId: json.string(),
@@ -278,6 +278,7 @@ export const editResumeTool = defineTool({
             operation: json.enumOf([
               "replace_section_text",
               "replace_entry_summary",
+              "replace_entry_date_range",
               "insert_bullet",
               "update_bullet",
               "remove_bullet",

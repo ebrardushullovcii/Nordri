@@ -32,6 +32,8 @@ const QueryInput = z.object({
   workMode: z.enum(["remote", "hybrid", "onsite"]).optional(),
   postedWithinDays: z.number().int().min(1).max(365).optional(),
   onlyIds: z.array(Id).max(3000).optional(),
+  sourceIds: z.array(Id).min(1).max(1_000).optional(),
+  listingOrigins: z.array(z.string().url()).min(1).max(200).optional(),
   sort: z.enum(["score", "recent"]).default("score"),
   limit: z.number().int().min(1).max(25).default(10),
   includeExcludedEmployers: z.boolean().default(false),
@@ -48,8 +50,21 @@ function filterJobs(
     .split(/\s+/u)
     .filter((word) => word.length > 1);
   const only = input.onlyIds ? new Set(input.onlyIds) : null;
+  const sources = input.sourceIds ? new Set(input.sourceIds) : null;
+  const origins = input.listingOrigins
+    ? new Set(input.listingOrigins.map((url) => new URL(url).origin))
+    : null;
   const filtered = jobs.filter((job) => {
     if (only && !only.has(job.id)) return false;
+    if (sources && !job.provenance.some((entry) => sources.has(entry.targetId)))
+      return false;
+    if (origins) {
+      try {
+        if (!origins.has(new URL(job.canonicalUrl).origin)) return false;
+      } catch {
+        return false;
+      }
+    }
     if (input.scope === "found" && job.status !== "discovered") return false;
     if (input.scope === "dismissed" && job.status !== "archived") return false;
     if (
@@ -94,6 +109,12 @@ export const queryJobsTool = defineTool({
     workMode: json.enumOf(["remote", "hybrid", "onsite"]),
     postedWithinDays: json.number(),
     onlyIds: json.ids("Restrict to these job ids."),
+    sourceIds: json.ids(
+      "Only jobs collected from these source IDs. Keep the person's source restriction when ranking or shortlisting.",
+    ),
+    listingOrigins: json.ids(
+      "Only listing URLs on these exact origins, including port, such as http://127.0.0.1:47950. For local-only picks use the requested local origin.",
+    ),
     sort: json.enumOf(["score", "recent"]),
     limit: json.number("Rows to show, at most 25."),
     includeExcludedEmployers: json.boolean(
@@ -133,7 +154,11 @@ export const queryJobsTool = defineTool({
     const hiddenExcluded = all.length - matches.length;
     const resultSet = await session.createResultSet({
       kind: "jobs",
-      label: `Jobs: ${input.scope}${input.text ? ` matching "${input.text}"` : ""}`,
+      label:
+        `Jobs: ${input.scope}${input.text ? ` matching "${input.text}"` : ""}${input.sourceIds ? `; sources ${input.sourceIds.join(", ")}` : ""}${input.listingOrigins ? `; listing origins ${input.listingOrigins.join(", ")}` : ""}`.slice(
+          0,
+          200,
+        ),
       itemIds: matches.map((job) => job.id),
       source: "tool_query",
     });
@@ -143,6 +168,10 @@ export const queryJobsTool = defineTool({
       data: {
         resultSetId: resultSet.id,
         total: matches.length,
+        sourceRestriction: {
+          sourceIds: input.sourceIds ?? null,
+          listingOrigins: input.listingOrigins ?? null,
+        },
         jobs: shown.map((job, index) => {
           const caveats = caveatsFor(job);
           return {
@@ -184,7 +213,7 @@ export const showJobsTool = defineTool({
   name: "show_jobs",
   group: "jobs",
   description:
-    "Shows the given saved jobs to the person as cards under your reply, in this order. Use it for the jobs your answer is about (a top three, the ones you shortlisted); it reads nothing new.",
+    "Shows the given saved jobs to the person as cards under your reply, in this order, and returns their current saved fit evidence from the same read. Use those fit labels in prose, replacing any earlier scores. Use it for the jobs your answer is about (a top three, the ones you shortlisted).",
   parameters: json.object(
     {
       jobIds: json.ids(),
@@ -200,7 +229,7 @@ export const showJobsTool = defineTool({
   effect: "read",
   async execute(input, { service, session }) {
     const snapshot = await service.getWorkspaceSnapshot();
-    const jobs = input.jobIds
+    const jobs = [...new Set(input.jobIds)]
       .map((jobId) => findJob(snapshot, jobId))
       .filter((job): job is NonNullable<typeof job> => job !== null);
     if (jobs.length === 0) {
@@ -214,6 +243,7 @@ export const showJobsTool = defineTool({
     });
     return {
       summary: `Showing ${plural(jobs.length, "job")} (result set ${resultSet.id}).`,
+      data: { resultSetId: resultSet.id, jobs: jobs.map(jobEvidence) },
       parts: [
         jobRowsPart({
           jobs,
@@ -825,14 +855,44 @@ export const updateSourcesTool = defineTool({
   name: "update_sources",
   group: "jobs",
   description:
-    "Adds job sources by address, or turns sources on or off by id. Added sources are on and searched at once; a check is optional.",
+    "Adds job sources by address, with optional custom names through namedSources, renames saved sources through renameSources, or turns sources on or off by id. Source names are supported (Profile > Job sources > Source name). Added sources are on and ready for searching; a check is optional.",
   parameters: json.object({
     addUrls: json.ids("Addresses to add."),
+    namedSources: json.array(
+      json.object(
+        {
+          url: json.string(),
+          label: json.string("The person's source name, such as the employer."),
+        },
+        ["url", "label"],
+      ),
+    ),
+    renameSources: json.array(
+      json.object({ sourceId: json.string(), label: json.string() }, [
+        "sourceId",
+        "label",
+      ]),
+    ),
     enableIds: json.ids(),
     disableIds: json.ids(),
   }),
   input: z.object({
     addUrls: z.array(z.string().trim().url()).max(200).default([]),
+    namedSources: z
+      .array(
+        z.object({
+          url: z.string().trim().url(),
+          label: z.string().trim().min(1).max(200),
+        }),
+      )
+      .max(200)
+      .optional(),
+    renameSources: z
+      .array(
+        z.object({ sourceId: Id, label: z.string().trim().min(1).max(200) }),
+      )
+      .max(500)
+      .optional(),
     enableIds: z.array(Id).max(500).default([]),
     disableIds: z.array(Id).max(500).default([]),
   }),
@@ -846,25 +906,55 @@ export const updateSourcesTool = defineTool({
         target.startingUrl.replace(/\/+$/u, ""),
       ),
     );
-    const additions = input.addUrls
-      .filter((url) => !existing.has(url.replace(/\/+$/u, "")))
-      .map((url) =>
+    const renames = new Map(
+      (input.renameSources ?? []).map((source) => [
+        source.sourceId,
+        source.label,
+      ]),
+    );
+    for (const id of renames.keys()) {
+      if (!preferences.discovery.targets.some((target) => target.id === id))
+        throw new AssistantToolError(
+          "not_found",
+          "One of the sources to rename is no longer saved. Nothing changed.",
+        );
+    }
+    const named = new Map(
+      (input.namedSources ?? []).map((source) => [
+        source.url.replace(/\/+$/u, ""),
+        source.label,
+      ]),
+    );
+    const additions = [
+      ...input.addUrls,
+      ...(input.namedSources ?? []).map((source) => source.url),
+    ].flatMap((url) => {
+      const key = url.replace(/\/+$/u, "");
+      if (existing.has(key)) return [];
+      existing.add(key);
+      return [
         JobDiscoveryTargetSchema.parse({
           id: session.createId("target"),
-          label: sourceLabel(url),
+          label: named.get(key) ?? sourceLabel(url),
           startingUrl: url,
           enabled: true,
           adapterKind: "auto",
         }),
-      );
+      ];
+    });
     const targets = [
-      ...preferences.discovery.targets.map((target) =>
-        input.enableIds.includes(target.id)
-          ? { ...target, enabled: true }
+      ...preferences.discovery.targets.map((target) => ({
+        ...target,
+        label:
+          renames.get(target.id) ??
+          named.get(target.startingUrl.replace(/\/+$/u, "")) ??
+          target.label,
+        enabled: input.enableIds.includes(target.id)
+          ? true
           : input.disableIds.includes(target.id)
-            ? { ...target, enabled: false }
-            : target,
-      ),
+            ? false
+            : target.enabled,
+      })),
       ...additions,
     ];
     session.assertCurrent();
@@ -874,12 +964,25 @@ export const updateSourcesTool = defineTool({
     });
     ports.publishWorkspaceUpdate();
     return {
-      summary: `Added ${plural(additions.length, "source")}; ${input.enableIds.length} turned on, ${input.disableIds.length} turned off.`,
+      summary: `Added ${plural(additions.length, "source")}; ${input.enableIds.length} turned on, ${input.disableIds.length} turned off.${targets.some((target) => preferences.discovery.targets.some((before) => before.id === target.id && before.label !== target.label)) ? " Updated source names." : ""}`,
       data: {
         added: additions.map((target) => ({
           id: target.id,
           url: target.startingUrl,
+          label: target.label,
         })),
+        renamed: targets
+          .filter((target) =>
+            preferences.discovery.targets.some(
+              (before) =>
+                before.id === target.id && before.label !== target.label,
+            ),
+          )
+          .map((target) => ({
+            id: target.id,
+            label: target.label,
+            url: target.startingUrl,
+          })),
       },
     };
   },

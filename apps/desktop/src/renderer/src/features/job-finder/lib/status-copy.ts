@@ -209,6 +209,7 @@ export const CANDIDATE_ASSET_RETENTION_LABELS = {
 export const RESUME_PATCH_OPERATION_LABELS = {
   replace_section_text: "Rewrite this section",
   replace_entry_summary: "Rewrite this summary",
+  replace_entry_date_range: "Change date wording",
   insert_bullet: "Add a bullet",
   update_bullet: "Reword a bullet",
   remove_bullet: "Remove a bullet",

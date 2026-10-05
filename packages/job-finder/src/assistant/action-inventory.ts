@@ -269,9 +269,15 @@ export const ACTION_INVENTORY: readonly ActionInventoryEntry[] = [
   {
     id: "campaigns.edit",
     screen: "Search plans",
-    action: "Create, edit or delete a plan, its rules and schedule",
+    action: "Create or edit a named plan and its schedule",
+    channels: ["job-finder:save-campaign"],
+    coverage: tools("list_search_plans", "save_search_plan"),
+  },
+  {
+    id: "campaigns.rules",
+    screen: "Search plans",
+    action: "Delete plans or edit their rules and funnel",
     channels: [
-      "job-finder:save-campaign",
       "job-finder:delete-campaign",
       "job-finder:save-campaign-rule",
       "job-finder:delete-campaign-rule",
@@ -279,7 +285,7 @@ export const ACTION_INVENTORY: readonly ActionInventoryEntry[] = [
       "job-finder:project-campaign-rule-funnel",
     ],
     coverage: excluded(
-      "Plan editing (rules, schedule, funnel) is not yet a tool; the assistant logs a gap with report_missing_capability.",
+      "Plan deletion, rules and funnel editing still use Search plans; Undo can remove a plan just created in chat.",
     ),
   },
   {

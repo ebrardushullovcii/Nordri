@@ -35,6 +35,7 @@ const TARGET_LABELS: Record<string, string> = {
   search_preferences: "Preferences",
   settings: "Settings",
   resume_draft: "Resume",
+  search_plan: "Search plan",
 };
 
 const RECORD_CHANGE_PATTERN = /^(?:Added|Removed) /u;
@@ -395,6 +396,46 @@ function PlanPart(props: {
   );
 }
 
+/** Repeated reads of the same jobs share one list; the latest read supplies fit. */
+export function consolidateJobLists(
+  parts: readonly AssistantMessagePart[],
+): AssistantMessagePart[] {
+  const result: AssistantMessagePart[] = [];
+  for (const part of parts) {
+    if (part.type !== "records" || part.kind !== "jobs") {
+      result.push(part);
+      continue;
+    }
+    const ids = new Set(part.rows.map((row) => row.id));
+    const previousIndex = result.findIndex(
+      (candidate) =>
+        candidate.type === "records" &&
+        candidate.kind === "jobs" &&
+        (candidate.rows.every((row) => ids.has(row.id)) ||
+          part.rows.every((row) =>
+            candidate.rows.some((saved) => saved.id === row.id),
+          )),
+    );
+    const previous = result[previousIndex];
+    if (previous?.type !== "records") {
+      result.push({
+        ...part,
+        rows: [...new Map(part.rows.map((row) => [row.id, row])).values()],
+      });
+      continue;
+    }
+    const rows = new Map(previous.rows.map((row) => [row.id, row]));
+    for (const row of part.rows) rows.set(row.id, row);
+    const larger = part.rows.length >= previous.rows.length ? part : previous;
+    result[previousIndex] = {
+      ...larger,
+      title: part.title ?? previous.title,
+      rows: [...rows.values()],
+    };
+  }
+  return result;
+}
+
 export function AssistantMessageParts(props: {
   message: AssistantMessage;
   actions: AssistantPartActions;
@@ -402,7 +443,7 @@ export function AssistantMessageParts(props: {
   const { message } = props;
   return (
     <div className="grid gap-2">
-      {message.parts.map((part, index) => {
+      {consolidateJobLists(message.parts).map((part, index) => {
         const key = `${message.id}_${index}`;
         switch (part.type) {
           case "text":

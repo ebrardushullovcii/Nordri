@@ -134,6 +134,7 @@ export type TailoredResumeCoverageMetadata = z.infer<
 export const resumePatchOperationValues = [
   "replace_section_text",
   "replace_entry_summary",
+  "replace_entry_date_range",
   "insert_bullet",
   "update_bullet",
   "remove_bullet",

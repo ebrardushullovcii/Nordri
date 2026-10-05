@@ -191,6 +191,7 @@ export function resumeProposalPreview(
     replace_section_text: "Rewrite",
     replace_section_bullets: "Replace achievements under",
     replace_entry_summary: "Rewrite the summary under",
+    replace_entry_date_range: "Restore the date wording under",
     insert_bullet: "Add an achievement under",
     update_bullet: "Rewrite an achievement under",
     remove_bullet: "Remove an achievement under",
@@ -205,7 +206,9 @@ export function resumeProposalPreview(
       ? section?.text
       : patch.operation === "replace_entry_summary"
         ? entry?.summary
-        : bullet?.text;
+        : patch.operation === "replace_entry_date_range"
+          ? entry?.dateRange
+          : bullet?.text;
   return {
     label: `${labels[patch.operation]} ${place}`.slice(0, 400),
     detail:
