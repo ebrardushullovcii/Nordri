@@ -85,6 +85,7 @@ test("per-turn field counts survive persistence without requiring them on older 
         fieldsAttempted: 5,
         fieldsFilled: 4,
         stepsAdvanced: 1,
+        uploadsAttached: 1,
       },
     ],
   };
@@ -112,6 +113,20 @@ test("steps advanced is optional for old records and rejects invalid counts", ()
       ApplyAgentTimingSchema.safeParse({
         ...timing,
         requests: [{ ...timing.requests[0], stepsAdvanced }],
+      }).success,
+    ).toBe(false);
+  }
+});
+
+test("uploads attached is optional for old records and rejects invalid counts", () => {
+  expect(
+    ApplyAgentTimingSchema.parse(timing).requests[0]?.uploadsAttached,
+  ).toBeUndefined();
+  for (const uploadsAttached of [-1, 0.5, Infinity]) {
+    expect(
+      ApplyAgentTimingSchema.safeParse({
+        ...timing,
+        requests: [{ ...timing.requests[0], uploadsAttached }],
       }).success,
     ).toBe(false);
   }

@@ -43,6 +43,7 @@ test("measures decisions, auxiliary checks, reads, writes, uploads and longest s
       fieldsAttempted: 0,
       fieldsFilled: 0,
       stepsAdvanced: 0,
+      uploadsAttached: 0,
     },
   ]);
   expect(snapshot.longestSteps[0]).toEqual({
@@ -171,6 +172,7 @@ test("field counts belong to their decision turn and snapshots do not change lat
   timing.onFieldAttempt();
   timing.onFieldFilled();
   timing.onStepAdvanced();
+  timing.onUploadAttached();
   const first = timing.snapshot();
   timing.onFieldAttempt(); // refused field
   await model.chatWithTools([], []); // auxiliary check is not a new turn
@@ -182,9 +184,22 @@ test("field counts belong to their decision turn and snapshots do not change lat
     fieldsAttempted: 1,
     fieldsFilled: 1,
     stepsAdvanced: 1,
+    uploadsAttached: 1,
   });
   expect(snapshot.requests).toMatchObject([
-    { turn: 1, fieldsAttempted: 3, fieldsFilled: 2, stepsAdvanced: 1 },
-    { turn: 2, fieldsAttempted: 0, fieldsFilled: 0, stepsAdvanced: 0 },
+    {
+      turn: 1,
+      fieldsAttempted: 3,
+      fieldsFilled: 2,
+      stepsAdvanced: 1,
+      uploadsAttached: 1,
+    },
+    {
+      turn: 2,
+      fieldsAttempted: 0,
+      fieldsFilled: 0,
+      stepsAdvanced: 0,
+      uploadsAttached: 0,
+    },
   ]);
 });

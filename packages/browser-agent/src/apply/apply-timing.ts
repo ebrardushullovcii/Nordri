@@ -59,6 +59,10 @@ export function createApplyTiming(now: () => Date) {
       const request = timing.requests.at(-1);
       if (request) request.stepsAdvanced = (request.stepsAdvanced ?? 0) + 1;
     },
+    onUploadAttached: () => {
+      const request = timing.requests.at(-1);
+      if (request) request.uploadsAttached = (request.uploadsAttached ?? 0) + 1;
+    },
     onFieldAttempt: () => {
       const request = timing.requests.at(-1);
       if (request) request.fieldsAttempted = (request.fieldsAttempted ?? 0) + 1;
@@ -106,6 +110,7 @@ export function createApplyTiming(now: () => Date) {
             fieldsAttempted: 0,
             fieldsFilled: 0,
             stepsAdvanced: 0,
+            uploadsAttached: 0,
           });
         } else timing.auxiliaryModelCalls += 1;
         try {

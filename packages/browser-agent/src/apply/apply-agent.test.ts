@@ -259,7 +259,14 @@ test("prose instructions separate candidate evidence from job requirements", () 
   expect(prompt).toContain(
     "EVERY field you can answer into ONE fill_fields call",
   );
-  expect(prompt).toContain("read it before handling uploads");
+  expect(prompt).toContain("read it before handling newly revealed fields");
+  expect(prompt).toContain("even on the first step");
+  expect(prompt).toContain("tool: upload and documentId");
+  expect(prompt).toContain("tool: click and ref");
+  expect(prompt).toContain("call finish once");
+  expect(createApplyUserPrompt(config(page()))).toContain(
+    "from the FIRST step",
+  );
   expect(prompt).toContain("include thenContinue");
   expect(prompt).toContain("Otherwise fill without continuing");
   expect(prompt).toContain("Never use thenContinue for final submit");
@@ -3029,7 +3036,7 @@ describe("fill_fields visible steps", () => {
     } satisfies LLMClient;
   }
 
-  test("six answerable steps take six fill decisions and a finish, with five steps advanced", async () => {
+  test("six answerable steps including a first-step resume take six fill decisions and a finish", async () => {
     const source = page();
     let step = 1;
     const showStep = () => {
@@ -3049,7 +3056,38 @@ describe("fill_fields visible steps", () => {
       ];
     };
     showStep();
+    source.controls.push({
+      ...field(3, "Resume / CV"),
+      inputType: "file",
+      required: true,
+    });
+    source.actions[0].disabled = true; // Upload enables this same Continue control.
     const { input, writes } = writable(source);
+    input.sources.documents = [
+      {
+        id: "synthetic_resume",
+        fileName: "synthetic.pdf",
+        mimeType: "application/pdf",
+        label: "Synthetic resume",
+        kind: "resume",
+        loadBytes: () => Promise.resolve(new Uint8Array([1, 2, 3])),
+      },
+    ];
+    input.hands.uploadFile = vi.fn(
+      (ref: string, file: Parameters<ApplyPageHands["uploadFile"]>[1]) => {
+        expect(ref).toBe("c3");
+        source.controls[3].value = file.name;
+        source.actions[0].disabled = false;
+        // A real upload commonly reveals a Remove button on the same step.
+        source.actions.push({
+          index: 1,
+          label: "Remove file",
+          visible: true,
+          disabled: false,
+        });
+        return Promise.resolve({ ok: true as const, observedValue: file.name });
+      },
+    );
     input.sources.profile.email = "robin@example.test";
     const click = vi.fn(() => {
       step += 1;
@@ -3063,6 +3101,14 @@ describe("fill_fields visible steps", () => {
         const check = supportedChecks(messages, definitions);
         if (check) return check;
         turns += 1;
+        if (turns === 1) {
+          const firstPage = messages.at(-1)?.content;
+          expect(firstPage).toContain("Step 1 of 6");
+          expect(firstPage).toContain(
+            "synthetic_resume: Synthetic resume (synthetic.pdf, application/pdf)",
+          );
+          expect(firstPage).toContain("no list call is needed");
+        }
         if (turns > 1 && turns <= 6) {
           const report = messages
             .filter((message) => message.role === "tool")
@@ -3081,6 +3127,15 @@ describe("fill_fields visible steps", () => {
                       { tool: "type", ref: "c0", text: "Robin Ashford" },
                       { tool: "type", ref: "c1", text: "robin@example.test" },
                       { tool: "type", ref: "c2", text: "Manchester" },
+                      ...(step === 1
+                        ? [
+                            {
+                              tool: "upload",
+                              ref: "c3",
+                              documentId: "synthetic_resume",
+                            },
+                          ]
+                        : []),
                     ],
                     ...(step < 6 ? { thenContinue: "a0" } : {}),
                   },
@@ -3095,6 +3150,14 @@ describe("fill_fields visible steps", () => {
     expect(writes).toHaveLength(18);
     expect(click).toHaveBeenCalledTimes(5);
     expect(result.timing?.modelTurns).toBe(7);
+    expect(input.hands.uploadFile).toHaveBeenCalledTimes(1);
+    expect(result.attachments).toHaveLength(1);
+    expect(
+      result.timing?.requests.map((request) => request.uploadsAttached),
+    ).toEqual([1, 0, 0, 0, 0, 0, 0]);
+    expect(result.notes.at(-1)).toContain(
+      "uploads_attached_per_turn=[1,0,0,0,0,0,0]",
+    );
     expect(
       result.timing?.requests.map((request) => request.stepsAdvanced),
     ).toEqual([1, 1, 1, 1, 1, 0, 0]);
@@ -3102,6 +3165,502 @@ describe("fill_fields visible steps", () => {
       "steps_advanced_per_turn=[1,1,1,1,1,0,0]",
     );
   });
+
+  test("cookie and add-row clicks run in order with fields and Continue on the first turn", async () => {
+    const source = page({
+      stepLabel: "Step 1 of 2",
+      controls: [
+        field(0, "Full name"),
+        { ...field(1, "City"), visible: false, required: true },
+      ],
+      actions: [
+        { index: 0, label: "Continue", visible: true, disabled: false },
+        {
+          index: 1,
+          label: "Add work history row",
+          visible: true,
+          disabled: false,
+        },
+      ],
+      clickables: [
+        {
+          index: 0,
+          label: "Reject cookies",
+          tagName: "button",
+          role: "button",
+          visible: true,
+          topOffset: 0,
+        },
+      ],
+    });
+    const { input, writes } = writable(source);
+    const order: string[] = [];
+    const fill = input.hands.fillText;
+    input.hands.fillText = (ref, value) => {
+      order.push(ref);
+      return fill(ref, value);
+    };
+    input.hands.clickElement = vi.fn((ref: string) => {
+      order.push(ref);
+      if (ref === "e0") source.clickables = [];
+      if (ref === "a1") source.controls[1].visible = true;
+      if (ref === "a0") {
+        source.stepLabel = "Step 2 of 2";
+        source.controls = [nameControl()];
+        source.actions = [
+          {
+            index: 0,
+            label: "Submit application",
+            visible: true,
+            disabled: false,
+          },
+        ];
+      }
+      return Promise.resolve({ ok: true as const, observedValue: "clicked" });
+    });
+    const result = await runApplyAgent(
+      input,
+      modelFor(
+        [
+          { tool: "click", ref: "e0" },
+          { tool: "click", ref: "a1" },
+          { tool: "type", ref: "c0", text: "Robin Ashford" },
+          { tool: "type", ref: "c1", text: "Manchester" },
+        ],
+        () => {},
+        "a0",
+      ),
+    );
+    expect(order).toEqual(["e0", "a1", "c0", "c1", "a0"]);
+    expect(writes).toEqual(["c0", "c1"]);
+    expect(result.outcome).toBe("prepared");
+    expect(result.timing?.modelTurns).toBe(2);
+    expect(result.timing?.requests[0]).toMatchObject({
+      fieldsFilled: 2,
+      fieldsAttempted: 2,
+      stepsAdvanced: 1,
+      uploadsAttached: 0,
+    });
+  });
+
+  test.each([
+    "navigation",
+    "step",
+    "refused",
+    "new required row",
+    "reused field handle",
+    "reused Continue handle",
+  ])("a %s chore stops or blocks Continue", async (barrier) => {
+    const source = page({
+      stepLabel: "Step 1 of 2",
+      controls: [field(0, "Full name")],
+      actions: [
+        { index: 0, label: "Continue", visible: true, disabled: false },
+        {
+          index: 1,
+          label: "Add work history row",
+          visible: true,
+          disabled: false,
+        },
+      ],
+    });
+    const { input, writes } = writable(source);
+    const click = vi.fn((ref: string) => {
+      expect(ref).toBe("a1");
+      if (barrier === "navigation")
+        source.url = "https://apply.example.test/other";
+      if (barrier === "step") source.stepLabel = "Step 2 of 2";
+      if (barrier === "reused field handle")
+        source.controls[0].label = "Notice period";
+      if (barrier === "reused Continue handle")
+        source.actions[0].label = "Remove row";
+      if (barrier === "new required row")
+        source.controls.push({ ...field(1, "City"), required: true });
+      return Promise.resolve(
+        barrier === "refused"
+          ? { ok: false as const, error: "Click failed" }
+          : { ok: true as const, observedValue: "clicked" },
+      );
+    });
+    input.hands.clickElement = click;
+    await runApplyAgent(
+      input,
+      modelFor(
+        [
+          { tool: "click", ref: "a1" },
+          { tool: "type", ref: "c0", text: "Robin Ashford" },
+        ],
+        () => {},
+        "a0",
+      ),
+    );
+    expect(click).toHaveBeenCalledTimes(1);
+    expect(writes).toEqual(barrier === "new required row" ? ["c0"] : []);
+  });
+
+  test("one finish hands back all required questions after filling and uploading without Continue", async () => {
+    const source = page({
+      stepLabel: "Step 1 of 6",
+      controls: [
+        field(0, "Full name"),
+        { ...field(1, "Resume / CV"), inputType: "file", required: true },
+        {
+          ...field(2, "I agree to marketing contact"),
+          inputType: "checkbox",
+          required: true,
+          value: "on",
+        },
+        { ...field(3, "Notice period"), required: true },
+      ],
+      actions: [
+        { index: 0, label: "Continue", visible: true, disabled: false },
+      ],
+    });
+    const { input, writes } = writable(source);
+    input.sources.documents = [
+      {
+        id: "cv",
+        kind: "resume",
+        label: "Synthetic CV",
+        fileName: "synthetic.pdf",
+        mimeType: "application/pdf",
+        loadBytes: () => Promise.resolve(new Uint8Array([1])),
+      },
+    ];
+    input.hands.uploadFile = vi.fn(
+      (_ref: string, file: Parameters<ApplyPageHands["uploadFile"]>[1]) => {
+        source.controls[1].value = file.name;
+        return Promise.resolve({ ok: true as const, observedValue: file.name });
+      },
+    );
+    const click = vi.fn(input.hands.clickElement);
+    input.hands.clickElement = click;
+    const result = await runApplyAgent(
+      input,
+      modelFor(
+        [
+          { tool: "type", ref: "c0", text: "Robin Ashford" },
+          { tool: "upload", ref: "c1", documentId: "cv" },
+          { tool: "set_checkbox", ref: "c2", checked: true },
+        ],
+        () => {},
+        "a0",
+      ),
+    );
+    expect(writes).toEqual(["c0"]);
+    expect(input.hands.uploadFile).toHaveBeenCalledTimes(1);
+    expect(click).not.toHaveBeenCalled();
+    expect(result.outcome).toBe("paused");
+    expect(result.timing?.modelTurns).toBe(2); // fill+upload, exactly one finish
+    expect(result.timing?.requests[0]).toMatchObject({
+      fieldsAttempted: 2,
+      fieldsFilled: 1,
+      uploadsAttached: 1,
+      stepsAdvanced: 0,
+    });
+    expect(
+      result.pauses[0]?.questions?.map((question) => question.prompt),
+    ).toEqual(["I agree to marketing contact", "Notice period"]);
+  });
+
+  test("a model's explicit person handoff finishes once without an empty-field reminder", async () => {
+    const source = page({
+      stepLabel: "Step 1 of 6",
+      controls: [{ ...field(0, "Notice period"), required: true }],
+    });
+    const result = await runApplyAgent(
+      config(source),
+      scriptedModel([
+        {
+          name: "finish",
+          args: {
+            reason: "Please provide your notice period.",
+            needsPerson: true,
+          },
+        },
+      ]),
+    );
+    expect(result.outcome).toBe("paused");
+    expect(result.timing?.modelTurns).toBe(1);
+    expect(result.pauses[0]?.question?.prompt).toBe("Notice period");
+  });
+
+  test("an approved certificate uploads with the fields and Continue through the normal path", async () => {
+    const source = page({
+      stepLabel: "Step 1 of 2",
+      controls: [
+        field(0, "Full name"),
+        {
+          ...field(1, "Certificate"),
+          inputType: "file",
+          required: true,
+          accept: ".pdf",
+        },
+      ],
+      actions: [
+        { index: 0, label: "Continue", visible: true, disabled: false },
+      ],
+    });
+    const { input } = writable(source);
+    const bytes = new Uint8Array([1, 2, 3]);
+    input.sources.documents = [
+      {
+        id: "certificate",
+        kind: "certificate",
+        label: "Synthetic certificate",
+        fileName: "certificate.pdf",
+        mimeType: "application/pdf",
+        loadBytes: () => Promise.resolve(bytes),
+      },
+    ];
+    input.hands.uploadFile = vi.fn(
+      (_ref: string, file: Parameters<ApplyPageHands["uploadFile"]>[1]) => {
+        expect(file).toEqual({
+          name: "certificate.pdf",
+          mimeType: "application/pdf",
+          bytes,
+        });
+        source.controls[1].value = file.name;
+        return Promise.resolve({ ok: true as const, observedValue: file.name });
+      },
+    );
+    input.hands.clickElement = vi.fn(() => {
+      source.stepLabel = "Step 2 of 2";
+      source.controls = [nameControl()];
+      source.actions = [
+        {
+          index: 0,
+          label: "Submit application",
+          visible: true,
+          disabled: false,
+        },
+      ];
+      return Promise.resolve({ ok: true as const, observedValue: "clicked" });
+    });
+    const result = await runApplyAgent(
+      input,
+      modelFor(
+        [
+          { tool: "type", ref: "c0", text: "Robin Ashford" },
+          { tool: "upload", ref: "c1", documentId: "certificate" },
+        ],
+        () => {},
+        "a0",
+      ),
+    );
+    expect(result.outcome).toBe("prepared");
+    expect(result.attachments[0]).toMatchObject({
+      documentId: "certificate",
+      fileName: "certificate.pdf",
+    });
+    expect(result.timing?.modelTurns).toBe(2);
+    expect(result.timing?.requests[0]).toMatchObject({
+      fieldsFilled: 1,
+      uploadsAttached: 1,
+      stepsAdvanced: 1,
+    });
+  });
+
+  test.each([
+    "missing document",
+    "wrong kind",
+    "wrong format",
+    "write refused",
+    "navigation",
+    "new field",
+  ])(
+    "a %s upload preserves executor checks and stops remaining actions",
+    async (barrier) => {
+      const source = page({
+        stepLabel: "Step 1 of 2",
+        controls: [
+          {
+            ...field(
+              0,
+              barrier === "wrong kind" ? "Academic transcript" : "Resume / CV",
+            ),
+            inputType: "file",
+            required: true,
+            ...(barrier === "wrong format" ? { accept: ".docx" } : {}),
+          },
+          field(1, "Full name"),
+        ],
+        actions: [
+          { index: 0, label: "Continue", visible: true, disabled: false },
+        ],
+      });
+      const { input, writes } = writable(source);
+      input.sources.documents = [
+        {
+          id: "cv",
+          kind: "resume",
+          label: "Synthetic CV",
+          fileName: "synthetic.pdf",
+          mimeType: "application/pdf",
+          loadBytes: () => Promise.resolve(new Uint8Array([1])),
+        },
+      ];
+      const upload = vi.fn((_ref: string, file: { name: string }) => {
+        if (barrier === "write refused")
+          return Promise.resolve({
+            ok: false as const,
+            error: "Upload failed",
+          });
+        source.controls[0].value = file.name;
+        if (barrier === "navigation")
+          source.url = "https://apply.example.test/next";
+        if (barrier === "new field")
+          source.controls.push({
+            ...field(2, "Another question"),
+            required: true,
+          });
+        return Promise.resolve({ ok: true as const, observedValue: file.name });
+      });
+      input.hands.uploadFile = upload;
+      const click = vi.fn(input.hands.clickElement);
+      input.hands.clickElement = click;
+      let report = "";
+      const result = await runApplyAgent(
+        input,
+        modelFor(
+          [
+            {
+              tool: "upload",
+              ref: "c0",
+              documentId: barrier === "missing document" ? "absent" : "cv",
+            },
+            { tool: "type", ref: "c1", text: "Robin Ashford" },
+          ],
+          (messages) => {
+            report =
+              messages.find((message) => message.role === "tool")?.content ??
+              "";
+          },
+          "a0",
+        ),
+      );
+      expect(writes).toEqual([]);
+      expect(click).not.toHaveBeenCalled();
+      if (barrier === "wrong format") {
+        expect(result.outcome).toBe("paused");
+        expect(result.timing?.modelTurns).toBe(1);
+        expect(result.pauses[0]?.code).toBe("document_needs_you");
+      } else expect(report).toContain("c1: not attempted");
+      expect(upload).toHaveBeenCalledTimes(
+        ["write refused", "navigation", "new field"].includes(barrier) ? 1 : 0,
+      );
+      expect(result.timing?.requests[0]?.uploadsAttached).toBe(
+        ["navigation", "new field"].includes(barrier) ? 1 : 0,
+      );
+    },
+  );
+
+  test.each(["send guard", "Stop"])(
+    "an upload batch respects %s before later fields or Continue",
+    async (barrier) => {
+      const source = page({
+        controls: [
+          { ...field(0, "Resume / CV"), inputType: "file" },
+          field(1, "Full name"),
+        ],
+        actions: [
+          { index: 0, label: "Continue", visible: true, disabled: false },
+        ],
+      });
+      const controller = new AbortController();
+      const { input, writes } = writable(source);
+      input.signal = controller.signal;
+      input.sources.documents = [
+        {
+          id: "cv",
+          kind: "resume",
+          label: "Synthetic CV",
+          fileName: "synthetic.pdf",
+          mimeType: "application/pdf",
+          loadBytes: () => Promise.resolve(new Uint8Array([1])),
+        },
+      ];
+      let uploaded = false;
+      input.hands.uploadFile = vi.fn(
+        (_ref: string, file: Parameters<ApplyPageHands["uploadFile"]>[1]) => {
+          uploaded = true;
+          source.controls[0].value = file.name;
+          if (barrier === "Stop") controller.abort();
+          return Promise.resolve({
+            ok: true as const,
+            observedValue: file.name,
+          });
+        },
+      );
+      input.hands.clickElement = vi.fn(input.hands.clickElement);
+      input.safety = {
+        readBlockedAttempt: () =>
+          Promise.resolve(
+            uploaded && barrier === "send guard"
+              ? {
+                  kind: "form_submit",
+                  method: "POST",
+                  url: "https://apply.example.test/send",
+                  at: "2026-09-14T10:00:01.000Z",
+                }
+              : null,
+          ),
+        registerPreparedValue: () => Promise.resolve(),
+        openIntermediateWriteWindow: () => Promise.resolve(),
+        closeIntermediateWriteWindow: () => Promise.resolve(),
+        checkServiceWorker: () => Promise.resolve(null),
+      };
+      const result = await runApplyAgent(
+        input,
+        modelFor(
+          [
+            { tool: "upload", ref: "c0", documentId: "cv" },
+            { tool: "type", ref: "c1", text: "Robin Ashford" },
+          ],
+          () => {},
+          "a0",
+        ),
+      );
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      expect(input.hands.uploadFile).toHaveBeenCalledTimes(1);
+      expect(writes).toEqual([]);
+      expect(input.hands.clickElement).not.toHaveBeenCalled();
+      expect(result.timing?.modelTurns).toBe(1);
+      if (barrier === "send guard") {
+        expect(result.outcome).toBe("paused");
+        expect(result.pauses[0]?.code).toBe("site_tried_to_send");
+        expect(result.timing?.requests[0]?.uploadsAttached).toBe(0);
+      }
+    },
+  );
+
+  test.each([
+    "prepare_only",
+    "confirm_before_submit",
+    "autonomous_submit",
+  ] as const)(
+    "a batch click on final send keeps the %s executor guard",
+    async (mode) => {
+      const source = page({ controls: [nameControl()] });
+      const { input, writes } = writable(source);
+      input.authority.mode = mode;
+      input.authority.submitAuthorized = mode === "autonomous_submit";
+      input.authority.allowedOrigins = ["https://apply.example.test"];
+      const click = vi.fn(input.hands.clickElement);
+      input.hands.clickElement = click;
+      const result = await runApplyAgent(
+        input,
+        modelFor([
+          { tool: "click", ref: "a0" },
+          { tool: "type", ref: "c0", text: "Robin Ashford" },
+        ]),
+      );
+      expect(click).not.toHaveBeenCalled();
+      expect(writes).toEqual([]);
+      expect(result.filled).toHaveLength(0);
+      expect(result.timing?.requests[0]?.stepsAdvanced).toBe(0);
+    },
+  );
 
   test.each([
     "refused",

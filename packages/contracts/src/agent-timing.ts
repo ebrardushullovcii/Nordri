@@ -30,6 +30,7 @@ const ApplyAgentTimingRecordSchema = z.object({
         fieldsAttempted: z.number().int().nonnegative().optional(),
         fieldsFilled: z.number().int().nonnegative().optional(),
         stepsAdvanced: z.number().int().nonnegative().optional(),
+        uploadsAttached: z.number().int().nonnegative().optional(),
       }),
     )
     .max(1000),

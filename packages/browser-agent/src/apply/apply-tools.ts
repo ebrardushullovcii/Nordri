@@ -55,7 +55,7 @@ export function getApplyToolDefinitions(): ApplyToolDefinition[] {
       function: {
         name: "observe",
         description:
-          "Look at the whole page: its address, headings, every visible field, every button, every link with where it goes, anything else clickable, tabs the page opened, and an excerpt of the text. Nothing is filtered — what a person could see, you can see. Start here and look again whenever the page changes.",
+          "Look at the whole page: its address, headings, every visible field, every button, every link with where it goes, anything else clickable, tabs the page opened, and an excerpt of the text. Nothing is filtered — what a person could see, you can see. The first page view is supplied before your first turn. Use observe when that read failed or you need page facts beyond the fresh view returned by fill_fields.",
         parameters: { type: "object", properties: {} },
       },
     },
@@ -268,7 +268,7 @@ export function getApplyToolDefinitions(): ApplyToolDefinition[] {
       function: {
         name: "submit_application",
         description:
-          "Say the form is complete and this is the button that sends it. First observe again and dismiss ordinary cookie banners, newsletter dialogs, and chat overlays using their own controls; readable fields can still have a covered send button. Job Finder checks everything again and presses it only if the person allowed that; otherwise the application stops here, filled in and ready for them.",
+          "Say the form is complete and this is the button that sends it. First read the fresh page returned by fill_fields or observe and dismiss ordinary cookie banners, newsletter dialogs, and chat overlays using their own controls; readable fields can still have a covered send button. Job Finder checks everything again and presses it only if the person allowed that; otherwise the application stops here, filled in and ready for them.",
         parameters: {
           type: "object",
           properties: { ref: { type: "string" } },
@@ -281,7 +281,7 @@ export function getApplyToolDefinitions(): ApplyToolDefinition[] {
       function: {
         name: "finish",
         description:
-          "Finish. Before reporting a completed form, observe again and dismiss ordinary cookie banners, newsletter dialogs, and chat overlays using their own controls, then observe the final button. Call finish when the form is complete, when only the person can go further (they have to sign in, pass a security check, pay, or make an account), or when you are genuinely stuck. The reason is your report to the person: which site and page you were on, what you tried, what the page did, and what they need to do. Pass stuck: true when you could not get there.",
+          "Finish. Before reporting a completed form, read the fresh page returned by fill_fields or observe, dismiss ordinary cookie banners, newsletter dialogs, and chat overlays using their own controls, and check the final button on the returned page. When questions remain for the person, use needsPerson: true; one finish hands back all the questions and ends the run. Call finish when the form is complete, when only the person can go further (they have to sign in, pass a security check, pay, or make an account), or when you are genuinely stuck. The reason is your report to the person: which site and page you were on, what you tried, what the page did, and what they need to do. Pass stuck: true when you could not get there.",
         parameters: {
           type: "object",
           properties: {
@@ -469,7 +469,7 @@ export const FILL_FIELDS_TOOL_DEFINITION: ApplyToolDefinition = {
   function: {
     name: "fill_fields",
     description:
-      "Fill every answerable field on the visible step in one call. Each entry uses the same arguments as type, select or set_checkbox; choose a radio option with set_checkbox on that option's ref. Entries run in order through the same answer, permission and send checks as single calls. A refusal, pause, navigation or changed step stops the rest. The result names every field, including those not attempted, followed by one fresh page observation. When every required field is answered, set thenContinue to the visible Continue or Next ref to fill and advance in one call. Otherwise omit it. Continue uses the normal click executor and send checks; a final submit is never pressed here. Validation errors or an unchanged step are reported with the fresh page.",
+      "Complete the visible step in one call, from the first step onward: fill all answerable fields, attach the requested available documents with upload, then include thenContinue for Continue or Next when no required answer is missing. Entries use the exact single-tool arguments for type, select, set_checkbox, upload or click and run in order through the same executor, permissions and send checks. Click may dismiss a cookie banner or add a required history row on this step; use handles already observed and read the returned page for newly revealed handles. Choose a radio with set_checkbox on its option's ref. A refusal, pause, navigation, changed step or newly revealed question after a field write stops the rest and names entries not attempted. Ordinary upload buttons changing or a chore click revealing a row on this same page do not stop planned entries. Omit thenContinue when a question needs the person; fill everything else, then finish once. Never use this tool to send. Validation errors or an unchanged step are reported with one fresh page observation.",
     parameters: {
       type: "object",
       properties: {
@@ -486,7 +486,7 @@ export const FILL_FIELDS_TOOL_DEFINITION: ApplyToolDefinition = {
             properties: {
               tool: {
                 type: "string",
-                enum: ["type", "select", "set_checkbox"],
+                enum: ["type", "select", "set_checkbox", "upload", "click"],
               },
               ref: { type: "string" },
               text: {
@@ -500,6 +500,15 @@ export const FILL_FIELDS_TOOL_DEFINITION: ApplyToolDefinition = {
               checked: {
                 type: "boolean",
                 description: "For set_checkbox: true or false.",
+              },
+              documentId: {
+                type: "string",
+                description:
+                  "For upload: an id from the available document list.",
+              },
+              reason: {
+                type: "string",
+                description: "For click: why this page chore is needed.",
               },
               groundedIn: {
                 type: "array",
@@ -519,7 +528,7 @@ export const FILL_FIELDS_TOOL_DEFINITION: ApplyToolDefinition = {
 
 export type FillFieldsEntry = Extract<
   ApplyProposal,
-  { tool: "type" | "select" | "set_checkbox" }
+  { tool: "type" | "select" | "set_checkbox" | "upload" | "click" }
 >;
 
 export function parseFillFields(
@@ -560,12 +569,14 @@ export function parseFillFields(
     if (
       record.tool !== "type" &&
       record.tool !== "select" &&
-      record.tool !== "set_checkbox"
+      record.tool !== "set_checkbox" &&
+      record.tool !== "upload" &&
+      record.tool !== "click"
     ) {
       return {
         ok: false,
         error:
-          "fill_fields accepts only type, select and set_checkbox actions. Use separate tools for files, navigation and sending.",
+          "fill_fields accepts only type, select, set_checkbox, upload and page-chore click actions. Use separate tools for navigation and sending.",
       };
     }
     if (record.tool === "set_checkbox" && typeof record.checked !== "boolean") {
@@ -580,7 +591,9 @@ export function parseFillFields(
     if (
       proposal.tool === "type" ||
       proposal.tool === "select" ||
-      proposal.tool === "set_checkbox"
+      proposal.tool === "set_checkbox" ||
+      proposal.tool === "upload" ||
+      proposal.tool === "click"
     ) {
       fields.push(proposal);
     }

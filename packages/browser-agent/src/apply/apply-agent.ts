@@ -363,6 +363,9 @@ async function runMeasuredApplyAgent(
               ? control.label || control.value
               : null;
         break;
+      case "upload":
+      case "click":
+        return null; // The executor checks files and click-derived answers itself.
     }
     return answer !== null &&
       control.attestationKind === null &&
@@ -584,10 +587,14 @@ async function runMeasuredApplyAgent(
     return text;
   };
   let openingMessage: string;
+  const describeDocuments = () =>
+    documentCatalog.length
+      ? `Available documents for this application (use these ids with upload in fill_fields; no list call is needed):\n${documentCatalog.map((document) => `- ${document.id}: ${document.label} (${document.fileName}, ${document.mimeType})`).join("\n")}`
+      : "No application documents are available yet.";
   const openingReadStartedAt = now().getTime();
   try {
     syncObservation(await pageTools.observe());
-    openingMessage = `The page you have landed on:\n\n${renderObservation(pageTools.state.observation!)}`;
+    openingMessage = `The page you have landed on:\n\n${renderObservation(pageTools.state.observation!)}\n\n${describeDocuments()}`;
   } catch (error) {
     const detail = describeBrowserError(error, "The page did not open.");
     note(`The application page did not open. ${detail}`);
@@ -765,6 +772,35 @@ async function runMeasuredApplyAgent(
           if (classification?.required) control.required = true;
         }
         syncObservation(observation);
+        const finishWithQuestions = (): AgentLoopToolOutcome => {
+          // The model has already left questions for the person. One finish
+          // hands back this step, including other visible required gaps;
+          // reminders cannot make these questions answerable.
+          for (const control of unresolvedRequiredControls(observation)) {
+            const key = pendingQuestionKey(control);
+            if (pendingQuestions.has(key)) continue;
+            pendingQuestions.set(
+              key,
+              buildPendingQuestion({
+                control,
+                jobId: config.application.jobId,
+                detectedAt: now().toISOString(),
+                suggestion: null,
+                siblings: observation.controls,
+              }),
+            );
+          }
+          return {
+            kind: "finish",
+            finish: {
+              reason: outcome.reason,
+              stuck: false,
+              needsPerson: true,
+              data: {},
+            },
+          };
+        };
+        if (pendingQuestions.size > 0) return finishWithQuestions();
         const resume = documentCatalog.find(
           (document) => document.kind === "resume",
         );
@@ -804,6 +840,13 @@ async function runMeasuredApplyAgent(
             blocker: null,
           });
         }
+        if (
+          outcome.needsPerson &&
+          unresolvedRequiredControls(observation).some(
+            (control) => !isSecurityChallengeControl(control),
+          )
+        )
+          return finishWithQuestions();
         // "Whenever there is room" covers optional letter fields too. Ask
         // once; an empty optional field never stops the application.
         const emptyOptionalLetter =
@@ -1135,6 +1178,8 @@ async function runMeasuredApplyAgent(
       },
     );
     if (isField && outcome.kind === "filled") timingRecord.onFieldFilled();
+    if (proposal.tool === "upload" && outcome.kind === "attached")
+      timingRecord.onUploadAttached();
     if (
       proposal.tool === "click" &&
       before &&
@@ -1256,13 +1301,14 @@ async function runMeasuredApplyAgent(
       let wrote = false;
       let stopped = false;
       let stopOutcome: AgentLoopToolOutcome | null = null;
-      for (const step of steps) {
+      for (const [index, step] of steps.entries()) {
         if (stopped) {
           lines.push(`${step.ref}: not attempted (batch stopped).`);
           continue;
         }
         context.signal?.throwIfAborted();
-        const before = applyStepShape(pageTools.state.observation);
+        const beforePage = pageTools.state.observation!;
+        const before = applyStepShape(beforePage);
         const writeKey = controlWriteKey(step);
         const currentControl = pageTools.state.observation?.controls.find(
           (control) => control.ref === step.ref,
@@ -1279,19 +1325,90 @@ async function runMeasuredApplyAgent(
                 observation: pageTools.state.observation!,
               }
             : await runProposal(step, checkFromBatch);
-        if (outcome.kind === "filled") wrote = true;
+        if (outcome.kind === "filled" || outcome.kind === "attached")
+          wrote = true;
         const reported = await outcomeToLoop(outcome, { withPage: false });
         lines.push(
           `${step.ref}: ${reported.kind === "ok" ? reported.content : reported.kind === "stop" ? reported.reason : "Stopped."}`,
         );
         if (reported.kind !== "ok") stopOutcome = reported;
+        const afterPage = pageTools.state.observation!;
+        const samePageStep = (page: ApplyFormObservation) =>
+          JSON.stringify({
+            url: page.url,
+            step: page.step,
+            blocker: page.blocker,
+            loading: page.loading,
+            tabs: page.openedTabs,
+          });
+        const choreClick =
+          step.tool === "click" &&
+          outcome.kind === "moved" &&
+          !beforePage.controls.some((control) => control.ref === step.ref) &&
+          !beforePage.actions.some(
+            (action) =>
+              action.ref === step.ref &&
+              (action.kind === "advance" || action.kind === "final"),
+          ) &&
+          samePageStep(beforePage) === samePageStep(afterPage);
+        // Attaching a file commonly adds Remove/Replace buttons. Those do
+        // not invalidate other field handles; changed fields still do.
+        const uploadShape = (page: ApplyFormObservation) =>
+          applyStepShape({
+            ...page,
+            actions: [],
+            clickables: [],
+            links: [],
+          });
+        // Refs are page-local. A chore or upload may add controls, but it
+        // cannot reassign a handle that a later planned action relies on.
+        const refIdentity = (page: ApplyFormObservation, ref: string) => {
+          const control = page.controls.find((entry) => entry.ref === ref);
+          if (control)
+            return JSON.stringify({
+              kind: control.kind,
+              label: control.label,
+              group: control.groupLabel,
+            });
+          const entry = [
+            ...page.actions,
+            ...page.clickables,
+            ...page.links,
+          ].find((entry) => entry.ref === ref);
+          return entry
+            ? JSON.stringify({
+                label: entry.label,
+                kind: "kind" in entry ? entry.kind : undefined,
+                href: "href" in entry ? entry.href : undefined,
+              })
+            : null;
+        };
+        const plannedRefs = [
+          ...steps.slice(index + 1).map((entry) => entry.ref),
+          ...(parsed.thenContinue ? [parsed.thenContinue] : []),
+        ];
+        const changedHandle =
+          (choreClick || step.tool === "upload") &&
+          plannedRefs.some(
+            (ref) =>
+              !refIdentity(beforePage, ref) ||
+              refIdentity(beforePage, ref) !== refIdentity(afterPage, ref),
+          );
+        const shapeChanged = choreClick
+          ? false
+          : step.tool === "upload"
+            ? uploadShape(beforePage) !== uploadShape(afterPage)
+            : before !== applyStepShape(afterPage);
         if (
-          outcome.kind !== "filled" ||
+          (outcome.kind !== "filled" &&
+            outcome.kind !== "attached" &&
+            !choreClick) ||
           reported.kind !== "ok" ||
-          reported.stopBatch ||
+          (reported.stopBatch && !choreClick) ||
           reported.status === "refused" ||
           reported.status === "failed" ||
-          before !== applyStepShape(pageTools.state.observation)
+          shapeChanged ||
+          changedHandle
         )
           stopped = true;
       }
@@ -1396,15 +1513,7 @@ async function runMeasuredApplyAgent(
     execute: () =>
       Promise.resolve({
         kind: "ok",
-        content:
-          documentCatalog.length === 0
-            ? "No application documents are available yet."
-            : documentCatalog
-                .map(
-                  (document) =>
-                    `- ${document.id}: ${document.label} (${document.fileName}, ${document.mimeType})`,
-                )
-                .join("\n"),
+        content: describeDocuments(),
       }),
   });
 
@@ -1685,7 +1794,10 @@ async function runMeasuredApplyAgent(
   const stepsPerTurn = agentTiming.requests
     .map((request) => request.stepsAdvanced ?? 0)
     .join(",");
-  const timing = `[apply] timing read=${agentTiming.pageReadMs}ms (${agentTiming.pageReads} reads) fill=${agentTiming.writeMs}ms upload=${agentTiming.uploadMs}ms tools=${agentTiming.toolMs}ms model=${agentTiming.modelTurns} turns ${agentTiming.modelMs}ms checks=${agentTiming.auxiliaryModelCalls} calls ${agentTiming.auxiliaryModelMs}ms total=${agentTiming.totalMs}ms fields_per_turn(filled/attempted)=[${fieldsPerTurn}] steps_advanced_per_turn=[${stepsPerTurn}]`;
+  const uploadsPerTurn = agentTiming.requests
+    .map((request) => request.uploadsAttached ?? 0)
+    .join(",");
+  const timing = `[apply] timing read=${agentTiming.pageReadMs}ms (${agentTiming.pageReads} reads) fill=${agentTiming.writeMs}ms upload=${agentTiming.uploadMs}ms tools=${agentTiming.toolMs}ms model=${agentTiming.modelTurns} turns ${agentTiming.modelMs}ms checks=${agentTiming.auxiliaryModelCalls} calls ${agentTiming.auxiliaryModelMs}ms total=${agentTiming.totalMs}ms fields_per_turn(filled/attempted)=[${fieldsPerTurn}] steps_advanced_per_turn=[${stepsPerTurn}] uploads_attached_per_turn=[${uploadsPerTurn}]`;
   return {
     outcome,
     reason,
