@@ -64,14 +64,18 @@ export function ProfileSaveFooter({
               : "No unsaved changes."}
           </p>
           {/* When a saved profile is felt: the next tailored draft and
-              application read it, and nothing already drafted moves. */}
-          <p
-            className="text-(length:--text-description) leading-5 text-foreground-muted"
-            data-profile-save-effect
-          >
-            Saved changes reach new tailored drafts and applications; drafts you
-            already have stay as they are until you re-tailor them.
-          </p>
+              application read it, and nothing already drafted moves. It is
+              said while there is something to save; a clean footer is one
+              line. */}
+          {hasUnsavedChanges ? (
+            <p
+              className="text-(length:--text-description) leading-5 text-foreground-muted"
+              data-profile-save-effect
+            >
+              Saved changes reach new tailored drafts and applications; drafts
+              you already have stay as they are until you re-tailor them.
+            </p>
+          ) : null}
           {validationMessage ? (
             <p
               aria-atomic="true"

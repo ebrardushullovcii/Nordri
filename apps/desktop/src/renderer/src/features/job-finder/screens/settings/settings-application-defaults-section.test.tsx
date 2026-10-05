@@ -13,6 +13,8 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { MemoryRouter } from "react-router-dom";
+import { JOB_FINDER_ROUTE_PATHS } from "../../lib/job-finder-route-hrefs";
 import { SettingsApplicationDefaultsSection } from "./settings-application-defaults-section";
 
 function parseSettings(
@@ -52,10 +54,16 @@ describe("SettingsApplicationDefaultsSection", () => {
         onUpdateApplicationDefaults={vi.fn()}
         settings={parseSettings()}
       />,
+      { wrapper: MemoryRouter },
     );
 
     expect(screen.getByText("Resume look")).toBeTruthy();
     expect(screen.getByText(/set under AI behavior/)).toBeTruthy();
+    // The pointer to where the resume itself lives sits with the section it
+    // concerns, not in the page header.
+    expect(
+      screen.getByRole("link", { name: "Profile" }).getAttribute("href"),
+    ).toBe(JOB_FINDER_ROUTE_PATHS.profile);
     expect(
       screen.queryByRole("radio", { name: /Use my original resume unchanged/ }),
     ).toBeNull();
@@ -79,6 +87,7 @@ describe("SettingsApplicationDefaultsSection", () => {
         onUpdateApplicationDefaults={onUpdateApplicationDefaults}
         settings={parseSettings()}
       />,
+      { wrapper: MemoryRouter },
     );
 
     chooseDisplayFont();
@@ -116,6 +125,7 @@ describe("SettingsApplicationDefaultsSection", () => {
         onUpdateApplicationDefaults={onUpdateApplicationDefaults}
         settings={parseSettings()}
       />,
+      { wrapper: MemoryRouter },
     );
 
     chooseDisplayFont();

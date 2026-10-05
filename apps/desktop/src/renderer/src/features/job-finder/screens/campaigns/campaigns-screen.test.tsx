@@ -598,15 +598,20 @@ describe("CampaignsScreen", () => {
     );
 
     expect(screen.getByRole("heading", { name: "Search plans" })).toBeTruthy();
-    expect(screen.getByText(/Search plans are optional\./)).toBeTruthy();
+    // The header says it once; no explainer box repeats it above the plans.
+    expect(
+      screen.getByText(
+        "Optional reusable searches. Find jobs always searches with the current plan.",
+      ),
+    ).toBeTruthy();
+    expect(
+      document.querySelector(
+        "details#search-plans-guide, [aria-labelledby='search-plans-guide']",
+      ),
+    ).toBeNull();
     // Plain language, not product vocabulary: a job seeker should not have
     // to learn "precision" and "scale" to pick one.
-    expect(
-      screen.getByText("fewer jobs each run, chosen for a closer match."),
-    ).toBeTruthy();
-    expect(
-      screen.getByText("more jobs each run, keeping more of them for review."),
-    ).toBeTruthy();
+    expect(screen.queryByText(/precision|\bscale\b/i)).toBeNull();
     expect(screen.queryByText(/Prepare only/)).toBeNull();
     expect(screen.queryByText(/application/)).toBeNull();
   });
@@ -1698,30 +1703,6 @@ describe("CampaignsScreen", () => {
       screen.getByRole("group", {
         name: "Confirm deleting Broad engineering",
       }),
-    ).toBeTruthy();
-  });
-
-  it("keeps the volume guide collapsed by default on returning visits", () => {
-    render(
-      <CampaignsScreen
-        activeCampaignId="one"
-        campaigns={[campaign("one", "Remote TypeScript", "precision")]}
-        onSaveCampaign={vi.fn()}
-        onSelectCampaign={vi.fn()}
-        pending={false}
-      />,
-    );
-
-    const guide = screen
-      .getByText(/Search plans are optional\./)
-      .closest("details");
-    expect(guide).toBeTruthy();
-    expect(guide?.hasAttribute("open")).toBe(false);
-    // The mode explanations stay reachable behind one toggle.
-    expect(screen.getByText("How much a plan searches")).toBeTruthy();
-    // Collapsed content remains available for assistive tech queries.
-    expect(
-      screen.getByText("fewer jobs each run, chosen for a closer match."),
     ).toBeTruthy();
   });
 

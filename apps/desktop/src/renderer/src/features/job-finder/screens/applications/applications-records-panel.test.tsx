@@ -198,7 +198,7 @@ describe("ApplicationsRecordsPanel", () => {
     },
   );
 
-  it("titles the preparation workspace after its own view instead of the tracker", () => {
+  it("leaves the title and count to the page header instead of repeating them", () => {
     render(
       <MemoryRouter>
         <ApplicationsRecordsPanel
@@ -220,8 +220,9 @@ describe("ApplicationsRecordsPanel", () => {
     );
 
     expect(
-      screen.getByRole("heading", { name: "All applications" }),
-    ).toBeTruthy();
+      screen.queryByRole("heading", { name: "All applications" }),
+    ).toBeNull();
+    expect(screen.queryByText(/^\d+ applications?$/i)).toBeNull();
     expect(screen.queryByText("Application tracker")).toBeNull();
     expect(screen.getByText("Nothing applied to yet")).toBeTruthy();
     expect(
@@ -530,13 +531,17 @@ describe("ApplicationsRecordsPanel", () => {
       </MemoryRouter>,
     );
 
-    const headerBar = container.querySelector(":scope > section > div");
-    expect(headerBar?.className).toContain("px-5");
-    expect(headerBar?.className).toContain("py-3");
+    // The toolbar is the panel's first row: no panel title above it.
+    const toolbar = container.querySelector(":scope > section > div");
+    expect(toolbar?.hasAttribute("data-applications-list-toolbar")).toBe(true);
+    expect(toolbar?.className).toContain("min-h-12");
+    expect(toolbar?.className).toContain("px-3");
+    expect(container.querySelector("section h2")).toBeNull();
 
     const filterGroup = screen.getByRole("group", {
       name: "Application filters",
     });
+    expect(filterGroup).toBe(toolbar);
     expect(filterGroup.className).toContain("flex-wrap");
     expect(filterGroup.className).toContain("w-full");
 
@@ -544,6 +549,8 @@ describe("ApplicationsRecordsPanel", () => {
     expect(filterButtons.length).toBeGreaterThan(1);
     for (const filterButton of filterButtons) {
       expect(filterButton.className).toContain("shrink-0");
+      // Chips are the 24px size so they share the toolbar row.
+      expect(filterButton.className).toContain("h-6");
     }
 
     // Zero-count views are hidden so a single record cannot wrap the filter
@@ -1304,7 +1311,8 @@ it("counts chips from unarchived search and stage matches and keeps filters in o
   expect(
     screen.getByRole("button", { name: "Submitted: 1 application" }),
   ).toBeTruthy();
-  expect(screen.getByText("1 application")).toBeTruthy();
+  // The count lives on the All chip; the panel does not repeat it.
+  expect(screen.queryByText("1 application")).toBeNull();
 });
 
 it("distinguishes equal titles and companies by location in rows and accessible names", () => {

@@ -497,7 +497,7 @@ describe("ApplicationsScreen", () => {
         />
       </MemoryRouter>,
     );
-    expect(screen.getByText("Latest automatic run")).toBeTruthy();
+    expect(screen.getByText(/^Last automatic run: /)).toBeTruthy();
     expect(screen.queryByText("1 sent")).toBeNull();
     expect(screen.queryByText("2 finished")).toBeNull();
   });
@@ -605,7 +605,7 @@ describe("ApplicationsScreen", () => {
     );
     expect(
       screen.getByText(
-        /14 applications need another try.*4 remain after this batch/,
+        "14 applications need another try; 10 start at a time, 4 wait for the next batch",
       ),
     ).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Retry next 10" }));
@@ -706,12 +706,12 @@ describe("ApplicationsScreen", () => {
         </MemoryRouter>,
       );
 
+      const retryItem = screen.getByText("2 applications need another try");
+      // A bulk follow-up for the list is an item on the header status line.
+      expect(retryItem.closest("[data-page-header-status]")).toBeTruthy();
       expect(
-        screen.getByTestId("applications-bulk-retry").textContent,
-      ).toContain("2 applications need another try");
-      expect(
-        screen.getByTestId("applications-bulk-retry").closest("header"),
-      ).toBeTruthy();
+        retryItem.closest("[data-page-status-item]")?.getAttribute("data-tone"),
+      ).toBe("warning");
       fireEvent.click(
         screen.getByRole("button", { name: "Try again for all 2" }),
       );
@@ -806,9 +806,7 @@ describe("ApplicationsScreen", () => {
       </MemoryRouter>,
     );
     expect(
-      screen.getByText(
-        /2 jobs · 1 need attention · 1 could not apply · 1 in progress/,
-      ),
+      screen.getByText("Last automatic run: 2 jobs, 1 needs you"),
     ).toBeTruthy();
   });
   it.each(["failed", "awaiting_review"] as const)(
@@ -1018,12 +1016,17 @@ describe("ApplicationsScreen", () => {
     const dividers = view.container.querySelectorAll(
       "[data-page-header-divider]",
     );
-    const safeguards = screen.getByRole("region", {
-      name: "Active safeguards",
-    });
-    expect(safeguards.textContent).toContain(
-      "2 active safeguard blockers need attention. Affected work is paused; job discovery may still be available.",
+    // Holds are a red-dot item on the status line, not a box.
+    const safeguards = screen.getByText(
+      "2 safeguard holds are pausing some work",
     );
+    expect(safeguards.closest("[data-page-header-status]")).toBeTruthy();
+    expect(
+      safeguards.closest("[data-page-status-item]")?.getAttribute("data-tone"),
+    ).toBe("critical");
+    expect(
+      screen.queryByRole("region", { name: "Active safeguards" }),
+    ).toBeNull();
 
     expect(dividers).toHaveLength(1);
     expect(stack?.className).toContain("mb-(--gap-page-header-body)");
@@ -1229,12 +1232,15 @@ describe("ApplicationsScreen", () => {
           />
         </MemoryRouter>,
       );
-      expect(screen.getByText("Latest automatic run")).toBeTruthy();
+      // The run summary is a neutral item; the failure itself is reported
+      // by the row and the retry item, not by tinting the summary.
+      const runItem = screen.getByText(
+        "Last automatic run: 1 job, 1 needs you",
+      );
       expect(
-        screen
-          .getByText("1 need attention")
-          .className.includes("text-critical"),
-      ).toBe(attentionState === "failed");
+        runItem.closest("[data-page-status-item]")?.getAttribute("data-tone"),
+      ).toBe("neutral");
+      expect(screen.getByRole("button", { name: "Show them" })).toBeTruthy();
       expect(screen.queryByText("failed")).toBeNull();
     },
   );
@@ -1300,9 +1306,7 @@ describe("ApplicationsScreen", () => {
       </MemoryRouter>,
     );
 
-    expect(
-      screen.queryByRole("region", { name: "Active safeguards" }),
-    ).toBeNull();
+    expect(screen.queryByText(/safeguard holds? (is|are) pausing/)).toBeNull();
   });
 
   it("loads details for a newly selected historical apply run", async () => {
@@ -1879,7 +1883,9 @@ describe("ApplicationsScreen", () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByText("1 application")).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "All: 1 application" }),
+    ).toBeTruthy();
     // Association is proven by the run entry itself; the recovery section no
     // longer repeats a saved-run count above its one action.
     expect(screen.getAllByTitle("apply_run_legacy").length).toBeGreaterThan(0);
@@ -2006,7 +2012,9 @@ describe("ApplicationsScreen", () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByText("2 applications")).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "All: 2 applications" }),
+    ).toBeTruthy();
     expect(screen.queryByText(/runs? saved/i)).toBeNull();
     expect(screen.queryByTitle("apply_run_shared")).toBeNull();
     expect(
@@ -2479,7 +2487,7 @@ describe("ApplicationsScreen", () => {
 
     expect(screen.getByRole("combobox", { name: "Stage" })).toBeTruthy();
     expect(screen.getByText("Backend Engineer 110 · Beta")).toBeTruthy();
-    expect(screen.getByText("Showing 1–50 of 120 applications")).toBeTruthy();
+    expect(screen.getByText("1–50 of 120")).toBeTruthy();
     expect(onSelectRecord).not.toHaveBeenCalled();
   });
 

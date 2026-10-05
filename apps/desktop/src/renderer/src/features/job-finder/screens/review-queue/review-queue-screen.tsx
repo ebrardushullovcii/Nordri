@@ -371,7 +371,7 @@ export function ReviewQueueScreen(props: {
         <PageHeaderStack
           title="Shortlisted"
           subnav={props.scopeControl}
-          description="The jobs you want. Pick a resume level for each, get the resume ready, then press Apply."
+          description="The jobs you want: pick a resume level, get the resume ready, then press Apply."
         />
       }
     >

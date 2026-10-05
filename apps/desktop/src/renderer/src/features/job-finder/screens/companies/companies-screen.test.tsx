@@ -225,7 +225,7 @@ describe("CompaniesScreen", () => {
     renderScreen({ companies });
 
     expect(screen.getAllByTestId(/^company-card-/)).toHaveLength(40);
-    expect(screen.getByText("Showing 1–40 of 501 companies")).toBeTruthy();
+    expect(screen.getByText("1–40 of 501")).toBeTruthy();
     expect(screen.getByText("Page 1 of 13")).toBeTruthy();
     expect(screen.getByText("Company 000")).toBeTruthy();
     expect(screen.queryByText("Company 040")).toBeNull();
@@ -233,7 +233,7 @@ describe("CompaniesScreen", () => {
     fireEvent.click(screen.getByRole("button", { name: "Next page" }));
 
     expect(screen.getAllByTestId(/^company-card-/)).toHaveLength(40);
-    expect(screen.getByText("Showing 41–80 of 501 companies")).toBeTruthy();
+    expect(screen.getByText("41–80 of 501")).toBeTruthy();
     expect(screen.getByText("Company 040")).toBeTruthy();
     expect(screen.queryByText("Company 000")).toBeNull();
   });

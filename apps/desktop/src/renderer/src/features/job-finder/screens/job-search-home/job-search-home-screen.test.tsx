@@ -487,7 +487,7 @@ describe("JobSearchHomeScreen", () => {
     expect(props.onPauseActivity).toHaveBeenCalledTimes(1);
   });
 
-  it("offers Resume in the header while paused", () => {
+  it("offers one Resume while paused, on the next step instead of the header", () => {
     const props = baseProps();
     const ws = workspace();
     ws.activityControl = {
@@ -496,7 +496,10 @@ describe("JobSearchHomeScreen", () => {
       reason: "Paused by you.",
     };
     render(<JobSearchHomeScreen {...props} workspace={ws} />);
-    fireEvent.click(screen.getAllByRole("button", { name: "Resume" })[0]!);
+    const resumeButtons = screen.getAllByRole("button", { name: "Resume" });
+    expect(resumeButtons).toHaveLength(1);
+    expect(resumeButtons[0]!.closest("[data-page-header-actions]")).toBeNull();
+    fireEvent.click(resumeButtons[0]!);
     expect(props.onResumeActivity).toHaveBeenCalledTimes(1);
     expect(screen.getByText(/^Paused\./)).toBeTruthy();
   });

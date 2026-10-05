@@ -471,7 +471,7 @@ export function OutcomeAnalyticsScreen(props: {
     return (
       <section className="grid gap-4 pb-8">
         <PageHeaderStack
-          description="Compare response and interview rates from outcomes you record. Suggestions are never applied automatically and never change job facts."
+          description="Response and interview rates from the outcomes you record. Suggestions never apply themselves."
           title="Outcomes"
         />
 
@@ -502,7 +502,7 @@ export function OutcomeAnalyticsScreen(props: {
   return (
     <section className="grid gap-4 pb-8">
       <PageHeaderStack
-        description="Compare response and interview rates from outcomes you record. Suggestions are never applied automatically and never change job facts."
+        description="Response and interview rates from the outcomes you record. Suggestions never apply themselves."
         title="Outcomes"
       />
 

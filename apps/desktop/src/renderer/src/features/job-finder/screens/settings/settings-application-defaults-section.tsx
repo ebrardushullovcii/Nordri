@@ -1,4 +1,6 @@
 import { useEffect, useId, useState } from "react";
+import { Link } from "react-router-dom";
+import { JOB_FINDER_ROUTE_PATHS } from "../../lib/job-finder-route-hrefs";
 import type {
   JobFinderSettings,
   ResumeTemplateDefinition,
@@ -133,9 +135,17 @@ export function SettingsApplicationDefaultsSection({
             {SETTINGS_RESUME_LOOK_LABEL}
           </h3>
           <p className="text-(length:--text-description) leading-5 text-foreground-soft">
-            The template is the default for new tailored resumes. The font applies
-            to all generated resumes; changing it requires approving existing
-            drafts again. Resume rewriting is set under AI behavior.
+            The template is the default for new tailored resumes. The font
+            applies to all generated resumes; changing it requires approving
+            existing drafts again. Resume rewriting is set under AI behavior.
+            Your resume and any extra files for applications are managed in{" "}
+            <Link
+              className="text-(--link) underline underline-offset-2 hover:text-(--link-hover)"
+              to={JOB_FINDER_ROUTE_PATHS.profile}
+            >
+              Profile
+            </Link>
+            .
           </p>
         </div>
         <SettingsSectionSaveControl

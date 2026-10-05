@@ -135,7 +135,17 @@ export function CollectionSearchToolbar(props: {
    * three; a list whose rows only have two useful shapes offers two.
    */
   densities?: readonly CollectionDensity[];
+  /**
+   * Filter controls (Show, Sort, chips) that share the compact row, placed
+   * right after the search field and its count.
+   */
+  filters?: ReactNode;
   hideCompactCount?: boolean;
+  /**
+   * A panel title and count at the start of the compact row, used only when
+   * the page has two panes that need names (ADR 0044).
+   */
+  leading?: ReactNode;
   label: string;
   onDensityChange?: (density: CollectionDensity) => void;
   onQueryChange: (query: string) => void;
@@ -159,27 +169,55 @@ export function CollectionSearchToolbar(props: {
       : "border-t border-(--surface-panel-border)";
 
   if (props.compact) {
+    // The list panel toolbar: one 48px row with the search field (no visible
+    // label), the count, filters, density and view actions. A narrow panel
+    // wraps the trailing controls instead of clipping them.
     return (
       <div
         className={cn(
-          "relative z-20 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1.5 border-b border-(--surface-panel-border) px-4 py-2.5",
+          "relative z-20 flex min-h-12 min-w-0 shrink-0 flex-wrap items-center gap-x-2 gap-y-1.5 border-b border-(--surface-panel-border) px-3 py-2",
           topSeam,
           props.className,
         )}
         data-collection-toolbar-compact
       >
+        {props.leading}
         <label className="sr-only" htmlFor={inputId}>
           {props.label}
         </label>
         <Input
           autoComplete="off"
-          className={cn("h-9 min-w-48 flex-1", collectionSearchFieldClass)}
+          className={cn(
+            "min-w-32 flex-1 text-(length:--text-small)",
+            collectionSearchFieldClass,
+          )}
           id={inputId}
           onChange={(event) => props.onQueryChange(event.target.value)}
           placeholder={props.placeholder}
+          size="toolbar"
           type="search"
           value={props.query}
         />
+        {props.query ? (
+          <Button
+            onClick={() => props.onQueryChange("")}
+            size="xs"
+            type="button"
+            variant="ghost"
+          >
+            Clear
+          </Button>
+        ) : null}
+        {!props.hideCompactCount ? (
+          <span
+            aria-atomic="true"
+            aria-live="polite"
+            className="shrink-0 text-(length:--text-small) tabular-nums text-foreground-muted"
+          >
+            {countLabel}
+          </span>
+        ) : null}
+        {props.filters}
         {props.density && props.onDensityChange ? (
           <CollectionDensitySwitcher
             densities={densities}
@@ -187,28 +225,11 @@ export function CollectionSearchToolbar(props: {
             onDensityChange={props.onDensityChange}
           />
         ) : null}
-        <div className="flex min-w-0 max-w-full shrink-0 flex-wrap items-center gap-1">
-          {!props.hideCompactCount ? (
-            <span
-              aria-atomic="true"
-              aria-live="polite"
-              className="mr-1 text-xs tabular-nums text-foreground-muted"
-            >
-              {countLabel}
-            </span>
-          ) : null}
-          {props.viewActions}
-          {props.query ? (
-            <Button
-              onClick={() => props.onQueryChange("")}
-              size="xs"
-              type="button"
-              variant="ghost"
-            >
-              Clear
-            </Button>
-          ) : null}
-        </div>
+        {props.viewActions ? (
+          <div className="flex min-w-0 max-w-full shrink-0 flex-wrap items-center gap-1">
+            {props.viewActions}
+          </div>
+        ) : null}
       </div>
     );
   }

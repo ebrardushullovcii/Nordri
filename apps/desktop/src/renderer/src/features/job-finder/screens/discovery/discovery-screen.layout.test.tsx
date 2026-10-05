@@ -425,8 +425,10 @@ describe("DiscoveryScreen established-results layout", () => {
     expect(header).toBeTruthy();
     // No route-level action cluster: the search bar owns the one command.
     expect(actions).toBeNull();
-    expect(header?.className).toContain("xl:grid-cols-[minmax(0,1fr)_auto]");
-    expect(header?.className).not.toContain("lg:grid-cols-");
+    // One title row: title and description side by side, no grid switch.
+    expect(header?.className).toContain("min-h-8");
+    expect(header?.className).toContain("items-center");
+    expect(header?.className).not.toMatch(/grid-cols-/u);
     expect(header?.firstElementChild?.querySelector("h1")?.textContent).toBe(
       "Find jobs",
     );

@@ -153,7 +153,9 @@ describe("OutcomeAnalyticsScreen", () => {
     expect(
       screen.getByRole("heading", { name: "No outcomes recorded yet" }),
     ).toBeTruthy();
-    expect(screen.getByText(/never applied automatically/i)).toBeTruthy();
+    expect(
+      screen.getByText(/Suggestions never apply themselves/i),
+    ).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Outcomes" })).toBeTruthy();
   });
 
@@ -380,7 +382,7 @@ describe("OutcomeAnalyticsScreen", () => {
     fireEvent.click(screen.getByRole("button", { name: "Source" }));
 
     expect(screen.getAllByRole("article")).toHaveLength(40);
-    expect(screen.getByText(/Showing 1–40 of 10000 sources/)).toBeTruthy();
+    expect(screen.getByText(/1–40 of 10000/)).toBeTruthy();
     expect(screen.getByText("Page 1 of 250")).toBeTruthy();
     expect(bucketKeyCard("source-00000")).toBeTruthy();
     expect(bucketKeyCard("source-00040")).toBeNull();
@@ -388,7 +390,7 @@ describe("OutcomeAnalyticsScreen", () => {
     fireEvent.click(screen.getByRole("button", { name: "Next page" }));
 
     expect(screen.getAllByRole("article")).toHaveLength(40);
-    expect(screen.getByText(/Showing 41–80 of 10000 sources/)).toBeTruthy();
+    expect(screen.getByText(/41–80 of 10000/)).toBeTruthy();
     expect(screen.getByText("Page 2 of 250")).toBeTruthy();
     expect(bucketKeyCard("source-00040")).toBeTruthy();
     expect(bucketKeyCard("source-00000")).toBeNull();

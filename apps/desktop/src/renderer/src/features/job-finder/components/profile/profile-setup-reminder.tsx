@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { ProfileSetupState } from "@nordri/contracts";
-import { Button } from "@renderer/components/ui/button";
+
+import type { PageStatusItem } from "../page-status-line";
 
 const PROFILE_SETUP_REMINDER_DISMISSED_KEY =
   "nordri.profile-setup-reminder-dismissed-v1";
@@ -33,59 +34,50 @@ function readReminderDismissed(): boolean {
   }
 }
 
-export function ProfileSetupReminder(props: {
+/**
+ * Unfinished guided setup is a condition owned by another screen, so it is
+ * an item on Profile's header status line with one Continue button, not a
+ * card above the tabs (ADR 0044). Hiding it lasts for the rest of the
+ * session, as "Not now" did.
+ */
+export function useProfileSetupStatusItem(props: {
   currentStep: ProfileSetupState["currentStep"];
+  enabled: boolean;
   isResumePending: boolean;
   onResume: (step: ProfileSetupState["currentStep"]) => void;
   pendingItemCount: number;
-}) {
+}): PageStatusItem | null {
   const [isDismissed, setIsDismissed] = useState(readReminderDismissed);
 
-  if (isDismissed) {
+  if (!props.enabled || isDismissed) {
     return null;
   }
 
-  function dismissReminder() {
-    setIsDismissed(true);
-    try {
-      window.sessionStorage.setItem(PROFILE_SETUP_REMINDER_DISMISSED_KEY, "1");
-    } catch {
-      // The in-memory dismissal still applies when storage is unavailable.
-    }
-  }
-
-  return (
-    <div className="surface-card-tint flex flex-col gap-3 rounded-(--radius-panel) border border-border/30 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
-      <div className="grid gap-1">
-        <p className="text-(length:--text-tiny) uppercase tracking-[0.18em] text-muted-foreground">
-          Setup still in progress
-        </p>
-        <p className="text-sm text-foreground-soft">
-          {props.pendingItemCount > 0
-            ? `${props.pendingItemCount} setup item${props.pendingItemCount === 1 ? "" : "s"} still need${props.pendingItemCount === 1 ? "s" : ""} review. Continue from ${PROFILE_SETUP_STEP_LABELS[props.currentStep]}.`
-            : `Continue setup from ${PROFILE_SETUP_STEP_LABELS[props.currentStep]}.`}
-        </p>
-      </div>
-      <div className="flex flex-wrap items-center justify-end gap-2">
-        <Button
-          aria-label="Dismiss guided setup reminder for this session"
-          className="text-sm font-medium tracking-normal normal-case"
-          onClick={dismissReminder}
-          size="sm"
-          type="button"
-          variant="ghost"
-        >
-          Not now
-        </Button>
-        <Button
-          pending={props.isResumePending}
-          onClick={() => props.onResume(props.currentStep)}
-          type="button"
-          variant="secondary"
-        >
-          Resume guided setup
-        </Button>
-      </div>
-    </div>
-  );
+  const count = props.pendingItemCount;
+  const step = PROFILE_SETUP_STEP_LABELS[props.currentStep];
+  return {
+    id: "profile-setup",
+    tone: "info",
+    text:
+      count > 0
+        ? `Setup in progress: ${count} item${count === 1 ? "" : "s"} still need${count === 1 ? "s" : ""} review. Continue from ${step}.`
+        : `Setup in progress. Continue from ${step}.`,
+    action: {
+      kind: "button",
+      label: "Resume guided setup",
+      onClick: () => props.onResume(props.currentStep),
+      pending: props.isResumePending,
+    },
+    onHide: () => {
+      setIsDismissed(true);
+      try {
+        window.sessionStorage.setItem(
+          PROFILE_SETUP_REMINDER_DISMISSED_KEY,
+          "1",
+        );
+      } catch {
+        // The in-memory dismissal still applies when storage is unavailable.
+      }
+    },
+  };
 }

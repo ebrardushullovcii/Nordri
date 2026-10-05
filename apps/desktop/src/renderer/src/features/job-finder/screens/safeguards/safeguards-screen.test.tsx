@@ -239,7 +239,9 @@ describe("SafeguardsScreen", () => {
     renderScreen({ onMutateSafeguards, workspace: workspaceWith(safeguards) });
 
     expect(screen.getByText("Listing suspicious")).toBeTruthy();
-    expect(screen.getByText(/1 thing is being held back/)).toBeTruthy();
+    // The held count is said once, on the events section, not in a box.
+    expect(screen.getByText(/1 holding work back/)).toBeTruthy();
+    expect(screen.queryByText(/thing is being held back/)).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Dismiss signal" }));
 
@@ -528,7 +530,12 @@ describe("SafeguardsScreen", () => {
 
     renderScreen({ workspace });
 
-    const status = screen.getByTestId("safeguards-daily-capacity-status");
+    // The reached limit is an info item on the header status line.
+    const status = document.querySelector(
+      '[data-page-status-item="daily-capacity"]',
+    ) as HTMLElement;
+    expect(status.getAttribute("data-tone")).toBe("info");
+    expect(status.closest("[data-page-header-status]")).toBeTruthy();
     expect(status.textContent).toMatch(/20 of 20 used today/i);
     expect(status.textContent).toMatch(/reset at local midnight \(/i);
     expect(status.textContent).not.toMatch(/applications can both run/i);
@@ -564,7 +571,9 @@ describe("SafeguardsScreen", () => {
         /Nothing is being held back right now\. Searching and preparing applications can both run\./i,
       ),
     ).toBeTruthy();
-    expect(screen.queryByTestId("safeguards-daily-capacity-status")).toBeNull();
+    expect(
+      document.querySelector('[data-page-status-item="daily-capacity"]'),
+    ).toBeNull();
   });
 
   it("states the whole application boundary and keeps every permission revocable", async () => {
@@ -666,6 +675,12 @@ it("uses workspace actions to refresh immediately after Resume and browser reset
   }
   render(<Harness />);
   expect(screen.getByText(/Everything is paused/)).toBeTruthy();
+  // The pause is one amber item on the status line, not a box.
+  expect(
+    document
+      .querySelector('[data-page-status-item="activity-paused"]')
+      ?.getAttribute("data-tone"),
+  ).toBe("warning");
   fireEvent.click(screen.getByRole("button", { name: "Resume everything" }));
   await waitFor(() =>
     expect(screen.queryByText(/Everything is paused/)).toBeNull(),

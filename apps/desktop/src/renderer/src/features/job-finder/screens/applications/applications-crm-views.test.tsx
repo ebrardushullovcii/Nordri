@@ -158,9 +158,9 @@ describe("ApplicationsCrmViews", () => {
       />,
     );
     await chooseShow("Interview stage");
-    expect(screen.getByText(/24 of 24 applications/)).toBeTruthy();
+    expect(screen.getByText("24 results")).toBeTruthy();
     await chooseShow("Scheduled interviews");
-    expect(screen.getByText(/0 of 24 applications/)).toBeTruthy();
+    expect(screen.getByText("0 of 24 results")).toBeTruthy();
   });
 
   test.each([
@@ -401,7 +401,7 @@ describe("ApplicationsCrmViews", () => {
     expect(
       screen.getByRole("navigation", { name: "applications pagination" }),
     ).toBeTruthy();
-    expect(screen.getByText("Showing 1–50 of 226 applications")).toBeTruthy();
+    expect(screen.getByText("1–50 of 226")).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Next page" }));
     expect(screen.getAllByRole("row")).toHaveLength(51);
@@ -442,9 +442,7 @@ describe("ApplicationsCrmViews", () => {
     const initialReport = onVisibleRecordIdsChange.mock.calls.at(-1)?.[0] ?? [];
     expect(initialReport).toHaveLength(120);
     expect(initialReport).toContain("application_119");
-    expect(
-      screen.getByText("Showing 101–120 of 120 applications"),
-    ).toBeTruthy();
+    expect(screen.getByText("101–120 of 120")).toBeTruthy();
 
     fireEvent.change(
       screen.getByRole("searchbox", { name: "Search applications" }),
@@ -948,10 +946,10 @@ test("sort and Show changes return to page one without following the old selecti
   fireEvent.click(
     screen.getByRole("option", { name: "Applied date: oldest first" }),
   );
-  expect(screen.getByText("Showing 1–50 of 120 applications")).toBeTruthy();
+  expect(screen.getByText("1–50 of 120")).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: /Next/ }));
   await chooseShow("Offers");
-  expect(screen.getByText("Showing 1–50 of 120 applications")).toBeTruthy();
+  expect(screen.getByText("1–50 of 120")).toBeTruthy();
 });
 
 test("a requested record opens despite persisted search and Show filters", () => {
@@ -1054,4 +1052,44 @@ test("gives role and employer more room than sparse tracker columns", () => {
   expect(
     screen.getByRole("columnheader", { name: "Stage" }).className,
   ).toContain("w-[1%]");
+});
+
+test("keeps the tracker controls on one toolbar row under the page title", () => {
+  const records = Array.from({ length: 4 }, (_, index) =>
+    record(`application_${index}`, `Role ${index}`, "Acme"),
+  );
+  const { container } = render(
+    <ApplicationsCrmViews
+      onSelectRecord={vi.fn()}
+      onViewChange={vi.fn()}
+      records={records}
+      selectedRecordId={null}
+      view="table"
+    />,
+  );
+
+  // No visible panel title or subtitle repeats the page header.
+  const heading = screen.getByRole("heading", { name: "Application tracker" });
+  expect(heading.className).toContain("sr-only");
+  expect(screen.queryByText(/in this view · a stage is either/)).toBeNull();
+
+  const row = container.querySelector("[data-collection-toolbar-compact]");
+  expect(row?.className).toContain("min-h-12");
+  for (const control of [
+    screen.getByLabelText("Search applications"),
+    screen.getByRole("combobox", { name: "Show" }),
+    screen.getByRole("combobox", { name: "Sort applications" }),
+    screen.getByRole("group", { name: "Application view" }),
+  ]) {
+    expect(row?.contains(control)).toBe(true);
+  }
+  expect(screen.getByText("4 results")).toBeTruthy();
+  // The stage explanation is a description of the Stage column.
+  const stage = screen.getByRole("columnheader", { name: "Stage" });
+  expect(stage.getAttribute("aria-describedby")).toBe(
+    "application-tracker-stage-help",
+  );
+  expect(
+    document.getElementById("application-tracker-stage-help")?.textContent,
+  ).toMatch(/one you recorded or one Job Finder worked out/);
 });

@@ -338,6 +338,8 @@ describe("createActionRunners", () => {
     expect(actionState.message).toBe(
       "The approved tailored CV changed after it was saved.",
     );
+    // A failure carries its tone so it never becomes a toast (ADR 0042).
+    expect(actionState.tone).toBe("failure");
     expect(pendingActionState).toEqual({});
     expect(succeeded).toBe(false);
   });
@@ -2353,9 +2355,11 @@ describe("createPrimaryPageActions", () => {
         source: "manual",
         reason: "Picked by the user.",
       });
+      // A finished action reports a success tone (ADR 0044).
       expect(setActionState).toHaveBeenLastCalledWith({
         message:
           "Strategy chosen for this job. The job's resume still needs its own review and approval before it can be used.",
+        tone: "success",
       });
     });
   });
@@ -2395,6 +2399,7 @@ describe("createPrimaryPageActions", () => {
       expect(queueJobForReview).toHaveBeenCalledWith("job_find_results");
       expect(setActionState).toHaveBeenLastCalledWith({
         message: "Job added to Shortlisted.",
+        tone: "success",
         actionLink: {
           label: "Open Shortlisted",
           route: "/job-finder/review-queue",

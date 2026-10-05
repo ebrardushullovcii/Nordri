@@ -42,7 +42,7 @@ describe("CollectionPagination focus ownership", () => {
     nextButton.focus();
     fireEvent.click(nextButton);
 
-    expect(screen.getByText("Showing 51–100 of 120 jobs")).toBeTruthy();
+    expect(screen.getByText("51–100 of 120")).toBeTruthy();
     expect(document.activeElement).toBe(nextButton);
   });
 
@@ -56,7 +56,7 @@ describe("CollectionPagination focus ownership", () => {
     nextButton.focus();
     fireEvent.click(nextButton);
 
-    expect(screen.getByText("Showing 101–120 of 120 jobs")).toBeTruthy();
+    expect(screen.getByText("101–120 of 120")).toBeTruthy();
     expect(nextButton).toHaveProperty("disabled", true);
     expect(document.activeElement).toBe(previousButton);
   });
@@ -72,5 +72,33 @@ describe("CollectionPagination focus ownership", () => {
     expect(
       fireEvent.keyDown(previousButton, { key: "Tab", shiftKey: true }),
     ).toBe(true);
+  });
+});
+
+describe("CollectionPagination layout", () => {
+  test("is one 44px line with the range on the left and small buttons on the right", () => {
+    const view = render(<StatefulPagination />);
+    const nav = screen.getByRole("navigation", { name: "jobs pagination" });
+
+    for (const token of [
+      "flex",
+      "h-11",
+      "items-center",
+      "justify-between",
+      "px-3",
+    ]) {
+      expect(nav.className).toContain(token);
+    }
+    expect(nav.className).not.toContain("flex-wrap");
+    const range = screen.getByText("1–50 of 120");
+    // The noun stays for screen readers.
+    expect(range.textContent).toBe("1–50 of 120 jobs");
+    expect(view.container.querySelector(".sr-only")?.textContent).toBe(" jobs");
+    expect(
+      screen.getByRole("button", { name: "Next page" }).className,
+    ).toContain("h-6");
+    expect(
+      screen.getByRole("button", { name: "Previous page" }).className,
+    ).toContain("h-6");
   });
 });

@@ -497,7 +497,6 @@ export function ProfileSetupScreen(props: {
                 </Button>
               </div>
             }
-            eyebrow="Profile setup"
             title="Guided setup"
             description={
               isPristineSetup

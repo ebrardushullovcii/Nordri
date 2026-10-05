@@ -1,80 +1,55 @@
-import type { ComponentProps, ReactNode } from "react";
+import { useId, type ComponentProps, type ReactNode } from "react";
 
 import { cn } from "@renderer/lib/cn";
 
+import { PageStatusLine, type PageStatusItem } from "./page-status-line";
+
 interface PageHeaderProps {
   /**
-   * @deprecated Ignored. Scheduled for deletion; the only remaining caller is
-   * `screens/review-queue/review-queue-screen.tsx`, which PKG-04 does not own.
-   * See CR-PKG04-01 — once that caller drops the prop, delete this line and
-   * `eyebrow` below, plus the two `page-header.test.tsx` legacy cases.
+   * Page-level actions on the right of the title row: `size="sm"` buttons,
+   * at most two.
    */
-  compact?: boolean;
   actions?: ReactNode;
+  /**
+   * One sentence of 90 characters or fewer about what the page is for. It
+   * stays on one line and truncates; the full text is its tooltip and the
+   * heading's accessible description. Instructions belong where they apply.
+   */
   description: string;
-  /**
-   * Keep action-heavy headers stacked through the compact desktop breakpoint
-   * so the title block always retains a readable column.
-   */
-  layout?: "default" | "stacked-until-xl";
-  /**
-   * @deprecated Ignored. The visible eyebrow was removed from the page
-   * grammar. Remaining callers: `screens/profile-screen.tsx` and
-   * `screens/review-queue/review-queue-screen.tsx` — see CR-PKG04-01.
-   */
-  eyebrow?: string;
-  /**
-   * Optional supporting facts about the current route (for example the
-   * configured search scope). It belongs to the title block, not the action
-   * row, so a compact width never leaves a gap between wrapped meta text and a
-   * right-aligned primary action.
-   */
-  meta?: ReactNode;
   title: string;
 }
 
-export function PageHeader({
-  actions,
-  description,
-  layout = "default",
-  meta,
-  title,
-}: PageHeaderProps) {
+/**
+ * One row: the title, a one-line description beside it, and the page actions
+ * on the right. Below 1024px the description drops under the title, still on
+ * one line.
+ */
+export function PageHeader({ actions, description, title }: PageHeaderProps) {
+  const descriptionId = useId();
+
   return (
     <header
-      className={cn(
-        "grid min-w-0 gap-1",
-        layout === "stacked-until-xl"
-          ? "xl:grid-cols-[minmax(0,1fr)_auto] xl:items-baseline xl:gap-x-4"
-          : "lg:grid-cols-[minmax(0,1fr)_auto] lg:items-baseline lg:gap-x-4",
-      )}
+      className="flex min-h-8 min-w-0 items-center justify-between gap-4"
       data-page-header
     >
-      <div className="grid min-w-0 gap-1">
-        <h1 className="max-w-[24ch] font-display text-(length:--text-page-title-compact) font-semibold leading-none tracking-(--tracking-page-title-compact) text-(--headline-primary)">
+      <div className="flex min-w-0 flex-1 flex-col gap-1 lg:flex-row lg:items-baseline lg:gap-3">
+        <h1
+          aria-describedby={descriptionId}
+          className="shrink-0 font-display text-(length:--text-page-title-compact) font-semibold leading-none tracking-(--tracking-page-title-compact) text-(--headline-primary)"
+        >
           {title}
         </h1>
-        <p className="max-w-[68ch] text-(length:--text-page-description-compact) leading-5 text-foreground-soft">
+        <p
+          className="min-w-0 truncate text-(length:--text-page-description-compact) leading-5 text-foreground-soft"
+          id={descriptionId}
+          title={description}
+        >
           {description}
         </p>
-        {meta ? (
-          <div
-            className="min-w-0 max-w-[68ch] text-(length:--text-small) text-foreground-muted"
-            data-page-header-meta
-          >
-            {meta}
-          </div>
-        ) : null}
       </div>
       {actions ? (
         <div
-          className={cn(
-            "flex min-w-0 flex-wrap items-center justify-start gap-2",
-            // Right alignment only once the actions actually share a row with
-            // the title. While the header is stacked, an end-aligned button
-            // strands a wide empty band beside itself.
-            layout === "stacked-until-xl" ? "xl:justify-end" : "lg:justify-end",
-          )}
+          className="flex shrink-0 items-center gap-2"
           data-page-header-actions
         >
           {actions}
@@ -86,22 +61,21 @@ export function PageHeader({
 
 export function PageHeaderStack(
   props: PageHeaderProps & {
-    status?: ReactNode;
+    /**
+     * Toned items for the status line under the title (ADR 0044). The line
+     * is not rendered when the list is empty.
+     */
+    statusItems?: readonly PageStatusItem[];
     subnav?: ReactNode;
   },
 ) {
-  const { status, subnav, ...headerProps } = props;
+  const { statusItems, subnav, ...headerProps } = props;
 
   return (
     <div className="mb-(--gap-page-header-body)" data-page-header-stack>
       <PageHeader {...headerProps} />
-      {status ? (
-        <div
-          className="mt-(--gap-page-header-aux) min-w-0 w-full"
-          data-page-header-status
-        >
-          {status}
-        </div>
+      {statusItems && statusItems.length > 0 ? (
+        <PageStatusLine items={statusItems} />
       ) : null}
       {subnav ? (
         <div className="mt-(--gap-page-header-aux)" data-page-header-subnav>
@@ -126,3 +100,5 @@ export function PageSubnav({ className, ...props }: ComponentProps<"div">) {
     />
   );
 }
+
+export type { PageStatusAction, PageStatusItem } from "./page-status-line";

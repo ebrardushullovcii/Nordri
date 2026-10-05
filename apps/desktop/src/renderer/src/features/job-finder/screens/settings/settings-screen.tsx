@@ -22,9 +22,8 @@ import {
 } from "lucide-react";
 import type { CSSProperties, MouseEvent } from "react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Link, useLocation } from "react-router-dom";
+import { useLocation } from "react-router-dom";
 import { cn } from "@renderer/lib/cn";
-import { JOB_FINDER_ROUTE_PATHS } from "@renderer/features/job-finder/lib/job-finder-route-hrefs";
 import { SHELL_SCROLLING_ROUTE_BOTTOM_GUTTER_CANCEL_CLASS } from "../../lib/job-finder-shell-gutters";
 import { PageHeaderStack } from "../../components/page-header";
 import { ApplicationsCrmSettingsEditor } from "../applications/applications-crm-settings";
@@ -451,23 +450,8 @@ export function SettingsScreen(props: {
         } as CSSProperties
       }
     >
-      {/* The old standing notice spent a bordered 70px band restating where
-          Documents lives. It is one line of the header's own meta slot now, so
-          the first real setting is reachable in a short window. */}
       <PageHeaderStack
         description="Choose how the AI works for you, and set reusable defaults for resumes and applications."
-        meta={
-          <>
-            Your resume and any extra files for applications are managed in{" "}
-            <Link
-              className="text-primary underline underline-offset-2 hover:text-primary/80"
-              to={JOB_FINDER_ROUTE_PATHS.profile}
-            >
-              Profile
-            </Link>
-            .
-          </>
-        }
         title="Settings"
       />
 

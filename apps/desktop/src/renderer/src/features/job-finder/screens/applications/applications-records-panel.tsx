@@ -35,7 +35,6 @@ import { resolveApplyStatePresentation } from "./apply-state";
 import type { ApplyRunContext } from "./applications-recovery-state";
 import { Input } from "@renderer/components/ui/input";
 import { matchesCollectionSearch } from "../../components/collection-search-toolbar";
-import { Badge } from "@renderer/components/ui/badge";
 import { Button } from "@renderer/components/ui/button";
 import {
   SelectableRow,
@@ -93,6 +92,11 @@ interface ApplicationsRecordsPanelProps {
   }>;
   filterCounts: Record<ApplicationsViewFilter, number>;
   hasAnyApplications: boolean;
+  /**
+   * Older preparation history that belongs to no application record. It is
+   * explained once at the end of the list, not above it.
+   */
+  hasUnassignedLegacyHistory?: boolean;
   searchPlanName?: string | undefined;
   hasOtherPlanApplications?: boolean | undefined;
   /**
@@ -124,6 +128,7 @@ export function ApplicationsRecordsPanel({
   customStages,
   discoveryJobs = [],
   hasAnyApplications,
+  hasUnassignedLegacyHistory = false,
   searchPlanName,
   hasOtherPlanApplications,
   liveRunLinesByJobId,
@@ -277,83 +282,71 @@ export function ApplicationsRecordsPanel({
     // stretched to it: a 470x780 panel holding one 100px card left ~670px of
     // empty space beside a detail pane that needed the room.
     <section className="surface-panel-shell @container/tracker relative flex min-w-0 flex-col overflow-hidden rounded-(--radius-field) border border-(--surface-panel-border) xl:sticky xl:top-0 xl:max-h-full xl:min-h-0 xl:self-start">
-      <div className="grid gap-3 border-b border-(--surface-panel-border) px-5 py-3">
-        <div className="flex flex-wrap items-center gap-4">
-          {/* A panel title, not an eyebrow: the base heading scale already
-              gives it 19px/600, and the previous bold uppercase primary
-              treatment made it heavier than the page's own H1. */}
-          <h2 className="min-w-0">
-            {searchPlanName
-              ? `${searchPlanName} applications`
-              : "All applications"}
-          </h2>
-          <Badge variant="section">
-            {recordCount} {recordCount === 1 ? "application" : "applications"}
-          </Badge>
-        </div>
-
-        {hasAnyApplications ? (
-          <div
-            aria-labelledby={filterGroupId}
-            className="flex w-full min-w-0 flex-wrap items-center gap-1.5"
-            role="group"
-          >
-            <span className="sr-only" id={filterGroupId}>
-              Application filters
-            </span>
-            <Input
+      {/* One toolbar row. The page title and the "All" chip already say what
+          this list is and how many it holds, so the panel repeats neither.
+          A narrow column wraps the chips onto a second, shorter line. */}
+      {hasAnyApplications ? (
+        <div
+          aria-labelledby={filterGroupId}
+          className="flex min-h-12 w-full min-w-0 shrink-0 flex-wrap items-center gap-1.5 border-b border-(--surface-panel-border) px-3 py-2"
+          data-applications-list-toolbar
+          role="group"
+        >
+          <span className="sr-only" id={filterGroupId}>
+            Application filters
+          </span>
+          <Input
+            size="toolbar"
+            className="min-w-40 flex-1"
+            aria-label="Search applications"
+            placeholder="Search applications"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+          />
+          <Select value={pipelineStage} onValueChange={setPipelineStage}>
+            <SelectTrigger
+              aria-label="Hiring stage"
               size="toolbar"
-              className="w-40 flex-1"
-              aria-label="Search applications"
-              placeholder="Search applications"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-            />
-            <Select value={pipelineStage} onValueChange={setPipelineStage}>
-              <SelectTrigger
-                aria-label="Hiring stage"
-                size="toolbar"
-                className="w-36"
-              >
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All stages</SelectItem>
-                {APPLICATION_CRM_STAGE_ORDER.map((stage) => (
-                  <SelectItem key={stage} value={stage}>
-                    {APPLICATION_CRM_STAGE_NAMES[stage]}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {visibleFilters.map((filterOption) => (
-              <Button
-                aria-label={formatApplicationFilterAccessibleLabel(
-                  filterOption,
-                  filterCounts[filterOption],
-                )}
-                aria-pressed={activeFilter === filterOption}
-                className={cn(
-                  "shrink-0 whitespace-nowrap rounded-full ring-inset focus-visible:ring-inset",
-                  activeFilter === filterOption
-                    ? null
-                    : "border-(--border-strong)",
-                )}
-                key={filterOption}
-                onClick={() => onFilterChange(filterOption)}
-                size="sm"
-                type="button"
-                variant={activeFilter === filterOption ? "secondary" : "ghost"}
-              >
-                {APPLICATION_FILTER_LABELS[filterOption]}
-                <span className="rounded-full border border-current/15 px-1.5 py-0.5 font-mono text-[11px] font-bold uppercase leading-none tracking-(--tracking-badge)">
-                  {filterCounts[filterOption]}
-                </span>
-              </Button>
-            ))}
-          </div>
-        ) : null}
-      </div>
+              className="w-36"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All stages</SelectItem>
+              {APPLICATION_CRM_STAGE_ORDER.map((stage) => (
+                <SelectItem key={stage} value={stage}>
+                  {APPLICATION_CRM_STAGE_NAMES[stage]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {visibleFilters.map((filterOption) => (
+            <Button
+              aria-label={formatApplicationFilterAccessibleLabel(
+                filterOption,
+                filterCounts[filterOption],
+              )}
+              aria-pressed={activeFilter === filterOption}
+              className={cn(
+                "shrink-0 whitespace-nowrap rounded-full ring-inset focus-visible:ring-inset",
+                activeFilter === filterOption
+                  ? null
+                  : "border-(--border-strong)",
+              )}
+              key={filterOption}
+              onClick={() => onFilterChange(filterOption)}
+              size="xs"
+              type="button"
+              variant={activeFilter === filterOption ? "secondary" : "ghost"}
+            >
+              {APPLICATION_FILTER_LABELS[filterOption]}
+              <span className="rounded-full border border-current/15 px-1.5 py-px font-mono text-[10px] font-bold uppercase leading-none tracking-(--tracking-badge)">
+                {filterCounts[filterOption]}
+              </span>
+            </Button>
+          ))}
+        </div>
+      ) : null}
       {applicationRecords.length === 0 ? (
         <div className="flex min-h-0 flex-1 items-start p-6">
           {!hasAnyApplications && hasOtherPlanApplications && searchPlanName ? (
@@ -595,6 +588,12 @@ export function ApplicationsRecordsPanel({
           })}
         </ul>
       )}
+      {hasUnassignedLegacyHistory ? (
+        <p className="border-t border-(--surface-panel-border) px-3 py-2 text-(length:--text-small) leading-5 text-foreground-muted">
+          Unassigned legacy preparation history is retained for audit only. It
+          is not attached to an application record and has no action controls.
+        </p>
+      ) : null}
       {recordCount > 0 ? (
         <CollectionPagination
           itemLabel="applications"

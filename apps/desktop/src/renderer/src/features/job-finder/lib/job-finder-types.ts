@@ -566,6 +566,13 @@ export type BadgeTone =
 export interface ActionState {
   message: string | null;
   /**
+   * What the message reports: `success` (the action finished as asked),
+   * `failure` (it was refused or failed and the person may need to act), or
+   * `progress` (still running). A success may become a toast; a failure and
+   * a message without a tone always stay inline (ADR 0042).
+   */
+  tone?: "success" | "failure" | "progress" | null;
+  /**
    * A file this action just wrote, when the message names its path. The
    * surface that prints the message offers "Open folder" beside it, so the
    * path is an action rather than something to retype.

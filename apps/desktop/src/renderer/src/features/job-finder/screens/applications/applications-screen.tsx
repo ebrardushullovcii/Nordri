@@ -34,7 +34,10 @@ import { ArrowLeft } from "lucide-react";
 import { Button } from "@renderer/components/ui/button";
 import { LockedScreenLayout } from "../../components/locked-screen-layout";
 import { EmptyState } from "../../components/empty-state";
-import { PageHeaderStack } from "../../components/page-header";
+import {
+  PageHeaderStack,
+  type PageStatusItem,
+} from "../../components/page-header";
 import { ApplicationsDetailPanel } from "./applications-detail-panel";
 import type {
   ConfirmFinishedInBrowserStatus,
@@ -563,52 +566,6 @@ export function ApplicationsScreen(props: {
         runJobIds: new Set(latestAutomaticRun.jobIds),
       })
     : 0;
-  const latestRunCouldNotApplyCount = latestRunAttentionResults.filter(
-    (result) => ["failed", "blocked", "skipped"].includes(result.state),
-  ).length;
-  const latestRunHasCountedFailure =
-    latestAutomaticRun &&
-    latestRunAttentionResults.some(
-      (result) =>
-        result.state === "failed" &&
-        countApplyRunItemsNeedingYou({
-          applicationRecords: latestRunAttentionRecords.filter(
-            (record) => record.id === result.applicationRecordId,
-          ),
-          applyJobResults: [result],
-          requests: latestRunAttentionRequests.filter(
-            (request) =>
-              request.scope.type === "application" &&
-              request.scope.jobId === result.jobId,
-          ),
-          runId: latestAutomaticRun.id,
-          runJobIds: new Set([result.jobId]),
-        }) > 0,
-    );
-  const latestRunQueuedCount =
-    latestAutomaticRun?.state === "running"
-      ? latestAutomaticResults.filter((result) => result.state === "planned")
-          .length
-      : 0;
-  const latestRunNotStartedCount =
-    latestAutomaticRun?.state !== "running"
-      ? latestAutomaticResults.filter((result) => result.state === "planned")
-          .length
-      : 0;
-  const latestRunInProgressCount =
-    latestAutomaticRun?.state === "running"
-      ? latestAutomaticResults.filter((result) =>
-          ["filling", "question_capture", "submitting"].includes(result.state),
-        ).length
-      : 0;
-  const latestRunFinishedCount = latestAutomaticResults.filter(
-    (result) =>
-      result.state === "submitted" &&
-      result.privacyReceipt?.finalSubmitOccurred !== false,
-  ).length;
-  const latestRunSkippedCount = latestAutomaticResults.filter(
-    (result) => result.state === "skipped",
-  ).length;
   const filteredApplicationRecords = useMemo(
     () =>
       applicationRecords.filter((record) =>
@@ -905,6 +862,72 @@ export function ApplicationsScreen(props: {
     dailyPreparationCapacity,
     latestRunAttentionCount,
   });
+  // Conditions owned elsewhere, the latest automatic run and the bulk retry
+  // are items on the header's status line, not boxes above the list
+  // (ADR 0044). The tracker records stages by hand, which none of them stop.
+  const applicationsStatusItems: PageStatusItem[] = [];
+  if (workspaceView === "workflow") {
+    const holdCount = props.safeguardsBlockerCount ?? 0;
+    if (holdCount > 0) {
+      applicationsStatusItems.push({
+        id: "safeguard-holds",
+        tone: "critical",
+        text: `${holdCount} safeguard ${holdCount === 1 ? "hold is" : "holds are"} pausing some work`,
+        ...(props.onOpenSafeguards
+          ? {
+              action: {
+                kind: "link",
+                label: "Open Safeguards",
+                onClick: props.onOpenSafeguards,
+              },
+            }
+          : {}),
+      });
+    }
+    const retryCount = retryableJobIds.length;
+    if (applicationRecords.length > 0 && retryCount > 1) {
+      const limit = APPLICATION_PREPARATION_BATCH_LIMIT;
+      // ADR 0043: the total, how many start now and how many remain.
+      applicationsStatusItems.push({
+        id: "bulk-retry",
+        tone: "warning",
+        text:
+          retryCount > limit
+            ? `${retryCount} applications need another try; ${limit} start at a time, ${retryCount - limit} wait for the next batch`
+            : `${retryCount} applications need another try`,
+        action: {
+          kind: "button",
+          label:
+            retryCount > limit
+              ? `Retry next ${limit}`
+              : `Try again for all ${retryCount}`,
+          disabled:
+            isApplyPending ||
+            (dailyPreparationCapacity !== null &&
+              dailyPreparationCapacity.remaining < 1),
+          onClick: () =>
+            onStartAutoApplyQueue(
+              retryableJobIds.slice(0, limit),
+              props.applicationAutomationMode ?? "prepare_only",
+            ),
+        },
+      });
+    }
+    // Completed runs belong in Activity; the run is named here only while
+    // the person has an unresolved step in it.
+    if (latestAutomaticRun && latestRunAttentionCount > 0) {
+      const total = latestAutomaticRun.totalJobs;
+      applicationsStatusItems.push({
+        id: "latest-automatic-run",
+        text: `Last automatic run: ${total} ${total === 1 ? "job" : "jobs"}, ${latestRunAttentionCount} ${latestRunAttentionCount === 1 ? "needs" : "need"} you`,
+        action: {
+          kind: "link",
+          label: "Show them",
+          onClick: () => handleFilterChange("needs_action"),
+        },
+      });
+    }
+  }
   const crmEmptyState = !hasCrmTrackerControls
     ? {
         title: "Tracking tools unavailable",
@@ -964,47 +987,7 @@ export function ApplicationsScreen(props: {
                   Back to Applications
                 </Button>
               ) : applicationRecords.length > 0 ? (
-                <div className="flex flex-wrap items-center gap-2">
-                  {workspaceView === "workflow" &&
-                  retryableJobIds.length > 1 ? (
-                    <section
-                      aria-label="Retry applications that could not be applied"
-                      className="flex flex-wrap items-center gap-2"
-                      data-testid="applications-bulk-retry"
-                    >
-                      <p className="text-sm text-foreground-soft">
-                        {retryableJobIds.length} applications need another try.
-                        {retryableJobIds.length >
-                        APPLICATION_PREPARATION_BATCH_LIMIT
-                          ? ` Up to ${APPLICATION_PREPARATION_BATCH_LIMIT} start at a time; ${retryableJobIds.length - APPLICATION_PREPARATION_BATCH_LIMIT} remain after this batch.`
-                          : ""}
-                      </p>
-                      <Button
-                        disabled={
-                          isApplyPending ||
-                          (dailyPreparationCapacity !== null &&
-                            dailyPreparationCapacity.remaining < 1)
-                        }
-                        onClick={() =>
-                          onStartAutoApplyQueue(
-                            retryableJobIds.slice(
-                              0,
-                              APPLICATION_PREPARATION_BATCH_LIMIT,
-                            ),
-                            props.applicationAutomationMode ?? "prepare_only",
-                          )
-                        }
-                        size="sm"
-                        type="button"
-                        variant="secondary"
-                      >
-                        {retryableJobIds.length >
-                        APPLICATION_PREPARATION_BATCH_LIMIT
-                          ? `Retry next ${APPLICATION_PREPARATION_BATCH_LIMIT}`
-                          : `Try again for all ${retryableJobIds.length}`}
-                      </Button>
-                    </section>
-                  ) : null}
+                <>
                   {/* Outcomes has no navigation entry; it is reached from
                       here once something has been sent and can have one. */}
                   {props.onOpenOutcomes &&
@@ -1032,97 +1015,17 @@ export function ApplicationsScreen(props: {
                   >
                     Open tracker
                   </Button>
-                </div>
+                </>
               ) : null
             }
             description={
               workspaceView === "crm"
-                ? "Stages you record yourself, plus notes, reminders and export. Recording a stage is a local note; it never submits anything."
-                : "Track preparations and hiring progress. Search or filter to find an application."
+                ? "Stages you record yourself, with notes, reminders and export. It never submits anything."
+                : "Track your applications and where each one stands."
             }
+            statusItems={applicationsStatusItems}
             title={workspaceView === "crm" ? "Tracker" : "Applications"}
           />
-          {props.safeguardsBlockerCount !== undefined &&
-          props.safeguardsBlockerCount > 0 ? (
-            <section
-              aria-label="Active safeguards"
-              className="flex flex-wrap items-center justify-between gap-4 rounded-(--radius-field) border border-destructive/30 bg-destructive/10 px-4 py-3"
-            >
-              <p className="min-w-0 text-(length:--text-small) leading-6 text-foreground">
-                {props.safeguardsBlockerCount} active safeguard{" "}
-                {props.safeguardsBlockerCount === 1 ? "blocker" : "blockers"}{" "}
-                {props.safeguardsBlockerCount === 1 ? "needs" : "need"}{" "}
-                attention. Affected work is paused; job discovery may still be
-                available.
-              </p>
-              {props.onOpenSafeguards ? (
-                <Button
-                  onClick={props.onOpenSafeguards}
-                  size="sm"
-                  type="button"
-                  variant="outline"
-                >
-                  Open Safeguards
-                </Button>
-              ) : null}
-            </section>
-          ) : null}
-          {/* Completed runs belong in Activity. Keep this callout only while
-              the person has an unresolved step in this run. */}
-          {latestAutomaticRun &&
-          latestRunAttentionCount > 0 &&
-          workspaceView === "workflow" ? (
-            <section className="flex flex-wrap items-center justify-between gap-4 rounded-(--radius-field) border border-(--surface-panel-border) px-4 py-3">
-              <div className="min-w-0">
-                <p className="label-mono-xs">Latest automatic run</p>
-                <p className="mt-1 text-(length:--text-small) leading-6 text-foreground-soft">
-                  {latestAutomaticRun.totalJobs} job
-                  {latestAutomaticRun.totalJobs === 1 ? "" : "s"} ·{" "}
-                  {latestRunAttentionCount} need attention
-                  {[
-                    latestRunCouldNotApplyCount
-                      ? `${latestRunCouldNotApplyCount} could not apply`
-                      : null,
-                    latestRunQueuedCount
-                      ? `${latestRunQueuedCount} queued`
-                      : null,
-                    latestRunInProgressCount
-                      ? `${latestRunInProgressCount} in progress`
-                      : null,
-                    latestRunNotStartedCount
-                      ? `${latestRunNotStartedCount} not started`
-                      : null,
-                    latestAutomaticResults.filter(
-                      (result) => result.state === "awaiting_review",
-                    ).length
-                      ? `${latestAutomaticResults.filter((result) => result.state === "awaiting_review").length} prepared`
-                      : null,
-                    latestRunFinishedCount
-                      ? `${latestRunFinishedCount} sent`
-                      : null,
-                    latestRunSkippedCount
-                      ? `${latestRunSkippedCount} skipped`
-                      : null,
-                  ]
-                    .filter(Boolean)
-                    .map((label) => ` · ${label}`)
-                    .join("")}
-                </p>
-              </div>
-              <StatusBadge
-                tone={latestRunHasCountedFailure ? "critical" : "neutral"}
-              >
-                {latestRunAttentionCount} need attention
-              </StatusBadge>
-            </section>
-          ) : null}
-          {hasUnassignedLegacyLineage ? (
-            <p className="text-(length:--text-small) leading-6 text-foreground-soft">
-              Unassigned legacy preparation history is retained for audit only.
-              It is not attached to an application record and has no action
-              controls.
-            </p>
-          ) : null}
           {visibleActionMessage ? (
             <p
               aria-atomic="true"
@@ -1238,6 +1141,7 @@ export function ApplicationsScreen(props: {
             latestApplyResultByRecordId={latestApplyResultByRecordId}
             readApplyRunContext={readApplyRunContext}
             applyMode={applyMode}
+            hasUnassignedLegacyHistory={hasUnassignedLegacyLineage}
             onFilterChange={handleFilterChange}
             onSelectRecord={selectRecordAndRevealDetails}
             selectedRecord={effectiveSelectedRecord}

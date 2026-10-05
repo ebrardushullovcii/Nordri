@@ -465,10 +465,18 @@ export function ProfileResumePanel({
       ? "Part of this import used the built-in reader."
       : null;
 
+  // The strip is one line when the resume is simply ready: "replace or
+  // refresh" repeats its own two buttons. Any state that needs reading
+  // (suggestions to review, a failed or unreadable import) keeps its line.
+  const compactDescription =
+    resumeTextReadyToAnalyze && latestResumeImportReviewCandidates.length === 0
+      ? null
+      : panelDescription;
+
   if (compact) {
     return (
       <section
-        className="grid gap-3 border-b border-(--surface-panel-border) bg-(--surface-overlay-strong) px-3 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:px-4"
+        className="grid gap-2 border-b border-(--surface-panel-border) bg-(--surface-overlay-strong) px-3 py-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:px-4"
         data-profile-resume-summary
       >
         <div className="grid min-w-0 gap-1">
@@ -491,9 +499,11 @@ export function ProfileResumePanel({
               </span>
             ) : null}
           </div>
-          <p className="text-sm leading-5 text-foreground-muted">
-            {panelDescription}
-          </p>
+          {compactDescription ? (
+            <p className="text-sm leading-5 text-foreground-muted">
+              {compactDescription}
+            </p>
+          ) : null}
           {latestRunWarning ? (
             <p
               className="text-sm leading-5 text-foreground-muted"

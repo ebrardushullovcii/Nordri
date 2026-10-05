@@ -983,6 +983,10 @@ export function DiscoveryResultsPanel({
     await onShortlistJobs(shortlistableJobs.map((job) => job.id));
     setBulkSelectedJobIds(new Set());
   };
+  const isSelecting = Boolean(onShortlistJobs) && bulkSelectedJobIds.size > 0;
+  const selectedShortlistableCount = shortlistableJobs.filter((job) =>
+    bulkSelectedJobIds.has(job.id),
+  ).length;
   // Band dividers only make sense while the list is in its canonical
   // best-match order; any other sort re-interleaves the bands. Headings are
   // built from the rows actually on screen so every page keeps its dividers
@@ -1192,65 +1196,320 @@ export function DiscoveryResultsPanel({
     [currentPage, moveToPage, onSelectJob, orderedJobs],
   );
 
+  const resultsTitle = (
+    <div className="flex min-w-0 shrink-0 items-baseline gap-x-2">
+      <h2 className="text-(--text-headline)" id="discovery-job-results-heading">
+        Results
+      </h2>
+      {planName ? (
+        <span className="text-xs text-foreground-muted">{planName}</span>
+      ) : null}
+      {/* An empty list explains itself below; "0 jobs" beside "Ready for
+          your first search" only repeats the empty state as a number. */}
+      {jobs.length > 0 ? (
+        <span
+          aria-atomic="true"
+          aria-live="polite"
+          className="text-(length:--text-small) tabular-nums text-foreground-muted"
+          data-testid="discovery-result-count"
+        >
+          {resultCountLabel}
+          {locationCountLabel ? <span> · {locationCountLabel}</span> : null}
+        </span>
+      ) : null}
+    </div>
+  );
+
   return (
     <section
       aria-labelledby="discovery-job-results-heading"
       className="surface-panel-shell relative flex min-h-0 min-w-0 flex-col overflow-hidden rounded-(--radius-panel) border border-(--surface-panel-border) xl:h-full xl:min-h-0"
     >
-      <header className="flex min-h-14 flex-wrap items-center justify-between gap-2 border-b border-(--surface-panel-border) px-4 py-3">
-        <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
-          <h2
-            className="text-(--text-headline)"
-            id="discovery-job-results-heading"
+      {/* One header row: the panel title and count (this page has two panes
+          that need names), then search, filters and sort. While rows are
+          ticked the same row holds the bulk actions instead, so ticking a
+          row never moves the list (ADR 0044). */}
+      <header className="shrink-0 border-b border-(--surface-panel-border)">
+        {isSelecting ? (
+          <div
+            aria-label="Bulk shortlist actions"
+            className="flex min-h-12 flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-2"
+            data-discovery-selection-bar
+            role="group"
           >
-            Results
-          </h2>
-          {planName ? (
-            <span className="text-xs text-foreground-muted">{planName}</span>
-          ) : null}
-          {/* An empty list explains itself below; "0 jobs" beside "Ready for
-              your first search" only repeats the empty state as a number. */}
-          {jobs.length > 0 ? (
-            <span
-              aria-atomic="true"
-              aria-live="polite"
-              className="text-(length:--text-small) tabular-nums text-foreground-muted"
-              data-testid="discovery-result-count"
+            {/* Kept to one row so ticking a row never moves the list: the
+                title without the plan and count, and short visible labels
+                whose full names are their accessible names. */}
+            <h2
+              className="text-(--text-headline)"
+              id="discovery-job-results-heading"
             >
-              {resultCountLabel}
-              {locationCountLabel ? <span> · {locationCountLabel}</span> : null}
+              Results
+            </h2>
+            <span className="text-(length:--text-small) font-medium text-foreground">
+              {bulkSelectedJobIds.size} selected
             </span>
-          ) : null}
-        </div>
-        <div className="flex flex-wrap items-center justify-end gap-2">
-          {/* One reveal control for one pool. Its accessible name is exactly
-              its visible label, so the state a user reads is the state
-              assistive technology and automation report. */}
-          {alsoFoundCount > 0 && jobs.length > 0 && onToggleAlsoFound ? (
             <Button
-              aria-pressed={areAlsoFoundShown}
-              className="shrink-0 whitespace-nowrap"
-              data-testid="discovery-toggle-also-found"
-              onClick={onToggleAlsoFound}
-              size="xs"
+              aria-label={`Shortlist ${bulkSelectedJobIds.size} selected`}
+              disabled={selectedShortlistableCount === 0}
+              onClick={() => void shortlistSelected()}
+              size="toolbar"
               type="button"
-              variant={areAlsoFoundShown ? "secondary" : "outline"}
+              variant="secondary"
             >
-              {areAlsoFoundShown
-                ? `Hide weaker matches (${alsoFoundCount})`
-                : `Show weaker matches (${alsoFoundCount})`}
+              Shortlist
             </Button>
-          ) : null}
-        </div>
-        {/* What the list is doing right now, as one plain line under the
-            header instead of a tinted box above the list (ADR 0042): a
-            search still running, saved results shown while the browser gets
-            ready, or live search being unavailable. */}
+            {shortlistableJobs.length > 0 ? (
+              <Button
+                onClick={() => void shortlistAllShown()}
+                size="toolbar"
+                type="button"
+                variant="outline"
+              >
+                Shortlist all {shortlistableJobs.length} shown
+              </Button>
+            ) : null}
+            <Button
+              aria-label="Clear selection"
+              onClick={() => setBulkSelectedJobIds(new Set())}
+              size="toolbar"
+              type="button"
+              variant="ghost"
+            >
+              Clear
+            </Button>
+          </div>
+        ) : jobs.length > 0 ? (
+          <CollectionSearchToolbar
+            className="border-b-0"
+            compact
+            hideCompactCount
+            leading={resultsTitle}
+            label="Find a job"
+            onQueryChange={(query) => {
+              view.setQuery(query);
+              moveToPage(0);
+            }}
+            placeholder="Search results"
+            placement="panel"
+            query={view.query}
+            totalCount={jobs.length}
+            visibleCount={filteredJobs.length}
+            viewActions={
+              <div
+                className="flex min-w-0 flex-wrap items-start justify-between gap-2"
+                data-testid="discovery-results-toolbar"
+              >
+                {hasFilterGroups ? (
+                  <details className="group relative min-w-0">
+                    {/* `--control-border` rather than the inert
+                  `--surface-panel-border`: this border is the disclosure's
+                  entire boundary, so it has to read as a control beside the
+                  sort field. */}
+                    <summary
+                      className={cn(
+                        DISCOVERY_RESULTS_TOOLBAR_CONTROL_CLASS,
+                        "flex w-fit cursor-pointer list-none items-center gap-2 whitespace-nowrap border border-(--control-border) px-3 text-foreground-soft outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/30 [&::-webkit-details-marker]:hidden",
+                      )}
+                    >
+                      Filters
+                      {activeFilterCount > 0 ? (
+                        <span
+                          aria-label={`${activeFilterCount} active ${activeFilterCount === 1 ? "filter" : "filters"}`}
+                          className="rounded-full bg-accent px-1.5 py-0.5 tabular-nums text-accent-foreground"
+                        >
+                          {activeFilterCount}
+                        </span>
+                      ) : null}
+                    </summary>
+                    {/* Columns follow the groups actually shown: a lone Source group
+                  used to get a quarter of the row and broke source addresses
+                  mid-word. */}
+                    <div
+                      className="mt-2 grid max-h-[min(22rem,45dvh)] grid-cols-[repeat(auto-fit,minmax(12rem,1fr))] gap-3 overflow-y-auto overscroll-contain rounded-(--radius-field) border border-(--surface-panel-border) bg-(--surface-panel-raised) p-3"
+                      data-testid="discovery-results-filter-groups"
+                    >
+                      {filterGroups.recommendation ? (
+                        <fieldset className="min-w-0">
+                          <legend className="mb-2 text-xs font-semibold text-foreground">
+                            Fit
+                          </legend>
+                          <div className="grid gap-2">
+                            {recommendationOptions.map((recommendation) => (
+                              <label
+                                className="flex min-w-0 items-start gap-2 text-xs leading-6 text-foreground-soft"
+                                key={recommendation}
+                              >
+                                <input
+                                  checked={recommendationFilters.has(
+                                    recommendation,
+                                  )}
+                                  className="size-6 shrink-0 accent-current"
+                                  onChange={() => {
+                                    setRecommendationFilters((current) =>
+                                      toggleFilterValue(
+                                        current,
+                                        recommendation,
+                                      ),
+                                    );
+                                    moveToPage(0);
+                                  }}
+                                  type="checkbox"
+                                />
+                                <span className="min-w-0 break-words">
+                                  {fitRecommendationCopy[recommendation].label}
+                                </span>
+                              </label>
+                            ))}
+                          </div>
+                        </fieldset>
+                      ) : null}
+                      {filterGroups.source ? (
+                        <fieldset className="min-w-0">
+                          <legend className="mb-2 text-xs font-semibold text-foreground">
+                            Source
+                          </legend>
+                          <div className="grid gap-2">
+                            {sourceOptions.map((source) => (
+                              <label
+                                className="flex min-w-0 items-start gap-2 text-xs leading-6 text-foreground-soft"
+                                key={source}
+                                title={source}
+                              >
+                                <input
+                                  checked={sourceFilters.has(source)}
+                                  className="size-6 shrink-0 accent-current"
+                                  onChange={() => {
+                                    setSourceFilters((current) =>
+                                      toggleFilterValue(current, source),
+                                    );
+                                    moveToPage(0);
+                                  }}
+                                  type="checkbox"
+                                />
+                                <span className="min-w-0 break-words">
+                                  {source}
+                                </span>
+                              </label>
+                            ))}
+                          </div>
+                        </fieldset>
+                      ) : null}
+                      {filterGroups.workMode ? (
+                        <fieldset className="min-w-0">
+                          <legend className="mb-2 text-xs font-semibold text-foreground">
+                            Work mode
+                          </legend>
+                          <div className="grid gap-2">
+                            {workModeOptions.map((workMode) => (
+                              <label
+                                className="flex min-w-0 items-start gap-2 text-xs leading-6 text-foreground-soft"
+                                key={workMode}
+                              >
+                                <input
+                                  checked={workModeFilters.has(workMode)}
+                                  className="size-6 shrink-0 accent-current"
+                                  onChange={() => {
+                                    setWorkModeFilters((current) =>
+                                      toggleFilterValue(current, workMode),
+                                    );
+                                    moveToPage(0);
+                                  }}
+                                  type="checkbox"
+                                />
+                                <span className="min-w-0 break-words">
+                                  {workMode === WORK_MODE_UNSPECIFIED_FILTER
+                                    ? workMode
+                                    : formatWorkModeLabel(workMode as WorkMode)}
+                                </span>
+                              </label>
+                            ))}
+                          </div>
+                        </fieldset>
+                      ) : null}
+                      {filterGroups.activity ? (
+                        <fieldset className="min-w-0">
+                          <legend className="mb-2 text-xs font-semibold text-foreground">
+                            Listing status
+                          </legend>
+                          <div className="grid gap-2">
+                            {activityOptions.map((status) => (
+                              <label
+                                className="flex min-w-0 items-start gap-2 text-xs leading-6 text-foreground-soft"
+                                key={status}
+                              >
+                                <input
+                                  checked={activityFilters.has(status)}
+                                  className="size-6 shrink-0 accent-current"
+                                  onChange={() => {
+                                    setActivityFilters((current) =>
+                                      toggleFilterValue(current, status),
+                                    );
+                                    moveToPage(0);
+                                  }}
+                                  type="checkbox"
+                                />
+                                <span>{formatStatusLabel(status)}</span>
+                              </label>
+                            ))}
+                          </div>
+                        </fieldset>
+                      ) : null}
+                      {activeFilterCount > 0 ? (
+                        <div className="sm:col-span-2 xl:col-span-4">
+                          <Button
+                            onClick={clearFilters}
+                            size="xs"
+                            type="button"
+                            variant="ghost"
+                          >
+                            Clear filters
+                          </Button>
+                        </div>
+                      ) : null}
+                    </div>
+                  </details>
+                ) : (
+                  <span />
+                )}
+                <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">
+                  <select
+                    aria-label="Sort results"
+                    title="Best match shows assessed jobs first. Within each group, reachable places come first, then fit score."
+                    className={cn(
+                      DISCOVERY_RESULTS_TOOLBAR_CONTROL_CLASS,
+                      "min-w-0 max-w-full border border-(--field-border) bg-(--field) px-2 text-foreground-soft outline-none focus-visible:border-(--field-focus-border) focus-visible:bg-(--field-strong) focus-visible:shadow-[var(--field-focus-shadow)]",
+                    )}
+                    onChange={(event) => {
+                      const match = DISCOVERY_RESULTS_SORT_OPTIONS.find(
+                        (option) => option.field === event.target.value,
+                      );
+                      if (!match) return;
+                      resultsSort.setSortField(match.field);
+                      moveToPage(0);
+                    }}
+                    value={sortField}
+                  >
+                    {DISCOVERY_RESULTS_SORT_OPTIONS.map((option) => (
+                      <option key={option.field} value={option.field}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            }
+          />
+        ) : (
+          <div className="flex min-h-12 items-center px-3 py-2">
+            {resultsTitle}
+          </div>
+        )}
         {resultsStatusLine && (jobs.length > 0 || liveStatusLine) ? (
           <p
             aria-atomic="true"
             aria-live="polite"
-            className="flex basis-full items-start gap-1.5 text-(length:--text-small) leading-5 text-foreground-muted"
+            className="flex items-start gap-1.5 px-3 pb-2 text-(length:--text-small) leading-5 text-foreground-muted"
             data-testid="discovery-results-status-line"
             {...(resultsStatusLine.id ? { id: resultsStatusLine.id } : {})}
             role="status"
@@ -1266,7 +1525,9 @@ export function DiscoveryResultsPanel({
             </span>
           </p>
         ) : null}
-        {hiddenJobsControl}
+        {hiddenJobsControl ? (
+          <div className="px-3 pb-2">{hiddenJobsControl}</div>
+        ) : null}
       </header>
       <div
         className="overscroll-contain xl:min-h-[360px] xl:flex-1 xl:overflow-y-auto"
@@ -1277,237 +1538,6 @@ export function DiscoveryResultsPanel({
         aria-label="Job results list"
         tabIndex={0}
       >
-        {jobs.length > 0 ? (
-          <>
-            <CollectionSearchToolbar
-              compact
-              hideCompactCount
-              label="Find a job"
-              onQueryChange={(query) => {
-                view.setQuery(query);
-                moveToPage(0);
-              }}
-              placeholder="Search results"
-              placement="panel"
-              query={view.query}
-              totalCount={jobs.length}
-              visibleCount={filteredJobs.length}
-              viewActions={
-                <div
-                  className="flex min-w-0 flex-wrap items-start justify-between gap-2"
-                  data-testid="discovery-results-toolbar"
-                >
-                  {hasFilterGroups ? (
-                    <details className="group relative min-w-0">
-                      {/* `--control-border` rather than the inert
-                  `--surface-panel-border`: this border is the disclosure's
-                  entire boundary, so it has to read as a control beside the
-                  sort field. */}
-                      <summary
-                        className={cn(
-                          DISCOVERY_RESULTS_TOOLBAR_CONTROL_CLASS,
-                          "flex w-fit cursor-pointer list-none items-center gap-2 whitespace-nowrap border border-(--control-border) px-3 text-foreground-soft outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/30 [&::-webkit-details-marker]:hidden",
-                        )}
-                      >
-                        Filters
-                        {activeFilterCount > 0 ? (
-                          <span
-                            aria-label={`${activeFilterCount} active ${activeFilterCount === 1 ? "filter" : "filters"}`}
-                            className="rounded-full bg-accent px-1.5 py-0.5 tabular-nums text-accent-foreground"
-                          >
-                            {activeFilterCount}
-                          </span>
-                        ) : null}
-                      </summary>
-                      {/* Columns follow the groups actually shown: a lone Source group
-                  used to get a quarter of the row and broke source addresses
-                  mid-word. */}
-                      <div
-                        className="mt-2 grid grid-cols-[repeat(auto-fit,minmax(12rem,1fr))] gap-3 rounded-(--radius-field) border border-(--surface-panel-border) bg-(--surface-panel-raised) p-3"
-                        data-testid="discovery-results-filter-groups"
-                      >
-                        {filterGroups.recommendation ? (
-                          <fieldset className="min-w-0">
-                            <legend className="mb-2 text-xs font-semibold text-foreground">
-                              Fit
-                            </legend>
-                            <div className="grid gap-2">
-                              {recommendationOptions.map((recommendation) => (
-                                <label
-                                  className="flex min-w-0 items-start gap-2 text-xs leading-6 text-foreground-soft"
-                                  key={recommendation}
-                                >
-                                  <input
-                                    checked={recommendationFilters.has(
-                                      recommendation,
-                                    )}
-                                    className="size-6 shrink-0 accent-current"
-                                    onChange={() => {
-                                      setRecommendationFilters((current) =>
-                                        toggleFilterValue(
-                                          current,
-                                          recommendation,
-                                        ),
-                                      );
-                                      moveToPage(0);
-                                    }}
-                                    type="checkbox"
-                                  />
-                                  <span className="min-w-0 break-words">
-                                    {
-                                      fitRecommendationCopy[recommendation]
-                                        .label
-                                    }
-                                  </span>
-                                </label>
-                              ))}
-                            </div>
-                          </fieldset>
-                        ) : null}
-                        {filterGroups.source ? (
-                          <fieldset className="min-w-0">
-                            <legend className="mb-2 text-xs font-semibold text-foreground">
-                              Source
-                            </legend>
-                            <div className="grid gap-2">
-                              {sourceOptions.map((source) => (
-                                <label
-                                  className="flex min-w-0 items-start gap-2 text-xs leading-6 text-foreground-soft"
-                                  key={source}
-                                  title={source}
-                                >
-                                  <input
-                                    checked={sourceFilters.has(source)}
-                                    className="size-6 shrink-0 accent-current"
-                                    onChange={() => {
-                                      setSourceFilters((current) =>
-                                        toggleFilterValue(current, source),
-                                      );
-                                      moveToPage(0);
-                                    }}
-                                    type="checkbox"
-                                  />
-                                  <span className="min-w-0 break-words">
-                                    {source}
-                                  </span>
-                                </label>
-                              ))}
-                            </div>
-                          </fieldset>
-                        ) : null}
-                        {filterGroups.workMode ? (
-                          <fieldset className="min-w-0">
-                            <legend className="mb-2 text-xs font-semibold text-foreground">
-                              Work mode
-                            </legend>
-                            <div className="grid gap-2">
-                              {workModeOptions.map((workMode) => (
-                                <label
-                                  className="flex min-w-0 items-start gap-2 text-xs leading-6 text-foreground-soft"
-                                  key={workMode}
-                                >
-                                  <input
-                                    checked={workModeFilters.has(workMode)}
-                                    className="size-6 shrink-0 accent-current"
-                                    onChange={() => {
-                                      setWorkModeFilters((current) =>
-                                        toggleFilterValue(current, workMode),
-                                      );
-                                      moveToPage(0);
-                                    }}
-                                    type="checkbox"
-                                  />
-                                  <span className="min-w-0 break-words">
-                                    {workMode === WORK_MODE_UNSPECIFIED_FILTER
-                                      ? workMode
-                                      : formatWorkModeLabel(
-                                          workMode as WorkMode,
-                                        )}
-                                  </span>
-                                </label>
-                              ))}
-                            </div>
-                          </fieldset>
-                        ) : null}
-                        {filterGroups.activity ? (
-                          <fieldset className="min-w-0">
-                            <legend className="mb-2 text-xs font-semibold text-foreground">
-                              Listing status
-                            </legend>
-                            <div className="grid gap-2">
-                              {activityOptions.map((status) => (
-                                <label
-                                  className="flex min-w-0 items-start gap-2 text-xs leading-6 text-foreground-soft"
-                                  key={status}
-                                >
-                                  <input
-                                    checked={activityFilters.has(status)}
-                                    className="size-6 shrink-0 accent-current"
-                                    onChange={() => {
-                                      setActivityFilters((current) =>
-                                        toggleFilterValue(current, status),
-                                      );
-                                      moveToPage(0);
-                                    }}
-                                    type="checkbox"
-                                  />
-                                  <span>{formatStatusLabel(status)}</span>
-                                </label>
-                              ))}
-                            </div>
-                          </fieldset>
-                        ) : null}
-                        {activeFilterCount > 0 ? (
-                          <div className="sm:col-span-2 xl:col-span-4">
-                            <Button
-                              onClick={clearFilters}
-                              size="xs"
-                              type="button"
-                              variant="ghost"
-                            >
-                              Clear filters
-                            </Button>
-                          </div>
-                        ) : null}
-                      </div>
-                    </details>
-                  ) : (
-                    <span />
-                  )}
-                  <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">
-                    <select
-                      aria-label="Sort results"
-                      title="Best match shows assessed jobs first. Within each group, reachable places come first, then fit score."
-                      className={cn(
-                        DISCOVERY_RESULTS_TOOLBAR_CONTROL_CLASS,
-                        "min-w-0 max-w-full border border-(--field-border) bg-(--field) px-2 text-foreground-soft outline-none focus-visible:border-(--field-focus-border) focus-visible:bg-(--field-strong) focus-visible:shadow-[var(--field-focus-shadow)]",
-                      )}
-                      onChange={(event) => {
-                        const match = DISCOVERY_RESULTS_SORT_OPTIONS.find(
-                          (option) => option.field === event.target.value,
-                        );
-                        if (!match) return;
-                        resultsSort.setSortField(match.field);
-                        moveToPage(0);
-                      }}
-                      value={sortField}
-                    >
-                      {DISCOVERY_RESULTS_SORT_OPTIONS.map((option) => (
-                        <option key={option.field} value={option.field}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-              }
-            />
-            {/* Two control groups on one row instead of four spread over two:
-              the filter disclosure no longer sits alone with ~940px of empty
-              row beside it, and sorting is where the filtering is. */}
-          </>
-        ) : null}
-
         {latestRun?.targetExecutions?.length ? (
           <details
             className="shrink-0 px-5 py-2 text-xs text-foreground-soft"
@@ -1877,33 +1907,6 @@ export function DiscoveryResultsPanel({
           // pixels of empty bordered area that reads as a loading failure and
           // pushes the inspector — and its primary action — off screen.
           <div className="flex min-h-0 flex-col" data-job-results-stack>
-            {onShortlistJobs && shortlistableJobs.length > 0 ? (
-              <div
-                aria-label="Bulk shortlist actions"
-                className="flex flex-wrap items-center gap-2 border-b border-(--surface-panel-border) px-4 py-2.5"
-                role="group"
-              >
-                <Button
-                  disabled={bulkSelectedJobIds.size === 0}
-                  onClick={() => void shortlistSelected()}
-                  size="sm"
-                  type="button"
-                  variant="secondary"
-                >
-                  {bulkSelectedJobIds.size > 0
-                    ? `Shortlist ${bulkSelectedJobIds.size} selected`
-                    : "Shortlist selected"}
-                </Button>
-                <Button
-                  onClick={() => void shortlistAllShown()}
-                  size="sm"
-                  type="button"
-                  variant="outline"
-                >
-                  Shortlist all {shortlistableJobs.length} shown
-                </Button>
-              </div>
-            ) : null}
             <div
               // The scroll padding keeps the last card clear of the two-pane
               // scroller's bottom edge. Below that breakpoint the list has no
@@ -2314,17 +2317,45 @@ export function DiscoveryResultsPanel({
                   ];
                 })}
               </ul>
+              {/* The weaker pool is offered where the strong list ends
+                  instead of in the header (ADR 0044). */}
+              {alsoFoundCount > 0 && onToggleAlsoFound ? (
+                <div
+                  className="flex flex-wrap items-center justify-center gap-2 border-t border-(--surface-panel-border) px-3 py-3 text-(length:--text-small) text-foreground-muted"
+                  data-discovery-weaker-matches
+                >
+                  {!areAlsoFoundShown ? (
+                    <span>
+                      {alsoFoundCount} weaker{" "}
+                      {alsoFoundCount === 1 ? "match" : "matches"} hidden
+                    </span>
+                  ) : null}
+                  <Button
+                    aria-pressed={areAlsoFoundShown}
+                    className="shrink-0 whitespace-nowrap"
+                    data-testid="discovery-toggle-also-found"
+                    onClick={onToggleAlsoFound}
+                    size="xs"
+                    type="button"
+                    variant={areAlsoFoundShown ? "secondary" : "outline"}
+                  >
+                    {areAlsoFoundShown
+                      ? `Hide weaker matches (${alsoFoundCount})`
+                      : `Show weaker matches (${alsoFoundCount})`}
+                  </Button>
+                </div>
+              ) : null}
             </div>
             {pageCount > 1 ? (
               <nav
                 aria-label="Job result pages"
-                className="sticky bottom-0 z-10 flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-(--surface-panel-border) bg-(--surface-panel) px-5 py-3"
+                className="sticky bottom-0 z-10 flex h-11 shrink-0 items-center justify-between gap-3 border-t border-(--surface-panel-border) bg-(--surface-panel) px-3"
                 data-job-results-pagination
               >
                 <Button
                   disabled={currentPage === 0}
                   onClick={() => moveToPage(Math.max(0, currentPage - 1))}
-                  size="sm"
+                  size="xs"
                   type="button"
                   variant="outline"
                 >
@@ -2341,7 +2372,7 @@ export function DiscoveryResultsPanel({
                   onClick={() =>
                     moveToPage(Math.min(pageCount - 1, currentPage + 1))
                   }
-                  size="sm"
+                  size="xs"
                   type="button"
                   variant="outline"
                 >

@@ -251,10 +251,10 @@ describe("CollectionSearchToolbar", () => {
     expect(compactInput.className).toContain("overflow-hidden");
     expect(compactInput.className).toContain("whitespace-nowrap");
     expect(compactInput.className).not.toContain("[&::placeholder]");
-    // Compact row geometry stays intact next to the shared ellipsis classes:
-    // the desktop width floor and flex shrinking are unchanged.
-    expect(compactInput.className).toContain("h-9");
-    expect(compactInput.className).toContain("min-w-48");
+    // The compact row is the 48px list toolbar: a 32px field with a width
+    // floor that still shrinks, next to the shared ellipsis classes.
+    expect(compactInput.className).toContain("h-8");
+    expect(compactInput.className).toContain("min-w-32");
     expect(compactInput.className).toContain("flex-1");
     expect(screen.getByLabelText("Find a shortlisted job")).toBe(compactInput);
   });
@@ -283,7 +283,12 @@ describe("CollectionSearchToolbar", () => {
       />,
     );
 
-    expect(screen.getByRole("searchbox").className).toContain("h-9");
+    expect(screen.getByRole("searchbox").className).toContain("h-8");
+    const row = document.querySelector("[data-collection-toolbar-compact]");
+    expect(row?.className).toContain("min-h-12");
+    expect(row?.className).toContain("px-3");
+    // No visible label: the field is named for assistive technology only.
+    expect(document.querySelector("label")?.className).toContain("sr-only");
     expect(
       screen.getByRole("button", { name: "Comfortable" }).textContent,
     ).toBe("Comfortable");
@@ -356,6 +361,37 @@ describe("CollectionSearchToolbar", () => {
     expect(toolbar?.className).not.toContain("border-t");
     expect(toolbar?.className).not.toContain("px-5");
     expect(toolbar?.className).toContain("py-3");
+  });
+
+  it("puts filters on the compact row right after the count", () => {
+    render(
+      <CollectionSearchToolbar
+        compact
+        filters={<button type="button">Show all</button>}
+        label="Search applications"
+        onQueryChange={vi.fn()}
+        placement="panel"
+        placeholder="Search applications"
+        query="acme"
+        totalCount={12}
+        viewActions={<button type="button">Columns</button>}
+        visibleCount={3}
+      />,
+    );
+
+    const row = document.querySelector("[data-collection-toolbar-compact]");
+    const count = screen.getByText("3 of 12 results");
+    const filter = screen.getByRole("button", { name: "Show all" });
+    expect(row?.contains(filter)).toBe(true);
+    expect(
+      count.compareDocumentPosition(filter) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      filter.compareDocumentPosition(
+        screen.getByRole("button", { name: "Columns" }),
+      ) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Clear" })).toBeTruthy();
   });
 
   it("lets a panel header own the top seam for compact toolbars", () => {

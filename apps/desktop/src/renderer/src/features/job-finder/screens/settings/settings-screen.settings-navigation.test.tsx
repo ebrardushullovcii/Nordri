@@ -12,7 +12,6 @@ import {
 } from "@testing-library/react";
 import { HashRouter, MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { JOB_FINDER_ROUTE_PATHS } from "@renderer/features/job-finder/lib/job-finder-route-hrefs";
 import {
   SETTINGS_SUBNAV_BOTTOM_GAP_PX,
   SETTINGS_SUBNAV_SCROLL_OFFSET_FALLBACK_PX,
@@ -462,15 +461,13 @@ describe("SettingsScreen information architecture", () => {
       </MemoryRouter>,
     );
 
-    // The standing bordered Documents notice is now one line of header meta
-    // with an inline link, so Settings does not spend a band of a short window
-    // on chrome before its first setting.
-    // The imported resume lives in Profile; Documents never showed it, so the
-    // pointer names the screen that actually has it.
-    const profileLink = screen.getByRole("link", { name: "Profile" });
-    expect(profileLink.getAttribute("href")).toBe(
-      JOB_FINDER_ROUTE_PATHS.profile,
-    );
+    // The pointer to Profile lives in the Resume look section it concerns
+    // (covered by that section's own test), not in a header meta line, so
+    // the header stays one row.
+    expect(document.querySelector("[data-page-header-meta]")).toBeNull();
+    expect(
+      document.querySelector("[data-page-header-stack]")?.querySelector("a"),
+    ).toBeNull();
 
     expect(screen.queryByText("Add a file")).toBeNull();
     expect(

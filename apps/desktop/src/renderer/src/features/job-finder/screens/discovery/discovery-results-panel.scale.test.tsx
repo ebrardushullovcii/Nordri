@@ -129,6 +129,10 @@ describe("DiscoveryResultsPanel workspace scale", () => {
       />,
     );
 
+    // Bulk actions show once a row is ticked.
+    fireEvent.click(
+      screen.getAllByRole("checkbox", { name: /^Select / })[0] as HTMLElement,
+    );
     fireEvent.click(
       screen.getByRole("button", {
         name: `Shortlist all ${DISCOVERY_RESULTS_PAGE_SIZE} shown`,

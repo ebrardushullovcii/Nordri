@@ -228,7 +228,7 @@ describe("RapidReviewScreen workspace scale", () => {
 
       expect(within(list).getAllByRole("button")).toHaveLength(PAGE_SIZE);
       expect(within(list).getAllByRole("checkbox")).toHaveLength(PAGE_SIZE);
-      expect(screen.getByText("Showing 1–40 of 550 jobs")).toBeTruthy();
+      expect(screen.getByText("1–40 of 550")).toBeTruthy();
       expect(
         screen.getByRole("navigation", { name: "jobs pagination" }),
       ).toBeTruthy();
@@ -239,7 +239,7 @@ describe("RapidReviewScreen workspace scale", () => {
       expect(within(list).getAllByRole("button")).toHaveLength(PAGE_SIZE);
       expect(within(list).getByRole("button", { name: /0040/ })).toBeTruthy();
       expect(within(list).queryByRole("button", { name: /0000/ })).toBeNull();
-      expect(screen.getByText("Showing 41–80 of 550 jobs")).toBeTruthy();
+      expect(screen.getByText("41–80 of 550")).toBeTruthy();
     },
     PAGING_WALK_TIMEOUT_MS,
   );
@@ -255,7 +255,7 @@ describe("RapidReviewScreen workspace scale", () => {
         fireEvent.keyDown(window, { key: "ArrowDown" });
       }
 
-      expect(screen.getByText("Showing 41–80 of 550 jobs")).toBeTruthy();
+      expect(screen.getByText("41–80 of 550")).toBeTruthy();
       expect(container.querySelector('[aria-current="true"]')).toBe(
         within(list).getByRole("button", { name: /0040/ }),
       );
@@ -354,7 +354,7 @@ describe("RapidReviewScreen pagination consistency", () => {
 
       clickNext(5);
 
-      expect(screen.getByText("Showing 201–240 of 500 jobs")).toBeTruthy();
+      expect(screen.getByText("201–240 of 500")).toBeTruthy();
       // Exactly one rendered row carries the active state and it is the first
       // row of the requested page — never a stray from page 1.
       const firstPageSixRow = within(list).getByRole("button", {
@@ -378,7 +378,7 @@ describe("RapidReviewScreen pagination consistency", () => {
         screen.getByRole("button", { name: "Previous page" });
 
       clickNext();
-      expect(screen.getByText("Showing 41–80 of 500 jobs")).toBeTruthy();
+      expect(screen.getByText("41–80 of 500")).toBeTruthy();
       expect(soleCurrentRow(container)).toBe(
         within(list).getByRole("button", {
           name: /Senior Product Designer 0040/,
@@ -389,7 +389,7 @@ describe("RapidReviewScreen pagination consistency", () => {
       ).toBeTruthy();
 
       fireEvent.click(previousButton());
-      expect(screen.getByText("Showing 1–40 of 500 jobs")).toBeTruthy();
+      expect(screen.getByText("1–40 of 500")).toBeTruthy();
       expect(soleCurrentRow(container)).toBe(
         within(list).getByRole("button", {
           name: /Senior Product Designer 0000/,
@@ -409,7 +409,7 @@ describe("RapidReviewScreen pagination consistency", () => {
       const list = screen.getByRole("list", { name: "Jobs to review" });
 
       clickNext();
-      expect(screen.getByText("Showing 41–80 of 500 jobs")).toBeTruthy();
+      expect(screen.getByText("41–80 of 500")).toBeTruthy();
 
       // Activating a mid-page row keeps the page anchored to that row.
       fireEvent.click(
@@ -417,7 +417,7 @@ describe("RapidReviewScreen pagination consistency", () => {
           name: /Senior Product Designer 0045/,
         }),
       );
-      expect(screen.getByText("Showing 41–80 of 500 jobs")).toBeTruthy();
+      expect(screen.getByText("41–80 of 500")).toBeTruthy();
       expect(soleCurrentRow(container)).toBe(
         within(list).getByRole("button", {
           name: /Senior Product Designer 0045/,
@@ -433,7 +433,7 @@ describe("RapidReviewScreen pagination consistency", () => {
         }),
       );
       clickNext();
-      expect(screen.getByText("Showing 41–80 of 500 jobs")).toBeTruthy();
+      expect(screen.getByText("41–80 of 500")).toBeTruthy();
       expect(soleCurrentRow(container)).toBe(
         within(list).getByRole("button", {
           name: /Senior Product Designer 0040/,
@@ -479,7 +479,7 @@ describe("RapidReviewScreen pagination consistency", () => {
         fireEvent.click(nextButton);
       }
 
-      expect(screen.getByText("Showing 241–250 of 250 jobs")).toBeTruthy();
+      expect(screen.getByText("241–250 of 250")).toBeTruthy();
       expect(within(list).getAllByRole("button")).toHaveLength(10);
       const lastPartialFirstRow = within(list).getByRole("button", {
         name: /Senior Product Designer 0481/,
@@ -507,7 +507,7 @@ describe("RapidReviewScreen pagination consistency", () => {
     const first = renderRapidReview(jobs);
 
     clickNext();
-    expect(screen.getByText("Showing 41–45 of 45 jobs")).toBeTruthy();
+    expect(screen.getByText("41–45 of 45")).toBeTruthy();
     first.unmount();
 
     // Documented remount behavior: the route passes no active-job state and
@@ -516,7 +516,7 @@ describe("RapidReviewScreen pagination consistency", () => {
     // invented state, not retained context.
     const second = renderRapidReview(jobs);
     const list = screen.getByRole("list", { name: "Jobs to review" });
-    expect(screen.getByText("Showing 1–40 of 45 jobs")).toBeTruthy();
+    expect(screen.getByText("1–40 of 45")).toBeTruthy();
     expect(soleCurrentRow(second.container)).toBe(
       within(list).getByRole("button", {
         name: /Senior Product Designer 0000/,

@@ -1262,7 +1262,7 @@ export function ActionsScreen(props: {
         // action it offers; the page header owns the credential boundary
         // only, so the promise is stated once per card instead of three
         // times on the same screen.
-        description={`Steps only you can do. Answer here, or finish in ${JOB_FINDER_BROWSER_NAME}; Job Finder notices when a step is done and carries on by itself. Passwords and security codes stay with you.`}
+        description="Steps only you can do. Passwords and security codes stay with you."
         title="Needs you"
       />
 

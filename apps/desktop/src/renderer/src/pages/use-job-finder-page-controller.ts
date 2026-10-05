@@ -1,5 +1,5 @@
 import { useToast } from "@renderer/components/ui/toast";
-import { isActionNews } from "./action-news-toast";
+import { isActionNews, isActionSuccessToast } from "./action-news-toast";
 import { stopAssistantUiResumeBatch } from "./use-job-finder-page-controller-actions";
 import { useResumeOperationStarts } from "./use-resume-operation-starts";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -270,6 +270,32 @@ export function useJobFinderPageController() {
         setActionState({ message: null });
         return;
       }
+      const carried = resolved as ActionStateStatusWrite;
+      const ownerPath =
+        carried.ownerPath ??
+        ownerPathOverride ??
+        latestLocationPathnameRef.current;
+      // A finished action on a screen that reports outcomes as toasts. Only a
+      // success qualifies; failures stay inline next to what they concern.
+      if (isActionSuccessToast(resolved, ownerPath)) {
+        const link = resolved.actionLink ?? null;
+        showToast({
+          title: resolved.message!,
+          tone: "success",
+          ...(link
+            ? {
+                action: {
+                  label: link.label,
+                  onClick: () => navigate(link.route),
+                },
+              }
+            : {}),
+        });
+        actionStateRef.current = { message: null };
+        actionMessageOwnerPathRef.current = null;
+        setActionState({ message: null });
+        return;
+      }
       actionStateRef.current = resolved;
 
       if (resolved.message === null) {
@@ -278,15 +304,11 @@ export function useJobFinderPageController() {
         return;
       }
 
-      const carried = resolved as ActionStateStatusWrite;
-      actionMessageOwnerPathRef.current =
-        carried.ownerPath ??
-        ownerPathOverride ??
-        latestLocationPathnameRef.current;
+      actionMessageOwnerPathRef.current = ownerPath;
       const cleanState = stripActionStateOwner(carried);
       setActionState(cleanState);
     },
-    [setActionState, showToast],
+    [navigate, setActionState, showToast],
   );
   const [initialSaveReceipt] = useState(() =>
     loadJobFinderSaveReceipt(window.localStorage),

@@ -719,7 +719,10 @@ export function createActionRunners(args: {
 
     try {
       if (options?.clearMessageOnStart !== false) {
-        applyStatusMessage({ message: options?.startMessage ?? null });
+        applyStatusMessage({
+          message: options?.startMessage ?? null,
+          tone: options?.startMessage ? "progress" : null,
+        });
       }
 
       await withPendingScope(
@@ -744,12 +747,14 @@ export function createActionRunners(args: {
                 : "The workspace view could not refresh automatically.";
             applyStatusMessage({
               message: `Action completed, but the current view could not refresh automatically. ${detail}`,
+              tone: "failure",
             });
             return;
           }
 
           applyStatusMessage({
             message: resolvedSuccessMessage,
+            tone: resolvedSuccessMessage ? "success" : null,
           });
         },
         options?.releasePendingAfterMs,
@@ -757,6 +762,7 @@ export function createActionRunners(args: {
           ? () =>
               applyStatusMessage({
                 message: options.pendingTimeoutMessage ?? null,
+                tone: "progress",
               })
           : undefined,
       );
@@ -770,7 +776,7 @@ export function createActionRunners(args: {
         error,
         "The requested Job Finder action failed.",
       );
-      applyStatusMessage({ message });
+      applyStatusMessage({ message, tone: "failure" });
       if (options?.rethrowError) {
         throw error instanceof Error ? error : new Error(message);
       }
@@ -1644,7 +1650,7 @@ export function createPrimaryPageActions(
     ): Promise<JobFinderAutoApplyQueueStartOutcome> => {
       const capacityRefusal = getDailyCapacityRefusalMessage();
       if (capacityRefusal) {
-        applyRouteScopedMessage({ message: capacityRefusal });
+        applyRouteScopedMessage({ message: capacityRefusal, tone: "failure" });
         return {
           status: "refused",
           reason: "daily_capacity_exhausted",
@@ -1713,7 +1719,7 @@ export function createPrimaryPageActions(
     onStartAutoApply: (input: JobFinderApplicationStartTarget) => {
       const capacityRefusal = getDailyCapacityRefusalMessage();
       if (capacityRefusal) {
-        applyRouteScopedMessage({ message: capacityRefusal });
+        applyRouteScopedMessage({ message: capacityRefusal, tone: "failure" });
         return;
       }
 
@@ -1732,6 +1738,7 @@ export function createPrimaryPageActions(
         navigate(buildResumeWorkspaceRoute(jobId));
         applyRouteScopedMessage({
           message: "Review and approve a PDF for this job, then apply again.",
+          tone: "failure",
         });
         return;
       }
@@ -1745,7 +1752,7 @@ export function createPrimaryPageActions(
     onStartApplyCopilot: (input: JobFinderApplicationStartTarget) => {
       const capacityRefusal = getDailyCapacityRefusalMessage();
       if (capacityRefusal) {
-        applyRouteScopedMessage({ message: capacityRefusal });
+        applyRouteScopedMessage({ message: capacityRefusal, tone: "failure" });
         return;
       }
 
@@ -1947,7 +1954,7 @@ export function createPrimaryPageActions(
     onApproveResumeAndApply: (jobId: string) => {
       const capacityRefusal = getDailyCapacityRefusalMessage();
       if (capacityRefusal) {
-        applyRouteScopedMessage({ message: capacityRefusal });
+        applyRouteScopedMessage({ message: capacityRefusal, tone: "failure" });
         return;
       }
       // Light and Tailored drafts keep every fact the person wrote, so
@@ -2192,6 +2199,7 @@ export function createPrimaryPageActions(
         applyRouteScopedMessage(
           {
             message: successMessage,
+            tone: "success",
             actionLink: {
               label: "Open Shortlisted",
               route: "/job-finder/review-queue",
@@ -2213,7 +2221,10 @@ export function createPrimaryPageActions(
           error,
           "The requested Job Finder action failed.",
         );
-        applyRouteScopedMessage({ message: failureMessage }, ownerStartRoute);
+        applyRouteScopedMessage(
+          { message: failureMessage, tone: "failure" },
+          ownerStartRoute,
+        );
         return { status: "failure", message: failureMessage };
       }
     },

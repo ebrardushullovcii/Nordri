@@ -19,7 +19,6 @@ import {
   type SaveJobSearchCampaignInput,
 } from "@nordri/contracts";
 import { trackerTimeToIso } from "../applications/applications-tracker-time";
-import { ChevronRight } from "lucide-react";
 import { Button } from "@renderer/components/ui/button";
 import { Input } from "@renderer/components/ui/input";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -1862,70 +1861,27 @@ export function CampaignsScreen(props: {
     props.campaigns.find((campaign) => campaign.id === rulesCampaignId) ?? null;
 
   return (
-    <section className="grid gap-5 pb-8">
+    // The header stack owns its 12px seam; the -mb-2 cancels the part of
+    // the 20px grid gap that would double it.
+    <section className="grid gap-5 pb-8 [&>[data-page-header-stack]]:-mb-2">
       <PageHeaderStack
         actions={
-          // The banner below says most people should stay on the default
-          // plan, so creating one is a secondary action, not the only filled
-          // button on the page.
+          // Most people stay on the default plan, so creating one is a
+          // secondary action, not the only filled button on the page.
           <Button
             onClick={() =>
               beginEditing(newCampaignFrom(activeCampaign ?? null))
             }
+            size="sm"
             type="button"
             variant="secondary"
           >
             New search plan
           </Button>
         }
-        description="Organize roles, sources, how many jobs each search keeps, and progress into reusable plans."
+        description="Optional reusable searches. Find jobs always searches with the current plan."
         title="Search plans"
       />
-
-      <details
-        aria-labelledby="search-plans-guide"
-        className="group rounded-(--radius-field) border border-(--surface-panel-border) bg-(--surface-panel-raised) px-4 py-2.5 [&_summary::-webkit-details-marker]:hidden"
-      >
-        {/* The toggle used to sit as bare grey text at the far right edge of
-            the banner, where it read as a stray label. It now sits under the
-            explanation as a bordered control with a rotating chevron. */}
-        <summary className="grid cursor-pointer gap-2 text-sm">
-          <span className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-            <span
-              className="font-semibold text-(--text-headline)"
-              id="search-plans-guide"
-            >
-              Search plans are optional.
-            </span>
-            <span className="min-w-0 flex-1 text-foreground-soft">
-              Find jobs always searches with the current plan. Switch plans with
-              Make current here. Create another plan when you want a reusable
-              search setup with its own roles, sources,
-              how many jobs each search keeps, and progress.
-            </span>
-          </span>
-          <span className="inline-flex w-fit items-center gap-1.5 rounded-(--radius-button) border border-(--surface-panel-border) px-2.5 py-1 text-xs font-medium text-foreground">
-            <ChevronRight
-              aria-hidden="true"
-              className="size-3.5 shrink-0 transition-transform group-open:rotate-90"
-            />
-            <span className="group-open:hidden">How much a plan searches</span>
-            <span className="hidden group-open:inline">
-              Hide how much a plan searches
-            </span>
-          </span>
-        </summary>
-        <div className="grid gap-2 pt-2.5 text-sm text-foreground-soft sm:grid-cols-2">
-          <p>
-            <span className="font-medium text-foreground">Focused:</span> fewer
-            jobs each run, chosen for a closer match.
-          </p>
-          <p>
-            <span className="font-medium text-foreground">Wide:</span> more jobs
-            each run, keeping more of them for review.
-          </p>
-        </div>
-      </details>
 
       {editing ? (
         <CampaignEditor

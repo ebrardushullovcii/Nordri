@@ -305,17 +305,15 @@ export function ReviewQueueListPanel({
 
   return (
     <section className="surface-panel-shell relative flex min-w-0 flex-col overflow-hidden rounded-(--radius-field) border border-(--surface-panel-border) xl:h-full xl:min-h-0">
-      <div className="flex flex-wrap items-start justify-between gap-3 px-5 pb-2 pt-5">
-        <p className="font-display text-[11px] font-bold uppercase tracking-(--tracking-caps) text-muted-foreground">
-          Jobs
-        </p>
-      </div>
       {/* A search field, a density switch and named views are list
           management for a list that usually holds one to eight rows. Only the
-          search survives, and only once there is more than one row to search. */}
+          search survives, and only once there is more than one row to search.
+          The page title already names the list, so no label row sits above
+          it (ADR 0044). */}
       {queue.length > 1 ? (
         <CollectionSearchToolbar
           compact
+          placement="panel"
           label="Find a shortlisted job"
           onQueryChange={view.setQuery}
           placeholder="Search jobs"

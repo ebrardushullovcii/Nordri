@@ -48,8 +48,9 @@ ADRs capture durable decisions and rejected alternatives. Use them to avoid reop
 | [0039](0039-written-instructions-authorize.md) | accepted | Written sidebar instructions authorize their steps, sending included, through recorded grants |
 | [0040](0040-nordri-rebrand.md) | accepted | UnEmployed becomes Nordri and Interview Helper becomes Live Assistant; existing data moves once |
 | [0041](0041-the-model-reads-the-page.md) | accepted | The model reads the page and returns job details; scripts keep safety and mechanics, not interpretation |
-| [0042](0042-toasts-for-news-boxes-for-action.md) | accepted; action toasts lengthened by 0043 | Toasts for news; tinted boxes only when the person must act; status in the control that owns it |
+| [0042](0042-toasts-for-news-boxes-for-action.md) | accepted; action toasts lengthened by 0043; amended by 0044 | Toasts for news; tinted boxes only when the person must act; status in the control that owns it |
 | [0043](0043-bulk-work-queues-the-whole-selection.md) | accepted | Bulk work queues the whole selection or says what remains; toasts with Undo stay about twenty seconds |
+| [0044](0044-page-conditions-on-the-header-status-line.md) | accepted | Page-level conditions owned elsewhere are toned items on a one-row header's status line, not boxes |
 
 ## Policy
 

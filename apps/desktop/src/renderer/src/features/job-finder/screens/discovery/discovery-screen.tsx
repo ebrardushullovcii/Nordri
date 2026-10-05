@@ -30,13 +30,10 @@ import {
   resolveCampaignSourceTargetIds,
   isListableCompanyName,
 } from "@nordri/contracts";
-import { PauseCircle, Play, X } from "lucide-react";
+import { X } from "lucide-react";
 import { Button } from "@renderer/components/ui/button";
 import { useToast } from "@renderer/components/ui/toast";
-import {
-  DISCOVERY_PAUSED_SEARCH_REASON,
-  getDiscoveryRuntimeProjection,
-} from "./discovery-search-readiness";
+import { getDiscoveryRuntimeProjection } from "./discovery-search-readiness";
 import {
   createDiscoveryRunCancelledFeedback,
   createDiscoveryRunInterruptedFeedback,
@@ -46,7 +43,11 @@ import {
   createDiscoveryRunSucceededFeedback,
 } from "./discovery-run-feedback";
 import { LockedScreenLayout } from "@renderer/features/job-finder/components/locked-screen-layout";
-import { PageHeaderStack } from "@renderer/features/job-finder/components/page-header";
+import {
+  PageHeaderStack,
+  type PageStatusAction,
+  type PageStatusItem,
+} from "@renderer/features/job-finder/components/page-header";
 import { OPEN_JOB_FINDER_BROWSER_ACTION } from "@renderer/features/job-finder/lib/job-finder-browser-handoff-copy";
 import { JOB_FINDER_ROUTE_PATHS } from "@renderer/features/job-finder/lib/job-finder-route-hrefs";
 import { formatCountLabel } from "@renderer/features/job-finder/lib/job-finder-utils";
@@ -297,43 +298,6 @@ export function getDiscoveryInspectedJob(
     return null;
   }
   return rankedJobs.find((job) => job.id === displayedJobId) ?? null;
-}
-
-/**
- * Concise, non-color paused state with the nearest Resume action. Rendered
- * above every mode and message so an unrelated failure callout can never
- * mask the pause truth.
- */
-export function DiscoveryPausedBanner(props: {
-  isResumePending: boolean;
-  onResolve?: () => void;
-}) {
-  return (
-    <div
-      className="flex flex-wrap items-center gap-2 rounded-(--radius-field) border border-(--surface-panel-border) bg-(--warning-surface) px-3 py-2 text-(length:--text-small) text-foreground"
-      data-testid="discovery-paused-banner"
-      role="status"
-    >
-      <PauseCircle aria-hidden="true" className="size-4 shrink-0" />
-      <span className="min-w-0 flex-1">
-        <strong className="font-semibold">Paused.</strong> Automatic work is
-        paused. Press Resume activity to continue.
-      </span>
-      {props.onResolve ? (
-        <Button
-          disabled={props.isResumePending}
-          onClick={props.onResolve}
-          pending={props.isResumePending}
-          size="sm"
-          type="button"
-          variant="secondary"
-        >
-          <Play aria-hidden="true" className="size-4" />
-          Resume activity
-        </Button>
-      ) : null}
-    </div>
-  );
 }
 
 export function DiscoveryScreen(props: {
@@ -1069,68 +1033,83 @@ export function DiscoveryScreen(props: {
         }
       : null;
 
-  // Keep the readiness explanation out of the title/action grid. It is a
-  // route-level status row, so the title keeps its full width while the
-  // Search now button remains aligned with the configured search summary.
-  const discoveryHeaderStatus =
-    workspaceMode !== "results" ? null : activityPaused ? (
-      <span
-        className="block w-full min-w-0 text-(length:--text-description) leading-5 text-(--warning-text)"
-        id="discovery-header-search-paused-reason"
-        role="status"
-      >
-        {DISCOVERY_PAUSED_SEARCH_REASON}
-      </span>
-    ) : searchReadiness.ready ||
-      searchSetupBlocker ||
-      hasOfflineCatalogRows ? null : (
-      <span
-        className="flex w-full min-w-0 flex-wrap items-center gap-2 text-(length:--text-description) leading-5 text-(--warning-text)"
-        id="discovery-header-search-disabled-reason"
-        role="status"
-      >
-        <span className="min-w-0 flex-1 break-words">
-          {searchReadiness.reason}
-        </span>
-        {/* The action is derived from the exact blocker so a browser problem
-            never reads as "Enable sources" while a source is already on. */}
-        {searchReadiness.blocker === "browser_blocked" ? (
-          <Button
-            className="h-8 shrink-0 whitespace-nowrap px-3 text-xs normal-case tracking-normal"
-            onClick={onOpenBrowserSession}
-            pending={isBrowserSessionPending}
-            size="sm"
-            type="button"
-            variant="primary"
-          >
-            {OPEN_JOB_FINDER_BROWSER_ACTION}
-          </Button>
-        ) : searchReadiness.blocker === "no_search_roles" ? (
-          <Button
-            asChild
-            className="h-8 shrink-0 whitespace-nowrap px-3 text-xs normal-case tracking-normal"
-            size="sm"
-            variant="primary"
-          >
-            <Link to={JOB_FINDER_ROUTE_PATHS.profileTargetRoles}>
-              Add target roles
-            </Link>
-          </Button>
-        ) : searchReadiness.blocker === "no_enabled_sources" ? (
-          <Button
-            asChild
-            className="h-8 shrink-0 whitespace-nowrap px-3 text-xs normal-case tracking-normal"
-            size="sm"
-            variant="primary"
-          >
-            <Link to={JOB_FINDER_ROUTE_PATHS.profileSources}>
-              {savedSourceCount > 0 ? "Enable sources" : "Add sources"}
-            </Link>
-          </Button>
-        ) : null}
-      </span>
-    );
-  const headerStatusWithReview = discoveryHeaderStatus;
+  // A failed search that needs a retry keeps its box (ADR 0042), in the
+  // Results column in results mode because it concerns the results, and at
+  // the top while the search setup is open.
+  const runFeedbackCallout =
+    visibleDiscoveryRunFeedback &&
+    !visibleDiscoveryRunFeedback.toast &&
+    visibleDiscoveryRunFeedback.status !== "started" &&
+    (!isSetupOpen || visibleDiscoveryRunFeedback.status !== "succeeded") ? (
+      <DiscoveryRunFeedbackCallout
+        feedback={visibleDiscoveryRunFeedback}
+        isRecoveryPending={isBrowserSessionPending}
+        notices={latestRunNotices}
+        onDismiss={() => setDismissedFeedbackKey(currentFeedbackKey)}
+        onOpenBrowserSession={onOpenBrowserSession}
+        suppressBrowserRecovery={runtimeProjection.isOffline}
+      />
+    ) : null;
+
+  // Page-level conditions are items on the header's status line (ADR 0044):
+  // the pause, with the one Resume, and a readiness blocker with its fix.
+  // The search bar's Search now names the item that disables it.
+  const discoveryStatusItems: PageStatusItem[] = [];
+  if (activityPaused) {
+    discoveryStatusItems.push({
+      id: "activity-paused",
+      tone: "warning",
+      text: "Paused. New searches and applications wait until you resume.",
+      textId: "discovery-header-search-paused-reason",
+      ...(onResumeActivity
+        ? {
+            action: {
+              kind: "button",
+              label: "Resume activity",
+              onClick: onResumeActivity,
+              pending: isActivityPausePending,
+            },
+          }
+        : {}),
+    });
+  } else if (
+    workspaceMode === "results" &&
+    !searchReadiness.ready &&
+    searchReadiness.reason &&
+    !searchSetupBlocker &&
+    !hasOfflineCatalogRows
+  ) {
+    // The action is derived from the exact blocker so a browser problem
+    // never reads as "Enable sources" while a source is already on.
+    const readinessAction: PageStatusAction | null =
+      searchReadiness.blocker === "browser_blocked"
+        ? {
+            kind: "button",
+            label: OPEN_JOB_FINDER_BROWSER_ACTION,
+            onClick: onOpenBrowserSession,
+            pending: isBrowserSessionPending,
+          }
+        : searchReadiness.blocker === "no_search_roles"
+          ? {
+              kind: "link",
+              label: "Add target roles",
+              to: JOB_FINDER_ROUTE_PATHS.profileTargetRoles,
+            }
+          : searchReadiness.blocker === "no_enabled_sources"
+            ? {
+                kind: "link",
+                label: savedSourceCount > 0 ? "Enable sources" : "Add sources",
+                to: JOB_FINDER_ROUTE_PATHS.profileSources,
+              }
+            : null;
+    discoveryStatusItems.push({
+      id: "search-readiness",
+      tone: "warning",
+      text: searchReadiness.reason,
+      textId: "discovery-header-search-disabled-reason",
+      ...(readinessAction ? { action: readinessAction } : {}),
+    });
+  }
 
   const filtersPanel = (
     <DiscoveryFiltersPanel
@@ -1180,6 +1159,7 @@ export function DiscoveryScreen(props: {
       id="discovery-workspace-content"
     >
       <div className="flex min-h-0 min-w-0 flex-col gap-2">
+        {runFeedbackCallout}
         <DiscoveryResultsPanel
           hiddenJobsControl={
             dismissedJobs.length > 0 ? (
@@ -1378,8 +1358,7 @@ export function DiscoveryScreen(props: {
                 ) : null
               }
               description="Search your job sources, then shortlist the jobs you want to apply to."
-              layout="stacked-until-xl"
-              status={headerStatusWithReview}
+              statusItems={discoveryStatusItems}
               subnav={
                 // The search settings used to be a peer tab whose whole content
                 // was four read-only summary rows. They are now an interactive
@@ -1449,12 +1428,6 @@ export function DiscoveryScreen(props: {
               }
               title="Find jobs"
             />
-            {activityPaused ? (
-              <DiscoveryPausedBanner
-                isResumePending={isActivityPausePending}
-                {...(onResumeActivity ? { onResolve: onResumeActivity } : {})}
-              />
-            ) : null}
             {/* A results banner belongs where the results are. While the
                 search-setup editor is open there are no results on screen, so
                 only feedback that still needs the user — a failure, a
@@ -1462,20 +1435,7 @@ export function DiscoveryScreen(props: {
             {/* Toast outcomes (finished, stopped) and a run in flight get no
                 banner: the search bar already says "Searching" with the
                 elapsed time and counts. */}
-            {visibleDiscoveryRunFeedback &&
-            !visibleDiscoveryRunFeedback.toast &&
-            visibleDiscoveryRunFeedback.status !== "started" &&
-            (!isSetupOpen ||
-              visibleDiscoveryRunFeedback.status !== "succeeded") ? (
-              <DiscoveryRunFeedbackCallout
-                feedback={visibleDiscoveryRunFeedback}
-                isRecoveryPending={isBrowserSessionPending}
-                notices={latestRunNotices}
-                onDismiss={() => setDismissedFeedbackKey(currentFeedbackKey)}
-                onOpenBrowserSession={onOpenBrowserSession}
-                suppressBrowserRecovery={runtimeProjection.isOffline}
-              />
-            ) : null}
+            {isSetupOpen ? runFeedbackCallout : null}
             {/* One route-owned action surface shared by Results and Search
                 setup, so a failed Resume activity or any other authoritative
                 refusal stays visible in every mode. It renders below the

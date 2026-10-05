@@ -53,8 +53,11 @@ import { getJobFinderScrollBehavior } from "../lib/job-finder-scroll-behavior";
 
 import { ResumeIdentityChoiceNotice } from "../components/profile/resume-identity-choice-notice";
 import { ProfileSectionTabs } from "../components/profile/profile-section-tabs";
-import { ProfileSetupReminder } from "../components/profile/profile-setup-reminder";
-import { PageHeaderStack } from "../components/page-header";
+import { useProfileSetupStatusItem } from "../components/profile/profile-setup-reminder";
+import {
+  PageHeaderStack,
+  type PageStatusItem,
+} from "../components/page-header";
 import {
   buildProfilePayload,
   buildSearchPreferencesPayload,
@@ -359,6 +362,27 @@ export function ProfileScreen(props: {
   const isResumeImportProcessing = importPending && importProgress !== null;
   const resumeAnalysisPending =
     isResumeImportProcessing || pendingActions.analyzeProfile;
+  // Unfinished setup and a running resume update are conditions shown on
+  // the header status line, not cards above the tabs (ADR 0044).
+  const setupStatusItem = useProfileSetupStatusItem({
+    currentStep: profileSetupState.currentStep,
+    enabled: profileSetupState.status !== "completed",
+    isResumePending: pendingActions.profileSetup,
+    onResume: onResumeProfileSetup,
+    pendingItemCount: pendingSetupItems.length,
+  });
+  const profileStatusItems: PageStatusItem[] = [
+    ...(setupStatusItem ? [setupStatusItem] : []),
+    ...(resumeAnalysisPending
+      ? [
+          {
+            id: "resume-update",
+            tone: "info" as const,
+            text: "Editing is paused while your resume update finishes, so the import cannot overwrite a draft made at the same time.",
+          },
+        ]
+      : []),
+  ];
   // Job sources and Files hold no profile facts, so the assistant talks about
   // preferences while either tab is open.
   const copilotSection =
@@ -634,7 +658,8 @@ export function ProfileScreen(props: {
         <>
           <PageHeaderStack
             title="Your profile"
-            description="Everything Job Finder knows about you. Edit any field, or ask the assistant to change it for you."
+            description="Everything Job Finder knows about you. Edit any field or ask the assistant."
+            statusItems={profileStatusItems}
             actions={
               <AskAssistantButton
                 prompt={starterQuestion ?? undefined}
@@ -647,27 +672,10 @@ export function ProfileScreen(props: {
             }
           />
 
-          {profileSetupState.status !== "completed" ? (
-            <ProfileSetupReminder
-              currentStep={profileSetupState.currentStep}
-              isResumePending={pendingActions.profileSetup}
-              onResume={onResumeProfileSetup}
-              pendingItemCount={pendingSetupItems.length}
-            />
-          ) : (
+          {profileSetupState.status === "completed" ? (
             <ProfileReadyBanner
               completionIdentity={`${profile.id}:${profileSetupState.completedAt ?? "completed"}`}
             />
-          )}
-
-          {resumeAnalysisPending ? (
-            <p
-              className="text-(length:--text-description) leading-6 text-foreground-muted"
-              role="status"
-            >
-              Editing is paused while your resume update finishes, so the import
-              cannot overwrite a draft made at the same time.
-            </p>
           ) : null}
         </>
       }

@@ -585,8 +585,10 @@ describe("DiscoveryScreen Results-mode shortlist feedback", () => {
     expect(status.textContent).toContain(
       "Activity could not be resumed. Try again.",
     );
-    // The pause truth stays visible above the failure, never masked by it.
-    expect(screen.getByTestId("discovery-paused-banner")).toBeTruthy();
+    // The pause truth stays visible on the status line, never masked by it.
+    expect(
+      document.querySelector('[data-page-status-item="activity-paused"]'),
+    ).toBeTruthy();
   });
 
   it("keeps a finished search off both the results and the search-setup editor", () => {

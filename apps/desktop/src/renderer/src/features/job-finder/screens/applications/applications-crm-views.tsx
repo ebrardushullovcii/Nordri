@@ -20,6 +20,7 @@ import type {
   ApplicationRecord,
 } from "@nordri/contracts";
 import { useToast } from "@renderer/components/ui/toast";
+import { Info } from "lucide-react";
 import { Button } from "@renderer/components/ui/button";
 import { cn } from "@renderer/lib/utils";
 import { Badge } from "@renderer/components/ui/badge";
@@ -731,55 +732,72 @@ export function ApplicationsCrmViews(props: {
 
   return (
     <section className="surface-panel-shell @container/tracker flex min-h-0 max-h-[calc(100dvh-15rem)] min-w-0 flex-1 flex-col overflow-hidden rounded-(--radius-field) border border-(--surface-panel-border)">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-(--surface-panel-border) px-5 py-3">
-        <div>
-          {/* Same panel-title rule as the Preparation list: the base scale
-              owns the size and weight. */}
-          <h2 className="min-w-0" id="application-tracker-heading">
-            Application tracker
-          </h2>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {filteredRecords.length} of {props.records.length} applications in
-            this view · a stage is either one you recorded or one Job Finder
-            worked out from your activity
-          </p>
-        </div>
-        {/* A table, a board and a calendar are three ways of looking at a
-            list. With one row there is nothing to look at three ways, so the
-            switcher is earned rather than always present. */}
-        {props.records.length >= APPLICATION_CRM_VIEW_SWITCHER_MIN_RECORDS ? (
-          <div
-            aria-label="Application view"
-            className="flex gap-1"
-            data-testid="applications-crm-view-switcher"
-            role="group"
-          >
-            {APPLICATION_CRM_VIEW_VALUES.map((view) => (
-              <Button
-                aria-pressed={props.view === view}
-                key={view}
-                onClick={() => props.onViewChange(view)}
-                size="sm"
-                type="button"
-                variant={props.view === view ? "secondary" : "ghost"}
-              >
-                {viewLabels[view]}
-              </Button>
-            ))}
-          </div>
-        ) : null}
-      </div>
-
+      {/* The page header already says "Tracker"; the panel's own name is
+          for assistive technology and names the table. Search, count,
+          Show, Sort, density, saved views, columns and the view switch share
+          one toolbar row. */}
+      <h2 className="sr-only" id="application-tracker-heading">
+        Application tracker
+      </h2>
+      <span className="sr-only" id="application-tracker-stage-help">
+        A stage is either one you recorded or one Job Finder worked out from
+        your activity.
+      </span>
       <CollectionSearchToolbar
+        compact
         density={density}
+        filters={
+          <div className="contents" data-tracker-filter-row>
+            <Select
+              value={savedView}
+              onValueChange={(value) => setSavedView(value as CrmSavedView)}
+            >
+              <SelectTrigger aria-label="Show" size="toolbar" className="w-40">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {crmSavedViewValues.map((view) => (
+                  <SelectItem key={view} value={view}>
+                    {crmSavedViewLabels[view]}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {props.view !== "calendar" ? (
+              <Select
+                value={sort}
+                onValueChange={(value) => setSort(value as TrackerSort)}
+              >
+                <SelectTrigger
+                  aria-label="Sort applications"
+                  size="toolbar"
+                  className="w-48"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="updated">Recently updated</SelectItem>
+                  <SelectItem value="company">Company</SelectItem>
+                  <SelectItem value="applied_oldest">
+                    Applied date: oldest first
+                  </SelectItem>
+                  <SelectItem value="applied_newest">
+                    Applied date: newest first
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            ) : null}
+          </div>
+        }
         label="Search applications"
         onDensityChange={setDensity}
         onQueryChange={setQuery}
+        placement="panel"
         placeholder="Search jobs, companies, contacts, stages, or tags"
         query={query}
         totalCount={props.records.length}
         viewActions={
-          <div className="flex items-center gap-1">
+          <>
             <CollectionSavedViews
               onApply={(id) => {
                 const metadata = applySavedView(id);
@@ -816,60 +834,35 @@ export function ApplicationsCrmViews(props: {
                 }
               />
             ) : null}
-          </div>
+            {/* A table, a board and a calendar are three ways of looking at
+                a list. With one row there is nothing to look at three ways,
+                so the switcher is earned rather than always present. */}
+            {props.records.length >=
+            APPLICATION_CRM_VIEW_SWITCHER_MIN_RECORDS ? (
+              <div
+                aria-label="Application view"
+                className="flex gap-1"
+                data-testid="applications-crm-view-switcher"
+                role="group"
+              >
+                {APPLICATION_CRM_VIEW_VALUES.map((view) => (
+                  <Button
+                    aria-pressed={props.view === view}
+                    key={view}
+                    onClick={() => props.onViewChange(view)}
+                    size="toolbar"
+                    type="button"
+                    variant={props.view === view ? "secondary" : "ghost"}
+                  >
+                    {viewLabels[view]}
+                  </Button>
+                ))}
+              </div>
+            ) : null}
+          </>
         }
         visibleCount={filteredRecords.length}
       />
-      <div
-        className="flex flex-wrap items-center gap-3 border-b border-(--surface-panel-border) px-5 py-2"
-        data-tracker-filter-row
-      >
-        <label className="flex items-center gap-2 text-sm">
-          Show
-          <Select
-            value={savedView}
-            onValueChange={(value) => setSavedView(value as CrmSavedView)}
-          >
-            <SelectTrigger aria-label="Show" size="toolbar" className="w-40">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {crmSavedViewValues.map((view) => (
-                <SelectItem key={view} value={view}>
-                  {crmSavedViewLabels[view]}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </label>
-        {props.view !== "calendar" ? (
-          <label className="flex items-center gap-2 text-sm">
-            Sort
-            <Select
-              value={sort}
-              onValueChange={(value) => setSort(value as TrackerSort)}
-            >
-              <SelectTrigger
-                aria-label="Sort applications"
-                size="toolbar"
-                className="w-48"
-              >
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="updated">Recently updated</SelectItem>
-                <SelectItem value="company">Company</SelectItem>
-                <SelectItem value="applied_oldest">
-                  Applied date: oldest first
-                </SelectItem>
-                <SelectItem value="applied_newest">
-                  Applied date: newest first
-                </SelectItem>
-              </SelectContent>
-            </Select>
-          </label>
-        ) : null}
-      </div>
 
       {props.records.length === 0 ? (
         <EmptyState
@@ -960,13 +953,24 @@ export function ApplicationsCrmViews(props: {
                     )}
                     key={column}
                     scope="col"
+                    {...(column === "stage"
+                      ? { "aria-describedby": "application-tracker-stage-help" }
+                      : {})}
                     title={
                       ["updated", "applied", "reminder"].includes(column)
                         ? resolvePlanTimeZone(props.homeTimeZone)
-                        : undefined
+                        : column === "stage"
+                          ? "A stage is either one you recorded or one Job Finder worked out from your activity."
+                          : undefined
                     }
                   >
                     {columnLabels[column]}
+                    {column === "stage" ? (
+                      <Info
+                        aria-hidden="true"
+                        className="ml-1 inline size-3 align-[-1px] text-foreground-muted"
+                      />
+                    ) : null}
                   </th>
                 ))}
               </tr>
