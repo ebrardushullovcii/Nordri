@@ -82,6 +82,11 @@ function useToastLayout(
     if (!viewport) return undefined;
     let frame: number | undefined;
     const observed = new Set<Element>();
+    // Whether each scroll area already scrolled before any spacer was added.
+    // An area that did not would gain a scrollbar from the spacer, and the
+    // scrollbar shifts the whole page sideways; it gets no spacer. Recorded
+    // once per toast so a spacer can never feed back into the decision.
+    const scrolledBeforeToast = new Map<HTMLElement, boolean>();
     const resizeObserver =
       typeof ResizeObserver === "undefined"
         ? null
@@ -133,6 +138,12 @@ function useToastLayout(
           rect.bottom <= top
         )
           return [];
+        if (!scrolledBeforeToast.has(owner))
+          scrolledBeforeToast.set(
+            owner,
+            owner.scrollHeight > owner.clientHeight + 1,
+          );
+        if (!scrolledBeforeToast.get(owner)) return [];
         return [
           {
             owner,

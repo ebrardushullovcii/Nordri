@@ -82,10 +82,28 @@ function mockLayout({
       if (this.hasAttribute("data-job-results-pagination"))
         return rect(288, pagerTop ?? 856, 600, 44);
       if (this.hasAttribute("data-locked-pane-scroll-region"))
-        return rect(this.dataset.rightPane ? 900 : 288, 200, 600, 700);
+        return rect(
+          this.dataset.rightPane ? 900 : 288,
+          200,
+          600,
+          // A list that ends above its pager stops 60px short of the route.
+          this.hasAttribute("data-ends-above-pager") ? 640 : 700,
+        );
       if (this.hasAttribute("data-locked-screen-scroll-area"))
         return rect(288, 130, 1100, 770);
       return rect(0, 0, 0, 0);
+    },
+  );
+  // jsdom has no layout: scroll areas overflow unless marked data-fits, so
+  // only areas that already scroll before a toast get its spacer.
+  vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockImplementation(
+    function (this: HTMLElement) {
+      return this.hasAttribute("data-fits") ? 0 : 2000;
+    },
+  );
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockImplementation(
+    function (this: HTMLElement) {
+      return this.hasAttribute("data-fits") ? 0 : 700;
     },
   );
   return {
@@ -101,10 +119,13 @@ function mockLayout({
 function ScrollFixture({
   pager = false,
   compact = false,
+  outerFits = false,
 }: {
   pager?: boolean;
   compact?: boolean;
+  outerFits?: boolean;
 }) {
+  const paneEnd = outerFits ? { "data-ends-above-pager": "" } : {};
   return (
     <ToastProvider>
       <aside data-job-finder-sidebar />
@@ -112,10 +133,12 @@ function ScrollFixture({
         <Trigger />
         <div
           data-locked-screen-scroll-area
+          {...(outerFits ? { "data-fits": "" } : {})}
           style={{ height: 770, overflowY: "auto" }}
         >
           <div
             data-locked-pane-scroll-region
+            {...paneEnd}
             style={{
               height: 700,
               overflowY: compact ? "visible" : "auto",
@@ -130,6 +153,7 @@ function ScrollFixture({
           <ul
             aria-label="Applications"
             data-locked-pane-scroll-region
+            {...paneEnd}
             style={{ height: 700, overflowY: compact ? "visible" : "auto" }}
           >
             <li>Only application</li>
@@ -137,6 +161,7 @@ function ScrollFixture({
           <div
             data-locked-pane-scroll-region
             data-right-pane
+            {...paneEnd}
             style={{ height: 700, overflowY: compact ? "visible" : "auto" }}
           >
             Right pane
@@ -293,4 +318,25 @@ it("gives the outer route scroll clearance when compact lists use natural height
     owner.lastElementChild?.hasAttribute("data-toast-scroll-spacer-slot"),
   ).toBe(true);
   expect(owner.querySelectorAll("[data-toast-scroll-spacer]")).toHaveLength(1);
+});
+
+it("gives no spacer to a route area that did not scroll before the toast, so the page never shifts sideways", () => {
+  mockLayout();
+  render(<ScrollFixture outerFits />);
+  fireEvent.click(screen.getByText("Hide jobs"));
+  const outer = document.querySelector<HTMLElement>(
+    "[data-locked-screen-scroll-area]",
+  )!;
+  // A spacer here would give the outer area a scrollbar and move the page.
+  expect(
+    Array.from(outer.children).some((child) =>
+      child.hasAttribute("data-toast-scroll-spacer-slot"),
+    ),
+  ).toBe(false);
+  // The list panes that scroll on their own still get room at their end.
+  expect(
+    document.querySelectorAll(
+      "[data-locked-pane-scroll-region] > [data-toast-scroll-spacer-slot]",
+    ).length,
+  ).toBeGreaterThan(0);
 });
