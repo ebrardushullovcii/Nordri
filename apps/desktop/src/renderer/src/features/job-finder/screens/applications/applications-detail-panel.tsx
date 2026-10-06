@@ -491,6 +491,9 @@ export function ApplicationsDetailPanel({
       selectedRecordJobId={selectedRecord.jobId}
       selectedApplicationRecordId={selectedRecord.id}
       selectedRecordLastActionLabel={selectedRecord.lastActionLabel}
+      personSendReceiptSummary={
+        selectedRecord.personSendReceipt?.summary ?? null
+      }
       selectedRecordTrackedAsApplied={isApplicationTrackedAsSentByPerson(
         selectedRecord.crm,
       )}

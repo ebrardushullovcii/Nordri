@@ -122,6 +122,11 @@ describe("ApplicationsCrmViews", () => {
     expect(screen.queryByText("Application tracker updated.")).toBeNull();
     fireEvent.click(await screen.findByRole("button", { name: "Undo" }));
     await waitFor(() => expect(onBulkChange).toHaveBeenCalledTimes(2));
+    expect(
+      await screen.findByText(
+        "Closed browser tasks stay closed. Prepare again to reopen the form.",
+      ),
+    ).toBeTruthy();
     expect(onBulkChange.mock.calls[1]?.[0]).toMatchObject({
       action: "undo",
       items: [

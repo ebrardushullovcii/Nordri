@@ -435,6 +435,7 @@ export function resolveApplicationRecoveryPresentation(input: {
    * outside Job Finder, so it is never filled in again.
    */
   recordTrackedAsApplied?: boolean;
+  personSendReceiptSummary?: string | null;
   /** What the result's run is doing; a planned job means nothing without it. */
   run?: ApplyRunContext | null;
   visibleApplyResult: ApplyResult;
@@ -477,51 +478,40 @@ export function resolveApplicationRecoveryPresentation(input: {
     visibleApplyResult?.privacyReceipt?.submissionOutcome?.outcome ===
       "outcome_uncertain";
 
-  // A sent application is terminal. Job Finder's own send carries an
-  // outcome receipt; a send the person made on the kept page is recorded as
-  // submitted with the site's confirmation (older records have no receipt
-  // outcome). Only a receipt that says otherwise keeps it from reading sent:
-  // Try again here would prepare an application that was already sent.
   if (
-    visibleApplyResult?.state === "submitted" &&
-    visibleApplyResult.privacyReceipt?.finalSubmitOccurred !== false &&
-    (visibleApplyResult.privacyReceipt?.submissionOutcome?.outcome ??
-      "submitted") === "submitted"
+    input.personSendReceiptSummary ||
+    (visibleApplyResult?.state === "submitted" &&
+      visibleApplyResult.privacyReceipt?.finalSubmitOccurred === true &&
+      (visibleApplyResult.privacyReceipt.submissionOutcome?.outcome ??
+        "submitted") === "submitted")
   ) {
     return {
       state: "submitted",
       statusLine: "Application submitted",
       reasonSentence:
+        input.personSendReceiptSummary ??
         reasonSentence ??
-        "The employer site confirmed that it received the application.",
+        "The employer site confirmed receipt.",
       primaryAction: "none",
       primaryActionLabel: null,
     };
   }
-
-  if (
-    input.recordTrackedAsApplied &&
-    visibleApplyResult?.state !== "submitted"
-  ) {
+  if (input.recordTrackedAsApplied) {
     return {
       state: "submitted",
-      statusLine: "You recorded this as applied",
+      statusLine: "Marked sent by you",
       reasonSentence:
-        "Your tracker says this application was sent, so Job Finder will not fill it in again.",
+        "You recorded this send. Job Finder has no site receipt for it.",
       primaryAction: "none",
       primaryActionLabel: null,
     };
   }
-
-  if (
-    visibleApplyResult?.state === "submitted" &&
-    visibleApplyResult.privacyReceipt?.finalSubmitOccurred === false
-  ) {
+  if (visibleApplyResult?.state === "submitted") {
     return {
       state: "verify_outcome",
-      statusLine: "Send not confirmed",
+      statusLine: "Not confirmed",
       reasonSentence:
-        "The saved receipt does not confirm a send. Review this application's outcome before trying again.",
+        "No saved receipt confirms this send. Check the site and record the outcome before trying again.",
       primaryAction: "none",
       primaryActionLabel: null,
     };

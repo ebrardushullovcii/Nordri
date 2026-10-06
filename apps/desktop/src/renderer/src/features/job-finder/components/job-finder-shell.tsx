@@ -1788,6 +1788,7 @@ export function JobFinderShell({
             />
             <AssistantToggle platform={platform} />
             <BrowserPeek
+              onRecordSend={() => { void navigate("/job-finder/applications"); }}
               chromeInsetStart={
                 isMac && !windowControlsState.isFullScreen
                   ? MACOS_TRAFFIC_LIGHT_INSET

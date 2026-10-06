@@ -356,7 +356,12 @@ export function createAssistantHostPorts(input: {
             .sort((left, right) =>
               right.updatedAt.localeCompare(left.updatedAt),
             )[0];
-          if (latest?.state === "submitted") sentJobIds.push(jobId);
+          if (
+            latest?.state === "submitted" &&
+            latest.privacyReceipt?.finalSubmitOccurred === true &&
+            latest.privacyReceipt.submissionOutcome?.outcome === "submitted"
+          )
+            sentJobIds.push(jobId);
           else {
             failed.push({
               jobId,
@@ -364,7 +369,8 @@ export function createAssistantHostPorts(input: {
                 latest?.privacyReceipt?.submissionOutcome?.outcome ===
                 "outcome_uncertain"
                   ? "The site did not confirm the application; check it on the employer's page before trying again."
-                  : (latest?.blockerSummary ??
+                  : (latest?.detail ??
+                    latest?.blockerSummary ??
                     "The site did not confirm the application."),
             });
           }

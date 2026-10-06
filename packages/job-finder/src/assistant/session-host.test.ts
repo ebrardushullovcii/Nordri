@@ -2,6 +2,7 @@ import {
   AssistantConversationSchema,
   AssistantMessageSchema,
   ApplicationPrivacyReceiptSchema,
+  ApplicationRecordSchema,
   ApplyJobResultSchema,
   ApplyRunSchema,
   UserActionEventSchema,
@@ -1977,5 +1978,151 @@ describe("assistant session host", () => {
     expect(
       parts.some((part) => part.type === "records" && part.kind === "jobs"),
     ).toBe(true);
+  });
+
+  it("keeps later browser steps on the opened retained application during the same turn", async () => {
+    const { host, ports } = setup();
+    const release = vi.fn(() => Promise.resolve());
+    const requests: unknown[] = [];
+    ports.browser = {
+      visibleTab: () => null,
+      lease: async (input) => {
+        requests.push(input);
+        return {
+          leaseId: "exact",
+          tabId: "retained",
+          applicationResultId: "prepared",
+          isApplicationBound: () => Promise.resolve(true),
+          revoked: new AbortController().signal,
+          hands: {} as never,
+          currentUrl: () => "https://example.test/form",
+          childTabIds: () => [],
+          release,
+        };
+      },
+    };
+    const conversation = await host.createConversation();
+    const session = (
+      host as unknown as {
+        detachedSession(
+          id: string,
+          messageId: string | null,
+        ): AssistantTurnSession;
+      }
+    ).detachedSession(conversation.id, null);
+    const opened = await session.browserLease({
+      applicationResultId: "prepared",
+    });
+    expect(await session.browserLease()).toBe(opened);
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({ applicationResultId: "prepared" });
+    await session.releaseBrowserLease?.();
+    expect(release).toHaveBeenCalledWith("Reviewing your send instruction");
+  });
+
+  it("continues a confirmation timeout with an unconfirmed send and no permission to retry", async () => {
+    const fixture = applicationHandoff();
+    const sent = submittedResult(fixture.result);
+    const uncertain = ApplyJobResultSchema.parse({
+      ...sent,
+      state: "awaiting_review",
+      summary: "Send attempted; confirmation timed out",
+      detail: "Check the site before trying again.",
+      privacyReceipt: {
+        ...sent.privacyReceipt,
+        finalSubmitOccurred: false,
+        submissionOutcome: {
+          ...sent.privacyReceipt!.submissionOutcome,
+          outcome: "outcome_uncertain",
+          verifiedAt: null,
+          retry: { eligible: false, blockReason: "outcome_uncertain" },
+        },
+      },
+    });
+    fixture.seed.applyJobResults = [uncertain];
+    fixture.seed.applyRuns = [
+      ApplyRunSchema.parse({ ...fixture.run, state: "completed" }),
+    ];
+    fixture.seed.userActionRequests = [];
+    const chat = vi.fn(() =>
+      Promise.resolve({ content: "The send is unconfirmed. Check the site." }),
+    );
+    const { host, ports, repository } = setup({
+      seed: fixture.seed,
+      modelHandle: {
+        ...createScriptedAssistantModelHandle(),
+        createModel: () => ({ chatWithTools: chat }),
+      },
+    });
+    const conversation = await host.createConversation();
+    await installApplicationWatch(host, conversation.id);
+    await host.checkWatches();
+    await waitFor(
+      () => host.readConversation({ conversationId: conversation.id }),
+      (view) => view.activeTurn === null,
+    );
+    const notes = (
+      await repository.listMessages(conversation.id, { limit: 100 })
+    ).messages.filter((message) => message.origin === "host");
+    const text = JSON.stringify(notes);
+    expect(text).toContain("send unconfirmed");
+    expect(text).toContain("blocked_until_person_checks_outcome");
+    expect(text).toContain("Do not send again or change sending settings");
+    expect(ports.sent).toEqual([]);
+  });
+
+  it("records a successful prepared-form field edit on the application", async () => {
+    const seed = createSeed();
+    seed.applicationRecords = [
+      ApplicationRecordSchema.parse({
+        id: "record_edit",
+        jobId: "job_ready",
+        title: "Designer",
+        company: "Synthetic",
+        status: "ready_for_review",
+        lastUpdatedAt: "2026-10-05T10:00:00.000Z",
+        lastActionLabel: "Prepared",
+        nextActionLabel: "Review",
+      }),
+    ];
+    const { host, ports, harness } = setup({ seed });
+    let noteChange:
+      | ((recordId: string, field: string) => Promise<void>)
+      | undefined;
+    ports.browser = {
+      visibleTab: () => null,
+      lease: async (input) => {
+        noteChange = input.onApplicationChange;
+        return {
+          leaseId: "edit",
+          tabId: "retained",
+          applicationResultId: "prepared",
+          isApplicationBound: () => Promise.resolve(true),
+          revoked: new AbortController().signal,
+          hands: {} as never,
+          currentUrl: () => "https://example.test/form",
+          childTabIds: () => [],
+          release: () => Promise.resolve(),
+        };
+      },
+    };
+    const conversation = await host.createConversation();
+    const session = (
+      host as unknown as {
+        detachedSession(
+          id: string,
+          messageId: string | null,
+        ): AssistantTurnSession;
+      }
+    ).detachedSession(conversation.id, null);
+    await session.browserLease({ applicationResultId: "prepared" });
+    await noteChange!("record_edit", "Cover letter");
+    const application = (
+      await harness.workspaceService.getWorkspaceSnapshot()
+    ).applicationRecords.find((record) => record.id === "record_edit")!;
+    expect(application.crm?.notes[0]?.body).toBe(
+      "Assistant changed Cover letter in the prepared form. Nothing was sent.",
+    );
+    expect(application.status).toBe("ready_for_review");
   });
 });

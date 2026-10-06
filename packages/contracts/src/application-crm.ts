@@ -575,12 +575,59 @@ export function projectApplicationRecordsActivity(input: {
   }
   return input.records.map((record) => {
     const result = latest.get(record.id);
-    if (!result) return record;
+    const markedByPerson = isApplicationTrackedAsSentByPerson(record.crm);
+    const legacySent =
+      record.status === "submitted" || record.lastAttemptState === "submitted";
+    if (!result) {
+      if (record.personSendReceipt)
+        return {
+          ...record,
+          status: [
+            "assessment",
+            "interview",
+            "offer",
+            "rejected",
+            "withdrawn",
+          ].includes(record.status)
+            ? record.status
+            : "submitted",
+          lastAttemptState: "submitted",
+          lastActionLabel: record.personSendReceipt.summary,
+          nextActionLabel: "View application",
+        };
+      if (!legacySent && !markedByPerson) return record;
+      return {
+        ...record,
+        status:
+          markedByPerson ||
+          [
+            "assessment",
+            "interview",
+            "offer",
+            "rejected",
+            "withdrawn",
+          ].includes(record.status)
+            ? record.status
+            : "ready_for_review",
+        lastAttemptState: markedByPerson ? "submitted" : "paused",
+        lastActionLabel: markedByPerson
+          ? "Marked sent by you"
+          : "Not confirmed",
+        nextActionLabel: markedByPerson
+          ? "View application"
+          : "Check the site and record whether you sent it",
+      };
+    }
     const outcome = result.privacyReceipt?.submissionOutcome;
     const sent =
-      outcome?.outcome === "submitted" ||
-      (result.state === "submitted" &&
-        result.privacyReceipt?.finalSubmitOccurred === true);
+      Boolean(record.personSendReceipt) ||
+      (result.privacyReceipt?.finalSubmitOccurred === true &&
+        (outcome
+          ? outcome.outcome === "submitted" &&
+            outcome.applicationRecordId === record.id &&
+            outcome.resultId === result.id &&
+            outcome.jobId === record.jobId
+          : result.state === "submitted"));
     const run = input.runs?.find((run) => run.id === result.runId);
     const needsAnswers = result.latestQuestionCount > result.latestAnswerCount;
     const personStep =
@@ -636,7 +683,29 @@ export function projectApplicationRecordsActivity(input: {
       : null;
     return {
       ...record,
-      lastAttemptState: state,
+      lastAttemptState: markedByPerson && !sent ? "submitted" : state,
+      ...(!sent &&
+      (legacySent || result.state === "submitted" || markedByPerson)
+        ? {
+            status:
+              markedByPerson ||
+              [
+                "assessment",
+                "interview",
+                "offer",
+                "rejected",
+                "withdrawn",
+              ].includes(record.status)
+                ? record.status
+                : ("ready_for_review" as const),
+            lastActionLabel: markedByPerson
+              ? "Marked sent by you"
+              : "Not confirmed",
+            nextActionLabel: markedByPerson
+              ? "View application"
+              : "Check the site and record whether you sent it",
+          }
+        : {}),
       ...(sent &&
       !["assessment", "interview", "offer", "rejected", "withdrawn"].includes(
         record.status,

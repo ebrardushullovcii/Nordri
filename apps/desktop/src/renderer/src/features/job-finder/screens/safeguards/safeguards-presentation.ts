@@ -24,6 +24,9 @@ export function safeguardMutationKey(input: SafeguardMutationInput): string {
     case "apply_company_application_evidence":
       reference = input.config.companyId;
       break;
+    case "decide_same_company_send_pair":
+      reference = `${input.conflictId}:${input.jobIds.join(":")}:${input.allow}`;
+      break;
     case "record_simultaneous_application_conflict":
     case "resolve_simultaneous_application_conflict":
       reference = input.conflictId;
@@ -395,6 +398,83 @@ export function buildSafeguardsPresentationModel(
   }
 
   for (const conflict of safeguards.simultaneousApplicationConflicts) {
+    if (conflict.companyKey && conflict.jobIds) {
+      const jobIds = conflict.jobIds;
+      const label = (id: string) => {
+        const job = [
+          ...workspace.discoveryJobs,
+          ...workspace.companyJobs,
+          ...workspace.dismissedDiscoveryJobs,
+        ].find((job) => job.id === id);
+        const record = workspace.applicationRecords.find(
+          (record) => record.jobId === id,
+        );
+        return `${job?.title ?? record?.title ?? "Application"} (${job?.location || "place not listed"})`;
+      };
+      const controls: SafeguardControl[] = [];
+      let blocked = false;
+      for (let i = 0; i < jobIds.length; i++) {
+        for (let j = i + 1; j < jobIds.length; j++) {
+          const pair: [string, string] = [jobIds[i]!, jobIds[j]!];
+          const allowed =
+            conflict.allowedPairs?.some(
+              (decision) =>
+                decision.revokedAt === null &&
+                pair.every((id) => decision.jobIds.includes(id)),
+            ) ?? false;
+          const bothSent = pair.every((id) =>
+            workspace.applicationRecords.some(
+              (record) =>
+                record.jobId === id && record.lastAttemptState === "submitted",
+            ),
+          );
+          if (!allowed && bothSent) continue;
+          if (!allowed) blocked = true;
+          controls.push({
+            id: `${conflict.id}-${i}-${j}`,
+            label: `${allowed ? "Revoke Send both anyway" : "Send both anyway"}: ${pair.map(label).join(" and ")}`,
+            kind: allowed ? "restore" : "resolve",
+            mutation: {
+              type: "decide_same_company_send_pair",
+              conflictId: conflict.id,
+              jobIds: pair,
+              allow: !allowed,
+            },
+          });
+        }
+      }
+      pushRow({
+        key: `conflict-${conflict.id}`,
+        kind: "conflicts",
+        title: conflict.companyName ?? "Same employer",
+        subtitle: jobIds.map(label).join("; "),
+        explanation:
+          "These applications share an employer. Your choice applies to each pair, and you can revoke it.",
+        recoveryGuidance:
+          "Choose Send both anyway for a pair you want sent, then return to the application. Sending still needs your permission.",
+        statusLabel: blocked
+          ? "Needs your choice"
+          : controls.length
+            ? "Pairs allowed by you"
+            : "Past overlap",
+        statusTone: blocked
+          ? "critical"
+          : controls.length
+            ? "positive"
+            : "neutral",
+        active: blocked,
+        blocked,
+        dismissed: false,
+        lineage: baseLineage(jobIds, []),
+        tags: [],
+        controls,
+        recoveryLink: RECOVERY_LINKS.conflicts,
+        searchText: [conflict.companyName, ...jobIds.map(label)]
+          .join(" ")
+          .toLowerCase(),
+      });
+      continue;
+    }
     const dismissal = findDismissal(
       safeguards,
       "simultaneous_application_conflict",

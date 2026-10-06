@@ -2630,6 +2630,15 @@ export const ApplicationRecordSchema = z.object({
   lastActionLabel: NonEmptyStringSchema,
   nextActionLabel: NonEmptyStringSchema.nullable(),
   lastUpdatedAt: IsoDateTimeSchema,
+  personSendReceipt: z
+    .object({
+      observedAt: IsoDateTimeSchema,
+      origin: UrlStringSchema,
+      safePath: z.string().startsWith("/").max(4096),
+      summary: NonEmptyStringSchema.max(500),
+    })
+    .strict()
+    .optional(),
   lastAttemptState: ApplicationAttemptStateSchema.nullable().default(null),
   questionSummary: ApplicationAttemptQuestionSummarySchema.default({}),
   latestBlocker:

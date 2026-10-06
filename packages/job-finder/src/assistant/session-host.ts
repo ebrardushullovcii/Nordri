@@ -139,6 +139,7 @@ interface LiveTurn {
   stallShown: boolean;
   modelCallInFlight: boolean;
   lease: AssistantBrowserLease | null;
+  focusedApplicationResultId?: string | undefined;
   sourceMessage: AssistantMessage | null;
   outputs: AssistantToolOutputs;
   lastPersistedDraftAt: number;
@@ -1651,7 +1652,14 @@ export class AssistantSessionHost {
         }
       },
       visionAvailable: handle.capabilities.images,
+      releaseBrowserLease: async () => {
+        delete live.focusedApplicationResultId;
+        await this.releaseLease(live, "Reviewing your send instruction");
+      },
       browserLease: async (options) => {
+        const applicationResultId = options?.newTab
+          ? undefined
+          : (options?.applicationResultId ?? live.focusedApplicationResultId);
         const tabId = options?.newTab
           ? null
           : (options?.tabId ??
@@ -1661,7 +1669,9 @@ export class AssistantSessionHost {
           live.lease &&
           !live.lease.revoked.aborted &&
           !options?.newTab &&
-          (!options?.tabId || live.lease.tabId === options.tabId)
+          (!options?.tabId || live.lease.tabId === options.tabId) &&
+          (!applicationResultId ||
+            live.lease.applicationResultId === applicationResultId)
         )
           return live.lease;
         // A tab the person took back stays theirs until they send a new
@@ -1689,6 +1699,31 @@ export class AssistantSessionHost {
         session.assertCurrent();
         const lease = await this.ports.browser.lease({
           tabId,
+          ...(applicationResultId ? { applicationResultId } : {}),
+          onApplicationChange: async (recordId, field) => {
+            const snapshot = await this.service.getWorkspaceSnapshot();
+            const record = snapshot.applicationRecords.find(
+              (record) => record.id === recordId,
+            );
+            if (!record)
+              throw new Error("The application record is no longer available.");
+            const at = this.now();
+            await this.service.mutateApplicationCrm({
+              applicationRecordId: recordId,
+              expectedRevision: record.crm?.revision ?? 0,
+              actor: "assistant",
+              mutation: {
+                type: "add_note",
+                note: {
+                  id: session.createId("assistant_browser_edit"),
+                  body: `Assistant changed ${field.slice(0, 160)} in the prepared form. Nothing was sent.`,
+                  createdAt: at,
+                  updatedAt: at,
+                },
+              },
+            });
+            this.ports.publishWorkspaceUpdate();
+          },
           conversationId,
           turnId: live.turn.id,
           signal: session.signal,
@@ -1701,6 +1736,7 @@ export class AssistantSessionHost {
           throw error;
         }
         live.lease = lease;
+        live.focusedApplicationResultId = lease.applicationResultId;
         await this.repository.upsertLease({
           id: lease.leaseId,
           conversationId,

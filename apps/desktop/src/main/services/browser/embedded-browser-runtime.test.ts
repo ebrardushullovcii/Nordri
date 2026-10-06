@@ -481,3 +481,32 @@ test("reads the exact native person-owned application even when CDP released its
   expect(readApplicationPageWithPerson).toHaveBeenCalledWith("result_waiting");
   expect(fallback).not.toHaveBeenCalled();
 });
+
+test("does not send a prepared form while its exact tab is lent for editing", async () => {
+  const base = createStubBrowserSessionRuntime({ sessions: [], catalog: [] });
+  const execute = vi.fn<
+    NonNullable<BrowserSessionRuntime["executeExactlyOneFinalAction"]>
+  >(() => Promise.resolve({} as never));
+  const browser = {
+    isApplicationPageLent: vi.fn((owner: string) => owner === "editing_result"),
+    runAutomation: async (
+      _label: string,
+      _signal: AbortSignal | undefined,
+      work: (signal: AbortSignal) => Promise<unknown>,
+    ) => work(new AbortController().signal),
+  } as unknown as EmbeddedBrowser;
+  const wrapped = withEmbeddedBrowserActivity(
+    {
+      ...base,
+      executeExactlyOneFinalAction: execute,
+    },
+    browser,
+  );
+  const input = { pageBindingKey: "editing_result" } as Parameters<
+    NonNullable<BrowserSessionRuntime["executeExactlyOneFinalAction"]>
+  >[1];
+  await expect(
+    wrapped.executeExactlyOneFinalAction!("target_site", input),
+  ).rejects.toThrow("Wait for the turn to finish before sending");
+  expect(execute).not.toHaveBeenCalled();
+});

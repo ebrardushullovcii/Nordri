@@ -1,5 +1,6 @@
 import { assertPersonAnswerAuthority } from "../person-answer-authority";
 import {
+  isApplicationTrackedAsSentByPerson,
   ApplicationAnswerValueSchema,
   ApplicationCrmMutationSchema,
   ApplicationCrmStageSchema,
@@ -389,6 +390,7 @@ export const sendApplicationsTool = defineTool({
       );
     }
     session.assertCurrent();
+    await session.releaseBrowserLease?.();
     const result = await ports.sendPreparedApplications({ jobIds: allowed });
     ports.publishWorkspaceUpdate();
     const after = await service.getWorkspaceSnapshot();
@@ -398,16 +400,33 @@ export const sendApplicationsTool = defineTool({
         ...result.failed.map((entry) => entry.jobId),
       ].includes(record.jobId),
     );
+    const latestResults = new Map<
+      string,
+      (typeof after.applyJobResults)[number]
+    >();
+    for (const entry of after.applyJobResults) {
+      const previous = latestResults.get(entry.jobId);
+      if (!previous || entry.updatedAt >= previous.updatedAt)
+        latestResults.set(entry.jobId, entry);
+    }
+    const unconfirmed = result.failed
+      .filter(
+        (entry) =>
+          latestResults.get(entry.jobId)?.privacyReceipt?.submissionOutcome
+            ?.outcome === "outcome_uncertain",
+      )
+      .map((entry) => entry.jobId);
     return {
-      summary: `Sent ${plural(result.sentJobIds.length, "application")}${result.failed.length ? `, ${result.failed.length} not sent` : ""}${refused.length ? `, ${refused.length} refused` : ""}.`,
+      summary: `Sent ${plural(result.sentJobIds.length, "application")}${unconfirmed.length ? `, ${unconfirmed.length} send unconfirmed; check the site before trying again` : ""}${result.failed.length > unconfirmed.length ? `, ${result.failed.length - unconfirmed.length} not sent` : ""}${refused.length ? `, ${refused.length} refused` : ""}.`,
       data: {
         sent: result.sentJobIds,
+        unconfirmed,
         failed: result.failed,
         refused: refused.map(({ jobId, reason }) => ({ jobId, reason })),
         records: records.map(compactApplication),
       },
       parts: records.length
-        ? [applicationRowsPart({ records, title: "Sent" })]
+        ? [applicationRowsPart({ records, title: "Sending results" })]
         : [],
     };
   },
@@ -617,6 +636,11 @@ export const getApplicationTool = defineTool({
       )
       .slice(0, 10);
     const verifying = steps.some((step) => step.state === "verifying");
+    const unconfirmedLegacy =
+      result?.state === "submitted" &&
+      result.privacyReceipt?.finalSubmitOccurred !== true &&
+      !record?.personSendReceipt &&
+      !isApplicationTrackedAsSentByPerson(record?.crm);
     return {
       summary: [
         record
@@ -630,13 +654,26 @@ export const getApplicationTool = defineTool({
         .join(" "),
       data: {
         record: record ? compactApplication(record) : null,
+        submission:
+          result?.privacyReceipt?.submissionOutcome ??
+          record?.personSendReceipt ??
+          null,
+        recovery:
+          result?.privacyReceipt?.submissionOutcome?.outcome ===
+          "outcome_uncertain"
+            ? "Check the site and ask the person to record the outcome. Do not send again or change permission settings."
+            : null,
         needsYouSteps: steps.map((step) => ({
           id: step.id,
           title: step.title,
           state: step.state,
         })),
         run: result
-          ? { runId: result.runId, resultId: result.id, state: result.state }
+          ? {
+              runId: result.runId,
+              resultId: result.id,
+              state: unconfirmedLegacy ? "not_confirmed" : result.state,
+            }
           : null,
         questions: (details?.questionRecords ?? [])
           .slice(0, 30)
@@ -778,6 +815,12 @@ export const continueApplicationTool = defineTool({
     if (input.openPage) {
       if (!result || !record)
         throw new AssistantToolError("not_found", "No kept page for this job.");
+      await service.inspectPreparedApplicationPage({
+        runId: result.runId,
+        jobId: input.jobId,
+        resultId: result.id,
+        applicationRecordId: record.id,
+      });
       await service.focusPreparedApplicationPage({
         runId: result.runId,
         jobId: input.jobId,
@@ -790,8 +833,14 @@ export const continueApplicationTool = defineTool({
             "The application tab is selected. Open the Job Finder browser to see it.",
         };
       }
+      // The same retained tab is now the target of later browser tools in
+      // this turn, even when the message was sent with the browser minimized.
+      await session.browserLease({ applicationResultId: result.id });
       await ports.browser.show();
-      return { summary: "The application page is open in the browser." };
+      return {
+        summary:
+          "The application page is open in the browser. Browser tools now use this filled form; sending still uses send_applications.",
+      };
     }
     const outcome = await applyToJobsTool.execute(
       { jobIds: [input.jobId], evenIfExcludedOrApplied: true },

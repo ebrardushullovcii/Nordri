@@ -98,18 +98,52 @@ export class EmbeddedBrowser {
   private readonly pageListeners = new Set<(page: BrowserCdpPage) => void>();
   private stateListeners = new Set<(state: DesktopBrowserState) => void>();
   private activeTabId: string | null = null;
+  private unboundSendNotice: { id: string; tabId: string } | null = null;
+  private readonly personInputAt = new Map<string, number>();
+
+  /** A prompt to record an outcome, never evidence that the site received it. */
+  private noteUnboundSend(tabId: string): void {
+    if (Date.now() - (this.personInputAt.get(tabId) ?? 0) > 2_000) return;
+    if (this.applicationTabLabels.has(tabId)) return;
+    this.personInputAt.delete(tabId);
+    this.unboundSendNotice = { id: randomUUID(), tabId };
+    this.emit();
+  }
   private applicationTabLabels = new Map<
     string,
-    { title: string; url: string }
+    { title: string; url: string; baseLabel: string; reference: string }
   >();
 
-  setApplicationTabLabel(tabId: string, title: string, company: string): void {
+  setApplicationTabLabel(
+    tabId: string,
+    title: string,
+    company: string,
+    location = "",
+    reference = tabId.slice(-6),
+  ): void {
     const page = this.pageMap.get(tabId);
     if (!page || page.contents.isDestroyed()) return;
+    const baseLabel =
+      `${title.slice(0, 120)} · ${company.slice(0, 80)} · ${location || "place not listed"}`.slice(
+        0,
+        280,
+      );
     this.applicationTabLabels.set(tabId, {
-      title: `${title} · ${company}`.slice(0, 300),
+      title: baseLabel,
+      baseLabel,
+      reference,
       url: page.contents.getURL(),
     });
+    const matches = [...this.applicationTabLabels.values()].filter(
+      (label) => label.baseLabel === baseLabel,
+    );
+    if (matches.length > 1)
+      for (const [index, label] of matches.entries()) {
+        const repeated = matches.some(
+          (other) => other !== label && other.reference === label.reference,
+        );
+        label.title = `${baseLabel} · ${label.reference}${repeated ? `-${index + 1}` : ""}`;
+      }
     this.emit();
   }
 
@@ -411,6 +445,7 @@ export class EmbeddedBrowser {
     );
     return DesktopBrowserStateSchema.parse({
       revision: this.revision,
+      unboundSendNotice: this.unboundSendNotice,
       phase: this.closing
         ? "closing"
         : this.closed
@@ -703,6 +738,7 @@ export class EmbeddedBrowser {
   /** Called only after the native input ledger has excluded automation. */
   private notePersonInput(tabId: string): void {
     this.personInputTabs.add(tabId);
+    this.personInputAt.set(tabId, Date.now());
     // An idle prepared form has no running claim, but its guard and network
     // interception still belong to automation. Release that exact tab first.
     const owned = [...this.ownedTabs.values()].some((tabs) => tabs.has(tabId));
@@ -850,6 +886,32 @@ export class EmbeddedBrowser {
     };
     page.contents.on("did-start-loading", update);
     page.contents.on("did-stop-loading", update);
+    // Observe the person's final control without cancelling it or granting
+    // page scripts access to any app command. The native input ledger excludes
+    // automation; this message can only create a dismissible recording hint.
+    const submitNoticeToken = `nordri-unbound-send-${randomUUID()}`;
+    const installSubmitNotice = () => {
+      if (page.contents.isDestroyed()) return;
+      for (const frame of page.contents.mainFrame.framesInSubtree)
+        void frame
+          .executeJavaScript(
+            `(() => {
+        if (window.__nordriUnboundSendObserver) return;
+        window.__nordriUnboundSendObserver = true;
+        const isBound = () => window.__nordriPreparedApplication || sessionStorage.getItem('__nordriPreparedApplication');
+        const finalControl = element => element && /(?:submit|send[-_\\s]*application|complete[-_\\s]*(?:the[-_\\s]*)?application|apply[-_\\s]*(?:now|job))/iu.test([element.textContent, element.getAttribute('aria-label'), element.value].filter(Boolean).join(' '));
+        const note = element => { if (!isBound() && finalControl(element)) console.debug(${JSON.stringify(submitNoticeToken)}); };
+        document.addEventListener('submit', event => { if (event.isTrusted) note(event.submitter); }, true);
+        document.addEventListener('click', event => { if (event.isTrusted) note(event.target?.closest('button,input[type=submit],[role=button]')); }, true);
+      })()`,
+          )
+          .catch(() => undefined);
+    };
+    page.contents.on("dom-ready", installSubmitNotice);
+    page.contents.on("did-frame-finish-load", installSubmitNotice);
+    page.contents.on("console-message", (details) => {
+      if (details.message === submitNoticeToken) this.noteUnboundSend(page.id);
+    });
     page.contents.on("page-title-updated", update);
     page.contents.on("did-navigate", update);
     page.contents.on("did-navigate-in-page", update);
@@ -961,6 +1023,7 @@ export class EmbeddedBrowser {
       }
       this.agentPresses.forget(page.id);
       this.personInputTabs.delete(page.id);
+      this.personInputAt.delete(page.id);
       this.parkedTabs.delete(page.id);
       this.heldTabs.delete(page.id);
       this.personTabs.delete(page.id);
@@ -1178,13 +1241,20 @@ export class EmbeddedBrowser {
 
   private async closeTabForAutomation(tabId: string): Promise<void> {
     this.personInputTabs.delete(tabId);
+    this.personInputAt.delete(tabId);
     const page = this.pageMap.get(tabId);
     if (!page || page.contents.isDestroyed()) return;
     await Promise.all(
       page.contents.mainFrame.framesInSubtree.map((frame) =>
         frame
           .executeJavaScript(
-            OPEN_PREPARE_ONLY_GUARD_FOR_PERSON.replace("= true", "= false"),
+            `(() => {
+              const state = window.__nordriPrepareOnlyMutationGuardV1;
+              if (state) {
+                state.finalActionAllowed = false;
+                state.authorizedFormActionWindow = null;
+              }
+            })()`,
           )
           .catch(() => undefined),
       ),
@@ -1219,6 +1289,10 @@ export class EmbeddedBrowser {
     const page = this.pageMap.get(tabId);
     if (!page || page.contents.isDestroyed())
       throw new Error("That browser tab is closed.");
+    if (this.lentTabs.has(tabId))
+      throw new Error(
+        "The assistant is already working in this tab. Wait for the turn to finish.",
+      );
     const busy = [...this.operationClaims.values()].some(
       (claim) =>
         claim.tabs.has(tabId) && !(claim.owner ?? "").startsWith("assistant:"),
@@ -1239,8 +1313,23 @@ export class EmbeddedBrowser {
       this.heldTabs.has(tabId) ||
       this.parkedTabs.has(tabId) ||
       this.personTabs.has(tabId)
-    )
+    ) {
       this.bridge?.releasePage(tabId);
+      this.openTabForPerson(tabId);
+    }
+  }
+
+  getApplicationTabIds(owner: string): string[] {
+    return [...(this.ownedTabs.get(owner) ?? [])].filter((id) => {
+      const page = this.pageMap.get(id);
+      return page && !page.contents.isDestroyed();
+    });
+  }
+
+  isApplicationPageLent(owner: string): boolean {
+    return [...(this.ownedTabs.get(owner) ?? [])].some((tabId) =>
+      this.lentTabs.has(tabId),
+    );
   }
 
   isTabLent(tabId: string): boolean {

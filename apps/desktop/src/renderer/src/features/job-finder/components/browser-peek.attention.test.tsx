@@ -1,6 +1,13 @@
+import { ToastProvider } from "@renderer/components/ui/toast";
 // @vitest-environment jsdom
 
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  fireEvent,
+} from "@testing-library/react";
 import type {
   DesktopBrowserBridge,
   DesktopBrowserState,
@@ -72,4 +79,49 @@ describe("BrowserPeek handoff attention", () => {
       value: previousBridge,
     });
   });
+});
+
+it("shows a dismissible recording prompt for an unbound send without blocking browser input", async () => {
+  const previous = window.nordri;
+  const onRecordSend = vi.fn();
+  const command = vi.fn().mockResolvedValue(staleAttentionState);
+  Object.defineProperty(window, "nordri", {
+    configurable: true,
+    value: {
+      browser: {
+        getState: vi.fn().mockResolvedValue({
+          ...staleAttentionState,
+          attention: null,
+          unboundSendNotice: { id: "send_notice", tabId: "general" },
+        }),
+        command,
+        setViewport: vi.fn().mockResolvedValue(undefined),
+        onStateChanged: vi.fn().mockReturnValue(() => undefined),
+        onFocusAddress: vi.fn().mockReturnValue(() => undefined),
+      },
+    },
+  });
+  try {
+    render(
+      <ToastProvider>
+        <BrowserPeek onRecordSend={onRecordSend} />
+      </ToastProvider>,
+    );
+    expect(
+      await screen.findByText("This page is not linked to an application"),
+    ).toBeTruthy();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Record it in Applications" }),
+    );
+    expect(onRecordSend).toHaveBeenCalledOnce();
+    expect(command).toHaveBeenCalledWith({ type: "minimize" });
+    expect(command).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "stop" }),
+    );
+  } finally {
+    Object.defineProperty(window, "nordri", {
+      configurable: true,
+      value: previous,
+    });
+  }
 });

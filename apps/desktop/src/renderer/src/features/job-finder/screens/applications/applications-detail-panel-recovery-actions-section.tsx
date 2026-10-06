@@ -202,6 +202,7 @@ export function ApplicationsDetailPanelRecoveryActionsSection(props: {
   selectedRecordLatestBlockerCode?: string | null;
   selectedRecordLastActionLabel?: string | null;
   selectedRecordTrackedAsApplied?: boolean;
+  personSendReceiptSummary?: string | null;
   selectedRun: JobFinderWorkspaceSnapshot["applyRuns"][number] | null;
   /** What the visible result's run is doing (a planned job's standing). */
   visibleApplyRunContext?: ApplyRunContext | null;
@@ -252,6 +253,7 @@ export function ApplicationsDetailPanelRecoveryActionsSection(props: {
     isApplyPending,
     recordLastActionLabel: selectedRecordLastActionLabel,
     recordTrackedAsApplied: selectedRecordTrackedAsApplied,
+    personSendReceiptSummary: props.personSendReceiptSummary ?? null,
     ...(selectedRecordLatestBlockerCode !== undefined
       ? { recordLatestBlockerCode: selectedRecordLatestBlockerCode }
       : {}),
@@ -489,6 +491,10 @@ export function ApplicationsDetailPanelRecoveryActionsSection(props: {
             >
               {presentation.reasonSentence}
             </p>
+          ) : null}
+          {props.personSendReceiptSummary &&
+          !visibleApplyResult?.privacyReceipt?.submissionOutcome ? (
+            <p data-site-confirmation>{props.personSendReceiptSummary}</p>
           ) : null}
           {visibleApplyResult?.state === "submitted" &&
           visibleApplyResult.privacyReceipt?.submissionOutcome?.outcome ===

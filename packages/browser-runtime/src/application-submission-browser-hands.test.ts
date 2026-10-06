@@ -35,7 +35,7 @@ function startFixtureServer(): Promise<FixtureServer> {
       response.writeHead(200, { "content-type": "text/html" });
       response.end(
         requestUrl.pathname === "/submit-confirmed"
-          ? "<main>Thank you for applying. We have received your application.</main>"
+          ? "<main>Thank you for applying. We have received your application. Reference: SYN-42.</main>"
           : "<main>fixture submitted page</main>",
       );
       return;
@@ -402,6 +402,7 @@ describe("source-generic application browser hands", () => {
       reason: "employer_confirmation",
       confirmation: {
         destination: { safePath: "/submit-confirmed" },
+        summary: "The site confirmed receipt. Reference: SYN-42.",
       },
       facts: { actionIssued: true, actionCompleted: true },
     });

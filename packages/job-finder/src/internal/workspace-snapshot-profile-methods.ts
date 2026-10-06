@@ -1,3 +1,4 @@
+import { groupCompanyConflicts } from "./same-company-sends";
 import { readSalaryDisclosurePreference } from "./salary-disclosure-preference";
 import { hasVerifiedApplicationSubmission } from "./workspace-apply-run-support";
 import {
@@ -949,7 +950,7 @@ export function createWorkspaceSnapshotProfileMethods(
       userActionRequests,
       userActionEvents,
       activityControl,
-      intelligence,
+      rawIntelligence,
     ] = await Promise.all([
       getCurrentSetupStateContext(),
       ctx.repository.listSavedJobs(),
@@ -972,6 +973,25 @@ export function createWorkspaceSnapshotProfileMethods(
       ctx.repository.getActivityControl(),
       ctx.repository.getIntelligenceState(),
     ]);
+
+    let intelligence = groupCompanyConflicts(
+      rawIntelligence,
+      applicationRecords,
+      savedJobs,
+    );
+    if (JSON.stringify(intelligence) !== JSON.stringify(rawIntelligence)) {
+      intelligence = await ctx.withIntelligenceTransition(async () => {
+        const current = await ctx.repository.getIntelligenceState();
+        const grouped = groupCompanyConflicts(
+          current,
+          applicationRecords,
+          savedJobs,
+        );
+        if (JSON.stringify(grouped) !== JSON.stringify(current))
+          await ctx.repository.saveIntelligenceState(grouped);
+        return grouped;
+      });
+    }
 
     const availableResumeTemplates = ctx.documentManager.listResumeTemplates();
     const normalizedSettings = normalizeJobFinderSettings(
@@ -1365,6 +1385,7 @@ export function createWorkspaceSnapshotProfileMethods(
       existingCampaignState,
       userActionRequests,
       activityControl,
+      rawIntelligence,
     ] = await Promise.all([
       getCurrentSetupStateContext(),
       ctx.repository.getSettings(),
@@ -1372,6 +1393,7 @@ export function createWorkspaceSnapshotProfileMethods(
       ctx.repository.getCampaignState(),
       ctx.repository.listUserActionRequests(),
       ctx.repository.getActivityControl(),
+      ctx.repository.getIntelligenceState(),
     ]);
     const availableResumeTemplates = ctx.documentManager.listResumeTemplates();
     const settings = normalizeJobFinderSettings(

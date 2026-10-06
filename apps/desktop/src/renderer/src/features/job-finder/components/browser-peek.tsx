@@ -1,3 +1,4 @@
+import { useToast } from "@renderer/components/ui/toast";
 import {
   useCallback,
   useEffect,
@@ -100,6 +101,7 @@ function BrowserBrandMark({
 
 export function BrowserPeek(props: {
   hasUnresolvedAttention?: boolean;
+  onRecordSend?: () => void;
   /**
    * Width the expanded browser's toolbar keeps clear at its leading edge, for
    * the native macOS traffic lights that paint above every overlay. Undefined
@@ -108,7 +110,32 @@ export function BrowserPeek(props: {
   chromeInsetStart?: string | undefined;
 }) {
   const bridge = window.nordri?.browser;
+  const { showToast } = useToast();
+  const lastSendNotice = useRef<string | null>(null);
   const [state, setState] = useState(initialState);
+  useEffect(() => {
+    const notice = state.unboundSendNotice;
+    if (!notice || lastSendNotice.current === notice.id) return;
+    lastSendNotice.current = notice.id;
+    showToast({
+      id: "unbound-application-send",
+      title: "This page is not linked to an application",
+      description:
+        "After the site confirms receipt, record which application you sent.",
+      duration: 15_000,
+      ...(props.onRecordSend
+        ? {
+            action: {
+              label: "Record it in Applications",
+              onClick: () => {
+                void bridge?.command({ type: "minimize" });
+                props.onRecordSend?.();
+              },
+            },
+          }
+        : {}),
+    });
+  }, [state.unboundSendNotice, showToast, props.onRecordSend, bridge]);
   const [address, setAddress] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);

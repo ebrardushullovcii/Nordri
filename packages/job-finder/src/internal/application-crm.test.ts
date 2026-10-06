@@ -355,6 +355,12 @@ describe("application CRM service", () => {
       record({
         ...tagged,
         status: "submitted",
+        personSendReceipt: {
+          observedAt: "2026-08-15T10:00:00.000Z",
+          origin: "https://example.test",
+          safePath: "/confirmation",
+          summary: "The site confirmed receipt of the application.",
+        },
         lastAttemptState: "submitted",
         latestBlocker: null,
       }),
@@ -928,7 +934,7 @@ describe("application CRM service", () => {
     };
     expect(parsed.applications).toHaveLength(1);
     expect(parsed.applications[0]?.crm).toMatchObject({
-      appliedAtProvenance: "local_historical_inference",
+      appliedAtProvenance: null,
       externalVerification: "not_verified_with_employer_or_ats",
       stageProvenance: "local_historical_inference",
     });
@@ -937,7 +943,7 @@ describe("application CRM service", () => {
       "Stage provenance,Tags,Applied at,Applied at provenance,External verification",
     );
     expect(csv.content).toContain(
-      "Recorded by Nordri,Not checked with the employer",
+      "Recorded by Nordri,,,,Not checked with the employer",
     );
     expect(csv.exportedCount).toBe(1);
   });
@@ -986,7 +992,7 @@ describe("application CRM service", () => {
     });
     expect(crmById.get("application_inferred")).toMatchObject({
       stageProvenance: "local_historical_inference",
-      appliedAtProvenance: "local_historical_inference",
+      appliedAtProvenance: null,
       externalVerification: "not_verified_with_employer_or_ats",
     });
     expect(crmById.get("application_inferred_unapplied")).toMatchObject({
@@ -1009,7 +1015,7 @@ describe("application CRM service", () => {
       "application_persisted,job_persisted,Software Engineer,Example Inc,Applied,,Recorded by you,,2026-08-10T09:30:00.000Z,Recorded by you,Not checked with the employer,,,2026-08-01T10:00:00.000Z,,,,,,none,,,",
     );
     expect(csvRows.get("application_inferred")).toBe(
-      "application_inferred,job_inferred,Software Engineer,Example Inc,Applied,,Recorded by Nordri,,2026-08-01T10:00:00.000Z,Recorded by Nordri,Not checked with the employer,,,2026-08-01T10:00:00.000Z,,,,,,none,,,",
+      "application_inferred,job_inferred,Software Engineer,Example Inc,Needs you,,Recorded by Nordri,,,,Not checked with the employer,,,2026-08-01T10:00:00.000Z,,,,,,none,,,",
     );
     expect(csvRows.get("application_inferred_unapplied")).toBe(
       "application_inferred_unapplied,job_inferred_unapplied,Software Engineer,Example Inc,Shortlisted,,Recorded by Nordri,,,,Not checked with the employer,,,2026-08-01T10:00:00.000Z,,,,,,none,,,",

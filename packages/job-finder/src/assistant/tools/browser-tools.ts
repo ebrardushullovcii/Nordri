@@ -172,11 +172,13 @@ function forwardedTool(name: string): AssistantToolDefinition | null {
           name === "type" ||
           name === "select" ||
           name === "set_checkbox") &&
-        (await lease.isApplicationBound()) === true
+        (await lease.isApplicationBound()) === true &&
+        (!lease.applicationResultId ||
+          ["navigate", "go_back", "follow_link"].includes(name))
       ) {
         throw new AssistantToolError(
           "refused",
-          "This tab holds a prepared application. I can read it, but cannot edit or leave it here. Use browser_open for unrelated pages so the form and attachments stay intact.",
+          "This tab holds a prepared application. Use retry_application with openPage:true to edit its exact form. Use browser_open for unrelated pages.",
         );
       }
       if (name !== "observe" && !tools.state.observation) {
@@ -245,6 +247,7 @@ export const browserOpenTool = defineTool({
       newTab: true,
     });
     context.session.assertCurrent();
+    await context.ports.browser.show?.();
     const observation = await pageToolsFor(lease).observe();
     return {
       summary: `The new tab shows ${observation.url}. Inspect its fields and files before claiming any form was recovered.`,
@@ -292,7 +295,7 @@ export const browserUseApplicationTool = defineTool({
       {},
     ).observe();
     return {
-      summary: `Inspected the retained application tab at ${observation.url} with submit windows closed. This inspection is read-only; safe editing of its bound tab is unavailable. Report recovery only if its fields and attachment are present.`,
+      summary: `Inspected the retained application tab at ${observation.url} with submit windows closed. This inspection is read-only and did not show the page to the person or select it for later browser tools. Use retry_application with openPage:true to show and safely edit this exact form. Report recovery only if its fields and attachment are present.`,
       data: observation,
     };
   },

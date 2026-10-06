@@ -25,6 +25,10 @@ export const DesktopBrowserAttentionSchema = z.object({
 /** Only display state crosses preload. Cookies, page content and CDP stay in main. */
 export const DesktopBrowserStateSchema = z.object({
   revision: z.number().int().nonnegative(),
+  unboundSendNotice: z
+    .object({ id: z.string().min(1).max(100), tabId: BrowserTabIdSchema })
+    .nullable()
+    .optional(),
   phase: z.enum([
     "closed",
     "ready",

@@ -65,8 +65,41 @@ export function createAssistantBrowserPort(
       const tab = state.tabs.find((entry) => entry.id === state.activeTabId);
       return tab ? { tabId: tab.id, url: tab.url, title: tab.title } : null;
     },
-    lease(input) {
+    async lease(input) {
       input.signal?.throwIfAborted();
+      let preparedRecordId: string | null = null;
+      if (input.applicationResultId) {
+        const snapshot = await readWorkspace();
+        const result = snapshot.applyJobResults.find(
+          (result) => result.id === input.applicationResultId,
+        );
+        if (
+          !result?.applicationRecordId ||
+          !["awaiting_review", "blocked"].includes(result.state) ||
+          result.privacyReceipt?.submissionOutcome?.outcome ===
+            "outcome_uncertain"
+        )
+          throw new Error(
+            "This application is not waiting for editing. Check its send outcome first.",
+          );
+        preparedRecordId = result.applicationRecordId;
+        const matches: string[] = [];
+        for (const tabId of browser.getApplicationTabIds(
+          input.applicationResultId,
+        )) {
+          const mark = await browser.readTab<string | null>(
+            tabId,
+            `window.__nordriPreparedApplication || sessionStorage.getItem('__nordriPreparedApplication')`,
+          );
+          if (mark?.value === input.applicationResultId) matches.push(tabId);
+        }
+        input.signal?.throwIfAborted();
+        if (matches.length !== 1)
+          throw new Error(
+            "The exact prepared application tab is no longer available. Prepare again to reopen the form.",
+          );
+        input = { ...input, tabId: matches[0]! };
+      }
       const leaseId = `assistant_lease_${randomUUID()}`;
       return new Promise<AssistantBrowserLease>((resolve, reject) => {
         let settled = false;
@@ -174,12 +207,45 @@ export function createAssistantBrowserPort(
                 )
               );
             };
-            const requireEditableTab = async () => {
+            const requireEditableTab = async (fieldsOnly = false) => {
+              guard();
+              if (input.applicationResultId) {
+                const mark = await current
+                  .evaluate(
+                    () =>
+                      (window as unknown as Record<string, unknown>)
+                        .__nordriPreparedApplication ||
+                      window.sessionStorage.getItem(
+                        "__nordriPreparedApplication",
+                      ),
+                  )
+                  .catch(() => null);
+                guard();
+                if (mark !== input.applicationResultId || current !== page)
+                  throw new Error(
+                    "The prepared application changed or closed. Nothing else was edited.",
+                  );
+                if (!fieldsOnly)
+                  throw new Error(
+                    "This loan is for correcting fields only. Navigation and sending stay with you.",
+                  );
+                return;
+              }
               if (await isApplicationBound())
                 throw new Error(
                   "This tab holds a prepared application. I can read it, but cannot edit or leave it here. Use browser_open for unrelated pages so the form and attachments stay intact.",
                 );
               guard();
+            };
+            const changed = async (ref: string, outcome: { ok: boolean }) => {
+              if (outcome.ok && preparedRecordId && input.onApplicationChange) {
+                const raw = await mechanics.readPage();
+                const label =
+                  raw.controls.find(
+                    (control) => (control.ref ?? `c${control.index}`) === ref,
+                  )?.label || "a field";
+                await input.onApplicationChange(preparedRecordId, label);
+              }
             };
             const hands: ApplyRawPageHands = {
               readPage: () => {
@@ -187,20 +253,28 @@ export function createAssistantBrowserPort(
                 return mechanics.readPage();
               },
               fillText: async (ref, value) => {
-                await requireEditableTab();
-                return mechanics.fillText(ref, value);
+                await requireEditableTab(true);
+                const outcome = await mechanics.fillText(ref, value);
+                await changed(ref, outcome);
+                return outcome;
               },
               chooseOption: async (ref, label) => {
-                await requireEditableTab();
-                return mechanics.chooseOption(ref, label);
+                await requireEditableTab(true);
+                const outcome = await mechanics.chooseOption(ref, label);
+                await changed(ref, outcome);
+                return outcome;
               },
               setToggle: async (ref, checked) => {
-                await requireEditableTab();
-                return mechanics.setToggle(ref, checked);
+                await requireEditableTab(true);
+                const outcome = await mechanics.setToggle(ref, checked);
+                await changed(ref, outcome);
+                return outcome;
               },
               uploadFile: async (ref, file) => {
-                await requireEditableTab();
-                return mechanics.uploadFile(ref, file);
+                await requireEditableTab(true);
+                const outcome = await mechanics.uploadFile(ref, file);
+                await changed(ref, outcome);
+                return outcome;
               },
               clickAction: async (ref) => {
                 await requireEditableTab();
@@ -242,6 +316,10 @@ export function createAssistantBrowserPort(
               // the lent tab stays open behind it.
               adoptOpenedTab: async (index) => {
                 guard();
+                if (input.applicationResultId)
+                  throw new Error(
+                    "Stay on the retained application tab during this loan.",
+                  );
                 const popups = await popupsOf(current);
                 const opened = popups[index];
                 if (!opened)
@@ -263,6 +341,9 @@ export function createAssistantBrowserPort(
             };
             const lease: AssistantBrowserLease = {
               leaseId,
+              ...(input.applicationResultId
+                ? { applicationResultId: input.applicationResultId }
+                : {}),
               borrowed: input.tabId !== null,
               isApplicationBound,
               tabId: lentTabId,
@@ -281,9 +362,10 @@ export function createAssistantBrowserPort(
                     }
                   : null;
               },
-              release: () => {
+              release: async () => {
                 release();
-                return Promise.resolve();
+                await work.catch(() => undefined);
+                if (lentTabId) browser.endLoan(lentTabId);
               },
             };
             guard();

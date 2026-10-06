@@ -285,38 +285,22 @@ it("excludes a receipt-confirmed send before staging the remaining batch", async
   expect(h.service.approveApplyRun).toHaveBeenCalledWith("staged");
 });
 
-it("names same-company jobs before staging a sending batch", async () => {
+it("returns the shared service's overlap choice instead of applying a desktop-only veto", async () => {
   const h = harness({});
-  const service = {
-    ...h.service,
-    getWorkspaceSnapshot: () =>
-      Promise.resolve({
-        settings: { applicationAutomationMode: "autonomous_submit" },
-        discoveryJobs: [
-          {
-            id: "job_1",
-            company: "Synthetic Company",
-            title: "Engineer",
-            location: "Denver",
-          },
-          {
-            id: "job_2",
-            company: "Synthetic Company",
-            title: "Designer",
-            location: "London",
-          },
-        ],
-      } as unknown as JobFinderWorkspaceSnapshot),
-  };
+  h.service.startAutoApplyQueueRun.mockRejectedValueOnce(
+    new Error(
+      "Synthetic Company: Engineer (Denver) and Designer (London). Choose Send both anyway in Safeguards.",
+    ),
+  );
   await expect(
     startApplyBatch({
-      service,
+      service: h.service,
       runs: h.reader,
       jobIds: ["job_1", "job_2"],
       onBackgroundSettled: vi.fn(),
     }),
-  ).rejects.toThrow(/Synthetic Company.*Engineer.*Denver.*Designer.*London/);
-  expect(h.service.startAutoApplyQueueRun).not.toHaveBeenCalled();
+  ).rejects.toThrow(/Send both anyway/);
+  expect(h.service.startAutoApplyQueueRun).toHaveBeenCalledOnce();
 });
 
 it("allows Ask before sending to prepare same-company jobs", async () => {

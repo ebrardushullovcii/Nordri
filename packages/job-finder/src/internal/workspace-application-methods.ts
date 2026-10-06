@@ -1,3 +1,4 @@
+import { checkSameCompanySends } from "./same-company-sends";
 import { completeTailoredResumeDraft } from "@nordri/ai-providers";
 import {
   applyResumeLanguage,
@@ -7793,6 +7794,14 @@ export function createWorkspaceApplicationMethods(
         applicationAutomationMode ??
         scopedSettings.applicationAutomationMode ??
         "prepare_only";
+      if (effectiveApplicationAutomationMode === "autonomous_submit") {
+        const overlap = await checkSameCompanySends({
+          repository: ctx.repository,
+          jobIds: uniqueJobIds,
+          transition: ctx.withIntelligenceTransition,
+        });
+        if (overlap) throw new Error(overlap);
+      }
       const capturedCampaignId = await ctx.getActiveCampaignId();
       const runId = createUniqueId("apply_run");
       const approvalId = createUniqueId("apply_submit_approval");

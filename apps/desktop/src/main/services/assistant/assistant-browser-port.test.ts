@@ -50,6 +50,8 @@ function world(bound = false) {
   };
   const lendTab = vi.fn(() => Promise.resolve());
   const showTab = vi.fn();
+  const getApplicationTabIds = vi.fn(() => ["original"]);
+  const endLoan = vi.fn();
   const browser = {
     getState: () => ({
       phase: "needs_you",
@@ -57,9 +59,10 @@ function world(bound = false) {
       activeTabId: "original",
       tabs: [{ id: "original", url: original.url(), title: "Spruce" }],
     }),
+    getApplicationTabIds,
     lendTab,
     showTab,
-    endLoan: vi.fn(),
+    endLoan,
     identifyAutomationPage: (page: unknown) =>
       Promise.resolve(page === original ? "original" : "owned"),
     connect: () => Promise.resolve({ contexts: () => [context] }),
@@ -86,6 +89,8 @@ function world(bound = false) {
     snapshot,
     readWorkspace,
     browser,
+    getApplicationTabIds,
+    endLoan,
     lendTab,
     showTab,
     original,
@@ -248,4 +253,107 @@ it("shows a focused retained tab through the browser open command", async () => 
   await createAssistantBrowserPort(browser, readWorkspace).show?.();
   expect(command).toHaveBeenCalledWith({ type: "open" });
   expect(readWorkspace).not.toHaveBeenCalled();
+});
+
+it("lends the exact waiting application for fields only, records edits, and fences late writes", async () => {
+  const ctx = world(true);
+  ctx.snapshot.applyJobResults = [
+    {
+      id: "prepared_result",
+      applicationRecordId: "record",
+      state: "awaiting_review",
+      privacyReceipt: null,
+    },
+  ] as unknown as JobFinderWorkspaceSnapshot["applyJobResults"];
+  ctx.browser.readTab = vi.fn(() =>
+    Promise.resolve({ url: ctx.original.url(), value: "prepared_result" }),
+  ) as EmbeddedBrowser["readTab"];
+  const onApplicationChange = vi.fn(() => Promise.resolve());
+  const turn = new AbortController();
+  const lease = await ctx.port.lease({
+    tabId: null,
+    applicationResultId: "prepared_result",
+    conversationId: "conversation",
+    turnId: "turn",
+    signal: turn.signal,
+    onApplicationChange,
+  });
+  expect(ctx.getApplicationTabIds).toHaveBeenCalledWith("prepared_result");
+  expect(ctx.context.newPage).not.toHaveBeenCalled();
+  expect(ctx.lendTab).toHaveBeenCalledWith("original");
+  expect(lease.applicationResultId).toBe("prepared_result");
+  await lease.hands.fillText("cover_letter", "Synthetic letter");
+  expect(onApplicationChange).toHaveBeenCalledWith(
+    "record",
+    expect.any(String),
+  );
+  await expect(lease.hands.clickAction("send")).rejects.toThrow("fields only");
+  await expect(lease.hands.navigate("https://example.test")).rejects.toThrow(
+    "fields only",
+  );
+  ctx.original.evaluate.mockResolvedValue("different_result");
+  await expect(
+    lease.hands.fillText("cover_letter", "Wrong tab"),
+  ).rejects.toThrow("changed or closed");
+  ctx.original.evaluate.mockResolvedValue("prepared_result");
+  turn.abort();
+  await expect(
+    lease.hands.uploadFile("resume", {
+      name: "synthetic.pdf",
+      mimeType: "application/pdf",
+      bytes: new Uint8Array(),
+    }),
+  ).rejects.toThrow();
+  await lease.release("ended");
+  expect(ctx.endLoan).toHaveBeenCalledWith("original");
+  await expect(lease.hands.fillText("cover_letter", "Late")).rejects.toThrow();
+});
+
+it("refuses missing or ambiguous retained application tabs without opening a copy", async () => {
+  const ctx = world(true);
+  ctx.snapshot.applyJobResults = [
+    {
+      id: "prepared_result",
+      applicationRecordId: "record",
+      state: "awaiting_review",
+    },
+  ] as unknown as JobFinderWorkspaceSnapshot["applyJobResults"];
+  ctx.browser.readTab = vi.fn(() =>
+    Promise.resolve(null),
+  ) as EmbeddedBrowser["readTab"];
+  await expect(
+    ctx.port.lease({
+      tabId: null,
+      applicationResultId: "prepared_result",
+      conversationId: "conversation",
+      turnId: "turn",
+    }),
+  ).rejects.toThrow("exact prepared application tab");
+  expect(ctx.getApplicationTabIds).toHaveBeenCalledWith("prepared_result");
+  expect(ctx.context.newPage).not.toHaveBeenCalled();
+  expect(ctx.lendTab).not.toHaveBeenCalled();
+  const readTab = vi.fn(() =>
+    Promise.resolve({ url: ctx.original.url(), value: "prepared_result" }),
+  );
+  ctx.browser.readTab = readTab as EmbeddedBrowser["readTab"];
+  ctx.getApplicationTabIds.mockReturnValue([]);
+  await expect(
+    ctx.port.lease({
+      tabId: null,
+      applicationResultId: "prepared_result",
+      conversationId: "conversation",
+      turnId: "turn",
+    }),
+  ).rejects.toThrow("exact prepared application tab");
+  expect(readTab).not.toHaveBeenCalled();
+  ctx.getApplicationTabIds.mockReturnValue(["original", "owned"]);
+  await expect(
+    ctx.port.lease({
+      tabId: null,
+      applicationResultId: "prepared_result",
+      conversationId: "conversation",
+      turnId: "turn",
+    }),
+  ).rejects.toThrow("exact prepared application tab");
+  expect(ctx.lendTab).not.toHaveBeenCalled();
 });

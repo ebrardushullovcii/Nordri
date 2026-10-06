@@ -612,6 +612,7 @@ it("drops the browser-finish instruction as soon as the same application is subm
     <ApplicationsDetailPanelRecoveryActionsSection
       {...baseProps}
       visibleApplyResult={{ ...result, state: "submitted" }}
+      personSendReceiptSummary="The site confirmed receipt of the application."
     />,
   );
   expect(view.queryByTestId("manual-field-finish-status")).toBeNull();

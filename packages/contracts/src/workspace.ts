@@ -939,106 +939,14 @@ export type JobFinderDiscoveryState = z.infer<
   typeof JobFinderDiscoveryStateSchema
 >;
 
-const JobFinderRepositoryStateShape: {
-  profile: typeof CandidateProfileSchema;
-  searchPreferences: typeof JobSearchPreferencesSchema;
-  profileSetupState: z.ZodDefault<typeof ProfileSetupStateSchema>;
-  savedJobs: z.ZodDefault<z.ZodArray<typeof SavedJobSchema>>;
-  tailoredAssets: z.ZodDefault<z.ZodArray<typeof TailoredAssetSchema>>;
-  resumeDrafts: z.ZodDefault<z.ZodArray<typeof ResumeDraftSchema>>;
-  resumeDraftRevisions: z.ZodDefault<
-    z.ZodArray<typeof ResumeDraftRevisionSchema>
-  >;
-  resumeExportArtifacts: z.ZodDefault<
-    z.ZodArray<typeof ResumeExportArtifactSchema>
-  >;
-  resumeResearchArtifacts: z.ZodDefault<
-    z.ZodArray<typeof ResumeResearchArtifactSchema>
-  >;
-  resumeValidationResults: z.ZodDefault<
-    z.ZodArray<typeof ResumeValidationResultSchema>
-  >;
-  resumeAssistantMessages: z.ZodDefault<
-    z.ZodArray<typeof ResumeAssistantMessageSchema>
-  >;
-  profileCopilotMessages: z.ZodDefault<
-    z.ZodArray<typeof ProfileCopilotMessageSchema>
-  >;
-  profileRevisions: z.ZodDefault<z.ZodArray<typeof ProfileRevisionSchema>>;
-  applyRuns: z.ZodDefault<z.ZodArray<typeof ApplyRunSchema>>;
-  applyJobResults: z.ZodDefault<z.ZodArray<typeof ApplyJobResultSchema>>;
-  applySubmitApprovals: z.ZodDefault<
-    z.ZodArray<typeof ApplySubmitApprovalSchema>
-  >;
-  applicationQuestionRecords: z.ZodDefault<
-    z.ZodArray<typeof ApplicationQuestionRecordSchema>
-  >;
-  applicationAnswerRecords: z.ZodDefault<
-    z.ZodArray<typeof ApplicationAnswerRecordSchema>
-  >;
-  applicationArtifactRefs: z.ZodDefault<
-    z.ZodArray<typeof ApplicationArtifactRefSchema>
-  >;
-  applicationReplayCheckpoints: z.ZodDefault<
-    z.ZodArray<typeof ApplicationReplayCheckpointSchema>
-  >;
-  applicationConsentRequests: z.ZodDefault<
-    z.ZodArray<typeof ApplicationConsentRequestSchema>
-  >;
-  applicationAnswerSnapshots: z.ZodDefault<
-    z.ZodArray<typeof ApprovedApplicationAnswerSnapshotSchema>
-  >;
-  applicationAuthorityEnvelopes: z.ZodDefault<
-    z.ZodArray<typeof ApplicationAuthorityEnvelopeSchema>
-  >;
-  submissionPreflights: z.ZodDefault<
-    z.ZodArray<typeof SubmissionPreflightRecordSchema>
-  >;
-  submissionExecutionGrants: z.ZodDefault<
-    z.ZodArray<typeof SubmissionExecutionGrantSchema>
-  >;
-  submissionIdempotencyRecords: z.ZodDefault<
-    z.ZodArray<typeof SubmissionIdempotencyRecordSchema>
-  >;
-  submissionArmedMarkers: z.ZodDefault<
-    z.ZodArray<typeof SubmissionArmedMarkerSchema>
-  >;
-  submissionOutcomeRecords: z.ZodDefault<
-    z.ZodArray<typeof SubmissionOutcomeRecordSchema>
-  >;
-  userActionRequests: z.ZodDefault<z.ZodArray<typeof UserActionRequestSchema>>;
-  userActionEvents: z.ZodDefault<z.ZodArray<typeof UserActionEventSchema>>;
-  applicationRecords: z.ZodDefault<z.ZodArray<typeof ApplicationRecordSchema>>;
-  applicationAttempts: z.ZodDefault<
-    z.ZodArray<typeof ApplicationAttemptSchema>
-  >;
-  sourceDebugRuns: z.ZodDefault<z.ZodArray<typeof SourceDebugRunRecordSchema>>;
-  sourceDebugAttempts: z.ZodDefault<
-    z.ZodArray<typeof SourceDebugWorkerAttemptSchema>
-  >;
-  sourceInstructionArtifacts: z.ZodDefault<
-    z.ZodArray<typeof SourceInstructionArtifactSchema>
-  >;
-  sourceDebugEvidenceRefs: z.ZodDefault<
-    z.ZodArray<typeof SourceDebugEvidenceRefSchema>
-  >;
-  resumeImportRuns: z.ZodDefault<z.ZodArray<typeof ResumeImportRunSchema>>;
-  resumeImportDocumentBundles: z.ZodDefault<
-    z.ZodArray<typeof ResumeDocumentBundleSchema>
-  >;
-  resumeImportFieldCandidates: z.ZodDefault<
-    z.ZodArray<typeof ResumeImportFieldCandidateSchema>
-  >;
-  settings: typeof JobFinderSettingsSchema;
-  discovery: z.ZodDefault<typeof JobFinderDiscoveryStateSchema>;
-  campaigns: z.ZodDefault<z.ZodArray<typeof JobSearchCampaignSchema>>;
-  activeCampaignId: z.ZodDefault<z.ZodNullable<typeof NonEmptyStringSchema>>;
-  campaignNotifications: z.ZodDefault<
-    z.ZodArray<typeof CampaignNotificationSchema>
-  >;
-  activityControl: z.ZodDefault<typeof JobFinderActivityControlSchema>;
-  intelligence: z.ZodDefault<typeof JobFinderIntelligenceStateSchema>;
-} = {
+// Keep repository schema declarations small as application receipt fields grow.
+const PersistedApplicationRecordSchema: z.ZodType<
+  z.output<typeof ApplicationRecordSchema>,
+  z.ZodTypeDef,
+  z.input<typeof ApplicationRecordSchema>
+> = ApplicationRecordSchema;
+
+const JobFinderRepositoryStateShape = {
   profile: CandidateProfileSchema,
   searchPreferences: JobSearchPreferencesSchema,
   profileSetupState: ProfileSetupStateSchema.default({}),
@@ -1083,7 +991,7 @@ const JobFinderRepositoryStateShape: {
   submissionOutcomeRecords: z.array(SubmissionOutcomeRecordSchema).default([]),
   userActionRequests: z.array(UserActionRequestSchema).default([]),
   userActionEvents: z.array(UserActionEventSchema).default([]),
-  applicationRecords: z.array(ApplicationRecordSchema).default([]),
+  applicationRecords: z.array(PersistedApplicationRecordSchema).default([]),
   applicationAttempts: z.array(ApplicationAttemptSchema).default([]),
   sourceDebugRuns: z.array(SourceDebugRunRecordSchema).default([]),
   sourceDebugAttempts: z.array(SourceDebugWorkerAttemptSchema).default([]),
@@ -1520,7 +1428,7 @@ export const JobFinderWorkspaceSnapshotSchema = z.object({
     .default([]),
   applyRuns: z.array(ApplyRunSummarySchema).default([]),
   applyJobResults: z.array(ApplyJobResultSummarySchema).default([]),
-  applicationRecords: z.array(ApplicationRecordSchema).default([]),
+  applicationRecords: z.array(PersistedApplicationRecordSchema).default([]),
   applicationAttempts: z.array(ApplicationAttemptSchema).default([]),
   userActionRequests: z.array(UserActionRequestSchema).default([]),
   userActionEvents: z.array(UserActionEventSchema).default([]),
@@ -1760,7 +1668,7 @@ export const JobFinderWorkspaceDeltaSchema = z
       .strict(),
     applicationRecords: z
       .object({
-        upserts: z.array(ApplicationRecordSchema).default([]),
+        upserts: z.array(PersistedApplicationRecordSchema).default([]),
         removedIds: WorkspaceDeltaRemovalIdsSchema,
       })
       .strict(),

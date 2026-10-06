@@ -2969,6 +2969,12 @@ describe("ApplicationsScreen", () => {
       id: "application_submitted",
       jobId: "job_submitted",
       status: "submitted",
+      personSendReceipt: {
+        observedAt: "2026-08-15T10:00:00.000Z",
+        origin: "https://example.test",
+        safePath: "/confirmation",
+        summary: "The site confirmed receipt of the application.",
+      },
       title: "Staff Engineer",
     });
     const selected = createTrackedApplication({
@@ -3181,6 +3187,12 @@ describe("ApplicationsScreen", () => {
       nextActionLabel: "Prepare again",
       lastAttemptState: "submitted",
       status: "submitted",
+      personSendReceipt: {
+        observedAt: "2026-08-15T10:00:00.000Z",
+        origin: "https://example.test",
+        safePath: "/confirmation",
+        summary: "The site confirmed receipt of the application.",
+      },
       crm: undefined,
     });
     render(

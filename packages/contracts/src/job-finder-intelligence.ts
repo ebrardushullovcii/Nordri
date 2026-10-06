@@ -1284,6 +1284,22 @@ export const SimultaneousApplicationConflictSchema = z
     id: NonEmptyStringSchema,
     applicationRecordId: NonEmptyStringSchema,
     conflictingApplicationRecordId: NonEmptyStringSchema,
+    companyKey: NonEmptyStringSchema.optional(),
+    companyName: NonEmptyStringSchema.optional(),
+    jobIds: z.array(NonEmptyStringSchema).min(2).optional(),
+    allowedPairs: z
+      .array(
+        z
+          .object({
+            jobIds: z
+              .tuple([NonEmptyStringSchema, NonEmptyStringSchema])
+              .refine((ids) => ids[0] !== ids[1]),
+            decidedAt: IsoDateTimeSchema,
+            revokedAt: IsoDateTimeSchema.nullable(),
+          })
+          .strict(),
+      )
+      .optional(),
     status: SimultaneousApplicationConflictStatusSchema.default("detected"),
     explanation: NonEmptyStringSchema,
     recoveryGuidance: NonEmptyStringSchema,
@@ -1654,6 +1670,16 @@ export const AbnormalFailureConfigSchema = z
  */
 export const SafeguardMutationInputSchema = z
   .discriminatedUnion("type", [
+    z
+      .object({
+        type: z.literal("decide_same_company_send_pair"),
+        conflictId: NonEmptyStringSchema,
+        jobIds: z
+          .tuple([NonEmptyStringSchema, NonEmptyStringSchema])
+          .refine((ids) => ids[0] !== ids[1]),
+        allow: z.boolean(),
+      })
+      .strict(),
     z
       .object({
         type: z.literal("apply_company_application_evidence"),

@@ -231,79 +231,96 @@ describe("opening a prepared application to finish it", () => {
     expect(await workspaceService.recordApplicationsSentByPerson()).toBe(0);
   });
 
-  test("the person's send writes a submitted receipt, so no screen offers Try again", async () => {
-    const seed = seedPrepared("awaiting_review");
-    seed.applyJobResults = seed.applyJobResults.map((result) =>
-      ApplyJobResultSchema.parse({
-        ...result,
-        privacyReceipt: {
-          generatedAt: now,
-          lineage: {
-            runId: "run_prepared",
-            jobId: "job_ready",
-            resultId: "result_a",
-            applicationRecordId: "application_a",
-          },
-          destination: {
-            origin: "https://jobs.example.com",
-            safePath: "/jobs/1",
-          },
-          resume: {
-            source: "tailored_export",
-            sourceDocumentId: null,
-            exportArtifactId: "resume_export_a",
-            fileName: "resume.pdf",
-            sha256: "a".repeat(64),
-          },
-        },
-      }),
-    );
-    const { repository, workspaceService } = createWorkspaceServiceHarness({
-      seed,
-      browserRuntime: {
-        ...createBrowserRuntime(),
-        readApplicationPageWithPerson: vi.fn(() =>
-          Promise.resolve({
-            url: "https://jobs.example.com/apply/1?ref=x",
-            title: "Thanks",
-            bodyText: "Thank you! Your application has been received.",
-            headings: [],
-            controls: [],
-            actions: [],
-            links: [],
-            clickables: [],
-            openedTabs: [],
-            validationErrors: [],
-            stepLabel: null,
-            loading: false,
-          }),
-        ),
-        releaseApplicationPageBinding: vi.fn(() => Promise.resolve()),
-      },
-    });
-
-    expect(await workspaceService.recordApplicationsSentByPerson()).toBe(1);
-    const [result] = await repository.listApplyJobResults({
-      runId: "run_prepared",
-    });
-    expect(result?.privacyReceipt).toMatchObject({
-      finalSubmitOccurred: true,
-      submissionOutcome: {
-        outcome: "submitted",
-        resultId: "result_a",
-        retry: { eligible: false, blockReason: "submission_confirmed" },
-        evidence: [
-          {
-            kind: "employer_site_state",
-            destination: {
-              origin: "https://jobs.example.com",
-              safePath: "/apply/1",
+  test.each([true, false])(
+    "the person's send keeps its site reference, with an older privacy receipt: %s",
+    async (withReceipt) => {
+      const seed = seedPrepared("awaiting_review");
+      if (withReceipt)
+        seed.applyJobResults = seed.applyJobResults.map((result) =>
+          ApplyJobResultSchema.parse({
+            ...result,
+            privacyReceipt: {
+              generatedAt: now,
+              lineage: {
+                runId: "run_prepared",
+                jobId: "job_ready",
+                resultId: "result_a",
+                applicationRecordId: "application_a",
+              },
+              destination: {
+                origin: "https://jobs.example.com",
+                safePath: "/jobs/1",
+              },
+              resume: {
+                source: "tailored_export",
+                sourceDocumentId: null,
+                exportArtifactId: "resume_export_a",
+                fileName: "resume.pdf",
+                sha256: "a".repeat(64),
+              },
             },
-          },
-        ],
-      },
-    });
-  });
+          }),
+        );
+      const { repository, workspaceService } = createWorkspaceServiceHarness({
+        seed,
+        browserRuntime: {
+          ...createBrowserRuntime(),
+          readApplicationPageWithPerson: vi.fn(() =>
+            Promise.resolve({
+              url: "https://jobs.example.com/apply/1?ref=x",
+              title: "Thanks",
+              bodyText:
+                "Thank you! Your application has been received. Reference: SYN-42.",
+              headings: [],
+              controls: [],
+              actions: [],
+              links: [],
+              clickables: [],
+              openedTabs: [],
+              validationErrors: [],
+              stepLabel: null,
+              loading: false,
+            }),
+          ),
+          releaseApplicationPageBinding: vi.fn(() => Promise.resolve()),
+        },
+      });
+
+      expect(await workspaceService.recordApplicationsSentByPerson()).toBe(1);
+      const [result] = await repository.listApplyJobResults({
+        runId: "run_prepared",
+      });
+      const [record] = await repository.listApplicationRecords();
+      expect(record?.personSendReceipt).toMatchObject({
+        origin: "https://jobs.example.com",
+        safePath: "/apply/1",
+        summary: "The site confirmed receipt. Reference: SYN-42.",
+      });
+      if (!withReceipt) {
+        expect(result?.privacyReceipt).toBeNull();
+        expect(record?.lastAttemptState).toBe("submitted");
+        return;
+      }
+      expect(result?.privacyReceipt).toMatchObject({
+        finalSubmitOccurred: true,
+        submissionOutcome: {
+          outcome: "submitted",
+          resultId: "result_a",
+          retry: { eligible: false, blockReason: "submission_confirmed" },
+          evidence: [
+            {
+              kind: "employer_site_state",
+              summary: "The site confirmed receipt. Reference: SYN-42.",
+              destination: {
+                origin: "https://jobs.example.com",
+                safePath: "/apply/1",
+              },
+            },
+          ],
+        },
+      });
+    },
+  );
 
   test("a page not handed to the person is never read as their send", async () => {
     const readApplicationPageWithPerson = vi.fn(() => Promise.resolve(null));

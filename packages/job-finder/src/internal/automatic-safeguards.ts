@@ -1,3 +1,4 @@
+import { groupCompanyConflicts } from "./same-company-sends";
 import { createHash } from "node:crypto";
 
 import {
@@ -1121,6 +1122,11 @@ async function persistAutomaticSimultaneousConflicts(input: {
         nextSafeguards = result.safeguards;
       }
     }
+    nextSafeguards = groupCompanyConflicts(
+      { ...current, safeguards: nextSafeguards },
+      records,
+      await input.ctx.repository.listSavedJobs(),
+    ).safeguards;
     if (JSON.stringify(nextSafeguards) === JSON.stringify(current.safeguards)) {
       return;
     }

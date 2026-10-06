@@ -127,7 +127,9 @@ export interface AssistantTurnSession {
     openUrl?: string | null;
     newTab?: boolean;
     tabId?: string;
+    applicationResultId?: string;
   }): Promise<AssistantBrowserLease>;
+  releaseBrowserLease?(): Promise<void>;
   getResultSet(id: string): Promise<AssistantResultSet | null>;
   listResultSets(): Promise<AssistantResultSet[]>;
   recordChange(input: {

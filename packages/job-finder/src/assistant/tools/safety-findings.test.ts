@@ -1038,7 +1038,7 @@ it("chat and the queue retain existing display rules for a legacy quoted questio
 });
 
 describe("opening a retained application", () => {
-  it("shows the browser after focusing, without borrowing a tab", async () => {
+  it("shows the browser and lends the exact retained result for subsequent browser tools", async () => {
     const ctx = world();
     const snapshot = await ctx.service.getWorkspaceSnapshot();
     snapshot.applyJobResults = [
@@ -1068,6 +1068,13 @@ describe("opening a retained application", () => {
     ];
     vi.spyOn(ctx.service, "getWorkspaceSnapshot").mockResolvedValue(snapshot);
     const order: string[] = [];
+    vi.spyOn(ctx.service, "inspectPreparedApplicationPage").mockResolvedValue(
+      page(),
+    );
+    ctx.session.browserLease = vi.fn(() => {
+      order.push("lease");
+      return Promise.resolve({} as AssistantBrowserLease);
+    });
     vi.spyOn(ctx.service, "focusPreparedApplicationPage").mockImplementation(
       () => {
         order.push("focus");
@@ -1084,11 +1091,12 @@ describe("opening a retained application", () => {
       { jobId: "job_ready", openPage: true },
       ctx,
     );
-    expect(order).toEqual(["focus", "show"]);
+    expect(order).toEqual(["focus", "lease", "show"]);
+    expect(ctx.session.browserLease).toHaveBeenCalledWith({
+      applicationResultId: "result",
+    });
     expect(lease).not.toHaveBeenCalled();
-    expect(outcome.summary).toBe(
-      "The application page is open in the browser.",
-    );
+    expect(outcome.summary).toContain("Browser tools now use this filled form");
     show.mockRejectedValueOnce(new Error("Browser could not open"));
     await expect(
       continueApplicationTool.execute(
@@ -1097,4 +1105,54 @@ describe("opening a retained application", () => {
       ),
     ).rejects.toThrow("Browser could not open");
   });
+});
+
+it("chat send cards name the result rather than claiming failed or unconfirmed sends were SENT", async () => {
+  const { sendApplicationsTool } = await import("./application-tools");
+  const ctx = world();
+  const snapshot = await ctx.service.getWorkspaceSnapshot();
+  snapshot.applicationRecords = [application()];
+  vi.spyOn(ctx.service, "getWorkspaceSnapshot").mockResolvedValue(snapshot);
+  ctx.session.grants = {
+    list: () =>
+      Promise.resolve([
+        {
+          id: "grant",
+          jobIds: ["job_ready"],
+          status: "active",
+          action: "prepare_and_send",
+        },
+      ] as never),
+    save: vi.fn(),
+  };
+  ctx.ports.sendPreparedApplications = vi.fn(() =>
+    Promise.resolve({
+      sentJobIds: [],
+      failed: [{ jobId: "job_ready", reason: "Waiting for approval" }],
+    }),
+  );
+  const result = await sendApplicationsTool.execute(
+    { jobIds: ["job_ready"] },
+    ctx,
+  );
+  expect(result.parts?.[0]).toMatchObject({
+    type: "records",
+    title: "Sending results",
+  });
+  expect(result.summary).toContain("0 applications");
+  expect(result.summary).toContain("1 not sent");
+  snapshot.applyJobResults = [1, 2].map(
+    (index) =>
+      ({
+        jobId: "job_ready",
+        updatedAt: `2026-10-04T12:00:0${index}.000Z`,
+        privacyReceipt: { submissionOutcome: { outcome: "outcome_uncertain" } },
+      }) as unknown as (typeof snapshot.applyJobResults)[number],
+  );
+  const uncertain = await sendApplicationsTool.execute(
+    { jobIds: ["job_ready"] },
+    ctx,
+  );
+  expect(uncertain.summary).toContain("1 send unconfirmed");
+  expect(uncertain.summary).not.toContain("not sent");
 });

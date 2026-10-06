@@ -337,6 +337,8 @@ export function withEmbeddedBrowserActivity(
                   tabId,
                   input.job.title,
                   input.job.company,
+                  input.job.location,
+                  input.applicationPageBindingKey?.slice(-6),
                 );
               if (result.state === "failed" || result.state === "submitted")
                 browser.markFinishedTabs(tabs);
@@ -411,11 +413,19 @@ export function withEmbeddedBrowserActivity(
             browser.runAutomation(
               "Reviewing authorized action",
               input.signal,
-              (signal) =>
-                runtime.executeExactlyOneFinalAction!(source, {
+              (signal) => {
+                if (
+                  input.pageBindingKey &&
+                  browser.isApplicationPageLent(input.pageBindingKey)
+                )
+                  throw new Error(
+                    "The assistant is editing this application. Wait for the turn to finish before sending.",
+                  );
+                return runtime.executeExactlyOneFinalAction!(source, {
                   ...input,
                   signal,
-                }),
+                });
+              },
             ),
         } satisfies Partial<BrowserSessionRuntime>)
       : {}),

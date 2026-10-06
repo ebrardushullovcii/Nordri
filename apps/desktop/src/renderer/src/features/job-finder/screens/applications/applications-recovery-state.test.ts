@@ -121,6 +121,7 @@ describe("resolveApplicationRecoveryPresentation", () => {
         summary: "Application submitted",
         detail: "The employer site confirmed that it received the application.",
         privacyReceipt: {
+          finalSubmitOccurred: true,
           submissionOutcome: { outcome: "submitted" },
         } as ApplyResult["privacyReceipt"],
       }),
@@ -132,7 +133,7 @@ describe("resolveApplicationRecoveryPresentation", () => {
     expect(presentation.primaryActionLabel).toBeNull();
   });
 
-  it("shows an application the person sent on the site as sent, with no Try again", () => {
+  it("keeps an old person-send claim unconfirmed without a receipt", () => {
     const presentation = resolve(
       buildResult({
         state: "submitted",
@@ -144,7 +145,8 @@ describe("resolveApplicationRecoveryPresentation", () => {
     );
 
     expect(presentation).toMatchObject({
-      state: "submitted",
+      state: "verify_outcome",
+      statusLine: "Not confirmed",
       primaryAction: "none",
       primaryActionLabel: null,
     });
@@ -692,7 +694,7 @@ it("does not call a contradictory submitted state a send", () => {
     }),
   });
   expect(resolve(result)).toMatchObject({
-    statusLine: "Send not confirmed",
+    statusLine: "Not confirmed",
     primaryAction: "none",
   });
 });
@@ -766,4 +768,18 @@ it("shows a repeated stop sentence only once in Next step", () => {
   expect(getApplicationStopReasonSentence(result)).toBe(
     "The listing has no application form.",
   );
+});
+
+it("shows a saved person-send receipt and its reference without claiming automation sent it", () => {
+  const presentation = resolveApplicationRecoveryPresentation({
+    visibleApplyResult: null,
+    canOpenSafeguards: false,
+    isApplyPending: false,
+    personSendReceiptSummary: "The site confirmed receipt. Reference: SYN-25.",
+  });
+  expect(presentation).toMatchObject({
+    state: "submitted",
+    reasonSentence: "The site confirmed receipt. Reference: SYN-25.",
+    primaryAction: "none",
+  });
 });

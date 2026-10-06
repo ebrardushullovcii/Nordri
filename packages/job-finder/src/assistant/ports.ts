@@ -80,6 +80,8 @@ export interface AssistantBrowserLease {
   borrowed?: boolean;
   /** Rechecks whether the current page retains a saved application. */
   isApplicationBound(): Promise<boolean>;
+  /** Exact retained result this turn may edit; navigation and send stay closed. */
+  applicationResultId?: string;
   tabId: string;
   /** Aborted when the lease is revoked. */
   revoked: AbortSignal;
@@ -100,6 +102,8 @@ export interface AssistantBrowserPort {
   visibleTab(): { tabId: string; url: string; title: string | null } | null;
   lease(input: {
     tabId: string | null;
+    applicationResultId?: string;
+    onApplicationChange?: (recordId: string, field: string) => Promise<void>;
     conversationId: string;
     turnId: string;
     signal?: AbortSignal;

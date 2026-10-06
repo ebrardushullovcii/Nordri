@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import {
+  submissionConfirmationSummary,
   ApplicationAuthorityOriginSchema,
   SubmissionFinalControlIdentitySchema,
   SubmissionObservationIdentitySchema,
@@ -1181,8 +1182,7 @@ export async function executeExactlyOneFinalAction(
             confirmation: {
               observedAt: new Date().toISOString(),
               destination: readSafePageUrl(page.url()),
-              summary:
-                "The employer site showed an application-received confirmation after the final action.",
+              summary: submissionConfirmationSummary(bodyText),
             },
             facts: {
               ...facts,

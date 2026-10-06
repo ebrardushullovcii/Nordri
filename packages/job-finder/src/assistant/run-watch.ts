@@ -3,6 +3,8 @@ import type {
   JobFinderWorkspaceSnapshot,
 } from "@nordri/contracts";
 
+import { isApplicationTrackedAsSentByPerson } from "@nordri/contracts";
+
 import { readBackgroundBatch } from "./tools";
 import { allJobs, compactJob } from "./tools/format";
 
@@ -103,9 +105,29 @@ export function readRunStatus(
         details: null,
       };
     }
+    const sendState = (result: (typeof results)[number]) => {
+      const application = snapshot.applicationRecords?.find(
+        (record) => record.jobId === result.jobId,
+      );
+      if (application?.personSendReceipt) return "submitted";
+      if (isApplicationTrackedAsSentByPerson(application?.crm))
+        return "marked sent by you";
+      if (
+        result.privacyReceipt?.submissionOutcome?.outcome ===
+        "outcome_uncertain"
+      )
+        return "send unconfirmed";
+      if (
+        result.state === "submitted" &&
+        result.privacyReceipt?.finalSubmitOccurred !== true
+      )
+        return "not confirmed";
+      return result.state;
+    };
     const byState = new Map<string, number>();
     for (const result of results) {
-      byState.set(result.state, (byState.get(result.state) ?? 0) + 1);
+      const state = sendState(result);
+      byState.set(state, (byState.get(state) ?? 0) + 1);
     }
     const pendingSteps =
       APPLY_TERMINAL_STATES.has(record.state) && record.state !== "completed"
@@ -164,8 +186,25 @@ export function readRunStatus(
             // The address the application actually used, so the reply
             // names the real site.
             appliedOn: job?.applicationUrl ?? job?.canonicalUrl ?? null,
-            state: result.state,
-            summary: result.summary,
+            state:
+              sendState(result) === "not confirmed"
+                ? "not_confirmed"
+                : sendState(result),
+            summary:
+              sendState(result) === "not confirmed"
+                ? "No receipt confirms this send."
+                : result.summary,
+            recovery:
+              result.privacyReceipt?.submissionOutcome?.outcome ===
+              "outcome_uncertain"
+                ? "The send was attempted, but the site did not confirm receipt. Check the site and ask the person to record the outcome. Do not send again or change sending settings."
+                : null,
+            sendPermission:
+              result.privacyReceipt?.submissionOutcome?.outcome ===
+              "outcome_uncertain"
+                ? "blocked_until_person_checks_outcome"
+                : null,
+            detail: result.detail,
             outcome: result.privacyReceipt?.submissionOutcome?.outcome ?? null,
             blocker: result.blockerSummary ?? null,
           };

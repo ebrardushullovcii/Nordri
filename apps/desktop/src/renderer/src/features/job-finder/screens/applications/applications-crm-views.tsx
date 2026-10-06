@@ -723,7 +723,11 @@ export function ApplicationsCrmViews(props: {
     setBulkError(null);
     try {
       await props.onBulkChange(command);
-      showToast({ title: "Previous stages restored" });
+      showToast({
+        title: "Previous stages restored",
+        description:
+          "Closed browser tasks stay closed. Prepare again to reopen the form.",
+      });
     } catch {
       setBulkError(
         "Undo could not be saved because an application changed. Your newer changes were kept.",

@@ -306,3 +306,61 @@ describe("latest application result projection", () => {
     ).toBe(expected);
   });
 });
+
+test("legacy sent records need a receipt or the person's own confirmation", () => {
+  const record = ApplicationRecordSchema.parse({
+    id: "legacy",
+    jobId: "job",
+    title: "Engineer",
+    company: "Synthetic",
+    status: "submitted",
+    lastAttemptState: "submitted",
+    lastActionLabel: "Sent",
+    nextActionLabel: null,
+    lastUpdatedAt: "2026-10-05T00:00:00.000Z",
+  });
+  expect(
+    projectApplicationRecordsActivity({ records: [record], results: [] })[0],
+  ).toMatchObject({
+    status: "ready_for_review",
+    lastAttemptState: "paused",
+    lastActionLabel: "Not confirmed",
+  });
+  expect(
+    projectApplicationRecordsActivity({
+      records: [{ ...record, status: "interview" }],
+      results: [],
+    })[0]?.status,
+  ).toBe("interview");
+  const manual = {
+    ...record,
+    crm: ApplicationCrmDataSchema.parse({
+      stage: "applied",
+      stageSource: "user",
+      stageChangedAt: record.lastUpdatedAt,
+    }),
+  };
+  expect(
+    projectApplicationRecordsActivity({ records: [manual], results: [] })[0]
+      ?.lastActionLabel,
+  ).toBe("Marked sent by you");
+  const confirmed = {
+    ...record,
+    personSendReceipt: {
+      observedAt: record.lastUpdatedAt,
+      origin: "https://example.test",
+      safePath: "/confirmation",
+      summary: "The site confirmed receipt. Reference: SYN-42.",
+    },
+  };
+  expect(
+    projectApplicationRecordsActivity({ records: [confirmed], results: [] })[0]
+      ?.lastAttemptState,
+  ).toBe("submitted");
+  expect(
+    projectApplicationRecordsActivity({
+      records: [{ ...confirmed, nextActionLabel: "Prepare again" }],
+      results: [],
+    })[0]?.nextActionLabel,
+  ).toBe("View application");
+});

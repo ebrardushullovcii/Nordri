@@ -321,7 +321,7 @@ test("prepared tabs identify the job even when the site gives them identical tit
   );
   expect(
     browser.getState().tabs.find((tab) => tab.id === "prepared")?.title,
-  ).toBe("Senior Learning Coordinator · Clientnest Cobalt");
+  ).toBe("Senior Learning Coordinator · Clientnest Cobalt · place not listed");
   pages.get("prepared")!.getURL = () => "https://example.test/another-page";
   expect(
     browser.getState().tabs.find((tab) => tab.id === "prepared")?.title,
@@ -412,4 +412,89 @@ test("a background application does not label the selected prepared tab as worki
     phase: "working",
     activity: "Preparing another application",
   });
+});
+
+test("same-title tabs include place and distinguish the same place by reference", () => {
+  const { browser } = makeBrowser();
+  browser.setApplicationTabLabel(
+    "prepared",
+    "Engineer",
+    "Synthetic",
+    "London",
+    "abc123",
+  );
+  browser.setApplicationTabLabel(
+    "failed",
+    "Engineer",
+    "Synthetic",
+    "Manchester",
+    "def456",
+  );
+  expect(
+    browser.getState().tabs.find((tab) => tab.id === "prepared")?.title,
+  ).toBe("Engineer · Synthetic · London");
+  browser.setApplicationTabLabel(
+    "failed",
+    "Engineer",
+    "Synthetic",
+    "London",
+    "def456",
+  );
+  expect(
+    browser.getState().tabs.find((tab) => tab.id === "prepared")?.title,
+  ).toBe("Engineer · Synthetic · London · abc123");
+  expect(
+    browser.getState().tabs.find((tab) => tab.id === "failed")?.title,
+  ).toBe("Engineer · Synthetic · London · def456");
+  browser.setApplicationTabLabel(
+    "failed",
+    "Engineer",
+    "Synthetic",
+    "London",
+    "abc123",
+  );
+  const titles = browser
+    .getState()
+    .tabs.filter((tab) => ["prepared", "failed"].includes(tab.id))
+    .map((tab) => tab.title);
+  expect(new Set(titles).size).toBe(2);
+});
+
+test("a general-browser send prompt requires recent person input and never claims a send", () => {
+  const { browser, state: browserState } = makeBrowser();
+  browserState.ownedTabs.set("result", new Set(["prepared"]));
+  browser.setApplicationTabLabel("prepared", "Engineer", "Synthetic", "London");
+  const state = browser as unknown as {
+    personInputAt: Map<string, number>;
+    noteUnboundSend(id: string): void;
+  };
+  state.noteUnboundSend("person");
+  expect(browser.getState().unboundSendNotice).toBeNull();
+  state.personInputAt.set("person", Date.now());
+  state.noteUnboundSend("person");
+  expect(browser.getState().unboundSendNotice?.tabId).toBe("person");
+  const previous = browser.getState().unboundSendNotice?.id;
+  state.personInputAt.set("prepared", Date.now());
+  state.noteUnboundSend("prepared");
+  expect(browser.getState().unboundSendNotice?.id).toBe(previous);
+  browserState.ownedTabs.set("search", new Set(["person"]));
+  state.personInputAt.set("person", Date.now());
+  state.noteUnboundSend("person");
+  expect(browser.getState().unboundSendNotice?.id).not.toBe(previous);
+});
+
+test("ending an application loan returns the person's own send control", async () => {
+  const { browser, pages, state } = makeBrowser();
+  state.personTabs.add("prepared");
+  const execute =
+    pages.get("prepared")!.mainFrame.framesInSubtree[0]!.executeJavaScript;
+  await browser.lendTab("prepared");
+  expect(execute).toHaveBeenLastCalledWith(
+    expect.stringContaining("state.finalActionAllowed = false"),
+  );
+  browser.endLoan("prepared");
+  expect(browser.isTabLent("prepared")).toBe(false);
+  expect(execute).toHaveBeenLastCalledWith(
+    expect.stringContaining("state.finalActionAllowed = true"),
+  );
 });
