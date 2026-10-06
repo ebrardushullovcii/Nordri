@@ -435,3 +435,26 @@ it("uses a warning icon for an unsent outcome", () => {
     "warning-text",
   );
 });
+
+it("never loops when a spacer and the next measurement disagree", () => {
+  mockLayout();
+  // A spacer and the measurement it changes used to undo each other inside
+  // one commit ("Maximum update depth exceeded"), blanking the whole app.
+  // Here the scroll areas are visible on every other measuring pass only.
+  const original = HTMLElement.prototype.getBoundingClientRect;
+  let pass = 0;
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+    function (this: HTMLElement) {
+      if (this.hasAttribute("data-job-finder-sidebar")) pass += 1;
+      const rect = original.call(this);
+      return (this.hasAttribute("data-locked-pane-scroll-region") ||
+        this.hasAttribute("data-locked-screen-scroll-area")) &&
+        pass % 2 === 0
+        ? { ...rect, height: 0, bottom: rect.top }
+        : rect;
+    },
+  );
+  render(<ScrollFixture />);
+  expect(() => fireEvent.click(screen.getByText("Hide jobs"))).not.toThrow();
+  expect(screen.getByRole("region", { name: "Notifications" })).toBeTruthy();
+});

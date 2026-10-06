@@ -142,7 +142,7 @@ function SafeguardRowCard(props: {
         </dl>
       ) : null}
 
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
         {row.sampleLinks?.map((link) => (
           <Button
             asChild
@@ -162,9 +162,13 @@ function SafeguardRowCard(props: {
             <Link to={row.recoveryLink.href}>{row.recoveryLink.label}</Link>
           </Button>
         ) : null}
-        <span className="ml-auto flex flex-wrap justify-end gap-2">
+        <span className="ml-auto flex min-w-0 max-w-full flex-wrap justify-end gap-2">
           {row.controls.map((control) => (
             <Button
+              // Pair choices name both jobs; they wrap instead of pushing the
+              // card past a narrow column (the assistant panel open).
+              className="h-auto min-h-8 max-w-full whitespace-normal py-1.5 text-left"
+              data-safeguard-control
               disabled={isPending(safeguardMutationKey(control.mutation))}
               key={control.id}
               onClick={() => void runControl(control)}
@@ -443,7 +447,7 @@ export function SafeguardsScreen(props: {
                 title="No matching safeguards"
               />
             ) : (
-              <div className="grid gap-3">
+              <div className="grid min-w-0 gap-3">
                 {visibleRows.map((row) => (
                   <SafeguardRowCard
                     isPending={isPending}

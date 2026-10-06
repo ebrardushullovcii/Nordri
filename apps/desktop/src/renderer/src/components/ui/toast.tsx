@@ -75,10 +75,17 @@ function useToastLayout(
 
   const layoutRef = React.useRef(layout);
   layoutRef.current = layout;
-  const hasClearance = layout.spacers.length > 0;
+  const activeRef = React.useRef(active);
+  activeRef.current = active;
+  const measureRef = React.useRef<(() => void) | null>(null);
+  // The effect restarts only when the layer turns on or off. Restarting it
+  // whenever a spacer came or went let a kept spacer and the next measurement
+  // undo each other inside one commit, an endless update loop that blanked
+  // the app.
+  const running = active || layout.spacers.length > 0;
 
   React.useLayoutEffect(() => {
-    if (!active && !hasClearance) return undefined;
+    if (!running) return undefined;
     const viewport = viewportRef.current;
     if (!viewport) return undefined;
     let frame: number | undefined;
@@ -128,7 +135,7 @@ function useToastLayout(
         document.querySelectorAll<HTMLElement>(SCROLL_OWNERS),
       );
       const previousSpacers = layoutRef.current.spacers;
-      const candidates = active
+      const candidates = activeRef.current
         ? owners.flatMap((owner) => {
             const overflowY = window.getComputedStyle(owner).overflowY;
             const rect = owner.getBoundingClientRect();
@@ -251,6 +258,7 @@ function useToastLayout(
       });
     };
     measure();
+    measureRef.current = measure;
     const mutations = new MutationObserver(schedule);
     mutations.observe(document.body, {
       childList: true,
@@ -261,13 +269,19 @@ function useToastLayout(
     window.addEventListener("resize", schedule);
     window.addEventListener("scroll", schedule, true);
     return () => {
+      measureRef.current = null;
       if (frame !== undefined) window.cancelAnimationFrame(frame);
       mutations.disconnect();
       resizeObserver?.disconnect();
       window.removeEventListener("resize", schedule);
       window.removeEventListener("scroll", schedule, true);
     };
-  }, [active, hasClearance, viewportRef]);
+  }, [running, viewportRef]);
+  // A toast arriving or the last one leaving re-measures at once. Measuring
+  // never changes `active`, so this cannot feed back into itself.
+  React.useLayoutEffect(() => {
+    measureRef.current?.();
+  }, [active]);
   return layout;
 }
 

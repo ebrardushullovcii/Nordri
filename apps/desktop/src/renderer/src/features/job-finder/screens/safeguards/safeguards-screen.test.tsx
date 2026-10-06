@@ -781,7 +781,13 @@ it("keeps the inspected Safeguards section open after allowing a pair", async ()
   )!;
   expect(card.className).toContain("min-w-0");
   expect(card.querySelector("h3")?.className).toContain("break-words");
-  fireEvent.click(screen.getByRole("button", { name: /^Send both anyway:/ }));
+  // A pair choice names both jobs; it wraps inside the card instead of
+  // pushing it past a narrow column.
+  const pairChoice = screen.getByRole("button", { name: /^Send both anyway:/ });
+  expect(pairChoice.className).toContain("whitespace-normal");
+  expect(pairChoice.className).toContain("max-w-full");
+  expect(pairChoice.parentElement?.className).toContain("min-w-0");
+  fireEvent.click(pairChoice);
   await screen.findByText("Pairs allowed by you");
   expect(events.open).toBe(true);
   expect(screen.queryByText(/Recovery: Choose Send both anyway/)).toBeNull();
