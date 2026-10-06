@@ -326,4 +326,6 @@ test("renders the person's approved letter word for word without writing or chec
   expect(new TextDecoder().decode(await result.document.loadBytes())).toBe(
     approvedText,
   );
+  // Named as the person's letter, not "v1" of this run.
+  expect(result.document.label).toBe("Cover letter you approved");
 });

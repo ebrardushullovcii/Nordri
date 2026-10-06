@@ -273,6 +273,8 @@ async function runMeasuredApplyAgent(
   const observedAnswers = new Map<string, ApplyFilledControl>();
   const observedAttachments = new Map<string, ApplyAttachedDocument>();
   const pauses: ApplyPause[] = [];
+  // Letter fields whose drafted letter waits for the person's review.
+  const lettersAwaitingReview = new Set<string>();
   const notes: string[] = [];
   const timeline: { at: string; text: string }[] = [];
   const reviewObservedFieldKeys = new Set<string>();
@@ -750,7 +752,7 @@ async function runMeasuredApplyAgent(
               id: `${question.id}_review`,
               text: outcome.pause.reviewDraft.text,
               sourceKind: "prior_answer",
-              sourceId: "application.letter.review",
+              sourceId: "review.letter",
               confidenceLabel: null,
               provenance: [],
             },
@@ -1705,6 +1707,12 @@ async function runMeasuredApplyAgent(
       const approvedText = control
         ? approvedApplicationLetter(runConfig, control)
         : undefined;
+      if (control && lettersAwaitingReview.has(pendingQuestionKey(control))) {
+        return {
+          kind: "ok",
+          content: `The letter for "${questionPrompt(control)}" is already waiting for the person's review. Do not write or attach another one. Fill the other fields, then finish with needsPerson: true.`,
+        };
+      }
       const created = await runConfig.letters.provide({
         purpose,
         prompt: `${grounding.prompt}\n\nRequested document: ${purpose.replace(/_/gu, " ")}\nForm request or revision: ${instructions}`,
@@ -1715,6 +1723,50 @@ async function runMeasuredApplyAgent(
         ...(approvedText ? { approvedText } : {}),
       });
       if (!created.ok || !created.document) {
+        if (!created.ok && control && created.draftText) {
+          // A drafted letter that needs the person's review joins the other
+          // questions. The run keeps filling the rest of the form, so the
+          // person is asked about the letter and only what nothing else
+          // covers, never their name or email.
+          const question = buildPendingQuestion({
+            control,
+            jobId: config.application.jobId,
+            detectedAt: now().toISOString(),
+            suggestion: null,
+            reason: created.reason,
+          });
+          question.note = `${question.answerControlType === "file" ? "The form wants a letter file. Review the wording here; your answer will be attached as that file. " : ""}${created.reason}`;
+          question.answerControlType = "text";
+          question.suggestedAnswers = [
+            {
+              id: `${question.id}_review`,
+              text: created.draftText,
+              sourceKind: "prior_answer",
+              sourceId: "review.letter",
+              confidenceLabel: null,
+              provenance: [],
+            },
+          ];
+          const key = pendingQuestionKey(control);
+          pendingQuestions.set(key, question);
+          lettersAwaitingReview.add(key);
+          pauses.push({
+            code: "document_needs_you",
+            summary: created.reason,
+            question,
+            blocker: null,
+            reviewDraft: {
+              text: created.draftText,
+              reason: created.reason,
+              groundedIn: grounding.groundedIn,
+            },
+          });
+          note(created.reason);
+          return {
+            kind: "ok",
+            content: `The letter for "${questionPrompt(control)}" needs the person's review: ${created.reason} It is now one of the questions for the person, with your draft. Do not write, type or attach another letter for this field. Fill every other field you can on this step, then call finish once with needsPerson: true.`,
+          };
+        }
         if (!created.ok && control) {
           return outcomeToLoop({
             kind: "paused",

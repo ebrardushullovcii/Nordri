@@ -17,6 +17,7 @@ import {
 import { describe, expect, test } from "vitest";
 
 import {
+  createDocumentManager,
   createSeed,
   createWorkspaceServiceHarness,
 } from "./workspace-service.test-support";
@@ -1135,4 +1136,83 @@ test("saving a different pay for a second application replaces the saved answer 
       (request) => request.id === "request_b",
     )?.state,
   ).toBe("verifying");
+});
+
+test("a cover letter answered here becomes this application's approved letter", async () => {
+  const seed = createSeed();
+  seed.applicationRecords = [
+    ApplicationRecordSchema.parse({
+      id: "application_a",
+      jobId: "job_ready",
+      title: "Senior Product Designer",
+      company: "Signal Systems",
+      status: "ready_for_review",
+      lastActionLabel: "Manual answer needed",
+      nextActionLabel: "Review answer",
+      lastUpdatedAt: now,
+    }),
+  ];
+  seed.applyRuns = [
+    ApplyRunSchema.parse({
+      id: "run_manual",
+      campaignId: null,
+      state: "completed",
+      jobIds: ["job_ready"],
+      currentJobId: null,
+      createdAt: now,
+      updatedAt: now,
+      completedAt: now,
+      summary: "Manual answer needed.",
+      detail: "The exact application remains reviewable.",
+      totalJobs: 1,
+      pendingJobs: 0,
+    }),
+  ];
+  seed.applyJobResults = [
+    ApplyJobResultSchema.parse({
+      id: "result_a",
+      runId: "run_manual",
+      jobId: "job_ready",
+      applicationRecordId: "application_a",
+      state: "blocked",
+      summary: "The letter needs your review.",
+      detail: "A required question needs review.",
+      startedAt: now,
+      updatedAt: now,
+    }),
+  ];
+  seed.userActionRequests = [createManualAnswerRequest()];
+  seed.applicationQuestionRecords = [
+    ApplicationQuestionRecordSchema.parse({
+      ...createQuestion(),
+      prompt: "Cover letter",
+      kind: "cover_letter",
+    }),
+  ];
+  const kept: Array<{ text: string; applicationRecordId: string }> = [];
+  const documentManager = Object.assign(createDocumentManager(), {
+    saveApprovedApplicationLetter: (input: {
+      text: string;
+      applicationRecord: { id: string };
+    }) => {
+      kept.push({
+        text: input.text,
+        applicationRecordId: input.applicationRecord.id,
+      });
+      return Promise.resolve();
+    },
+  });
+  const harness = createWorkspaceServiceHarness({ seed, documentManager });
+  const letter =
+    "I enjoy building dependable products. I am looking for 20 hours a week.";
+
+  await harness.workspaceService.performUserAction({
+    ...submitManualAnswerCommand(),
+    answer: letter,
+  });
+
+  // The next preparation attaches these exact words instead of drafting again.
+  expect(kept).toEqual([
+    { text: letter, applicationRecordId: "application_a" },
+  ]);
 });

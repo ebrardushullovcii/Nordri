@@ -597,6 +597,35 @@ async function persistOneManualAnswer(input: {
     }
   }
 
+  // A letter the person wrote or accepted here is the letter this
+  // application uses: preparation attaches it word for word and never
+  // drafts or asks about another one.
+  async function keepLetterApproved(): Promise<void> {
+    if (
+      question.kind !== "cover_letter" ||
+      !input.ctx.documentManager.saveApprovedApplicationLetter
+    )
+      return;
+    const [profile, savedJobs, applicationRecords] = await Promise.all([
+      input.ctx.repository.getProfile(),
+      input.ctx.repository.listSavedJobs(),
+      input.ctx.repository.listApplicationRecords(),
+    ]);
+    const job = savedJobs.find((entry) => entry.id === question.jobId);
+    const applicationRecord = applicationRecords.find(
+      (entry) => entry.id === scope.applicationRecordId,
+    );
+    if (job && applicationRecord) {
+      await input.ctx.documentManager.saveApprovedApplicationLetter({
+        profile,
+        job,
+        applicationRecord,
+        question,
+        text: answer,
+      });
+    }
+  }
+
   const recordId = `manual_answer_${input.request.id}_${input.resultingRevision}${input.recordSuffix}`;
   const records = await input.ctx.repository.listApplicationAnswerRecords({
     questionId: question.id,
@@ -651,6 +680,7 @@ async function persistOneManualAnswer(input: {
   if (existingById) {
     if (JSON.stringify(existingById) === JSON.stringify(record)) {
       // Exact idempotent retry of the deterministic record id.
+      await keepLetterApproved();
       return;
     }
     throw new Error(
@@ -690,6 +720,7 @@ async function persistOneManualAnswer(input: {
       );
     }
   }
+  await keepLetterApproved();
 }
 /**
  * A hand-off made when the browser refused a new tab. Before that error was

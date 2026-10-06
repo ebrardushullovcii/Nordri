@@ -172,7 +172,13 @@ export function createApplicationLetterProvider(
         id: `document_${writtenVersion.purpose}_${dependencies.application.jobId}_v${writtenVersion.version}_${typeKey}`,
         fileName: rendered.fileName,
         mimeType: rendered.mimeType,
-        label: `${purposeLabel.charAt(0).toUpperCase()}${purposeLabel.slice(1)} v${writtenVersion.version}`,
+        // A version number counts letters written in this run; the letter
+        // the person approved is named as theirs, never "v1" again.
+        label: `${purposeLabel.charAt(0).toUpperCase()}${purposeLabel.slice(1)}${
+          request.approvedText !== undefined
+            ? " you approved"
+            : ` v${writtenVersion.version}`
+        }`,
         kind: "cover_letter",
         loadBytes: rendered.loadBytes,
       };

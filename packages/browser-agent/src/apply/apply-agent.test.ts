@@ -4881,3 +4881,82 @@ test("an eligibility check is not reused for a different application page", asyn
   });
   expect(checks).toBe(2);
 });
+
+test("a letter that needs review joins the other questions while the run fills the rest", async () => {
+  const source = page({
+    controls: [
+      { ...nameControl(), value: "" },
+      {
+        ...nameControl(),
+        index: 1,
+        id: "f1",
+        name: "f1",
+        inputType: "file",
+        label: "Cover letter",
+        value: "",
+      },
+    ],
+  });
+  const baseHands = hands(source);
+  const input = config(source, {
+    hands: {
+      ...baseHands,
+      // Typed values stay on the page, as on a real form.
+      fillText: (ref, value) => {
+        source.controls = source.controls.map((control) =>
+          `c${control.index}` === ref ? { ...control, value } : control,
+        );
+        return Promise.resolve({ ok: true as const, observedValue: value });
+      },
+    },
+  });
+  const wording =
+    "I enjoy building dependable platforms. I am looking for 20 hours a week from Manchester.";
+  input.letters = {
+    preference: {
+      tone: "direct",
+      length: "short",
+      language: null,
+      sample: null,
+    },
+    provide: () =>
+      Promise.resolve({
+        ok: false,
+        draftText: wording,
+        reason: "Your available hours differ from this full-time role.",
+      }),
+  };
+  const result = await runApplyAgent(
+    input,
+    scriptedModel([
+      {
+        name: "create_application_document",
+        args: {
+          ref: "c1",
+          purpose: "cover_letter",
+          fileType: "pdf",
+          instructions: "Write the requested letter.",
+        },
+      },
+      {
+        name: "type",
+        args: {
+          ref: "c0",
+          text: "Robin Ashford",
+          storedFactId: "profile.fullName",
+        },
+      },
+      {
+        name: "finish",
+        args: { reason: "Only the letter is left.", needsPerson: true },
+      },
+    ]),
+  );
+  // The person is asked about the letter only, never their own name.
+  expect(result.outcome).toBe("paused");
+  expect(result.filled.map((entry) => entry.label)).toContain("Full name");
+  const questions = result.pauses[0]?.questions ?? [];
+  expect(questions.map((question) => question.kind)).toEqual(["cover_letter"]);
+  expect(questions[0]?.suggestedAnswers?.[0]?.text).toBe(wording);
+  expect(result.attachments).toEqual([]);
+});

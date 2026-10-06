@@ -785,6 +785,17 @@ export interface JobFinderDocumentManager {
     jobId: string,
     applicationRecordId?: string,
   ): Promise<import("@nordri/contracts").ApplicationDocumentRevision | null>;
+  /**
+   * Keeps a letter the person wrote or accepted while answering a form's
+   * letter question as this application's approved letter.
+   */
+  saveApprovedApplicationLetter?(input: {
+    profile: import("@nordri/contracts").CandidateProfile;
+    job: SavedJob;
+    applicationRecord: import("@nordri/contracts").ApplicationRecord;
+    question: import("@nordri/contracts").ApplicationQuestionRecord;
+    text: string;
+  }): Promise<void>;
   renderLetterArtifact?(input: {
     text: string;
     job: SavedJob;
