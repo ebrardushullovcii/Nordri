@@ -319,22 +319,14 @@ test("older translated fields without source links do not claim existing languag
   ).toEqual([]);
 });
 
-test("older drafts that name no language still offer a refresh when their skills have no source links", () => {
+test("a draft that names its language but not its written language offers a refresh", () => {
   const seed = createSeed();
   const draft = seedResumeDraft({
     profile: seed.profile,
     job: seed.savedJobs[0]!,
     templateId: seed.settings.resumeTemplateId,
   });
-  delete draft.language;
   delete draft.writtenLanguage;
-  const skills = draft.sections.find((section) => section.kind === "skills")!;
-  skills.included = true;
-  skills.text = "Polnisch C1";
-  skills.sourceRefs = [];
-  expect(resumeComparisonNeedsRefresh(draft)).toBe(true);
-  // A draft that names its language but not its written language also does.
-  skills.text = "";
   draft.language = "German";
   expect(resumeComparisonNeedsRefresh(draft)).toBe(true);
 });

@@ -35,6 +35,7 @@ import {
   withResumeClaimFixes,
 } from "./resume-claim-checks";
 import { buildResumeDraftIdentity } from "./resume-workspace-structure";
+import { buildResumeCoverageComparison } from "./resume-workspace-helpers";
 import { hasResumeAffectingProfileChange } from "./resume-workspace-staleness";
 import { resolveJobResumeApplicationMode } from "./job-resume-application-mode";
 import {
@@ -961,6 +962,29 @@ export async function buildResumeWorkspace(
     ...artifact,
     isApproved: draft.approvedExportId === artifact.id,
   }));
+  // The comparison is stored when a resume is written. Its keyword lists
+  // depend only on the profile and the draft, so they are read again here:
+  // a draft written by older code never keeps listing the person's own
+  // languages or skills as added.
+  const storedValidation = validations[0] ?? null;
+  const validation = storedValidation?.coverageComparison
+    ? (() => {
+        const current = buildResumeCoverageComparison({
+          profile,
+          draft,
+          pageCount: storedValidation.pageCount ?? null,
+          validationIssues: storedValidation.issues,
+        });
+        return {
+          ...storedValidation,
+          coverageComparison: {
+            ...storedValidation.coverageComparison,
+            addedKeywords: current.addedKeywords,
+            removedKeywords: current.removedKeywords,
+          },
+        };
+      })()
+    : storedValidation;
 
   return JobFinderResumeWorkspaceSchema.parse({
     listingCheckState:
@@ -972,7 +996,7 @@ export async function buildResumeWorkspace(
       ...draft,
       identity: draft.identity ?? buildResumeDraftIdentity(profile),
     },
-    validation: validations[0] ?? null,
+    validation,
     exports: normalizedExports,
     research,
     assistantMessages,
