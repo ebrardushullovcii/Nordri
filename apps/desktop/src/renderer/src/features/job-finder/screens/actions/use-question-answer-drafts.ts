@@ -16,13 +16,29 @@ export function useQuestionAnswerDrafts(props: {
     query: JobFinderApplyRunDetailsQuery,
   ) => Promise<ApplyRunDetails>;
 }) {
-  // Drafts survive the question form temporarily disappearing during a
-  // browser check. They stay local to this screen and exact application.
+  // The request is the durable draft scope; this map also protects live edits
+  // while a submitted-answer read is in flight.
   const answerDrafts = useRef(new Map<string, QuestionAnswerDraft>());
   const restoredDrafts = useRef(new Set<string>());
   const [restoredApplications, setRestoredApplications] = useState<
     ReadonlySet<string>
   >(new Set());
+  for (const request of props.requests) {
+    if (request.answerDraft && !answerDrafts.current.has(request.id)) {
+      answerDrafts.current.set(request.id, request.answerDraft);
+    }
+  }
+  async function updateAnswerDraft(
+    request: UserActionRequest,
+    draft: QuestionAnswerDraft,
+  ): Promise<void> {
+    answerDrafts.current.set(request.id, draft);
+    await window.nordri.jobFinder.saveUserActionAnswerDraft({
+      requestId: request.id,
+      expectedRevision: request.revision,
+      draft,
+    });
+  }
   useEffect(() => {
     if (!props.onGetApplyRunDetails) return;
     let cancelled = false;
@@ -39,7 +55,7 @@ export function useQuestionAnswerDrafts(props: {
       )
         continue;
       const applicationRecordId = request.scope.applicationRecordId;
-      const existing = answerDrafts.current.get(applicationRecordId);
+      const existing = answerDrafts.current.get(request.id);
       if (
         existing &&
         (Object.keys(existing.answers).length > 0 || !existing.saveForFuture)
@@ -68,7 +84,7 @@ export function useQuestionAnswerDrafts(props: {
         })
         .then((details) => {
           if (cancelled) return;
-          const edited = answerDrafts.current.get(applicationRecordId);
+          const edited = answerDrafts.current.get(request.id);
           if (
             edited &&
             (Object.keys(edited.answers).length > 0 || !edited.saveForFuture)
@@ -135,12 +151,12 @@ export function useQuestionAnswerDrafts(props: {
             answers[key] = value;
           }
           if (!Object.keys(answers).length) return;
-          answerDrafts.current.set(applicationRecordId, {
+          answerDrafts.current.set(request.id, {
             answers,
             saveForFuture: records[0]?.saveScope === "reusable_profile",
           });
           setRestoredApplications(
-            (current) => new Set([...current, applicationRecordId]),
+            (current) => new Set([...current, request.id]),
           );
         })
         .catch(() => {
@@ -152,5 +168,5 @@ export function useQuestionAnswerDrafts(props: {
       for (const requestId of started) restoredDrafts.current.delete(requestId);
     };
   }, [props.onGetApplyRunDetails, props.requests, props.applicationAttempts]);
-  return { answerDrafts, restoredApplications };
+  return { answerDrafts, restoredApplications, updateAnswerDraft };
 }

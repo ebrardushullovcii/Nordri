@@ -2700,6 +2700,9 @@ test("Full written answers ask for supported specifics within the available limi
   expect(full).toContain("70–90%");
   expect(full).toContain("no character limit");
   expect(full).toContain("four to six developed sentences");
+  expect(full).toContain("100–160 words");
+  expect(full).toContain("meaningfully more developed");
+  expect(short).toContain("one or two direct sentences");
   expect(full).toContain("concrete supported achievement");
   expect(full).toContain("specific need in this job");
   expect(full).toContain("Never invent a metric");
@@ -4254,3 +4257,41 @@ test.each([1, 2])(
     expect(input.hands.clickElement).not.toHaveBeenCalled();
   },
 );
+
+test("renumbered handles keep current answers and two equal-worded questions distinct", async () => {
+  const source = page({
+    controls: [
+      { ...nameControl(), index: 0, label: "Email", value: "old@example.test" },
+      { ...nameControl(), index: 1, label: "Description", value: "First role" },
+      {
+        ...nameControl(),
+        index: 2,
+        label: "Description",
+        value: "Second role",
+      },
+    ],
+  });
+  const input = config(source);
+  input.hands.scroll = () => {
+    source.controls.forEach((control, index) => {
+      control.index = index + 10;
+    });
+    source.controls[0]!.value = "new@example.test";
+    source.controls[2]!.value = "Changed second role";
+    return Promise.resolve({ ok: true, observedValue: "down" });
+  };
+  const result = await runApplyAgent(
+    input,
+    scriptedModel([
+      { name: "scroll", args: { direction: "down" } },
+      { name: "finish", args: { reason: "Reviewed" } },
+    ]),
+  );
+  expect(
+    result.reviewFilled?.map((entry) => [entry.label, entry.answer.value]),
+  ).toEqual([
+    ["Email", "new@example.test"],
+    ["Description", "First role"],
+    ["Description", "Changed second role"],
+  ]);
+});

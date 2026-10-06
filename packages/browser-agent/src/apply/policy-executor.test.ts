@@ -3857,3 +3857,90 @@ test("Prepare again uses the person's No for a checkbox and the saved sibling ra
     ["c2", true],
   ]);
 });
+
+test("conflicting hours produce review wording and never enter it before the person's decision", async () => {
+  const page = rawPage({
+    controls: [
+      rawControl({
+        index: 0,
+        tagName: "textarea",
+        label: "Why this role?",
+        required: true,
+      }),
+    ],
+  });
+  const { config, hands } = configFor(page);
+  const fill = vi.spyOn(hands, "fillText");
+  const observation = observationOf(page);
+  const wording =
+    "I can work 20–30 hours per week from Toronto. Can this role support those hours and location?";
+  const outcome = await executeApplyProposal(
+    { tool: "type", ref: "c0", text: "I am available full-time in Boston." },
+    observation.signature,
+    {
+      config,
+      now,
+      guardState: createApplyGuardState(),
+      checkWrittenAnswer: () =>
+        Promise.resolve({
+          supported: false,
+          reason: "This job's hours and location conflict with your limits.",
+          reviewWording: wording,
+        }),
+    },
+  );
+  expect(fill).not.toHaveBeenCalled();
+  expect(outcome.kind).toBe("suggestion");
+  if (outcome.kind === "suggestion")
+    expect(outcome.question?.suggestedAnswers[0]).toMatchObject({
+      text: wording,
+      sourceKind: "prior_answer",
+      sourceId: "review.c0",
+    });
+});
+
+test("uncertain eligibility shows the posting and permit facts beside the question", async () => {
+  const page = rawPage({
+    controls: [
+      rawControl({
+        index: 0,
+        tagName: "select",
+        label: "Are you authorized to work here?",
+        required: true,
+        options: ["Yes", "No"],
+      }),
+    ],
+  });
+  const { config, hands } = configFor(page);
+  config.sources.posting.location = "Berlin, Germany";
+  config.sources.profile.workEligibility.limitedWorkPermissions = [
+    {
+      country: "Germany",
+      conditions: "20 hours during term",
+      requiresFutureSponsorship: true,
+    },
+  ];
+  const select = vi.spyOn(hands, "chooseOption");
+  const observation = observationOf(page);
+  const outcome = await executeApplyProposal(
+    { tool: "select", ref: "c0", option: "No" },
+    observation.signature,
+    {
+      config,
+      now,
+      guardState: createApplyGuardState(),
+      checkWrittenAnswer: () =>
+        Promise.resolve({
+          supported: false,
+          reason: "Germany's student permit may not cover this full-time job.",
+        }),
+    },
+  );
+  expect(select).not.toHaveBeenCalled();
+  expect(outcome.kind).toBe("suggestion");
+  if (outcome.kind === "suggestion") {
+    expect(outcome.question?.note).toContain("Berlin, Germany");
+    expect(outcome.question?.note).toContain("20 hours during term");
+    expect(outcome.question?.note).toContain("sponsorship needed later");
+  }
+});

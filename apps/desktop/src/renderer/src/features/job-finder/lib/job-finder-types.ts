@@ -522,6 +522,7 @@ export type ProofBankEntryFormEntry = {
 };
 
 export type ReusableAnswerFormEntry = {
+  needsConfirmation?: boolean;
   applicationScope?: CandidateReusableAnswer["applicationScope"];
   id: string;
   label: string;

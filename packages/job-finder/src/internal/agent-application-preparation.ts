@@ -980,7 +980,10 @@ export function buildApplyLetterDependencies(input: {
         );
       }
       if (!check.supported)
-        throw new ApplicationLetterGroundingError(check.reason, text);
+        throw new ApplicationLetterGroundingError(
+          `${check.reason} Review and agree the wording for this application before approving it.`,
+          check.reviewWording ?? text,
+        );
       return text;
     },
     ...(renderLetterArtifact
@@ -1026,6 +1029,31 @@ export function buildApplyLetterDependencies(input: {
  * and the page it ended on. Nothing is inferred and nothing is hidden — a
  * review that does not show the generated answers is not a review.
  */
+function reviewQuestionKey(
+  fieldKey: string | undefined,
+  label: string,
+  siblings: readonly { fieldKey?: string | undefined; label: string }[] = [],
+): string {
+  if (!fieldKey) return label;
+  const parts = fieldKey.split("|");
+  if (parts.length < 4) return fieldKey;
+  const base = `${parts[0]}|${parts[1]}|${label}`;
+  if (parts[2]?.startsWith("field:"))
+    return `${base}|${parts[2].split(":").at(-1)}`;
+  const same = siblings.filter((entry) => {
+    const peer = entry.fieldKey?.split("|");
+    return (
+      peer &&
+      peer.length >= 4 &&
+      `${peer[0]}|${peer[1]}|${entry.label}` === base
+    );
+  });
+  const ordinal = same.findIndex((entry) => entry.fieldKey === fieldKey);
+  // Equal-worded questions on one screen remain separate by their order.
+  // Temporary handles never become the identity of a unique question.
+  return `${base}|${same.length > 1 ? Math.max(0, ordinal) : 0}`;
+}
+
 export function buildApplyReviewCard(input: {
   result: ApplyAgentResult;
   siteLabel: string;
@@ -1070,14 +1098,6 @@ export function buildApplyReviewCard(input: {
         filled.map((entry) => [entry.fieldKey ?? entry.label, entry]),
       ).values(),
     ]
-      .filter(
-        (entry, index, all) =>
-          all.findLastIndex(
-            (candidate) =>
-              candidate.label === entry.label &&
-              candidate.answer.value === entry.answer.value,
-          ) === index,
-      )
       .slice(0, 200)
       .map((entry) => ({
         ...(entry.fieldKey ? { fieldKey: entry.fieldKey } : {}),
@@ -1092,14 +1112,6 @@ export function buildApplyReviewCard(input: {
         attached.map((entry) => [entry.fieldKey ?? entry.controlLabel, entry]),
       ).values(),
     ]
-      .filter(
-        (entry, index, all) =>
-          all.findLastIndex(
-            (candidate) =>
-              candidate.controlLabel === entry.controlLabel &&
-              candidate.fileName === entry.fileName,
-          ) === index,
-      )
       .slice(0, 20)
       .map((attachment) => ({
         ...(attachment.fieldKey ? { fieldKey: attachment.fieldKey } : {}),
@@ -1140,10 +1152,26 @@ export function mergeApplyReviewCards(
 ): ApplicationReviewCard | null {
   if (!current) return previous;
   if (!previous) return current;
+  const answerPeers = (card: ApplicationReviewCard) =>
+    card.answers.map((entry) => ({ ...entry, label: entry.question }));
+  const attachmentPeers = (card: ApplicationReviewCard) =>
+    card.attachments.map((entry) => ({ ...entry, label: entry.field }));
+  const answerKey = (
+    card: ApplicationReviewCard,
+    entry: ApplicationReviewCard["answers"][number],
+  ) => reviewQuestionKey(entry.fieldKey, entry.question, answerPeers(card));
+  const attachmentKey = (
+    card: ApplicationReviewCard,
+    entry: ApplicationReviewCard["attachments"][number],
+  ) => reviewQuestionKey(entry.fieldKey, entry.field, attachmentPeers(card));
+  const observedPeers = (current.observedFieldKeys ?? []).map((fieldKey) => ({
+    fieldKey,
+    label: fieldKey.split("|").slice(3).join("|"),
+  }));
   const answers = current.answers.map((answer) => {
     const recorded = previous.answers.find((entry) =>
       answer.fieldKey && entry.fieldKey
-        ? answer.fieldKey === entry.fieldKey
+        ? answerKey(current, answer) === answerKey(previous, entry)
         : answer.question === entry.question,
     );
     return answer.source === "the filled application form" &&
@@ -1156,12 +1184,34 @@ export function mergeApplyReviewCards(
   });
   const earlierAnswers = previous.answers.filter((answer) =>
     answer.fieldKey
-      ? !current.observedFieldKeys?.includes(answer.fieldKey)
+      ? !current.observedFieldKeys?.some(
+          (key) =>
+            reviewQuestionKey(
+              key,
+              key.split("|").slice(3).join("|"),
+              observedPeers,
+            ) === answerKey(previous, answer),
+        ) &&
+        !answers.some(
+          (entry) => answerKey(current, entry) === answerKey(previous, answer),
+        )
       : !answers.some((entry) => entry.question === answer.question),
   );
   const earlierAttachments = previous.attachments.filter((attachment) =>
     attachment.fieldKey
-      ? !current.observedFieldKeys?.includes(attachment.fieldKey)
+      ? !current.observedFieldKeys?.some(
+          (key) =>
+            reviewQuestionKey(
+              key,
+              key.split("|").slice(3).join("|"),
+              observedPeers,
+            ) === attachmentKey(previous, attachment),
+        ) &&
+        !current.attachments.some(
+          (entry) =>
+            attachmentKey(current, entry) ===
+            attachmentKey(previous, attachment),
+        )
       : !current.attachments.some((entry) => entry.field === attachment.field),
   );
   return ApplicationReviewCardSchema.parse({
@@ -1169,7 +1219,10 @@ export function mergeApplyReviewCards(
     answers: [
       ...new Map(
         [...earlierAnswers, ...answers].map((answer) => [
-          answer.fieldKey ?? answer.question,
+          answerKey(
+            earlierAnswers.includes(answer) ? previous : current,
+            answer,
+          ),
           answer,
         ]),
       ).values(),
@@ -1177,6 +1230,9 @@ export function mergeApplyReviewCards(
       (entry, index, all) =>
         all.findLastIndex(
           (candidate) =>
+            (candidate.fieldKey === entry.fieldKey ||
+              ((candidate.fieldKey?.split("|").length ?? 0) < 4 &&
+                (entry.fieldKey?.split("|").length ?? 0) < 4)) &&
             candidate.question === entry.question &&
             candidate.answer === entry.answer,
         ) === index,
@@ -1184,7 +1240,10 @@ export function mergeApplyReviewCards(
     attachments: [
       ...new Map(
         [...earlierAttachments, ...current.attachments].map((attachment) => [
-          attachment.fieldKey ?? attachment.field,
+          attachmentKey(
+            earlierAttachments.includes(attachment) ? previous : current,
+            attachment,
+          ),
           attachment,
         ]),
       ).values(),
@@ -1192,6 +1251,9 @@ export function mergeApplyReviewCards(
       (entry, index, all) =>
         all.findLastIndex(
           (candidate) =>
+            (candidate.fieldKey === entry.fieldKey ||
+              ((candidate.fieldKey?.split("|").length ?? 0) < 4 &&
+                (entry.fieldKey?.split("|").length ?? 0) < 4)) &&
             candidate.field === entry.field &&
             candidate.fileName === entry.fileName,
         ) === index,

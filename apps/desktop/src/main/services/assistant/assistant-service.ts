@@ -197,3 +197,22 @@ export async function exportAssistantHistory() {
     if (ownsStore) await store.close();
   }
 }
+
+/** Stop the current turn before replacing saved chat history. */
+export async function restoreAssistantHistory(
+  history: Awaited<ReturnType<typeof exportAssistantHistory>>,
+): Promise<void> {
+  const current = hostPromise;
+  hostPromise = null;
+  if (current) await (await current).shutdown();
+  repository ??= createAssistantRepository({
+    filePath: path.join(getJobFinderUserDataDirectory(), "assistant.sqlite"),
+  });
+  await repository.restoreHistory(history);
+}
+
+export async function stopAssistantForWorkspaceRestore(): Promise<void> {
+  const current = hostPromise;
+  hostPromise = null;
+  if (current) await (await current).shutdown();
+}

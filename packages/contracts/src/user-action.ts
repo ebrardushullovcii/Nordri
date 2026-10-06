@@ -336,6 +336,28 @@ const UserActionSafetyFields = {
   accountCreationAuthorized: z.literal(false).default(false),
 } as const;
 
+export const UserActionAnswerDraftSchema = z
+  .object({
+    answers: z.record(
+      z.string(),
+      z.union([z.string().max(4_000), z.array(z.string().max(4_000)).max(50)]),
+    ),
+    saveForFuture: z.boolean(),
+    hiringCountry: z.string().max(120).optional(),
+  })
+  .strict();
+export type UserActionAnswerDraft = z.infer<typeof UserActionAnswerDraftSchema>;
+export const SaveUserActionAnswerDraftInputSchema = z
+  .object({
+    requestId: UserActionIdentifierSchema,
+    expectedRevision: z.number().int().positive(),
+    draft: UserActionAnswerDraftSchema.nullable(),
+  })
+  .strict();
+export type SaveUserActionAnswerDraftInput = z.infer<
+  typeof SaveUserActionAnswerDraftInputSchema
+>;
+
 export const UserActionRequestSchema = z
   .object({
     schemaVersion: z.literal(1).default(1),
@@ -349,6 +371,7 @@ export const UserActionRequestSchema = z
     verification: UserActionVerificationStrategySchema,
     title: UserActionShortTextSchema,
     summary: UserActionLongTextSchema,
+    answerDraft: UserActionAnswerDraftSchema.nullable().optional(),
     instructions: z.array(UserActionLongTextSchema).max(12).default([]),
     actionUrl: UserActionBrowserUrlSchema.nullable().default(null),
     displayOrigin: UserActionBrowserOriginSchema.nullable().default(null),
@@ -456,6 +479,7 @@ export type ChooseUserActionAccountPathCommand = z.infer<
 export const SubmitUserActionManualAnswerCommandSchema =
   UserActionCommandBaseSchema.extend({
     action: z.literal("submit_manual_answer"),
+    hiringCountry: z.string().trim().min(1).max(120).optional(),
     answer: z.string().trim().min(1).max(4_000),
     /**
      * Every answer of a multi-question step in one command, each tied to the

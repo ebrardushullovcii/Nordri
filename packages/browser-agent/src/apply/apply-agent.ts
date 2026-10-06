@@ -483,8 +483,16 @@ async function runMeasuredApplyAgent(
       if (control.disabled || (!control.visible && control.kind !== "file"))
         continue;
       const label = questionPrompt(control);
+      const matchingQuestions = next.controls.filter(
+        (entry) => questionPrompt(entry) === label,
+      );
+      const questionOrdinal = matchingQuestions.indexOf(control);
+      const questionKey =
+        control.choiceGroupKey && !control.choiceGroupKey.startsWith("ref:")
+          ? control.choiceGroupKey
+          : `field:${control.kind}:${questionOrdinal}`;
       const fieldKey =
-        `${next.url?.split(/[?#]/u)[0] ?? ""}|${next.step.label ?? ""}|${control.choiceGroupKey ?? control.ref}|${label}`.slice(
+        `${next.url?.split(/[?#]/u)[0] ?? ""}|${next.step.label ?? ""}|${questionKey}|${label}`.slice(
           0,
           2_000,
         );

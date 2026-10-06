@@ -94,6 +94,7 @@ import type {
   UpdateApplicationDefaultsInput,
   UpdateWorkspaceBehaviorInput,
   UpdateAiBehaviorInput,
+  SaveUserActionAnswerDraftInput,
   UserActionCommandInput,
   CandidateAssetKind,
   AssistantChangeEntry,
@@ -139,6 +140,9 @@ export interface JobFinderWorkspaceService {
     input?: JobFinderOpenBrowserSessionInput,
   ): Promise<JobFinderWorkspaceSnapshot>;
   checkBrowserSession(): Promise<JobFinderWorkspaceSnapshot>;
+  saveUserActionAnswerDraft(
+    input: SaveUserActionAnswerDraftInput,
+  ): Promise<void>;
   performUserAction(
     command: UserActionCommandInput,
   ): Promise<JobFinderWorkspaceSnapshot>;
@@ -166,6 +170,7 @@ export interface JobFinderWorkspaceService {
     assetId: string;
     assetKind: CandidateAssetKind;
   }): Promise<number>;
+  withWorkspaceRestore(operation: () => Promise<void>): Promise<void>;
   resetWorkspace(
     seed: JobFinderRepositorySeed,
     options?: JobFinderWorkspaceResetOptions,

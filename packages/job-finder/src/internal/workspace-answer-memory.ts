@@ -51,7 +51,7 @@ export function createReusableAnswerForQuestion(input: {
   applicationScope?: CandidateReusableAnswer["applicationScope"];
 }): CandidateReusableAnswer {
   return {
-    id: `${input.idPrefix ?? "answer_memory"}_${stableAnswerId(`${input.prompt}\n${input.applicationScope?.location ?? ""}`)}`,
+    id: `${input.idPrefix ?? "answer_memory"}_${stableAnswerId(`${input.prompt}\n${input.applicationScope?.hiringCountry ?? input.applicationScope?.location ?? ""}`)}`,
     kind: mapQuestionKindToCandidateAnswerKind(input.kind),
     label: input.prompt.slice(0, 120),
     question: input.prompt,
@@ -69,6 +69,7 @@ export function eligibilityAnswerScope(input: {
   resultId: string | null;
   applicationRecordId: string | null;
   location: string | null | undefined;
+  hiringCountry?: string;
 }): CandidateReusableAnswer["applicationScope"] {
   return input.kind === "work_authorization" ||
     input.kind === "visa_sponsorship"
@@ -76,6 +77,7 @@ export function eligibilityAnswerScope(input: {
         resultId: input.resultId,
         applicationRecordId: input.applicationRecordId,
         location: input.location?.trim() || null,
+        ...(input.hiringCountry ? { hiringCountry: input.hiringCountry } : {}),
       }
     : undefined;
 }

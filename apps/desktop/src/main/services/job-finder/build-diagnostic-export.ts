@@ -12,6 +12,7 @@ import {
   getApplicationDocumentsDirectory,
 } from "./paths";
 import {
+  type JobFinderRepositoryState,
   JobFinderDiagnosticExportSchema,
   type JobFinderDiagnosticExport,
   type JobFinderPerformanceSnapshot,
@@ -154,6 +155,7 @@ export function personalWorkspaceExportFileName(date = new Date()): string {
 /** Personal backup, separate from the redacted support report. No sign-in storage. */
 export async function buildPersonalWorkspaceExport(input: {
   workspace: JobFinderWorkspaceSnapshot;
+  repositoryState?: JobFinderRepositoryState;
   applicationQuestions?: readonly ApplicationQuestionRecord[];
   applicationAnswers?: readonly ApplicationAnswerRecord[];
   assistantHistory?: readonly {
@@ -217,6 +219,15 @@ export async function buildPersonalWorkspaceExport(input: {
       schemaVersion: 1,
       exportedAt: input.generatedAt ?? new Date().toISOString(),
       workspace,
+      repositoryState: input.repositoryState,
+      fileRoots: input.directories ?? [
+        { name: "resumes", directory: getJobFinderDocumentsDirectory() },
+        { name: "attachments", directory: getCandidateAssetsDirectory() },
+        {
+          name: "application-documents",
+          directory: getApplicationDocumentsDirectory(),
+        },
+      ],
       applicationQuestions: input.applicationQuestions ?? [],
       applicationAnswers: input.applicationAnswers ?? [],
       assistantHistory: input.assistantHistory ?? [],

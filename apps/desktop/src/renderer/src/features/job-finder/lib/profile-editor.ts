@@ -266,6 +266,7 @@ function toReusableAnswerFormEntries(
 ): ReusableAnswerFormEntry[] {
   return profile.answerBank.customAnswers.map((entry) => ({
     id: entry.id,
+    ...(entry.needsConfirmation ? { needsConfirmation: true } : {}),
     label: entry.label,
     question: entry.question,
     answer: entry.answer,
@@ -806,6 +807,7 @@ export function buildProfilePayload(
         .filter((entry) => entry.question.trim() && entry.answer.trim())
         .map((entry) => ({
           id: entry.id,
+          ...(entry.needsConfirmation ? { needsConfirmation: true } : {}),
           kind: candidateAnswerKindValues.includes(entry.kind)
             ? entry.kind
             : "other",

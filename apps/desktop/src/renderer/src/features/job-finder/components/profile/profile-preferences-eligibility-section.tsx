@@ -592,6 +592,29 @@ export function ProfilePreferencesEligibilitySection(props: {
                       Remove
                     </Button>
                   </div>
+                  {watch(
+                    `answerBank.customAnswers.${index}.needsConfirmation`,
+                  ) ? (
+                    <div className="grid gap-2" role="alert">
+                      <p className="text-sm text-(--warning-text)">
+                        Job Finder chose this earlier. Review and confirm it
+                        before it can be reused as your answer.
+                      </p>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        onClick={() =>
+                          props.profileForm.setValue(
+                            `answerBank.customAnswers.${index}.needsConfirmation`,
+                            false,
+                            { shouldDirty: true },
+                          )
+                        }
+                      >
+                        Confirm this is my answer
+                      </Button>
+                    </div>
+                  ) : null}
                   <div className="grid gap-(--gap-content) md:grid-cols-2 md:items-start">
                     <div className="grid min-w-0 content-start gap-(--gap-field) h-full">
                       <FieldLabel htmlFor={buildAnswerFieldId("label")}>

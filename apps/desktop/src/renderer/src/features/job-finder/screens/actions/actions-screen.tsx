@@ -61,7 +61,7 @@ import {
 } from "../../components/collection-search-toolbar";
 import { PageHeaderStack } from "../../components/page-header";
 import { usePersistedCollectionView } from "../../hooks/use-persisted-collection-view";
-import { useDeferredValue, useEffect, useMemo, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 
 const terminalStates = new Set<UserActionRequest["state"]>([
   "resolved",
@@ -402,7 +402,7 @@ function ActionCard(props: {
   profile: CandidateProfile | null;
   questions: readonly ApplicationAttemptQuestion[];
   answerDraft?: QuestionAnswerDraft;
-  onAnswerDraftChange?: (draft: QuestionAnswerDraft) => void;
+  onAnswerDraftChange?: (draft: QuestionAnswerDraft) => void | Promise<void>;
   request: UserActionRequest;
   /**
    * Closes a check that never finished and prepares the application again,
@@ -661,7 +661,7 @@ function ActionCard(props: {
               ? { onDraftChange: props.onAnswerDraftChange }
               : {})}
             isPending={isPending || isVerifying}
-            onAnswer={async (answers, saveForFuture) => {
+            onAnswer={async (answers, saveForFuture, hiringCountry) => {
               // Every answer in one command, each tied to its question, so one
               // revision moves the step on and no answer is lost between calls.
               const first = answers[0];
@@ -674,6 +674,7 @@ function ActionCard(props: {
                 // questions on record, so a bare answer can be ambiguous.
                 answers: answers.map((entry) => ({ ...entry })),
                 saveForFuture,
+                ...(hiringCountry ? { hiringCountry } : {}),
               });
             }}
             jobLocation={props.jobLocation}
@@ -1143,7 +1144,8 @@ export function ActionsScreen(props: {
   profile?: CandidateProfile;
   requests: readonly UserActionRequest[];
 }) {
-  const { answerDrafts, restoredApplications } = useQuestionAnswerDrafts(props);
+  const { answerDrafts, restoredApplications, updateAnswerDraft } =
+    useQuestionAnswerDrafts(props);
   const groupedDecisions = props.groupedDecisions ?? [];
   const pendingDecisions = groupedDecisions.filter(
     (decision) => decision.approval === "pending",
@@ -1456,8 +1458,7 @@ export function ActionsScreen(props: {
                               jobId: applicationScope.jobId,
                             })
                           : [];
-                        const draftKey =
-                          applicationScope?.applicationRecordId ?? request.id;
+                        const draftKey = request.id;
                         const answerDraft = answerDrafts.current.get(draftKey);
                         return (
                           <ActionCard
@@ -1467,7 +1468,7 @@ export function ActionsScreen(props: {
                             isPending={props.isPending(request.id)}
                             {...(answerDraft ? { answerDraft } : {})}
                             onAnswerDraftChange={(draft) => {
-                              answerDrafts.current.set(draftKey, draft);
+                              return updateAnswerDraft(request, draft);
                             }}
                             jobLocation={job?.location}
                             jobLabel={
@@ -1557,16 +1558,18 @@ export function ActionsScreen(props: {
 export type QuestionAnswerDraft = {
   answers: Record<string, string | string[]>;
   saveForFuture: boolean;
+  hiringCountry?: string | undefined;
 };
 
 export function QuestionAnswerForm(props: {
   jobLocation?: string | undefined;
   draft?: QuestionAnswerDraft;
-  onDraftChange?: (draft: QuestionAnswerDraft) => void;
+  onDraftChange?: (draft: QuestionAnswerDraft) => void | Promise<void>;
   isPending: boolean;
   onAnswer: (
     answers: readonly { questionId: string; answer: string }[],
     saveForFuture: boolean,
+    hiringCountry?: string,
   ) => void | Promise<void>;
   questions: readonly ApplicationAttemptQuestion[];
   requestId: string;
@@ -1584,10 +1587,37 @@ export function QuestionAnswerForm(props: {
         ),
       ),
   );
+  const needsCountry = questions.some(
+    (question) =>
+      question.kind === "work_authorization" ||
+      question.kind === "visa_sponsorship",
+  );
+  const [hiringCountry, setHiringCountry] = useState(
+    props.draft?.hiringCountry ?? "",
+  );
   const { onDraftChange } = props;
+  const lastDraft = useRef(
+    JSON.stringify({
+      answers,
+      saveForFuture,
+      ...(needsCountry ? { hiringCountry } : {}),
+    }),
+  );
   useEffect(() => {
-    onDraftChange?.({ answers, saveForFuture });
-  }, [answers, saveForFuture, onDraftChange]);
+    const draft = {
+      answers,
+      saveForFuture,
+      ...(needsCountry ? { hiringCountry } : {}),
+    };
+    const serialized = JSON.stringify(draft);
+    if (serialized === lastDraft.current) return;
+    lastDraft.current = serialized;
+    void Promise.resolve(onDraftChange?.(draft)).catch(() => {
+      setFailure(
+        "Your unfinished answer could not be saved. Keep this form open and try again.",
+      );
+    });
+  }, [answers, saveForFuture, hiringCountry, needsCountry, onDraftChange]);
   const [working, setWorking] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const saveId = `${requestId}-save-answer`;
@@ -1606,10 +1636,12 @@ export function QuestionAnswerForm(props: {
         : ""
       : value;
   };
-  const missingRequired = questions.some(
-    (question) =>
-      question.isRequired !== false && !readAnswer(question.id).trim(),
-  );
+  const missingRequired =
+    (needsCountry && !hiringCountry.trim()) ||
+    questions.some(
+      (question) =>
+        question.isRequired !== false && !readAnswer(question.id).trim(),
+    );
   const isSingle = questions.length === 1;
 
   return (
@@ -1639,6 +1671,7 @@ export function QuestionAnswerForm(props: {
               }))
               .filter((entry) => entry.answer.length > 0),
             saveForFuture,
+            ...(needsCountry ? ([hiringCountry.trim()] as const) : []),
           ),
         ).then(
           () => {
@@ -1659,16 +1692,31 @@ export function QuestionAnswerForm(props: {
         );
       }}
     >
-      {questions.some(
-        (question) =>
-          question.kind === "work_authorization" ||
-          question.kind === "visa_sponsorship",
-      ) ? (
-        <p className="text-(length:--text-small) text-foreground-soft">
-          Application location: {props.jobLocation?.trim() || "not specified"}.
-          Answer for the country that would hire you. Saved answers are used
-          again only for jobs in the same country.
-        </p>
+      {needsCountry ? (
+        <div className="grid gap-2">
+          <p className="text-(length:--text-small) text-foreground-soft">
+            Application location: {props.jobLocation?.trim() || "not specified"}
+            . Answer for the country that would hire you. Saved answers are used
+            again only for jobs in the same country and permit conditions.
+          </p>
+          <label
+            className="grid gap-1 text-sm"
+            htmlFor={`${requestId}-hiring-country`}
+          >
+            Which country would hire you for this job?
+            <Input
+              id={`${requestId}-hiring-country`}
+              value={hiringCountry}
+              maxLength={120}
+              required
+              onChange={(event) => setHiringCountry(event.target.value)}
+            />
+          </label>
+          <p className="text-xs text-foreground-soft">
+            Confirm with the employer if it is unclear. Your answers below are
+            your decision for that country, the job's hours and dates.
+          </p>
+        </div>
       ) : null}
       {questions.map((question) => {
         const answerId = `${requestId}-answer-${question.id}`;
@@ -1712,6 +1760,34 @@ export function QuestionAnswerForm(props: {
                 {question.note}
               </p>
             ) : null}
+            {(question.suggestedAnswers ?? [])
+              .filter(
+                (suggestion) =>
+                  suggestion.sourceKind === "prior_answer" &&
+                  suggestion.sourceId?.startsWith("review."),
+              )
+              .map((suggestion) => (
+                <div key={suggestion.id} className="grid gap-2">
+                  <p className="text-sm">
+                    Suggested wording — review it before continuing:
+                  </p>
+                  <p className="whitespace-pre-wrap text-sm">
+                    {suggestion.text}
+                  </p>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() =>
+                      setAnswers((current) => ({
+                        ...current,
+                        [draftKeyFor(question)]: suggestion.text,
+                      }))
+                    }
+                  >
+                    Use this wording
+                  </Button>
+                </div>
+              ))}
             {question.answerControlType === "multi_choice" &&
             options.length > 0 ? (
               <fieldset className="grid gap-2">

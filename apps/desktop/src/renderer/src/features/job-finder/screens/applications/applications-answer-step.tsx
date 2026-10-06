@@ -21,7 +21,7 @@ export interface ApplicationAnswerStep {
   request: UserActionRequest;
   draft?: QuestionAnswerDraft;
   draftRestored?: boolean;
-  onDraftChange?: (draft: QuestionAnswerDraft) => void;
+  onDraftChange?: (draft: QuestionAnswerDraft) => void | Promise<void>;
   jobLocation?: string | undefined;
   questions: readonly ApplicationAttemptQuestion[];
   isPending: boolean;
@@ -65,7 +65,7 @@ export function ApplicationAnswerStepCard(props: {
           : {})}
         jobLocation={props.step.jobLocation}
         isPending={isPending}
-        onAnswer={async (answers, saveForFuture) => {
+        onAnswer={async (answers, saveForFuture, hiringCountry) => {
           const first = answers[0];
           if (!first) return;
           await onCommand({
@@ -76,6 +76,7 @@ export function ApplicationAnswerStepCard(props: {
               ? { answers: answers.map((entry) => ({ ...entry })) }
               : {}),
             saveForFuture,
+            ...(hiringCountry ? { hiringCountry } : {}),
           });
         }}
         questions={questions}

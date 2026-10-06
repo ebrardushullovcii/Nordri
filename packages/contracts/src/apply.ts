@@ -725,6 +725,7 @@ export type ApplicationQuestionRecordInput = z.input<
 >;
 
 export const ApplicationAnswerRecordSchema = z.object({
+  hiringCountry: NonEmptyStringSchema.optional(),
   id: NonEmptyStringSchema,
   runId: NonEmptyStringSchema,
   jobId: NonEmptyStringSchema,

@@ -4,6 +4,8 @@ import type {
   ApplicationAuthorityEnvelope,
   ApplicationAuthorityEnvelopeMutationResult,
   ApplicationAuthorityReadiness,
+  PersonalWorkspaceRestorePreview,
+  PersonalWorkspaceRestoreResult,
   ApplicationCrmBulkStageMutationInput,
   ApplicationCrmExportInput,
   ApplicationCrmFileExportResult,
@@ -146,6 +148,7 @@ import type {
   UpdateWorkspaceBehaviorInput,
   UpdateAiBehaviorInput,
   WorkspaceRevision,
+  SaveUserActionAnswerDraftInput,
   UserActionCommandInput,
 } from "@nordri/contracts";
 import type {
@@ -302,6 +305,9 @@ declare global {
           input?: JobFinderOpenBrowserSessionInput,
         ) => Promise<JobFinderWorkspaceSnapshot>;
         checkBrowserSession: () => Promise<JobFinderWorkspaceSnapshot>;
+        saveUserActionAnswerDraft: (
+          input: SaveUserActionAnswerDraftInput,
+        ) => Promise<void>;
         performUserAction: (
           command: UserActionCommandInput,
         ) => Promise<JobFinderWorkspaceSnapshot>;
@@ -477,6 +483,10 @@ declare global {
         snoozeGroupedDecision: (
           input: SnoozeGroupedDecisionInput,
         ) => Promise<JobFinderWorkspaceSnapshot>;
+        previewPersonalWorkspaceRestore: () => Promise<PersonalWorkspaceRestorePreview | null>;
+        confirmPersonalWorkspaceRestore: (input: {
+          token: string;
+        }) => Promise<PersonalWorkspaceRestoreResult>;
         exportPersonalWorkspace: () => Promise<ApplicationCrmFileExportResult>;
         exportDiagnostics: () => Promise<JobFinderDiagnosticExportResult>;
         getPerformanceSnapshot: () => Promise<JobFinderPerformanceSnapshot>;

@@ -1,4 +1,5 @@
 import {
+  SaveUserActionAnswerDraftInputSchema,
   UserActionEventSchema,
   UserActionRequestSchema,
   type UserActionEvent,
@@ -194,12 +195,48 @@ export function createFileRepositoryUserActionMethods(
 ): Pick<
   JobFinderRepository,
   | "listUserActionRequests"
+  | "saveUserActionAnswerDraft"
   | "getUserActionRequest"
   | "createUserActionRequest"
   | "listUserActionEvents"
   | "commitUserActionTransition"
 > {
   return {
+    async saveUserActionAnswerDraft(input) {
+      const command = SaveUserActionAnswerDraftInputSchema.parse(input);
+      runImmediateTransaction(context.database, () => {
+        const request = getRequestById(context, command.requestId);
+        if (
+          !request ||
+          request.kind !== "manual_answer" ||
+          request.scope.type !== "application" ||
+          request.revision !== command.expectedRevision ||
+          !(
+            command.draft === null
+              ? [
+                  "pending",
+                  "awaiting_user",
+                  "still_blocked",
+                  "verifying",
+                  "resolved",
+                ]
+              : ["pending", "awaiting_user", "still_blocked"]
+          ).includes(request.state)
+        ) {
+          throw new Error(
+            "This question has changed. Reopen it before editing your answer.",
+          );
+        }
+        updateUserActionRequest(
+          context,
+          UserActionRequestSchema.parse({
+            ...request,
+            answerDraft: command.draft,
+          }),
+        );
+      });
+      await secureDatabaseFile(context.filePath);
+    },
     listUserActionRequests(options) {
       return Promise.resolve(cloneValue(listRequests(context, options)));
     },

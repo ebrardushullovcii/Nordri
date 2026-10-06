@@ -72,6 +72,9 @@ export function mergeApplicationAnswersIntoExecutionProfile(input: {
           resultId: question.resultId,
           applicationRecordId: question.applicationRecordId ?? null,
           location: input.jobLocation,
+          ...(latest.hiringCountry
+            ? { hiringCountry: latest.hiringCountry }
+            : {}),
         }) ?? {
           resultId: question.resultId,
           applicationRecordId: question.applicationRecordId ?? null,

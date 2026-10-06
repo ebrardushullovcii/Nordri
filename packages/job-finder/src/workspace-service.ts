@@ -754,7 +754,9 @@ export function createJobFinderWorkspaceService(
     // still land in this snapshot; a long continuation carries on in the
     // background instead of holding every read (the app showed "Loading your
     // workspace" for as long as the agent worked).
-    const recovery = resumeVerifyingUserActions();
+    const recovery = workspaceResetInProgress
+      ? Promise.resolve()
+      : resumeVerifyingUserActions();
     recovery.catch((error: unknown) => {
       console.error(
         "[user-actions] recovery of a verifying step failed",
@@ -1511,7 +1513,33 @@ export function createJobFinderWorkspaceService(
     writeApplicationDocumentText: (input) =>
       writeApplicationDocumentText(context, input),
     ...snapshotProfileMethods,
+    saveProfile: (profile) =>
+      trackWorkspaceOperation("profile save", () =>
+        snapshotProfileMethods.saveProfile(profile),
+      ),
+    saveProfileAndSearchPreferences: (profile, preferences) =>
+      trackWorkspaceOperation("profile save", () =>
+        snapshotProfileMethods.saveProfileAndSearchPreferences(
+          profile,
+          preferences,
+        ),
+      ),
     resetWorkspace,
+    async withWorkspaceRestore(operation) {
+      if (
+        workspaceResetInProgress ||
+        activeWorkspaceOperationLabels().length > 0
+      )
+        throw new Error(
+          "Wait for Job Finder's current work to finish or stop it before restoring. Your workspace was kept.",
+        );
+      workspaceResetInProgress = true;
+      try {
+        await operation();
+      } finally {
+        workspaceResetInProgress = false;
+      }
+    },
     runResumeImport: (input) =>
       trackWorkspaceOperation("resume import", () =>
         snapshotProfileMethods.runResumeImport(input),
@@ -1556,7 +1584,11 @@ export function createJobFinderWorkspaceService(
     ...intelligenceMethods,
     setActivityControl,
     getWorkspaceSnapshot: () =>
-      trackWorkspaceOperation("workspace read", () => getWorkspaceSnapshot()),
+      workspaceResetInProgress
+        ? getWorkspaceSnapshot()
+        : trackWorkspaceOperation("workspace read", () =>
+            getWorkspaceSnapshot(),
+          ),
     getWorkspaceBootstrap,
     mutateSafeguards: safeguardMethods.mutateSafeguards,
     getSafeguardsOverview: safeguardMethods.getSafeguardsOverview,
@@ -1643,6 +1675,10 @@ export function createJobFinderWorkspaceService(
     ...applyRunStoreMethods,
     ...applicationAnswerMethods,
     ...groupedAnswerMethods,
+    saveUserActionAnswerDraft: (input) =>
+      trackWorkspaceOperation("answer draft", () =>
+        repository.saveUserActionAnswerDraft(input),
+      ),
     performUserAction: (command) =>
       trackWorkspaceOperation("application user action", () =>
         userActionMethods.performUserAction(command),

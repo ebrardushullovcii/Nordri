@@ -61,6 +61,19 @@ it("keeps a person's checkbox-group answer attributed to them when the form chan
   expect(withPersonAnswerSources(card, details).answers[0]?.source).toBe(
     "your answer to this question",
   );
+  details.answerRecords[0]!.text = '["Reporting","Finance"]';
+  expect(withPersonAnswerSources(card, details).answers[0]?.source).toBe(
+    "your answer to this question",
+  );
+  details.answerRecords[0]!.text = '["Reporting","Communication, mentoring"]';
+  card.answers[0]!.answer = "Communication, mentoring; Reporting";
+  expect(withPersonAnswerSources(card, details).answers[0]?.source).toBe(
+    "the filled application form",
+  );
+  card.answers[0]!.answer = '["Communication, mentoring","Reporting"]';
+  expect(withPersonAnswerSources(card, details).answers[0]?.source).toBe(
+    "your answer to this question",
+  );
   details.questionRecords[0]!.selectedAnswerId = null;
   expect(withPersonAnswerSources(card, details).answers[0]?.source).toBe(
     "your answer to this question",

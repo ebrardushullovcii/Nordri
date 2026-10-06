@@ -5,6 +5,7 @@ import {
   plainRecordedJobFinderText,
   splitBlockedAttemptNote,
   describeFailure,
+  describeWorkspaceRestoreFailure,
 } from "./describe-failure";
 
 describe("recorded Job Finder copy", () => {
@@ -39,4 +40,20 @@ describe("paused background work", () => {
     );
     expect(description.userMessage).not.toContain("remote method");
   });
+});
+
+it("workspace restore explains unknown versions and keeps unexpected raw errors behind details", () => {
+  const unsupported = describeWorkspaceRestoreFailure(
+    new Error(
+      "Error invoking remote method 'job-finder:preview-personal-workspace-restore': Error: This export uses a version Nordri cannot restore. Your workspace was kept.",
+    ),
+  );
+  expect(unsupported.userMessage).toBe(
+    "This export uses a version Nordri cannot restore. Your workspace was kept.",
+  );
+  const unknown = describeWorkspaceRestoreFailure(
+    new Error("Unexpected storage failure at internal_record_123"),
+  );
+  expect(unknown.userMessage).not.toContain("internal_record_123");
+  expect(unknown.technicalDetails).toContain("internal_record_123");
 });

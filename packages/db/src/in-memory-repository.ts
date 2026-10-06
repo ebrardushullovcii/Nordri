@@ -36,6 +36,7 @@ import {
   SourceInstructionArtifactSchema,
   TailoredAssetSchema,
   UserActionEventSchema,
+  SaveUserActionAnswerDraftInputSchema,
   UserActionRequestSchema,
   type ApplicationAnswerRecord,
   type ApplicationQuestionRecord,
@@ -179,6 +180,7 @@ export function createInMemoryJobFinderRepository(
     close() {
       return Promise.resolve();
     },
+    exportState: () => Promise.resolve(cloneValue(state)),
     reset(nextSeed) {
       const normalizedSeed = JobFinderRepositoryStateSchema.parse(
         cloneValue(nextSeed),
@@ -1367,6 +1369,35 @@ export function createInMemoryJobFinderRepository(
     getUserActionRequest(id) {
       const request = state.userActionRequests.find((entry) => entry.id === id);
       return Promise.resolve(request ? cloneValue(request) : null);
+    },
+    saveUserActionAnswerDraft(input) {
+      const command = SaveUserActionAnswerDraftInputSchema.parse(input);
+      const request = state.userActionRequests.find(
+        (entry) => entry.id === command.requestId,
+      );
+      if (
+        !request ||
+        request.kind !== "manual_answer" ||
+        request.scope.type !== "application" ||
+        request.revision !== command.expectedRevision ||
+        !(
+          command.draft === null
+            ? [
+                "pending",
+                "awaiting_user",
+                "still_blocked",
+                "verifying",
+                "resolved",
+              ]
+            : ["pending", "awaiting_user", "still_blocked"]
+        ).includes(request.state)
+      ) {
+        throw new Error(
+          "This question has changed. Reopen it before editing your answer.",
+        );
+      }
+      request.answerDraft = cloneValue(command.draft);
+      return Promise.resolve();
     },
     createUserActionRequest(request) {
       const normalizedRequest = UserActionRequestSchema.parse(

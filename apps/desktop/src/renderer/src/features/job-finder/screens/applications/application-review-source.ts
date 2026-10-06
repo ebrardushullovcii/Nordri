@@ -1,5 +1,23 @@
 import type { ApplicationReviewCard, ApplyRunDetails } from "@nordri/contracts";
 
+function selectedOptions(value: string): string[] {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (
+      Array.isArray(parsed) &&
+      parsed.every((entry) => typeof entry === "string")
+    )
+      return [...parsed].sort();
+  } catch {
+    /* Older answers used separators. */
+  }
+  return value
+    .split(/[\n,;]+/u)
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .sort();
+}
+
 export function withPersonAnswerSources(
   card: ApplicationReviewCard,
   details: ApplyRunDetails,
@@ -27,18 +45,8 @@ export function withPersonAnswerSources(
       const same =
         recorded.text === answer.answer ||
         (question?.answerControlType === "multi_choice" &&
-          recorded.text
-            .split(/[\n,;]+/u)
-            .map((part) => part.trim())
-            .filter(Boolean)
-            .sort()
-            .join("\n") ===
-            answer.answer
-              .split(/[\n,;]+/u)
-              .map((part) => part.trim())
-              .filter(Boolean)
-              .sort()
-              .join("\n"));
+          JSON.stringify(selectedOptions(recorded.text)) ===
+            JSON.stringify(selectedOptions(answer.answer)));
       return same
         ? { ...answer, source: "your answer to this question" }
         : answer;

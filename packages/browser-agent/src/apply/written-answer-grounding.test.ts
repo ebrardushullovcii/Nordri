@@ -214,3 +214,43 @@ test("a repeated incomplete check reports plain copy without provider errors", a
   ).rejects.toThrow("could not check the facts");
   expect(chatWithTools).toHaveBeenCalledTimes(2);
 });
+
+test("conflicts propose wording for person review and omission cannot hide a work limit", async () => {
+  const chatWithTools = vi.fn<LLMClient["chatWithTools"]>().mockResolvedValue({
+    toolCalls: [
+      {
+        id: "review",
+        type: "function",
+        function: {
+          name: "report_answer_checks",
+          arguments: JSON.stringify({
+            checks: [
+              {
+                index: 0,
+                supported: false,
+                reason: "Your hours differ from this role.",
+                reviewWording:
+                  "I can work 20 hours. Could the role support this?",
+              },
+            ],
+          }),
+        },
+      },
+    ],
+  });
+  const checks = await checkWrittenApplicationAnswers({
+    client: { chatWithTools },
+    sources,
+    payDisclosed: false,
+    answers: [{ question: "Why this role?", answer: "I enjoy this work." }],
+  });
+  expect(checks[0]).toMatchObject({
+    supported: false,
+    reviewWording: "I can work 20 hours. Could the role support this?",
+  });
+  const prompt = JSON.stringify(chatWithTools.mock.calls[0][0]);
+  expect(prompt).toContain("even if the draft merely omits the limit");
+  expect(prompt).toContain(
+    "reviewed and submitted by the person for this application",
+  );
+});

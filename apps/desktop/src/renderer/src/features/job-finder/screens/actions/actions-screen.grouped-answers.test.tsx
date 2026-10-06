@@ -341,6 +341,10 @@ describe("ActionsScreen persisted grouped reusable answers", () => {
       getByLabelText("Are you authorized to work in the job's country?"),
       { target: { value: "Yes" } },
     );
+    fireEvent.change(
+      getByLabelText("Which country would hire you for this job?"),
+      { target: { value: "Germany" } },
+    );
     const answer = getByRole("button", { name: "Answer and continue" });
     expect((answer as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(box);
@@ -565,7 +569,7 @@ describe("Needs you question step shapes", () => {
     );
   }
 
-  it("keeps a one-use answer after checking removes the form and creates a new request", () => {
+  it("keeps an unfinished answer on the same request after its form temporarily disappears", () => {
     const questions = [
       {
         id: "q_years",
@@ -611,8 +615,8 @@ describe("Needs you question step shapes", () => {
     rerender(
       <ActionsScreen
         {...base}
-        applicationAttempts={attemptsWith([{ ...questions[0], id: "q_retry" }])}
-        requests={[createManualAnswerRequest({ id: "retry", jobId: "job_a" })]}
+        applicationAttempts={attemptsWith(questions)}
+        requests={[createManualAnswerRequest({ id: "first", jobId: "job_a" })]}
       />,
     );
     expect(

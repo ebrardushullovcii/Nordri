@@ -6,6 +6,8 @@ import {
 import { browserBridge } from "./browser";
 import { createAssistantBridge } from "./assistant";
 import type {
+  PersonalWorkspaceRestorePreview,
+  PersonalWorkspaceRestoreResult,
   ApplicationCrmBulkStageMutationInput,
   ApplicationCrmExportInput,
   ApplicationCrmFileExportResult,
@@ -148,6 +150,7 @@ import type {
   UpdateAiBehaviorInput,
   WorkspaceRevision,
   WriteClipboardTextResult,
+  SaveUserActionAnswerDraftInput,
   UserActionCommandInput,
 } from "@nordri/contracts";
 import { SYSTEM_THEME_CHANGE_EVENT } from "../shared/system-theme";
@@ -689,6 +692,11 @@ const desktopApi = {
       ipcRenderer.invoke(
         "job-finder:check-browser-session",
       ) as Promise<JobFinderWorkspaceSnapshot>,
+    saveUserActionAnswerDraft: (input: SaveUserActionAnswerDraftInput) =>
+      ipcRenderer.invoke(
+        "job-finder:save-user-action-answer-draft",
+        input,
+      ) as Promise<void>,
     performUserAction: (command: UserActionCommandInput) =>
       ipcRenderer.invoke(
         "job-finder:perform-user-action",
@@ -1121,6 +1129,15 @@ const desktopApi = {
         "job-finder:snooze-grouped-decision",
         input,
       ) as Promise<JobFinderWorkspaceSnapshot>,
+    previewPersonalWorkspaceRestore: () =>
+      ipcRenderer.invoke(
+        "job-finder:preview-personal-workspace-restore",
+      ) as Promise<PersonalWorkspaceRestorePreview | null>,
+    confirmPersonalWorkspaceRestore: (input: { token: string }) =>
+      ipcRenderer.invoke(
+        "job-finder:confirm-personal-workspace-restore",
+        input,
+      ) as Promise<PersonalWorkspaceRestoreResult>,
     exportPersonalWorkspace: () =>
       ipcRenderer.invoke(
         "job-finder:export-personal-workspace",

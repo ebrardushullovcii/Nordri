@@ -354,6 +354,11 @@ async function persistManualAnswer(input: {
       recordSuffix: pairs.length === 1 ? "" : `_${pairIndex}`,
     });
   }
+  await input.ctx.repository.saveUserActionAnswerDraft({
+    requestId: input.request.id,
+    expectedRevision: input.resultingRevision,
+    draft: null,
+  });
   return pairs.map((pair) => ({
     prompt: pair.question.prompt,
     answer: pair.answer,
@@ -540,6 +545,9 @@ async function persistOneManualAnswer(input: {
       resultId: question.resultId,
       applicationRecordId: question.applicationRecordId ?? null,
       location: job?.location,
+      ...(input.command.hiringCountry
+        ? { hiringCountry: input.command.hiringCountry }
+        : {}),
     });
     const normalizedPrompt = normalizeAnswerQuestion(question.prompt);
     const exactMatches = profile.answerBank.customAnswers.filter((candidate) =>
@@ -547,7 +555,9 @@ async function persistOneManualAnswer(input: {
         (value) =>
           normalizeAnswerQuestion(value) === normalizedPrompt &&
           (candidate.applicationScope?.location ?? null) ===
-            (applicationScope?.location ?? null),
+            (applicationScope?.location ?? null) &&
+          candidate.applicationScope?.hiringCountry ===
+            applicationScope?.hiringCountry,
       ),
     );
     // The person kept "save for next time" on, so this answer becomes the
@@ -599,6 +609,9 @@ async function persistOneManualAnswer(input: {
 
   const record = ApplicationAnswerRecordSchema.parse({
     id: recordId,
+    ...(input.command.hiringCountry
+      ? { hiringCountry: input.command.hiringCountry }
+      : {}),
     runId: scope.runId,
     jobId: scope.jobId,
     applicationRecordId: scope.applicationRecordId,

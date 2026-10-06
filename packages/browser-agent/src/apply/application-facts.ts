@@ -68,7 +68,9 @@ export function applicationFacts(
     answers: answerBank,
     savedAnswers: sources.reusableAnswers
       .filter(
-        (saved) => options.payDisclosed || saved.kind !== "salary_expectation",
+        (saved) =>
+          !saved.needsConfirmation &&
+          (options.payDisclosed || saved.kind !== "salary_expectation"),
       )
       .map((saved) => ({
         kind: saved.kind,
@@ -233,7 +235,9 @@ function storedFacts(
   for (const [value, key, label] of bankEntries) {
     add(value, `profile.answerBank.${key}`, label);
   }
-  for (const saved of sources.reusableAnswers) {
+  for (const saved of sources.reusableAnswers.filter(
+    (entry) => !entry.needsConfirmation,
+  )) {
     add(
       saved.answer,
       `answerLibrary.${saved.id}`,
@@ -305,11 +309,13 @@ export function savedAnswerForQuestion(
   return (
     reusableAnswers.find(
       (saved) =>
+        !saved.needsConfirmation &&
         saved.id.startsWith("application_") &&
         asked.has(normalizeSignal(saved.question)),
     ) ??
-    reusableAnswers.find((saved) =>
-      asked.has(normalizeSignal(saved.question)),
+    reusableAnswers.find(
+      (saved) =>
+        !saved.needsConfirmation && asked.has(normalizeSignal(saved.question)),
     ) ??
     null
   );

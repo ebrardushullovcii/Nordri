@@ -1,5 +1,15 @@
 import { resetJobFinderBrowser } from "../services/job-finder/reset-workspace";
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import {
+  parsePersonalWorkspaceExport,
+  restorePersonalWorkspace,
+} from "../services/job-finder/personal-workspace-restore";
+import {
+  getJobFinderDocumentsDirectory,
+  getCandidateAssetsDirectory,
+  getApplicationDocumentsDirectory,
+} from "../services/job-finder/paths";
 import path from "node:path";
 import { access } from "node:fs/promises";
 import { app, BrowserWindow, clipboard, dialog, shell } from "electron";
@@ -10,6 +20,10 @@ import type {
   SaveDialogOptions,
 } from "electron";
 import {
+  type PersonalWorkspaceExport,
+  PersonalWorkspaceRestorePreviewSchema,
+  ConfirmPersonalWorkspaceRestoreSchema,
+  PersonalWorkspaceRestoreResultSchema,
   ApplicationCrmExportInputSchema,
   ApplicationCrmFileExportResultSchema,
   ApplicationCrmBulkStageMutationInputSchema,
@@ -121,6 +135,7 @@ import {
   UpdateAiBehaviorInputSchema,
   UpdateApplicationDefaultsInputSchema,
   UpdateWorkspaceBehaviorInputSchema,
+  SaveUserActionAnswerDraftInputSchema,
   UserActionCommandSchema,
   WriteClipboardTextInputSchema,
   WriteClipboardTextResultSchema,
@@ -833,6 +848,11 @@ export function registerJobFinderRouteHandlers(
   if (options.includeBootstrapRoutes !== false) {
     registerJobFinderBootstrapDesktopRoutes(ipcMain);
   }
+  const pendingWorkspaceRestores = new Map<
+    number,
+    { token: string; backup: PersonalWorkspaceExport }
+  >();
+  let workspaceRestorePending = false;
   const workspaceDeltaTracker = createJobFinderWorkspaceDeltaTracker();
   const activeResumePreviewRequests = new WeakMap<
     object,
@@ -1864,6 +1884,16 @@ export function registerJobFinderRouteHandlers(
   );
 
   ipcMain.handle(
+    "job-finder:save-user-action-answer-draft",
+    async (_event, payload: unknown) => {
+      const service = await getJobFinderWorkspaceService();
+      await service.saveUserActionAnswerDraft(
+        SaveUserActionAnswerDraftInputSchema.parse(payload),
+      );
+    },
+  );
+
+  ipcMain.handle(
     "job-finder:perform-user-action",
     async (event, payload: unknown) => {
       const command = UserActionCommandSchema.parse(payload);
@@ -2418,6 +2448,108 @@ export function registerJobFinderRouteHandlers(
       });
     },
   );
+  ipcMain.handle(
+    "job-finder:preview-personal-workspace-restore",
+    async (event) => {
+      const browserWindow = BrowserWindow.fromWebContents(event.sender);
+      const picker: OpenDialogOptions = {
+        title: "Restore from a workspace export",
+        properties: ["openFile"],
+        filters: [{ name: "Nordri workspace export", extensions: ["json"] }],
+      };
+      const picked = browserWindow
+        ? await dialog.showOpenDialog(browserWindow, picker)
+        : await dialog.showOpenDialog(picker);
+      pendingWorkspaceRestores.delete(event.sender.id);
+      if (picked.canceled || !picked.filePaths[0]) return null;
+      const backup = parsePersonalWorkspaceExport(
+        await readFile(picked.filePaths[0], "utf8"),
+      );
+      const token = randomUUID();
+      pendingWorkspaceRestores.set(event.sender.id, { token, backup });
+      return PersonalWorkspaceRestorePreviewSchema.parse({
+        token,
+        profileName: backup.repositoryState.profile.fullName ?? "Your profile",
+        exportedAt: backup.exportedAt,
+        jobs: backup.repositoryState.savedJobs.length,
+        applications: backup.repositoryState.applicationRecords.length,
+        answers:
+          backup.repositoryState.applicationAnswerRecords.length +
+          backup.repositoryState.profile.answerBank.customAnswers.length,
+        documents: backup.files.length,
+        chats: backup.assistantHistory.length,
+      });
+    },
+  );
+  ipcMain.handle(
+    "job-finder:confirm-personal-workspace-restore",
+    async (event, payload: unknown) => {
+      const { token } = ConfirmPersonalWorkspaceRestoreSchema.parse(payload);
+      const prepared = pendingWorkspaceRestores.get(event.sender.id);
+      if (!prepared || prepared.token !== token)
+        throw new Error("Choose the export again before restoring.");
+      if (workspaceRestorePending)
+        throw new Error(
+          "A workspace restore is already running. Wait for it to finish.",
+        );
+      workspaceRestorePending = true;
+      const safetyExportPath = path.join(
+        app.getPath("documents"),
+        `nordri-before-restore-${Date.now()}-${randomUUID()}.json`,
+      );
+      try {
+        const service = await getJobFinderWorkspaceService();
+        const repository = getJobFinderRepositoryForWorkspaceService(service);
+        if (!repository)
+          throw new Error(
+            "Your workspace could not be restored. Nothing was changed.",
+          );
+        const {
+          exportAssistantHistory,
+          restoreAssistantHistory,
+          stopAssistantForWorkspaceRestore,
+        } = await import("../services/assistant/assistant-service");
+        await service.withWorkspaceRestore(async () => {
+          await stopAssistantForWorkspaceRestore();
+          await restorePersonalWorkspace({
+            backup: prepared.backup,
+            repository,
+            roots: new Map([
+              ["resumes", getJobFinderDocumentsDirectory()],
+              ["attachments", getCandidateAssetsDirectory()],
+              ["application-documents", getApplicationDocumentsDirectory()],
+            ]),
+            safetyExportPath,
+            buildSafetyExport: async () =>
+              buildPersonalWorkspaceExport({
+                workspace: await service.getWorkspaceSnapshot(),
+                repositoryState: await repository.exportState(),
+                assistantHistory: await exportAssistantHistory(),
+                applicationQuestions:
+                  await repository.listApplicationQuestionRecords(),
+                applicationAnswers:
+                  await repository.listApplicationAnswerRecords(),
+              }),
+            beforeReplace: async () => {
+              await resetJobFinderBrowser();
+            },
+            readChats: exportAssistantHistory,
+            restoreChats: restoreAssistantHistory,
+          });
+        });
+        pendingWorkspaceRestores.delete(event.sender.id);
+        await service.setActivityControl({
+          paused: true,
+          reason: "Workspace restored. Resume activity when you are ready.",
+        });
+        publishJobFinderWorkspaceUpdate();
+        return PersonalWorkspaceRestoreResultSchema.parse({ safetyExportPath });
+      } finally {
+        workspaceRestorePending = false;
+      }
+    },
+  );
+
   ipcMain.handle("job-finder:export-personal-workspace", async (event) => {
     const service = await getJobFinderWorkspaceService();
     const browserWindow = BrowserWindow.fromWebContents(event.sender);
@@ -2454,6 +2586,7 @@ export function registerJobFinderRouteHandlers(
     ]);
     const content = await buildPersonalWorkspaceExport({
       workspace,
+      repositoryState: await repository.exportState(),
       assistantHistory,
       applicationQuestions,
       applicationAnswers,

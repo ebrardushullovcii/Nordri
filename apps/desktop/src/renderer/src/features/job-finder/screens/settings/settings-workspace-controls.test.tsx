@@ -230,3 +230,55 @@ test("personal export toast names the saved path and explains included chats", a
   act(() => root.unmount());
   document.body.replaceChildren();
 });
+
+test("restore previews all workspace contents and requires confirmation", async () => {
+  const { render, fireEvent, cleanup } = await import("@testing-library/react");
+  const previewPersonalWorkspaceRestore = vi.fn().mockResolvedValue({
+    token: "00000000-0000-4000-8000-000000000001",
+    profileName: "Synthetic Example",
+    exportedAt: "2026-10-05T10:00:00.000Z",
+    jobs: 3,
+    applications: 2,
+    answers: 4,
+    documents: 5,
+    chats: 1,
+  });
+  const confirmPersonalWorkspaceRestore = vi
+    .fn()
+    .mockResolvedValue({ safetyExportPath: "/synthetic/safety.json" });
+  Object.defineProperty(window, "nordri", {
+    configurable: true,
+    value: {
+      jobFinder: {
+        previewPersonalWorkspaceRestore,
+        confirmPersonalWorkspaceRestore,
+      },
+    },
+  });
+  const view = render(
+    <ToastProvider>
+      <SettingsWorkspaceControls
+        isWorkspaceResetPending={false}
+        onResetWorkspace={vi.fn()}
+      />
+    </ToastProvider>,
+  );
+  fireEvent.click(view.getByRole("button", { name: "Restore from an export" }));
+  await act(async () => {
+    await Promise.resolve();
+  });
+  expect(view.getByRole("dialog").textContent).toContain(
+    "3 jobs, 2 applications, 4 answers, 5 documents and 1 chat",
+  );
+  expect(view.getByRole("dialog").textContent).toContain("safety export");
+  expect(confirmPersonalWorkspaceRestore).not.toHaveBeenCalled();
+  fireEvent.click(view.getByRole("button", { name: "Restore workspace" }));
+  await act(async () => {
+    await Promise.resolve();
+  });
+  expect(confirmPersonalWorkspaceRestore).toHaveBeenCalledWith({
+    token: "00000000-0000-4000-8000-000000000001",
+  });
+  expect(view.queryByRole("dialog")).toBeNull();
+  cleanup();
+});

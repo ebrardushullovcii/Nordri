@@ -505,11 +505,12 @@ export function ApplicationsScreen(props: {
       ) as Record<ApplicationsViewFilter, number>,
     [applicationRecords, latestApplyResultByRecordId, readApplyRunContext],
   );
-  const { answerDrafts, restoredApplications } = useQuestionAnswerDrafts({
-    applicationAttempts,
-    requests: userActionRequests ?? [],
-    onGetApplyRunDetails,
-  });
+  const { answerDrafts, restoredApplications, updateAnswerDraft } =
+    useQuestionAnswerDrafts({
+      applicationAttempts,
+      requests: userActionRequests ?? [],
+      onGetApplyRunDetails,
+    });
   const latestAutomaticRun = useMemo(
     () =>
       [...applyRuns]
@@ -1234,19 +1235,40 @@ export function ApplicationsScreen(props: {
               : {})}
             activeFilter={activeFilter}
             readApplyRunContext={readApplyRunContext}
-            answerDraft={
-              selectedRecord
-                ? answerDrafts.current.get(selectedRecord.id)
-                : undefined
-            }
+            answerDraft={(() => {
+              const request = userActionRequests?.find(
+                (entry) =>
+                  entry.kind === "manual_answer" &&
+                  entry.scope.type === "application" &&
+                  entry.scope.applicationRecordId === selectedRecord?.id &&
+                  ["pending", "awaiting_user", "still_blocked"].includes(
+                    entry.state,
+                  ),
+              );
+              return request ? answerDrafts.current.get(request.id) : undefined;
+            })()}
             answerDraftRestored={
               selectedRecord
-                ? restoredApplications.has(selectedRecord.id)
+                ? (userActionRequests ?? []).some(
+                    (entry) =>
+                      entry.kind === "manual_answer" &&
+                      entry.scope.type === "application" &&
+                      entry.scope.applicationRecordId === selectedRecord.id &&
+                      restoredApplications.has(entry.id),
+                  )
                 : false
             }
             onAnswerDraftChange={(draft) => {
-              if (selectedRecord)
-                answerDrafts.current.set(selectedRecord.id, draft);
+              const request = userActionRequests?.find(
+                (entry) =>
+                  entry.kind === "manual_answer" &&
+                  entry.scope.type === "application" &&
+                  entry.scope.applicationRecordId === selectedRecord?.id &&
+                  ["pending", "awaiting_user", "still_blocked"].includes(
+                    entry.state,
+                  ),
+              );
+              if (request) return updateAnswerDraft(request, draft);
             }}
             applyRunDetails={applyRunDetails}
             applyRunDetailsTarget={applyRunDetailsTarget}

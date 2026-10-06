@@ -711,6 +711,23 @@ export function useProfileScreenForms(input: {
           ),
         ),
       );
+      // Incomplete added rows are omitted by the save payload. They are still
+      // the person's draft and must survive the response to that save.
+      const canonicalLanguageIds = new Set(
+        createProfileEditorValues(
+          input.profile,
+          input.latestResumeImportReviewCandidates,
+        ).languages.map((row) => row.id),
+      );
+      if (
+        draftValues.languages.some((row) => !canonicalLanguageIds.has(row.id))
+      ) {
+        runWithoutDraftEditSignal(() =>
+          profileForm.setValue("languages", draftValues.languages, {
+            shouldDirty: true,
+          }),
+        );
+      }
       applyBackgroundConflictSurface("profile", false);
       setValidationMessage(null);
       setBackgroundMergeNotice(

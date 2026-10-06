@@ -222,6 +222,7 @@ it("Prepare again keeps one-use eligibility on the same application even after a
       revision: 1,
     }),
     applicationRecordId: "application_a",
+    hiringCountry: "Germany",
     saveScope: "application_once" as const,
   };
   const proposed = {
@@ -253,6 +254,7 @@ it("Prepare again keeps one-use eligibility on the same application even after a
       resultId: "prepare_again",
       applicationRecordId: "application_a",
       location: "Hamburg, Germany",
+      hiringCountry: "Germany",
     },
   });
   expect(profile).toEqual(before);

@@ -98,6 +98,7 @@ import {
   incrementSingletonRevision,
   listCollectionValues,
   listValues,
+  readState,
   replaceCollection,
   saveSingletonValue,
   stateTableNames,
@@ -761,6 +762,8 @@ export async function createFileJobFinderRepository(
     ...createFileRepositoryResumeMethods(context),
     ...createFileRepositoryUserActionMethods(context),
     ...createFileRepositoryGroupedManualAnswerMethods(context),
+    exportState: () =>
+      Promise.resolve(cloneValue(readState(database, normalizedSeed))),
     async close() {
       if (automaticBackup.onClose) {
         const backup = await createWorkspaceCloseDatabaseBackup({

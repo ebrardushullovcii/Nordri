@@ -1436,7 +1436,7 @@ test("continued observations preserve generated provenance and distinct equal-wo
     ...base,
     answers: [
       {
-        fieldKey: "first",
+        fieldKey: "https://example.test/form|Work|c0|Description",
         question: "Description",
         answer: "First role.",
         written: true,
@@ -1444,7 +1444,7 @@ test("continued observations preserve generated provenance and distinct equal-wo
         groundedIn: ["your profile"],
       },
       {
-        fieldKey: "second",
+        fieldKey: "https://example.test/form|Work|c1|Description",
         question: "Description",
         answer: "Second role.",
         written: true,
@@ -1456,6 +1456,7 @@ test("continued observations preserve generated provenance and distinct equal-wo
   const current = {
     ...base,
     answers: [
+      previous.answers[0]!,
       {
         ...previous.answers[1]!,
         written: false,
@@ -1804,4 +1805,64 @@ test("a failed provider call still returns typed timing for persistence", async 
   });
   expect(result.state).toBe("failed");
   expect(result.agentTiming).toMatchObject({ modelTurns: 1, pageReads: 1 });
+});
+
+test("review keeps the latest value across handles and removes cleared fields", () => {
+  const previous = ApplicationReviewCardSchema.parse({
+    siteLabel: "Synthetic board",
+    pageUrl: PAGE_URL,
+    preparedAt: "2026-10-01T10:00:00.000Z",
+    answers: [
+      {
+        fieldKey: `${PAGE_URL}|Contact|c0|Email`,
+        question: "Email",
+        answer: "old@example.test",
+        written: false,
+        source: "your email",
+      },
+    ],
+    attachments: [
+      {
+        fieldKey: `${PAGE_URL}|Contact|c1|Resume`,
+        label: "CV",
+        field: "Resume",
+        fileName: "old.pdf",
+      },
+    ],
+  });
+  const current = ApplicationReviewCardSchema.parse({
+    ...previous,
+    answers: [
+      {
+        ...previous.answers[0],
+        fieldKey: `${PAGE_URL}|Contact|c9|Email`,
+        answer: "new@example.test",
+      },
+    ],
+    attachments: [
+      {
+        ...previous.attachments[0],
+        fieldKey: `${PAGE_URL}|Contact|c8|Resume`,
+        fileName: "new.pdf",
+      },
+    ],
+  });
+  const merged = mergeApplyReviewCards(previous, current)!;
+  expect(merged.answers.map((entry) => entry.answer)).toEqual([
+    "new@example.test",
+  ]);
+  expect(merged.attachments.map((entry) => entry.fileName)).toEqual([
+    "new.pdf",
+  ]);
+  expect(
+    mergeApplyReviewCards(merged, {
+      ...current,
+      answers: [],
+      attachments: [],
+      observedFieldKeys: [
+        `${PAGE_URL}|Contact|c20|Email`,
+        `${PAGE_URL}|Contact|c21|Resume`,
+      ],
+    }),
+  ).toMatchObject({ answers: [], attachments: [] });
 });

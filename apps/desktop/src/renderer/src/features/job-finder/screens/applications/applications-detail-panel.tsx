@@ -101,7 +101,7 @@ interface ApplicationsDetailPanelProps {
   progressNow?: number | undefined;
   answerDraft?: QuestionAnswerDraft | undefined;
   answerDraftRestored?: boolean;
-  onAnswerDraftChange?: (draft: QuestionAnswerDraft) => void;
+  onAnswerDraftChange?: (draft: QuestionAnswerDraft) => void | Promise<void>;
   activeFilter: ApplicationsViewFilter;
   /** Stages the person named in the tracker, shown by those names. */
   customStages?: readonly ApplicationCrmStageDefinition[];

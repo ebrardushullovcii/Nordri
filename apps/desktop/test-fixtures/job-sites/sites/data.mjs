@@ -70,6 +70,7 @@ export const departments = [
 ];
 export const countries = [
   "United States",
+  "Canada",
   "United Kingdom",
   "Germany",
   "Portugal",
@@ -201,5 +202,19 @@ export function createCatalog(sites) {
   catalog.get("ripple")[0] = { ...duplicate };
   // A board application hands the identical fictional vacancy to a local ATS.
   catalog.get("cedar-ats")[2] = { ...catalog.get("ripple")[2] };
+  const canadian = catalog.get("clientnest");
+  canadian[10] = {
+    ...canadian[10],
+    title: "Data Analyst",
+    company: "Clientnest",
+    location: "Toronto, Canada",
+    country: "CA",
+    mode: "Hybrid",
+    employment: "Full-time",
+    language: "en",
+    closed: false,
+    description:
+      "Join our fictional Toronto analytics team. This role is hired in Canada for 40 hours per week. Analyze synthetic datasets and explain results. All applications stay on this local replica.",
+  };
   return catalog;
 }

@@ -126,6 +126,7 @@ export interface ApplyExecutorDeps {
   ) => Promise<{
     supported: boolean;
     reason: string;
+    reviewWording?: string;
   }>;
 }
 
@@ -316,7 +317,11 @@ export function buildPendingQuestion(input: {
             id: `${questionIdFor(control, input.jobId, input.siblings ?? [])}_suggestion`,
             text: suggestion.value,
             sourceKind:
-              suggestion.sourceKind === "answer_library" ? "user" : "profile",
+              suggestion.sourceKind === "answer_library"
+                ? "user"
+                : suggestion.sourceKind === "generated"
+                  ? "prior_answer"
+                  : "profile",
             sourceId: suggestion.sourceId,
             confidenceLabel: null,
             provenance: [],
@@ -559,7 +564,16 @@ async function decideAnswer(input: {
     return {
       kind: "leave",
       reason: check.reason,
-      suggestion: savedSuggestion(control, config),
+      suggestion: check.reviewWording
+        ? {
+            value: check.reviewWording,
+            kind: control.questionKind,
+            sourceKind: "generated",
+            sourceId: `review.${control.ref}`,
+            provenanceLabel: "proposed wording for your review",
+            groundedIn: [],
+          }
+        : savedSuggestion(control, config),
       permission: false,
     };
   }
@@ -582,6 +596,24 @@ async function decideAnswer(input: {
   };
 }
 
+function eligibilityReviewReason(
+  control: ApplyFormControl,
+  config: ApplyAgentConfig,
+  reason: string,
+): string {
+  if (
+    control.questionKind !== "work_authorization" &&
+    control.questionKind !== "visa_sponsorship"
+  )
+    return reason;
+  const facts = config.sources.profile.workEligibility;
+  const permits = (facts.limitedWorkPermissions ?? []).map(
+    (permit) =>
+      `${permit.country}: ${permit.conditions}${permit.requiresFutureSponsorship === true ? "; sponsorship needed later" : ""}`,
+  );
+  return `${reason} Posting location: ${config.sources.posting.location?.trim() || "not specified"}. Countries where you can work: ${facts.authorizedWorkCountries.join(", ") || "not recorded"}.${permits.length ? ` Limited permissions: ${permits.join(". ")}.` : ""} Confirm the hiring country and answer for this job's hours and dates.`;
+}
+
 function leaveUnansweredForPerson(input: {
   control: ApplyFormControl;
   observation: ApplyFormObservation;
@@ -590,7 +622,8 @@ function leaveUnansweredForPerson(input: {
   reason: string;
   suggestion: ApplyAnswer | null;
 }): ApplyExecutionOutcome {
-  const { control, observation, config, at, reason, suggestion } = input;
+  const { control, observation, config, at, suggestion } = input;
+  const reason = eligibilityReviewReason(control, config, input.reason);
   return {
     kind: "suggestion",
     answer: suggestion,
@@ -635,7 +668,7 @@ function unsupportedAnswer(input: {
           detectedAt: at,
           suggestion: input.suggestion,
           siblings: observation.controls,
-          reason: input.reason,
+          reason: eligibilityReviewReason(control, config, input.reason),
         })
       : null,
     controlRef: control.ref,

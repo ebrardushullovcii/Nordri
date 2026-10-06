@@ -204,6 +204,7 @@ export const CandidateAnswerKindSchema = z.enum(candidateAnswerKindValues);
 export type CandidateAnswerKind = z.infer<typeof CandidateAnswerKindSchema>;
 
 export const CandidateReusableAnswerSchema = z.object({
+  needsConfirmation: z.boolean().optional(),
   id: NonEmptyStringSchema,
   kind: CandidateAnswerKindSchema.default("other"),
   label: NonEmptyStringSchema,
@@ -216,6 +217,7 @@ export const CandidateReusableAnswerSchema = z.object({
       resultId: NonEmptyStringSchema.nullable(),
       applicationRecordId: NonEmptyStringSchema.nullable(),
       location: NonEmptyStringSchema.nullable(),
+      hiringCountry: NonEmptyStringSchema.optional(),
     })
     .optional(),
 });

@@ -1785,3 +1785,29 @@ test("normalizes a bare portfolio domain and removes trailing skill punctuation"
   expect(result.payload?.portfolioUrl).toBe("https://portfolio.example.test/");
   expect(result.payload?.skills).toEqual(["SAP EWM", "SQL"]);
 });
+
+test("saving unrelated profile edits keeps the old-answer confirmation marker until the person confirms", () => {
+  const profile = createProfile();
+  profile.answerBank.customAnswers = [
+    {
+      id: "agent",
+      label: "Experience",
+      question: "Years?",
+      answer: "0",
+      kind: "other",
+      roleFamilies: [],
+      proofEntryIds: [],
+      needsConfirmation: true,
+    },
+  ];
+  const values = createProfileEditorValues(profile);
+  expect(
+    buildProfilePayload(profile, values).payload?.answerBank.customAnswers[0]
+      ?.needsConfirmation,
+  ).toBe(true);
+  values.answerBank.customAnswers[0]!.needsConfirmation = false;
+  expect(
+    buildProfilePayload(profile, values).payload?.answerBank.customAnswers[0]
+      ?.needsConfirmation,
+  ).toBeUndefined();
+});
