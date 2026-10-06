@@ -1,3 +1,8 @@
+import {
+  getDiscoverySourceRunCountLabel,
+  formatDiscoveryRunReportLabel,
+  getDiscoveryRunReportCounts,
+} from "../../lib/discovery-run-count-label";
 import { joinUniqueSentences } from "../../lib/sentence-copy";
 import {
   useCallback,
@@ -119,6 +124,7 @@ interface DiscoveryResultsPanelProps {
   facetScopeId?: string | null;
   hasCompletedSearch?: boolean;
   hiddenAlsoFoundCount?: number;
+  hiddenAlsoFoundJobs?: readonly SavedJob[];
   inAreaJobCount?: number;
   pendingLocationJobCount?: number;
   isSearchInProgress?: boolean;
@@ -607,6 +613,7 @@ export function DiscoveryResultsPanel({
   planName = null,
   onAssessJobListing,
   alsoFoundCount = 0,
+  hiddenAlsoFoundJobs = [],
   areAlsoFoundShown = false,
   browserSession,
   discoveryTargets = [],
@@ -1112,6 +1119,21 @@ export function DiscoveryResultsPanel({
     moveToPage(0);
   }, [facetScopeKey, moveToPage]);
 
+  const hiddenTextMatches = hiddenAlsoFoundJobs.filter((job) =>
+    matchesCollectionSearch(deferredQuery, [
+      job.title,
+      job.company,
+      job.location,
+      job.salaryText,
+      job.status,
+      job.applyPath,
+      ...job.workMode,
+      fitRecommendationCopy[
+        job.matchAssessment.recommendation ?? "review_before_applying"
+      ].label,
+      presentListingActivity(getListingActivity(job)).label,
+    ]),
+  ).length;
   const sessionNeedsAttention =
     !isOfflineRuntime &&
     (browserSession.status === "login_required" ||
@@ -1128,7 +1150,9 @@ export function DiscoveryResultsPanel({
     ? {
         busy: true,
         text: [
-          getDiscoveryProgressCountLabel(filteredJobs.length, jobs.length),
+          latestRun?.summary.report
+            ? `${formatDiscoveryRunReportLabel(getDiscoveryRunReportCounts(latestRun))}.`
+            : `${filteredJobs.length} ${filteredJobs.length === 1 ? "result" : "results"} shown.`,
           liveStatusLine ?? "Still checking the remaining sources.",
         ].join(" "),
       }
@@ -1581,17 +1605,11 @@ export function DiscoveryResultsPanel({
                               : "Waiting"}
                     </p>
                     <p>
-                      {source.jobsReviewed}{" "}
-                      {source.jobsReviewed === 1 ? "listing" : "listings"}{" "}
-                      recorded · {source.jobsPersisted + source.jobsStaged}{" "}
-                      {source.jobsPersisted + source.jobsStaged === 1
-                        ? "job"
-                        : "jobs"}{" "}
-                      saved · {source.duplicatesMerged}{" "}
-                      {source.duplicatesMerged === 1
-                        ? "duplicate"
-                        : "duplicates"}{" "}
-                      merged.
+                      {getDiscoverySourceRunCountLabel(
+                        latestRun,
+                        source.targetId,
+                      )}
+                      .
                     </p>
                     {note ? <p className="break-words">{note}</p> : null}
                     {source.state === "failed" ? (
@@ -1899,19 +1917,30 @@ export function DiscoveryResultsPanel({
             />
           </div>
         ) : jobs.length > 0 && filteredJobs.length === 0 ? (
-          <CollectionNoMatches
-            // "No jobs match 'Akron'" over eleven kept results read as a search
-            // that found nothing. It found eleven; none of them answer this
-            // word, and saying both is the only true version.
-            description={`This search kept ${jobs.length} ${
-              jobs.length === 1 ? "job" : "jobs"
-            }, found elsewhere. Clear the search to see ${
-              jobs.length === 1 ? "it" : "them"
-            }.`}
-            noun="jobs"
-            onClear={() => view.setQuery("")}
-            query={view.query}
-          />
+          <div>
+            <CollectionNoMatches
+              description={`This search kept ${jobs.length} ${jobs.length === 1 ? "job" : "jobs"}. None of the shown jobs match this text. Clear the search to see ${jobs.length === 1 ? "it" : "them"}.`}
+              noun="jobs"
+              onClear={() => view.setQuery("")}
+              query={view.query}
+            />
+            {hiddenTextMatches > 0 && onToggleAlsoFound ? (
+              <div className="px-5 pb-4">
+                <p className="mb-2 text-sm text-foreground-soft">
+                  {hiddenTextMatches} hidden weaker{" "}
+                  {hiddenTextMatches === 1 ? "match fits" : "matches fit"} this
+                  text.
+                </p>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={onToggleAlsoFound}
+                >
+                  Show weaker matches
+                </Button>
+              </div>
+            ) : null}
+          </div>
         ) : null}
 
         {filteredJobs.length > 0 ? (
@@ -2168,6 +2197,7 @@ export function DiscoveryResultsPanel({
                               ) : null}
                               {listingDateBadge.shown ? (
                                 <Badge
+                                  className="justify-start text-left"
                                   {...(listingDateExplanation
                                     ? { title: listingDateExplanation }
                                     : {})}

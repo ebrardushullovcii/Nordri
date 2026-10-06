@@ -1,3 +1,4 @@
+import { round3SearchRun } from "../../lib/discovery-round3.test-fixture";
 // @vitest-environment jsdom
 
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
@@ -144,7 +145,11 @@ describe("DiscoveryHistoryModal", () => {
     render(<DiscoveryHistoryModal activeRun={null} isDiscoveryPending={false}
       isTargetPending={() => false} liveEvents={[]} onClose={vi.fn()} open
       recentRuns={[run]} targets={targets} />);
-    expect(screen.getByText("Contributed 3 new jobs to this run.")).toBeTruthy();
+    expect(
+      screen.getByText(
+        "inspected not recorded · 3 saved · rejected not recorded · 0 duplicates · deferred not recorded · pages covered not recorded.",
+      ),
+    ).toBeTruthy();
     expect(screen.getByText("By source: Greenhouse roles — 3 jobs.")).toBeTruthy();
     expect(
       screen.getByText("Could not read this source").closest("details"),
@@ -283,7 +288,9 @@ describe("DiscoveryHistoryModal", () => {
     );
 
     expect(
-      screen.getByText("Contributed 0 new jobs to this run."),
+      screen.getByText(
+        "inspected not recorded · 0 saved · rejected not recorded · 0 duplicates · deferred not recorded · pages covered not recorded.",
+      ),
     ).toBeTruthy();
     expect(screen.getByText(/^Finished( · .*)?$/u)).toBeTruthy();
     expect(
@@ -340,7 +347,7 @@ describe("DiscoveryHistoryModal", () => {
 
     expect(
       screen.getByText(
-        "Contributed 0 new jobs to this run; 0 duplicates merged · 10 seen before.",
+        "inspected not recorded · 0 saved · rejected not recorded · 10 duplicates · deferred not recorded · pages covered not recorded.",
       ),
     ).toBeTruthy();
     expect(screen.queryByText(/No jobs matched this plan/u)).toBeNull();
@@ -483,7 +490,7 @@ it("shows reconciling source counts and the model's reason for an excluded listi
   );
   expect(
     screen.getByText(
-      "4 inspected · 1 saved · 1 rejected · 1 duplicates · 1 deferred · 2 pages covered.",
+      "4 inspected · 1 saved · 1 rejected · 1 duplicate · 1 deferred · 2 pages covered.",
     ),
   ).toBeTruthy();
   expect(screen.getByText(/Found on Other board: 4 inspected/)).toBeTruthy();
@@ -517,7 +524,7 @@ it("uses singular duplicate counts in both run totals and source details", () =>
     />,
   );
   expect(screen.getByText("1 duplicate merged")).toBeTruthy();
-  expect(screen.getByText(/1 duplicate merged · 0 seen before/)).toBeTruthy();
+  expect(screen.getByText(/1 duplicate · deferred not recorded/)).toBeTruthy();
   expect(screen.queryByText(/1 duplicates merged/)).toBeNull();
 });
 
@@ -542,4 +549,28 @@ it("places Search history above the open assistant instead of clipping its detai
   const dialog = screen.getByRole("dialog", { name: "Search history" });
   expect(dialog.parentElement?.className).toContain("z-[140]");
   expect(dialog.parentElement?.className).toContain("inset-0");
+});
+
+it("uses the report for headline, duplicate tile and source counts without repeating its own source line", () => {
+  const run = round3SearchRun();
+  render(
+    <DiscoveryHistoryModal
+      open
+      activeRun={null}
+      isDiscoveryPending={false}
+      isTargetPending={() => false}
+      liveEvents={[]}
+      onClose={vi.fn()}
+      recentRuns={[run]}
+      targets={[{ ...targets[0]!, id: "source", label: "Example board" }]}
+    />,
+  );
+  expect(screen.getAllByText(/27 duplicates merged/).length).toBeGreaterThan(0);
+  expect(screen.queryByText("3 duplicates merged")).toBeNull();
+  expect(
+    screen.getByText(
+      "52 inspected · 25 saved · 0 rejected · 27 duplicates · 0 deferred · 7 pages covered.",
+    ),
+  ).toBeTruthy();
+  expect(screen.queryByText(/Found on Example board:/)).toBeNull();
 });

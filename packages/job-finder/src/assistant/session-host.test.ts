@@ -579,6 +579,26 @@ describe("assistant session host", () => {
     expect(runs[0]?.status).toBe("cancelled");
   });
 
+  it("stops assistant resume batches from the Shortlisted control and saves the stop status", async () => {
+    const { host, harness } = setup();
+    await harness.workspaceService.saveResumeBatchCheckpoint({
+      id: "active_assistant",
+      jobIds: ["one", "two"],
+      activeJobIds: ["one"],
+      completedJobIds: [],
+      done: false,
+      running: true,
+      stopRequested: false,
+    });
+    await host.stopResumeBatches();
+    const snapshot = await harness.workspaceService.getWorkspaceSnapshot();
+    expect(snapshot.intelligence.resumeBatchCheckpoint).toMatchObject({
+      running: true,
+      stopRequested: true,
+      activeJobIds: ["one"],
+    });
+  });
+
   it("does not continue an interrupted resume queue after restart", async () => {
     const { host, repository, harness, ports } = setup();
     const conversation = await host.createConversation();
@@ -625,6 +645,38 @@ describe("assistant session host", () => {
     expect(
       (await repository.getOperation("interrupted_resume_operation"))?.status,
     ).toBe("cancelled");
+    await harness.workspaceService.saveResumeBatchCheckpoint({
+      id: "continued",
+      resumedBatchIds: ["old_resume_batch"],
+      jobIds: ["one"],
+      completedJobIds: ["one"],
+      activeJobIds: [],
+      done: true,
+      stopRequested: false,
+      running: false,
+    });
+    await resumed.refreshFinishedResumeBatchNotices();
+    const finished = await resumed.readConversation({
+      conversationId: conversation.id,
+    });
+    expect(
+      finished.messages
+        .flatMap((message) => message.parts)
+        .some(
+          (part) =>
+            part.type === "notice" && part.text.includes("ask again to write"),
+        ),
+    ).toBe(false);
+    expect(
+      finished.messages
+        .flatMap((message) => message.parts)
+        .some(
+          (part) =>
+            part.type === "notice" &&
+            part.text ===
+              "Resume batch finished. Review the results in Shortlisted.",
+        ),
+    ).toBe(true);
   });
 
   it("applies a requested profile edit at once, with a change receipt and Undo", async () => {

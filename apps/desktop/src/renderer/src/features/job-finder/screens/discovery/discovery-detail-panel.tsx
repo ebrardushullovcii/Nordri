@@ -1539,7 +1539,11 @@ export function DiscoveryDetailPanel({
                     void onAssessJobListing(jobId)
                       .catch((error: unknown) => {
                         setAssessmentErrorJobId(jobId);
-                        setAssessmentError(describeListingReadFailure(error));
+                        setAssessmentError(
+                          describeListingReadFailure(error, {
+                            listingUrl: selectedJob.canonicalUrl,
+                          }),
+                        );
                       })
                       .finally(() =>
                         setAssessingJobId((current) =>

@@ -629,6 +629,46 @@ export function ApplicationsCrmViews(props: {
   ]);
   const selectedIdSet = useMemo(() => new Set(selectedIds), [selectedIds]);
   const columnVisible = (column: CrmColumn) => visibleColumns.includes(column);
+  const trackerPanelRef = useRef<HTMLElement>(null);
+  const tablePaneRef = useRef<HTMLDivElement>(null);
+  const [tableMinimum, setTableMinimum] = useState({ pane: 0, panel: 0 });
+  useLayoutEffect(() => {
+    const pane = tablePaneRef.current;
+    const panel = trackerPanelRef.current;
+    const table = pane?.querySelector("table");
+    if (!pane || !panel || !table) return;
+    const measure = () => {
+      const rows = Array.from(table.tBodies[0]?.rows ?? []).slice(0, 3);
+      const rowHeights = rows.map((row) => row.getBoundingClientRect().height);
+      const rowHeight = Math.max(0, ...rowHeights);
+      const paneHeight = Math.ceil(
+        (table.tHead?.getBoundingClientRect().height ?? 0) +
+          rowHeights.reduce((total, height) => total + height, 0) +
+          (3 - rows.length) * rowHeight +
+          Math.max(0, pane.offsetHeight - pane.clientHeight),
+      );
+      const otherHeight = Array.from(panel.children).reduce(
+        (total, child) =>
+          total + (child === pane ? 0 : child.getBoundingClientRect().height),
+        0,
+      );
+      const panelHeight = Math.ceil(paneHeight + otherHeight + 2);
+      setTableMinimum((current) =>
+        current.pane === paneHeight && current.panel === panelHeight
+          ? current
+          : { pane: paneHeight, panel: panelHeight },
+      );
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(table);
+    for (const child of panel.children) {
+      if (child !== pane) observer.observe(child);
+    }
+    return () => observer.disconnect();
+  }, [props.view, pagedRecords, density, selectedIds.length]);
+
   const rowPadding =
     density === "compact" ? "py-2" : density === "detailed" ? "py-5" : "py-3";
 
@@ -779,7 +819,15 @@ export function ApplicationsCrmViews(props: {
   }
 
   return (
-    <section className="surface-panel-shell @container/tracker flex min-h-0 max-h-[calc(100dvh-15rem)] min-w-0 flex-1 flex-col overflow-hidden rounded-(--radius-field) border border-(--surface-panel-border)">
+    <section
+      ref={trackerPanelRef}
+      style={
+        props.view === "table" && tableMinimum.pane > 0
+          ? { minHeight: tableMinimum.panel }
+          : undefined
+      }
+      className="surface-panel-shell @container/tracker flex min-h-0 max-h-[calc(100dvh-15rem)] min-w-0 flex-1 flex-col overflow-hidden rounded-(--radius-field) border border-(--surface-panel-border)"
+    >
       {/* The page header already says "Tracker"; the panel's own name is
           for assistive technology and names the table. Search, count,
           Show, Sort, density, saved views, columns and the view switch share
@@ -958,6 +1006,10 @@ export function ApplicationsCrmViews(props: {
 
       {props.view === "table" && filteredRecords.length > 0 ? (
         <div
+          ref={tablePaneRef}
+          style={
+            tableMinimum.pane > 0 ? { minHeight: tableMinimum.pane } : undefined
+          }
           className="min-h-0 min-w-0 flex-1 overflow-auto"
           data-locked-pane-scroll-region
         >

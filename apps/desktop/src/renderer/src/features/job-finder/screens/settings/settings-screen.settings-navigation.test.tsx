@@ -714,3 +714,29 @@ it("places workflow timing below both diagnostics columns", () => {
   expect(timing?.previousElementSibling?.className).toContain("xl:grid-cols-");
   expect(timing?.textContent).toContain("Workflow timing evidence");
 });
+
+it("scrolls the last focused tab fully into view with edge clearance", () => {
+  cleanup();
+  render(
+    <MemoryRouter>
+      <SettingsScreen {...baseProps} />
+    </MemoryRouter>,
+  );
+  const row = document.querySelector<HTMLElement>(
+    "[data-settings-subnav-row]",
+  )!;
+  const link = screen.getByRole("link", { name: "Delete everything" });
+  Object.defineProperties(row, {
+    clientWidth: { configurable: true, value: 300 },
+    scrollWidth: { configurable: true, value: 1012 },
+    offsetLeft: { configurable: true, value: 0 },
+  });
+  Object.defineProperties(link, {
+    offsetLeft: { configurable: true, value: 800 },
+    offsetWidth: { configurable: true, value: 200 },
+  });
+  fireEvent.focus(link);
+  expect(row.scrollLeft).toBe(712);
+  expect(row.className).toContain("px-3");
+  expect(row.dataset.moreAfter).toBeUndefined();
+});

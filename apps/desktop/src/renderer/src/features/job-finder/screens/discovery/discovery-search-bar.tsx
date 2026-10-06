@@ -242,19 +242,9 @@ export function DiscoverySearchBar(props: {
     availableSources.map((source) => source.id).sort(),
   );
   useEffect(() => {
-    const enabledIds = new Set(JSON.parse(availableSourceIdsKey) as string[]);
-    setSelectedSourceIds((current) => {
-      if (current === "all") return current;
-      // A single source has no picker. Keep it searchable when setup edits
-      // or a plan change remove the previously selected sources.
-      if (enabledIds.size <= 1) return "all";
-      const retained = current.filter((id) => enabledIds.has(id));
-      if (current.length > 0 && retained.length === 0) return "all";
-      if (retained.length === enabledIds.size) return "all";
-      return retained.length === current.length ? current : retained;
-    });
+    setSelectedSourceIds("all");
     setIsSourcePickerOpen(false);
-  }, [availableSourceIdsKey]);
+  }, [availableSourceIdsKey, props.activeCampaignId]);
   const selectedSourceCount =
     selectedSourceIds === "all"
       ? availableSources.length
@@ -401,7 +391,7 @@ export function DiscoverySearchBar(props: {
             onClick={() => setSelectedSourceIds("all")}
             type="button"
           >
-            All enabled sources
+            All sources in this plan
           </button>
           {availableSources.map((source) => {
             const checked =

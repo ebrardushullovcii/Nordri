@@ -76,7 +76,46 @@ export function isPreparedApplicationStatus(record: {
  * be the same untruth in a new place. Missing values render as
  * "not recorded".
  */
+export const DiscoverySourceRunReportSchema = z.object({
+  targetId: NonEmptyStringSchema,
+  inspected: z.number().int().nonnegative().nullable(),
+  saved: z.number().int().nonnegative(),
+  rejected: z.number().int().nonnegative().nullable(),
+  duplicates: z.number().int().nonnegative(),
+  deferred: z.number().int().nonnegative().nullable(),
+  pagesCovered: z.number().int().nonnegative().nullable(),
+});
+export type DiscoverySourceRunReport = z.infer<
+  typeof DiscoverySourceRunReportSchema
+>;
+
+export function formatDiscoverySourceAccounting(
+  source: DiscoverySourceRunReport,
+): string {
+  const count = (value: number | null, label: string) => {
+    if (value === null) return `${label} not recorded`;
+    const noun =
+      value === 1
+        ? label === "duplicates"
+          ? "duplicate"
+          : label === "pages covered"
+            ? "page covered"
+            : label
+        : label;
+    return `${value} ${noun}`;
+  };
+  return [
+    count(source.inspected, "inspected"),
+    count(source.saved, "saved"),
+    count(source.rejected, "rejected"),
+    count(source.duplicates, "duplicates"),
+    count(source.deferred, "deferred"),
+    count(source.pagesCovered, "pages covered"),
+  ].join(" · ");
+}
+
 export const DiscoveryRunReportSchema = z.object({
+  sources: z.array(DiscoverySourceRunReportSchema).optional(),
   rejected: z.number().int().nonnegative().nullable().optional(),
   deferred: z.number().int().nonnegative().nullable().optional(),
   pagesCovered: z.number().int().nonnegative().nullable().optional(),

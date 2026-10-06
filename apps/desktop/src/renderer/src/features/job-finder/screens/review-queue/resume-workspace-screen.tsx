@@ -1326,9 +1326,7 @@ export function ResumeWorkspaceScreen(props: ResumeWorkspaceScreenProps) {
       >
         <ResumeWorkspaceStudioShell
           approvalBlockedReason={approvalBlockedReason}
-          approvalStateLabel={
-            rewriteFailed ? "Rewrite failed" : approvalStateLabel
-          }
+          approvalStateLabel={approvalStateLabel}
           approvedExportPageCount={approvedExport?.pageCount ?? null}
           canApproveResume={Boolean(
             selectedTemplateApprovalEligible &&
@@ -1491,12 +1489,7 @@ export function ResumeWorkspaceScreen(props: ResumeWorkspaceScreenProps) {
               />
             </ResumeWorkspaceContextDisclosure>
           }
-          rewriteFailed={rewriteFailed}
-          studioStatusMessage={
-            rewriteFailed
-              ? "Your previous resume was kept."
-              : studioStatusMessage
-          }
+          studioStatusMessage={rewriteFailed ? "" : studioStatusMessage}
           templatePanel={templatePanel}
           validationIssues={visibleValidationIssues}
         />

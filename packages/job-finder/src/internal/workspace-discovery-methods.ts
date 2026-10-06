@@ -1,3 +1,4 @@
+import { buildDiscoveryRunReport } from "./workspace-discovery-run-helpers";
 import {
   withPlanAssessment,
   readPlanAssessment,
@@ -2487,6 +2488,12 @@ export function createWorkspaceDiscoveryMethods(
         };
 
         const persistTargetWorkingState = async (): Promise<void> => {
+          activeRun = updateRunSummary(activeRun, {
+            report: buildDiscoveryRunReport(
+              activeRun,
+              new Date().toISOString(),
+            ),
+          });
           await persistWorkingSavedJobs((current) =>
             finalizeDiscoveryState(
               {
@@ -2513,6 +2520,12 @@ export function createWorkspaceDiscoveryMethods(
         // unprocessed postings: keeps the resume checkpoint and live run
         // truth durable without a saved-job delta commit or ledger rebase.
         const persistTargetRunStateOnly = async (): Promise<void> => {
+          activeRun = updateRunSummary(activeRun, {
+            report: buildDiscoveryRunReport(
+              activeRun,
+              new Date().toISOString(),
+            ),
+          });
           await ctx.persistDiscoveryState((current) =>
             finalizeDiscoveryState(
               {

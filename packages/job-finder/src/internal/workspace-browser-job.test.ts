@@ -4,6 +4,42 @@ import { createAiClient } from "../workspace-service.test-runtimes";
 import { createSeed } from "../workspace-service.test-fixtures";
 
 describe("Add this job", () => {
+  it("returns the saved record before fit judging finishes", async () => {
+    let finish!: () => void;
+    let judged = false;
+    const assessJobFit = vi.fn(async () => {
+      await new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      judged = true;
+      return null;
+    });
+    const posting = {
+      ...createSeed().savedJobs[0]!,
+      canonicalUrl: "https://board.example.test/jobs/new",
+      sourceJobId: "new",
+    };
+    const { workspaceService, repository } = createWorkspaceServiceHarness({
+      aiClient: {
+        ...createAiClient(),
+        extractJobsFromPage: vi.fn().mockResolvedValue([posting]),
+        assessJobFit,
+      },
+    });
+    const saved = await workspaceService.addJobFromBrowserPage({
+      html: "<main>Job</main>",
+      pageUrl: posting.canonicalUrl,
+    });
+    expect(assessJobFit).toHaveBeenCalledOnce();
+    expect(judged).toBe(false);
+    expect(
+      (await repository.listSavedJobs()).find((job) => job.id === saved.jobId)
+        ?.personSupplied,
+    ).toBe(true);
+    expect(saved.company).toBe(posting.company);
+    finish();
+    await vi.waitFor(() => expect(judged).toBe(true));
+  });
   it("reads the page with the model and saves its listing source without shortlisting automatically", async () => {
     const posting = {
       ...createSeed().savedJobs[0]!,

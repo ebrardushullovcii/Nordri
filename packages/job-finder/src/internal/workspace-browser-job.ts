@@ -41,29 +41,6 @@ export async function addJobFromBrowserPage(
     ctx.repository.getSearchPreferences(),
     ctx.repository.getCampaignState(),
   ]);
-  // Saving succeeds even when assessment is unavailable; the normal listing action can retry it.
-  try {
-    const matchAssessment = await createMatchAssessmentAsync(
-      ctx.aiClient,
-      profile,
-      campaignState?.campaigns.find(
-        (plan) => plan.id === campaignState.activeCampaignId,
-      )?.searchPreferences ?? preferences,
-      posting,
-    );
-    await ctx.repository.commitSavedJobDelta({
-      update: (job) =>
-        job.id === jobId
-          ? withPlanAssessment(
-              job,
-              campaignState?.activeCampaignId ?? null,
-              matchAssessment,
-            )
-          : job,
-    });
-  } catch {
-    /* Leave the saved job unjudged when the model is unavailable. */
-  }
   const activeId = await ctx.getActiveCampaignId();
   const source = preferences.discovery.targets
     .filter((source) => {
@@ -93,9 +70,37 @@ export async function addJobFromBrowserPage(
           }
         : job,
   });
+  // The saved record is available immediately; fit judging finishes in the background.
+  void (async () => {
+    try {
+      const matchAssessment = await createMatchAssessmentAsync(
+        ctx.aiClient,
+        profile,
+        campaignState?.campaigns.find(
+          (plan) => plan.id === campaignState.activeCampaignId,
+        )?.searchPreferences ?? preferences,
+        posting,
+      );
+      await ctx.repository.commitSavedJobDelta({
+        update: (job) =>
+          job.id === jobId
+            ? withPlanAssessment(
+                job,
+                campaignState?.activeCampaignId ?? null,
+                matchAssessment,
+              )
+            : job,
+      });
+    } catch {
+      /* Leave the saved job unjudged when the model is unavailable. */
+    } finally {
+      ctx.onListingAssessmentFinished?.();
+    }
+  })();
   return {
     jobId,
     title: posting.title,
+    company: posting.company,
     planName:
       campaignState?.campaigns.find((plan) => plan.id === activeId)?.name ??
       null,

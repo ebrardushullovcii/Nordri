@@ -14,6 +14,7 @@ import type {
   SaveJobSearchCampaignInput,
 } from "@nordri/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { round3SearchRun } from "../../lib/discovery-round3.test-fixture";
 import { resetJobFinderOverlaysForTests } from "../../lib/job-finder-overlay-ownership";
 import { deviceTimeZone } from "../../lib/job-finder-timestamp-format";
 import { describePlanRunFailure, CampaignsScreen } from "./campaigns-screen";
@@ -2684,4 +2685,48 @@ it("labels an explicitly selected source that is off in Profile without disablin
   expect(screen.getByLabelText<HTMLInputElement>(target.label).checked).toBe(
     true,
   );
+});
+
+it("uses the shared run report for the plan card without replacing new jobs with retained jobs", () => {
+  const run = round3SearchRun();
+  const plan: JobSearchCampaign = {
+    ...campaign("plan", "Example search", "precision"),
+    latestDigest: {
+      id: "digest",
+      campaignId: "plan",
+      discoveryRunId: run.id,
+      generatedAt: run.startedAt,
+      counts: {
+        new: 22,
+        changed: 0,
+        reactivated: 0,
+        inactive: 0,
+        known: 0,
+        skipped: 0,
+      },
+      failedSources: [],
+      sourceOutcome: null,
+      jobIds: [],
+      report: { ...run.summary.report!, new: 22 },
+    },
+  };
+  render(
+    <CampaignsScreen
+      activeCampaignId="plan"
+      campaigns={[plan]}
+      discoveryRuns={[run]}
+      onSaveCampaign={vi.fn()}
+      onSelectCampaign={vi.fn()}
+      pending={false}
+    />,
+  );
+  const details = screen
+    .getByText("What the last run found")
+    .closest("details")!;
+  expect(details.textContent).toContain("25 new to you");
+  expect(details.textContent).toContain("22 kept");
+  expect(details.textContent).toContain(
+    "52 postings seen · 25 unique jobs · 25 new to you · 22 kept by this plan · 27 duplicates merged · 0 rejected · 0 deferred · 7 pages covered",
+  );
+  expect(details.textContent).not.toContain("22 new to you");
 });

@@ -528,8 +528,9 @@ describe("campaign workspace core", () => {
 
     const state = await repository.getCampaignState();
     expect(state?.campaigns[0]?.jobIds).toEqual(["high", "mid"]);
+    // The run saved three new jobs; the plan retained its strongest two.
     expect(state?.campaigns[0]?.latestDigest?.report).toMatchObject({
-      new: 2,
+      new: 3,
       retained: 2,
     });
     expect(state?.campaigns[0]?.history[0]?.discoveryRunId).toBe("run_1");

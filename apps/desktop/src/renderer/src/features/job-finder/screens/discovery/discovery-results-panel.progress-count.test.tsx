@@ -1,3 +1,4 @@
+import { round3SearchRun } from "../../lib/discovery-round3.test-fixture";
 // @vitest-environment jsdom
 
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
@@ -60,12 +61,6 @@ function renderStreamingResults(jobs: readonly SavedJob[]) {
   );
 }
 
-/** The count sentence that leads the results status line while a run streams. */
-function getProgressCount(): string {
-  const line = screen.getByTestId("discovery-results-status-line");
-  return /^.*?(?:found|shown)\./.exec(line.textContent ?? "")?.[0] ?? "";
-}
-
 afterEach(() => {
   cleanup();
   window.localStorage?.clear();
@@ -93,13 +88,17 @@ describe("DiscoveryResultsPanel streaming progress count", () => {
       createJob("beta", "Designer beta"),
     ]);
 
-    expect(getProgressCount()).toBe("2 listings found.");
+    expect(
+      screen.getByTestId("discovery-results-status-line").textContent,
+    ).toContain("2 results shown.");
   });
 
   it("singularizes a single streaming match", () => {
     renderStreamingResults([createJob("alpha", "Engineer alpha")]);
 
-    expect(getProgressCount()).toBe("1 listing found.");
+    expect(
+      screen.getByTestId("discovery-results-status-line").textContent,
+    ).toContain("1 result shown.");
   });
 
   it("reports the visible subset when a persisted query hides results", () => {
@@ -118,7 +117,9 @@ describe("DiscoveryResultsPanel streaming progress count", () => {
 
     // The persisted query survives remounts, so the callout must never claim
     // the raw total while the visible list is narrower.
-    expect(getProgressCount()).toBe("1 of 2 listings shown.");
+    expect(
+      screen.getByTestId("discovery-results-status-line").textContent,
+    ).toContain("1 result shown.");
     expect(screen.getByText("Designer beta")).toBeTruthy();
     expect(screen.queryByText("Engineer alpha")).toBeNull();
   });
@@ -136,13 +137,17 @@ describe("DiscoveryResultsPanel streaming progress count", () => {
       createJob("alpha", "Engineer alpha"),
       createJob("beta", "Designer beta"),
     ]);
-    expect(getProgressCount()).toBe("1 of 2 listings shown.");
+    expect(
+      screen.getByTestId("discovery-results-status-line").textContent,
+    ).toContain("1 result shown.");
 
     fireEvent.change(screen.getByLabelText("Find a job"), {
       target: { value: "" },
     });
 
-    expect(getProgressCount()).toBe("2 listings found.");
+    expect(
+      screen.getByTestId("discovery-results-status-line").textContent,
+    ).toContain("2 results shown.");
     expect(screen.getByText("Engineer alpha")).toBeTruthy();
   });
 });
@@ -159,4 +164,27 @@ describe("getDiscoveryProgressCountLabel", () => {
     expect(getDiscoveryProgressCountLabel(1, 2)).toBe("1 of 2 listings shown.");
     expect(getDiscoveryProgressCountLabel(3, 4)).toBe("3 of 4 listings shown.");
   });
+});
+
+it("reads the same report for the live line and source summary regardless of displayed inventory", () => {
+  const run = round3SearchRun();
+  render(
+    <DiscoveryResultsPanel
+      browserSession={browserSession}
+      isSearchInProgress
+      jobs={[createJob("one", "Designer")]}
+      latestRun={{ ...run, state: "running" }}
+      onSelectJob={vi.fn()}
+      selectedJob={null}
+    />,
+  );
+  expect(
+    screen.getByTestId("discovery-results-status-line").textContent,
+  ).toContain("25 new to you · 22 kept by this plan · 27 duplicates merged");
+  expect(
+    screen.getByTestId("discovery-source-summaries").textContent,
+  ).toContain(
+    "52 inspected · 25 saved · 0 rejected · 27 duplicates · 0 deferred · 7 pages covered",
+  );
+  expect(screen.queryByText(/28 listings recorded/)).toBeNull();
 });

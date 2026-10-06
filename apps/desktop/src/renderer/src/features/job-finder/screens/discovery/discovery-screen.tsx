@@ -829,6 +829,10 @@ export function DiscoveryScreen(props: {
       preserveSelectedJob,
     ],
   );
+  const hiddenAlsoFoundJobs = useMemo(() => {
+    const visibleIds = new Set(resultVisibility.jobs.map((job) => job.id));
+    return stableJobs.filter((job) => !visibleIds.has(job.id));
+  }, [resultVisibility.jobs, stableJobs]);
   const inspectedJob = getDiscoveryInspectedJob(
     resultVisibility.jobs,
     selectedJob?.id ?? null,
@@ -1285,6 +1289,7 @@ export function DiscoveryScreen(props: {
           }
           liveStatusLine={liveStatusLine}
           hiddenAlsoFoundCount={hiddenJobCount}
+          hiddenAlsoFoundJobs={hiddenAlsoFoundJobs}
           inAreaJobCount={
             stableJobs.filter(
               (job) =>

@@ -160,6 +160,7 @@ export const AddBrowserJobResultSchema = z
   .object({
     jobId: z.string().min(1),
     title: z.string(),
+    company: z.string(),
     planName: z.string().nullable(),
   })
   .strict();

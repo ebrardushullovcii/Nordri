@@ -297,7 +297,7 @@ it("keeps recorded source explanations and coverage after a no-match search", ()
   expect(
     screen.getByText("No project management roles in the listings read."),
   ).toBeTruthy();
-  expect(screen.getByText(/12 listings recorded/)).toBeTruthy();
+  expect(screen.getAllByText(/inspected not recorded/)).toHaveLength(2);
   expect(
     screen.getByTestId("discovery-source-summaries").hasAttribute("open"),
   ).toBe(false);
@@ -388,7 +388,7 @@ it.each(["running", "cancelled"] as const)(
     ).toBeTruthy();
     expect(
       screen.getByText(
-        "1 listing recorded · 1 job saved · 1 duplicate merged.",
+        "inspected not recorded · 1 saved · rejected not recorded · 1 duplicate · deferred not recorded · pages covered not recorded.",
       ),
     ).toBeTruthy();
     expect(screen.queryByText(/page.goto/)).toBeNull();

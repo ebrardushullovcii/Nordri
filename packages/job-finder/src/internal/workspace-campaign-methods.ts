@@ -535,9 +535,6 @@ export async function commitCampaignRunTerminal(input: {
       ...(latestRun.summary.report ??
         buildDiscoveryRunReport(latestRun, measuredAt)),
       alreadyHere: retentionCounts.alreadyHere,
-      new: retainedRunJobs.filter(
-        (job) => !input.beforeJobProvenanceFingerprints.has(job.id),
-      ).length,
       retained: retentionCounts.retained,
       worthOpening: retentionCounts.worthOpening,
       retentionLimitApplied: campaign.limits.retainedJobTarget,

@@ -597,7 +597,7 @@ describe("ResumeWorkspaceScreen", () => {
 
   it("offers one rewrite for an older translation and hides unreliable additions", () => {
     const workspace = buildWorkspace();
-    workspace.draft.writtenLanguage = "German";
+    delete workspace.draft.writtenLanguage;
     workspace.draft.language = "German";
     const skills = {
       ...workspace.draft.sections[0]!,
@@ -2367,6 +2367,13 @@ describe("ResumeWorkspaceScreen", () => {
         "The writing assistant did not answer. Try again in a few minutes.",
       ),
     ).toBeTruthy();
+    expect(screen.queryByText("Rewrite failed")).toBeNull();
+    expect(
+      screen.queryByText(
+        "Your previous resume was kept. Try the rewrite again.",
+      ),
+    ).toBeNull();
+    expect(screen.queryByText("Your previous resume was kept.")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(onRegenerateDraft).toHaveBeenCalledWith("job_ready");
     rerender(

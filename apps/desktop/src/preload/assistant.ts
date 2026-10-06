@@ -48,6 +48,9 @@ export function createAssistantBridge(ipc: {
         AssistantNavigationAcknowledgmentSchema.parse(input),
       );
     },
+    stopResumeBatch: async () => {
+      await ipc.invoke("job-finder:assistant:stop-resume-batch");
+    },
     syncResumeBatch: async (state) =>
       AssistantResumeBatchStateSchema.parse(
         await ipc.invoke(

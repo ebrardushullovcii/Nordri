@@ -1,4 +1,7 @@
-import { formatDiscoveryAccounting } from "@nordri/contracts";
+import {
+  formatDiscoveryAccounting,
+  formatDiscoverySourceAccounting,
+} from "@nordri/contracts";
 import type {
   DiscoveryActivityEvent,
   DiscoveryRunRecord,
@@ -481,4 +484,32 @@ function formatSavedAndKeptCounts(
   return `${savedByRun} new ${
     savedByRun === 1 ? "job" : "jobs"
   } saved on this device · ${keptInPlan} kept in your current search plan (its 'Jobs to retain' limit; raise it in Search plans → Edit to keep more)`;
+}
+
+/** A source's part of the same run report; older runs say what was not recorded. */
+export function getDiscoverySourceRunCountLabel(
+  run: Pick<DiscoveryRunRecord, "summary"> &
+    Partial<Pick<DiscoveryRunRecord, "targetExecutions">>,
+  targetId: string,
+): string {
+  const source = run.summary.report?.sources?.find(
+    (source) => source.targetId === targetId,
+  );
+  if (source) return formatDiscoverySourceAccounting(source);
+  const execution = run.targetExecutions?.find(
+    (source) => source.targetId === targetId,
+  );
+  if (!execution) return "Counts not recorded for this source";
+  return formatDiscoverySourceAccounting({
+    targetId,
+    inspected: execution.jobsInspected ?? null,
+    saved: execution.jobsPersisted + execution.jobsStaged,
+    rejected:
+      execution.jobsInspected !== undefined
+        ? (execution.rejectedListings?.length ?? 0) + execution.invalidSkipped
+        : null,
+    duplicates: execution.duplicatesMerged + execution.jobsSkippedByLedger,
+    deferred: execution.listingsDeferred ?? null,
+    pagesCovered: execution.pagesCovered ?? null,
+  });
 }

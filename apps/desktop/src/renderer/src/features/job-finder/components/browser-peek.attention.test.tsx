@@ -91,11 +91,25 @@ it("saves the exact current tab from the visible Add this job action", async () 
     },
   );
   const previous = window.nordri;
-  const addCurrentJob = vi.fn().mockResolvedValue({
+  let finishAdd!: (value: {
+    jobId: string;
+    title: string;
+    company: string;
+    planName: string;
+  }) => void;
+  const addCurrentJob = vi.fn(
+    () =>
+      new Promise((resolve) => {
+        finishAdd = resolve;
+      }),
+  );
+  const saved = {
     jobId: "saved",
     title: "Designer",
+    company: "Example Studio",
     planName: "Design",
-  });
+  };
+  const queueJobForReview = vi.fn().mockResolvedValue(undefined);
   const state: DesktopBrowserState = {
     ...staleAttentionState,
     phase: "ready",
@@ -116,6 +130,7 @@ it("saves the exact current tab from the visible Add this job action", async () 
   Object.defineProperty(window, "nordri", {
     configurable: true,
     value: {
+      jobFinder: { queueJobForReview },
       browser: {
         addCurrentJob,
         getState: vi.fn().mockResolvedValue(state),
@@ -137,6 +152,33 @@ it("saves the exact current tab from the visible Add this job action", async () 
       expect(addCurrentJob).toHaveBeenCalledExactlyOnceWith({
         tabId: "chosen",
       }),
+    );
+    expect(screen.getByRole("status").textContent).toContain(
+      "Adding this job…",
+    );
+    finishAdd(saved);
+    await screen.findByText("Saved Designer at Example Studio.");
+    expect(screen.getByRole("status").textContent).toContain("Shortlist");
+    fireEvent.click(screen.getByRole("button", { name: "Shortlist" }));
+    await waitFor(() =>
+      expect(queueJobForReview).toHaveBeenCalledWith("saved"),
+    );
+    await screen.findByText("Designer at Example Studio added to Shortlisted.");
+    addCurrentJob.mockImplementationOnce(() =>
+      Promise.reject(
+        new Error(
+          "No job listing was found on this page. Open the job's own listing and try again.",
+        ),
+      ),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "More browser actions" }),
+    );
+    fireEvent.click(screen.getByRole("menuitem", { name: "Add this job" }));
+    await waitFor(() =>
+      expect(screen.getByRole("status").textContent).toContain(
+        "No job listing",
+      ),
     );
   } finally {
     cleanup();

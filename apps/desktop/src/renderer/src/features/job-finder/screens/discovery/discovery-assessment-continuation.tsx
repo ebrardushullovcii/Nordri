@@ -31,15 +31,20 @@ export function DiscoveryAssessmentContinuation(props: {
     setError(null);
     const batch = unread.slice(0, 20);
     setProgress({ done: 0, total: batch.length });
+    let listingUrl: string | undefined;
     try {
       for (const [index, job] of batch.entries()) {
         if (stopped.current) break;
+        listingUrl = job.canonicalUrl;
         await props.onAssess(job.id);
         if (!stopped.current)
           setProgress({ done: index + 1, total: batch.length });
       }
     } catch (error) {
-      if (!stopped.current) setError(describeListingReadFailure(error));
+      if (!stopped.current)
+        setError(
+          describeListingReadFailure(error, listingUrl ? { listingUrl } : {}),
+        );
     } finally {
       busy.current = false;
       if (!stopped.current) setProgress(null);

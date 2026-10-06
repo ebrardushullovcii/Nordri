@@ -1015,3 +1015,42 @@ it("offers the saved batch when its jobs are outside the current campaign", () =
   fireEvent.click(screen.getByRole("button", { name: "Continue batch" }));
   expect(onPrepareTailoredDrafts).toHaveBeenCalledWith(["elsewhere"]);
 });
+
+it("shows an assistant-owned batch in the usual control with progress, time left and Stop", async () => {
+  const previous = window.nordri;
+  const stopResumeBatch = vi.fn().mockResolvedValue(undefined);
+  Object.defineProperty(window, "nordri", {
+    configurable: true,
+    value: { assistant: { stopResumeBatch } },
+  });
+  try {
+    renderScreen({
+      queue: [
+        createEligibleItem("one"),
+        createEligibleItem("two"),
+        createEligibleItem("three"),
+      ],
+      resumeBatchCheckpoint: {
+        id: "assistant",
+        jobIds: ["one", "two", "three"],
+        activeJobIds: ["three"],
+        completedJobIds: ["one", "two"],
+        done: false,
+        stopRequested: false,
+        running: true,
+        durationsMs: [60000, 60000],
+      },
+    });
+    expect(
+      screen.getByText(/Writing resumes · 2 of 3 finished · about 1 min left/),
+    ).toBeTruthy();
+    expect(screen.queryByTestId("create-missing-resumes")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Stop new resumes" }));
+    await vi.waitFor(() => expect(stopResumeBatch).toHaveBeenCalledOnce());
+  } finally {
+    Object.defineProperty(window, "nordri", {
+      configurable: true,
+      value: previous,
+    });
+  }
+});

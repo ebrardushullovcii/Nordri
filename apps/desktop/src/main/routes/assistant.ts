@@ -114,6 +114,10 @@ export function registerAssistantRouteHandlers(ipcMain: IpcMain): void {
       return batch;
     },
   );
+  ipcMain.handle("job-finder:assistant:stop-resume-batch", async (event) => {
+    assertAppWindow(event);
+    await (await getAssistantHost()).stopResumeBatches();
+  });
   ipcMain.handle("job-finder:assistant:get-status", async () => {
     const host = await getAssistantHost();
     return AssistantStatusSchema.parse(host.getStatus());

@@ -268,6 +268,26 @@ it("partitions inspected listings across sources into saved, rejected, duplicate
     duplicates: 2,
     deferred: 1,
     pagesCovered: 3,
+    sources: [
+      {
+        targetId: "one",
+        inspected: 5,
+        saved: 2,
+        rejected: 1,
+        duplicates: 1,
+        deferred: 1,
+        pagesCovered: 2,
+      },
+      {
+        targetId: "two",
+        inspected: 2,
+        saved: 1,
+        rejected: 0,
+        duplicates: 1,
+        deferred: 0,
+        pagesCovered: 1,
+      },
+    ],
   });
   expect(report.found).toBe(
     report.saved! + report.rejected! + report.duplicates! + report.deferred!,

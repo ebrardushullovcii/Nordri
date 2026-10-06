@@ -1,3 +1,4 @@
+import { getDiscoverySourceRunCountLabel } from "../../lib/discovery-run-count-label";
 import {
   useDeferredValue,
   useEffect,
@@ -472,6 +473,9 @@ export function DiscoveryHistoryModal(props: {
     eventStreamEndRef.current?.scrollIntoView({ block: "end" });
   };
 
+  const selectedReport = getDiscoveryRunReportCounts(selectedRun);
+  const duplicateCount =
+    selectedReport.duplicates ?? selectedRun?.summary.duplicatesMerged ?? 0;
   return (
     <div
       className="fixed inset-0 z-[140] overflow-y-auto bg-(--modal-scrim) p-6 backdrop-blur-sm sm:p-10 backdrop-blur-sm"
@@ -630,9 +634,9 @@ export function DiscoveryHistoryModal(props: {
                   <p className="mt-2 text-[0.95rem] font-semibold text-(--text-headline)">
                     {getDiscoveryRunReportCounts(selectedRun).new ??
                       selectedRun.summary.validJobsFound}
-                    {selectedRun.summary.duplicatesMerged > 0 ? (
+                    {duplicateCount > 0 ? (
                       <span className="ml-2 text-[0.78rem] font-normal text-foreground-muted">
-                        {`${selectedRun.summary.duplicatesMerged} duplicate${selectedRun.summary.duplicatesMerged === 1 ? "" : "s"} merged`}
+                        {`${duplicateCount} duplicate${duplicateCount === 1 ? "" : "s"} merged`}
                       </span>
                     ) : null}
                   </p>
@@ -858,46 +862,31 @@ export function DiscoveryHistoryModal(props: {
                                     : ""}
                                 </p>
                                 <p className="mt-1 text-[0.82rem] text-foreground-soft">
-                                  {execution?.jobsInspected !== undefined ? (
-                                    <>
-                                      {execution.jobsInspected} inspected ·{" "}
-                                      {contributed} saved ·{" "}
-                                      {(execution.rejectedListings?.length ??
-                                        0) + execution.invalidSkipped}{" "}
-                                      rejected ·{" "}
-                                      {execution.duplicatesMerged +
-                                        execution.jobsSkippedByLedger}{" "}
-                                      duplicates ·{" "}
-                                      {execution.listingsDeferred ?? 0} deferred
-                                      ·{" "}
-                                      {execution.pagesCovered ?? "Not recorded"}{" "}
-                                      pages covered.
-                                    </>
-                                  ) : (
-                                    <>
-                                      Contributed {contributed} new job
-                                      {contributed === 1 ? "" : "s"} to this run
-                                      {alreadySaved > 0
-                                        ? `; ${execution?.duplicatesMerged ?? 0} duplicate${execution?.duplicatesMerged === 1 ? "" : "s"} merged · ${execution?.jobsSkippedByLedger ?? 0} seen before`
-                                        : ""}
-                                      .
-                                    </>
+                                  {getDiscoverySourceRunCountLabel(
+                                    selectedRun,
+                                    source.targetId,
                                   )}
+                                  .
                                 </p>
-                                {execution?.sourceCounts?.map((counts) => (
-                                  <p
-                                    key={counts.sourceId}
-                                    className="mt-1 text-[0.82rem] text-foreground-soft"
-                                  >
-                                    Found on {counts.label}: {counts.inspected}{" "}
-                                    inspected · {counts.saved} saved ·{" "}
-                                    {counts.rejected} rejected ·{" "}
-                                    {counts.duplicates} duplicates ·{" "}
-                                    {counts.deferred} deferred ·{" "}
-                                    {counts.pagesCovered ?? "Not recorded"}{" "}
-                                    pages covered.
-                                  </p>
-                                ))}
+                                {execution?.sourceCounts
+                                  ?.filter(
+                                    (counts) =>
+                                      counts.sourceId !== source.targetId,
+                                  )
+                                  .map((counts) => (
+                                    <p
+                                      key={counts.sourceId}
+                                      className="mt-1 text-[0.82rem] text-foreground-soft"
+                                    >
+                                      Found on {counts.label}:{" "}
+                                      {counts.inspected} inspected ·{" "}
+                                      {counts.saved} saved · {counts.rejected}{" "}
+                                      rejected · {counts.duplicates} duplicates
+                                      · {counts.deferred} deferred ·{" "}
+                                      {counts.pagesCovered ?? "Not recorded"}{" "}
+                                      pages covered.
+                                    </p>
+                                  ))}
                                 {execution?.rejectedListings?.length ? (
                                   <details className="mt-2 text-[0.82rem] text-foreground-soft">
                                     <summary>

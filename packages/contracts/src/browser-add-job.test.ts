@@ -21,6 +21,7 @@ it("binds Add this job to an exact tab and returns only saved-job display facts"
     AddBrowserJobResultSchema.parse({
       jobId: "saved-one",
       title: "Designer",
+      company: "Example Studio",
       planName: "Design",
     }).title,
   ).toBe("Designer");

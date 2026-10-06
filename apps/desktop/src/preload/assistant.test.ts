@@ -80,3 +80,17 @@ it("schema-checks displayed navigation acknowledgments before sending to main", 
   ).rejects.toThrow();
   expect(invoke).toHaveBeenCalledTimes(1);
 });
+
+it("sends the resume stop through the typed bridge", async () => {
+  const invoke = vi.fn().mockResolvedValue(undefined);
+  const bridge = createAssistantBridge({
+    invoke,
+    on: vi.fn(),
+    removeListener: vi.fn(),
+    pathForFile: () => "",
+  });
+  await bridge.stopResumeBatch();
+  expect(invoke).toHaveBeenCalledExactlyOnceWith(
+    "job-finder:assistant:stop-resume-batch",
+  );
+});

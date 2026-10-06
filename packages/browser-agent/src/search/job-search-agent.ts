@@ -1,3 +1,4 @@
+import { ListingRejectionCategorySchema } from "@nordri/contracts";
 import {
   parseToolArguments,
   runAgentLoop,
@@ -450,7 +451,7 @@ export async function runJobSearchAgent(
       function: {
         name: "extract_jobs",
         description:
-          "Read the job postings on the current page and save them. Tells you how many were new and how many you already had. Use it on results pages and on a posting's own page.",
+          "Read every job posting on the current page and save the suitable ones. Supply rejected listing URLs with a reason category and a plain reason for every listing you ruled out; those decisions are recorded, not saved as matches. Tells you what was saved, rejected and already known.",
         parameters: {
           type: "object",
           properties: {
@@ -460,6 +461,25 @@ export async function runJobSearchAgent(
               description: "What this page is.",
             },
             maxJobs: { type: "number", description: "Up to 50. Default 20." },
+            rejected: {
+              type: "array",
+              maxItems: 50,
+              items: {
+                type: "object",
+                properties: {
+                  url: {
+                    type: "string",
+                    description: "The listing's own URL shown on this page.",
+                  },
+                  category: {
+                    type: "string",
+                    enum: ListingRejectionCategorySchema.options,
+                  },
+                  reason: { type: "string" },
+                },
+                required: ["url", "category", "reason"],
+              },
+            },
           },
           required: ["pageType"],
         },
@@ -469,6 +489,45 @@ export async function runJobSearchAgent(
       const args = parseToolArguments(raw);
       const pageType =
         args.pageType === "job_detail" ? "job_detail" : "search_results";
+      const rejections = new Map<
+        string,
+        {
+          category: ReturnType<typeof ListingRejectionCategorySchema.parse>;
+          reason: string;
+        }
+      >();
+      if (args.rejected !== undefined && !Array.isArray(args.rejected))
+        return {
+          kind: "ok",
+          content:
+            "Nothing changed. Supply rejected listing URLs with categories and reasons.",
+        };
+      for (const rawRejection of Array.isArray(args.rejected)
+        ? args.rejected
+        : []) {
+        const row =
+          rawRejection && typeof rawRejection === "object"
+            ? (rawRejection as Record<string, unknown>)
+            : {};
+        const category = ListingRejectionCategorySchema.safeParse(row.category);
+        if (
+          typeof row.url !== "string" ||
+          !category.success ||
+          typeof row.reason !== "string" ||
+          !row.reason.trim() ||
+          rejections.has(row.url) ||
+          rejections.size >= 50
+        )
+          return {
+            kind: "ok",
+            content:
+              "Nothing changed. Supply distinct listing URLs with valid categories and reasons.",
+          };
+        rejections.set(row.url, {
+          category: category.data,
+          reason: row.reason.trim(),
+        });
+      }
       const maxJobs =
         typeof args.maxJobs === "number"
           ? Math.max(1, Math.min(50, Math.floor(args.maxJobs)))
@@ -526,16 +585,31 @@ export async function runJobSearchAgent(
                 request: config.promptContext.searchRequest,
                 searchGuidance: config.promptContext.searchGuidance,
                 sourceInstructions: config.promptContext.siteInstructions ?? [],
+                pageDecisions: [...rejections].map(([url, rejection]) => ({
+                  url,
+                  ...rejection,
+                })),
               }),
             }
           : {}),
         ...(context.signal ? { signal: context.signal } : {}),
       });
+      // A rejection whose address matches nothing read here is reported back,
+      // never a reason to drop the rest of the page's saves.
+      const unmatchedRejections = [...rejections.keys()].filter(
+        (url) => !found.some((job) => job.canonicalUrl === url),
+      );
       const added: JobPosting[] = [];
       const skipped: string[] = [];
       const ignoredBefore = outsideCatalogAttempts;
       for (const partial of found) {
-        const posting = toPosting(normalizeExtractedJobSourceId(partial));
+        const decision = rejections.get(partial.canonicalUrl ?? "");
+        const posting = toPosting(
+          normalizeExtractedJobSourceId({
+            ...partial,
+            ...(decision ? { searchRejection: decision } : {}),
+          }),
+        );
         if (posting) posting.producingPageUrl = observation.url;
         const notAPosting = posting
           ? describeNonPosting(posting, observation.url, pageType)
@@ -580,6 +654,9 @@ export async function runJobSearchAgent(
                 ),
                 skipped.length > 0
                   ? `Not saved, because they do not look like job postings: ${skipped.slice(0, 8).join("; ")}. If one is a real job, open its own page and use extract_jobs there.`
+                  : null,
+                unmatchedRejections.length > 0
+                  ? `These rejections matched no listing read on this page, so they were not recorded: ${unmatchedRejections.slice(0, 8).join("; ")}. Use the listing address exactly as shown on the page.`
                   : null,
               ]
                 .filter((line): line is string => line !== null)

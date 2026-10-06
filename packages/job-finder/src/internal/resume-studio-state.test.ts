@@ -308,7 +308,8 @@ test("older translated fields without source links do not claim existing languag
     job: seed.savedJobs[0]!,
     templateId: seed.settings.resumeTemplateId,
   });
-  draft.writtenLanguage = "German";
+  draft.language = "German";
+  delete draft.writtenLanguage;
   const skills = draft.sections.find((section) => section.kind === "skills")!;
   skills.text = "Polnisch C1";
   skills.sourceRefs = [];

@@ -418,6 +418,9 @@ it("labels an explicit plan source that is off in Profile without turning it off
   });
   fireEvent.click(screen.getByRole("button", { name: /All .*sources/i }));
   expect(
+    screen.getByRole("button", { name: "All sources in this plan" }),
+  ).toBeTruthy();
+  expect(
     screen.getByText("Off in Profile; this plan still searches it"),
   ).toBeTruthy();
   expect((screen.getAllByRole("checkbox")[0] as HTMLInputElement).checked).toBe(
@@ -425,4 +428,47 @@ it("labels an explicit plan source that is off in Profile without turning it off
   );
   fireEvent.click(screen.getByRole("button", { name: "Search now" }));
   expect(onRunAgentDiscovery).toHaveBeenCalled();
+});
+
+it("refreshes the selected sources when the plan adds a source without leaving Find jobs", () => {
+  const first = target();
+  const second = target({ id: "second", label: "Second source" });
+  const third = target({ id: "third", label: "Third source" });
+  const onRunAgentDiscovery = vi.fn();
+  const props = {
+    browserSession,
+    isBrowserSessionPending: false,
+    isSearchDisabled: false,
+    isSearchPending: false,
+    isSearchRunning: false,
+    isSetupOpen: false,
+    onOpenBrowserSession: vi.fn(),
+    onRunAgentDiscovery,
+    onToggleSetup: vi.fn(),
+    activeCampaignId: "plan",
+    searchPreferences: preferences({
+      discovery: { historyLimit: 5, targets: [first, second] },
+    }),
+  };
+  const view = render(<DiscoverySearchBar {...props} />, {
+    wrapper: MemoryRouter,
+  });
+  fireEvent.click(screen.getByRole("button", { name: "All sources" }));
+  fireEvent.click(screen.getByLabelText("Second source"));
+  view.rerender(
+    <DiscoverySearchBar
+      {...props}
+      searchPreferences={preferences({
+        discovery: { historyLimit: 5, targets: [first, second, third] },
+      })}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "All sources" }));
+  expect(screen.getByLabelText<HTMLInputElement>("Third source").checked).toBe(
+    true,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Search now" }));
+  expect(onRunAgentDiscovery).toHaveBeenCalledWith(
+    expect.objectContaining({ sourceIds: "all" }),
+  );
 });

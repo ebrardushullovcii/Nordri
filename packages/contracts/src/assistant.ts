@@ -1143,6 +1143,7 @@ export interface DesktopAssistantBridge {
   acknowledgeNavigation(
     input: AssistantNavigationAcknowledgment,
   ): Promise<void>;
+  stopResumeBatch(): Promise<void>;
   syncResumeBatch(
     state: AssistantResumeBatchState,
   ): Promise<AssistantResumeBatchState>;

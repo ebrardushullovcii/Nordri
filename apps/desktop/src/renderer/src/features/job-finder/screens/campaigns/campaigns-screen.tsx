@@ -240,14 +240,12 @@ function readPlanRunReport(
   runs: readonly DiscoveryRunRecord[] | undefined,
   digest: CampaignDigest | null,
 ): DiscoveryRunReportCounts {
-  const fromDigest = readDiscoveryRunReportCounts(digest?.report ?? null);
-  if (hasDiscoveryRunReportCounts(fromDigest)) {
-    return fromDigest;
-  }
   const run = (runs ?? []).find(
     (candidate) => candidate.id === digest?.discoveryRunId,
   );
-  return getDiscoveryRunReportCounts(run ?? null);
+  const fromRun = getDiscoveryRunReportCounts(run ?? null);
+  if (hasDiscoveryRunReportCounts(fromRun)) return fromRun;
+  return readDiscoveryRunReportCounts(digest?.report ?? null);
 }
 
 /**

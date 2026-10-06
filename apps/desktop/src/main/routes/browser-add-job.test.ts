@@ -52,12 +52,14 @@ it("validates exact-tab IPC, reads that page in main and publishes its saved res
   mocks.add.mockResolvedValue({
     jobId: "one",
     title: "Designer",
+    company: "Example Studio",
     planName: "Design",
   });
   const add = handlers.get("browser:add-job")!;
   expect(await add(event, { tabId: "chosen" })).toEqual({
     jobId: "one",
     title: "Designer",
+    company: "Example Studio",
     planName: "Design",
   });
   expect(mocks.readTab).toHaveBeenCalledWith(

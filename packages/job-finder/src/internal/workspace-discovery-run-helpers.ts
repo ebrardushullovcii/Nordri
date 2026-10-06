@@ -290,6 +290,18 @@ export function buildDiscoveryRunReport(
     0,
   );
   return DiscoveryRunReportSchema.parse({
+    sources: run.targetExecutions.map((source) => ({
+      targetId: source.targetId,
+      inspected: source.jobsInspected ?? null,
+      saved: source.jobsPersisted + source.jobsStaged,
+      rejected:
+        source.jobsInspected !== undefined
+          ? (source.rejectedListings?.length ?? 0) + source.invalidSkipped
+          : null,
+      duplicates: source.duplicatesMerged + source.jobsSkippedByLedger,
+      deferred: source.listingsDeferred ?? null,
+      pagesCovered: source.pagesCovered ?? null,
+    })),
     ...(counted
       ? {
           rejected: run.targetExecutions.reduce(

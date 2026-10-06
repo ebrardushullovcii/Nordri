@@ -1360,7 +1360,7 @@ export function estimateResumeBatchMinutesLeft(
 
 /** Older translated fields have no original wording to compare against. */
 export function resumeComparisonNeedsRefresh(draft: ResumeDraft): boolean {
-  if (!draft.writtenLanguage) return false;
+  if (!draft.writtenLanguage) return Boolean(draft.language);
   return draft.sections.some(
     (section) =>
       section.included &&

@@ -392,7 +392,25 @@ const LISTING_READ_MESSAGES = new Set([
 ]);
 
 /** Preserve the service's recovery advice, while removing IPC wrappers. */
-export function describeListingReadFailure(error: unknown): string {
+export function describeListingReadFailure(
+  error: unknown,
+  options: { listingUrl?: string; online?: boolean } = {},
+): string {
+  const online =
+    options.online ??
+    (typeof navigator === "undefined" || navigator.onLine !== false);
+  if (!online) return FAILURE_SENTENCES.offline;
+  if (classifyFailure(error) === "offline") {
+    let host: string | null = null;
+    try {
+      host = options.listingUrl ? new URL(options.listingUrl).hostname : null;
+    } catch {
+      /* No usable site address. */
+    }
+    return host
+      ? `Job Finder could not reach ${host}. Open the listing in the browser and try again.`
+      : "Job Finder could not reach this job site. Open the listing in the browser and try again.";
+  }
   const detail = getJobFinderErrorDetail(error);
   if (detail && LISTING_READ_MESSAGES.has(detail)) return detail;
   if (detail?.startsWith("The page answered "))

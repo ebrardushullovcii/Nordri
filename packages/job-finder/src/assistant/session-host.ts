@@ -261,6 +261,14 @@ export class AssistantSessionHost {
     { conversationId: string; questionId: string; requestId: string }
   >();
   private questionSyncPending = false;
+  /**
+   * Restart notices about an unfinished resume batch can only resolve while
+   * one may still be open; checking needs a full snapshot, so it is skipped
+   * once none is left and runs at most every 10 s otherwise.
+   */
+  private resumeNoticeCheckDue = true;
+  private resumeNoticeCheckPending = false;
+  private resumeNoticeCheckedAt = 0;
   /** Notes for the model's next turn about questions settled elsewhere. */
   private readonly answeredElsewhere = new Map<string, string[]>();
   private closed = false;
@@ -601,6 +609,26 @@ export class AssistantSessionHost {
       });
     }
     await this.publishResumeBatchActivity(conversationId, true);
+  }
+
+  /** Stop dispatching from either batch entry point; active drafts can finish. */
+  async stopResumeBatches(): Promise<void> {
+    this.ports.stopResumeBatch?.();
+    const snapshot = await this.service.getWorkspaceSnapshot();
+    const checkpoints =
+      snapshot.intelligence.resumeBatchCheckpoints ??
+      (snapshot.intelligence.resumeBatchCheckpoint
+        ? [snapshot.intelligence.resumeBatchCheckpoint]
+        : []);
+    for (const batch of checkpoints) {
+      if (!batch.running || batch.done) continue;
+      cancelBackgroundBatch(batch.id);
+      await this.service.saveResumeBatchCheckpoint({
+        ...batch,
+        stopRequested: true,
+      });
+    }
+    this.ports.publishWorkspaceUpdate();
   }
 
   private async cancelRun(run: AssistantRunRef): Promise<void> {
@@ -1944,12 +1972,91 @@ export class AssistantSessionHost {
         void this.closeQuestionsAnsweredElsewhere();
       }, 300);
     }
+    if (
+      this.resumeNoticeCheckDue &&
+      !this.resumeNoticeCheckPending &&
+      Date.now() - this.resumeNoticeCheckedAt >= 10_000
+    ) {
+      this.resumeNoticeCheckPending = true;
+      setTimeout(() => {
+        this.resumeNoticeCheckedAt = Date.now();
+        void this.refreshFinishedResumeBatchNotices()
+          .catch((error: unknown) =>
+            this.log("Could not update a resume batch notice", error),
+          )
+          .finally(() => {
+            this.resumeNoticeCheckPending = false;
+          });
+      }, 300);
+    }
     if (this.watches.size === 0 || this.watchCheckPending) return;
     this.watchCheckPending = true;
     setTimeout(() => {
       this.watchCheckPending = false;
       void this.checkWatches();
     }, 750);
+  }
+
+  /** A queue continued in Shortlisted closes the assistant's restart notice too. */
+  async refreshFinishedResumeBatchNotices(): Promise<void> {
+    const snapshot = await this.service.getWorkspaceSnapshot();
+    const checkpoints =
+      snapshot.intelligence.resumeBatchCheckpoints ??
+      (snapshot.intelligence.resumeBatchCheckpoint
+        ? [snapshot.intelligence.resumeBatchCheckpoint]
+        : []);
+    const completedIds = new Set(
+      checkpoints
+        .filter((batch) => batch.done)
+        .flatMap((batch) => [batch.id, ...(batch.resumedBatchIds ?? [])]),
+    );
+    let unresolved = false;
+    for (const conversation of await this.repository.listConversations()) {
+      const interrupted = (
+        await this.repository.listOperations(conversation.id, { runOnly: true })
+      ).filter(
+        (operation) =>
+          operation.run?.kind === "resume_generation" &&
+          operation.resultSummary ===
+            "The app closed while writing resumes. Saved drafts are kept; queued jobs were not restarted.",
+      );
+      if (interrupted.length === 0) continue;
+      if (
+        interrupted.some((operation) => !completedIds.has(operation.run!.id))
+      ) {
+        unresolved = true;
+        continue;
+      }
+      const page = await this.repository.listMessages(conversation.id, {
+        limit: 100,
+      });
+      for (const message of page.messages) {
+        let changed = false;
+        const parts = message.parts.map((part) => {
+          if (
+            part.type !== "notice" ||
+            part.kind !== "interrupted" ||
+            part.text !==
+              "The app closed while writing resumes. Saved drafts are kept; ask again to write the remaining resumes."
+          )
+            return part;
+          changed = true;
+          return {
+            ...part,
+            kind: "continued" as const,
+            text: "Resume batch finished. Review the results in Shortlisted.",
+          };
+        });
+        if (!changed) continue;
+        const updated = { ...message, parts, updatedAt: this.now() };
+        await this.repository.upsertMessage(updated);
+        await this.emit(conversation.id, null, {
+          type: "message_updated",
+          message: updated,
+        });
+      }
+    }
+    this.resumeNoticeCheckDue = unresolved;
   }
 
   /**
@@ -2645,6 +2752,7 @@ export class AssistantSessionHost {
             "interrupted",
             "The app closed while writing resumes. Saved drafts are kept; ask again to write the remaining resumes.",
           );
+          this.resumeNoticeCheckDue = true;
           continue;
         }
         const run = { ...operation.run, jobIds: [] };

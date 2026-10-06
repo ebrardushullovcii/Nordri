@@ -329,6 +329,38 @@ export function ReviewQueueScreen(props: {
     queue,
   ]);
 
+  // Both entry points publish their batch receipt to the workspace.
+  const runningBatch =
+    props.resumeBatchCheckpoint?.running && !props.resumeBatchCheckpoint.done
+      ? props.resumeBatchCheckpoint
+      : null;
+  const visibleDraftPreparation: TailoredDraftPreparationViewState =
+    draftPreparation.status === "running" || !runningBatch
+      ? draftPreparation
+      : {
+          status: "running",
+          totalCount: runningBatch.jobIds.length,
+          completedCount: runningBatch.completedJobIds.length,
+          attemptedCount:
+            runningBatch.completedJobIds.length +
+            runningBatch.activeJobIds.length,
+          failedCount: 0,
+          currentIndex: null,
+          eligibleRemainingCount: 0,
+          durationsMs: runningBatch.durationsMs ?? [],
+          stopRequested: runningBatch.stopRequested,
+        };
+  const [batchStopError, setBatchStopError] = useState<string | null>(null);
+  const stopVisibleBatch = () => {
+    setBatchStopError(null);
+    onStopTailoredDraftPreparation();
+    if (runningBatch)
+      void window.nordri.assistant
+        .stopResumeBatch()
+        .catch(() =>
+          setBatchStopError("Could not stop the resume batch. Try again."),
+        );
+  };
   const interruptedJobIds =
     props.draftPreparation.status === "idle" &&
     props.resumeBatchCheckpoint &&
@@ -378,6 +410,7 @@ export function ReviewQueueScreen(props: {
         />
       }
     >
+      {batchStopError ? <p role="alert">{batchStopError}</p> : null}
       {interruptedJobIds.length > 0 ? (
         <div
           className="mb-3 rounded-(--radius-field) border border-warning/30 px-4 py-3 text-sm"
@@ -406,7 +439,7 @@ export function ReviewQueueScreen(props: {
         <ReviewQueueListPanel
           key={props.campaignId}
           campaignId={props.campaignId}
-          draftPreparation={draftPreparation}
+          draftPreparation={visibleDraftPreparation}
           isApplyToAllPending={applyAllPending || isApplyPending}
           applicationBatchLimit={applicationBatchLimit}
           isJobPending={isJobPending}
@@ -416,7 +449,7 @@ export function ReviewQueueScreen(props: {
           {...(onOpenSafeguards ? { onOpenSafeguards } : {})}
           safeguardBlocker={safeguardBlocker ?? null}
           onSelectItem={selectItemAndRevealWorkspace}
-          onStopTailoredDraftPreparation={onStopTailoredDraftPreparation}
+          onStopTailoredDraftPreparation={stopVisibleBatch}
           preparedJobIds={preparedJobIds}
           applicationPreparingJobIds={applicationPreparingJobIds}
           queue={queue}

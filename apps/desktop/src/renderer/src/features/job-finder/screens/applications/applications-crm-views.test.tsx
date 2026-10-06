@@ -1245,3 +1245,48 @@ test("Undo explains closed steps only when this stage change actually closed one
     ),
   ).toBeTruthy();
 });
+
+test("keeps the header and three readable rows when the available table height is short at large text", () => {
+  const geometry = vi
+    .spyOn(HTMLElement.prototype, "getBoundingClientRect")
+    .mockImplementation(function (this: HTMLElement) {
+      const height =
+        this.tagName === "THEAD"
+          ? 45
+          : this.tagName === "TR"
+            ? 100
+            : this.tagName === "DIV"
+              ? 30
+              : 0;
+      return {
+        height,
+        width: 1200,
+        x: 0,
+        y: 0,
+        top: 0,
+        left: 0,
+        right: 1200,
+        bottom: height,
+        toJSON: () => ({}),
+      };
+    });
+  try {
+    render(
+      <ApplicationsCrmViews
+        records={[record("one", "Role", "Acme")]}
+        selectedRecordId={null}
+        view="table"
+        onViewChange={vi.fn()}
+        onSelectRecord={vi.fn()}
+      />,
+    );
+    const table = screen.getByRole("table");
+    expect(table.parentElement?.style.minHeight).toBe("345px");
+    expect(
+      Number.parseFloat(table.closest("section")!.style.minHeight),
+    ).toBeGreaterThan(345);
+    expect(table.parentElement?.className).toContain("overflow-auto");
+  } finally {
+    geometry.mockRestore();
+  }
+});

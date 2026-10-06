@@ -1886,3 +1886,68 @@ test.each([false, true])(
     expect(judge).toHaveBeenCalled();
   },
 );
+
+test("records the page model's rejections in saved checkpoints with their reasons", async () => {
+  const rejectedUrl = "https://jobs.example.test/jobs/j2";
+  const checkpoint = vi.fn<NonNullable<AgentConfig["onCheckpoint"]>>();
+  const result = await runJobSearchAgent({
+    hands: hands({ current: rawPage() }),
+    config: config({ onCheckpoint: checkpoint }),
+    jobExtractor: extractor,
+    llmClient: scripted([
+      {
+        name: "extract_jobs",
+        args: {
+          pageType: "search_results",
+          rejected: [
+            {
+              url: rejectedUrl,
+              category: "role",
+              reason: "Outside this plan's requested roles.",
+            },
+          ],
+        },
+      },
+      { name: "finish", args: { reason: "One match, one rejected." } },
+    ]),
+  });
+  expect(
+    result.jobs.find((job) => job.canonicalUrl === rejectedUrl)
+      ?.searchRejection,
+  ).toEqual({
+    category: "role",
+    reason: "Outside this plan's requested roles.",
+  });
+  expect(
+    checkpoint.mock.calls
+      .at(-1)?.[0]
+      .collectedJobs.find((job) => job.canonicalUrl === rejectedUrl)
+      ?.searchRejection?.reason,
+  ).toBe("Outside this plan's requested roles.");
+});
+
+test("a rejection that matches no listing on the page never drops the page's saves", async () => {
+  const result = await runJobSearchAgent({
+    hands: hands({ current: rawPage() }),
+    config: config(),
+    jobExtractor: extractor,
+    llmClient: scripted([
+      {
+        name: "extract_jobs",
+        args: {
+          pageType: "search_results",
+          rejected: [
+            {
+              url: "https://jobs.example.test/jobs/not-on-this-page",
+              category: "role",
+              reason: "Outside this plan's requested roles.",
+            },
+          ],
+        },
+      },
+      { name: "finish", args: { reason: "Saved the page." } },
+    ]),
+  });
+  expect(result.jobs.length).toBeGreaterThan(0);
+  expect(result.jobs.every((job) => !job.searchRejection)).toBe(true);
+});

@@ -81,3 +81,25 @@ it("keeps service listing advice without its Electron wrapper and hides arbitrar
     ),
   ).toContain("No job listing");
 });
+
+it("names a failed listing site and reserves the internet sentence for an offline device", async () => {
+  const { describeListingReadFailure } = await import("./describe-failure");
+  const failure = new Error("fetch failed");
+  expect(
+    describeListingReadFailure(failure, {
+      listingUrl: "https://careers.example.test/jobs/one?private=value",
+      online: true,
+    }),
+  ).toBe(
+    "Job Finder could not reach careers.example.test. Open the listing in the browser and try again.",
+  );
+  expect(
+    describeListingReadFailure(failure, {
+      listingUrl: "https://careers.example.test/jobs/one",
+      online: false,
+    }),
+  ).toContain("could not reach the internet");
+  expect(describeListingReadFailure(failure, { online: true })).not.toContain(
+    "internet",
+  );
+});

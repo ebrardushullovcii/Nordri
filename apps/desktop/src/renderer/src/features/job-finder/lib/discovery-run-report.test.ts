@@ -1,3 +1,4 @@
+import { round3SearchRun } from "./discovery-round3.test-fixture";
 import type {
   DiscoveryRunRecord,
   JobFinderWorkspaceSnapshot,
@@ -188,4 +189,11 @@ describe("frozen discovery run report", () => {
       "Counts not recorded for this run",
     );
   });
+});
+
+test("the plan card keeps new-to-device and retained counts distinct in the shared report", () => {
+  const counts = getDiscoveryRunReportCounts(round3SearchRun());
+  expect(describePlanRunCounts(counts)).toContain(
+    "25 new to you · 22 kept by this plan · 27 duplicates merged",
+  );
 });

@@ -364,9 +364,9 @@ export function SettingsScreen(props: {
     const link = row?.querySelector<HTMLElement>('[aria-current="location"]');
     if (row && link) {
       const start = link.offsetLeft - row.offsetLeft;
-      const end = start + link.offsetWidth;
+      const end = start + link.offsetWidth + 12;
       if (start < row.scrollLeft) {
-        row.scrollLeft = start;
+        row.scrollLeft = Math.max(0, start - 12);
       } else if (end > row.scrollLeft + row.clientWidth) {
         row.scrollLeft = end - row.clientWidth;
       }
@@ -483,7 +483,7 @@ export function SettingsScreen(props: {
           // rule) and fades the edge that has more sections past it instead.
           // `min-w-0` here and on the band keeps the row's full width from
           // stretching the page; only the row scrolls.
-          className="flex min-w-0 items-center gap-1 overflow-x-auto overflow-y-hidden [scrollbar-width:none]"
+          className="flex min-w-0 items-center gap-1 overflow-x-auto overflow-y-hidden px-3 scroll-px-3 [scrollbar-width:none]"
           data-settings-subnav-row
           data-more-after={subnavEdges.after || undefined}
           data-more-before={subnavEdges.before || undefined}
@@ -517,6 +517,17 @@ export function SettingsScreen(props: {
                 )}
                 href={section.href}
                 key={section.id}
+                onFocus={(event) => {
+                  const row = subnavRowRef.current;
+                  if (!row) return;
+                  const start = event.currentTarget.offsetLeft - row.offsetLeft;
+                  const end = start + event.currentTarget.offsetWidth + 12;
+                  if (start - 12 < row.scrollLeft)
+                    row.scrollLeft = Math.max(0, start - 12);
+                  else if (end > row.scrollLeft + row.clientWidth)
+                    row.scrollLeft = end - row.clientWidth;
+                  measureSubnavEdges();
+                }}
                 onClick={handleSectionAnchorClick}
               >
                 <section.icon aria-hidden="true" />
