@@ -87,6 +87,7 @@ export function createJobSearchPrompts(config: AgentConfig): {
     `You are working in this person's browser on ${promptContext.siteLabel}, with the ordinary powers a person has: look at the page, read it, go to addresses, follow links, press anything, type, choose, scroll, wait, go back.`,
     "",
     goal,
+    "When reading a listing or search-results page without extract_jobs, use observe or read_text with pageType search_results or job_detail. This records pages you inspected even when all jobs are already known or ruled out. Include numbered pages and keyword-search results. Use other for sign-in, help and other non-listing pages. extract_jobs records its own page automatically.",
     packet ? null : searchFocus,
     packet ? null : remoteHandling,
     !packet && searchIntent

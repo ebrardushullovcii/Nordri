@@ -430,3 +430,194 @@ test("stored older translated experience lines without source links retain their
     );
   }
 });
+
+test.each([
+  { differentLanguage: true, listingLanguage: null, failsFirstRead: false },
+  { differentLanguage: false, listingLanguage: null, failsFirstRead: false },
+  { differentLanguage: true, listingLanguage: "German", failsFirstRead: false },
+  { differentLanguage: true, listingLanguage: null, failsFirstRead: true },
+])(
+  "legacy listing-linked draft uses language evidence ($differentLanguage, $listingLanguage) and prefers original-line evidence",
+  async ({ differentLanguage, listingLanguage, failsFirstRead }) => {
+    const seed = createSeed();
+    const original = seed.profile.experiences[0]!;
+    seed.profile.experiences = [
+      {
+        ...original,
+        summary: null,
+        achievements: [
+          "Managed customer orders.",
+          "Organized warehouse deliveries.",
+          "Coordinated the daily team schedule.",
+        ],
+      },
+    ];
+    const draft = seedResumeDraft({
+      profile: seed.profile,
+      job: seed.savedJobs[0]!,
+      templateId: seed.settings.resumeTemplateId,
+    });
+    draft.listingLanguage = listingLanguage;
+    const section = draft.sections.find(
+      (section) => section.kind === "experience",
+    )!;
+    const entry = section.entries[0]!;
+    for (const [index, text] of [
+      "Bearbeitung von Kundenaufträgen.",
+      "Organisation der Lagerlieferungen.",
+      "Koordination des täglichen Schichtplans.",
+    ].entries()) {
+      const bullet = entry.bullets[index]!;
+      bullet.text = text;
+      bullet.sourceRefs = [
+        {
+          id: `listing-${index}`,
+          sourceKind: "job",
+          sourceId: draft.jobId,
+          snippet: "The listing asks for operations experience.",
+        },
+        {
+          id: `resume-${index}`,
+          sourceKind: "resume",
+          sourceId: seed.profile.baseResume.id,
+          snippet: "The entire original resume.",
+        },
+      ];
+    }
+    const validation = validateResumeDraft({
+      draft,
+      profile: seed.profile,
+      job: seed.savedJobs[0]!,
+    });
+    validation.coverageComparison!.roles[0]!.addedClaims[1]!.sourceAchievementIds =
+      [`experience:${original.id}:achievement:0`];
+    validation.claimAssessments.find(
+      (a) => a.bulletId === entry.bullets[1]!.id,
+    )!.evidenceRefs = [
+      {
+        id: `claim_evidence_profile_experience:${original.id}:achievement:2_1`,
+        sourceKind: "profile",
+        sourceId: `experience:${original.id}:achievement:2`,
+        snippet: "Organized warehouse deliveries.",
+      },
+    ];
+    const chatWithTools = vi.fn<
+      NonNullable<JobFinderAiClient["chatWithTools"]>
+    >(() =>
+      Promise.resolve({
+        content: JSON.stringify({
+          roles: [{ profileRecordId: original.id, differentLanguage }],
+        }),
+      }),
+    );
+    const { repository, workspaceService } = createWorkspaceServiceHarness({
+      seed,
+      aiClient: { ...createAiClient(), chatWithTools },
+    });
+    await repository.upsertResumeDraft(draft);
+    await repository.upsertResumeValidationResult(validation);
+    if (failsFirstRead) {
+      chatWithTools.mockRejectedValueOnce(
+        new Error("Temporary language read failure"),
+      );
+      const reads = await Promise.all([
+        workspaceService.getResumeWorkspace(draft.jobId),
+        workspaceService.getResumeWorkspace(draft.jobId),
+      ]);
+      for (const read of reads)
+        expect(
+          read.validation!.coverageComparison!.roles[0]!.retainedClaimCount,
+        ).toBe(1);
+    }
+    const workspace = await workspaceService.getResumeWorkspace(draft.jobId);
+    const role = workspace.validation!.coverageComparison!.roles[0]!;
+    expect(role.addedClaims[1]!.sourceAchievementIds).toEqual([
+      `experience:${original.id}:achievement:1`,
+    ]);
+    expect(role.retainedClaimCount).toBe(differentLanguage ? 3 : 1);
+    if (differentLanguage) {
+      expect(role.status).toBe("rewritten");
+      expect(
+        role.addedClaims.map((claim) => claim.sourceAchievementIds),
+      ).toEqual(role.removedClaims.map((claim) => claim.sourceAchievementIds));
+    } else {
+      expect(role.addedClaims[0]!.sourceAchievementIds).toBeUndefined();
+    }
+    await workspaceService.getResumeWorkspace(draft.jobId);
+    expect(chatWithTools).toHaveBeenCalledTimes(
+      listingLanguage ? 0 : failsFirstRead ? 2 : 1,
+    );
+  },
+);
+
+test("legacy comparison converts evidence coordinates with translated and unchanged lines in one role", async () => {
+  const seed = createSeed();
+  const experience = seed.profile.experiences[0]!;
+  seed.profile.experiences = [
+    {
+      ...experience,
+      summary: null,
+      achievements: [
+        "Managed customer orders.",
+        "Organized warehouse deliveries.",
+      ],
+    },
+  ];
+  const draft = seedResumeDraft({
+    profile: seed.profile,
+    job: seed.savedJobs[0]!,
+    templateId: seed.settings.resumeTemplateId,
+  });
+  const section = draft.sections.find((s) => s.kind === "experience")!;
+  const entry = section.entries[0]!;
+  const originals = [...entry.bullets];
+  entry.bullets[0]!.text = "Bearbeitung von Kundenaufträgen.";
+  entry.bullets[1]!.text = "Organisation der Lagerlieferungen.";
+  entry.bullets.push({
+    ...originals[0]!,
+    id: "unchanged-original",
+    text: "Managed customer orders.",
+  });
+  for (const bullet of entry.bullets)
+    bullet.sourceRefs = [
+      {
+        id: `listing:${bullet.id}`,
+        sourceKind: "job",
+        sourceId: draft.jobId,
+        snippet: "Operations role.",
+      },
+    ];
+  const validation = validateResumeDraft({
+    profile: seed.profile,
+    draft,
+    job: seed.savedJobs[0]!,
+  });
+  for (const [index, bullet] of entry.bullets.slice(0, 2).entries()) {
+    validation.claimAssessments.find(
+      (a) => a.bulletId === bullet.id,
+    )!.evidenceRefs = [
+      {
+        id: `claim_evidence_profile_experience:${experience.id}:achievement:${index + 1}_1`,
+        sourceKind: "profile",
+        sourceId: `experience:${experience.id}:achievement:${index + 1}`,
+        snippet: index
+          ? "Organized warehouse deliveries."
+          : "Managed customer orders.",
+      },
+    ];
+  }
+  const { repository, workspaceService } = createWorkspaceServiceHarness({
+    seed,
+  });
+  await repository.upsertResumeDraft(draft);
+  await repository.upsertResumeValidationResult(validation);
+  const workspace = await workspaceService.getResumeWorkspace(draft.jobId);
+  const role = workspace.validation!.coverageComparison!.roles[0]!;
+  expect(role.retainedClaimCount).toBe(2);
+  expect(role.addedClaims.map((claim) => claim.sourceAchievementIds)).toEqual([
+    [`experience:${experience.id}:achievement:0`],
+    [`experience:${experience.id}:achievement:1`],
+  ]);
+  expect(draft.language).toBeUndefined();
+  expect(draft.writtenLanguage).toBeUndefined();
+});

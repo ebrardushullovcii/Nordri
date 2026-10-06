@@ -579,7 +579,21 @@ export function createJobIdentityIndex<T extends object>(
                 // one host reuse posting numbers: neither makes two postings
                 // the same job when they name different roles.
                 const other = selectIdentity(candidate);
+                const listingUrls = (value: JobIdentityInput) =>
+                  [value.canonicalUrl, ...(value.alternateListingUrls ?? [])]
+                    .filter((url): url is string => Boolean(url))
+                    .map(normalizeJobIdentityUrl);
+                const otherUrls = new Set(listingUrls(other));
+                const sameListingSite =
+                  alias.kind !== "source_posting_id" ||
+                  (identity.source === "target_site" ||
+                  other.source === "target_site"
+                    ? listingUrls(identity).some((url) => otherUrls.has(url))
+                    : [...readListingSiteKeys(identity)].some((site) =>
+                        readListingSiteKeys(other).has(site),
+                      ));
                 return (
+                  sameListingSite &&
                   (!identity.title?.trim() ||
                     !other.title?.trim() ||
                     hasCompatibleTitles(identity, other)) &&

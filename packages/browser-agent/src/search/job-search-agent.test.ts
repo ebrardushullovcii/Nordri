@@ -2022,3 +2022,34 @@ test("counts pages actually read instead of addresses only visited", async () =>
   expect(result.pagesCovered).toBe(1);
   expect(result.coveredPageUrls).toEqual(["https://jobs.example.test/results"]);
 });
+
+test("counts paginated and keyword result reads even when no extraction is needed", async () => {
+  const pages = { current: rawPage() };
+  const urls = [
+    pages.current.url!,
+    "https://jobs.example.test/search?q=engineer&page=2",
+    "https://jobs.example.test/search?q=engineer&page=3",
+    "https://jobs.example.test/search?q=operations",
+    "https://jobs.example.test/search?q=support",
+  ];
+  const result = await runJobSearchAgent({
+    hands: hands(pages),
+    config: config(),
+    llmClient: scripted([
+      ...urls.flatMap((url) => [
+        { name: "navigate", args: { url } },
+        { name: "observe", args: { pageType: "search_results" } },
+        { name: "observe", args: { pageType: "search_results" } },
+      ]),
+      { name: "navigate", args: { url: urls[0] } },
+      { name: "extract_jobs", args: { pageType: "search_results" } },
+      {
+        name: "finish",
+        args: { reason: "Read all results, no suitable jobs" },
+      },
+    ]),
+    jobExtractor: { extractJobsFromPage: () => Promise.resolve([]) },
+  });
+  expect(result.pagesCovered).toBe(5);
+  expect(result.coveredPageUrls).toEqual(urls);
+});

@@ -1588,6 +1588,7 @@ export function validateResumeDraft(input: {
           draft: input.draft,
           pageCount: input.pageCount ?? null,
           validationIssues: issues,
+          claimAssessments,
         })
       : null,
     pageCount: input.pageCount ?? null,
@@ -1978,6 +1979,8 @@ export function buildResumeCoverageComparison(input: {
   draft: ResumeDraft;
   pageCount?: number | null;
   validationIssues?: readonly ResumeValidationIssue[];
+  claimAssessments?: readonly ResumeClaimAssessment[];
+  translatedRoleIds?: ReadonlySet<string>;
   coverageMetadata?: TailoredResumeDraft["coverageMetadata"];
 }): ResumeCoverageComparison {
   const experienceSection =
@@ -2056,6 +2059,60 @@ export function buildResumeCoverageComparison(input: {
             : (entry?.bullets
                 .filter((bullet) => bullet.included && bullet.text === text)
                 .flatMap((bullet) => bullet.sourceRefs) ?? []);
+        // The fact check links the actual current wording to original fields.
+        // Older comparison rows may carry a stale positional link instead.
+        const evidenceRefs = (input.claimAssessments ?? [])
+          .filter(
+            (assessment) =>
+              assessment.sectionId === experienceSection?.id &&
+              assessment.entryId === entry?.id &&
+              assessment.claimText === text,
+          )
+          .flatMap((assessment) => assessment.evidenceRefs);
+        const originalFieldIds = (
+          sourceRefs: readonly ResumeDraftSourceRef[],
+        ) =>
+          uniqueStrings(
+            sourceRefs.flatMap((ref) => {
+              if (ref.sourceId === `experience:${experience.id}:summary`)
+                return resumeSentences(experience.summary ?? "").flatMap(
+                  sourceAchievementIds,
+                );
+              if (
+                ref.sourceId?.startsWith(`experience:${experience.id}:summary:`)
+              )
+                return resumeSentences(experience.summary ?? "")
+                  .flatMap(sourceAchievementIds)
+                  .filter((id) => id === ref.sourceId);
+              return experience.achievements.some(
+                (_, index) =>
+                  ref.sourceId ===
+                  `experience:${experience.id}:achievement:${index}`,
+              )
+                ? [ref.sourceId!]
+                : [];
+            }),
+          );
+        // The evidence bank numbers achievements from one; comparison and
+        // draft field IDs number them from zero. Prefer the quoted original
+        // wording, then convert only the evidence bank's field coordinate.
+        const evidenceIds = uniqueStrings(
+          evidenceRefs.flatMap((ref) => {
+            const quotedIds = sourceAchievementIds(ref.snippet);
+            if (quotedIds.length) return quotedIds;
+            const prefix = `experience:${experience.id}:achievement:`;
+            if (ref.sourceId.startsWith(prefix)) {
+              const index = Number(ref.sourceId.slice(prefix.length)) - 1;
+              return Number.isInteger(index) &&
+                index >= 0 &&
+                experience.achievements[index]
+                ? [`${prefix}${index}`]
+                : [];
+            }
+            return originalFieldIds([ref]);
+          }),
+        );
+        if (evidenceIds.length) return evidenceIds;
         const linkedIds = uniqueStrings(
           refs.flatMap((ref) => {
             if (
@@ -2081,7 +2138,12 @@ export function buildResumeCoverageComparison(input: {
         if (
           linkedIds.length ||
           !entry ||
-          !(input.draft.writtenLanguage || input.draft.language)
+          !(
+            input.translatedRoleIds?.has(experience.id) ||
+            input.draft.writtenLanguage ||
+            input.draft.language ||
+            input.draft.listingLanguage
+          )
         )
           return linkedIds;
         // Legacy language drafts predate original-field links. The language

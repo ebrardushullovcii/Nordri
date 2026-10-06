@@ -260,6 +260,18 @@ export async function runJobSearchAgent(
   const inspectedPageUrls: string[] = [];
   const lastReadMovementByUrl = new Map<string, number>();
   let pageMovementRevision = 0;
+  const recordListingRead = (url: string, text: string) => {
+    const pageKey = `${url}\n${text}`;
+    const lastMovement = lastReadMovementByUrl.get(url);
+    if (
+      !coveredPageKeys.has(pageKey) &&
+      (lastMovement === undefined || pageMovementRevision > lastMovement)
+    ) {
+      inspectedPageUrls.push(url);
+    }
+    coveredPageKeys.add(pageKey);
+    lastReadMovementByUrl.set(url, pageMovementRevision);
+  };
   const outsideCatalog = new Set<string>();
   let outsideCatalogAttempts = 0;
   let duplicateListings = 0;
@@ -348,7 +360,14 @@ export async function runJobSearchAgent(
       const outcome = await tool.execute(raw, context);
       if (
         outcome.kind === "ok" &&
-        ["navigate", "click", "go_back"].includes(tool.definition.function.name)
+        [
+          "navigate",
+          "click",
+          "go_back",
+          "follow_link",
+          "press_key",
+          "select",
+        ].includes(tool.definition.function.name)
       )
         pageMovementRevision += 1;
       // Only a fresh page read can show a new bot check; re-reading the page
@@ -548,18 +567,7 @@ export async function runJobSearchAgent(
       if (!observation.url) {
         return { kind: "ok", content: "There is no page to read yet." };
       }
-      const pageKey = `${observation.url}\n${pageText}`;
-      const lastMovement = lastReadMovementByUrl.get(observation.url);
-      if (
-        !coveredPageKeys.has(pageKey) &&
-        (lastMovement === undefined || pageMovementRevision > lastMovement)
-      ) {
-        inspectedPageUrls.push(observation.url);
-      }
-      // A changing clock or loading text is not another results page. A new
-      // rendered page at the same address counts after the agent moves it.
-      coveredPageKeys.add(pageKey);
-      lastReadMovementByUrl.set(observation.url, pageMovementRevision);
+      recordListingRead(observation.url, observation.bodyTextExcerpt);
       // Plain innerText omits link destinations and JSON-LD. Keep that URL
       // evidence available to the extractor so a listing and its own detail
       // link do not acquire separate identities merely because both were read.
@@ -1008,7 +1016,43 @@ export async function runJobSearchAgent(
   );
 
   const tools = [
-    ...pageTools.tools.map(withBotCheckHandoff),
+    ...pageTools.tools.map((tool) => {
+      if (!["observe", "read_text"].includes(tool.definition.function.name))
+        return withBotCheckHandoff(tool);
+      return withBotCheckHandoff({
+        ...tool,
+        definition: {
+          ...tool.definition,
+          function: {
+            ...tool.definition.function,
+            parameters: {
+              ...tool.definition.function.parameters,
+              properties: {
+                ...tool.definition.function.parameters.properties,
+                pageType: {
+                  type: "string",
+                  enum: ["search_results", "job_detail", "other"],
+                  description:
+                    "What the page you are reading shows. Mark listing and search-result reads even when all jobs are duplicates or rejected; other pages do not count as listing coverage.",
+                },
+              },
+            },
+          },
+        },
+        execute: async (raw, context) => {
+          const outcome = await tool.execute(raw, context);
+          const args = parseToolArguments(raw);
+          const observation = pageTools.state.observation;
+          if (
+            outcome.kind === "ok" &&
+            observation?.url &&
+            ["search_results", "job_detail"].includes(String(args.pageType))
+          )
+            recordListingRead(observation.url, observation.bodyTextExcerpt);
+          return outcome;
+        },
+      });
+    }),
     ...catalogTools,
     withBotCheckHandoff(extractTool),
     savedTool,

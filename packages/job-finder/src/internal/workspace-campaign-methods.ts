@@ -387,13 +387,6 @@ export async function commitCampaignRunTerminal(input: {
     // and must participate in retention; otherwise the renderer's campaign
     // filter hides the entire completed run.
     const availableJobs = [...savedJobs, ...discovery.pendingDiscoveryJobs];
-    const encounteredSourceJobIds = new Set(
-      latestRun.targetExecutions.flatMap((execution) =>
-        (execution.agentCheckpoint?.collectedJobs ?? []).map(
-          (posting) => `${posting.source}:${posting.sourceJobId}`,
-        ),
-      ),
-    );
     const encounteredCanonicalUrls = new Set(
       latestRun.targetExecutions.flatMap((execution) =>
         (execution.agentCheckpoint?.collectedJobs ?? []).map(
@@ -419,7 +412,6 @@ export async function commitCampaignRunTerminal(input: {
           // a compact run actually encountered.
           return (
             encounteredRecordedJobIds.has(job.id) ||
-            encounteredSourceJobIds.has(`${job.source}:${job.sourceJobId}`) ||
             encounteredCanonicalUrls.has(job.canonicalUrl)
           );
         })
@@ -454,7 +446,7 @@ export async function commitCampaignRunTerminal(input: {
         .map((job) => job.id),
     ]);
     const candidates = availableJobs
-      .filter((job) => candidateJobIds.has(job.id))
+      .filter((job) => candidateJobIds.has(job.id) && job.status !== "archived")
       .map((job) => readPlanAssessment(job, campaign.id));
     const profile = await input.ctx.repository.getProfile();
     const preferences = withSavedJobSearchBehavior(

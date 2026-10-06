@@ -2330,6 +2330,98 @@ test("the first search ignores unrelated live membership and the second keeps th
   }
 });
 
+test("a one-site plan keeps only its listings when three sites reuse posting numbers", async () => {
+  const seed = createSeed();
+  const own = {
+    ...savedJob("own", 90, "one-source"),
+    sourceJobId: "2",
+    canonicalUrl: "https://jobs.example.com/first/jobs/2",
+  };
+  const unrelated = {
+    ...savedJob("elsewhere", 90, "other-plan"),
+    sourceJobId: "2",
+    canonicalUrl: "https://jobs.example.com/second/jobs/2",
+  };
+  const hidden = {
+    ...savedJob("hidden", 90, "other-plan"),
+    sourceJobId: "2",
+    canonicalUrl: "https://jobs.example.com/third/jobs/2",
+    status: "archived" as const,
+  };
+  const ownHidden = {
+    ...hidden,
+    id: "own-hidden",
+    sourceJobId: "3",
+    canonicalUrl: "https://jobs.example.com/first/jobs/3",
+  };
+  const plan = createCampaign({
+    id: "one-source",
+    name: "One source",
+    mode: "precision",
+    searchPreferences: seed.searchPreferences,
+    now: "2026-10-05T10:00:00.000Z",
+  });
+  const repository = createInMemoryJobFinderRepository({
+    ...seed,
+    savedJobs: [own, unrelated, hidden, ownHidden],
+  });
+  const ctx = {
+    repository,
+    withCampaignTransition: async <T>(operation: () => Promise<T>) =>
+      operation(),
+  } as WorkspaceServiceContext;
+  for (const [index, priorIds] of [[], [own.id]].entries()) {
+    await repository.saveCampaignState({
+      activeCampaignId: plan.id,
+      notifications: [],
+      campaigns: [
+        { ...plan, jobIds: [own.id, unrelated.id, hidden.id, ownHidden.id] },
+      ],
+    });
+    const run = DiscoveryRunRecordSchema.parse({
+      id: `search-${index}`,
+      campaignId: plan.id,
+      state: "completed",
+      runPhase: "complete",
+      scope: "run_all",
+      startedAt: "2026-10-05T10:00:00.000Z",
+      completedAt: "2026-10-05T10:01:00.000Z",
+      targetIds: [plan.sourceTargetIds[0]!],
+      targetExecutions: [
+        {
+          targetId: plan.sourceTargetIds[0]!,
+          adapterKind: "target_site",
+          state: "completed",
+          encounteredJobIds: [ownHidden.id],
+          agentCheckpoint: {
+            revision: 1,
+            savedAt: "2026-10-05T10:01:00.000Z",
+            currentUrl: "https://jobs.example.com/first",
+            lastStableUrl: "https://jobs.example.com/first",
+            stepCount: 3,
+            collectedJobs: [own],
+            visitedUrls: [],
+            phaseEvidence: {},
+          },
+        },
+      ],
+    });
+    await repository.commitDiscoveryStateUpdate(() => ({
+      ...seed.discovery,
+      recentRuns: [run],
+    }));
+    await recordCampaignDiscoveryResult({
+      ctx,
+      campaignId: plan.id,
+      beforeCampaignJobIds: priorIds,
+      beforeJobProvenanceFingerprints: new Map(),
+    });
+    expect((await repository.getCampaignState())!.campaigns[0]!.jobIds).toEqual(
+      [own.id],
+    );
+  }
+});
+
 test.each(["cancelled", "failed"] as const)(
   "%s searches do not turn merely visited addresses into pages covered",
   (state) => {

@@ -64,6 +64,23 @@ describe("job identity", () => {
     ).toBeNull();
   });
 
+  test("site-local posting numbers do not merge different sites on one host", () => {
+    const first = identity({
+      source: "target_site",
+      sourceJobId: "2",
+      canonicalUrl: "https://jobs.example.com/shared/first/jobs/2",
+      applicationUrl: "https://jobs.example.com/shared/first/apply/2",
+    });
+    const second = identity({
+      ...first,
+      canonicalUrl: "https://jobs.example.com/shared/second/jobs/2",
+      applicationUrl: "https://jobs.example.com/shared/second/apply/2",
+    });
+    expect(
+      createJobIdentityIndex([first], (value) => value).find(second),
+    ).toBeNull();
+  });
+
   test("normalizes only non-identity URL decoration", () => {
     expect(
       normalizeJobIdentityUrl(
@@ -222,7 +239,7 @@ describe("job identity", () => {
     ).toBe(urlMatch);
   });
 
-  test("uses exact facts only to disambiguate colliding strong IDs", () => {
+  test("does not use generic posting numbers and similar facts to identify a new listing", () => {
     const first = identity({
       canonicalUrl: "https://careers.acme.test/jobs/first",
       applicationUrl: null,
@@ -243,7 +260,7 @@ describe("job identity", () => {
           title: "Senior Data Engineer",
         }),
       ),
-    ).toBe(second);
+    ).toBeNull();
   });
 
   test("does not create a facts alias from a relative posted date", () => {
