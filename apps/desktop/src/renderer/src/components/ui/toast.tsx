@@ -73,11 +73,12 @@ function useToastLayout(
     spacers: [],
   });
 
+  const layoutRef = React.useRef(layout);
+  layoutRef.current = layout;
+  const hasClearance = layout.spacers.length > 0;
+
   React.useLayoutEffect(() => {
-    if (!active) {
-      setLayout((current) => ({ ...current, spacers: [] }));
-      return undefined;
-    }
+    if (!active && !hasClearance) return undefined;
     const viewport = viewportRef.current;
     if (!viewport) return undefined;
     let frame: number | undefined;
@@ -126,34 +127,54 @@ function useToastLayout(
       const owners = Array.from(
         document.querySelectorAll<HTMLElement>(SCROLL_OWNERS),
       );
-      const candidates = owners.flatMap((owner) => {
-        const overflowY = window.getComputedStyle(owner).overflowY;
-        const rect = owner.getBoundingClientRect();
-        if (
-          (overflowY !== "auto" && overflowY !== "scroll") ||
-          rect.width <= 0 ||
-          rect.height <= 0 ||
-          rect.left >= left + width ||
-          rect.right <= left ||
-          rect.bottom <= top
-        )
-          return [];
-        if (!scrolledBeforeToast.has(owner))
-          scrolledBeforeToast.set(
-            owner,
-            owner.scrollHeight > owner.clientHeight + 1,
-          );
-        if (!scrolledBeforeToast.get(owner)) return [];
-        return [
-          {
-            owner,
-            gap: parseFloat(window.getComputedStyle(owner).rowGap) || 0,
-            height: Math.ceil(
-              Math.min(rect.bottom, window.innerHeight) - top + CONTENT_GAP,
-            ),
-          },
-        ];
-      });
+      const previousSpacers = layoutRef.current.spacers;
+      const candidates = active
+        ? owners.flatMap((owner) => {
+            const overflowY = window.getComputedStyle(owner).overflowY;
+            const rect = owner.getBoundingClientRect();
+            if (
+              (overflowY !== "auto" && overflowY !== "scroll") ||
+              rect.width <= 0 ||
+              rect.height <= 0 ||
+              rect.left >= left + width ||
+              rect.right <= left ||
+              rect.bottom <= top
+            )
+              return [];
+            if (!scrolledBeforeToast.has(owner))
+              scrolledBeforeToast.set(
+                owner,
+                owner.scrollHeight -
+                  (previousSpacers.find((spacer) => spacer.owner === owner)
+                    ?.height ?? 0) >
+                  owner.clientHeight + 1,
+              );
+            if (!scrolledBeforeToast.get(owner)) return [];
+            const row = owner.querySelector<HTMLElement>(
+              "tbody tr, li:not([data-toast-scroll-spacer-slot])",
+            );
+            const rowHeight =
+              row?.getBoundingClientRect().height ||
+              parseFloat(window.getComputedStyle(owner).lineHeight) ||
+              32;
+            // Even a tall stack leaves one row of scrollable content.
+            const maxClearance = Math.max(0, owner.clientHeight - rowHeight);
+            return [
+              {
+                owner,
+                gap: parseFloat(window.getComputedStyle(owner).rowGap) || 0,
+                height: Math.ceil(
+                  Math.min(
+                    maxClearance,
+                    Math.min(rect.bottom, window.innerHeight) -
+                      top +
+                      CONTENT_GAP,
+                  ),
+                ),
+              },
+            ];
+          })
+        : [];
       // A pane filling the bottom of its route already owns this clearance.
       // Do not give the route a second scroll range underneath that pane.
       const spacers = candidates.filter(
@@ -168,6 +189,29 @@ function useToastLayout(
               ) <= EDGE_GAP,
           ),
       );
+      // Shrinking scroll range while its tail is visible clamps scrollTop.
+      // Keep that range until the person scrolls above it, including when
+      // just one of several toasts leaves. Disconnected routes need no space.
+      for (const previous of previousSpacers) {
+        if (!previous.owner.isConnected) continue;
+        const index = spacers.findIndex(
+          ({ owner }) => owner === previous.owner,
+        );
+        const nextHeight = spacers[index]?.height ?? 0;
+        const naturalEnd = Math.max(
+          0,
+          previous.owner.scrollHeight -
+            previous.owner.clientHeight -
+            previous.height,
+        );
+        if (
+          previous.height > nextHeight &&
+          previous.owner.scrollTop > naturalEnd + nextHeight
+        ) {
+          if (index < 0) spacers.push(previous);
+          else spacers[index] = previous;
+        }
+      }
       for (const element of [
         viewport,
         ...(sidebar ? [sidebar] : []),
@@ -223,7 +267,7 @@ function useToastLayout(
       window.removeEventListener("resize", schedule);
       window.removeEventListener("scroll", schedule, true);
     };
-  }, [active, viewportRef]);
+  }, [active, hasClearance, viewportRef]);
   return layout;
 }
 

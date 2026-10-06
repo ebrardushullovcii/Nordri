@@ -231,10 +231,19 @@ async function readApplyFrame(frame: Frame, frameIndex: number) {
               labelText(element.closest("label")) ||
               nearbyQuestionText() ||
               "";
-            const legend = element
-              .closest("fieldset")
-              ?.querySelector(":scope > legend")
-              ?.textContent?.trim();
+            // Nested question groups keep the outer form step's own label.
+            // Reading only the nearest legend dropped that context for skills
+            // and radio groups while other questions still showed the step.
+            const legends: string[] = [];
+            let fieldset = element.closest("fieldset");
+            while (fieldset) {
+              const legend = labelText(
+                fieldset.querySelector(":scope > legend"),
+              );
+              if (legend && !legends.includes(legend)) legends.unshift(legend);
+              fieldset = fieldset.parentElement?.closest("fieldset") ?? null;
+            }
+            const legend = legends.join(" — ");
             const role = element.getAttribute("role")?.toLowerCase() ?? "";
             const tagName = select
               ? "select"
@@ -578,10 +587,16 @@ async function readRawApplyPageOnce(page: Page): Promise<RawApplyPage> {
             return "";
           };
           const groupLabel = (element: Element): string => {
-            const legend = element
-              .closest("fieldset")
-              ?.querySelector(":scope > legend");
-            if (legend?.textContent?.trim()) return legend.textContent.trim();
+            const legends: string[] = [];
+            let fieldset = element.closest("fieldset");
+            while (fieldset) {
+              const legend = labelText(
+                fieldset.querySelector(":scope > legend"),
+              );
+              if (legend && !legends.includes(legend)) legends.unshift(legend);
+              fieldset = fieldset.parentElement?.closest("fieldset") ?? null;
+            }
+            if (legends.length > 0) return legends.join(" — ");
             const group = element.closest(
               "[role='group'], [role='radiogroup']",
             );

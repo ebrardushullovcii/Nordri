@@ -609,13 +609,13 @@ describe("DiscoveryScreen Results-mode shortlist feedback", () => {
 
   it("keeps one shared route message surface across Results and Search setup", () => {
     const { rerender } = renderScreen({
-      actionState: { message: "Activity resumed." },
+      actionState: { message: "Reading selected sources…" },
     });
 
     const assertSingleSurface = () => {
       const surfaces = screen.getAllByTestId("discovery-route-action-status");
       expect(surfaces).toHaveLength(1);
-      expect(screen.getAllByText("Activity resumed.")).toHaveLength(1);
+      expect(screen.getAllByText("Reading selected sources…")).toHaveLength(1);
     };
 
     assertSingleSurface();

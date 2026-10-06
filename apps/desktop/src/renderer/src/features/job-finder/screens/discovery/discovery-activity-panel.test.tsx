@@ -492,3 +492,54 @@ it("shows reconciling source counts and the model's reason for an excluded listi
     screen.getByText("Unrelated role: Outside your requested roles."),
   ).toBeTruthy();
 });
+
+it("uses singular duplicate counts in both run totals and source details", () => {
+  const run = DiscoveryRunRecordSchema.parse({
+    ...failedRun,
+    summary: { ...failedRun.summary, duplicatesMerged: 1 },
+    targetExecutions: failedRun.targetExecutions.map((execution) => ({
+      ...execution,
+      duplicatesMerged: 1,
+      jobsContributed: 0,
+      jobsSkippedByLedger: 0,
+    })),
+  });
+  render(
+    <DiscoveryHistoryModal
+      activeRun={null}
+      liveEvents={[]}
+      onClose={vi.fn()}
+      recentRuns={[run]}
+      targets={targets}
+      open
+      isDiscoveryPending={false}
+      isTargetPending={() => false}
+    />,
+  );
+  expect(screen.getByText("1 duplicate merged")).toBeTruthy();
+  expect(screen.getByText(/1 duplicate merged · 0 seen before/)).toBeTruthy();
+  expect(screen.queryByText(/1 duplicates merged/)).toBeNull();
+});
+
+it("places Search history above the open assistant instead of clipping its details", () => {
+  render(
+    <>
+      <aside className="fixed z-[120]" aria-label="Assistant">
+        Assistant
+      </aside>
+      <DiscoveryHistoryModal
+        activeRun={null}
+        liveEvents={[]}
+        onClose={vi.fn()}
+        recentRuns={[failedRun]}
+        targets={targets}
+        open
+        isDiscoveryPending={false}
+        isTargetPending={() => false}
+      />
+    </>,
+  );
+  const dialog = screen.getByRole("dialog", { name: "Search history" });
+  expect(dialog.parentElement?.className).toContain("z-[140]");
+  expect(dialog.parentElement?.className).toContain("inset-0");
+});

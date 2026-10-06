@@ -428,10 +428,9 @@ export function ReviewQueueListPanel({
                 ) : null}
                 {totalReadyToApplyCount > readyToApplyCount ? (
                   <p className="text-sm text-foreground-soft">
-                    {totalReadyToApplyCount} ready jobs. Up to{" "}
-                    {applicationBatchLimit} start at a time;{" "}
-                    {totalReadyToApplyCount - readyToApplyCount} remain after
-                    this batch.
+                    {totalReadyToApplyCount} ready jobs. {readyToApplyCount}{" "}
+                    start now; {totalReadyToApplyCount - readyToApplyCount}{" "}
+                    remain after this batch.
                   </p>
                 ) : null}
                 {readyToApplyCount > 0 && onApplyToAllReady ? (
@@ -480,7 +479,10 @@ export function ReviewQueueListPanel({
             </p>
           ) : draftEligibleCount > 0 ? (
             <p className="m-0 text-xs text-foreground-muted">
-              Up to two at once. Stop any time; finished resumes are kept.
+              {draftEligibleCount > 2
+                ? `${draftEligibleCount} missing resumes. 2 start now; ${draftEligibleCount - 2} wait their turn. `
+                : "Up to two at once. "}
+              Stop any time; finished resumes are kept.
             </p>
           ) : null}
           {!isDraftPreparationRunning &&

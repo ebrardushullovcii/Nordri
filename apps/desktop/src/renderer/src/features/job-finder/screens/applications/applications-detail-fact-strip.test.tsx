@@ -1041,3 +1041,30 @@ it("counts answers from a Ready review card when legacy counters are zero", () =
     screen.getByText("Form questions").nextElementSibling?.textContent,
   ).toContain("1");
 });
+
+it("labels a ready application's latest run Ready to send", () => {
+  render(
+    <ApplicationsDetailPanelRunHistorySection
+      applyRunHistory={[
+        {
+          result: {
+            id: "ready_result",
+            runId: "ready_run",
+            jobId: "job_1",
+            applicationRecordId: "application_1",
+            state: "awaiting_review",
+            summary: "Ready to send",
+            detail: "Filled in",
+            startedAt: "2026-10-05T10:00:00Z",
+            updatedAt: "2026-10-05T10:00:00Z",
+          } as ApplyJobResultSummary,
+          run: null,
+        },
+      ]}
+      onSelectApplyRun={vi.fn()}
+      selectedApplyRunId="ready_run"
+    />,
+  );
+  expect(screen.getByText("Ready to send")).toBeTruthy();
+  expect(screen.queryByText("Awaiting Review")).toBeNull();
+});

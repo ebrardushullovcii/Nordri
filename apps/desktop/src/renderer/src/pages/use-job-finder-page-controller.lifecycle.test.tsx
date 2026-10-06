@@ -321,6 +321,7 @@ describe("useJobFinderPageController cross-route status lifetime", () => {
           mutateWorkspaceEntities,
           startApplyCopilotRun:
             options.startApplyCopilotRun ?? (() => Promise.resolve(workspace)),
+          setActivityControl: vi.fn(() => Promise.resolve(workspace)),
         },
       } as unknown as Window["nordri"],
     });
@@ -361,6 +362,28 @@ describe("useJobFinderPageController cross-route status lifetime", () => {
       expect(harness.current?.context).not.toBeNull();
     });
   }
+
+  it("reports Activity resumed through the toast and clears the route status", async () => {
+    const harness = mountStatusHarness({
+      initialEntry: "/job-finder/discovery",
+    });
+    await waitForReady(harness);
+    await act(async () => {
+      await harness.current?.context?.onSetActivityControl({ paused: false });
+    });
+    expect(screen.getByRole("status").textContent).toContain(
+      "Activity resumed.",
+    );
+    expect(
+      screen.getByText("Activity resumed.").closest("[data-toast]"),
+    ).toBeTruthy();
+    expect(harness.current?.context?.actionState.message).toBeNull();
+    await act(async () => {
+      await harness.router.navigate("/job-finder/applications");
+    });
+    expect(harness.current?.context?.actionState.message).toBeNull();
+    expect(screen.getAllByText("Activity resumed.")).toHaveLength(1);
+  });
 
   it("reports a finished shortlist on Find jobs as a toast, not a route status", async () => {
     const harness = mountStatusHarness({

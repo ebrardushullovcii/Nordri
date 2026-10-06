@@ -600,10 +600,28 @@ it("explains the next ten out of 53 ready applications before starting", () => {
     onApplyToAllReady,
   });
   expect(
-    screen.getByText(/53 ready jobs.*43 remain after this batch/),
+    screen.getByText(/53 ready jobs. 10 start now; 43 remain after this batch/),
   ).toBeTruthy();
   fireEvent.click(
     screen.getByRole("button", { name: "Apply to next 10 ready jobs" }),
   );
   expect(onApplyToAllReady).toHaveBeenCalledWith(10);
+});
+
+it("names all 33 missing resumes, the two starting now and the 31 waiting", () => {
+  const onPrepareTailoredDrafts = vi.fn();
+  renderPanel({
+    queue: Array.from({ length: 33 }, (_, i) =>
+      createEligibleItem(`missing_${i}`),
+    ),
+    onPrepareTailoredDrafts,
+  });
+  expect(
+    screen.getByText(/33 missing resumes. 2 start now; 31 wait their turn/),
+  ).toBeTruthy();
+  fireEvent.click(
+    screen.getByRole("button", { name: "Create 33 missing resumes" }),
+  );
+  expect(onPrepareTailoredDrafts).toHaveBeenCalledOnce();
+  expect(onPrepareTailoredDrafts).toHaveBeenCalledWith();
 });

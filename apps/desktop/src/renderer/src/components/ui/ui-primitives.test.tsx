@@ -159,7 +159,7 @@ describe("Dialog", () => {
       document.querySelectorAll("[data-slot='dialog-close']"),
     ).toHaveLength(1);
     expect(dialog.parentElement?.className).toContain("bg-(--modal-scrim)");
-    expect(dialog.parentElement?.className).toContain("z-[80]");
+    expect(dialog.parentElement?.className).toContain("z-[140]");
   });
 
   it("closes on Escape, on the scrim, and on the close affordance", () => {

@@ -1049,15 +1049,20 @@ test("reserves one-line stage and narrow dates while truncating role and employe
     />,
   );
   expect(screen.getByRole("columnheader", { name: "Job" }).className).toContain(
-    "min-w-0",
+    "w-[12rem]",
   );
   expect(
     screen.getByRole("columnheader", { name: "Company" }).className,
-  ).toContain("min-w-0");
+  ).toContain("w-[10rem]");
   expect(
     screen.getByRole("columnheader", { name: "Stage" }).className,
   ).toContain("w-[8.5rem]");
-  expect(screen.getByRole("table").className).toContain("table-fixed");
+  const table = screen.getByRole("table");
+  expect(table.className).toContain("table-fixed");
+  expect(table.style.minWidth).toBe("68rem");
+  expect(table.parentElement?.className).toContain(
+    "min-h-0 min-w-0 flex-1 overflow-auto",
+  );
   expect(
     screen.getByRole("columnheader", { name: "Updated" }).className,
   ).toContain("w-[7.5rem]");
@@ -1141,4 +1146,28 @@ test("uses singular wording when tagging one application", async () => {
   await waitFor(() =>
     expect(screen.getByText("1 application updated")).toBeTruthy(),
   );
+});
+
+test("confirms one selected application without claiming other pages will change", () => {
+  render(
+    <ApplicationsCrmViews
+      records={[record("one", "Role", "Acme")]}
+      selectedRecordId={null}
+      view="table"
+      onSelectRecord={vi.fn()}
+      onViewChange={vi.fn()}
+      onBulkChange={vi.fn()}
+    />,
+  );
+  fireEvent.click(
+    screen.getByRole("checkbox", { name: "Select all matching applications" }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Move to Reviewing" }));
+  const confirmation = screen.getByRole("alertdialog", {
+    name: "Confirm bulk change",
+  });
+  expect(
+    within(confirmation).getByText("This application will change."),
+  ).toBeTruthy();
+  expect(within(confirmation).queryByText(/other pages/)).toBeNull();
 });

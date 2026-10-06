@@ -60,6 +60,36 @@ describe("reading the choices of lists the page draws itself", () => {
     browser = await chromium.launch({ headless: true });
   }, 60_000);
 
+  test("keeps the outer step legend on a nested skills group", async () => {
+    const page = await browser.newPage();
+    try {
+      await page.setContent(`
+        <form><fieldset><legend>Step 3 of 6: Skills</legend>
+          <label>Email <input type="email" name="email"></label>
+          <fieldset><legend>Select your skills</legend>
+            <label><input type="checkbox" name="skills" value="Analysis">Analysis</label>
+            <label><input type="checkbox" name="skills" value="Coordination">Coordination</label>
+          </fieldset>
+        </fieldset></form>
+      `);
+      const observation = await readRawApplyPage(page);
+      expect(
+        observation.controls
+          .filter((control) => control.name === "skills")
+          .map((control) => control.groupLabel),
+      ).toEqual([
+        "Step 3 of 6: Skills — Select your skills",
+        "Step 3 of 6: Skills — Select your skills",
+      ]);
+      expect(
+        observation.controls.find((control) => control.name === "email")
+          ?.groupLabel,
+      ).toBe("Step 3 of 6: Skills");
+    } finally {
+      await page.close();
+    }
+  });
+
   test("reads the upload format and numeric/month constraints from the actual inputs", async () => {
     const page = await browser.newPage();
     try {

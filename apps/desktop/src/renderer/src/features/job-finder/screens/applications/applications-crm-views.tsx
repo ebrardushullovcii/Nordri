@@ -92,6 +92,16 @@ const columnValues = [
   "updated",
 ] as const;
 type CrmColumn = (typeof columnValues)[number];
+const columnMinimumWidths: Record<CrmColumn, number> = {
+  job: 12,
+  company: 10,
+  stage: 8.5,
+  reminder: 7.5,
+  interview: 7.5,
+  tags: 5,
+  applied: 7.5,
+  updated: 7.5,
+};
 
 /**
  * Below this many records the table/board/calendar switcher and the exports
@@ -917,12 +927,15 @@ export function ApplicationsCrmViews(props: {
 
       {props.view === "table" && filteredRecords.length > 0 ? (
         <div
-          className="min-h-28 flex-1 overflow-auto"
+          className="min-h-0 min-w-0 flex-1 overflow-auto"
           data-locked-pane-scroll-region
         >
           <table
             aria-labelledby="application-tracker-heading"
-            className="w-full min-w-[48rem] table-fixed border-collapse text-left text-sm"
+            className="w-full table-fixed border-collapse text-left text-sm"
+            style={{
+              minWidth: `${2.5 + columnValues.filter(columnVisible).reduce((width, column) => width + columnMinimumWidths[column], 0)}rem`,
+            }}
             data-application-tracker-table
           >
             <thead className="sticky top-0 z-10 bg-(--surface-panel-solid)">
@@ -948,15 +961,17 @@ export function ApplicationsCrmViews(props: {
                   <th
                     className={cn(
                       "label-mono-xs px-2 py-3 capitalize",
-                      column === "job" || column === "company"
-                        ? "min-w-0"
-                        : column === "stage"
-                          ? "w-[8.5rem] whitespace-nowrap"
-                          : column === "tags"
-                            ? "w-20 whitespace-nowrap"
-                            : // Date columns: "Oct 3, 12:37 PM" and the
-                              // "Next reminder" heading fit without cutting.
-                              "w-[7.5rem] whitespace-nowrap",
+                      column === "job"
+                        ? "w-[12rem]"
+                        : column === "company"
+                          ? "w-[10rem]"
+                          : column === "stage"
+                            ? "w-[8.5rem] whitespace-nowrap"
+                            : column === "tags"
+                              ? "w-20 whitespace-nowrap"
+                              : // Date columns: "Oct 3, 12:37 PM" and the
+                                // "Next reminder" heading fit without cutting.
+                                "w-[7.5rem] whitespace-nowrap",
                     )}
                     key={column}
                     scope="col"
@@ -1230,8 +1245,9 @@ export function ApplicationsCrmViews(props: {
             >
               <strong>{confirmation.label}</strong>
               <p>
-                Every selected application will change, including those on other
-                pages.
+                {selectedIds.length === 1
+                  ? "This application will change."
+                  : "Every selected application will change, including those on other pages."}
               </p>
               {confirmation.action === "archive" ? (
                 <p>

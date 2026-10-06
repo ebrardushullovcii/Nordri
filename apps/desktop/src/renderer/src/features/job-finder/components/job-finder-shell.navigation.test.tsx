@@ -1532,12 +1532,18 @@ describe("JobFinderShell section navigation", () => {
 
     expect(shellGrid?.className).toContain("grid-rows-[3.5rem_auto_auto]");
     expect(shellGrid?.className).toContain("sm:grid-rows-[3.5rem_3.75rem]");
-    expect(shell?.className).toContain("overflow-y-auto");
-    expect(shell?.className).toContain("sm:overflow-hidden");
+    expect(shell?.className).toContain(
+      "flex h-dvh min-h-0 flex-col overflow-hidden",
+    );
+    expect(shell?.className).not.toContain("overflow-y-auto");
+
     expect(header?.className).toContain("relative");
     expect(header?.className).toContain("sm:fixed");
-    expect(shellContent?.className).toContain("h-screen");
-    expect(shellContent?.className).toContain("min-h-screen");
+    expect(shellContent?.className).toContain(
+      "min-h-0 min-w-0 flex-1 flex-col",
+    );
+    expect(shellContent?.className).not.toContain("min-h-screen");
+    expect(header?.className).toContain("shrink-0");
     expect(shellContent?.className).not.toContain("pt-[18.75rem]");
     expect(shellContent?.className).toContain("sm:pt-[7.25rem]");
     expect(shellContent?.className).toContain("min-[1440px]:!pt-14");
@@ -1823,7 +1829,7 @@ describe("JobFinderShell section navigation", () => {
     const shell = document.querySelector<HTMLElement>(
       "[data-job-finder-shell]",
     );
-    expect(shell?.className).toContain("overflow-x-hidden");
+    expect(shell?.className).toContain("overflow-hidden");
     expect(navigation.className).not.toContain("overflow-x-hidden");
   });
 

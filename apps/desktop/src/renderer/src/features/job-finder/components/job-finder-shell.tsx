@@ -278,7 +278,7 @@ export const DESTINATION_COUNT_RAIL_MARKER_LAYOUT_CLASS =
  * 3:1 non-text floor in both themes.
  */
 export const SHELL_HEADER_CLASS =
-  "relative z-50 overflow-visible border-b border-(--surface-panel-shell-border) bg-(--shell-header-bg) backdrop-blur-sm sm:fixed sm:inset-x-0 sm:top-0 min-[1440px]:h-14";
+  "relative z-50 shrink-0 overflow-visible border-b border-(--surface-panel-shell-border) bg-(--shell-header-bg) backdrop-blur-sm sm:fixed sm:inset-x-0 sm:top-0 min-[1440px]:h-14";
 export const SHELL_HEADER_GRID_CLASS =
   "job-finder-shell-grid grid grid-rows-[3.5rem_auto_auto] items-stretch overflow-visible pl-2 pr-2 sm:grid-rows-[3.5rem_3.75rem] sm:pl-3 sm:pr-3 min-[1440px]:!grid-rows-[3.5rem]";
 /**
@@ -347,16 +347,18 @@ export function SidebarDestinationLabel({
     </span>
   );
 }
+export const SHELL_ROOT_CLASS =
+  "flex h-dvh min-h-0 flex-col overflow-hidden text-foreground";
 export const SHELL_CONTENT_CLASS =
-  "flex min-h-screen flex-col sm:h-full sm:min-h-0 sm:pt-[7.25rem] min-[1440px]:!pt-14 min-[1440px]:pl-(--job-finder-side-width)";
+  "flex min-h-0 min-w-0 flex-1 flex-col sm:pt-[7.25rem] min-[1440px]:!pt-14 min-[1440px]:pl-(--job-finder-side-width)";
 export const SHELL_MAIN_SCROLLING_CLASS = cn(
-  "flex-1 overflow-x-hidden outline-none",
+  "min-h-0 min-w-0 flex-1 overflow-x-hidden outline-none",
   "screen-scroll-area overflow-y-auto px-3 min-[1440px]:px-4",
   SHELL_SCROLLING_ROUTE_TOP_GUTTER_CLASS,
   SHELL_SCROLLING_ROUTE_BOTTOM_GUTTER_CLASS,
 );
 export const SHELL_MAIN_LOCKED_CLASS = cn(
-  "flex-1 overflow-x-hidden outline-none",
+  "min-h-0 min-w-0 flex-1 overflow-x-hidden outline-none",
   // Important for the same reason the header reserves above: `sm:px-3` still
   // matches at >=1440px and Tailwind v4 emits it after every arbitrary
   // variant, so a plain `min-[1440px]:px-4` silently lost and the wide layout
@@ -1203,10 +1205,7 @@ export function JobFinderShell({
     <div
       data-job-finder-shell
       data-sidebar-collapsed={isSidebarCollapsed ? "true" : "false"}
-      className={cn(
-        "h-screen overflow-x-hidden overflow-y-auto text-foreground sm:overflow-hidden",
-        `platform-${platform}`,
-      )}
+      className={cn(SHELL_ROOT_CLASS, `platform-${platform}`)}
       style={
         {
           "--job-finder-side-width": isSidebarCollapsed ? "4rem" : "17rem",

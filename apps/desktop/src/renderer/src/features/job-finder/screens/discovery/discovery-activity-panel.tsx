@@ -474,7 +474,7 @@ export function DiscoveryHistoryModal(props: {
 
   return (
     <div
-      className="fixed inset-0 z-50 overflow-y-auto bg-(--modal-scrim) p-6 backdrop-blur-sm sm:p-10 backdrop-blur-sm"
+      className="fixed inset-0 z-[140] overflow-y-auto bg-(--modal-scrim) p-6 backdrop-blur-sm sm:p-10 backdrop-blur-sm"
       onClick={props.onClose}
     >
       <div
@@ -632,7 +632,7 @@ export function DiscoveryHistoryModal(props: {
                       selectedRun.summary.validJobsFound}
                     {selectedRun.summary.duplicatesMerged > 0 ? (
                       <span className="ml-2 text-[0.78rem] font-normal text-foreground-muted">
-                        {`${selectedRun.summary.duplicatesMerged} duplicates merged`}
+                        {`${selectedRun.summary.duplicatesMerged} duplicate${selectedRun.summary.duplicatesMerged === 1 ? "" : "s"} merged`}
                       </span>
                     ) : null}
                   </p>
@@ -878,7 +878,7 @@ export function DiscoveryHistoryModal(props: {
                                       Contributed {contributed} new job
                                       {contributed === 1 ? "" : "s"} to this run
                                       {alreadySaved > 0
-                                        ? `; ${execution?.duplicatesMerged ?? 0} duplicates merged · ${execution?.jobsSkippedByLedger ?? 0} seen before`
+                                        ? `; ${execution?.duplicatesMerged ?? 0} duplicate${execution?.duplicatesMerged === 1 ? "" : "s"} merged · ${execution?.jobsSkippedByLedger ?? 0} seen before`
                                         : ""}
                                       .
                                     </>

@@ -11,6 +11,7 @@ import {
   SHELL_HEADER_GRID_CLASS,
   SHELL_MAIN_LOCKED_CLASS,
   SHELL_MAIN_SCROLLING_CLASS,
+  SHELL_ROOT_CLASS,
   SHELL_ROUTE_CONTAINER_BASE_CLASS,
   SHELL_ROUTE_SECTION_GAP_STYLE,
   SHELL_SIDEBAR_CLASS,
@@ -518,10 +519,7 @@ function JobFinderOpeningShell() {
 
   return (
     <div
-      className={cn(
-        "h-screen overflow-x-hidden overflow-y-auto text-foreground sm:overflow-hidden",
-        `platform-${platform ?? "unknown"}`,
-      )}
+      className={cn(SHELL_ROOT_CLASS, `platform-${platform ?? "unknown"}`)}
       data-job-finder-opening-shell
       data-job-finder-shell
       data-sidebar-collapsed={isSidebarCollapsed ? "true" : "false"}

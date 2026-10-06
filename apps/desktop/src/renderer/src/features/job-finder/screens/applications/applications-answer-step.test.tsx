@@ -61,3 +61,55 @@ it("offers Skip beside the waiting application's questions without authorizing a
   );
   expect(screen.getByText(/history is kept/)).toBeTruthy();
 });
+
+it("shows the same step prefix on a multi-choice skills question", () => {
+  const at = "2026-10-05T10:00:00.000Z";
+  const request = UserActionRequestSchema.parse({
+    id: "skills_request",
+    revision: 1,
+    dedupeKey: "skills_request",
+    kind: "manual_answer",
+    state: "awaiting_user",
+    scope: {
+      type: "application",
+      runId: "run",
+      jobId: "job",
+      applicationRecordId: "application",
+      source: "target_site",
+    },
+    verification: { type: "page_blocker_absent", blockerFingerprint: "skills" },
+    title: "Answer needed",
+    summary: "Answer needed",
+    createdAt: at,
+    updatedAt: at,
+  });
+  render(
+    <ApplicationAnswerStepCard
+      step={{
+        request,
+        isPending: false,
+        onCommand: vi.fn(),
+        questions: [
+          {
+            id: "skills",
+            prompt: "Step 3 of 6: Skills — Select your skills",
+            kind: "other",
+            isRequired: true,
+            answerControlType: "multi_choice",
+            detectedAt: at,
+            answerOptions: ["Analysis", "Coordination"],
+            suggestedAnswers: [],
+            submittedAnswer: null,
+            status: "detected",
+          },
+        ],
+      }}
+    />,
+  );
+  expect(
+    screen.getByRole("group", {
+      name: "Step 3 of 6: Skills — Select your skills",
+    }),
+  ).toBeTruthy();
+  expect(screen.getByRole("checkbox", { name: "Analysis" })).toBeTruthy();
+});

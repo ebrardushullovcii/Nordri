@@ -340,3 +340,75 @@ it("gives no spacer to a route area that did not scroll before the toast, so the
     ).length,
   ).toBeGreaterThan(0);
 });
+
+it.each(["dismiss", "expire"])(
+  "keeps clearance at the list end after %s until the person scrolls above it",
+  async (leave) => {
+    vi.useFakeTimers();
+    mockLayout();
+    render(<ScrollFixture />);
+    fireEvent.click(screen.getByText("Hide jobs"));
+    const owner = document.querySelector<HTMLElement>(
+      "[data-locked-pane-scroll-region]",
+    )!;
+    // Natural end = 2000 - 700 - 136; the person is in the added tail.
+    owner.scrollTop = 1300;
+    if (leave === "dismiss")
+      fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    else await act(() => vi.advanceTimersByTime(20000));
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(owner.querySelector("[data-toast-scroll-spacer]")).toBeTruthy();
+    expect(owner.scrollTop).toBe(1300);
+    owner.scrollTop = 1164;
+    fireEvent.scroll(owner);
+    await act(() => vi.advanceTimersByTime(20));
+    expect(owner.querySelector("[data-toast-scroll-spacer]")).toBeNull();
+    expect(owner.scrollTop).toBe(1164);
+  },
+);
+
+it("keeps the old range when part of the stack leaves at the list end", async () => {
+  vi.useFakeTimers();
+  const layout = mockLayout({ stackHeight: 300 });
+  render(<ScrollFixture />);
+  fireEvent.click(screen.getByText("Hide jobs"));
+  fireEvent.click(screen.getByText("Hide jobs"));
+  const owner = document.querySelector<HTMLElement>(
+    "[data-locked-pane-scroll-region]",
+  )!;
+  owner.scrollTop = 1300;
+  layout.setStackHeight(112);
+  fireEvent.click(screen.getAllByRole("button", { name: "Dismiss" })[0]!);
+  fireEvent(window, new Event("resize"));
+  await act(() => vi.advanceTimersByTime(20));
+  expect(
+    owner.querySelector<HTMLElement>("[data-toast-scroll-spacer]")?.style
+      .height,
+  ).toBe("324px");
+  owner.scrollTop = 900;
+  fireEvent.scroll(owner);
+  await act(() => vi.advanceTimersByTime(20));
+  expect(
+    owner.querySelector<HTMLElement>("[data-toast-scroll-spacer]")?.style
+      .height,
+  ).toBe("136px");
+});
+
+it("caps a tall stack's clearance at the pane height minus one measured row", () => {
+  mockLayout({ stackHeight: 800, pagerTop: 780 });
+  const view = render(<ScrollFixture pager />);
+  const owner = view.container.querySelector<HTMLElement>(
+    "[data-locked-pane-scroll-region]",
+  )!;
+  Object.defineProperty(owner, "clientHeight", { value: 180 });
+  const row = screen.getByText("First job");
+  vi.spyOn(row, "getBoundingClientRect").mockReturnValue({
+    height: 48,
+  } as DOMRect);
+  fireEvent.click(screen.getByText("Hide jobs"));
+  expect(
+    owner.querySelector<HTMLElement>("[data-toast-scroll-spacer]")?.style
+      .height,
+  ).toBe("132px");
+  expect(owner.style.height).toBe("700px");
+});
