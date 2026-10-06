@@ -160,6 +160,8 @@ export type ListApplicationDocumentsInput = z.infer<
 
 export const ApplicationDocumentListResultSchema = z.object({
   documents: z.array(ApplicationDocumentRevisionSchema),
+  /** The latest approved revision behind each newer proposed revision. */
+  approvedRevisions: z.array(ApplicationDocumentRevisionSchema).default([]),
 });
 export type ApplicationDocumentListResult = z.infer<
   typeof ApplicationDocumentListResultSchema

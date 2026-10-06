@@ -2339,20 +2339,28 @@ export function CampaignsScreen(props: {
                         Recent search-plan history
                       </summary>
                       <ol className="mt-3 grid gap-2 text-sm text-foreground-soft">
-                        {campaign.history.slice(0, 5).map((entry) => (
-                          <li key={entry.id}>
-                            <span className="font-medium text-foreground">
-                              {formatPlanCardDateTime(entry.occurredAt) ??
-                                "Unknown time"}
-                            </span>{" "}
-                            — {describePlanHistory(entry)}
-                          </li>
-                        ))}
+                        {campaign.history
+                          .filter(
+                            (entry, index, history) =>
+                              entry.kind !== "activated" ||
+                              history[index - 1]?.kind !== "activated",
+                          )
+                          .slice(0, 5)
+                          .map((entry) => (
+                            <li key={entry.id}>
+                              <span className="font-medium text-foreground">
+                                {formatPlanCardDateTime(entry.occurredAt) ??
+                                  "Unknown time"}
+                              </span>{" "}
+                              — {describePlanHistory(entry)}
+                            </li>
+                          ))}
                       </ol>
                     </details>
                   ) : null}
                   {deleteCandidateId === campaign.id ? (
                     <div
+                      data-toast-avoid
                       aria-label={`Confirm deleting ${campaign.name}`}
                       className="grid gap-2 rounded-(--radius-field) border border-destructive/40 bg-destructive/10 p-3"
                       role="group"
@@ -2470,7 +2478,10 @@ export function CampaignsScreen(props: {
                     row, at the opposite end, one deliberate reach away from
                     Edit. */}
                   {props.onDeleteCampaign ? (
-                    <div className="flex flex-wrap justify-start gap-2 border-t border-(--surface-panel-border) pt-2">
+                    <div
+                      data-toast-avoid
+                      className="flex flex-wrap justify-start gap-2 border-t border-(--surface-panel-border) pt-2"
+                    >
                       <Button
                         className="border-destructive/45 text-destructive hover:border-destructive hover:text-destructive"
                         onClick={() => {

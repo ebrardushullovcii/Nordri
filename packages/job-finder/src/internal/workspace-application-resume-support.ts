@@ -962,10 +962,8 @@ export async function buildResumeWorkspace(
     ...artifact,
     isApproved: draft.approvedExportId === artifact.id,
   }));
-  // The comparison is stored when a resume is written. Its keyword lists
-  // depend only on the profile and the draft, so they are read again here:
-  // a draft written by older code never keeps listing the person's own
-  // languages or skills as added.
+  // Refresh comparison identities on read too: older stored translations
+  // have neither original-field links nor paired experience rows.
   const storedValidation = validations[0] ?? null;
   const validation = storedValidation?.coverageComparison
     ? (() => {
@@ -981,6 +979,13 @@ export async function buildResumeWorkspace(
             ...storedValidation.coverageComparison,
             addedKeywords: current.addedKeywords,
             removedKeywords: current.removedKeywords,
+            roles: current.roles.map((role) => ({
+              ...role,
+              reasons:
+                storedValidation.coverageComparison!.roles.find(
+                  (stored) => stored.profileRecordId === role.profileRecordId,
+                )?.reasons ?? role.reasons,
+            })),
           },
         };
       })()

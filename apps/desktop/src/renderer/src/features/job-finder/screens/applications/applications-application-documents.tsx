@@ -30,6 +30,9 @@ export function ApplicationsApplicationDocuments(props: {
   const [documents, setDocuments] = useState<
     readonly ApplicationDocumentRevision[]
   >([]);
+  const [approvedRevisions, setApprovedRevisions] = useState<
+    readonly ApplicationDocumentRevision[]
+  >([]);
   const [selectedDocumentId, setSelectedDocumentId] = useState("");
   const [kind, setKind] = useState<ApplicationDocumentKind>("cover_letter");
   const attachmentQuestions = useMemo(
@@ -50,6 +53,15 @@ export function ApplicationsApplicationDocuments(props: {
     documents.find((document) => document.id === selectedDocumentId) ??
     documents[0] ??
     null;
+
+  const previousApprovedRevision =
+    selectedDocument?.status === "proposed"
+      ? approvedRevisions.find(
+          (revision) =>
+            revision.id === selectedDocument.id &&
+            revision.revision < selectedDocument.revision,
+        )
+      : null;
 
   useEffect(() => {
     setDraftContent(selectedDocument?.content ?? "");
@@ -81,6 +93,7 @@ export function ApplicationsApplicationDocuments(props: {
           .values(),
       ];
       setDocuments(latest);
+      setApprovedRevisions(result.approvedRevisions ?? []);
       setSelectedDocumentId((current) =>
         latest.some((document) => document.id === current)
           ? current
@@ -101,6 +114,7 @@ export function ApplicationsApplicationDocuments(props: {
 
   useEffect(() => {
     setDocuments([]);
+    setApprovedRevisions([]);
     setSelectedDocumentId("");
     setQuestionId("");
   }, [applicationRecord.id, applicationRecord.jobId]);
@@ -415,6 +429,24 @@ export function ApplicationsApplicationDocuments(props: {
             <p className="text-(length:--text-small) text-foreground-soft">
               Attachment question: {selectedDocument.question.prompt}
             </p>
+          ) : null}
+          {previousApprovedRevision ? (
+            <div className="grid gap-2 text-(length:--text-small) text-foreground-soft">
+              <p>
+                Revision {previousApprovedRevision.revision} is approved and
+                stays in use until you approve this one.
+              </p>
+              <details
+                key={`${previousApprovedRevision.id}:${previousApprovedRevision.revision}`}
+              >
+                <summary className="cursor-pointer">
+                  Read approved revision {previousApprovedRevision.revision}
+                </summary>
+                <p className="mt-2 whitespace-pre-wrap leading-6">
+                  {previousApprovedRevision.content}
+                </p>
+              </details>
+            </div>
           ) : null}
           {selectedDocument.status === "proposed" ? (
             <div className="grid gap-2">

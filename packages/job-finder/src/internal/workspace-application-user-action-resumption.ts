@@ -490,6 +490,38 @@ async function settlePrepareOnlyVerification(input: {
     return null;
   }
 
+  if (
+    input.outcome === "verified" &&
+    currentRequest.kind === "manual_answer" &&
+    currentRequest.scope.type === "application" &&
+    currentRequest.scope.applicationRecordId !== null &&
+    currentRequest.scope.resultId !== null
+  ) {
+    const scope = currentRequest.scope;
+    const questions = await input.ctx.repository.listApplicationQuestionRecords(
+      {
+        applicationRecordId: scope.applicationRecordId!,
+        resultId: scope.resultId!,
+      },
+    );
+    const answers = await input.ctx.repository.listApplicationAnswerRecords({
+      applicationRecordId: scope.applicationRecordId!,
+      resultId: scope.resultId!,
+    });
+    const answered = questions.filter((question) =>
+      answers.some(
+        (answer) =>
+          answer.questionId === question.id &&
+          answer.sourceKind === "user" &&
+          answer.status !== "rejected",
+      ),
+    );
+    if (answered.length)
+      reduction.request.summary =
+        answered.length === 1
+          ? `You answered “${answered[0]!.prompt}” in the app.`
+          : `You answered ${answered.length} application questions in the app.`;
+  }
   const commit = await input.ctx.repository.commitUserActionTransition({
     request: reduction.request,
     event: reduction.event,
@@ -1682,6 +1714,7 @@ export function createApplicationUserActionResumer(
       resultStartedAt: nextResult.startedAt,
       replayCheckpointId: checkpoint.id,
       blocker: finalExecutionResult.blocker,
+      questions: resumedArtifacts.questionRecords,
       occurredAt: completedAt,
     });
     await handApplicationPageToPersonForAccessStep({

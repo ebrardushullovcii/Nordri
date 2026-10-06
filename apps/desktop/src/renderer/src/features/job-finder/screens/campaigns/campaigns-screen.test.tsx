@@ -2790,3 +2790,69 @@ it("uses plain words for saved plan history and keeps toasts off plan actions", 
     screen.getByRole("button", { name: "Rules" }).closest("[data-toast-avoid]"),
   ).toBeTruthy();
 });
+
+it("collapses consecutive Made current history before taking the five visible entries", () => {
+  const plan = campaign("one", "Plan", "scale");
+  plan.history = [
+    ...Array.from({ length: 6 }, (_, index) => ({
+      id: `select-${index}`,
+      campaignId: plan.id,
+      kind: "activated" as const,
+      occurredAt: plan.createdAt,
+      summary: "Made current",
+      discoveryRunId: null,
+    })),
+    {
+      id: "search",
+      campaignId: plan.id,
+      kind: "discovery_run",
+      occurredAt: plan.createdAt,
+      summary: "Search finished: 2 jobs saved.",
+      discoveryRunId: "run",
+    },
+    {
+      id: "select-older",
+      campaignId: plan.id,
+      kind: "activated",
+      occurredAt: plan.createdAt,
+      summary: "Made current",
+      discoveryRunId: null,
+    },
+  ];
+  render(
+    <CampaignsScreen
+      activeCampaignId={plan.id}
+      campaigns={[plan]}
+      onSaveCampaign={vi.fn()}
+      onSelectCampaign={vi.fn()}
+      pending={false}
+    />,
+  );
+  expect(screen.getAllByText(/Made current/)).toHaveLength(2);
+  expect(screen.getByText(/Search finished: 2 jobs saved/)).toBeTruthy();
+  expect(plan.history).toHaveLength(8);
+});
+
+it("keeps stacked toasts away from Delete plan and its confirmation", () => {
+  const plan = campaign("one", "Plan", "scale");
+  render(
+    <CampaignsScreen
+      activeCampaignId={plan.id}
+      campaigns={[plan, campaign("two", "Other", "scale")]}
+      onSaveCampaign={vi.fn()}
+      onSelectCampaign={vi.fn()}
+      onDeleteCampaign={vi.fn()}
+      pending={false}
+    />,
+  );
+  const deleteButton = screen.getAllByRole("button", {
+    name: "Delete plan",
+  })[0]!;
+  expect(deleteButton.closest("[data-toast-avoid]")).toBeTruthy();
+  fireEvent.click(deleteButton);
+  expect(
+    screen
+      .getByRole("group", { name: "Confirm deleting Plan" })
+      .hasAttribute("data-toast-avoid"),
+  ).toBe(true);
+});

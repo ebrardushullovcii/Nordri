@@ -1,6 +1,9 @@
 import { afterEach, expect, test, vi } from "vitest";
 import type { JudgeJobFitsInput } from "@nordri/ai-providers";
-import { JobDiscoveryTargetSchema } from "@nordri/contracts";
+import {
+  JobDiscoveryTargetSchema,
+  SaveJobSearchCampaignInputSchema,
+} from "@nordri/contracts";
 import {
   createAiClient,
   createSeed,
@@ -316,4 +319,45 @@ test("searching plan B never judges or changes plan A's jobs, including a shared
   await harness.workspaceService.selectCampaign("plan-b");
   await harness.workspaceService.runAgentDiscovery();
   expect(judgeJobFits).toHaveBeenCalledTimes(1);
+}, 30_000);
+
+test("a new one-source plan keeps the same jobs after its first and second search", async () => {
+  const seed = seedWithBoard();
+  seed.savedJobs = createSeed().savedJobs.map((job) => ({
+    ...job,
+    status: "discovered" as const,
+  }));
+  const { repository, workspaceService } = createWorkspaceServiceHarness({
+    seed,
+  });
+  const initial = await workspaceService.getWorkspaceSnapshot();
+  const oldPlan = initial.campaigns[0]!;
+  const created = await workspaceService.saveCampaign(
+    SaveJobSearchCampaignInputSchema.parse({
+      ...oldPlan,
+      id: null,
+      name: "One source",
+      sourceSelectionMode: "selected",
+      sourceTargetIds: ["fit"],
+    }),
+  );
+  const plan = created.campaigns.find(
+    (candidate) => candidate.name === "One source",
+  )!;
+  await workspaceService.selectCampaign(plan.id);
+  const first = await workspaceService.runAgentDiscovery();
+  const firstIds = first.campaigns.find(
+    (candidate) => candidate.id === plan.id,
+  )!.jobIds;
+  expect(firstIds.length).toBe(2);
+  expect(
+    firstIds.some((id) => seed.savedJobs.some((job) => job.id === id)),
+  ).toBe(false);
+  const second = await workspaceService.runAgentDiscovery();
+  expect(
+    second.campaigns.find((candidate) => candidate.id === plan.id)!.jobIds,
+  ).toEqual(firstIds);
+  expect((await repository.listSavedJobs()).length).toBe(
+    seed.savedJobs.length + 2,
+  );
 }, 30_000);

@@ -577,3 +577,55 @@ it("uses the report for headline, duplicate tile and source counts without repea
   ).toBeTruthy();
   expect(screen.queryByText(/Found on Example board:/)).toBeNull();
 });
+
+it("a source note labels the persisted saved count once without a contradictory agent total", () => {
+  const run = DiscoveryRunRecordSchema.parse({
+    ...failedRun,
+    targetExecutions: [
+      {
+        ...failedRun.targetExecutions[0]!,
+        state: "completed",
+        jobsPersisted: 0,
+        jobsStaged: 0,
+        warning: null,
+      },
+    ],
+    summary: {
+      ...failedRun.summary,
+      sourceHealth: [
+        {
+          ...failedRun.summary.sourceHealth[0]!,
+          health: "healthy",
+          warnings: [],
+        },
+      ],
+    },
+    activity: [
+      DiscoveryActivityEventSchema.parse({
+        id: "terminal",
+        runId: failedRun.id,
+        timestamp: failedRun.completedAt,
+        kind: "success",
+        stage: "target",
+        targetId: targets[0]!.id,
+        adapterKind: "auto",
+        terminalState: "completed",
+        message: "Saved 2 fits",
+      }),
+    ],
+  });
+  render(
+    <DiscoveryHistoryModal
+      activeRun={null}
+      isDiscoveryPending={false}
+      isTargetPending={() => false}
+      liveEvents={[]}
+      onClose={vi.fn()}
+      open
+      recentRuns={[run]}
+      targets={targets}
+    />,
+  );
+  const sourceCard = screen.getByText(/0 saved/).closest("article")!;
+  expect(within(sourceCard).queryByText("Saved 2 fits")).toBeNull();
+});

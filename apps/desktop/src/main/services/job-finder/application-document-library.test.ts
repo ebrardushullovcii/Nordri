@@ -69,13 +69,35 @@ describe("ApplicationDocumentLibrary", () => {
       "  My exact approved letter.\n",
     );
     const approved = await library.approve(edited.id, edited.revision);
-    await library.propose({
+    const newDraft = await library.propose({
       kind: "cover_letter",
       grounding,
       documentId: approved.id,
       expectedRevision: approved.revision,
       writtenContent: "Not approved.",
     });
+    expect(
+      await library.list({
+        jobId: grounding.job.id,
+        applicationRecordId: grounding.applicationRecord.id,
+      }),
+    ).toMatchObject({ documents: [newDraft], approvedRevisions: [approved] });
+    expect(
+      (
+        await library.list({
+          jobId: "another-job",
+          applicationRecordId: grounding.applicationRecord.id,
+        })
+      ).approvedRevisions,
+    ).toEqual([]);
+    expect(
+      (
+        await library.list({
+          jobId: grounding.job.id,
+          applicationRecordId: "another-application",
+        })
+      ).approvedRevisions,
+    ).toEqual([]);
     expect(
       await library.getLatestApprovedCoverLetter(
         grounding.job.id,

@@ -2056,7 +2056,7 @@ export function buildResumeCoverageComparison(input: {
             : (entry?.bullets
                 .filter((bullet) => bullet.included && bullet.text === text)
                 .flatMap((bullet) => bullet.sourceRefs) ?? []);
-        return uniqueStrings(
+        const linkedIds = uniqueStrings(
           refs.flatMap((ref) => {
             if (
               ref.sourceId?.startsWith("draft:") &&
@@ -2078,6 +2078,25 @@ export function buildResumeCoverageComparison(input: {
               : [];
           }),
         );
+        if (
+          linkedIds.length ||
+          !entry ||
+          !(input.draft.writtenLanguage || input.draft.language)
+        )
+          return linkedIds;
+        // Legacy language drafts predate original-field links. The language
+        // writer preserves section/entry/line order; recover that identity
+        // from the original field, never from translated word overlap.
+        if (text === entry.summary)
+          return resumeSentences(experience.summary ?? "").flatMap(
+            sourceAchievementIds,
+          );
+        const bulletIndex = entry.bullets.findIndex(
+          (bullet) => bullet.text === text,
+        );
+        return bulletIndex >= 0 && experience.achievements[bulletIndex]
+          ? [`experience:${experience.id}:achievement:${bulletIndex}`]
+          : [];
       };
       const originalSummaryKey = normalizeText(experience.summary ?? "");
       const removedClaims = removedClaimText.map((text) => ({

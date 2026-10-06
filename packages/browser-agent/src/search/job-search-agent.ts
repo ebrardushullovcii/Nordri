@@ -258,6 +258,8 @@ export async function runJobSearchAgent(
   const inspectedCatalog = new Map<string, JobPosting>();
   const coveredPageKeys = new Set<string>();
   const inspectedPageUrls: string[] = [];
+  const lastReadMovementByUrl = new Map<string, number>();
+  let pageMovementRevision = 0;
   const outsideCatalog = new Set<string>();
   let outsideCatalogAttempts = 0;
   let duplicateListings = 0;
@@ -344,6 +346,11 @@ export async function runJobSearchAgent(
     execute: async (raw, context) => {
       const before = observationRevision;
       const outcome = await tool.execute(raw, context);
+      if (
+        outcome.kind === "ok" &&
+        ["navigate", "click", "go_back"].includes(tool.definition.function.name)
+      )
+        pageMovementRevision += 1;
       // Only a fresh page read can show a new bot check; re-reading the page
       // after every tool would slow long searches for nothing.
       if (outcome.kind !== "ok" || observationRevision === before) {
@@ -542,10 +549,17 @@ export async function runJobSearchAgent(
         return { kind: "ok", content: "There is no page to read yet." };
       }
       const pageKey = `${observation.url}\n${pageText}`;
-      if (!coveredPageKeys.has(pageKey)) {
-        coveredPageKeys.add(pageKey);
+      const lastMovement = lastReadMovementByUrl.get(observation.url);
+      if (
+        !coveredPageKeys.has(pageKey) &&
+        (lastMovement === undefined || pageMovementRevision > lastMovement)
+      ) {
         inspectedPageUrls.push(observation.url);
       }
+      // A changing clock or loading text is not another results page. A new
+      // rendered page at the same address counts after the agent moves it.
+      coveredPageKeys.add(pageKey);
+      lastReadMovementByUrl.set(observation.url, pageMovementRevision);
       // Plain innerText omits link destinations and JSON-LD. Keep that URL
       // evidence available to the extractor so a listing and its own detail
       // link do not acquire separate identities merely because both were read.
@@ -1184,12 +1198,8 @@ export async function runJobSearchAgent(
         })
       : null;
 
-    const coveredPageUrls = [
-      ...inspectedPageUrls,
-      ...pageTools.state.visitedUrls.filter(
-        (url) => !inspectedPageUrls.includes(url),
-      ),
-    ];
+    // Visiting an address is not evidence that its job listings were read.
+    const coveredPageUrls = [...inspectedPageUrls];
     return {
       deferredListingPageUrls: [...inspectedCatalog]
         .filter(([key]) => !known.has(key))

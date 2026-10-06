@@ -1,6 +1,10 @@
 import { enrichSearchPreferencesFromProfile } from "./workspace-helpers";
 import { withSavedJobSearchBehavior } from "./job-search-behavior";
-import { readPlanAssessment, withPlanAssessment } from "./plan-assessment";
+import {
+  personPickedJob,
+  readPlanAssessment,
+  withPlanAssessment,
+} from "./plan-assessment";
 import { createMatchAssessmentSession } from "./match-assessment-session";
 import { createMatchAssessment } from "./matching";
 import { jobNeedsFitJudgment } from "./fit-judgment";
@@ -436,7 +440,19 @@ export async function commitCampaignRunTerminal(input: {
     const alreadyInPlanJobIds = new Set(
       [...encounteredJobIds].filter((jobId) => priorCampaignJobIds.has(jobId)),
     );
-    const candidateJobIds = new Set([...campaign.jobIds, ...encounteredJobIds]);
+    // Live membership may be published while a search is collecting. It is
+    // not proof that an older workspace job belongs to this run. Start with
+    // the plan before the search, then add only this run's actual encounters
+    // and jobs the person selected here while it was running.
+    const candidateJobIds = new Set([
+      ...priorCampaignJobIds,
+      ...encounteredJobIds,
+      ...availableJobs
+        .filter(
+          (job) => campaign.jobIds.includes(job.id) && personPickedJob(job),
+        )
+        .map((job) => job.id),
+    ]);
     const candidates = availableJobs
       .filter((job) => candidateJobIds.has(job.id))
       .map((job) => readPlanAssessment(job, campaign.id));

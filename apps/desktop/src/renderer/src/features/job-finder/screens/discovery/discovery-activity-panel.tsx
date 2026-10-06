@@ -770,7 +770,10 @@ export function DiscoveryHistoryModal(props: {
                         // direct saved jobs and jobs staged for the results list.
                         const contributed =
                           (execution?.jobsPersisted ?? 0) + (execution?.jobsStaged ?? 0);
-                        const terminalReport = contributed === 0
+                        const terminalReport =
+                          contributed === 0 &&
+                          (execution?.state !== "completed" ||
+                            source.health !== "healthy")
                           ? selectedRun.activity.findLast((event) =>
                               event.targetId === source.targetId &&
                               event.stage === "target" &&

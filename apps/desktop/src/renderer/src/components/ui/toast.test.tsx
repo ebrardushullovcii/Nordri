@@ -470,6 +470,7 @@ it("moves stacked toasts above plan actions without adding page padding", () => 
       <div data-toast-avoid>
         <button>Run now</button>
         <button>Rules</button>
+        <button>Delete plan</button>
       </div>
       <ScrollFixture />
     </>,

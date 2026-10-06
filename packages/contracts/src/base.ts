@@ -877,7 +877,7 @@ export function formatDiscoveryAccounting(
 ): string {
   const count = (value: number | null | undefined, label: string) =>
     value == null
-      ? `${label} not recorded`
+      ? null
       : `${value} ${value === 1 && label === "pages covered" ? "page covered" : label}`;
   return [
     count(report.found, "postings seen"),
@@ -892,7 +892,9 @@ export function formatDiscoveryAccounting(
           count(report.pagesCovered, "pages covered"),
         ]
       : []),
-  ].join(" · ");
+  ]
+    .filter((segment) => segment !== null)
+    .join(" · ");
 }
 
 /** Add the missing scheme on a public domain; leave malformed input for validation. */

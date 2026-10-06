@@ -1106,6 +1106,7 @@ async function collectTargetJobs(input: {
   });
 
   let sourceCatalog: JobPosting[] | undefined;
+  let catalogPagesCovered: number | undefined;
   let catalogWarning: string | null = null;
   if (discoveryMethod === "public_api") {
     const startedAt = new Date().toISOString();
@@ -1162,6 +1163,7 @@ async function collectTargetJobs(input: {
       apiResult.jobs.length > 0;
     if (needsCatalogReview) {
       sourceCatalog = apiResult.jobs;
+      catalogPagesCovered = apiResult.pagesCovered;
       catalogWarning = apiResult.warning;
     } else {
       return {
@@ -1340,6 +1342,25 @@ async function collectTargetJobs(input: {
     return {
       result: {
         ...result,
+        ...(catalogPagesCovered !== undefined
+          ? {
+              agentMetadata: DiscoveryAgentMetadataSchema.parse({
+                ...result.agentMetadata,
+                pagesCovered:
+                  catalogPagesCovered +
+                  (result.agentMetadata?.pagesCovered ?? 0),
+                coveredPageUrls: result.agentMetadata?.coveredPageUrls
+                  ? [
+                      ...Array.from(
+                        { length: catalogPagesCovered },
+                        () => target.startingUrl,
+                      ),
+                      ...result.agentMetadata.coveredPageUrls,
+                    ]
+                  : undefined,
+              }),
+            }
+          : {}),
         ...(catalogWarning
           ? {
               warning: [catalogWarning, result.warning]

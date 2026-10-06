@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   ApplicationDocumentRevisionSchema,
+  ApplicationDocumentListResultSchema,
   EditApplicationDocumentInputSchema,
   ProposeApplicationDocumentInputSchema,
 } from "./application-documents";
@@ -45,6 +46,22 @@ describe("application document contracts", () => {
       lastExportedAt: null,
     });
 
+    const approved = {
+      ...document,
+      revision: 1,
+      status: "approved" as const,
+      approvedAt: document.updatedAt,
+    };
+    expect(
+      ApplicationDocumentListResultSchema.parse({
+        documents: [document],
+        approvedRevisions: [approved],
+      }).approvedRevisions,
+    ).toEqual([approved]);
+    expect(
+      ApplicationDocumentListResultSchema.parse({ documents: [document] })
+        .approvedRevisions,
+    ).toEqual([]);
     expect(document.question?.questionId).toBe("question_1");
     expect(document.job.jobId).toBe("job_1");
   });

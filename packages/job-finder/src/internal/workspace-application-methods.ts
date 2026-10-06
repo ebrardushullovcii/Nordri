@@ -2734,6 +2734,7 @@ export function createWorkspaceApplicationMethods(
                 resultStartedAt: updatedResult.startedAt,
                 replayCheckpointId: runArtifacts.checkpoints.at(-1)?.id ?? null,
                 blocker,
+                questions: runArtifacts.questionRecords,
                 occurredAt: detectedAt,
               });
               await handApplicationPageToPersonForAccessStep({
@@ -7602,6 +7603,7 @@ export function createWorkspaceApplicationMethods(
             resultStartedAt: runArtifacts.result.startedAt,
             replayCheckpointId: runArtifacts.checkpoints.at(-1)?.id ?? null,
             blocker,
+            questions: runArtifacts.questionRecords,
             occurredAt: detectedAt,
           });
         });

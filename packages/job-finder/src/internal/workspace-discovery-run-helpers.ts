@@ -226,9 +226,6 @@ export function finalizeRunningTargetExecutions(
       completedAt,
       {
         state,
-        ...(targetExecution.agentCheckpoint
-          ? { pagesCovered: targetExecution.agentCheckpoint.visitedUrls.length }
-          : {}),
         warning:
           state === "cancelled"
             ? "Discovery was cancelled before this target finished."

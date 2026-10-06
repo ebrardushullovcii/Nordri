@@ -551,6 +551,94 @@ describe("ApplicationsApplicationDocuments", () => {
     expect(textareas[0]?.className).toContain("min-h-64");
     expect(textareas[0]?.className).toContain("resize-y");
   });
+  it("keeps the approved letter readable below its newer draft", async () => {
+    const approved = ApplicationDocumentRevisionSchema.parse({
+      ...proposed,
+      revision: 2,
+      status: "approved",
+      approvedAt: proposed.updatedAt,
+      content: "The approved letter still used on the form.",
+    });
+    const newDraft = {
+      ...proposed,
+      revision: 3,
+      content: "A new proposal awaiting approval.",
+    };
+    const listApplicationDocuments = vi.fn().mockResolvedValue({
+      documents: [newDraft],
+      approvedRevisions: [approved],
+    });
+    Object.defineProperty(window, "nordri", {
+      configurable: true,
+      value: { jobFinder: { listApplicationDocuments } },
+    });
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () => {
+      root?.render(
+        <ApplicationsApplicationDocuments
+          applicationRecord={applicationRecord}
+          applyRunDetails={null}
+        />,
+      );
+      await Promise.resolve();
+    });
+    expect(container.textContent).toContain(
+      "Revision 2 is approved and stays in use until you approve this one.",
+    );
+    const disclosure = [...container.querySelectorAll("details")].find(
+      (details) =>
+        details.querySelector("summary")?.textContent ===
+        "Read approved revision 2",
+    )!;
+    expect(disclosure).toBeTruthy();
+    disclosure.open = true;
+    expect(disclosure.textContent).toContain(approved.content);
+    expect(container.querySelector("textarea")?.value).toBe(newDraft.content);
+    listApplicationDocuments.mockResolvedValue({
+      documents: [
+        { ...newDraft, status: "approved", approvedAt: proposed.updatedAt },
+      ],
+      approvedRevisions: [],
+    });
+    await act(async () => {
+      root?.render(
+        <ApplicationsApplicationDocuments
+          applicationRecord={applicationRecord}
+          applyRunDetails={ApplyRunDetailsSchema.parse({
+            run: {
+              id: "synthetic",
+              mode: "copilot",
+              state: "paused_for_user_review",
+              jobIds: [applicationRecord.jobId],
+              summary: "Ready",
+              detail: "Read the letter",
+              createdAt: proposed.createdAt,
+              updatedAt: proposed.updatedAt,
+            },
+            result: {
+              id: "synthetic-result",
+              runId: "synthetic",
+              jobId: applicationRecord.jobId,
+              state: "awaiting_review",
+              summary: "Ready",
+              detail: "Read the letter",
+              startedAt: proposed.createdAt,
+              updatedAt: proposed.updatedAt,
+              reviewCard: {
+                siteLabel: "Synthetic",
+                preparedAt: proposed.updatedAt,
+                letter: { text: newDraft.content },
+              },
+            },
+          })}
+        />,
+      );
+      await Promise.resolve();
+    });
+    expect(container.textContent).not.toContain("Read approved revision 2");
+  });
 });
 
 it("shows a review reason without internal copy or IPC prefixes", async () => {

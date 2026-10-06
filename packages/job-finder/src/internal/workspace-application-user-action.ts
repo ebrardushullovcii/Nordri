@@ -493,6 +493,7 @@ export async function persistApplicationUserAction(input: {
   replayCheckpointId: string | null;
   blocker: ApplicationAttemptBlocker | null;
   occurredAt: string;
+  questions?: readonly { id: string; prompt: string }[];
 }): Promise<void> {
   if (!input.resultId || !input.replayCheckpointId) return;
   if (input.resultState === "failed") {
@@ -587,6 +588,29 @@ export async function persistApplicationUserAction(input: {
         })
       : [];
   const neededFileLabel = joinWithAnd(neededFiles);
+  const questionPrompts =
+    kind === "manual_answer"
+      ? (
+          input.questions ??
+          (await input.repository.listApplicationQuestionRecords({
+            applicationRecordId: input.applicationRecordId,
+            resultId: input.resultId,
+          }))
+        )
+          .filter((question) =>
+            (input.blocker?.questionIds ?? []).some(
+              (id) =>
+                question.id === id ||
+                question.id ===
+                  `apply_question_${input.applicationRecordId}_${id}`,
+            ),
+          )
+          .map((question) => question.prompt)
+      : [];
+  const answerPrompt =
+    questionPrompts.length === 1
+      ? `Answer “${questionPrompts[0]}” in the app.`
+      : "Answer the application questions in the app.";
   const request = UserActionRequestSchema.parse({
     id: `application_${kind}_${occurrenceFingerprint}`,
     dedupeKey,
@@ -621,28 +645,34 @@ export async function persistApplicationUserAction(input: {
     // A sign-in on the kept application page is watched and carries on by
     // itself (ADR 0027); every other step still ends with the person's
     // confirmation.
-    summary: isApplicationAuthenticationUserActionKind(kind)
-      ? `${describeApplicationBlockerReason(input.blocker)} Complete this ${copy.summaryStep} step in the ${JOB_FINDER_BROWSER_LABEL}; Job Finder carries on with this application by itself once you're in.`
-      : kind === "manual_upload"
-        ? neededFileLabel
-          ? `${describeApplicationBlockerReason(input.blocker)} The ${input.job.company} form asks for your ${neededFileLabel}. Add or restore ${neededFiles.length === 1 ? "it" : "them"} in Profile › Files and Job Finder attaches ${neededFiles.length === 1 ? "it" : "them"} and carries on by itself.`
-          : `${describeApplicationBlockerReason(input.blocker)} Add or restore the file in Profile › Files and Job Finder attaches it and carries on by itself.`
-        : `${describeApplicationBlockerReason(input.blocker)} Complete this ${copy.summaryStep} step in the ${JOB_FINDER_BROWSER_LABEL}, then come back here and confirm so Job Finder can check the page again.`,
-    instructions: isApplicationAuthenticationUserActionKind(kind)
-      ? [
-          copy.instruction,
-          "Job Finder watches this page and carries on with this exact application once the sign-in is done.",
-        ]
-      : kind === "manual_upload"
-        ? [
-            "Add or restore the file in Profile › Files; Job Finder attaches it and carries on by itself.",
-            `Or attach it yourself in the ${JOB_FINDER_BROWSER_LABEL}, then choose Check whether this step is done.`,
-          ]
-        : [
-            copy.instruction,
-            "Return to Needs you and confirm completion only after the browser step is complete.",
-            "After confirmation, Job Finder checks the page again and carries on in your saved apply mode.",
-          ],
+    summary:
+      kind === "manual_answer"
+        ? `${answerPrompt} Job Finder continues after you save your answer.`
+        : isApplicationAuthenticationUserActionKind(kind)
+          ? `${describeApplicationBlockerReason(input.blocker)} Complete this ${copy.summaryStep} step in the ${JOB_FINDER_BROWSER_LABEL}; Job Finder carries on with this application by itself once you're in.`
+          : kind === "manual_upload"
+            ? neededFileLabel
+              ? `${describeApplicationBlockerReason(input.blocker)} The ${input.job.company} form asks for your ${neededFileLabel}. Add or restore ${neededFiles.length === 1 ? "it" : "them"} in Profile › Files and Job Finder attaches ${neededFiles.length === 1 ? "it" : "them"} and carries on by itself.`
+              : `${describeApplicationBlockerReason(input.blocker)} Add or restore the file in Profile › Files and Job Finder attaches it and carries on by itself.`
+            : `${describeApplicationBlockerReason(input.blocker)} Complete this ${copy.summaryStep} step in the ${JOB_FINDER_BROWSER_LABEL}, then come back here and confirm so Job Finder can check the page again.`,
+    instructions:
+      kind === "manual_answer"
+        ? ["Answer the questions here, then save your answers to continue."]
+        : isApplicationAuthenticationUserActionKind(kind)
+          ? [
+              copy.instruction,
+              "Job Finder watches this page and carries on with this exact application once the sign-in is done.",
+            ]
+          : kind === "manual_upload"
+            ? [
+                "Add or restore the file in Profile › Files; Job Finder attaches it and carries on by itself.",
+                `Or attach it yourself in the ${JOB_FINDER_BROWSER_LABEL}, then choose Check whether this step is done.`,
+              ]
+            : [
+                copy.instruction,
+                "Return to Needs you and confirm completion only after the browser step is complete.",
+                "After confirmation, Job Finder checks the page again and carries on in your saved apply mode.",
+              ],
     actionUrl: browserTarget?.actionUrl ?? null,
     displayOrigin: browserTarget?.expectedOrigin ?? null,
     credentialsPolicy: "browser_only",

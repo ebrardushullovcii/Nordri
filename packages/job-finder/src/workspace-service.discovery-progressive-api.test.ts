@@ -250,6 +250,11 @@ describe("progressive public API discovery", () => {
     },
     { intent: "", freshness: "recent" as const, sourceIds: "all" as const },
     {
+      intent: "Find design roles whose feed needs detail pages",
+      freshness: "any" as const,
+      sourceIds: "all" as const,
+    },
+    {
       intent: "Find customer support roles instead",
       freshness: "any" as const,
       sourceIds: "all" as const,
@@ -258,6 +263,7 @@ describe("progressive public API discovery", () => {
     "hands explicit search choices and the feed to the agent: %j",
     async (request) => {
       const strictConflict = request.intent.includes("customer support");
+      const browserPages = request.intent.includes("detail pages") ? 2 : 0;
       vi.spyOn(globalThis, "fetch").mockImplementation(() =>
         Promise.resolve(
           createGreenhouseResponse({
@@ -297,6 +303,8 @@ describe("progressive public API discovery", () => {
             warning: null,
             jobs: options.sourceCatalog ?? [],
             agentMetadata: DiscoveryAgentMetadataSchema.parse({
+              pagesCovered: browserPages,
+              coveredPageUrls: browserPages ? undefined : [],
               phaseCompletionReason: strictConflict
                 ? "Customer support conflicts with your saved Product Designer role. Change the saved role or search selectivity to find support jobs."
                 : "The catalog contains a matching design role.",
@@ -343,6 +351,26 @@ describe("progressive public API discovery", () => {
         request,
       );
       expect(agent).toHaveBeenCalledOnce();
+      // Keep the feed's page plus any browser detail reads, including readers
+      // that report their actual count without individual page addresses.
+      expect(
+        snapshot.recentDiscoveryRuns[0]?.targetExecutions[0]?.pagesCovered,
+      ).toBe(1 + browserPages);
+      expect(
+        snapshot.recentDiscoveryRuns[0]?.summary.report?.pagesCovered,
+      ).toBe(1 + browserPages);
+      expect(
+        snapshot.recentDiscoveryRuns[0]?.summary.report?.sources?.reduce(
+          (total, source) => total + (source.pagesCovered ?? 0),
+          0,
+        ),
+      ).toBe(1 + browserPages);
+      expect(
+        snapshot.recentDiscoveryRuns[0]?.targetExecutions[0]?.sourceCounts?.reduce(
+          (total, source) => total + (source.pagesCovered ?? 0),
+          0,
+        ),
+      ).toBe(1 + browserPages);
       expect(agent.mock.calls[0]?.[1]).toMatchObject({
         searchRequest: request,
         retainAllFound: true,

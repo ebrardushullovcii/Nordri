@@ -40,6 +40,7 @@ import {
 import { enrichSearchPreferencesFromProfile } from "./workspace-helpers";
 import { withSavedJobSearchBehavior } from "./job-search-behavior";
 import { createSavedJob, createSeed } from "../workspace-service.test-fixtures";
+import { finalizeRunningTargetExecutions } from "./workspace-discovery-run-helpers";
 
 function savedJob(id: string, score: number, planId = "campaign_precision") {
   const job = createSavedJob({
@@ -2268,3 +2269,115 @@ describe("a plan card uses the application ledger", () => {
     expect(progress.applicationsPrepared).toBe(5);
   });
 });
+
+test("the first search ignores unrelated live membership and the second keeps the same list", async () => {
+  const seed = createSeed();
+  const own = savedJob("own", 90, "one-source");
+  const unrelated = savedJob("elsewhere", 90, "other-plan");
+  const plan = createCampaign({
+    id: "one-source",
+    name: "One source",
+    mode: "precision",
+    searchPreferences: seed.searchPreferences,
+    now: "2026-10-05T10:00:00.000Z",
+  });
+  const repository = createInMemoryJobFinderRepository({
+    ...seed,
+    savedJobs: [own, unrelated],
+  });
+  const ctx = {
+    repository,
+    withCampaignTransition: async <T>(operation: () => Promise<T>) =>
+      operation(),
+  } as WorkspaceServiceContext;
+  for (const [index, priorIds] of [[], [own.id]].entries()) {
+    await repository.saveCampaignState({
+      activeCampaignId: plan.id,
+      notifications: [],
+      campaigns: [{ ...plan, jobIds: [own.id, unrelated.id] }],
+    });
+    const run = DiscoveryRunRecordSchema.parse({
+      id: `search-${index}`,
+      campaignId: plan.id,
+      state: "completed",
+      runPhase: "complete",
+      scope: "run_all",
+      startedAt: "2026-10-05T10:00:00.000Z",
+      completedAt: "2026-10-05T10:01:00.000Z",
+      targetIds: [plan.sourceTargetIds[0]!],
+      targetExecutions: [
+        {
+          targetId: plan.sourceTargetIds[0]!,
+          adapterKind: "target_site",
+          state: "completed",
+          encounteredJobIds: [own.id],
+        },
+      ],
+    });
+    await repository.commitDiscoveryStateUpdate(() => ({
+      ...seed.discovery,
+      recentRuns: [run],
+    }));
+    await recordCampaignDiscoveryResult({
+      ctx,
+      campaignId: plan.id,
+      beforeCampaignJobIds: priorIds,
+      beforeJobProvenanceFingerprints: new Map(),
+    });
+    expect((await repository.getCampaignState())!.campaigns[0]!.jobIds).toEqual(
+      [own.id],
+    );
+  }
+});
+
+test.each(["cancelled", "failed"] as const)(
+  "%s searches do not turn merely visited addresses into pages covered",
+  (state) => {
+    const target = createSeed().searchPreferences.discovery.targets[0]!;
+    const run = DiscoveryRunRecordSchema.parse({
+      id: "interrupted-search",
+      state: "running",
+      startedAt: "2026-10-06T10:00:00.000Z",
+      targetIds: [target.id],
+      targetExecutions: [
+        {
+          targetId: target.id,
+          adapterKind: target.adapterKind,
+          state: "running",
+          agentCheckpoint: {
+            revision: 1,
+            savedAt: "2026-10-06T10:00:30.000Z",
+            currentUrl: target.startingUrl,
+            lastStableUrl: target.startingUrl,
+            stepCount: 3,
+            collectedJobs: [],
+            visitedUrls: [
+              "about:blank",
+              target.startingUrl,
+              `${target.startingUrl}/unread`,
+            ],
+            phaseEvidence: {},
+          },
+        },
+      ],
+    });
+    const finished = finalizeRunningTargetExecutions(
+      run,
+      state,
+      "2026-10-06T10:01:00.000Z",
+    );
+    expect(finished.targetExecutions[0]!.pagesCovered).toBeUndefined();
+    const measured = finalizeRunningTargetExecutions(
+      {
+        ...run,
+        targetExecutions: run.targetExecutions.map((execution) => ({
+          ...execution,
+          pagesCovered: 1,
+        })),
+      },
+      state,
+      "2026-10-06T10:01:00.000Z",
+    );
+    expect(measured.targetExecutions[0]!.pagesCovered).toBe(1);
+  },
+);

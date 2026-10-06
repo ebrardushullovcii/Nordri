@@ -392,6 +392,7 @@ export class ApplicationDocumentLibrary {
   async list(input: ListApplicationDocumentsInput) {
     const index = await this.readIndex();
     const latestById = new Map<string, ApplicationDocumentRevision>();
+    const approvedById = new Map<string, ApplicationDocumentRevision>();
     for (const revision of index.revisions) {
       if (
         revision.job.jobId !== input.jobId ||
@@ -399,12 +400,21 @@ export class ApplicationDocumentLibrary {
       ) {
         continue;
       }
+      if (revision.approvedAt !== null && revision.status !== "proposed") {
+        const approved = approvedById.get(revision.id);
+        if (!approved || approved.revision < revision.revision)
+          approvedById.set(revision.id, revision);
+      }
       const current = latestById.get(revision.id);
       if (!current || current.revision < revision.revision) {
         latestById.set(revision.id, revision);
       }
     }
     return ApplicationDocumentListResultSchema.parse({
+      approvedRevisions: [...approvedById.values()].filter(
+        (approved) =>
+          (latestById.get(approved.id)?.revision ?? 0) > approved.revision,
+      ),
       documents: [...latestById.values()].sort((left, right) =>
         right.updatedAt.localeCompare(left.updatedAt),
       ),

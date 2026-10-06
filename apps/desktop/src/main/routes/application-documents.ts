@@ -136,7 +136,7 @@ export function registerApplicationDocumentRouteHandlers(
           applicationRecord &&
           letter &&
           documentId &&
-          !listed.documents.some(
+          ![...listed.documents, ...(listed.approvedRevisions ?? [])].some(
             (entry) =>
               entry.id === documentId ||
               entry.content.trim() === letter.text.trim(),

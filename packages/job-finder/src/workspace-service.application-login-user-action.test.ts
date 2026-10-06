@@ -3197,6 +3197,11 @@ describe("application login UserActionRequest adoption", () => {
       submittedAnswer: "Yes, I am authorized to work in this location.",
       status: "answered",
     });
+    expect(
+      (await harness.repository.getUserActionRequest(request.id))?.summary,
+    ).toBe(
+      "You answered “Are you authorized to work in this location?” in the app.",
+    );
     expect(request.kind).toBe("manual_answer");
     expect(request.verification.type).toBe("page_blocker_absent");
     expect(executeApplicationFlow).toHaveBeenCalledTimes(2);

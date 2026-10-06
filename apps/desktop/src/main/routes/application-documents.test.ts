@@ -163,7 +163,9 @@ function register(
             }),
           ),
         ),
-        list: vi.fn(() => Promise.resolve({ documents: [] })),
+        list: vi.fn(() =>
+          Promise.resolve({ documents: [], approvedRevisions: [] }),
+        ),
       } as unknown as ApplicationDocumentLibrary),
     getWorkspaceSnapshot,
     getApplyRunDetails,
@@ -386,13 +388,29 @@ it("does not keep another copy of a letter it already holds when a later run att
     const event = { sender: {} } as IpcMainInvokeEvent;
     await listHandler(event, input);
     const first = (await library.list(input)).documents[0]!;
-    await library.approve(first.id, first.revision);
+    const approved = await library.approve(first.id, first.revision);
+    await library.propose({
+      kind: "cover_letter",
+      grounding: {
+        profile: createResumeWorkspaceDemoState().profile,
+        job: { ...createResumeWorkspaceDemoState().savedJobs[0]!, ...job },
+        applicationRecord: {
+          ...createResumeWorkspaceDemoState().applicationRecords[0]!,
+          ...applicationB,
+        },
+        question: null,
+      },
+      documentId: approved.id,
+      expectedRevision: approved.revision,
+      writtenContent: "A new draft of this letter.",
+    });
     // The approved letter goes on the form again in a later run.
     details.result!.id = "result-c";
     await listHandler(event, input);
     const documents = (await library.list(input)).documents;
     expect(documents).toHaveLength(1);
-    expect(documents[0]!.status).toBe("approved");
+    expect(documents[0]!.status).toBe("proposed");
+    expect((await library.list(input)).approvedRevisions).toEqual([approved]);
   } finally {
     await rm(temporaryDirectory, { recursive: true, force: true });
   }

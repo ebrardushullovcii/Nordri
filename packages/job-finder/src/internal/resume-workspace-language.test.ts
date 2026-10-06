@@ -9,7 +9,10 @@ import {
   seedResumeDraft,
   buildResumeRenderDocument,
 } from "./resume-workspace-structure";
-import { buildResumeCoverageComparison } from "./resume-workspace-helpers";
+import {
+  buildResumeCoverageComparison,
+  validateResumeDraft,
+} from "./resume-workspace-helpers";
 import { writeResumeLanguage } from "./resume-workspace-language";
 
 function context() {
@@ -373,4 +376,57 @@ test("R3-183 a continued generation reads its persisted language request", async
   await workspaceService.generateResume("job_ready");
   await workspaceService.regenerateResumeDraft("job_ready");
   expect(createResumeDraft).toHaveBeenCalledTimes(2);
+});
+
+test("stored older translated experience lines without source links retain their original positions", async () => {
+  const seed = createSeed();
+  const experience = seed.profile.experiences[0]!;
+  seed.profile.experiences = [
+    {
+      ...experience,
+      summary: "Coordinated the daily team schedule.",
+      achievements: [
+        "Managed customer orders.",
+        "Organized warehouse deliveries.",
+      ],
+    },
+  ];
+  const draft = seedResumeDraft({
+    profile: seed.profile,
+    job: seed.savedJobs[0]!,
+    templateId: seed.settings.resumeTemplateId,
+  });
+  draft.language = "German";
+  draft.writtenLanguage = "German";
+  const entry = draft.sections.find((section) => section.kind === "experience")!
+    .entries[0]!;
+  entry.summary = "Koordination des täglichen Schichtplans.";
+  entry.sourceRefs = [];
+  entry.bullets[0]!.text = "Bearbeitung von Kundenaufträgen.";
+  entry.bullets[1]!.text = "Organisation der Lagerlieferungen.";
+  for (const bullet of entry.bullets) bullet.sourceRefs = [];
+  const { repository, workspaceService } = createWorkspaceServiceHarness({
+    seed,
+  });
+  await repository.upsertResumeDraft(draft);
+  const legacyValidation = validateResumeDraft({
+    draft,
+    profile: seed.profile,
+    job: seed.savedJobs[0]!,
+  });
+  // Old persisted comparisons have no links on their translated rows.
+  for (const role of legacyValidation.coverageComparison!.roles) {
+    role.retainedClaimCount = 0;
+    for (const claim of role.addedClaims) delete claim.sourceAchievementIds;
+  }
+  await repository.upsertResumeValidationResult(legacyValidation);
+  const workspace = await workspaceService.getResumeWorkspace(draft.jobId);
+  const role = workspace.validation!.coverageComparison!.roles[0]!;
+  expect(role.retainedClaimCount).toBe(3);
+  expect(role.status).toBe("rewritten");
+  for (const [index, added] of role.addedClaims.entries()) {
+    expect(added.sourceAchievementIds).toEqual(
+      role.removedClaims[index]!.sourceAchievementIds,
+    );
+  }
 });

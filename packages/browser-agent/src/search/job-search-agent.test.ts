@@ -1984,3 +1984,41 @@ test("a known posting wins over a later no-own-link rejection", async () => {
   expect(result.duplicateListings).toBe(1);
   expect(result.unreadableListings).toEqual([]);
 });
+
+test("one results page read repeatedly with changing text is one page covered", async () => {
+  const pages = { current: rawPage() };
+  let reads = 0;
+  const pageHands = hands(pages);
+  pageHands.readText = () =>
+    Promise.resolve(`${pages.current.bodyText} Updated ${++reads}`);
+  const result = await runJobSearchAgent({
+    hands: pageHands,
+    config: config(),
+    llmClient: scripted([
+      { name: "extract_jobs", args: { pageType: "search_results" } },
+      { name: "extract_jobs", args: { pageType: "search_results" } },
+      { name: "extract_jobs", args: { pageType: "search_results" } },
+      { name: "finish", args: { reason: "Read the one page" } },
+    ]),
+    jobExtractor: { extractJobsFromPage: () => Promise.resolve([]) },
+  });
+  expect(result.pagesCovered).toBe(1);
+  expect(result.coveredPageUrls).toEqual([pages.current.url]);
+});
+
+test("counts pages actually read instead of addresses only visited", async () => {
+  const pages = { current: rawPage() };
+  const result = await runJobSearchAgent({
+    hands: hands(pages),
+    config: config(),
+    llmClient: scripted([
+      { name: "navigate", args: { url: "https://jobs.example.test/about" } },
+      { name: "navigate", args: { url: "https://jobs.example.test/results" } },
+      { name: "extract_jobs", args: { pageType: "search_results" } },
+      { name: "finish", args: { reason: "Read the one results page" } },
+    ]),
+    jobExtractor: { extractJobsFromPage: () => Promise.resolve([]) },
+  });
+  expect(result.pagesCovered).toBe(1);
+  expect(result.coveredPageUrls).toEqual(["https://jobs.example.test/results"]);
+});
