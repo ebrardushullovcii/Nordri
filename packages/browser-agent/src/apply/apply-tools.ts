@@ -1,5 +1,11 @@
 import type { ApplyProposal } from "./types";
 
+const STORED_FACT_PARAMETER = {
+  type: "string",
+  description:
+    "For an unchanged stored value: its exact id from the stored-fact catalog. Values that differ still need an answer check. Eligibility always needs its question and hiring context checked.",
+};
+
 /**
  * What the apply agent can do.
  *
@@ -154,6 +160,7 @@ export function getApplyToolDefinitions(): ApplyToolDefinition[] {
           properties: {
             ref: { type: "string" },
             text: { type: "string" },
+            storedFactId: STORED_FACT_PARAMETER,
             groundedIn: {
               type: "array",
               items: { type: "string" },
@@ -174,6 +181,7 @@ export function getApplyToolDefinitions(): ApplyToolDefinition[] {
           type: "object",
           properties: {
             ref: { type: "string" },
+            storedFactId: STORED_FACT_PARAMETER,
             option: {
               type: "string",
               description: "The option's exact label.",
@@ -193,6 +201,7 @@ export function getApplyToolDefinitions(): ApplyToolDefinition[] {
           type: "object",
           properties: {
             ref: { type: "string" },
+            storedFactId: STORED_FACT_PARAMETER,
             checked: { type: "boolean" },
           },
           required: ["ref", "checked"],
@@ -348,6 +357,8 @@ export function parseApplyProposal(
   const args = asRecord(parsedArguments);
   const ref = asString(args.ref);
   const reason = asString(args.reason);
+  const storedFactId = asString(args.storedFactId);
+  const factReference = storedFactId ? { storedFactId } : {};
   const withReason = <T extends object>(
     proposal: T,
   ): T & { reason?: string } => (reason ? { ...proposal, reason } : proposal);
@@ -395,6 +406,7 @@ export function parseApplyProposal(
           ref,
           text,
           ...(groundedIn ? { groundedIn } : {}),
+          ...factReference,
         },
       };
     }
@@ -402,7 +414,10 @@ export function parseApplyProposal(
       if (!ref) return needsRef();
       const option = asString(args.option);
       return option
-        ? { ok: true, proposal: { tool: "select", ref, option } }
+        ? {
+            ok: true,
+            proposal: { tool: "select", ref, option, ...factReference },
+          }
         : { ok: false, error: "select needs the option's label." };
     }
     case "set_checkbox":
@@ -413,6 +428,7 @@ export function parseApplyProposal(
               tool: "set_checkbox",
               ref,
               checked: args.checked !== false,
+              ...factReference,
             },
           }
         : needsRef();
@@ -469,7 +485,7 @@ export const FILL_FIELDS_TOOL_DEFINITION: ApplyToolDefinition = {
   function: {
     name: "fill_fields",
     description:
-      "Complete the visible step in one call, from the first step onward: fill all answerable fields, attach the requested available documents with upload, then include thenContinue for Continue or Next when no required answer is missing. Entries use the exact single-tool arguments for type, select, set_checkbox, upload or click and run in order through the same executor, permissions and send checks. Click may dismiss a cookie banner or add a required history row on this step; use handles already observed and read the returned page for newly revealed handles. Choose a radio with set_checkbox on its option's ref. A refusal, pause, navigation, changed step or newly revealed question after a field write stops the rest and names entries not attempted. Ordinary upload buttons changing or a chore click revealing a row on this same page do not stop planned entries. Omit thenContinue when a question needs the person; fill everything else, then finish once. Never use this tool to send. Validation errors or an unchanged step are reported with one fresh page observation.",
+      "Complete the visible step in one call, from the first step onward: fill all answerable fields, attach the requested available documents with upload, then include thenContinue for Continue or Next when no required answer is missing. Entries use the exact single-tool arguments for type, select, set_checkbox, upload or click through the same executor, permissions and send checks. Independent stored-fact fills may run before answers waiting for a check; clicks, uploads and writes to the same field or choice group retain their order. Click may dismiss a cookie banner or add a required history row on this step; use handles already observed and read the returned page for newly revealed handles. Choose a radio with set_checkbox on its option's ref. A refusal, pause, navigation, changed step or newly revealed question after a field write stops the rest and names entries not attempted. Ordinary upload buttons changing or a chore click revealing a row on this same page do not stop planned entries. Omit thenContinue when a question needs the person; fill everything else, then finish once. Never use this tool to send. Validation errors or an unchanged step are reported with one fresh page observation.",
     parameters: {
       type: "object",
       properties: {
@@ -489,6 +505,7 @@ export const FILL_FIELDS_TOOL_DEFINITION: ApplyToolDefinition = {
                 enum: ["type", "select", "set_checkbox", "upload", "click"],
               },
               ref: { type: "string" },
+              storedFactId: STORED_FACT_PARAMETER,
               text: {
                 type: "string",
                 description: "For type: the text to enter.",

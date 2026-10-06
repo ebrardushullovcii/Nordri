@@ -4571,3 +4571,302 @@ test.each([true, false])(
     ]);
   },
 );
+
+test("stored facts fill while earlier written and eligibility answers wait for their check", async () => {
+  const source = page({
+    controls: [
+      { ...nameControl(), index: 0, label: "Why this role?", value: "" },
+      {
+        ...nameControl(),
+        index: 1,
+        label: "Are you authorized to work here?",
+        value: "",
+      },
+      { ...nameControl(), index: 2, label: "Job title", value: "" },
+    ],
+  });
+  const input = config(source);
+  input.sources.profile.experiences = [
+    {
+      id: "role",
+      title: "Platform engineer",
+      companyName: "Fixture Tools",
+      companyUrl: null,
+      employmentType: null,
+      location: null,
+      workMode: [],
+      startDate: null,
+      endDate: null,
+      isCurrent: true,
+      isDraft: false,
+      summary: null,
+      achievements: [],
+      skills: [],
+      domainTags: [],
+      peopleManagementScope: null,
+      ownershipScope: null,
+    },
+  ];
+  const writes: string[] = [];
+  input.hands.fillText = (ref, value) => {
+    writes.push(ref);
+    source.controls[Number(ref.slice(1))].value = value;
+    return Promise.resolve({ ok: true, observedValue: value });
+  };
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let checks = 0;
+  let turns = 0;
+  const run = runApplyAgent(input, {
+    chatWithTools: async (messages, definitions) => {
+      if (definitions[0]?.function.name === "report_answer_checks") {
+        checks += 1;
+        await gate;
+        return (await supportedChecks(messages, definitions))!;
+      }
+      const name = ++turns === 1 ? "fill_fields" : "finish";
+      return {
+        toolCalls: [
+          {
+            id: `turn-${turns}`,
+            type: "function",
+            function: {
+              name,
+              arguments: JSON.stringify(
+                name === "fill_fields"
+                  ? {
+                      fields: [
+                        {
+                          tool: "type",
+                          ref: "c0",
+                          text: "I enjoy building dependable platforms.",
+                        },
+                        { tool: "type", ref: "c1", text: "Yes" },
+                        {
+                          tool: "type",
+                          ref: "c2",
+                          text: "Platform engineer",
+                          storedFactId: "profile.experiences.role.title",
+                        },
+                      ],
+                    }
+                  : { reason: "Done." },
+              ),
+            },
+          },
+        ],
+      };
+    },
+  });
+  try {
+    await vi.waitFor(() => expect(writes).toEqual(["c2"]));
+    expect(checks).toBe(1);
+  } finally {
+    release();
+  }
+  const result = await run;
+  expect(writes).toEqual(["c2", "c0", "c1"]);
+  expect(result.notes.at(-1)).toContain("stored_fact_fills_per_turn=[1,0]");
+  expect(result.notes.at(-1)).toContain("answers_waited_per_turn=[2,0]");
+});
+
+test("an explicit stored-fact reference with a changed value still gets checked", async () => {
+  const source = page({
+    controls: [{ ...nameControl(), label: "Full name", value: "" }],
+  });
+  const input = config(source);
+  const fill = vi.spyOn(input.hands, "fillText");
+  let checkCalls = 0;
+  let turns = 0;
+  const result = await runApplyAgent(input, {
+    chatWithTools: async (_messages, definitions) => {
+      const checking = definitions[0]?.function.name === "report_answer_checks";
+      if (checking) checkCalls += 1;
+      else turns += 1;
+      const name = checking
+        ? "report_answer_checks"
+        : turns === 1
+          ? "fill_fields"
+          : "finish";
+      const args = checking
+        ? {
+            checks: [
+              {
+                index: 0,
+                supported: false,
+                reason: "This name differs from your saved name.",
+              },
+            ],
+          }
+        : turns === 1
+          ? {
+              fields: [
+                {
+                  tool: "type",
+                  ref: "c0",
+                  text: "Robin Ashworth",
+                  storedFactId: "profile.fullName",
+                },
+              ],
+            }
+          : { reason: "Confirm your name.", needsPerson: true };
+      return {
+        toolCalls: [
+          {
+            id: `call-${turns}-${checkCalls}`,
+            type: "function",
+            function: { name, arguments: JSON.stringify(args) },
+          },
+        ],
+      };
+    },
+  });
+  expect(checkCalls).toBe(1);
+  expect(fill).not.toHaveBeenCalled();
+  expect(result.outcome).toBe("paused");
+});
+
+test("the same question and value are checked only once across batch and single-field retries", async () => {
+  const source = page({
+    controls: [{ ...nameControl(), label: "Why this role?", value: "" }],
+  });
+  const input = config(source);
+  const fill = vi.spyOn(input.hands, "fillText");
+  let checkCalls = 0;
+  let turns = 0;
+  await runApplyAgent(input, {
+    chatWithTools: async (_messages, definitions) => {
+      if (definitions[0]?.function.name === "report_answer_checks") {
+        checkCalls += 1;
+        return {
+          toolCalls: [
+            {
+              id: "check",
+              type: "function",
+              function: {
+                name: "report_answer_checks",
+                arguments: JSON.stringify({
+                  checks: [
+                    {
+                      index: 0,
+                      supported: false,
+                      reason: "This experience is not recorded.",
+                    },
+                  ],
+                }),
+              },
+            },
+          ],
+        };
+      }
+      turns += 1;
+      const name =
+        turns === 1 ? "fill_fields" : turns === 2 ? "type" : "finish";
+      const field = {
+        tool: "type",
+        ref: "c0",
+        text: "I have led space missions.",
+      };
+      return {
+        toolCalls: [
+          {
+            id: `turn-${turns}`,
+            type: "function",
+            function: {
+              name,
+              arguments: JSON.stringify(
+                turns === 1
+                  ? { fields: [field, field] }
+                  : turns === 2
+                    ? field
+                    : { reason: "Needs your answer.", needsPerson: true },
+              ),
+            },
+          },
+        ],
+      };
+    },
+  });
+  expect(checkCalls).toBe(1);
+  expect(fill).not.toHaveBeenCalled();
+});
+
+test("an eligibility check is not reused for a different application page", async () => {
+  const source = page({
+    controls: [
+      {
+        ...nameControl(),
+        label: "Are you authorized to work here?",
+        value: "",
+      },
+    ],
+  });
+  const input = config(source);
+  input.hands.navigate = (url) => {
+    source.url = url;
+    source.bodyText = "This form hires in a different country.";
+    return Promise.resolve({ ok: true, url });
+  };
+  let checks = 0;
+  let turns = 0;
+  await runApplyAgent(input, {
+    chatWithTools: async (_messages, definitions) => {
+      if (definitions[0]?.function.name === "report_answer_checks") {
+        checks += 1;
+        return {
+          toolCalls: [
+            {
+              id: `check-${checks}`,
+              type: "function",
+              function: {
+                name: "report_answer_checks",
+                arguments: JSON.stringify({
+                  checks: [
+                    {
+                      index: 0,
+                      supported: false,
+                      reason: "Confirm this form's hiring country.",
+                    },
+                  ],
+                }),
+              },
+            },
+          ],
+        };
+      }
+      turns += 1;
+      const name =
+        turns === 1
+          ? "fill_fields"
+          : turns === 2
+            ? "navigate"
+            : turns === 3
+              ? "type"
+              : "finish";
+      const field = { tool: "type", ref: "c0", text: "Yes" };
+      const args =
+        turns === 1
+          ? { fields: [field] }
+          : turns === 2
+            ? {
+                url: "https://apply.example.test/other-form",
+                reason: "Read the second application form.",
+              }
+            : turns === 3
+              ? field
+              : { reason: "Confirm the hiring country.", needsPerson: true };
+      return {
+        toolCalls: [
+          {
+            id: `turn-${turns}`,
+            type: "function",
+            function: { name, arguments: JSON.stringify(args) },
+          },
+        ],
+      };
+    },
+  });
+  expect(checks).toBe(2);
+});

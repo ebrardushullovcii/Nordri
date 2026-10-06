@@ -76,6 +76,8 @@ export interface ApplyFormControl {
   questionKind: ApplicationQuestionKind;
   /** Model reading of current pay versus the person's saved expected pay. */
   asksCurrentPay?: boolean;
+  /** Model reading: this asks for this application's hiring country. */
+  asksHiringCountry?: boolean;
   answerControlType: ApplicationQuestionControlType;
   /** Set when the control asks the person to declare something themselves. */
   attestationKind: ApplicationAttestationKind | null;
@@ -437,9 +439,20 @@ export type ApplyProposal =
   | { tool: "navigate"; url: string; reason?: string }
   | { tool: "follow_link"; ref: string; reason?: string }
   | { tool: "click"; ref: string; reason?: string }
-  | { tool: "type"; ref: string; text: string; groundedIn?: string[] }
-  | { tool: "select"; ref: string; option: string }
-  | { tool: "set_checkbox"; ref: string; checked: boolean }
+  | {
+      tool: "type";
+      ref: string;
+      text: string;
+      groundedIn?: string[];
+      storedFactId?: string;
+    }
+  | { tool: "select"; ref: string; option: string; storedFactId?: string }
+  | {
+      tool: "set_checkbox";
+      ref: string;
+      checked: boolean;
+      storedFactId?: string;
+    }
   | { tool: "upload"; ref: string; documentId: string }
   | { tool: "scroll"; direction: "down" | "up" | "top" | "bottom" }
   | { tool: "wait"; milliseconds: number }

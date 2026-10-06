@@ -189,3 +189,27 @@ test("returning to a step reuses its classification unless its questions changed
   await classify(controls(), "step1");
   expect(client.chatWithTools).toHaveBeenCalledTimes(4);
 });
+
+test("keeps the model's hiring-country classification", async () => {
+  const result = await classifyApplicationQuestions({
+    client: clientReplying([
+      {
+        index: 0,
+        asksAboutPay: false,
+        asksHiringCountry: true,
+        declarationKind: null,
+      },
+    ]),
+    questions: [
+      {
+        prompt: "Which country would employ you for this role?",
+        kind: "select",
+        options: ["United States", "United Kingdom"],
+      },
+    ],
+  });
+  expect(
+    result.get("Which country would employ you for this role?")
+      ?.asksHiringCountry,
+  ).toBe(true);
+});

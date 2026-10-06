@@ -20,6 +20,10 @@ export function createApplyTiming(now: () => Date) {
     requests: [],
   };
   let observationChars = 0;
+  const answerSources: Array<{
+    storedFactFills: number;
+    answersWaited: number;
+  }> = [];
   const activeTools = new Map<
     object,
     {
@@ -63,6 +67,15 @@ export function createApplyTiming(now: () => Date) {
       const request = timing.requests.at(-1);
       if (request) request.uploadsAttached = (request.uploadsAttached ?? 0) + 1;
     },
+    onStoredFactFilled: () => {
+      const counts = answerSources.at(-1);
+      if (counts) counts.storedFactFills += 1;
+    },
+    onAnswerWaited: () => {
+      const counts = answerSources.at(-1);
+      if (counts) counts.answersWaited += 1;
+    },
+    answerSourcesPerTurn: () => answerSources.map((counts) => ({ ...counts })),
     onFieldAttempt: () => {
       const request = timing.requests.at(-1);
       if (request) request.fieldsAttempted = (request.fieldsAttempted ?? 0) + 1;
@@ -103,6 +116,7 @@ export function createApplyTiming(now: () => Date) {
         activeModels.set(key, { startedAt: start, loop });
         if (loop) {
           timing.modelTurns += 1;
+          answerSources.push({ storedFactFills: 0, answersWaited: 0 });
           timing.requests.push({
             turn: timing.modelTurns,
             historyChars: JSON.stringify(messages).length,

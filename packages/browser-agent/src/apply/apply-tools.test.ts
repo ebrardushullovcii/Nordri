@@ -68,3 +68,28 @@ test("thenContinue accepts a ref and rejects malformed refs before any field is 
     FILL_FIELDS_TOOL_DEFINITION.function.parameters.properties,
   ).toHaveProperty("thenContinue");
 });
+
+test("stored fact references survive single-field and batch parsing", () => {
+  for (const field of [
+    { tool: "type", ref: "c0", text: "Li", storedFactId: "profile.firstName" },
+    {
+      tool: "select",
+      ref: "c1",
+      option: "Go",
+      storedFactId: "profile.skills.0",
+    },
+    {
+      tool: "set_checkbox",
+      ref: "c2",
+      checked: true,
+      storedFactId: "profile.skills.1",
+    },
+  ]) {
+    const single = parseApplyProposal(field.tool, JSON.stringify(field));
+    expect(single).toEqual({ ok: true, proposal: field });
+    expect(parseFillFields(JSON.stringify({ fields: [field] }))).toEqual({
+      ok: true,
+      fields: [field],
+    });
+  }
+});

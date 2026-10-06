@@ -121,6 +121,7 @@ export interface ApplyExecutorDeps {
     controls: readonly ApplyFormControl[],
     step?: string,
   ) => Promise<ReadonlyMap<string, ApplyQuestionClassification>>;
+  onAnswerSource?: (source: "stored_fact" | "checked") => void;
   checkWrittenAnswer?: (
     question: string,
     answer: string,
@@ -381,6 +382,9 @@ async function withModelQuestionKinds(
           ? "other"
           : control.questionKind),
     attestationKind: classification.declarationKind,
+    ...(typeof classification.asksHiringCountry === "boolean"
+      ? { asksHiringCountry: classification.asksHiringCountry }
+      : {}),
     ...(typeof classification.asksCurrentPay === "boolean"
       ? { asksCurrentPay: classification.asksCurrentPay }
       : {}),
@@ -456,6 +460,7 @@ async function decideAnswer(input: {
   control: ApplyFormControl;
   value: string;
   groundedIn?: readonly string[] | undefined;
+  storedFactId?: string | undefined;
 }): Promise<AnswerDecision> {
   const { deps, control, value } = input;
   const config = deps.config;
@@ -484,6 +489,7 @@ async function decideAnswer(input: {
         suggestion: saved,
         permission: false,
       };
+    deps.onAnswerSource?.("stored_fact");
     return { kind: "use", answer: saved };
   }
   if (control.questionKind === "salary_expectation" && !payDisclosed) {
@@ -509,7 +515,8 @@ async function decideAnswer(input: {
 
   const eligibilityQuestion =
     control.questionKind === "work_authorization" ||
-    control.questionKind === "visa_sponsorship";
+    control.questionKind === "visa_sponsorship" ||
+    control.asksHiringCountry === true;
   if (
     eligibilityQuestion &&
     saved &&
@@ -535,8 +542,9 @@ async function decideAnswer(input: {
         config.sources.posting.location,
       )) &&
     saved &&
-    normalizeSignal(saved.value) === normalizeSignal(value)
+    saved.value.trim() === value.trim()
   ) {
+    deps.onAnswerSource?.("stored_fact");
     return { kind: "use", answer: { ...saved, value } };
   }
   // The person's own answer to this exact question, even a bare Yes or No.
@@ -545,8 +553,10 @@ async function decideAnswer(input: {
     payDisclosed,
     control,
     value,
+    storedFactId: input.storedFactId,
   });
   if (stored) {
+    deps.onAnswerSource?.("stored_fact");
     return { kind: "use", answer: stored };
   }
   if (!deps.checkWrittenAnswer) {
@@ -558,6 +568,7 @@ async function decideAnswer(input: {
     };
   }
   let check;
+  deps.onAnswerSource?.("checked");
   try {
     check = await deps.checkWrittenAnswer(questionPrompt(control), value);
   } catch {
@@ -586,7 +597,7 @@ async function decideAnswer(input: {
       permission: false,
     };
   }
-  if (saved && normalizeSignal(saved.value) === normalizeSignal(value)) {
+  if (saved && saved.value.trim() === value.trim()) {
     return { kind: "use", answer: { ...saved, value } };
   }
   return {
@@ -1541,6 +1552,7 @@ export async function executeApplyProposal(
         control,
         value: proposal.text,
         groundedIn: proposal.groundedIn,
+        storedFactId: proposal.storedFactId,
       });
       if (decision.kind === "leave") {
         return notEntered({ deps, control, observation, at, decision });
@@ -1586,6 +1598,7 @@ export async function executeApplyProposal(
         deps,
         control,
         value: matchOption(control.options, proposal.option) ?? proposal.option,
+        storedFactId: proposal.storedFactId,
       });
       if (choice.kind === "leave") {
         return notEntered({ deps, control, observation, at, decision: choice });
@@ -1686,6 +1699,7 @@ export async function executeApplyProposal(
           deps,
           control,
           value: proposedOption,
+          storedFactId: proposal.storedFactId,
         });
         if (choice.kind === "leave") {
           return notEntered({

@@ -4066,3 +4066,53 @@ test("an answer reused from another question names the saved answer it came from
       'your saved answer "Platform work motivation"',
     );
 });
+
+test("the model's hiring-country question cannot copy residence without a check", async () => {
+  const page = rawPage({
+    controls: [
+      rawControl({
+        index: 0,
+        tagName: "select",
+        label: "Where would you be employed?",
+        options: ["United Kingdom", "Canada"],
+        required: true,
+      }),
+    ],
+  });
+  const { config, hands } = configFor(page);
+  config.sources.profile.currentCountry = "United Kingdom";
+  const choose = vi.spyOn(hands, "chooseOption");
+  const check = vi.fn(async () => ({
+    supported: false,
+    reason: "Confirm which country will employ you for this role.",
+  }));
+  const outcome = await executeApplyProposal(
+    {
+      tool: "select",
+      ref: "c0",
+      option: "United Kingdom",
+      storedFactId: "profile.currentCountry",
+    },
+    observationOf(page).signature,
+    {
+      config,
+      now,
+      guardState: createApplyGuardState(),
+      checkWrittenAnswer: check,
+      classifyQuestions: async () =>
+        new Map([
+          [
+            "Where would you be employed?",
+            {
+              asksAboutPay: false,
+              asksHiringCountry: true,
+              declarationKind: null,
+            },
+          ],
+        ]),
+    },
+  );
+  expect(check).toHaveBeenCalledOnce();
+  expect(choose).not.toHaveBeenCalled();
+  expect(outcome.kind).toBe("suggestion");
+});

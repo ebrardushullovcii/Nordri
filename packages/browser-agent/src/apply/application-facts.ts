@@ -18,7 +18,6 @@ export function applicationFacts(
   sources: ApplyAnswerSources,
   options: { payDisclosed: boolean },
 ) {
-  void options;
   const profile = sources.profile;
   const answerBank = {
     ...profile.answerBank,
@@ -73,6 +72,7 @@ export function applicationFacts(
           (options.payDisclosed || saved.kind !== "salary_expectation"),
       )
       .map((saved) => ({
+        id: saved.id,
         kind: saved.kind,
         label: saved.label,
         question: saved.question,
@@ -148,8 +148,9 @@ const YES_NO = new Set(["yes", "no", "y", "n", "true", "false"]);
 /**
  * Whether a value is distinctive enough that typing it can only mean that
  * fact: an email address, a phone number, a link, a name, a saved sentence.
- * "Yes", "No" and short numbers could answer anything, so they are always
- * read by the fact check with their question.
+ * "Yes", "No" and short numbers could answer anything, so implicit matching
+ * checks them with their question. An explicit fact reference can establish
+ * exact identity for these values without interpreting the question.
  */
 function isDistinctive(value: string): boolean {
   const normalized = normalizeSignal(value);
@@ -159,11 +160,10 @@ function isDistinctive(value: string): boolean {
   return true;
 }
 
-function storedFacts(
+export function storedFacts(
   sources: ApplyAnswerSources,
   options: { payDisclosed: boolean },
 ): StoredFact[] {
-  void options;
   const profile = sources.profile;
   const facts: StoredFact[] = [];
   const add = (
@@ -173,10 +173,48 @@ function storedFacts(
     sourceKind: ApplyAnswer["sourceKind"] = "profile",
   ) => {
     const trimmed = value?.trim();
-    if (trimmed && isDistinctive(trimmed)) {
+    if (trimmed) {
       facts.push({ value: trimmed, sourceKind, sourceId, provenanceLabel });
     }
   };
+  const addRecord = (value: unknown, sourceId: string, label: string): void => {
+    if (typeof value === "string" || typeof value === "number") {
+      add(String(value), sourceId, label);
+    } else if (Array.isArray(value)) {
+      value.forEach((entry, index) =>
+        addRecord(entry, `${sourceId}.${index}`, label),
+      );
+    } else if (value && typeof value === "object") {
+      for (const [key, entry] of Object.entries(value)) {
+        if (key !== "id") addRecord(entry, `${sourceId}.${key}`, label);
+      }
+    }
+  };
+  for (const entry of profile.experiences.filter((entry) => !entry.isDraft)) {
+    addRecord(entry, `profile.experiences.${entry.id}`, "your work history");
+  }
+  for (const entry of profile.education.filter((entry) => !entry.isDraft)) {
+    addRecord(entry, `profile.education.${entry.id}`, "your education");
+  }
+  addRecord(profile.skills, "profile.skills", "your skills");
+  addRecord(profile.skillGroups, "profile.skillGroups", "your skills");
+  addRecord(
+    profile.spokenLanguages,
+    "profile.spokenLanguages",
+    "your languages",
+  );
+  addRecord(
+    profile.certifications,
+    "profile.certifications",
+    "your qualifications",
+  );
+  addRecord(profile.projects, "profile.projects", "your projects");
+  addRecord(
+    profile.yearsExperience,
+    "profile.yearsExperience",
+    "your experience",
+  );
+  add(profile.timeZone, "profile.timeZone", "your time zone");
   add(profile.fullName, "profile.fullName", "your name");
   add(profile.firstName, "profile.firstName", "your first name");
   add(profile.middleName, "profile.middleName", "your middle name");
@@ -233,10 +271,16 @@ function storedFacts(
     [bank.salaryExpectations, "salaryExpectations", "your saved pay answer"],
   ];
   for (const [value, key, label] of bankEntries) {
+    if (key === "workAuthorization" || key === "visaSponsorship") continue;
+    if (key === "salaryExpectations" && !options.payDisclosed) continue;
     add(value, `profile.answerBank.${key}`, label);
   }
   for (const saved of sources.reusableAnswers.filter(
-    (entry) => !entry.needsConfirmation,
+    (entry) =>
+      !entry.needsConfirmation &&
+      entry.kind !== "work_authorization" &&
+      entry.kind !== "visa_sponsorship" &&
+      (options.payDisclosed || entry.kind !== "salary_expectation"),
   )) {
     add(
       saved.answer,
@@ -257,13 +301,17 @@ export function storedFactFor(input: {
   payDisclosed: boolean;
   control: ApplyFormControl;
   value: string;
+  storedFactId?: string | undefined;
 }): ApplyAnswer | null {
-  const wanted = normalizeSignal(input.value);
-  if (!wanted || !isDistinctive(input.value)) return null;
-  // Eligibility needs its question and hiring context checked.
+  const wanted = input.value.trim();
+  if (!wanted || (!input.storedFactId && !isDistinctive(input.value)))
+    return null;
+  // Eligibility and current pay need their question and context checked.
   if (
     input.control.questionKind === "work_authorization" ||
-    input.control.questionKind === "visa_sponsorship"
+    input.control.questionKind === "visa_sponsorship" ||
+    input.control.asksCurrentPay === true ||
+    input.control.asksHiringCountry === true
   ) {
     return null;
   }
@@ -271,11 +319,19 @@ export function storedFactFor(input: {
     payDisclosed: input.payDisclosed,
   }).find(
     (candidate) =>
-      candidate.sourceId !== "profile.answerBank.workAuthorization" &&
-      candidate.sourceId !== "profile.answerBank.visaSponsorship" &&
-      normalizeSignal(candidate.value) === wanted,
+      (!input.storedFactId || candidate.sourceId === input.storedFactId) &&
+      candidate.value === wanted,
   );
   if (!fact) return null;
+  // A short value such as Yes, No or a number answers whatever it is put
+  // against: a saved answer skips the check only on its own question, saved
+  // pay only on a pay question, and total years of experience never.
+  if (
+    !isDistinctive(input.value) &&
+    !shortFactFitsControl(fact.sourceId, input.control, input.sources)
+  ) {
+    return null;
+  }
   return {
     value: input.value.trim(),
     kind: input.control.questionKind,
@@ -335,4 +391,23 @@ export function isAnswerFromThisApplication(
     (application.applicationRecordId &&
       scope.applicationRecordId === application.applicationRecordId),
   );
+}
+
+function shortFactFitsControl(
+  sourceId: string,
+  control: ApplyFormControl,
+  sources: ApplyAnswerSources,
+): boolean {
+  // Total years of experience is not the years asked about a given skill.
+  if (sourceId === "profile.yearsExperience") return false;
+  if (sourceId === "profile.answerBank.salaryExpectations") {
+    return control.questionKind === "salary_expectation";
+  }
+  // Saved answers belong to their own question.
+  if (sourceId.startsWith("profile.answerBank.")) return false;
+  if (sourceId.startsWith("answerLibrary.")) {
+    const saved = savedAnswerForQuestion(control, sources.reusableAnswers);
+    return saved !== null && sourceId === `answerLibrary.${saved.id}`;
+  }
+  return true;
 }
