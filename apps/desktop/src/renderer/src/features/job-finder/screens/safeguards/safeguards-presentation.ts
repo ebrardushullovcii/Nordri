@@ -175,8 +175,13 @@ function jobLabel(
   workspace: JobFinderWorkspaceSnapshot,
   jobId: string,
 ): string {
-  const job = workspace.discoveryJobs.find((entry) => entry.id === jobId);
-  if (job) return `${job.title} · ${job.company ?? "Unknown company"}`;
+  const job = [
+    ...workspace.discoveryJobs,
+    ...(workspace.companyJobs ?? []),
+    ...(workspace.dismissedDiscoveryJobs ?? []),
+  ].find((entry) => entry.id === jobId);
+  if (job)
+    return [job.title, job.location, job.company].filter(Boolean).join(" · ");
   const record = workspace.applicationRecords.find(
     (entry) => entry.jobId === jobId,
   );
@@ -202,7 +207,7 @@ function applicationRecordLabel(
     (entry) => entry.id === applicationRecordId,
   );
   return record
-    ? `${record.title} · ${record.company}`
+    ? jobLabel(workspace, record.jobId)
     : "Application no longer saved";
 }
 
@@ -450,8 +455,11 @@ export function buildSafeguardsPresentationModel(
         subtitle: jobIds.map(label).join("; "),
         explanation:
           "These applications share an employer. Your choice applies to each pair, and you can revoke it.",
-        recoveryGuidance:
-          "Choose Send both anyway for a pair you want sent, then return to the application. Sending still needs your permission.",
+        recoveryGuidance: blocked
+          ? "Choose Send both anyway for a pair you want sent, then return to the application. Sending still needs your permission."
+          : controls.length
+            ? "Your choices are saved. Return to the applications to send them, or revoke a choice here."
+            : "These applications have already been sent.",
         statusLabel: blocked
           ? "Needs your choice"
           : controls.length

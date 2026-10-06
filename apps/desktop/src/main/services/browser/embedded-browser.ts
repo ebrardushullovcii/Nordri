@@ -129,10 +129,12 @@ export class EmbeddedBrowser {
     const page = this.pageMap.get(tabId);
     if (!page || page.contents.isDestroyed()) return;
     const baseLabel =
-      `${title.slice(0, 120)} · ${company.slice(0, 80)} · ${location || "place not listed"}`.slice(
-        0,
-        280,
-      );
+      // The place leads, so two tabs for the same role differ where the tab
+      // text is cut; the short reference is only added when even that matches.
+      [location, title.slice(0, 120), company.slice(0, 80)]
+        .filter(Boolean)
+        .join(" · ")
+        .slice(0, 280);
     this.applicationTabLabels.set(tabId, {
       title: baseLabel,
       baseLabel,
@@ -147,7 +149,7 @@ export class EmbeddedBrowser {
         const repeated = matches.some(
           (other) => other !== label && other.reference === label.reference,
         );
-        label.title = `${baseLabel} · ${label.reference}${repeated ? `-${index + 1}` : ""}`;
+        label.title = `${label.reference}${repeated ? `-${index + 1}` : ""} · ${baseLabel}`;
       }
     this.emit();
   }

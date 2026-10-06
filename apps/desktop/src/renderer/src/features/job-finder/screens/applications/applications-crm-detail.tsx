@@ -1278,34 +1278,36 @@ export function ApplicationsCrmDetail(props: {
         </summary>
         {crm.events.length > 0 ? (
           <ol className="mt-3 grid gap-2">
-            {[...crm.events].reverse().map((event) => {
-              const copy = applicationCrmEventCopyForView(
-                event.title,
-                event.detail,
-              );
-              return (
-                <li
-                  className="border-l-2 border-(--surface-panel-border) pl-3"
-                  key={event.id}
-                >
-                  <strong className="text-sm text-foreground">
-                    {copy.title}
-                  </strong>
-                  {copy.detail ? (
-                    <p className="mt-1 text-sm text-foreground-soft">
-                      {copy.detail}
-                    </p>
-                  ) : null}
-                  <time
-                    className="mt-1 block text-xs text-muted-foreground"
-                    dateTime={event.at}
+            {[...crm.events]
+              .sort((left, right) => Date.parse(right.at) - Date.parse(left.at))
+              .map((event) => {
+                const copy = applicationCrmEventCopyForView(
+                  event.title,
+                  event.detail,
+                );
+                return (
+                  <li
+                    className="border-l-2 border-(--surface-panel-border) pl-3"
+                    key={event.id}
                   >
-                    {formatTrackerMoment(event.at, homeTimeZone)} ·{" "}
-                    {event.source.replaceAll("_", " ")}
-                  </time>
-                </li>
-              );
-            })}
+                    <strong className="text-sm text-foreground">
+                      {copy.title}
+                    </strong>
+                    {copy.detail ? (
+                      <p className="mt-1 text-sm text-foreground-soft">
+                        {copy.detail}
+                      </p>
+                    ) : null}
+                    <time
+                      className="mt-1 block text-xs text-muted-foreground"
+                      dateTime={event.at}
+                    >
+                      {formatTrackerMoment(event.at, homeTimeZone)} ·{" "}
+                      {event.source.replaceAll("_", " ")}
+                    </time>
+                  </li>
+                );
+              })}
           </ol>
         ) : (
           <p className="mt-2 text-sm text-muted-foreground">

@@ -133,6 +133,7 @@ import { describeApplicationDefaultsSave } from "@renderer/features/job-finder/s
 export { COMMAND_PENDING_RELEASE_MS };
 
 type ActionOptions = {
+  toastTone?: () => "success" | "warning";
   clearMessageOnStart?: boolean;
   /** A flow that navigates immediately keeps later failures on its destination. */
   statusOwnerPath?: string;
@@ -315,18 +316,18 @@ export function isProfileSetupJustFinished(): boolean {
   return profileSetupJustFinished;
 }
 
-let firstSearchRequested = false;
+let firstSearchRequestedForPlan: string | null = null;
 
 /** Asks Find jobs to start the first search when it next mounts. */
-export function requestFirstSearchOnFindJobs(): void {
-  firstSearchRequested = true;
+export function requestFirstSearchOnFindJobs(campaignId: string): void {
+  firstSearchRequestedForPlan = campaignId;
 }
 
 /** True once per request; Find jobs calls it on mount. */
-export function consumeFirstSearchRequest(): boolean {
-  const requested = firstSearchRequested;
-  firstSearchRequested = false;
-  return requested;
+export function consumeFirstSearchRequest(campaignId?: string | null): boolean {
+  const requested = firstSearchRequestedForPlan;
+  firstSearchRequestedForPlan = null;
+  return requested !== null && requested === campaignId;
 }
 
 /**
@@ -651,6 +652,26 @@ export function describePreparedApplicationsSendResult(
     : `Sent ${sent} of ${jobIds.length} applications. The others are in Applications with what stopped them.`;
 }
 
+export function preparedApplicationsToastTone(
+  snapshot: JobFinderWorkspaceSnapshot,
+  jobIds: readonly string[],
+): "success" | "warning" {
+  return jobIds.every((jobId) => {
+    const result = [...snapshot.applyJobResults]
+      .filter((entry) => entry.jobId === jobId)
+      .sort(
+        (left, right) =>
+          Date.parse(right.updatedAt) - Date.parse(left.updatedAt),
+      )[0];
+    return (
+      result?.state === "submitted" &&
+      result.privacyReceipt?.submissionOutcome?.outcome === "submitted"
+    );
+  })
+    ? "success"
+    : "warning";
+}
+
 export function createActionRunners(args: {
   saveCoordinator?: JobFinderSaveCoordinator;
   setActionState: Dispatch<SetStateAction<ActionState>>;
@@ -756,6 +777,7 @@ export function createActionRunners(args: {
           applyStatusMessage({
             message: resolvedSuccessMessage,
             tone: resolvedSuccessMessage ? "success" : null,
+            ...(options?.toastTone ? { toastTone: options.toastTone() } : {}),
           });
         },
         options?.releasePendingAfterMs,
@@ -1828,12 +1850,17 @@ export function createPrimaryPageActions(
       );
     },
     onSubmitPreparedApplication: async (jobId: string): Promise<void> => {
+      let toastTone: "success" | "warning" = "warning";
       await runAction(
         () => actions.submitPreparedApplication({ jobId }),
         () => undefined,
-        (snapshot) => describePreparedApplicationSubmitResult(snapshot, jobId),
+        (snapshot) => {
+          toastTone = preparedApplicationsToastTone(snapshot, [jobId]);
+          return describePreparedApplicationSubmitResult(snapshot, jobId);
+        },
         {
           scope: jobFinderPendingActions.apply(),
+          toastTone: () => toastTone,
           releasePendingAfterMs: COMMAND_PENDING_RELEASE_MS,
           pendingTimeoutMessage:
             "This took too long to confirm. Check its status before trying again.",
@@ -1843,18 +1870,20 @@ export function createPrimaryPageActions(
     onSendPreparedApplications: async (
       jobIds: readonly string[],
     ): Promise<void> => {
+      let toastTone: "success" | "warning" = "warning";
       await runAction(
         // One permission covers the whole press; main then sends each kept
         // page in turn. A page that is gone is recorded on that job alone
         // and the rest still go out.
         () => actions.sendPreparedApplications({ jobIds: [...jobIds] }),
         () => undefined,
-        (snapshot) =>
-          snapshot
-            ? describePreparedApplicationsSendResult(snapshot, jobIds)
-            : null,
+        (snapshot) => {
+          toastTone = preparedApplicationsToastTone(snapshot, jobIds);
+          return describePreparedApplicationsSendResult(snapshot, jobIds);
+        },
         {
           scope: jobFinderPendingActions.apply(),
+          toastTone: () => toastTone,
         },
       );
     },
@@ -2674,6 +2703,7 @@ export function createPrimaryPageActions(
             : "Saved.");
       let handOffToFindJobs = false;
       let startFirstSearch = false;
+      let firstSearchCampaignId: string | null = null;
 
       return void runSaveAction({
         action: async () => {
@@ -2747,6 +2777,7 @@ export function createPrimaryPageActions(
             // this same step is not in the workspace the handler closed over,
             // so the first search was never requested.
             startFirstSearch = shouldStartFirstSearchAfterSetup(snapshot);
+            firstSearchCampaignId = snapshot.activeCampaignId;
           }
 
           return actions
@@ -2803,8 +2834,8 @@ export function createPrimaryPageActions(
           // the first search itself instead of waiting for a second press of
           // Search now. Only before any search has run. Find jobs starts it
           // once it has mounted, so the hand-off navigation is never raced.
-          if (startFirstSearch) {
-            requestFirstSearchOnFindJobs();
+          if (startFirstSearch && firstSearchCampaignId) {
+            requestFirstSearchOnFindJobs(firstSearchCampaignId);
           }
           navigate("/job-finder/discovery", { replace: true });
         }

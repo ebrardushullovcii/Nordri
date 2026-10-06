@@ -876,6 +876,7 @@ async function claimDueScheduledSlot(input: {
   now: string;
 }): Promise<JobSearchCampaign | null> {
   return input.ctx.withCampaignTransition(async () => {
+    if ((await input.ctx.repository.getActivityControl()).paused) return null;
     const state = await input.ctx.repository.getCampaignState();
     if (!state) return null;
     const campaign = state.campaigns.find(
@@ -1473,6 +1474,14 @@ export function createWorkspaceCampaignMethods(input: {
         });
         if (!claimed) continue;
 
+        if ((await input.ctx.repository.getActivityControl()).paused) {
+          await restoreClaimedScheduledSlot({
+            ctx: input.ctx,
+            campaignId: claimed.id,
+            dueNextRunAt,
+          });
+          break;
+        }
         let ranScheduledCampaign = false;
         await executeCampaignRun({
           ctx: input.ctx,

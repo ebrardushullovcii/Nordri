@@ -3,7 +3,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mechanics = vi.hoisted(() => ({
   readPage: vi.fn(() =>
     Promise.resolve({
-      controls: [{ value: "Sam", files: ["synthetic.pdf"] }],
+      controls: [
+        {
+          ref: "cover_letter",
+          label: "Phone *",
+          value: "Sam",
+          files: ["synthetic.pdf"],
+        },
+      ],
     }),
   ),
   navigate: vi.fn(() =>
@@ -136,7 +143,14 @@ describe("assistant browser tab safety", () => {
     expect(ctx.context.newPage).not.toHaveBeenCalled();
     expect(ctx.original.goto).not.toHaveBeenCalled();
     expect(await lease.hands.readPage()).toMatchObject({
-      controls: [{ value: "Sam", files: ["synthetic.pdf"] }],
+      controls: [
+        {
+          ref: "cover_letter",
+          label: "Phone *",
+          value: "Sam",
+          files: ["synthetic.pdf"],
+        },
+      ],
     });
     expect(lease.borrowed).toBe(true);
     for (const action of [
@@ -283,10 +297,7 @@ it("lends the exact waiting application for fields only, records edits, and fenc
   expect(ctx.lendTab).toHaveBeenCalledWith("original");
   expect(lease.applicationResultId).toBe("prepared_result");
   await lease.hands.fillText("cover_letter", "Synthetic letter");
-  expect(onApplicationChange).toHaveBeenCalledWith(
-    "record",
-    expect.any(String),
-  );
+  expect(onApplicationChange).toHaveBeenCalledWith("record", "Phone");
   await expect(lease.hands.clickAction("send")).rejects.toThrow("fields only");
   await expect(lease.hands.navigate("https://example.test")).rejects.toThrow(
     "fields only",

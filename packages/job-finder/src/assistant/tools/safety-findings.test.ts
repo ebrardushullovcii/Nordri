@@ -7,6 +7,7 @@ import {
   ApplicationRecordSchema,
   type ApplicationRecord,
   AssistantResultSetSchema,
+  AssistantMessageSchema,
   type RawApplyPage,
 } from "@nordri/contracts";
 import { describe, expect, it, vi } from "vitest";
@@ -21,6 +22,7 @@ import { ASSISTANT_SYSTEM_PROMPT } from "../prompt";
 import type { AssistantTurnSession } from "../tool-kit";
 import {
   continueApplicationTool,
+  recordInstructionTool,
   listApplicationsTool,
   getApplicationTool,
 } from "./application-tools";
@@ -1071,10 +1073,11 @@ describe("opening a retained application", () => {
     vi.spyOn(ctx.service, "inspectPreparedApplicationPage").mockResolvedValue(
       page(),
     );
-    ctx.session.browserLease = vi.fn(() => {
+    const browserLease = vi.fn(() => {
       order.push("lease");
       return Promise.resolve({} as AssistantBrowserLease);
     });
+    ctx.session.browserLease = browserLease;
     vi.spyOn(ctx.service, "focusPreparedApplicationPage").mockImplementation(
       () => {
         order.push("focus");
@@ -1092,7 +1095,7 @@ describe("opening a retained application", () => {
       ctx,
     );
     expect(order).toEqual(["focus", "lease", "show"]);
-    expect(ctx.session.browserLease).toHaveBeenCalledWith({
+    expect(browserLease).toHaveBeenCalledWith({
       applicationResultId: "result",
     });
     expect(lease).not.toHaveBeenCalled();
@@ -1155,4 +1158,28 @@ it("chat send cards name the result rather than claiming failed or unconfirmed s
   );
   expect(uncertain.summary).toContain("1 send unconfirmed");
   expect(uncertain.summary).not.toContain("not sent");
+});
+
+it("refuses unmentioned jobs in second person without echoing internal ids", async () => {
+  const ctx = world();
+  ctx.session.sourceMessage = AssistantMessageSchema.parse({
+    id: "message",
+    conversationId: "conversation",
+    role: "user",
+    origin: "sidebar",
+    createdAt: "2026-10-05T12:00:00Z",
+    parts: [{ type: "text", text: "Send these" }],
+  });
+  ctx.session.listResultSets = () => Promise.resolve([]);
+  await expect(
+    recordInstructionTool.execute(
+      {
+        action: "prepare_and_send",
+        jobIds: ["job_target_site_27"],
+        quote: "Send these",
+        constraints: [],
+      },
+      ctx,
+    ),
+  ).rejects.toThrow("None of those jobs were in your message");
 });

@@ -19,7 +19,10 @@ import {
   mutateApplicationCrm,
   runApplicationNoResponseAutomation,
 } from "./application-crm";
-import { closeApplicationStepsTrackedByPerson } from "./workspace-application-user-action";
+import {
+  closeApplicationStepsTrackedByPerson,
+  restoreWithdrawnApplicationPreparation,
+} from "./workspace-application-user-action";
 import type { WorkspaceServiceContext } from "./workspace-service-context";
 
 function trackedStageCloseReason(
@@ -129,6 +132,12 @@ export function createWorkspaceCrmMethods(input: {
           input.ctx.repository,
           parsedCommand.items.map((item) => item.applicationRecordId),
           closeReason,
+        );
+      }
+      if (parsedCommand.action === "undo") {
+        await restoreWithdrawnApplicationPreparation(
+          input.ctx.repository,
+          parsedCommand.items.map((item) => item.applicationRecordId),
         );
       }
       return input.getWorkspaceSnapshot();

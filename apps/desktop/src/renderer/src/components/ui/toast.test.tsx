@@ -412,3 +412,26 @@ it("caps a tall stack's clearance at the pane height minus one measured row", ()
   ).toBe("132px");
   expect(owner.style.height).toBe("700px");
 });
+
+it("uses a warning icon for an unsent outcome", () => {
+  function Unsent() {
+    const { showToast } = useToast();
+    return (
+      <button onClick={() => showToast({ title: "Not sent", tone: "warning" })}>
+        Send
+      </button>
+    );
+  }
+  render(
+    <ToastProvider>
+      <Unsent />
+    </ToastProvider>,
+  );
+  fireEvent.click(screen.getByText("Send"));
+  const toast = screen.getByRole("status");
+  expect(toast.querySelector(".lucide-circle-alert")).not.toBeNull();
+  expect(toast.querySelector(".lucide-circle-check-big")).toBeNull();
+  expect(toast.querySelector("svg")?.getAttribute("class")).toContain(
+    "warning-text",
+  );
+});

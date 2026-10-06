@@ -1,6 +1,6 @@
 import * as React from "react";
 import { createPortal } from "react-dom";
-import { CheckCircle2, Info, X } from "lucide-react";
+import { CheckCircle2, CircleAlert, Info, X } from "lucide-react";
 
 import { cn } from "@renderer/lib/utils";
 
@@ -20,7 +20,7 @@ export interface ToastInput {
   readonly id?: string;
   readonly title: string;
   readonly description?: string;
-  readonly tone?: "neutral" | "success";
+  readonly tone?: "neutral" | "success" | "warning";
   readonly action?: { readonly label: string; readonly onClick: () => void };
   /** Milliseconds before it leaves on its own. */
   readonly duration?: number;
@@ -378,7 +378,12 @@ function ToastCard({
     return () => window.clearTimeout(timer);
   }, [duration, held]);
 
-  const Icon = toast.tone === "success" ? CheckCircle2 : Info;
+  const Icon =
+    toast.tone === "success"
+      ? CheckCircle2
+      : toast.tone === "warning"
+        ? CircleAlert
+        : Info;
 
   return (
     <div
@@ -402,7 +407,9 @@ function ToastCard({
           "mt-0.5 size-4 shrink-0",
           toast.tone === "success"
             ? "text-(--success-text)"
-            : "text-muted-foreground",
+            : toast.tone === "warning"
+              ? "text-(--warning-text)"
+              : "text-muted-foreground",
         )}
       />
       <div className="grid min-w-0 flex-1 gap-0.5">

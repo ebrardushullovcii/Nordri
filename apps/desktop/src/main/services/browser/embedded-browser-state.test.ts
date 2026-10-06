@@ -329,7 +329,7 @@ test("prepared tabs identify the job even when the site gives them identical tit
   );
   expect(
     browser.getState().tabs.find((tab) => tab.id === "prepared")?.title,
-  ).toBe("Senior Learning Coordinator · Clientnest Cobalt · place not listed");
+  ).toBe("Senior Learning Coordinator · Clientnest Cobalt");
   pages.get("prepared")!.getURL = () => "https://example.test/another-page";
   expect(
     browser.getState().tabs.find((tab) => tab.id === "prepared")?.title,
@@ -440,7 +440,7 @@ test("same-title tabs include place and distinguish the same place by reference"
   );
   expect(
     browser.getState().tabs.find((tab) => tab.id === "prepared")?.title,
-  ).toBe("Engineer · Synthetic · London");
+  ).toBe("London · Engineer · Synthetic");
   browser.setApplicationTabLabel(
     "failed",
     "Engineer",
@@ -450,10 +450,10 @@ test("same-title tabs include place and distinguish the same place by reference"
   );
   expect(
     browser.getState().tabs.find((tab) => tab.id === "prepared")?.title,
-  ).toBe("Engineer · Synthetic · London · abc123");
+  ).toBe("abc123 · London · Engineer · Synthetic");
   expect(
     browser.getState().tabs.find((tab) => tab.id === "failed")?.title,
-  ).toBe("Engineer · Synthetic · London · def456");
+  ).toBe("def456 · London · Engineer · Synthetic");
   browser.setApplicationTabLabel(
     "failed",
     "Engineer",
@@ -551,4 +551,53 @@ test("memory pressure collects garbage without closing forms and admits work whe
   metrics.mockReturnValue([
     { pid: 100, memory: { workingSetSize: 0 } },
   ] as ReturnType<typeof app.getAppMetrics>);
+});
+
+test("different places distinguish prepared tabs before a long job and employer name", () => {
+  const { browser } = makeBrowser();
+  browser.setApplicationTabLabel(
+    "prepared",
+    "Senior Accountant",
+    "Synthetic Workshop",
+    "London",
+  );
+  browser.setApplicationTabLabel(
+    "failed",
+    "Senior Accountant",
+    "Synthetic Workshop",
+    "Denver",
+  );
+  expect(
+    browser.getState().tabs.find((tab) => tab.id === "prepared")?.title,
+  ).toBe("London · Senior Accountant · Synthetic Workshop");
+  expect(
+    browser.getState().tabs.find((tab) => tab.id === "failed")?.title,
+  ).toBe("Denver · Senior Accountant · Synthetic Workshop");
+});
+
+test("tabs without a place stay plain and add the short reference only when they match", () => {
+  const { browser } = makeBrowser();
+  browser.setApplicationTabLabel(
+    "prepared",
+    "Engineer",
+    "Synthetic",
+    "",
+    "abc123",
+  );
+  expect(
+    browser.getState().tabs.find((tab) => tab.id === "prepared")?.title,
+  ).toBe("Engineer · Synthetic");
+  browser.setApplicationTabLabel(
+    "failed",
+    "Engineer",
+    "Synthetic",
+    "",
+    "def456",
+  );
+  expect(
+    browser.getState().tabs.find((tab) => tab.id === "prepared")?.title,
+  ).toBe("abc123 · Engineer · Synthetic");
+  expect(
+    browser.getState().tabs.find((tab) => tab.id === "failed")?.title,
+  ).toBe("def456 · Engineer · Synthetic");
 });

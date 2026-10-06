@@ -229,16 +229,26 @@ function ProposalPart(props: {
   );
 }
 
+function recordsHeading(
+  part: Extract<AssistantMessagePart, { type: "records" }>,
+): string | null {
+  // Saved messages may predate truthful per-row sending receipts.
+  return part.kind === "applications" && part.title === "Sent"
+    ? "Sending results"
+    : part.title;
+}
+
 function RecordsPart(props: {
   part: Extract<AssistantMessagePart, { type: "records" }>;
   actions: AssistantPartActions;
 }) {
   const { part } = props;
+  const heading = recordsHeading(part);
   return (
     <div className="grid gap-1" data-assistant-records={part.kind}>
-      {part.title ? (
+      {heading ? (
         <span className="text-[12px] font-medium uppercase tracking-wide text-muted-foreground">
-          {part.title}
+          {heading}
         </span>
       ) : null}
       <ul className="grid overflow-hidden rounded-(--radius-field) border border-(--control-border)">

@@ -111,7 +111,7 @@ export const recordInstructionTool = defineTool({
     if (check.accepted.length === 0) {
       throw new AssistantToolError(
         "refused",
-        "None of those jobs came from the person's message, the screen it was sent from, or a list shown in this conversation.",
+        "None of those jobs were in your message, on the screen you sent it from, or in a list shown in this conversation.",
         { rejected: check.rejected },
       );
     }
@@ -267,8 +267,8 @@ export const applyToJobsTool = defineTool({
           jobId,
           reason:
             inFlight.jobState === "awaiting_review"
-              ? `This application is already prepared and waiting (run ${inFlight.runId}). Answer its Needs you step with resolve_needs_you, or send it with send_applications; a new run would only pile up behind it.`
-              : `This application is already in progress (run ${inFlight.runId}, ${inFlight.runState.replaceAll("_", " ")}, job ${inFlight.jobState.replaceAll("_", " ")}). Let it finish, or stop it with cancel_applications first.`,
+              ? `This application is already prepared and waiting. Answer its Needs you step with resolve_needs_you, or send it with send_applications; a new run would only pile up behind it.`
+              : `This application is already in progress. Let it finish, or stop it with cancel_applications first.`,
         });
         return false;
       }
@@ -278,7 +278,7 @@ export const applyToJobsTool = defineTool({
       if (caveats.excludedEmployer) {
         cautioned.push({
           jobId,
-          reason: `The person excluded ${job.company}.`,
+          reason: `You excluded ${job.company}.`,
         });
         return false;
       }
@@ -288,7 +288,7 @@ export const applyToJobsTool = defineTool({
       ) {
         cautioned.push({
           jobId,
-          reason: `Same posting as job ${caveats.alreadyAppliedAs.jobId}, already applied (${caveats.alreadyAppliedAs.status}).`,
+          reason: `You already applied to this posting.`,
         });
         return false;
       }
@@ -297,7 +297,12 @@ export const applyToJobsTool = defineTool({
     if (candidates.length === 0) {
       throw new AssistantToolError(
         "refused",
-        cautioned.map((entry) => `${entry.jobId}: ${entry.reason}`).join(" "),
+        cautioned
+          .map((entry) => {
+            const job = findJob(snapshot, entry.jobId);
+            return `${job ? [job.title, job.location, job.company].filter(Boolean).join(" · ") : "This application"}: ${entry.reason}`;
+          })
+          .join(" "),
       );
     }
     const decisions = decideUnderGrants({

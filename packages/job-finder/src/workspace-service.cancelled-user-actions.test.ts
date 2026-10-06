@@ -6,7 +6,11 @@ import {
   UserActionRequestSchema,
 } from "@nordri/contracts";
 import { describe, expect, test } from "vitest";
-import { retireCancelledApplicationUserActions } from "./internal/workspace-application-user-action";
+import { getApplicationCrmData } from "./internal/application-crm";
+import {
+  restoreWithdrawnApplicationPreparation,
+  retireCancelledApplicationUserActions,
+} from "./internal/workspace-application-user-action";
 import {
   createSeed,
   createWorkspaceServiceHarness,
@@ -440,4 +444,112 @@ test("recording a send preserves a completed preparation run", async () => {
   expect((await repository.getUserActionRequest("request_a"))?.state).toBe(
     "skipped",
   );
+});
+
+test("Undo of withdrawal replaces the preparation summary without reopening the closed step", async () => {
+  const { repository, workspaceService } = harness();
+  const before = getApplicationCrmData(
+    (await workspaceService.getWorkspaceSnapshot()).applicationRecords.find(
+      (record) => record.id === "application_a",
+    )!,
+  );
+  const moved = await workspaceService.mutateApplicationCrmBulkStage({
+    note: null,
+    customStageId: null,
+    stage: "withdrawn",
+    items: [
+      {
+        applicationRecordId: "application_a",
+        expectedRevision: before.revision,
+      },
+    ],
+    actor: "user",
+  });
+  const record = moved.applicationRecords.find(
+    (entry) => entry.id === "application_a",
+  )!;
+  const undone = await workspaceService.mutateApplicationCrmBulkStage({
+    note: null,
+    customStageId: null,
+    action: "undo",
+    stage: before.stage,
+    items: [
+      {
+        applicationRecordId: record.id,
+        expectedRevision: record.crm!.revision,
+        previousStage: {
+          stage: before.stage,
+          customStageId: before.customStageId,
+          stageChangedAt: before.stageChangedAt,
+          appliedAt: before.appliedAt,
+          lastEmployerActivityAt: before.lastEmployerActivityAt,
+        },
+      },
+    ],
+    actor: "user",
+  });
+  expect(
+    undone.applyJobResults.find((entry) => entry.id === "result_a"),
+  ).toMatchObject({ summary: "Withdrawal undone. Prepare again." });
+  expect(
+    undone.applicationRecords.find((entry) => entry.id === record.id)
+      ?.nextActionLabel,
+  ).toBe("Prepare again");
+  expect(await repository.getUserActionRequest("request_a")).toMatchObject({
+    state: "skipped",
+  });
+});
+
+test("withdrawal recovery preserves a later result and an already sent tracker stage", async () => {
+  const { repository, workspaceService } = harness();
+  await workspaceService.mutateApplicationCrm({
+    applicationRecordId: "application_a",
+    expectedRevision: 0,
+    mutation: {
+      type: "set_stage",
+      stage: "withdrawn",
+      customStageId: null,
+      note: null,
+    },
+    actor: "user",
+  });
+  const record = (await repository.listApplicationRecords()).find(
+    (entry) => entry.id === "application_a",
+  )!;
+  await repository.upsertApplicationRecord({
+    ...record,
+    crm: { ...record.crm!, stage: "applied" },
+  });
+  await restoreWithdrawnApplicationPreparation(repository, [record.id]);
+  expect(
+    (await repository.listApplyJobResults()).find(
+      (entry) => entry.id === "result_a",
+    )?.summary,
+  ).toBe("You marked this application withdrawn.");
+  await repository.upsertApplicationRecord({
+    ...record,
+    crm: { ...record.crm!, stage: "reviewing" },
+  });
+  const old = (await repository.listApplyJobResults()).find(
+    (entry) => entry.id === "result_a",
+  )!;
+  await repository.upsertApplyJobResult({
+    ...old,
+    id: "later_result",
+    runId: "later_run",
+    updatedAt: "2099-10-05T12:00:00Z",
+    state: "awaiting_review",
+    summary: "Prepared again",
+  });
+  await restoreWithdrawnApplicationPreparation(repository, [record.id]);
+  expect(
+    (await repository.listApplyJobResults()).find(
+      (entry) => entry.id === "result_a",
+    )?.summary,
+  ).toBe("You marked this application withdrawn.");
+  expect(
+    (await repository.listApplyJobResults()).find(
+      (entry) => entry.id === "later_result",
+    )?.summary,
+  ).toBe("Prepared again");
 });

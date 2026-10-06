@@ -110,7 +110,7 @@ describe("buildSafeguardsPresentationModel", () => {
     expect(capRows[0]?.title).toBe("3/3 applications");
     expect(capRows[0]?.lineage.companies).toContain("Signal Systems");
     expect(capRows[0]?.lineage.jobs).toContain(
-      "Senior Product Designer · Signal Systems",
+      "Senior Product Designer · Remote · Signal Systems",
     );
     expect(model.counts.blockers).toBe(1);
     expect(model.counts.caps).toBe(1);
@@ -136,7 +136,7 @@ describe("buildSafeguardsPresentationModel", () => {
     const conflictRows = model.rows.filter((row) => row.kind === "conflicts");
     expect(conflictRows).toHaveLength(1);
     expect(conflictRows[0]?.title).toContain(
-      "Senior Product Designer · Signal Systems",
+      "Senior Product Designer · Remote · Signal Systems",
     );
     expect(conflictRows[0]?.title).not.toContain("application_a");
     expect(conflictRows[0]?.blocked).toBe(true);
@@ -233,7 +233,7 @@ describe("buildSafeguardsPresentationModel", () => {
     expect(reviewRows[0]?.title).toBe("Quality sample review");
     expect(reviewRows[0]?.blocked).toBe(true);
     expect(reviewRows[0]?.sampleLinks?.[0]?.label).toBe(
-      "Senior Product Designer · Signal Systems",
+      "Senior Product Designer · Remote · Signal Systems",
     );
     expect(reviewRows[0]?.sampleLinks?.[0]?.href).toContain(
       "applicationRecordId=application_a",
@@ -456,7 +456,7 @@ describe("filterSafeguardRows", () => {
       blocked: true,
       dismissed: false,
       lineage: {
-        jobs: ["Senior Product Designer · Signal Systems"],
+        jobs: ["Senior Product Designer · Remote · Signal Systems"],
         companies: [],
         campaigns: [],
       },
@@ -661,6 +661,10 @@ it("shows one company group, labelled places, and revocable choices for specific
     safeguards,
   }).rows.find((row) => row.kind === "conflicts")!;
   expect(row.title).toBe("Signal Systems");
+  expect(row.lineage.jobs).toEqual([
+    "Engineer · Remote · Signal Systems",
+    "Engineer · Hybrid, London · Signal Systems",
+  ]);
   expect(row.controls[0]?.label).toContain("London");
   expect(row.controls[0]?.mutation).toEqual({
     type: "decide_same_company_send_pair",
@@ -680,6 +684,8 @@ it("shows one company group, labelled places, and revocable choices for specific
     safeguards,
   }).rows.find((row) => row.kind === "conflicts")!;
   expect(allowed.blocked).toBe(false);
+  expect(allowed.recoveryGuidance).not.toContain("Choose Send both anyway");
+  expect(allowed.recoveryGuidance).toContain("Your choices are saved");
   expect(allowed.controls[0]?.mutation).toMatchObject({ allow: false });
   expect(allowed.controls[0]?.label).toContain("Revoke Send both anyway");
   safeguards.simultaneousApplicationConflicts[0]!.allowedPairs = [];

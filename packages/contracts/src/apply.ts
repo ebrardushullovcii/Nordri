@@ -88,6 +88,13 @@ export type ApplyRunState = z.infer<typeof ApplyRunStateSchema>;
 export const PREPARED_PAGE_CLOSED_SUMMARY =
   "The prepared application page is no longer open.";
 
+/** The summary of an application the person marked withdrawn in the tracker. */
+export const WITHDRAWN_BY_PERSON_SUMMARY =
+  "You marked this application withdrawn.";
+
+/** The summary after Undo restored a withdrawn application's tracker stage. */
+export const WITHDRAWAL_UNDONE_SUMMARY = "Withdrawal undone. Prepare again.";
+
 export const applyJobStateValues = [
   "planned",
   "question_capture",

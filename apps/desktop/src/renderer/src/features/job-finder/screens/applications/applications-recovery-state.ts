@@ -18,6 +18,7 @@ export {
 import {
   APPLICATION_SKIPPED_BY_PERSON_LABEL,
   PREPARED_PAGE_CLOSED_SUMMARY,
+  WITHDRAWAL_UNDONE_SUMMARY,
   type JobFinderWorkspaceSnapshot,
 } from "@nordri/contracts";
 import {
@@ -556,6 +557,19 @@ export function resolveApplicationRecoveryPresentation(input: {
       statusLine: "Prepare again",
       reasonSentence:
         "The prepared form is no longer open. Prepare it again using your saved answers and files.",
+      primaryAction: "try_again",
+      primaryActionLabel: "Prepare again",
+    };
+  }
+
+  if (
+    visibleApplyResult?.state === "skipped" &&
+    visibleApplyResult.summary === WITHDRAWAL_UNDONE_SUMMARY
+  ) {
+    return {
+      state: "retry",
+      statusLine: "Prepare again",
+      reasonSentence: visibleApplyResult.detail,
       primaryAction: "try_again",
       primaryActionLabel: "Prepare again",
     };

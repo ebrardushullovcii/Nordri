@@ -281,7 +281,7 @@ export function useJobFinderPageController() {
         const link = resolved.actionLink ?? null;
         showToast({
           title: resolved.message!,
-          tone: "success",
+          tone: resolved.toastTone ?? "success",
           ...(link
             ? {
                 action: {

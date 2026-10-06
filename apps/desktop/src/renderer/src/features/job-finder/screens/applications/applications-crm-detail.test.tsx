@@ -1173,3 +1173,66 @@ describe("ApplicationsCrmDetail", () => {
     expect(screen.queryByRole("listbox", { name: "Time zones" })).toBeNull();
   });
 });
+
+test("Tracker activity sorts by event time rather than stored position", () => {
+  Object.defineProperty(window, "nordri", {
+    configurable: true,
+    value: {
+      jobFinder: {
+        listCandidateAssets: vi.fn(() => Promise.resolve({ assets: [] })),
+      },
+    },
+  });
+  const record = ApplicationRecordSchema.parse({
+    id: "synthetic",
+    jobId: "job_synthetic",
+    title: "Engineer",
+    company: "Synthetic",
+    status: "approved",
+    lastActionLabel: "Prepared",
+    nextActionLabel: null,
+    lastUpdatedAt: "2026-10-05T12:00:00Z",
+    crm: {
+      stage: "applied",
+      stageChangedAt: "2026-10-05T12:00:00Z",
+      events: [
+        {
+          id: "older",
+          at: "2026-10-03T10:00:00Z",
+          kind: "stage_changed",
+          title: "Old stage",
+          source: "user",
+        },
+        {
+          id: "newer",
+          at: "2026-10-05T12:00:00Z",
+          kind: "stage_changed",
+          title: "You sent this application",
+          source: "user",
+        },
+        {
+          id: "middle",
+          at: "2026-10-04T10:00:00Z",
+          kind: "stage_changed",
+          title: "Prepared earlier",
+          source: "user",
+        },
+      ],
+    },
+  });
+  render(
+    <ApplicationsCrmDetail
+      onExport={vi.fn(() => Promise.resolve())}
+      onMutate={vi.fn(() => Promise.resolve())}
+      record={record}
+      settings={ApplicationCrmSettingsSchema.parse({})}
+    />,
+    { container: appRoot },
+  );
+  const timeline = screen.getByText("Timeline (3)").parentElement!;
+  expect(
+    Array.from(timeline.querySelectorAll("li strong")).map(
+      (entry) => entry.textContent,
+    ),
+  ).toEqual(["You sent this application", "Prepared earlier", "Old stage"]);
+});

@@ -573,6 +573,7 @@ export interface ActionState {
    * a message without a tone always stay inline (ADR 0042).
    */
   tone?: "success" | "failure" | "progress" | null;
+  toastTone?: "success" | "warning";
   /**
    * A file this action just wrote, when the message names its path. The
    * surface that prints the message offers "Open folder" beside it, so the

@@ -783,3 +783,19 @@ it("shows a saved person-send receipt and its reference without claiming automat
     primaryAction: "none",
   });
 });
+
+it("offers Prepare again after Tracker Undo instead of the withdrawn summary", () => {
+  expect(
+    resolve(
+      buildResult({
+        state: "skipped",
+        summary: "Withdrawal undone. Prepare again.",
+        detail: "Your previous tracker stage is restored.",
+      }),
+    ),
+  ).toMatchObject({
+    statusLine: "Prepare again",
+    primaryActionLabel: "Prepare again",
+    reasonSentence: "Your previous tracker stage is restored.",
+  });
+});

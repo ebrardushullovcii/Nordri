@@ -1,5 +1,8 @@
 import {
   PREPARED_PAGE_CLOSED_SUMMARY,
+  WITHDRAWAL_UNDONE_SUMMARY,
+  WITHDRAWN_BY_PERSON_SUMMARY,
+  isApplicationTrackedAsSentByPerson,
   ApplicationRecordSchema,
   ApplyJobResultSchema,
   ApplyRunSchema,
@@ -1212,7 +1215,7 @@ export async function closeApplicationStepsTrackedByPerson(
             "Your tracker says this application was sent. Job Finder did not see the site's confirmation and will not fill it in again.",
         }
       : {
-          commandReason: "You marked this application withdrawn.",
+          commandReason: WITHDRAWN_BY_PERSON_SUMMARY,
           lastActionLabel: "You marked this application withdrawn.",
           eventTitle: "Application step closed: you withdrew it",
           eventDetail:
@@ -1274,5 +1277,55 @@ export async function closeApplicationStepsTrackedByPerson(
           },
         }),
     );
+  }
+}
+
+/** Undo restores the tracker, but cannot reopen a task already closed. */
+export async function restoreWithdrawnApplicationPreparation(
+  repository: JobFinderRepository,
+  applicationRecordIds: readonly string[],
+): Promise<void> {
+  for (const recordId of applicationRecordIds) {
+    await withApplicationRecordTransition(repository, recordId, async () => {
+      const record = (await repository.listApplicationRecords()).find(
+        (entry) => entry.id === recordId,
+      );
+      if (
+        !record ||
+        record.crm?.stage === "withdrawn" ||
+        isApplicationTrackedAsSentByPerson(record.crm)
+      )
+        return;
+      const latest = (await repository.listApplyJobResults())
+        .filter((entry) => entry.applicationRecordId === recordId)
+        .sort(
+          (left, right) =>
+            Date.parse(right.updatedAt) - Date.parse(left.updatedAt),
+        )[0];
+      if (
+        !latest ||
+        latest.state !== "skipped" ||
+        latest.summary !== WITHDRAWN_BY_PERSON_SUMMARY
+      )
+        return;
+      const now = new Date().toISOString();
+      await repository.upsertApplyJobResult(
+        ApplyJobResultSchema.parse({
+          ...latest,
+          summary: WITHDRAWAL_UNDONE_SUMMARY,
+          detail:
+            "Your previous tracker stage is restored. Prepare this application again using your saved answers and files.",
+          updatedAt: now,
+        }),
+      );
+      await repository.upsertApplicationRecord(
+        ApplicationRecordSchema.parse({
+          ...record,
+          lastActionLabel: "Withdrawal undone.",
+          nextActionLabel: "Prepare again",
+          lastUpdatedAt: now,
+        }),
+      );
+    });
   }
 }

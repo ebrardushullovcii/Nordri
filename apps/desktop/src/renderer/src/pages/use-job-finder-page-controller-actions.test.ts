@@ -21,6 +21,7 @@ import {
   createPrimaryPageActions,
   describeAutoApplyQueueStart,
   describePreparedApplicationSubmitResult,
+  preparedApplicationsToastTone,
   clearJobFinderNavigationHint,
   noteJobFinderNavigation,
   setJobFinderStatusRoute,
@@ -793,6 +794,7 @@ describe("createPrimaryPageActions", () => {
     // The workspace the handler closed over predates the source the person
     // just added on this step; only the saved snapshot has it.
     const staleWorkspace = {
+      activeCampaignId: "setup_plan",
       profile: completeSetupProfile,
       searchPreferences: {
         ...completeSetupPreferences,
@@ -850,7 +852,9 @@ describe("createPrimaryPageActions", () => {
         replace: true,
       }),
     );
-    expect(consumeFirstSearchRequest()).toBe(true);
+    expect(consumeFirstSearchRequest(savedSnapshot.activeCampaignId)).toBe(
+      true,
+    );
   });
 
   it("hands off to Find jobs before the completed setup state is persisted", async () => {
@@ -3208,4 +3212,22 @@ it("keeps a language rewrite outage out of the global resume save notice", async
     ),
   );
   expect(runSaveAction).not.toHaveBeenCalled();
+});
+
+it("uses warning toast tone unless every selected send has site confirmation", () => {
+  const result = {
+    jobId: "job",
+    state: "ready",
+    updatedAt: "2026-10-05T10:00:00Z",
+    privacyReceipt: { submissionOutcome: { outcome: "not_submitted" } },
+  };
+  const snapshot = {
+    applyJobResults: [result],
+  } as unknown as JobFinderWorkspaceSnapshot;
+  expect(preparedApplicationsToastTone(snapshot, ["job"])).toBe("warning");
+  snapshot.applyJobResults[0]!.state = "submitted";
+  expect(preparedApplicationsToastTone(snapshot, ["job"])).toBe("warning");
+  snapshot.applyJobResults[0]!.privacyReceipt!.submissionOutcome!.outcome =
+    "submitted";
+  expect(preparedApplicationsToastTone(snapshot, ["job"])).toBe("success");
 });

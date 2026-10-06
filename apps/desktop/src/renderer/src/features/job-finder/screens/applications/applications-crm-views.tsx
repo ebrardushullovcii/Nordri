@@ -211,17 +211,21 @@ function RecordButton(props: {
   onSelect: (id: string) => void;
   compact?: boolean;
   relatedJobCanonicalUrl?: string | null;
+  relatedJobLocation?: string | null;
 }) {
   const crm = applicationCrmDataForView(props.record);
   const pendingReminderCount = crm.reminders.filter(
     (reminder) => reminder.status === "pending",
   ).length;
-  const employerLine = formatApplicationEmployerLine({
+  const employer = formatApplicationEmployerLine({
     company: props.record.company,
     ...(props.relatedJobCanonicalUrl
       ? { canonicalUrl: props.relatedJobCanonicalUrl }
       : {}),
   });
+  const employerLine = [props.relatedJobLocation, employer]
+    .filter(Boolean)
+    .join(" · ");
   return (
     <button
       aria-current={props.selected ? "true" : undefined}
@@ -273,6 +277,7 @@ export function ApplicationsCrmViews(props: {
   discoveryJobs?: ReadonlyArray<{
     id: string;
     canonicalUrl: string;
+    location?: string | null;
   }>;
   onSelectRecord: (recordId: string) => void;
   onViewChange: (view: ApplicationCrmView) => void;
@@ -291,6 +296,8 @@ export function ApplicationsCrmViews(props: {
 }) {
   const customStages = props.customStages ?? NO_CUSTOM_STAGES;
   const { showToast } = useToast();
+  const latestRecordsRef = useRef(props.records);
+  latestRecordsRef.current = props.records;
   const [bulkStage, setBulkStage] = useState("reviewing");
   const [bulkTags, setBulkTags] = useState("");
   const [confirmation, setConfirmation] = useState<{
@@ -708,7 +715,14 @@ export function ApplicationsCrmViews(props: {
           action: {
             label: "Undo",
             onClick: () => {
-              void undoBulkChange(reverse);
+              void undoBulkChange(
+                reverse,
+                new Set(
+                  selected.flatMap((record) =>
+                    record.events.map((event) => event.id),
+                  ),
+                ),
+              );
             },
           },
         });
@@ -727,16 +741,33 @@ export function ApplicationsCrmViews(props: {
     }
   }
 
-  async function undoBulkChange(command: ApplicationCrmBulkStageMutationInput) {
+  async function undoBulkChange(
+    command: ApplicationCrmBulkStageMutationInput,
+    previousEventIds: ReadonlySet<string>,
+  ) {
     if (!props.onBulkChange) return;
     setBulkPending(true);
     setBulkError(null);
     try {
+      const closedStep = command.items.some((item) =>
+        latestRecordsRef.current
+          .find((record) => record.id === item.applicationRecordId)
+          ?.events.some(
+            (event) =>
+              !previousEventIds.has(event.id) &&
+              (event.title === "Application step closed: you withdrew it" ||
+                event.title === "Application step closed: you sent it"),
+          ),
+      );
       await props.onBulkChange(command);
       showToast({
         title: "Previous stages restored",
-        description:
-          "Closed browser tasks stay closed. Prepare again to reopen the form.",
+        ...(closedStep
+          ? {
+              description:
+                "Closed steps stay closed. Prepare again to reopen the form.",
+            }
+          : {}),
       });
     } catch {
       setBulkError(
@@ -1000,7 +1031,7 @@ export function ApplicationsCrmViews(props: {
             <tbody>
               {pagedRecords.map((record) => {
                 const crm = applicationCrmDataForView(record);
-                const employerLine = formatApplicationEmployerLine({
+                const employer = formatApplicationEmployerLine({
                   company: record.company,
                   ...(relatedJobsById.get(record.jobId)?.canonicalUrl
                     ? {
@@ -1009,6 +1040,12 @@ export function ApplicationsCrmViews(props: {
                       }
                     : {}),
                 });
+                const employerLine = [
+                  relatedJobsById.get(record.jobId)?.location,
+                  employer,
+                ]
+                  .filter(Boolean)
+                  .join(" · ");
                 const reminder = crm.reminders
                   .filter((entry) => entry.status === "pending")
                   .sort((left, right) =>
@@ -1431,6 +1468,9 @@ export function ApplicationsCrmViews(props: {
                           key={record.id}
                           onSelect={props.onSelectRecord}
                           record={record}
+                          relatedJobLocation={
+                            relatedJobsById.get(record.jobId)?.location ?? null
+                          }
                           relatedJobCanonicalUrl={
                             relatedJobsById.get(record.jobId)?.canonicalUrl ??
                             null

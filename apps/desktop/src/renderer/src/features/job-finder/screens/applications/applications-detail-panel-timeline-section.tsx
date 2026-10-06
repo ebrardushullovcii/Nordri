@@ -21,49 +21,53 @@ export function ApplicationsDetailPanelTimelineSection(props: {
         Activity history ({events.length})
       </summary>
       <div className="mt-2 grid gap-0">
-        {events.map((event) => {
-          const tone = getEventTone(event);
+        {[...events]
+          .sort((left, right) => Date.parse(right.at) - Date.parse(left.at))
+          .map((event) => {
+            const tone = getEventTone(event);
 
-          return (
-            <article
-              key={event.id}
-              className="relative grid gap-3 border-l border-border/20 pl-8 pb-8 sm:grid-cols-[1fr]"
-            >
-              <div
-                className={cn(
-                  "absolute -left-1.25 top-1 h-2.5 w-2.5",
-                  tone === "positive"
-                    ? "bg-positive"
-                    : tone === "active"
-                      ? "bg-primary"
-                      : tone === "critical"
-                        ? "bg-destructive"
-                        : "border border-border bg-background",
-                )}
-              />
-              <div>
-                <div className="label-mono-xs">{formatTimestamp(event.at)}</div>
-                <strong
+            return (
+              <article
+                key={event.id}
+                className="relative grid gap-3 border-l border-border/20 pl-8 pb-8 sm:grid-cols-[1fr]"
+              >
+                <div
                   className={cn(
-                    "mt-1 block text-sm font-medium",
+                    "absolute -left-1.25 top-1 h-2.5 w-2.5",
                     tone === "positive"
-                      ? "text-positive"
+                      ? "bg-positive"
                       : tone === "active"
-                        ? "text-primary"
+                        ? "bg-primary"
                         : tone === "critical"
-                          ? "text-destructive"
-                          : "text-foreground",
+                          ? "bg-destructive"
+                          : "border border-border bg-background",
                   )}
-                >
-                  {getCustomerFacingApplyText(event.title)}
-                </strong>
-                <p className="mt-2 text-(length:--text-description) leading-relaxed text-foreground-soft">
-                  {getCustomerFacingApplyText(event.detail)}
-                </p>
-              </div>
-            </article>
-          );
-        })}
+                />
+                <div>
+                  <div className="label-mono-xs">
+                    {formatTimestamp(event.at)}
+                  </div>
+                  <strong
+                    className={cn(
+                      "mt-1 block text-sm font-medium",
+                      tone === "positive"
+                        ? "text-positive"
+                        : tone === "active"
+                          ? "text-primary"
+                          : tone === "critical"
+                            ? "text-destructive"
+                            : "text-foreground",
+                    )}
+                  >
+                    {getCustomerFacingApplyText(event.title)}
+                  </strong>
+                  <p className="mt-2 text-(length:--text-description) leading-relaxed text-foreground-soft">
+                    {getCustomerFacingApplyText(event.detail)}
+                  </p>
+                </div>
+              </article>
+            );
+          })}
       </div>
     </details>
   );

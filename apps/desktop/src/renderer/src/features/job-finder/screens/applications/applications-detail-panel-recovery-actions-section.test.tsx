@@ -722,6 +722,7 @@ it.each([
 it("shows the site's captured confirmation reference on the submitted record", () => {
   const result = buildResult({
     state: "submitted",
+    summary: "Application received. Reference NW-2048.",
     privacyReceipt: {
       finalSubmitOccurred: true,
       submissionOutcome: {
@@ -739,6 +740,15 @@ it("shows the site's captured confirmation reference on the submitted record", (
   });
   const view = renderSection({ visibleApplyResult: result });
   expect(
-    view.getByText("Application received. Reference NW-2048."),
-  ).toBeTruthy();
+    view.getAllByText("Application received. Reference NW-2048."),
+  ).toHaveLength(1);
+});
+
+it("shows a person's captured confirmation once", () => {
+  const view = renderSection({
+    personSendReceiptSummary: "The site confirmed receipt. Reference SYN-1.",
+  });
+  expect(
+    view.getAllByText("The site confirmed receipt. Reference SYN-1."),
+  ).toHaveLength(1);
 });

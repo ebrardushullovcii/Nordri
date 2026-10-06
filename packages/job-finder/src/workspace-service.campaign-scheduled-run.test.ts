@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 
 import type { BrowserSessionRuntime } from "@nordri/browser-runtime";
 import {
@@ -814,4 +814,67 @@ describe("workspace campaign scheduled runs", () => {
       ),
     ).toHaveLength(0);
   });
+});
+
+test("selecting a manual or future plan does not search or resume paused work", async () => {
+  const base = createBrowserRuntime();
+  const runAgentDiscovery = vi.spyOn(base, "runAgentDiscovery");
+  const harness = createWorkspaceServiceHarness({
+    browserRuntime: { ...base, runAgentDiscovery },
+  });
+  const { workspaceService } = harness;
+  const active = await getActiveCampaign(harness);
+  const saved = await workspaceService.saveCampaign(
+    toCampaignInput(active, {
+      id: null,
+      name: "Other plan",
+      schedule: createSchedule(),
+    }),
+  );
+  const other = saved.campaigns.find((entry) => entry.name === "Other plan")!;
+  await workspaceService.setActivityControl({ paused: true });
+  await workspaceService.selectCampaign(active.id);
+  const selected = await workspaceService.selectCampaign(other.id);
+  expect(selected.activeCampaignId).toBe(other.id);
+  expect(selected.activityControl.paused).toBe(true);
+  expect(runAgentDiscovery).not.toHaveBeenCalled();
+});
+
+test("a pause after a scheduled tick starts prevents slot claiming and searching", async () => {
+  const base = createBrowserRuntime();
+  const runAgentDiscovery = vi.spyOn(base, "runAgentDiscovery");
+  const harness = createWorkspaceServiceHarness({
+    browserRuntime: { ...base, runAgentDiscovery },
+  });
+  const active = await getActiveCampaign(harness);
+  const due = "2026-08-15T08:00:00.000Z";
+  await harness.workspaceService.saveCampaign(
+    toCampaignInput(active, {
+      schedule: createSchedule({
+        mode: "daily",
+        enabled: true,
+        localStartTime: "08:00",
+        timeZone: "UTC",
+        runFacts: createRunFacts({ nextRunAt: due }),
+      }),
+    }),
+  );
+  const control = await harness.repository.getActivityControl();
+  const readControl = vi
+    .spyOn(harness.repository, "getActivityControl")
+    .mockResolvedValue({ ...control, paused: true })
+    .mockResolvedValueOnce({ ...control, paused: false });
+  try {
+    await harness.workspaceService.runDueScheduledCampaigns(
+      "2026-08-15T09:00:00.000Z",
+    );
+    expect(runAgentDiscovery).not.toHaveBeenCalled();
+    expect(
+      (await harness.repository.getCampaignState())?.campaigns.find(
+        (entry) => entry.id === active.id,
+      )?.schedule.runFacts.nextRunAt,
+    ).toBe(due);
+  } finally {
+    readControl.mockRestore();
+  }
 });

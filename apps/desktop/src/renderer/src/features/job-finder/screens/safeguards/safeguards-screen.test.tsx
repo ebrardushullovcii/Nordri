@@ -711,3 +711,78 @@ it("puts events before permissions, with compact browser recovery inside permiss
   expect(reset.parentElement?.className).toContain("justify-items-start");
   expect(screen.getAllByText(APPLICATION_BOUNDARY_SENTENCE)).toHaveLength(1);
 });
+
+it("keeps the inspected Safeguards section open after allowing a pair", async () => {
+  const safeguards = JobFinderIntelligenceSafeguardsSchema.parse({
+    simultaneousApplicationConflicts: [
+      {
+        id: "pair",
+        applicationRecordId: "a",
+        conflictingApplicationRecordId: "b",
+        companyKey: "synthetic",
+        companyName: "Synthetic Workshop",
+        jobIds: ["job_ready", "job_other"],
+        status: "detected",
+        explanation: "Same employer",
+        recoveryGuidance: "Choose a pair",
+      },
+    ],
+  });
+  const initial = workspaceWith(safeguards);
+  initial.companyJobs = [];
+  initial.dismissedDiscoveryJobs = [];
+  initial.discoveryJobs = [
+    initial.discoveryJobs[0]!,
+    { ...initial.discoveryJobs[0]!, id: "job_other", location: "London" },
+  ];
+  function Harness() {
+    const [workspace, setWorkspace] = useState(initial);
+    return (
+      <MemoryRouter>
+        <SafeguardsScreen
+          actionMessage={null}
+          isPending={() => false}
+          workspace={workspace}
+          onMutateSafeguards={() => {
+            setWorkspace({
+              ...workspace,
+              intelligence: {
+                ...workspace.intelligence,
+                safeguards: JobFinderIntelligenceSafeguardsSchema.parse({
+                  ...safeguards,
+                  simultaneousApplicationConflicts: [
+                    {
+                      ...safeguards.simultaneousApplicationConflicts[0],
+                      allowedPairs: [
+                        {
+                          jobIds: ["job_ready", "job_other"],
+                          decidedAt: now,
+                          revokedAt: null,
+                        },
+                      ],
+                    },
+                  ],
+                }),
+              },
+            });
+            return Promise.resolve(true);
+          }}
+        />
+      </MemoryRouter>
+    );
+  }
+  const view = render(<Harness />);
+  const events = view.container.querySelector<HTMLDetailsElement>(
+    "[data-safeguard-events]",
+  )!;
+  expect(events.open).toBe(true);
+  const card = view.container.querySelector<HTMLElement>(
+    "[data-safeguard-kind=conflicts]",
+  )!;
+  expect(card.className).toContain("min-w-0");
+  expect(card.querySelector("h3")?.className).toContain("break-words");
+  fireEvent.click(screen.getByRole("button", { name: /^Send both anyway:/ }));
+  await screen.findByText("Pairs allowed by you");
+  expect(events.open).toBe(true);
+  expect(screen.queryByText(/Recovery: Choose Send both anyway/)).toBeNull();
+});

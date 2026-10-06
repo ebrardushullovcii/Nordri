@@ -236,3 +236,11 @@ it("gives the assistant ordinary eligibility wording and the text-size route", (
     "Supporting facts are named achievements",
   );
 });
+
+it("instructs replies to use your job labels and keep internal ids out", () => {
+  expect(ASSISTANT_SYSTEM_PROMPT).toContain(
+    "never print them in replies, even in parentheses",
+  );
+  expect(ASSISTANT_SYSTEM_PROMPT).toContain("plain second-person words");
+  expect(ASSISTANT_SYSTEM_PROMPT).toContain("role, place and employer");
+});

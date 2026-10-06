@@ -61,18 +61,25 @@ function SafeguardRowCard(props: {
   return (
     <article
       aria-label={row.title}
-      className="grid gap-3 rounded-(--radius-field) border border-(--surface-panel-border) bg-background/40 px-4 py-3"
+      className="grid min-w-0 gap-3 rounded-(--radius-field) border border-(--surface-panel-border) bg-background/40 px-4 py-3"
       data-safeguard-kind={row.kind}
       data-safeguard-blocked={row.blocked ? "true" : "false"}
     >
       <div className="flex flex-wrap items-start justify-between gap-2">
-        <div className="grid min-w-0 gap-0.5">
-          <h3 className="font-semibold text-foreground">{row.title}</h3>
+        <div className="grid min-w-0 flex-1 basis-48 gap-0.5">
+          <h3 className="break-words [overflow-wrap:anywhere] font-semibold text-foreground">
+            {row.title}
+          </h3>
           <p className="break-words text-(length:--text-small) text-foreground-soft">
             {row.subtitle}
           </p>
         </div>
-        <StatusBadge tone={row.statusTone}>{row.statusLabel}</StatusBadge>
+        <StatusBadge
+          className="max-w-full whitespace-normal"
+          tone={row.statusTone}
+        >
+          {row.statusLabel}
+        </StatusBadge>
       </div>
 
       <div className="grid gap-1 text-(length:--text-small) leading-5">
@@ -87,9 +94,13 @@ function SafeguardRowCard(props: {
           {row.lineage.jobs.length > 0 ? (
             <>
               <dt className="text-foreground-muted">Jobs</dt>
-              <dd className="text-foreground">
+              <dd className="min-w-0 text-foreground">
                 {row.lineage.jobs.map((label) => (
-                  <span className="block truncate" key={label} title={label}>
+                  <span
+                    className="block break-words [overflow-wrap:anywhere]"
+                    key={label}
+                    title={label}
+                  >
                     {label}
                   </span>
                 ))}
@@ -99,9 +110,13 @@ function SafeguardRowCard(props: {
           {row.lineage.companies.length > 0 ? (
             <>
               <dt className="text-foreground-muted">Companies</dt>
-              <dd className="text-foreground">
+              <dd className="min-w-0 text-foreground">
                 {row.lineage.companies.map((label) => (
-                  <span className="block truncate" key={label} title={label}>
+                  <span
+                    className="block break-words [overflow-wrap:anywhere]"
+                    key={label}
+                    title={label}
+                  >
                     {label}
                   </span>
                 ))}
@@ -111,9 +126,13 @@ function SafeguardRowCard(props: {
           {row.lineage.campaigns.length > 0 ? (
             <>
               <dt className="text-foreground-muted">Search plans</dt>
-              <dd className="text-foreground">
+              <dd className="min-w-0 text-foreground">
                 {row.lineage.campaigns.map((label) => (
-                  <span className="block truncate" key={label} title={label}>
+                  <span
+                    className="block break-words [overflow-wrap:anywhere]"
+                    key={label}
+                    title={label}
+                  >
                     {label}
                   </span>
                 ))}
@@ -291,7 +310,7 @@ export function SafeguardsScreen(props: {
   }
 
   return (
-    <section aria-label="High-volume safeguards">
+    <section aria-label="High-volume safeguards" className="min-w-0">
       {/* This screen used to paint its own <h1> at a bespoke size, so its
           page title could drift away from every other route's. It goes
           through the shared PageHeader like the rest of the app. The card
@@ -429,7 +448,10 @@ export function SafeguardsScreen(props: {
                   <SafeguardRowCard
                     isPending={isPending}
                     key={row.key}
-                    onMutate={onMutateSafeguards}
+                    onMutate={(mutation) => {
+                      setEventsOpenOverride(true);
+                      return onMutateSafeguards(mutation);
+                    }}
                     row={row}
                   />
                 ))}

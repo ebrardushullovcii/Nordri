@@ -53,3 +53,47 @@ it("shows every proposal's full wording before Apply, including the ninth item",
     action: "accept",
   });
 });
+
+it("renders a saved Sent card as Sending results alongside unsent receipts", () => {
+  const message = AssistantMessageSchema.parse(
+    JSON.parse(
+      JSON.stringify({
+        id: "saved",
+        conversationId: "conversation",
+        role: "assistant",
+        origin: "sidebar",
+        createdAt: "2026-10-03T12:00:00Z",
+        parts: [
+          {
+            type: "records",
+            kind: "applications",
+            title: "Sent",
+            totalCount: 2,
+            rows: [
+              {
+                id: "a",
+                title: "Engineer",
+                status: "Review the prepared run approval in Applications",
+              },
+              { id: "b", title: "Designer", status: "Try again" },
+            ],
+          },
+        ],
+      }),
+    ),
+  );
+  render(
+    <AssistantMessageParts
+      message={message}
+      actions={{
+        onResolveProposal: () => Promise.resolve(),
+        onUndo: () => Promise.resolve(null),
+        onAnswer: () => undefined,
+        onOpenRoute: () => undefined,
+      }}
+    />,
+  );
+  expect(screen.getByText("Sending results")).toBeTruthy();
+  expect(screen.queryByText("Sent")).toBeNull();
+  expect(screen.getByText("Try again")).toBeTruthy();
+});

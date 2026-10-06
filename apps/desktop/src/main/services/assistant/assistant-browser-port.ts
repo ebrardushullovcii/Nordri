@@ -244,7 +244,11 @@ export function createAssistantBrowserPort(
                   raw.controls.find(
                     (control) => (control.ref ?? `c${control.index}`) === ref,
                   )?.label || "a field";
-                await input.onApplicationChange(preparedRecordId, label);
+                await input.onApplicationChange(
+                  preparedRecordId,
+                  label.replace(/^\s*\*+\s*|\s*\*+\s*$/gu, "").trim() ||
+                    "a field",
+                );
               }
             };
             const hands: ApplyRawPageHands = {

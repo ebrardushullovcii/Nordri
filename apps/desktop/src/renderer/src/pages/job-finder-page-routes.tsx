@@ -1125,14 +1125,17 @@ export function JobFinderDiscoveryRoute() {
   const [crossPlanRetry, setCrossPlanRetry] = useState(0);
   const attemptedCrossPlanJobRef = useRef<{ key: string } | null>(null);
   const { onRunAgentDiscovery } = context;
+  const checkedFirstSearchRequest = useRef(false);
 
   // Finishing guided setup lands here with the first search requested: start
   // it once, the same request Search now sends.
   useEffect(() => {
-    if (consumeFirstSearchRequest()) {
+    if (checkedFirstSearchRequest.current) return;
+    checkedFirstSearchRequest.current = true;
+    if (consumeFirstSearchRequest(context.workspace.activeCampaignId)) {
       onRunAgentDiscovery?.({ intent: "", freshness: "any", sourceIds: "all" });
     }
-  }, [onRunAgentDiscovery]);
+  }, [onRunAgentDiscovery, context.workspace.activeCampaignId]);
 
   const handleResumeActivity = () => {
     setActivityPausePending(true);

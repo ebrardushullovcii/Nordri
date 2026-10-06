@@ -122,11 +122,12 @@ describe("ApplicationsCrmViews", () => {
     expect(screen.queryByText("Application tracker updated.")).toBeNull();
     fireEvent.click(await screen.findByRole("button", { name: "Undo" }));
     await waitFor(() => expect(onBulkChange).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText("Previous stages restored")).toBeTruthy();
     expect(
-      await screen.findByText(
-        "Closed browser tasks stay closed. Prepare again to reopen the form.",
+      screen.queryByText(
+        "Closed steps stay closed. Prepare again to reopen the form.",
       ),
-    ).toBeTruthy();
+    ).toBeNull();
     expect(onBulkChange.mock.calls[1]?.[0]).toMatchObject({
       action: "undo",
       items: [
@@ -1170,4 +1171,77 @@ test("confirms one selected application without claiming other pages will change
     within(confirmation).getByText("This application will change."),
   ).toBeTruthy();
   expect(within(confirmation).queryByText(/other pages/)).toBeNull();
+});
+
+test("Tracker distinguishes the same role and employer in two places", () => {
+  const records = [
+    record("london", "Senior Accountant", "Synthetic Workshop"),
+    record("denver", "Senior Accountant", "Synthetic Workshop"),
+  ];
+  render(
+    <ApplicationsCrmViews
+      records={records}
+      discoveryJobs={records.map((entry, index) => ({
+        id: entry.jobId,
+        canonicalUrl: "https://example.test/jobs/" + index,
+        location: index ? "Denver" : "London",
+      }))}
+      onSelectRecord={vi.fn()}
+      onViewChange={vi.fn()}
+      selectedRecordId={null}
+      view="table"
+    />,
+  );
+  expect(screen.getByText("London · Synthetic Workshop")).toBeTruthy();
+  expect(screen.getByText("Denver · Synthetic Workshop")).toBeTruthy();
+});
+
+test("Undo explains closed steps only when this stage change actually closed one", async () => {
+  function Harness() {
+    const [records, setRecords] = useState([
+      record("application_test", "Engineer", "Synthetic"),
+    ]);
+    return (
+      <ToastProvider>
+        <ApplicationsCrmViews
+          records={records}
+          onSelectRecord={vi.fn()}
+          onViewChange={vi.fn()}
+          selectedRecordId={null}
+          view="table"
+          onBulkChange={(command) => {
+            if (command.action !== "undo")
+              setRecords((current) =>
+                current.map((entry) => ({
+                  ...entry,
+                  events: [
+                    ...entry.events,
+                    {
+                      id: "closed_step",
+                      at: "2026-10-05T12:00:00Z",
+                      title: "Application step closed: you withdrew it",
+                      detail: "Your step was closed.",
+                      emphasis: "neutral" as const,
+                    },
+                  ],
+                })),
+              );
+            return Promise.resolve();
+          }}
+        />
+      </ToastProvider>
+    );
+  }
+  render(<Harness />);
+  fireEvent.click(
+    screen.getByRole("checkbox", { name: "Select all matching applications" }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Move to Reviewing" }));
+  fireEvent.click(screen.getByRole("button", { name: "Confirm change" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Undo" }));
+  expect(
+    await screen.findByText(
+      "Closed steps stay closed. Prepare again to reopen the form.",
+    ),
+  ).toBeTruthy();
 });
