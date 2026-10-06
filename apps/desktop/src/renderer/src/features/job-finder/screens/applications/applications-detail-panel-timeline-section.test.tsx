@@ -76,3 +76,36 @@ it("shows an older record's duplicated confirmation once and keeps other history
   expect(screen.getByText("Activity history (2)")).toBeTruthy();
   expect(events).toHaveLength(3);
 });
+
+it("shows one confirmation when an older record worded the same send two ways", () => {
+  const events = [
+    {
+      id: "host-wording",
+      at: "2026-10-03T21:26:00Z",
+      title: "Application submitted",
+      detail:
+        "127.0.0.1:47950 confirmed that it received this application. Job Finder will not send it again.",
+      emphasis: "positive" as const,
+    },
+    {
+      id: "plain-wording",
+      at: "2026-10-03T21:26:02Z",
+      title: "Application submitted",
+      detail: "The employer site confirmed that it received the application.",
+      emphasis: "positive" as const,
+    },
+    {
+      id: "repeated",
+      at: "2026-10-03T21:20:00Z",
+      title: "Job Finder filled the form and is waiting for you.",
+      detail: "Job Finder filled the form and is waiting for you.",
+      emphasis: "neutral" as const,
+    },
+  ];
+  render(<ApplicationsDetailPanelTimelineSection events={events} />);
+  expect(screen.getAllByText("Application submitted")).toHaveLength(1);
+  expect(screen.getByText("Activity history (2)")).toBeTruthy();
+  expect(
+    screen.getAllByText("Job Finder filled the form and is waiting for you."),
+  ).toHaveLength(1);
+});

@@ -259,3 +259,54 @@ test("an unavailable fact check keeps draft text and a plain review reason", asy
   });
   await expect(result).rejects.toThrow("could not check this draft right now");
 });
+
+test.each([
+  [
+    "The letter offers full-time hours; review the wording before it goes on this application.",
+    "The letter offers full-time hours; review the wording before it goes on this application.",
+  ],
+  [
+    "The letter offers full-time hours.",
+    "The letter offers full-time hours. Review and agree the wording for this application before approving it.",
+  ],
+])("a letter check reason asks for review once (%s)", async (reason, shown) => {
+  const seed = createSeed();
+  const dependencies = buildApplyLetterDependencies({
+    aiClient: {
+      chatWithTools: async (...args) =>
+        args[1].length
+          ? {
+              toolCalls: [
+                {
+                  id: "check",
+                  type: "function",
+                  function: {
+                    name: "report_answer_checks",
+                    arguments: JSON.stringify({
+                      checks: [{ index: 0, supported: false, reason }],
+                    }),
+                  },
+                },
+              ],
+            }
+          : { content: "A proposed letter." },
+    },
+    documentManager: {},
+    job: seed.savedJobs[0]!,
+    profile: seed.profile,
+    settings: seed.settings,
+    searchPreferences: seed.searchPreferences,
+  })!;
+  const error: unknown = await dependencies
+    .writeLetter({
+      prompt: "Write a letter.",
+      purpose: "cover_letter",
+      groundedIn: ["your profile"],
+      language: "English",
+      preference: dependencies.preference,
+      priorText: null,
+    })
+    .catch((caught: unknown) => caught);
+  expect(error).toBeInstanceOf(Error);
+  expect((error as Error).message.endsWith(`: ${shown}`)).toBe(true);
+});

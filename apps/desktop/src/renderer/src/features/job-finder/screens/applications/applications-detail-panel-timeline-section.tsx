@@ -9,21 +9,27 @@ import { getCustomerFacingApplyText } from "./applications-detail-panel-helpers"
 export function ApplicationsDetailPanelTimelineSection(props: {
   events: ApplicationRecord["events"];
 }) {
-  // Older records sometimes appended the same site confirmation twice.
-  // Show that outcome once while preserving the stored history.
-  const seen = new Set<string>();
+  // Older records sometimes appended the same site confirmation twice, in
+  // different wordings. Show one confirmation per send (minutes apart at
+  // most) while preserving the stored history.
+  let shownConfirmationAt: number | null = null;
   const events = [...props.events]
     .sort((left, right) => Date.parse(right.at) - Date.parse(left.at))
     .filter((event) => {
       if (event.emphasis !== "positive") return true;
       const key = (getCustomerFacingApplyText(event.detail) ?? "").trim();
       if (
-        !key.startsWith("The site confirmed receipt") &&
+        !/confirmed (receipt|that it received)/iu.test(key) &&
         key !== "Submission confirmed."
       )
         return true;
-      if (seen.has(key)) return false;
-      seen.add(key);
+      const at = Date.parse(event.at);
+      if (
+        shownConfirmationAt !== null &&
+        Math.abs(shownConfirmationAt - at) <= 5 * 60_000
+      )
+        return false;
+      shownConfirmationAt = at;
       return true;
     });
 
@@ -77,9 +83,13 @@ export function ApplicationsDetailPanelTimelineSection(props: {
                   >
                     {getCustomerFacingApplyText(event.title)}
                   </strong>
-                  <p className="mt-2 text-(length:--text-description) leading-relaxed text-foreground-soft">
-                    {getCustomerFacingApplyText(event.detail)}
-                  </p>
+                  {/* A line whose body only repeats its title shows it once. */}
+                  {getCustomerFacingApplyText(event.detail)?.trim() !==
+                  getCustomerFacingApplyText(event.title)?.trim() ? (
+                    <p className="mt-2 text-(length:--text-description) leading-relaxed text-foreground-soft">
+                      {getCustomerFacingApplyText(event.detail)}
+                    </p>
+                  ) : null}
                 </div>
               </article>
             );

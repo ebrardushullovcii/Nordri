@@ -744,7 +744,7 @@ describe("apply policy executor", () => {
           "I certify that the information I have given is true and complete",
         question:
           "I certify that the information I have given is true and complete",
-        answer: "Yes",
+        answer: "Yes, I agree",
         roleFamilies: [],
         proofEntryIds: [],
       },
@@ -761,6 +761,11 @@ describe("apply policy executor", () => {
     expect(outcome.kind).toBe("filled");
     if (outcome.kind === "filled") {
       expect(outcome.filled.answer.sourceKind).toBe("answer_library");
+      expect(outcome.filled.answer.provenanceLabel).toBe(
+        "your answer to this question",
+      );
+      // The record shows what the box shows, so the review finds it.
+      expect(outcome.filled.answer.value).toBe("Yes");
     }
     expect(setToggle).toHaveBeenCalledWith("c0", true);
   });
@@ -851,6 +856,18 @@ describe("apply policy executor", () => {
           preApprovedAttestationKinds: [kind],
         },
       });
+      // A saved "Yes" does not change why the box was ticked.
+      config.sources.reusableAnswers = [
+        {
+          id: "saved_declaration",
+          kind: "other",
+          label,
+          question: label,
+          answer: "Yes, I agree",
+          roleFamilies: [],
+          proofEntryIds: [],
+        },
+      ];
       const observation = observationOf(page);
 
       const outcome = await executeApplyProposal(
@@ -864,6 +881,7 @@ describe("apply policy executor", () => {
         expect(outcome.filled.answer.provenanceLabel).toBe(
           "your Settings (on by default)",
         );
+        expect(outcome.filled.answer.value).toBe("Yes");
       }
     },
   );

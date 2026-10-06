@@ -137,6 +137,51 @@ describe("ApplicationsApplicationDocuments", () => {
     expect(container.querySelector("textarea")?.value).toBe(proposed.content);
   });
 
+  it("lists each document once at its newest revision and opens on the approved letter", async () => {
+    const approved = ApplicationDocumentRevisionSchema.parse({
+      ...proposed,
+      revision: 2,
+      status: "approved",
+      content: "Dear Hiring Team,\n\nThe letter you approved.",
+      approvedAt: "2026-08-10T11:00:00.000Z",
+      updatedAt: "2026-08-10T11:00:00.000Z",
+    });
+    const otherDraft = ApplicationDocumentRevisionSchema.parse({
+      ...proposed,
+      id: "document_2",
+    });
+    const listApplicationDocuments = vi
+      .fn()
+      .mockResolvedValue({ documents: [otherDraft, proposed, approved] });
+    Object.defineProperty(window, "nordri", {
+      configurable: true,
+      value: { jobFinder: { listApplicationDocuments } },
+    });
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () => {
+      root?.render(
+        <ApplicationsApplicationDocuments
+          applicationRecord={applicationRecord}
+          applyRunDetails={null}
+          demoteAsSecondary
+        />,
+      );
+      await Promise.resolve();
+    });
+    const options = [...container.querySelectorAll("option")]
+      .map((option) => option.textContent ?? "")
+      .filter((text) => text.includes("revision"));
+    expect(options).toHaveLength(2);
+    const savedDocument = [...container.querySelectorAll("label")]
+      .find((label) => label.textContent?.includes("Saved document"))
+      ?.querySelector("select");
+    expect(savedDocument?.value).toBe("document_1");
+    expect(container.textContent).toContain("The letter you approved.");
+    expect(container.querySelector("textarea")).toBeNull();
+  });
+
   it("saves a manual edit as a new revision before exact approval", async () => {
     let currentDocument: typeof proposed | null = null;
     const listApplicationDocuments = vi.fn(() =>

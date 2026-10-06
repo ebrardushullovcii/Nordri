@@ -177,3 +177,68 @@ it("does not label an unused zero suggestion as the person's answer", () => {
     groundedIn: ["your profile"],
   });
 });
+
+it("credits an answer the person gave in the app, stored as a suggestion until the form takes it", () => {
+  const at = "2026-10-05T10:00:00.000Z";
+  const card = ApplicationReviewCardSchema.parse({
+    siteLabel: "Example",
+    pageUrl: "https://example.test/apply",
+    preparedAt: at,
+    answers: [
+      {
+        question: "Expected salary",
+        answer: "55000",
+        source: "your answer to this question",
+        written: false,
+        groundedIn: [],
+      },
+    ],
+    attachments: [],
+    letter: null,
+    waitingOnYou: [],
+  });
+  const details = ApplyRunDetailsSchema.parse({
+    run: {
+      id: "run",
+      source: "target_site",
+      mode: "single_job_auto",
+      state: "completed",
+      summary: "Prepared",
+      detail: "Ready to review",
+      jobIds: ["job"],
+      createdAt: at,
+      updatedAt: at,
+    },
+    questionRecords: [
+      {
+        id: "question",
+        runId: "run",
+        jobId: "job",
+        prompt: "Expected salary",
+        detectedAt: at,
+        answerControlType: "text",
+        selectedAnswerId: "answer",
+      },
+    ],
+    answerRecords: [
+      {
+        id: "answer",
+        runId: "run",
+        jobId: "job",
+        questionId: "question",
+        text: "55000",
+        sourceKind: "user",
+        status: "suggested",
+        createdAt: at,
+      },
+    ],
+  });
+  expect(withPersonAnswerSources(card, details).answers[0]?.source).toBe(
+    "your answer to this question",
+  );
+  // A rejected answer of theirs is not what went out.
+  details.answerRecords[0]!.status = "rejected";
+  expect(withPersonAnswerSources(card, details).answers[0]?.source).toBe(
+    "the filled application form",
+  );
+});

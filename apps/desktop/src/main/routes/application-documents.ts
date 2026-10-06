@@ -129,12 +129,18 @@ export function registerApplicationDocumentRouteHandlers(
           result && letter
             ? `attached_letter_${result.id}_${createHash("sha256").update(letter.text).digest("hex").slice(0, 16)}`
             : null;
+        // A letter already kept here, such as the approved one going on the
+        // form, is not saved again as another proposed copy.
         if (
           job &&
           applicationRecord &&
           letter &&
           documentId &&
-          !listed.documents.some((entry) => entry.id === documentId)
+          !listed.documents.some(
+            (entry) =>
+              entry.id === documentId ||
+              entry.content.trim() === letter.text.trim(),
+          )
         ) {
           try {
             await dependencies.library.propose({

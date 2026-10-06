@@ -68,11 +68,25 @@ export function ApplicationsApplicationDocuments(props: {
           applicationRecordId: applicationRecord.id,
         },
       );
-      setDocuments(result.documents);
+      // One entry per document, at its newest revision; the approved one
+      // opens first so a person never mistakes it for an unapproved draft.
+      const latest = [
+        ...result.documents
+          .reduce((byId, document) => {
+            const current = byId.get(document.id);
+            if (!current || document.revision > current.revision)
+              byId.set(document.id, document);
+            return byId;
+          }, new Map<string, ApplicationDocumentRevision>())
+          .values(),
+      ];
+      setDocuments(latest);
       setSelectedDocumentId((current) =>
-        result.documents.some((document) => document.id === current)
+        latest.some((document) => document.id === current)
           ? current
-          : (result.documents[0]?.id ?? ""),
+          : (latest.find((document) => document.status === "approved")?.id ??
+            latest[0]?.id ??
+            ""),
       );
       setStatus("ready");
     } catch (error) {

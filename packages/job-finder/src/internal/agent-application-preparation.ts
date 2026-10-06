@@ -999,9 +999,12 @@ export function buildApplyLetterDependencies(input: {
           text,
         );
       }
+      // The check usually asks for the review itself; ask only once.
       if (!check.supported)
         throw new ApplicationLetterGroundingError(
-          `${check.reason} Review and agree the wording for this application before approving it.`,
+          /\breview\b/iu.test(check.reason)
+            ? check.reason
+            : `${check.reason} Review and agree the wording for this application before approving it.`,
           check.reviewWording ?? text,
         );
       return text;

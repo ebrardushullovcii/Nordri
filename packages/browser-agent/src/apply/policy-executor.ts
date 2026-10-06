@@ -1800,12 +1800,15 @@ export async function executeApplyProposal(
         /^(yes|true|agree|i agree|accept|checked|on|1)\b/iu.test(
           savedDeclaration.value.trim(),
         );
+      const declarationApproved =
+        control.attestationKind !== null &&
+        config.authority.preApprovedAttestationKinds.includes(
+          control.attestationKind,
+        );
       if (
         control.attestationKind !== null &&
         checked &&
-        !config.authority.preApprovedAttestationKinds.includes(
-          control.attestationKind,
-        ) &&
+        !declarationApproved &&
         !savedDeclarationSaysYes
       ) {
         return {
@@ -1837,22 +1840,26 @@ export async function executeApplyProposal(
       if (stop) {
         return { kind: "paused", pause: stop };
       }
+      const formValue =
+        control.kind === "radio" && checked
+          ? control.value || control.label
+          : checked
+            ? "Yes"
+            : "No";
       return {
         kind: "filled",
         filled: {
           ref: control.ref,
           label: questionPrompt(control),
           questionKind: control.questionKind,
+          // A declaration on in Settings is ticked because of that setting,
+          // whatever the person saved. A saved "Yes" keeps its source but
+          // records what the box shows, so the review finds it on the form.
           answer:
-            savedDeclarationSaysYes && savedDeclaration
-              ? savedDeclaration
+            savedDeclarationSaysYes && savedDeclaration && !declarationApproved
+              ? { ...savedDeclaration, value: formValue }
               : (radioAnswer ?? {
-                  value:
-                    control.kind === "radio" && checked
-                      ? control.value || control.label
-                      : checked
-                        ? "Yes"
-                        : "No",
+                  value: formValue,
                   kind: control.questionKind,
                   sourceKind: control.attestationKind ? "profile" : "generated",
                   sourceId: control.attestationKind

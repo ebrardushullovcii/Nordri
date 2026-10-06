@@ -37,7 +37,14 @@ export function withPersonAnswerSources(
         .filter(
           (entry) =>
             entry.questionId === question?.id &&
-            entry.status === "filled" &&
+            // An answer the person gave is the question's selected answer,
+            // stored as a suggestion until the form takes it; an unused
+            // suggestion never counts, and anything else only once filled.
+            (entry.status === "filled" ||
+              (entry.sourceKind === "user" &&
+                entry.id === question?.selectedAnswerId &&
+                entry.status !== "rejected" &&
+                entry.status !== "skipped")) &&
             (entry.text === answer.answer ||
               question?.answerControlType === "multi_choice"),
         )

@@ -359,6 +359,45 @@ it("lists attached letters through the real library and preserves edits on repea
   }
 });
 
+it("does not keep another copy of a letter it already holds when a later run attaches it", async () => {
+  const temporaryDirectory = await mkdtemp(
+    path.join(os.tmpdir(), "nordri-letter-copies-"),
+  );
+  try {
+    const library = new ApplicationDocumentLibrary(
+      path.join(temporaryDirectory, "documents"),
+      new CandidateAssetLibrary(path.join(temporaryDirectory, "assets")),
+    );
+    const details = createDetails();
+    details.result!.reviewCard = {
+      siteLabel: "Synthetic",
+      pageUrl: null,
+      preparedAt: now,
+      answers: [],
+      attachments: [],
+      letter: {
+        text: "Exact attached letter text.",
+        groundedIn: ["your profile"],
+      },
+      waitingOnYou: [],
+    };
+    const { listHandler } = register(details, undefined, library);
+    const input = { jobId: job.id, applicationRecordId: applicationB.id };
+    const event = { sender: {} } as IpcMainInvokeEvent;
+    await listHandler(event, input);
+    const first = (await library.list(input)).documents[0]!;
+    await library.approve(first.id, first.revision);
+    // The approved letter goes on the form again in a later run.
+    details.result!.id = "result-c";
+    await listHandler(event, input);
+    const documents = (await library.list(input)).documents;
+    expect(documents).toHaveLength(1);
+    expect(documents[0]!.status).toBe("approved");
+  } finally {
+    await rm(temporaryDirectory, { recursive: true, force: true });
+  }
+});
+
 it("keeps an unchecked letter draft and its reason through the real library", async () => {
   const temporaryDirectory = await mkdtemp(
     path.join(os.tmpdir(), "nordri-unchecked-letter-"),
