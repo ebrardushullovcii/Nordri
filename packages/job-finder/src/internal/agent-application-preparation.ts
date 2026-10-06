@@ -1384,8 +1384,40 @@ export function mergeApplyReviewCards(
             candidate.fileName === entry.fileName,
         ) === index,
     ),
-    letter: options.freshPreparation
-      ? current.letter
-      : (current.letter ?? previous.letter),
+    letter:
+      current.letter ??
+      (!options.freshPreparation || letterStillOnForm(previous, current)
+        ? previous.letter
+        : null),
   });
+}
+
+/**
+ * A fresh preparation that found the earlier letter already on the form
+ * (the same file in the same field, or the same text) filled nothing, so its
+ * own card has no letter; the letter going out is still the earlier one.
+ */
+function letterStillOnForm(
+  previous: ApplicationReviewCard,
+  current: ApplicationReviewCard,
+): boolean {
+  const letter = previous.letter;
+  const fields = letter?.fields ?? [];
+  if (!letter || fields.length === 0) return false;
+  return (
+    current.attachments.some(
+      (attachment) =>
+        fields.includes(attachment.field) &&
+        previous.attachments.some(
+          (earlier) =>
+            earlier.field === attachment.field &&
+            earlier.fileName === attachment.fileName,
+        ),
+    ) ||
+    current.answers.some(
+      (answer) =>
+        fields.includes(answer.question) &&
+        answer.answer.trim() === letter.text.trim(),
+    )
+  );
 }

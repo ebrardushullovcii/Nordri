@@ -584,9 +584,11 @@ describe("DiscoveryResultsPanel workspace scale", () => {
 
     // No count beside an empty list; the empty state below says it all.
     expect(screen.queryByTestId("discovery-result-count")).toBeNull();
+    // The jobs are still in the plan, so the list does not say "nothing".
+    expect(screen.getByText("3 jobs kept, but they scored low")).toBeTruthy();
     expect(
-      screen.getByText("Nothing scored close to your targets"),
-    ).toBeTruthy();
+      screen.queryByText("Nothing scored close to your targets"),
+    ).toBeNull();
     expect(screen.queryByText("No matches from this search")).toBeNull();
 
     fireEvent.click(

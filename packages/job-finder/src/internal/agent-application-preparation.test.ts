@@ -2057,6 +2057,63 @@ test("fresh preparations keep unchanged sources without reviving removed answers
   ).toBeNull();
 });
 
+test("preparing again keeps the letter that is still on the form", () => {
+  const letter = {
+    text: "Dear team, I would like to apply.",
+    fields: ["Cover letter"],
+    groundedIn: ["your approved letter"],
+  };
+  const attachment = {
+    field: "Cover letter",
+    fileName: "alex-example-cover-letter.pdf",
+    label: "Cover letter you approved",
+  };
+  const previous = ApplicationReviewCardSchema.parse({
+    siteLabel: "Example",
+    pageUrl: PAGE_URL,
+    preparedAt: "2026-10-06T10:00:00.000Z",
+    attachments: [attachment],
+    letter,
+  });
+  // The re-run found the file already attached and filled nothing.
+  const rerun = ApplicationReviewCardSchema.parse({
+    ...previous,
+    preparedAt: "2026-10-06T10:01:00.000Z",
+    letter: null,
+  });
+  expect(
+    mergeApplyReviewCards(previous, rerun, { freshPreparation: true })?.letter,
+  ).toEqual(letter);
+  // A different file in that field is not the earlier letter.
+  expect(
+    mergeApplyReviewCards(
+      previous,
+      { ...rerun, attachments: [{ ...attachment, fileName: "other.pdf" }] },
+      { freshPreparation: true },
+    )?.letter,
+  ).toBeNull();
+  // The same letter typed into a text field counts too.
+  expect(
+    mergeApplyReviewCards(
+      previous,
+      {
+        ...rerun,
+        attachments: [],
+        answers: [
+          {
+            question: "Cover letter",
+            answer: letter.text,
+            source: "the filled application form",
+            written: false,
+            groundedIn: [],
+          },
+        ],
+      },
+      { freshPreparation: true },
+    )?.letter,
+  ).toEqual(letter);
+});
+
 test.each([false, true])(
   "a saved declaration reaches the card with the correct evidence (Settings on: %s)",
   async (settingOn) => {

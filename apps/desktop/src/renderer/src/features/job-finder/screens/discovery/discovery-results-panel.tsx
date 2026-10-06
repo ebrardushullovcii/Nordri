@@ -1697,13 +1697,18 @@ export function DiscoveryResultsPanel({
           <div className="px-5 pt-4">
             <ResultsEmptyState
               className={emptyClassName ?? "min-h-56"}
-              description={`The ${hiddenAlsoFoundCount === 1 ? "result scored" : `${hiddenAlsoFoundCount} results scored`} well below your saved targets, or conflict with them. Nothing was deleted.`}
+              description={`${hiddenAlsoFoundCount === 1 ? "It scored" : "They scored"} well below your saved targets, or ${hiddenAlsoFoundCount === 1 ? "conflicts" : "conflict"} with them, so ${hiddenAlsoFoundCount === 1 ? "it is" : "they are"} under weaker matches. Nothing was deleted.`}
               {...(onShowAlsoFound !== undefined
                 ? { onRecoveryAction: onShowAlsoFound }
                 : {})}
               recoveryActionLabel={`Show weaker matches (${hiddenAlsoFoundCount})`}
               recoveryActionNextStep="Open a job to judge it yourself; a low score alone is not a reason to skip it."
-              title="Nothing scored close to your targets"
+              // The plan still holds these jobs; say so rather than "nothing".
+              title={
+                hiddenAlsoFoundCount === 1
+                  ? "1 job kept, but it scored low"
+                  : `${hiddenAlsoFoundCount} jobs kept, but they scored low`
+              }
             />
           </div>
         ) : null}
