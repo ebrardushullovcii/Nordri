@@ -386,6 +386,7 @@ export async function runJobSearchAgent(
         : outcome;
     },
   });
+  const resumedVisitedUrls = [...(config.resumeCheckpoint?.visitedUrls ?? [])];
   for (const url of config.resumeCheckpoint?.visitedUrls ?? []) {
     if (!pageTools.state.visitedUrls.includes(url))
       pageTools.state.visitedUrls.push(url);
@@ -1255,8 +1256,20 @@ export async function runJobSearchAgent(
     // through without marking a read), except a posting's own page and a
     // page the model said is not a listing page. An address counts once
     // unless a read saw a new page there.
-    const pageAddress = (url: string) =>
-      (url.split("#")[0] ?? url).replace(/\/(?=$|\?)/u, "");
+    // One results page, however its address is written: no fragment, no
+    // trailing slash, no empty fields, fields in a fixed order.
+    const pageAddress = (url: string) => {
+      try {
+        const parsed = new URL(url);
+        const fields = [...parsed.searchParams]
+          .filter(([, value]) => value !== "")
+          .sort(([a], [b]) => a.localeCompare(b));
+        const query = new URLSearchParams(fields).toString();
+        return `${parsed.origin}${parsed.pathname.replace(/\/$/u, "")}${query ? `?${query}` : ""}`;
+      } catch {
+        return url;
+      }
+    };
     const postingAddresses = new Set(
       [...collected, ...inspectedCatalog.values()].flatMap((job) =>
         [job.canonicalUrl, job.applicationUrl]
@@ -1264,8 +1277,11 @@ export async function runJobSearchAgent(
           .map(pageAddress),
       ),
     );
+    // Pages a resumed search loaded before it stopped belong to that search.
+    const inheritedAddresses = new Set(resumedVisitedUrls.map(pageAddress));
     const coveredPageUrls = [...inspectedPageUrls];
     const coveredAddresses = new Set([
+      ...inheritedAddresses,
       ...coveredPageUrls.map(pageAddress),
       ...[...nonListingUrls].map(pageAddress),
     ]);

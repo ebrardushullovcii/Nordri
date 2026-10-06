@@ -2096,3 +2096,49 @@ test("counts paginated and keyword result reads even when no extraction is neede
   expect(result.pagesCovered).toBe(5);
   expect(result.coveredPageUrls).toEqual(urls);
 });
+
+test("counts only the pages this search loaded, one per page however its address is written", async () => {
+  const pages = { current: rawPage() };
+  const result = await runJobSearchAgent({
+    hands: hands(pages),
+    config: config({
+      resumeCheckpoint: {
+        revision: 1,
+        savedAt: "2026-09-14T10:00:00.000Z",
+        currentUrl: "https://jobs.example.test/search?q=engineer",
+        lastStableUrl: "https://jobs.example.test/search?q=engineer",
+        stepCount: 4,
+        collectedJobs: [],
+        // Loaded by the stopped search this one resumes.
+        visitedUrls: [
+          "https://jobs.example.test/search?q=engineer&page=7",
+          "https://jobs.example.test/search?q=engineer&page=8",
+        ],
+        phaseEvidence: {
+          visibleControls: [],
+          successfulInteractions: [],
+          routeSignals: [],
+          attemptedControls: [],
+          warnings: [],
+          visualFindings: [],
+        },
+      },
+    }),
+    llmClient: scripted([
+      { name: "extract_jobs", args: { pageType: "search_results" } },
+      {
+        name: "navigate",
+        args: {
+          url: "https://jobs.example.test/search?location=&q=designer&sort=new",
+        },
+      },
+      {
+        name: "navigate",
+        args: { url: "https://jobs.example.test/search?q=designer&sort=new" },
+      },
+      { name: "finish", args: { reason: "Read two results pages" } },
+    ]),
+    jobExtractor: { extractJobsFromPage: () => Promise.resolve([]) },
+  });
+  expect(result.pagesCovered).toBe(2);
+});

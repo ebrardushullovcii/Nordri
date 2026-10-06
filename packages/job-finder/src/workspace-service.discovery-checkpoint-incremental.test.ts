@@ -2,6 +2,7 @@ import type { BrowserSessionRuntime } from "@nordri/browser-runtime";
 import {
   JobPostingSchema,
   DiscoveryRunResultSchema,
+  SaveJobSearchCampaignInputSchema,
   type DiscoveryActivityEvent,
 } from "@nordri/contracts";
 import { describe, expect, test, vi } from "vitest";
@@ -1408,5 +1409,92 @@ describe("discovery checkpoint incremental persistence", () => {
     expect(execution.duplicatesMerged).toBe(0);
     expect(run.summary.validJobsFound).toBe(1);
     expect(run.summary.jobsPersisted).toBe(1);
+  });
+
+  // A search stopped long ago must not seed later searches: a later finished
+  // search of the source replaces it, and another plan's stopped search was
+  // never this plan's progress.
+  function stoppedThenFinishingRuntime(seen: unknown[]): BrowserSessionRuntime {
+    let runCall = 0;
+    return {
+      ...createAgentBrowserRuntime([]),
+      async runAgentDiscovery(source, options) {
+        runCall += 1;
+        seen.push(options.resumeCheckpoint ?? null);
+        if (runCall === 1) {
+          await emitRuntimeCheckpoint(options, {
+            revision: 1,
+            savedAt: "2026-03-20T10:00:03.000Z",
+            currentUrl: "https://example.com/jobs?page=2",
+            lastStableUrl: "https://example.com/jobs?page=2",
+            stepCount: 2,
+            collectedJobs: [createCollectedJob({ token: "stale_a" })],
+            visitedUrls: ["https://example.com/jobs?page=2"],
+            phaseEvidence: createEmptyPhaseEvidence(),
+          });
+          throw new DOMException("Aborted", "AbortError");
+        }
+        return {
+          source,
+          startedAt: "2026-03-20T10:05:00.000Z",
+          completedAt: "2026-03-20T10:05:05.000Z",
+          querySummary: "Finished fixture",
+          inventoryCompleteness: "partial" as const,
+          warning: null,
+          jobs: [],
+          agentMetadata: null,
+        };
+      },
+    };
+  }
+
+  test("a finished search of the source ends an older stopped search's resume", async () => {
+    const seen: unknown[] = [];
+    const { seed } = createHarness();
+    const { workspaceService } = createWorkspaceServiceHarness({
+      seed,
+      browserRuntime: stoppedThenFinishingRuntime(seen),
+      aiClient: createAgentAiClient(),
+    });
+    for (let search = 0; search < 3; search += 1)
+      await workspaceService.runDiscoveryForTarget(
+        "target_incremental",
+        () => {},
+        new AbortController().signal,
+      );
+    expect(seen[1]).toMatchObject({ stepCount: 2 });
+    expect(seen[2]).toBeNull();
+  });
+
+  test("another plan's stopped search never seeds this plan's search", async () => {
+    const seen: unknown[] = [];
+    const { seed } = createHarness();
+    const { workspaceService } = createWorkspaceServiceHarness({
+      seed,
+      browserRuntime: stoppedThenFinishingRuntime(seen),
+      aiClient: createAgentAiClient(),
+    });
+    await workspaceService.runDiscoveryForTarget(
+      "target_incremental",
+      () => {},
+      new AbortController().signal,
+    );
+    const before = await workspaceService.getWorkspaceSnapshot();
+    const created = await workspaceService.saveCampaign(
+      SaveJobSearchCampaignInputSchema.parse({
+        ...before.campaigns[0]!,
+        id: null,
+        name: "Another plan",
+      }),
+    );
+    await workspaceService.selectCampaign(
+      created.campaigns.find((plan) => plan.name === "Another plan")!.id,
+    );
+    await workspaceService.runDiscoveryForTarget(
+      "target_incremental",
+      () => {},
+      new AbortController().signal,
+    );
+    expect(seen[1]).toBeNull();
   });
 });

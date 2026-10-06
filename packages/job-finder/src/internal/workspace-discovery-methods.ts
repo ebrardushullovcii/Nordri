@@ -631,11 +631,17 @@ const RESUMABLE_AGENT_CHECKPOINT_EXECUTION_STATES: ReadonlySet<
  * baselines into a fresh run. A still-running record (an app close observed
  * before recovery finalized it) is the newest candidate; history order is
  * newest-first, so the first eligible match carries the freshest progress.
+ *
+ * Progress belongs to the plan whose search was stopped: another plan's
+ * stopped search never seeds this one (its jobs were never this plan's). And
+ * a later finished search of the same source in this plan replaces any older
+ * stopped one, so the search looks no further back than that.
  */
 function selectResumableAgentCheckpoint(input: {
   activeRun: DiscoveryRunRecord | null;
   previousRuns: readonly DiscoveryRunRecord[];
   targetId: string;
+  campaignId: string | null;
 }): DiscoveryRunRecord["targetExecutions"][number]["agentCheckpoint"] {
   const candidateRuns =
     input.activeRun && input.activeRun.state === "running"
@@ -643,8 +649,16 @@ function selectResumableAgentCheckpoint(input: {
       : input.previousRuns;
 
   for (const run of candidateRuns) {
-    if (run.state === "completed") {
+    if (
+      (run.campaignId ?? null) !== input.campaignId ||
+      !run.targetExecutions.some(
+        (candidate) => candidate.targetId === input.targetId,
+      )
+    ) {
       continue;
+    }
+    if (run.state === "completed") {
+      return null;
     }
 
     const execution = run.targetExecutions.find(
@@ -733,6 +747,7 @@ function createInitialRunRecord(input: {
         activeRun: input.activeRun,
         previousRuns: input.previousRuns ?? [],
         targetId: target.id,
+        campaignId: input.campaignId,
       }),
     })),
     activity: [],
