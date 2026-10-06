@@ -4,6 +4,16 @@ import { checkWrittenApplicationAnswers } from "./written-answer-grounding";
 import type { LLMClient } from "../agent/contracts";
 
 test.each([
+  {
+    location: "Remote, United Kingdom",
+    answers: ["Yes", "No"],
+    supported: true,
+  },
+  {
+    location: "Remote, United Kingdom or Canada",
+    answers: ["Yes", "No"],
+    supported: false,
+  },
   { location: "Toronto, Canada", answers: ["Yes", "No"], supported: true },
   {
     location: "Boston, United States",
@@ -29,7 +39,7 @@ test.each([
         },
       ],
       workEligibility: {
-        authorizedWorkCountries: ["Lebanon", "Canada"],
+        authorizedWorkCountries: ["Lebanon", "Canada", "United Kingdom"],
         limitedWorkPermissions: [
           {
             country: "Germany",
@@ -95,6 +105,15 @@ test.each([
     const [messages] = chatWithTools.mock.calls[0];
     expect(String(messages[0].content)).toContain(
       "Reject both Yes and No when the country is unresolved",
+    );
+    expect(String(messages[0].content)).toContain(
+      "A single country named in the posting location is the hiring country",
+    );
+    expect(String(messages[0].content)).toContain(
+      "Remote is a work mode and does not erase the named country",
+    );
+    expect(String(messages[0].content)).toContain(
+      "location names no country or several countries",
     );
     expect(String(messages[0].content)).toContain(
       "limit hours, study status, dates or employer",
@@ -229,8 +248,7 @@ test("conflicts propose wording for person review and omission cannot hide a wor
                 index: 0,
                 supported: false,
                 reason: "Your hours differ from this role.",
-                reviewWording:
-                  "I can work 20 hours. Could the role support this?",
+                reviewWording: "I enjoy this work. I can work 20 hours a week.",
               },
             ],
           }),
@@ -246,10 +264,16 @@ test("conflicts propose wording for person review and omission cannot hide a wor
   });
   expect(checks[0]).toMatchObject({
     supported: false,
-    reviewWording: "I can work 20 hours. Could the role support this?",
+    reviewWording: "I enjoy this work. I can work 20 hours a week.",
   });
   const prompt = JSON.stringify(chatWithTools.mock.calls[0][0]);
   expect(prompt).toContain("even if the draft merely omits the limit");
+  expect(prompt).toContain(
+    "keep the supported motivation from the proposed answer",
+  );
+  expect(prompt).toContain("Do not reduce it to limits alone");
+  expect(prompt).toContain("Do not end with a question or a question mark");
+  expect(prompt).toContain("I enjoy this work.");
   expect(prompt).toContain(
     "reviewed and submitted by the person for this application",
   );

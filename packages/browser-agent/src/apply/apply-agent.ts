@@ -31,6 +31,7 @@ import {
 } from "./apply-tools";
 import {
   buildPendingQuestion,
+  approvedApplicationLetter,
   createApplyGuardState,
   executeApplyProposal,
   fileFieldHoldsOtherFile,
@@ -714,6 +715,24 @@ async function runMeasuredApplyAgent(
             : outcome.reason,
         };
       case "paused":
+        if (
+          outcome.pause.reviewDraft &&
+          outcome.pause.question?.kind === "cover_letter"
+        ) {
+          const question = outcome.pause.question;
+          question.note = `${question.answerControlType === "file" ? "The form wants a letter file. Review the wording here; your answer will be attached as that file. " : ""}${outcome.pause.reviewDraft.reason}`;
+          question.answerControlType = "text";
+          question.suggestedAnswers = [
+            {
+              id: `${question.id}_review`,
+              text: outcome.pause.reviewDraft.text,
+              sourceKind: "prior_answer",
+              sourceId: "application.letter.review",
+              confidenceLabel: null,
+              provenance: [],
+            },
+          ];
+        }
         if (outcome.pause.code === "document_needs_you") {
           const observation = await pageTools.observe();
           const classifications = await classifyQuestions?.(
@@ -1566,6 +1585,10 @@ async function runMeasuredApplyAgent(
                 "What the form requests and any revision needed. Do not invent candidate facts.",
             },
             fileType: { type: "string", enum: ["pdf", "docx", "txt"] },
+            ref: {
+              type: "string",
+              description: "The observed letter field this document is for.",
+            },
           },
           required: ["purpose", "instructions", "fileType"],
         },
@@ -1604,6 +1627,17 @@ async function runMeasuredApplyAgent(
         sources: runConfig.sources,
         preference: runConfig.letters.preference,
       });
+      const controls =
+        pageTools.state.observation?.controls.filter(
+          (control) =>
+            isApplicationLetterOrStatement(control) && !control.answered,
+        ) ?? [];
+      const control =
+        controls.find((entry) => entry.ref === args.ref) ??
+        (controls.length === 1 ? controls[0] : undefined);
+      const approvedText = control
+        ? approvedApplicationLetter(runConfig, control)
+        : undefined;
       const created = await runConfig.letters.provide({
         purpose,
         prompt: `${grounding.prompt}\n\nRequested document: ${purpose.replace(/_/gu, " ")}\nForm request or revision: ${instructions}`,
@@ -1611,8 +1645,35 @@ async function runMeasuredApplyAgent(
         language: grounding.language,
         delivery: "file",
         fileType,
+        ...(approvedText ? { approvedText } : {}),
       });
       if (!created.ok || !created.document) {
+        if (!created.ok && control) {
+          return outcomeToLoop({
+            kind: "paused",
+            pause: {
+              code: "document_needs_you",
+              summary: created.reason,
+              question: buildPendingQuestion({
+                control,
+                jobId: config.application.jobId,
+                detectedAt: now().toISOString(),
+                suggestion: null,
+                reason: created.reason,
+              }),
+              blocker: null,
+              ...(created.draftText
+                ? {
+                    reviewDraft: {
+                      text: created.draftText,
+                      reason: created.reason,
+                      groundedIn: grounding.groundedIn,
+                    },
+                  }
+                : {}),
+            },
+          });
+        }
         return {
           kind: "ok",
           status: "failed",
@@ -1627,7 +1688,12 @@ async function runMeasuredApplyAgent(
       if (existingIndex >= 0) documentCatalog.splice(existingIndex, 1);
       documentCatalog.push({
         ...created.document,
-        reviewText: { text: created.text, groundedIn: grounding.groundedIn },
+        reviewText: {
+          text: created.text,
+          groundedIn: approvedText
+            ? ["your letter for this application"]
+            : grounding.groundedIn,
+        },
       });
       note(
         `Created ${purpose.replace(/_/gu, " ")} ${created.document.fileName} for this application.`,

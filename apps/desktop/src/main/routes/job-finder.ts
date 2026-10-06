@@ -160,6 +160,7 @@ import { collectJobFinderPerformanceSnapshot } from "../services/job-finder/coll
 import { createJobFinderWorkspaceDeltaTracker } from "../services/job-finder/workspace-delta";
 import {
   publishJobFinderWorkspaceUpdate,
+  scheduleAnswerDraftWorkspaceUpdate,
   withJobFinderWorkspaceUpdates,
 } from "../services/job-finder/workspace-updates";
 import { runBoundedNewSourceReadabilityCheck } from "../services/job-finder/new-source-readability-check";
@@ -1893,6 +1894,7 @@ export function registerJobFinderRouteHandlers(
       await service.saveUserActionAnswerDraft(
         SaveUserActionAnswerDraftInputSchema.parse(payload),
       );
+      scheduleAnswerDraftWorkspaceUpdate();
     },
   );
 

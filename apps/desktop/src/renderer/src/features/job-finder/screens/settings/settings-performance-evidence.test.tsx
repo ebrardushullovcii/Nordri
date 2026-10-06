@@ -164,3 +164,46 @@ describe("SettingsPerformanceEvidence", () => {
     ).toBe(false);
   });
 });
+
+it.each([0, 1, 2])(
+  "uses the right waiting form count for %s forms",
+  async (count) => {
+    const getPerformanceSnapshot = vi.fn().mockResolvedValue(
+      JobFinderPerformanceSnapshotSchema.parse({
+        generatedAt,
+        waitingFormMemory: {
+          recordedAt: generatedAt,
+          budgetBytes: 805306368,
+          totalBytes: 0,
+          measurementComplete: true,
+          overBudget: false,
+          tabs: Array.from({ length: count }, (_, index) => ({
+            tabId: `synthetic_${index}`,
+            processId: index + 1,
+            processBytes: 0,
+            backgroundThrottled: true,
+          })),
+        },
+        latestDiscoveryRun: null,
+        latestSourceDebugRun: null,
+        evidence: [],
+      }),
+    );
+    Object.defineProperty(window, "nordri", {
+      configurable: true,
+      value: { jobFinder: { getPerformanceSnapshot } },
+    });
+    const view = render(<SettingsPerformanceEvidence />);
+    fireEvent.click(
+      view.getByRole("button", { name: "Load performance evidence" }),
+    );
+    await waitFor(() =>
+      expect(
+        view.getByText(
+          `0.0 MiB of 768 MiB budget · ${count} ${count === 1 ? "form" : "forms"}`,
+        ),
+      ).toBeTruthy(),
+    );
+    cleanup();
+  },
+);

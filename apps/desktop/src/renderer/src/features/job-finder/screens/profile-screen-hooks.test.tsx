@@ -515,6 +515,34 @@ describe("useProfileScreenForms background-snapshot durability", () => {
         .getValues("languages")
         .some((row) => row.id === "language_added"),
     ).toBe(true);
+    expect(
+      result.current.backgroundArrays.languageArray.fields.map((row) => row.id),
+    ).toEqual(
+      result.current.profileForm.getValues("languages").map((row) => row.id),
+    );
+    const keptCount =
+      result.current.backgroundArrays.languageArray.fields.length;
+    act(() =>
+      result.current.backgroundArrays.languageArray.append({
+        id: "language_second",
+        language: "",
+        proficiency: "",
+        interviewPreference: false,
+        notes: "",
+      }),
+    );
+    expect(result.current.backgroundArrays.languageArray.fields).toHaveLength(
+      keptCount + 1,
+    );
+    expect(
+      result.current.backgroundArrays.languageArray.fields.map((row) => row.id),
+    ).toEqual(
+      result.current.profileForm.getValues("languages").map((row) => row.id),
+    );
+    rerender(createInput({ profile: saved }));
+    expect(result.current.backgroundArrays.languageArray.fields).toHaveLength(
+      keptCount + 1,
+    );
     expect(result.current.profileForm.getValues("identity.headline")).toBe(
       "Saved headline",
     );

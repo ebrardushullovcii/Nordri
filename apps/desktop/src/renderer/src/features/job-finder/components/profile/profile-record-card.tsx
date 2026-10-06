@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { ChevronDown } from "lucide-react";
+import { Badge } from "@renderer/components/ui/badge";
 import { cn } from "@renderer/lib/cn";
 
 interface ProfileRecordCardProps {
@@ -13,6 +14,7 @@ interface ProfileRecordCardProps {
   forceOpenSignal?: string | null;
   summary?: string;
   title: string;
+  statusLabel?: string | undefined;
 }
 
 export function ProfileRecordCard({
@@ -23,6 +25,7 @@ export function ProfileRecordCard({
   forceOpenSignal = null,
   summary,
   title,
+  statusLabel,
 }: ProfileRecordCardProps) {
   const [isOpen, setIsOpen] = useState(defaultOpen);
   const detailSummary = summary?.trim() || "Review and edit this entry.";
@@ -48,6 +51,7 @@ export function ProfileRecordCard({
           <span className="text-[0.96rem] font-semibold text-(--text-headline)">
             {title}
           </span>
+          {statusLabel ? <Badge variant="status">{statusLabel}</Badge> : null}
           <span className="text-(length:--text-description) leading-6 text-foreground-muted">
             {detailSummary}
           </span>

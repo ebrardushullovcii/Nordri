@@ -423,14 +423,19 @@ function savedSuggestion(
       /* Older text answers still go through the fact check. */
     }
   }
+  const sourceLabel =
+    saved &&
+    normalizeSignal(saved.question) === normalizeSignal(questionPrompt(control))
+      ? "your answer to this question"
+      : `your saved answer "${saved?.label || saved?.question}"`;
   return saved
     ? {
         value,
         kind: control.questionKind,
         sourceKind: "answer_library",
         sourceId: `answerLibrary.${saved.id}`,
-        provenanceLabel: "your answer to this question",
-        groundedIn: ["your answer to this question"],
+        provenanceLabel: sourceLabel,
+        groundedIn: [sourceLabel],
       }
     : null;
 }
@@ -1448,7 +1453,10 @@ export async function executeApplyProposal(
       // two different letters for the same job.
       if (isCoverLetterControl(control)) {
         const policy = config.writing?.coverLetterPolicy ?? "when_required";
-        if (!coverLetterPolicyAllows(control, policy)) {
+        if (
+          !approvedApplicationLetter(config, control) &&
+          !coverLetterPolicyAllows(control, policy)
+        ) {
           if (policy === "never" && control.required) {
             return {
               kind: "paused",
@@ -1477,7 +1485,7 @@ export async function executeApplyProposal(
             observation,
           };
         }
-        if (!config.letters) {
+        if (!config.letters && !approvedApplicationLetter(config, control)) {
           return {
             kind: "refused",
             reason: "Job Finder has no letter for this application.",
@@ -1509,9 +1517,15 @@ export async function executeApplyProposal(
             answer: {
               value: letter.letter.text,
               kind: "cover_letter",
-              sourceKind: "generated",
-              sourceId: "application.letter",
-              provenanceLabel: "the letter written for this application",
+              sourceKind: approvedApplicationLetter(config, control)
+                ? "answer_library"
+                : "generated",
+              sourceId: approvedApplicationLetter(config, control)
+                ? `answerLibrary.${savedAnswerForQuestion(control, config.sources.reusableAnswers)?.id}`
+                : "application.letter",
+              provenanceLabel: approvedApplicationLetter(config, control)
+                ? "your letter for this application"
+                : "the letter written for this application",
               groundedIn: letter.letter.groundedIn,
             },
             at,
@@ -1837,8 +1851,15 @@ export async function executeApplyProposal(
         // and beats the "only when required" rule: they added the file in
         // order to send it, so an optional letter field gets it too. Only
         // "never" keeps every letter field for them.
-        const ownLetter =
-          policy === "never"
+        const approvedText = approvedApplicationLetter(config, control);
+        const ownLetter = approvedText
+          ? config.sources.documents.find(
+              (candidate) =>
+                candidate.id === proposal.documentId &&
+                candidate.kind === "cover_letter" &&
+                candidate.reviewText?.text === approvedText,
+            )
+          : policy === "never"
             ? undefined
             : config.sources.documents.find(
                 (candidate) => candidate.kind === "cover_letter",
@@ -1887,7 +1908,10 @@ export async function executeApplyProposal(
             observation: await config.hands.observe(),
           };
         }
-        if (!coverLetterPolicyAllows(control, policy)) {
+        if (
+          !approvedApplicationLetter(config, control) &&
+          !coverLetterPolicyAllows(control, policy)
+        ) {
           if (policy === "never" && control.required) {
             return {
               kind: "paused",
@@ -1916,7 +1940,7 @@ export async function executeApplyProposal(
             observation,
           };
         }
-        if (!config.letters) {
+        if (!config.letters && !approvedApplicationLetter(config, control)) {
           return {
             kind: "refused",
             reason: "Job Finder has no letter for this application.",
@@ -2145,6 +2169,22 @@ export async function executeApplyProposal(
   }
 }
 
+/** Only the person's explicit decision on this application's letter bypasses writing. */
+export function approvedApplicationLetter(
+  config: ApplyAgentConfig,
+  control: ApplyFormControl,
+): string | undefined {
+  const saved = savedAnswerForQuestion(control, config.sources.reusableAnswers);
+  return saved?.id.startsWith("application_") &&
+    isAnswerFromThisApplication(
+      saved,
+      config.application,
+      config.sources.posting.location,
+    )
+    ? saved.answer
+    : undefined;
+}
+
 type LetterOutcome =
   | {
       kind: "ok";
@@ -2168,6 +2208,17 @@ async function provideApplicationLetter(
 ): Promise<LetterOutcome> {
   const { config } = deps;
   const letters = config.letters;
+  const approvedText = approvedApplicationLetter(config, control);
+  if (!letters && approvedText && control.kind !== "file") {
+    return {
+      kind: "ok",
+      letter: {
+        text: approvedText,
+        document: null,
+        groundedIn: ["your letter for this application"],
+      },
+    };
+  }
   if (!letters) {
     return {
       kind: "stop",
@@ -2188,6 +2239,7 @@ async function provideApplicationLetter(
     purpose: "cover_letter",
     delivery: coverLetterDeliveryFor(control),
     fileType: requiredLetterFileType(control),
+    ...(approvedText ? { approvedText } : {}),
   });
 
   const pauseWith = (summary: string): LetterOutcome => ({
@@ -2224,7 +2276,7 @@ async function provideApplicationLetter(
     );
   }
   // A letter with a gap in it must never go out; the person is asked instead.
-  if (!looksLikeUsableLetter(produced.text)) {
+  if (!approvedText && !looksLikeUsableLetter(produced.text)) {
     return pauseWith(
       "The letter Job Finder wrote for this application did not come out usable, so nothing was attached. Write or attach one here and it will be used.",
     );
@@ -2235,7 +2287,9 @@ async function provideApplicationLetter(
     letter: {
       text: produced.text,
       document: produced.document,
-      groundedIn: request.groundedIn,
+      groundedIn: approvedText
+        ? ["your letter for this application"]
+        : request.groundedIn,
     },
   };
 }

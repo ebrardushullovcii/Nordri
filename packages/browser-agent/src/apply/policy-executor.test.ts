@@ -3944,3 +3944,125 @@ test("uncertain eligibility shows the posting and permit facts beside the questi
     expect(outcome.question?.note).toContain("sponsorship needed later");
   }
 });
+
+test.each(["file", "text"] as const)(
+  "uses a person's approved letter as %s without asking again",
+  async (delivery) => {
+    const page = rawPage({
+      controls: [
+        rawControl({
+          index: 0,
+          label: "Cover letter",
+          inputType: delivery === "file" ? "file" : "text",
+          required: true,
+        }),
+      ],
+    });
+    const { config, hands } = configFor(page);
+    config.application.applicationRecordId = "app";
+    const approvedText =
+      "I enjoy building dependable platforms. I can work 20 hours a week from Manchester.";
+    config.sources.reusableAnswers = [
+      {
+        id: "application_letter",
+        label: "Cover letter",
+        question: "Cover letter",
+        kind: "other",
+        answer: approvedText,
+        roleFamilies: [],
+        proofEntryIds: [],
+        applicationScope: {
+          resultId: "old_result",
+          applicationRecordId: "app",
+          location: null,
+        },
+      },
+    ];
+    config.writing = {
+      coverLetterPolicy: "never",
+      writtenAnswerLength: "short",
+      preApprovedDeclarations: [],
+    };
+    const provide = vi.fn(
+      (
+        request: Parameters<
+          NonNullable<ApplyAgentConfig["letters"]>["provide"]
+        >[0],
+      ) =>
+        Promise.resolve({
+          ok: true as const,
+          text: request.approvedText ?? "",
+          document: {
+            id: "letter",
+            label: "Your letter",
+            fileName: "letter.pdf",
+            kind: "cover_letter" as const,
+            mimeType: "application/pdf",
+            loadBytes: () =>
+              Promise.resolve(new TextEncoder().encode(request.approvedText)),
+          },
+        }),
+    );
+    config.letters = {
+      preference: {
+        tone: "direct",
+        length: "short",
+        language: null,
+        sample: null,
+      },
+      provide,
+    };
+    const upload = vi.spyOn(hands, "uploadFile");
+    const fill = vi.spyOn(hands, "fillText");
+    const result = await executeApplyProposal(
+      delivery === "file"
+        ? { tool: "upload", ref: "c0", documentId: "letter" }
+        : { tool: "type", ref: "c0", text: "wrong model text" },
+      observationOf(page).signature,
+      { config, now, guardState: createApplyGuardState() },
+    );
+    expect(result.kind).toBe(delivery === "file" ? "attached" : "filled");
+    expect(provide).toHaveBeenCalledWith(
+      expect.objectContaining({ approvedText, delivery }),
+    );
+    if (delivery === "file")
+      expect(new TextDecoder().decode(upload.mock.calls[0][1].bytes)).toBe(
+        approvedText,
+      );
+    else expect(fill).toHaveBeenCalledWith("c0", approvedText);
+  },
+);
+
+test("an answer reused from another question names the saved answer it came from", async () => {
+  const page = rawPage({
+    controls: [
+      rawControl({
+        index: 0,
+        label: "Why would you like this role?",
+        required: true,
+      }),
+    ],
+  });
+  const { config } = configFor(page);
+  config.sources.reusableAnswers = [
+    {
+      id: "saved_motivation",
+      label: "Platform work motivation",
+      question: "Why platform engineering?",
+      answer: "I enjoy building dependable platforms.",
+      kind: "other",
+      roleFamilies: [],
+      proofEntryIds: [],
+    },
+  ];
+  const outcome = await executeApplyProposal(
+    { tool: "type", ref: "c0", text: "I enjoy building dependable platforms." },
+    observationOf(page).signature,
+    { config, now, guardState: createApplyGuardState() },
+  );
+  expect(outcome.kind).toBe("filled");
+  if (outcome.kind === "filled")
+    expect(outcome.filled.answer.provenanceLabel).toBe(
+      'your saved answer "Platform work motivation"',
+    );
+});

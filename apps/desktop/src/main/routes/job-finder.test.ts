@@ -130,6 +130,7 @@ vi.mock("electron", () => ({
   },
   BrowserWindow: {
     fromWebContents: mockBrowserWindowFromWebContents,
+    getAllWindows: () => [],
   },
   dialog: {
     showOpenDialog: mockShowOpenDialog,
@@ -157,7 +158,10 @@ vi.mock("../services/job-finder", () => ({
   setJobFinderWorkspaceServiceTestEnv: vi.fn(),
 }));
 
-import { JOB_FINDER_WORKSPACE_UPDATED_CHANNEL } from "../services/job-finder/workspace-updates";
+import {
+  JOB_FINDER_WORKSPACE_UPDATED_CHANNEL,
+  onJobFinderWorkspaceUpdate,
+} from "../services/job-finder/workspace-updates";
 import {
   RETIRED_CHAT_MESSAGE,
   registerJobFinderRouteHandlers,
@@ -3903,4 +3907,48 @@ it("Fill-in only retries a changed permission revision and revokes the broader p
     expectedRevision: 2,
   });
   expect(authorityService.replaceUsed).not.toHaveBeenCalled();
+});
+
+it("publishes one workspace refresh after a burst of answer draft saves", async () => {
+  vi.useFakeTimers();
+  const saveUserActionAnswerDraft = vi.fn().mockResolvedValue(undefined);
+  mockGetJobFinderWorkspaceService.mockResolvedValue({
+    saveUserActionAnswerDraft,
+  });
+  const handlers = new Map<string, RegisteredHandler>();
+  registerJobFinderRouteHandlers({
+    handle: (channel: string, handler: RegisteredHandler) =>
+      handlers.set(channel, handler),
+  } as unknown as IpcMain);
+  const handler = handlers.get("job-finder:save-user-action-answer-draft")!;
+  const listener = vi.fn();
+  const stop = onJobFinderWorkspaceUpdate(listener);
+  try {
+    await handler(
+      { sender: {} },
+      {
+        requestId: "request",
+        expectedRevision: 1,
+        editedAt: 1,
+        draft: { answers: { Start: "Monday" } },
+      },
+    );
+    await vi.advanceTimersByTimeAsync(100);
+    await handler(
+      { sender: {} },
+      {
+        requestId: "request",
+        expectedRevision: 1,
+        editedAt: 2,
+        draft: { answers: { Start: "Friday" } },
+      },
+    );
+    expect(saveUserActionAnswerDraft).toHaveBeenCalledTimes(2);
+    expect(listener).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(150);
+    expect(listener).toHaveBeenCalledTimes(1);
+  } finally {
+    stop();
+    vi.useRealTimers();
+  }
 });

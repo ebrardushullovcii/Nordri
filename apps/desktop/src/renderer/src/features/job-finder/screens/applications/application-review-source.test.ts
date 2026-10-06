@@ -78,6 +78,19 @@ it("keeps a person's checkbox-group answer attributed to them when the form chan
   expect(withPersonAnswerSources(card, details).answers[0]?.source).toBe(
     "your answer to this question",
   );
+  details.answerRecords[0]!.sourceId = "answerLibrary.saved_motivation";
+  details.answerRecords[0]!.provenance = [
+    {
+      id: "source",
+      sourceKind: "user",
+      sourceId: "answerLibrary.saved_motivation",
+      label: 'your saved answer "Platform work motivation"',
+      snippet: null,
+    },
+  ];
+  expect(withPersonAnswerSources(card, details).answers[0]?.source).toBe(
+    'your saved answer "Platform work motivation"',
+  );
   details.answerRecords[0]!.sourceKind = "profile";
   expect(withPersonAnswerSources(card, details).answers[0]?.source).toBe(
     "the filled application form",

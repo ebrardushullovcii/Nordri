@@ -79,6 +79,7 @@ export function buildProfileScreenViewModel(
     label: string;
     description: string;
     progress: SectionProgress;
+    needsConfirmationCount?: number;
   }>;
 } {
   const snapshotDisplayName =
@@ -151,6 +152,10 @@ export function buildProfileScreenViewModel(
         description:
           "Set screening answers and preferences for future searches and applications.",
         progress: sectionProgress.preferences,
+        needsConfirmationCount:
+          input.answerBankValues?.customAnswers.filter(
+            (answer) => answer.needsConfirmation,
+          ).length ?? 0,
       },
       {
         id: "sources",

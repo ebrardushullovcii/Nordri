@@ -561,6 +561,11 @@ export function ProfilePreferencesEligibilitySection(props: {
               return (
                 <ProfileRecordCard
                   id={`answer-record-${entry.id}`}
+                  statusLabel={
+                    watch(`answerBank.customAnswers.${index}.needsConfirmation`)
+                      ? "Needs your confirmation"
+                      : undefined
+                  }
                   key={entry.fieldKey}
                   defaultOpen={index === 0}
                   forceOpenSignal={getAppendedRecordOpenSignal(entry.id)}

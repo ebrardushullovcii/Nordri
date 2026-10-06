@@ -335,6 +335,8 @@ export interface ApplyLetterProvider {
     groundedIn: string[];
     language: string | null;
     delivery: "file" | "text";
+    /** Exact text the person approved for this application; render without rewriting. */
+    approvedText?: string;
     /** A file type the form insists on, when it named one. */
     fileType: "pdf" | "docx" | "txt" | null;
   }) => Promise<

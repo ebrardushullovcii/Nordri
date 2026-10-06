@@ -1,4 +1,7 @@
-import { compareApplicationAnswerRecency } from "@nordri/contracts";
+import {
+  compareApplicationAnswerRecency,
+  mergeUserActionAnswerDraft,
+} from "@nordri/contracts";
 import { useEffect, useRef, useState } from "react";
 import type {
   ApplicationAttempt,
@@ -8,6 +11,8 @@ import type {
 } from "@nordri/contracts";
 import { listPendingApplicationQuestions } from "../applications/applications-status";
 import type { QuestionAnswerDraft } from "./actions-screen";
+
+let lastEditTime = 0;
 
 export function useQuestionAnswerDrafts(props: {
   applicationAttempts?: readonly ApplicationAttempt[];
@@ -19,24 +24,87 @@ export function useQuestionAnswerDrafts(props: {
   // The request is the durable draft scope; this map also protects live edits
   // while a submitted-answer read is in flight.
   const answerDrafts = useRef(new Map<string, QuestionAnswerDraft>());
+  const fieldTimes = useRef(new Map<string, Record<string, number>>());
   const restoredDrafts = useRef(new Set<string>());
   const [restoredApplications, setRestoredApplications] = useState<
     ReadonlySet<string>
   >(new Set());
   for (const request of props.requests) {
-    if (request.answerDraft && !answerDrafts.current.has(request.id)) {
+    if (!request.answerDraft) continue;
+    const current = answerDrafts.current.get(request.id);
+    if (!current) {
       answerDrafts.current.set(request.id, request.answerDraft);
+      fieldTimes.current.set(
+        request.id,
+        request.answerDraftFieldUpdatedAt ?? {},
+      );
+      continue;
     }
+    let merged = {
+      answerDraft: current,
+      answerDraftFieldUpdatedAt: fieldTimes.current.get(request.id) ?? {},
+    };
+    for (const [key, value] of Object.entries(request.answerDraft.answers)) {
+      const result = mergeUserActionAnswerDraft(
+        merged,
+        { answers: { [key]: value } },
+        request.answerDraftFieldUpdatedAt?.[`answer:${key}`] ?? 1,
+      );
+      merged = {
+        answerDraft: result.answerDraft!,
+        answerDraftFieldUpdatedAt: result.answerDraftFieldUpdatedAt!,
+      };
+    }
+    for (const key of ["saveForFuture", "hiringCountry"] as const) {
+      const result = mergeUserActionAnswerDraft(
+        merged,
+        { [key]: request.answerDraft[key] },
+        request.answerDraftFieldUpdatedAt?.[key] ?? 1,
+      );
+      merged = {
+        answerDraft: result.answerDraft!,
+        answerDraftFieldUpdatedAt: result.answerDraftFieldUpdatedAt!,
+      };
+    }
+    answerDrafts.current.set(request.id, merged.answerDraft);
+    fieldTimes.current.set(request.id, merged.answerDraftFieldUpdatedAt);
   }
   async function updateAnswerDraft(
     request: UserActionRequest,
     draft: QuestionAnswerDraft,
   ): Promise<void> {
-    answerDrafts.current.set(request.id, draft);
+    const previous = answerDrafts.current.get(request.id);
+    const answers = Object.fromEntries(
+      Object.entries(draft.answers).filter(
+        ([key, value]) =>
+          JSON.stringify(value) !== JSON.stringify(previous?.answers[key]),
+      ),
+    );
+    const patch = {
+      answers,
+      ...(draft.saveForFuture !== previous?.saveForFuture
+        ? { saveForFuture: draft.saveForFuture }
+        : {}),
+      ...(draft.hiringCountry !== previous?.hiringCountry
+        ? { hiringCountry: draft.hiringCountry }
+        : {}),
+    };
+    const editedAt = (lastEditTime = Math.max(Date.now(), lastEditTime + 1));
+    const merged = mergeUserActionAnswerDraft(
+      {
+        answerDraft: previous,
+        answerDraftFieldUpdatedAt: fieldTimes.current.get(request.id),
+      },
+      patch,
+      editedAt,
+    );
+    answerDrafts.current.set(request.id, merged.answerDraft!);
+    fieldTimes.current.set(request.id, merged.answerDraftFieldUpdatedAt!);
     await window.nordri.jobFinder.saveUserActionAnswerDraft({
       requestId: request.id,
       expectedRevision: request.revision,
-      draft,
+      draft: patch,
+      editedAt,
     });
   }
   useEffect(() => {

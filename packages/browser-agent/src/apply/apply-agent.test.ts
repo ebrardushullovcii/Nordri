@@ -4394,3 +4394,180 @@ test("batch classification, answer checks and safety page read overlap before an
   expect(events.filter((event) => event === "classification")).toHaveLength(1);
   expect(events.filter((event) => event === "answers")).toHaveLength(1);
 });
+
+test.each(["upload", "create_application_document"])(
+  "a rejected file letter offers its draft and conflict through %s",
+  async (tool) => {
+    const source = page({
+      controls: [
+        {
+          ...nameControl(),
+          inputType: "file",
+          label: "Cover letter",
+          value: "",
+        },
+      ],
+    });
+    const input = config(source);
+    const wording =
+      "I enjoy building dependable platforms. I can work 20 hours a week from Manchester.";
+    input.letters = {
+      preference: {
+        tone: "direct",
+        length: "short",
+        language: null,
+        sample: null,
+      },
+      provide: () =>
+        Promise.resolve({
+          ok: false,
+          draftText: wording,
+          reason: "Your available hours differ from this full-time role.",
+        }),
+    };
+    const result = await runApplyAgent(
+      input,
+      scriptedModel([
+        {
+          name: tool,
+          args:
+            tool === "upload"
+              ? { ref: "c0", documentId: "letter" }
+              : {
+                  ref: "c0",
+                  purpose: "cover_letter",
+                  fileType: "pdf",
+                  instructions: "Write the requested letter.",
+                },
+        },
+      ]),
+    );
+    const question =
+      result.pauses[0]?.questions?.[0] ?? result.pauses[0]?.question;
+    expect(result.outcome).toBe("paused");
+    expect(question).toMatchObject({
+      kind: "cover_letter",
+      answerControlType: "text",
+      suggestedAnswers: [expect.objectContaining({ text: wording })],
+    });
+    expect(question?.note).toContain("Your available hours differ");
+    expect(question?.note).toContain(
+      "your answer will be attached as that file",
+    );
+    expect(result.attachments).toEqual([]);
+  },
+);
+
+test.each([true, false])(
+  "create-document attaches the approved letter without a second question (explicit ref: %s)",
+  async (explicitRef) => {
+    const source = page({
+      controls: [
+        {
+          ...nameControl(),
+          inputType: "file",
+          label: "Cover letter",
+          value: "",
+        },
+      ],
+    });
+    const input = config(source);
+    input.application.applicationRecordId = "app";
+    const approvedText =
+      "I enjoy building dependable platforms.\nI can work 20 hours a week from Manchester.\n";
+    input.sources.reusableAnswers = [
+      {
+        id: "application_letter",
+        kind: "other",
+        label: "Cover letter",
+        question: "Cover letter",
+        answer: approvedText,
+        roleFamilies: [],
+        proofEntryIds: [],
+        applicationScope: {
+          applicationRecordId: "app",
+          resultId: "old_result",
+          location: null,
+        },
+      },
+    ];
+    input.writing = {
+      coverLetterPolicy: "never",
+      writtenAnswerLength: "short",
+      preApprovedDeclarations: [],
+    };
+    const provide = vi.fn(
+      (
+        request: Parameters<
+          NonNullable<ApplyAgentConfig["letters"]>["provide"]
+        >[0],
+      ) =>
+        Promise.resolve({
+          ok: true as const,
+          text: request.approvedText ?? "Wrong rewritten text",
+          document: {
+            id: "approved_letter",
+            kind: "cover_letter" as const,
+            label: "Your letter",
+            fileName: "letter.pdf",
+            mimeType: "application/pdf",
+            loadBytes: () =>
+              Promise.resolve(new TextEncoder().encode(request.approvedText)),
+          },
+        }),
+    );
+    input.letters = {
+      preference: {
+        tone: "direct",
+        length: "short",
+        language: null,
+        sample: null,
+      },
+      provide,
+    };
+    const uploadFile = vi.fn(
+      (_ref: string, file: { name: string; bytes: Uint8Array }) => {
+        source.controls[0].value = file.name;
+        return Promise.resolve({ ok: true as const, observedValue: file.name });
+      },
+    );
+    input.hands = { ...input.hands, uploadFile };
+    const result = await runApplyAgent(
+      input,
+      scriptedModel([
+        {
+          name: "create_application_document",
+          args: {
+            purpose: "cover_letter",
+            fileType: "pdf",
+            instructions: "Attach my reviewed letter.",
+            ...(explicitRef ? { ref: "c0" } : {}),
+          },
+        },
+        { name: "upload", args: { ref: "c0", documentId: "approved_letter" } },
+        { name: "finish", args: { reason: "The letter is attached." } },
+      ]),
+    );
+    expect(provide).toHaveBeenCalledOnce();
+    expect(provide).toHaveBeenCalledWith(
+      expect.objectContaining({
+        approvedText,
+        delivery: "file",
+        fileType: "pdf",
+      }),
+    );
+    expect(new TextDecoder().decode(uploadFile.mock.calls[0][1].bytes)).toBe(
+      approvedText,
+    );
+    expect(result.pauses).toEqual([]);
+    expect(result.attachments).toEqual([
+      expect.objectContaining({
+        fileName: "letter.pdf",
+        reviewText: {
+          text: approvedText,
+          groundedIn: ["your letter for this application"],
+        },
+      }),
+    ]);
+  },
+);

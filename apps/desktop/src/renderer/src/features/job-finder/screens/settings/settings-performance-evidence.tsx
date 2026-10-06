@@ -157,7 +157,10 @@ export function SettingsPerformanceEvidence() {
                 {(snapshot.waitingFormMemory.budgetBytes / 1024 / 1024).toFixed(
                   0,
                 )}{" "}
-                MiB budget · {snapshot.waitingFormMemory.tabs.length} forms
+                MiB budget · {snapshot.waitingFormMemory.tabs.length}{" "}
+                {snapshot.waitingFormMemory.tabs.length === 1
+                  ? "form"
+                  : "forms"}
               </p>
               <p className="mt-2 text-sm text-foreground-muted">
                 {snapshot.waitingFormMemory.overBudget

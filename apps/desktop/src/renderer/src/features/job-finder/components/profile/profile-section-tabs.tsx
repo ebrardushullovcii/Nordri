@@ -20,6 +20,7 @@ export interface ProfileSectionDescriptor {
   id: ProfileSection;
   label: string;
   progress: SectionProgress;
+  needsConfirmationCount?: number;
 }
 
 interface ProfileSectionTabsProps {
@@ -125,6 +126,11 @@ export function ProfileSectionTabs({
             >
               <Icon aria-hidden="true" />
               {section.label}
+              {section.needsConfirmationCount ? (
+                <span className="text-(length:--text-tiny) text-(--warning-text)">
+                  {section.needsConfirmationCount} to confirm
+                </span>
+              ) : null}
               {remaining > 0 ? (
                 <>
                   {/* Completion state is out of the label: no chip words and no

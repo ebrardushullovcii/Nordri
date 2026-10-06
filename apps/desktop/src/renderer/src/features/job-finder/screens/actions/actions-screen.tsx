@@ -1603,7 +1603,28 @@ export function QuestionAnswerForm(props: {
       ...(needsCountry ? { hiringCountry } : {}),
     }),
   );
+  const incomingDraft = JSON.stringify(props.draft);
+  const skipDraftSave = useRef(false);
   useEffect(() => {
+    if (!props.draft) return;
+    setAnswers(props.draft.answers);
+    setSaveForFuture(props.draft.saveForFuture);
+    setHiringCountry(props.draft.hiringCountry ?? "");
+    lastDraft.current = JSON.stringify({
+      answers: props.draft.answers,
+      saveForFuture: props.draft.saveForFuture,
+      ...(needsCountry
+        ? { hiringCountry: props.draft.hiringCountry ?? "" }
+        : {}),
+    });
+    skipDraftSave.current = true;
+    // Only a changed saved value refreshes the form.
+  }, [incomingDraft]);
+  useEffect(() => {
+    if (skipDraftSave.current) {
+      skipDraftSave.current = false;
+      return;
+    }
     const draft = {
       answers,
       saveForFuture,

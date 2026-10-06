@@ -47,9 +47,15 @@ export function withPersonAnswerSources(
         (question?.answerControlType === "multi_choice" &&
           JSON.stringify(selectedOptions(recorded.text)) ===
             JSON.stringify(selectedOptions(answer.answer)));
-      return same
-        ? { ...answer, source: "your answer to this question" }
-        : answer;
+      const savedSource =
+        recorded.sourceId?.startsWith("answerLibrary.") &&
+        !recorded.sourceId.startsWith("answerLibrary.application_");
+      const source = savedSource
+        ? (recorded.provenance.find(
+            (entry) => entry.sourceId === recorded.sourceId,
+          )?.label ?? "your saved answer")
+        : "your answer to this question";
+      return same ? { ...answer, source } : answer;
     }),
   };
 }

@@ -241,7 +241,7 @@ function storedFacts(
     add(
       saved.answer,
       `answerLibrary.${saved.id}`,
-      "your saved answer",
+      `your saved answer "${saved.label || saved.question}"`,
       "answer_library",
     );
   }

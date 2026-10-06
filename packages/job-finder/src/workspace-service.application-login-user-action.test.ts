@@ -3878,3 +3878,82 @@ describe("cancelling a browser step releases the application waiting on it", () 
     expect(after.applicationRecords.length).toBeGreaterThan(0);
   });
 });
+
+test("Prepare again inherits only the latest cancelled draft for this application's same questions", async () => {
+  const harness = createWorkspaceServiceHarness({ seed: createSeed() });
+  const job = (await harness.repository.listSavedJobs())[0]!;
+  const base = {
+    repository: harness.repository,
+    applicationRecordId: `application_${job.id}`,
+    job,
+    blocker: ApplicationAttemptBlockerSchema.parse({
+      code: "requires_manual_review",
+      userActionKind: "manual_answer",
+      summary: "Answer the dates",
+      questionIds: ["start", "interview"],
+      url: job.applicationUrl,
+    }),
+  };
+  await persistApplicationUserAction({
+    ...base,
+    runId: "before_restart",
+    resultId: "before_restart",
+    replayCheckpointId: "before_restart",
+    occurredAt: "2026-10-01T10:00:00.000Z",
+  });
+  const original = (await harness.repository.listUserActionRequests())[0]!;
+  const draft = {
+    answers: { Start: "Monday", Interview: "Tuesday" },
+    saveForFuture: false,
+  };
+  await harness.repository.saveUserActionAnswerDraft({
+    requestId: original.id,
+    expectedRevision: original.revision,
+    draft,
+    editedAt: 10,
+  });
+  // The restart cancellation began before the keystroke save returned.
+  const transition = reduceUserActionCommand(
+    original,
+    {
+      requestId: original.id,
+      commandId: "restart",
+      expectedRevision: original.revision,
+      action: "cancel",
+    },
+    "2026-10-01T11:00:00.000Z",
+  );
+  if (transition.status !== "applied") throw new Error("Expected cancellation");
+  await harness.repository.commitUserActionTransition({
+    request: transition.request,
+    event: transition.event,
+  });
+  await persistApplicationUserAction({
+    ...base,
+    runId: "after_restart",
+    resultId: "after_restart",
+    replayCheckpointId: "after_restart",
+    occurredAt: "2026-10-01T12:00:00.000Z",
+  });
+  expect(
+    (await harness.repository.listUserActionRequests()).find(
+      (entry) =>
+        entry.scope.type === "application" &&
+        entry.scope.runId === "after_restart",
+    )?.answerDraft,
+  ).toEqual(draft);
+  await persistApplicationUserAction({
+    ...base,
+    blocker: { ...base.blocker, questionIds: ["different"] },
+    runId: "different",
+    resultId: "different",
+    replayCheckpointId: "different",
+    occurredAt: "2026-10-01T13:00:00.000Z",
+  });
+  expect(
+    (await harness.repository.listUserActionRequests()).find(
+      (entry) =>
+        entry.scope.type === "application" && entry.scope.runId === "different",
+    )?.answerDraft,
+  ).toBeUndefined();
+});

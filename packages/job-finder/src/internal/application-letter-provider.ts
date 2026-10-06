@@ -86,20 +86,22 @@ export function createApplicationLetterProvider(
     preference: dependencies.preference,
     provide: async (request) => {
       const purpose = request.purpose ?? "cover_letter";
-      const requestKey = `${purpose}\n${request.prompt.trim()}`;
+      const requestKey = `${purpose}\n${request.prompt.trim()}\n${request.approvedText ?? ""}`;
       let writtenVersion = versionsByRequest.get(requestKey) ?? null;
       if (!writtenVersion) {
         let written: string | null;
         try {
-          written = await dependencies.writeLetter({
-            prompt: request.prompt,
-            purpose,
-            groundedIn: request.groundedIn,
-            language: request.language,
-            preference: dependencies.preference,
-            priorText: latestByPurpose.get(purpose)?.text ?? null,
-            ...(dependencies.signal ? { signal: dependencies.signal } : {}),
-          });
+          written =
+            request.approvedText ??
+            (await dependencies.writeLetter({
+              prompt: request.prompt,
+              purpose,
+              groundedIn: request.groundedIn,
+              language: request.language,
+              preference: dependencies.preference,
+              priorText: latestByPurpose.get(purpose)?.text ?? null,
+              ...(dependencies.signal ? { signal: dependencies.signal } : {}),
+            }));
         } catch (error) {
           if (error instanceof ApplicationLetterGroundingError) {
             return {
@@ -126,7 +128,7 @@ export function createApplicationLetterProvider(
         writtenVersion = {
           purpose,
           version,
-          text: written.trim(),
+          text: request.approvedText ?? written.trim(),
           renderedByType: new Map(),
         };
         versionsByRequest.set(requestKey, writtenVersion);

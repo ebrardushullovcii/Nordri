@@ -37,6 +37,7 @@ import {
   TailoredAssetSchema,
   UserActionEventSchema,
   SaveUserActionAnswerDraftInputSchema,
+  mergeUserActionAnswerDraft,
   UserActionRequestSchema,
   type ApplicationAnswerRecord,
   type ApplicationQuestionRecord,
@@ -1396,7 +1397,16 @@ export function createInMemoryJobFinderRepository(
           "This question has changed. Reopen it before editing your answer.",
         );
       }
-      request.answerDraft = cloneValue(command.draft);
+      Object.assign(
+        request,
+        cloneValue(
+          mergeUserActionAnswerDraft(
+            request,
+            command.draft,
+            command.editedAt ?? Date.now(),
+          ),
+        ),
+      );
       return Promise.resolve();
     },
     createUserActionRequest(request) {
@@ -1526,6 +1536,10 @@ export function createInMemoryJobFinderRepository(
         transition.request,
         transition.event,
       );
+      // Lifecycle transitions cannot replace edits saved while the command waited.
+      transition.request.answerDraft = currentRequest.answerDraft;
+      transition.request.answerDraftFieldUpdatedAt =
+        currentRequest.answerDraftFieldUpdatedAt;
       state.userActionRequests = [
         ...state.userActionRequests.filter(
           (request) => request.id !== transition.request.id,

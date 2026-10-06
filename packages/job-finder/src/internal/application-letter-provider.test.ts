@@ -295,3 +295,35 @@ test("an unsupported letter is handed back with its reason and is never rendered
   });
   expect(renderLetter).not.toHaveBeenCalled();
 });
+
+test("renders the person's approved letter word for word without writing or checking it again", async () => {
+  const writeLetter = vi
+    .fn()
+    .mockRejectedValue(new Error("Must not rewrite approved text"));
+  const renderLetter = vi.fn(({ text }: { text: string }) =>
+    Promise.resolve({
+      ok: true as const,
+      fileName: "letter.pdf",
+      mimeType: "application/pdf",
+      loadBytes: () => Promise.resolve(new TextEncoder().encode(text)),
+    }),
+  );
+  const letters = provider({ writeLetter, renderLetter });
+  const approvedText =
+    "I enjoy building dependable platforms.\nI can work 20 hours a week from Manchester.\n";
+  const result = await letters.provide({
+    ...REQUEST,
+    approvedText,
+    delivery: "file",
+    fileType: "pdf",
+  });
+  expect(writeLetter).not.toHaveBeenCalled();
+  expect(renderLetter).toHaveBeenCalledWith(
+    expect.objectContaining({ text: approvedText, fileType: "pdf" }),
+  );
+  if (!result.ok || !result.document)
+    throw new Error("Expected approved letter file");
+  expect(new TextDecoder().decode(await result.document.loadBytes())).toBe(
+    approvedText,
+  );
+});

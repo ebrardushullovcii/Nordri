@@ -723,9 +723,7 @@ export function useProfileScreenForms(input: {
         draftValues.languages.some((row) => !canonicalLanguageIds.has(row.id))
       ) {
         runWithoutDraftEditSignal(() =>
-          profileForm.setValue("languages", draftValues.languages, {
-            shouldDirty: true,
-          }),
+          languageArray.replace(draftValues.languages),
         );
       }
       applyBackgroundConflictSurface("profile", false);
@@ -809,6 +807,7 @@ export function useProfileScreenForms(input: {
     applyBackgroundConflictSurface,
     input.latestResumeImportReviewCandidates,
     input.profile,
+    languageArray.replace,
     profileForm,
   ]);
 

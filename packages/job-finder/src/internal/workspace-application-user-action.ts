@@ -546,9 +546,10 @@ export async function persistApplicationUserAction(input: {
     ].join("|"),
   );
   const dedupeKey = `application_${kind}:${occurrenceFingerprint}`;
-  const existingRequest = (
-    await input.repository.listUserActionRequests()
-  ).find((request) => request.dedupeKey === dedupeKey);
+  const allRequests = await input.repository.listUserActionRequests();
+  const existingRequest = allRequests.find(
+    (request) => request.dedupeKey === dedupeKey,
+  );
   if (existingRequest) {
     if (
       existingRequest.kind !== kind ||
@@ -655,6 +656,24 @@ export async function persistApplicationUserAction(input: {
     resolvedAt: null,
     expiresAt: null,
   });
+  if (kind === "manual_answer") {
+    const cancelled = allRequests
+      .filter(
+        (previous) =>
+          previous.kind === "manual_answer" &&
+          previous.state === "cancelled" &&
+          previous.answerDraft &&
+          previous.scope.type === "application" &&
+          previous.scope.applicationRecordId === input.applicationRecordId &&
+          "blockerFingerprint" in previous.verification &&
+          previous.verification.blockerFingerprint === blockerFingerprint,
+      )
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
+    if (cancelled) {
+      request.answerDraft = cancelled.answerDraft;
+      request.answerDraftFieldUpdatedAt = cancelled.answerDraftFieldUpdatedAt;
+    }
+  }
   await input.repository.createUserActionRequest(request);
   await keepOnlyLatestApplicationActionable({
     repository: input.repository,

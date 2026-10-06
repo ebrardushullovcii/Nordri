@@ -101,3 +101,54 @@ test("conflict wording is visible but remains unconfirmed until the person uses 
     ),
   );
 });
+
+test("a mounted answer form refreshes saved values without saving them back", async () => {
+  const onDraftChange = vi.fn();
+  const props = {
+    requestId: "request",
+    questions: ["Start", "Interview"].map((prompt) =>
+      ApplicationAttemptQuestionSchema.parse({
+        id: prompt,
+        prompt,
+        detectedAt: at,
+      }),
+    ),
+    isPending: false,
+    onAnswer: vi.fn(),
+    onDraftChange,
+  };
+  const view = render(
+    <QuestionAnswerForm
+      {...props}
+      draft={{
+        answers: { Start: "Monday", Interview: "Tuesday" },
+        saveForFuture: false,
+      }}
+    />,
+  );
+  view.rerender(
+    <QuestionAnswerForm
+      {...props}
+      draft={{
+        answers: { Start: "Friday", Interview: "Tuesday" },
+        saveForFuture: false,
+      }}
+    />,
+  );
+  expect((view.getByLabelText("Start") as HTMLInputElement).value).toBe(
+    "Friday",
+  );
+  expect((view.getByLabelText("Interview") as HTMLInputElement).value).toBe(
+    "Tuesday",
+  );
+  expect(onDraftChange).not.toHaveBeenCalled();
+  fireEvent.change(view.getByLabelText("Interview"), {
+    target: { value: "Thursday" },
+  });
+  await waitFor(() =>
+    expect(onDraftChange).toHaveBeenCalledWith({
+      answers: { Start: "Friday", Interview: "Thursday" },
+      saveForFuture: false,
+    }),
+  );
+});

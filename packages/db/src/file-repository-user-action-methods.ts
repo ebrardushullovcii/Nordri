@@ -1,5 +1,6 @@
 import {
   SaveUserActionAnswerDraftInputSchema,
+  mergeUserActionAnswerDraft,
   UserActionEventSchema,
   UserActionRequestSchema,
   type UserActionEvent,
@@ -231,7 +232,11 @@ export function createFileRepositoryUserActionMethods(
           context,
           UserActionRequestSchema.parse({
             ...request,
-            answerDraft: command.draft,
+            ...mergeUserActionAnswerDraft(
+              request,
+              command.draft,
+              command.editedAt ?? Date.now(),
+            ),
           }),
         );
       });
@@ -373,6 +378,10 @@ export function createFileRepositoryUserActionMethods(
           transition.request,
           transition.event,
         );
+        // Lifecycle transitions cannot replace edits saved while the command waited.
+        transition.request.answerDraft = currentRequest.answerDraft;
+        transition.request.answerDraftFieldUpdatedAt =
+          currentRequest.answerDraftFieldUpdatedAt;
         updateUserActionRequest(context, transition.request);
         insertUserActionEvent(context, transition.event);
         result = {

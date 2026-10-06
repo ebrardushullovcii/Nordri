@@ -351,7 +351,8 @@ export const SaveUserActionAnswerDraftInputSchema = z
   .object({
     requestId: UserActionIdentifierSchema,
     expectedRevision: z.number().int().positive(),
-    draft: UserActionAnswerDraftSchema.nullable(),
+    draft: UserActionAnswerDraftSchema.partial().nullable(),
+    editedAt: z.number().int().positive().optional(),
   })
   .strict();
 export type SaveUserActionAnswerDraftInput = z.infer<
@@ -372,6 +373,7 @@ export const UserActionRequestSchema = z
     title: UserActionShortTextSchema,
     summary: UserActionLongTextSchema,
     answerDraft: UserActionAnswerDraftSchema.nullable().optional(),
+    answerDraftFieldUpdatedAt: z.record(z.string(), z.number()).optional(),
     instructions: z.array(UserActionLongTextSchema).max(12).default([]),
     actionUrl: UserActionBrowserUrlSchema.nullable().default(null),
     displayOrigin: UserActionBrowserOriginSchema.nullable().default(null),
@@ -641,3 +643,40 @@ export const UserActionEventSchema = z
   });
 export type UserActionEvent = z.infer<typeof UserActionEventSchema>;
 export type UserActionEventInput = z.input<typeof UserActionEventSchema>;
+
+/** Merge only the supplied fields, retaining the newest edit of each field. */
+export function mergeUserActionAnswerDraft(
+  current: Pick<UserActionRequest, "answerDraft" | "answerDraftFieldUpdatedAt">,
+  patch: SaveUserActionAnswerDraftInput["draft"],
+  editedAt: number,
+): Pick<UserActionRequest, "answerDraft" | "answerDraftFieldUpdatedAt"> {
+  if (patch === null)
+    return { answerDraft: null, answerDraftFieldUpdatedAt: {} };
+  const draft: UserActionAnswerDraft = {
+    ...current.answerDraft,
+    answers: { ...current.answerDraft?.answers },
+    saveForFuture: current.answerDraft?.saveForFuture ?? true,
+  };
+  const times = { ...current.answerDraftFieldUpdatedAt };
+  for (const [key, value] of Object.entries(patch.answers ?? {})) {
+    const field = `answer:${key}`;
+    if (editedAt <= (times[field] ?? 0)) continue;
+    draft.answers[key] = value;
+    times[field] = editedAt;
+  }
+  if (
+    patch.saveForFuture !== undefined &&
+    editedAt > (times.saveForFuture ?? 0)
+  ) {
+    draft.saveForFuture = patch.saveForFuture;
+    times.saveForFuture = editedAt;
+  }
+  if (
+    patch.hiringCountry !== undefined &&
+    editedAt > (times.hiringCountry ?? 0)
+  ) {
+    draft.hiringCountry = patch.hiringCountry;
+    times.hiringCountry = editedAt;
+  }
+  return { answerDraft: draft, answerDraftFieldUpdatedAt: times };
+}
