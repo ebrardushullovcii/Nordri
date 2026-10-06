@@ -9,7 +9,23 @@ import { getCustomerFacingApplyText } from "./applications-detail-panel-helpers"
 export function ApplicationsDetailPanelTimelineSection(props: {
   events: ApplicationRecord["events"];
 }) {
-  const { events } = props;
+  // Older records sometimes appended the same site confirmation twice.
+  // Show that outcome once while preserving the stored history.
+  const seen = new Set<string>();
+  const events = [...props.events]
+    .sort((left, right) => Date.parse(right.at) - Date.parse(left.at))
+    .filter((event) => {
+      if (event.emphasis !== "positive") return true;
+      const key = (getCustomerFacingApplyText(event.detail) ?? "").trim();
+      if (
+        !key.startsWith("The site confirmed receipt") &&
+        key !== "Submission confirmed."
+      )
+        return true;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
 
   if (!events.length) {
     return null;

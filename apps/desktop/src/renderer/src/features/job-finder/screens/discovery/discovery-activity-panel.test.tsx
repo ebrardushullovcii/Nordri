@@ -451,7 +451,7 @@ it("shows reconciling source counts and the model's reason for an excluded listi
         jobsSkippedByLedger: 0,
         invalidSkipped: 0,
         listingsDeferred: 1,
-        pagesCovered: 2,
+        pagesCovered: 1,
         rejectedListings: [
           {
             title: "Unrelated role",
@@ -470,7 +470,7 @@ it("shows reconciling source counts and the model's reason for an excluded listi
             rejected: 1,
             duplicates: 1,
             deferred: 1,
-            pagesCovered: 2,
+            pagesCovered: 1,
           },
         ],
       },
@@ -490,10 +490,13 @@ it("shows reconciling source counts and the model's reason for an excluded listi
   );
   expect(
     screen.getByText(
-      "4 inspected · 1 saved · 1 rejected · 1 duplicate · 1 deferred · 2 pages covered.",
+      "4 inspected · 1 saved · 1 rejected · 1 duplicate · 1 deferred · 1 page covered.",
     ),
   ).toBeTruthy();
-  expect(screen.getByText(/Found on Other board: 4 inspected/)).toBeTruthy();
+  expect(
+    screen.getByText(/Found on Other board: 4 inspected.*1 page covered/),
+  ).toBeTruthy();
+  expect(screen.queryByText(/1 pages covered/)).toBeNull();
   expect(screen.queryByText(/By source:/)).toBeNull();
   expect(
     screen.getByText("Unrelated role: Outside your requested roles."),

@@ -44,3 +44,35 @@ it("shows the person's recent send above older unsent activity without mutating 
   ]);
   expect(record.events[0]?.id).toBe("old");
 });
+
+it("shows an older record's duplicated confirmation once and keeps other history", () => {
+  const events = [
+    {
+      id: "confirmation-one",
+      at: "2026-10-05T12:00:00Z",
+      title: "Application sent",
+      detail: "The site confirmed receipt. Reference: SYN-42.",
+      emphasis: "positive" as const,
+    },
+    {
+      id: "confirmation-two",
+      at: "2026-10-05T12:00:01Z",
+      title: "Submission confirmed",
+      detail: "The site confirmed receipt. Reference: SYN-42.",
+      emphasis: "positive" as const,
+    },
+    {
+      id: "other",
+      at: "2026-10-05T11:00:00Z",
+      title: "Prepared",
+      detail: "The application was prepared.",
+      emphasis: "neutral" as const,
+    },
+  ];
+  render(<ApplicationsDetailPanelTimelineSection events={events} />);
+  expect(
+    screen.getAllByText("The site confirmed receipt. Reference: SYN-42."),
+  ).toHaveLength(1);
+  expect(screen.getByText("Activity history (2)")).toBeTruthy();
+  expect(events).toHaveLength(3);
+});

@@ -225,3 +225,95 @@ test("with a result limit, the model's best fits are kept rather than the newest
   // The verdicts that chose them are kept; they are not asked for again.
   expect(judgeJobFits).toHaveBeenCalledTimes(1);
 }, 30_000);
+
+test("searching plan B never judges or changes plan A's jobs, including a shared job", async () => {
+  const seed = seedWithBoard();
+  const fixtureJobs = createSeed().savedJobs.slice(0, 2);
+  const [shared, onlyA] = fixtureJobs;
+  if (!shared || !onlyA) throw new Error("Expected two synthetic jobs");
+  seed.savedJobs = fixtureJobs;
+  const judgeJobFits = vi.fn((input: JudgeJobFitsInput) =>
+    Promise.resolve(
+      input.jobs.map(({ jobId }) => ({
+        jobId,
+        score: 80,
+        recommendation: "strong_fit" as const,
+        role: "exact" as const,
+        roleExplanation: "Different work",
+        preferences: "aligned" as const,
+        preferencesExplanation: null,
+        locationReach: "in_area" as const,
+        reasons: [],
+        gaps: ["Different work"],
+        listingClosed: false,
+        listingClosedEvidence: null,
+      })),
+    ),
+  );
+  const harness = createWorkspaceServiceHarness({
+    seed,
+    aiClient: { ...createAiClient(), judgeJobFits },
+  });
+  const initial = await harness.workspaceService.getWorkspaceSnapshot();
+  const planA = initial.campaigns[0]!;
+  await harness.repository.saveCampaignState({
+    activeCampaignId: planA.id,
+    notifications: [],
+    campaigns: [
+      { ...planA, jobIds: [shared.id, onlyA.id] },
+      {
+        ...planA,
+        id: "plan-b",
+        name: "Other work",
+        jobIds: [shared.id],
+        history: [],
+        searchPreferences: {
+          ...planA.searchPreferences,
+          targetRoles: ["Engineering"],
+        },
+      },
+    ],
+  });
+  await harness.repository.commitSavedJobDelta({
+    update: (job) => ({
+      ...job,
+      campaignIds: job.id === shared.id ? [planA.id, "plan-b"] : [planA.id],
+    }),
+  });
+  const beforeA = await harness.workspaceService.getWorkspaceSnapshot();
+  const storedBefore = await harness.repository.listSavedJobs();
+  // The source returns no jobs; B may judge only its existing shared job.
+  vi.mocked(globalThis.fetch).mockImplementation(() =>
+    Promise.resolve(Response.json({ jobs: [] })),
+  );
+  await harness.workspaceService.selectCampaign("plan-b");
+  await harness.workspaceService.runAgentDiscovery();
+  expect(
+    judgeJobFits.mock.calls.flatMap(([input]) =>
+      input.jobs.map((job) => job.jobId),
+    ),
+  ).toEqual([shared.id]);
+  const storedAfter = await harness.repository.listSavedJobs();
+  expect(storedAfter.find((job) => job.id === onlyA.id)).toEqual(
+    storedBefore.find((job) => job.id === onlyA.id),
+  );
+  expect(
+    storedAfter.find((job) => job.id === shared.id)?.matchAssessment,
+  ).toEqual(storedBefore.find((job) => job.id === shared.id)?.matchAssessment);
+  const afterA = await harness.workspaceService.selectCampaign(planA.id);
+  expect(
+    afterA.discoveryJobs.map((job) => ({
+      id: job.id,
+      assessment: job.matchAssessment,
+    })),
+  ).toEqual(
+    beforeA.discoveryJobs.map((job) => ({
+      id: job.id,
+      assessment: job.matchAssessment,
+    })),
+  );
+  // B's own unchanged verdict remains fresh when the search runs again.
+  await harness.workspaceService.selectCampaign("plan-b");
+  await harness.workspaceService.runAgentDiscovery();
+  expect(judgeJobFits).toHaveBeenCalledTimes(1);
+}, 30_000);

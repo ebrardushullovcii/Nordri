@@ -77,6 +77,7 @@ function mockLayout({
         );
       if (this.hasAttribute("data-job-finder-sidebar"))
         return rect(0, 56, railRight, 844);
+      if (this.hasAttribute("data-toast-avoid")) return rect(288, 780, 600, 44);
       if (this.hasAttribute("data-collection-pagination"))
         return rect(288, pagerTop ?? 856, 600, 44);
       if (this.hasAttribute("data-job-results-pagination"))
@@ -441,7 +442,10 @@ it("never loops when a spacer and the next measurement disagree", () => {
   // A spacer and the measurement it changes used to undo each other inside
   // one commit ("Maximum update depth exceeded"), blanking the whole app.
   // Here the scroll areas are visible on every other measuring pass only.
-  const original = HTMLElement.prototype.getBoundingClientRect;
+  const original = Object.getOwnPropertyDescriptor(
+    HTMLElement.prototype,
+    "getBoundingClientRect",
+  )?.value as (this: HTMLElement) => DOMRect;
   let pass = 0;
   vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
     function (this: HTMLElement) {
@@ -457,4 +461,25 @@ it("never loops when a spacer and the next measurement disagree", () => {
   render(<ScrollFixture />);
   expect(() => fireEvent.click(screen.getByText("Hide jobs"))).not.toThrow();
   expect(screen.getByRole("region", { name: "Notifications" })).toBeTruthy();
+});
+
+it("moves stacked toasts above plan actions without adding page padding", () => {
+  mockLayout({ stackHeight: 260 });
+  render(
+    <>
+      <div data-toast-avoid>
+        <button>Run now</button>
+        <button>Rules</button>
+      </div>
+      <ScrollFixture />
+    </>,
+  );
+  fireEvent.click(screen.getByText("Hide jobs"));
+  expect(
+    document.querySelector<HTMLElement>("[data-toast-viewport]")!.style.bottom,
+  ).toBe("128px");
+  expect(
+    document.querySelector<HTMLElement>("[data-toast-avoid]")!.style
+      .paddingBottom,
+  ).toBe("");
 });

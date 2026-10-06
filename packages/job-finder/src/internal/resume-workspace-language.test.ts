@@ -295,7 +295,13 @@ test("translated imported lines and keywords keep their original field sources",
       },
     },
   });
-  const comparison = buildResumeCoverageComparison({ profile, draft: result });
+  // Restoring an older translated draft changes its draft id, while its
+  // original field links still point at the draft that was translated.
+  const olderTranslated = { ...result, id: "restored-translated-draft" };
+  const comparison = buildResumeCoverageComparison({
+    profile,
+    draft: olderTranslated,
+  });
   expect(comparison.addedKeywords).toEqual([]);
   expect(comparison.removedKeywords).toEqual(
     buildResumeCoverageComparison({ profile, draft }).removedKeywords,

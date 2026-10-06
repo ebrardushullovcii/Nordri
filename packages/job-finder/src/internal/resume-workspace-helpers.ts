@@ -2058,7 +2058,10 @@ export function buildResumeCoverageComparison(input: {
                 .flatMap((bullet) => bullet.sourceRefs) ?? []);
         return uniqueStrings(
           refs.flatMap((ref) => {
-            if (ref.sourceId?.startsWith(`draft:${input.draft.id}:field:`))
+            if (
+              ref.sourceId?.startsWith("draft:") &&
+              ref.sourceId.includes(":field:")
+            )
               return resumeSentences(ref.snippet ?? "").flatMap(
                 sourceAchievementIds,
               );
@@ -2168,7 +2171,9 @@ export function buildResumeCoverageComparison(input: {
     refs: readonly ResumeDraftSourceRef[],
   ) =>
     refs.find(
-      (ref) => ref.sourceId === `draft:${input.draft.id}:field:${fieldId}`,
+      (ref) =>
+        ref.sourceId?.startsWith("draft:") &&
+        ref.sourceId.endsWith(`:field:${fieldId}`),
     )?.snippet ??
     refs.find((ref) => ref.sourceId?.startsWith("language:"))?.snippet ??
     text;

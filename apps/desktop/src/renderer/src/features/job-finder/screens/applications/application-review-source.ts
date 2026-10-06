@@ -25,7 +25,11 @@ export function withPersonAnswerSources(
   return {
     ...card,
     answers: card.answers.map((answer) => {
-      if (answer.source !== "the filled application form") return answer;
+      if (
+        answer.source !== "the filled application form" &&
+        answer.source !== "your answer to this question"
+      )
+        return answer;
       const question = details.questionRecords.find(
         (entry) => entry.prompt === answer.question,
       );
@@ -33,20 +37,45 @@ export function withPersonAnswerSources(
         .filter(
           (entry) =>
             entry.questionId === question?.id &&
-            entry.sourceKind === "user" &&
-            entry.status !== "rejected" &&
-            entry.status !== "skipped",
+            entry.status === "filled" &&
+            (entry.text === answer.answer ||
+              question?.answerControlType === "multi_choice"),
         )
         .sort(
           (a, b) =>
             b.revision - a.revision || b.createdAt.localeCompare(a.createdAt),
         )[0];
-      if (!recorded) return answer;
+      if (!recorded)
+        return answer.source === "your answer to this question"
+          ? { ...answer, source: "the filled application form", written: false }
+          : answer;
       const same =
         recorded.text === answer.answer ||
         (question?.answerControlType === "multi_choice" &&
           JSON.stringify(selectedOptions(recorded.text)) ===
             JSON.stringify(selectedOptions(answer.answer)));
+      if (!same) return answer;
+      const provenance = recorded.provenance.find(
+        (entry) => entry.sourceId === recorded.sourceId,
+      )?.label;
+      if (recorded.sourceId?.startsWith("authority.attestation."))
+        return {
+          ...answer,
+          source: "your Settings (on by default)",
+          written: false,
+        };
+      if (recorded.sourceKind !== "user")
+        return {
+          ...answer,
+          source:
+            provenance ??
+            (recorded.sourceKind === "profile"
+              ? "your profile"
+              : "an earlier application answer"),
+          written:
+            recorded.sourceKind === "prior_answer" && Boolean(provenance),
+          groundedIn: recorded.provenance.map((entry) => entry.label),
+        };
       const savedSource =
         recorded.sourceId?.startsWith("answerLibrary.") &&
         !recorded.sourceId.startsWith("answerLibrary.application_");

@@ -125,11 +125,7 @@ import {
 import { createUniqueId, normalizeText, uniqueStrings } from "./shared";
 import { createJobIdentityIndex } from "./job-identity";
 import { assessJobPostingDetailQuality } from "./job-posting-detail-quality";
-import {
-  jobNeedsFitJudgment,
-  judgeJobFitsInBatches,
-  readCarriedJudgment,
-} from "./fit-judgment";
+import { jobNeedsFitJudgment, judgeJobFitsInBatches } from "./fit-judgment";
 import {
   describeListingDetailEnrichment,
   createModelListingPageReader,
@@ -1549,11 +1545,30 @@ export function createWorkspaceDiscoveryMethods(
     let fitJudgmentsAttempted = 0;
     const assessmentPlanId =
       effectiveCampaign?.campaignId ?? (await ctx.getActiveCampaignId());
-    const assessDiscoveryPosting = (posting: JobPosting) =>
-      assessmentSession.assess(
-        posting,
-        runJudgments.get(toSavedJobId(posting)) ?? readCarriedJudgment(posting),
+    const plans = campaignState ?? (await ctx.repository.getCampaignState());
+    const planJobIds = new Set(
+      plans?.campaigns.find((plan) => plan.id === assessmentPlanId)?.jobIds ??
+        [],
+    );
+    const belongsToSearchPlanAtStart = (job: SavedJob) =>
+      !assessmentPlanId ||
+      planJobIds.has(job.id) ||
+      job.campaignIds?.includes(assessmentPlanId) === true;
+    const belongsToSearchPlan = (job: SavedJob) =>
+      belongsToSearchPlanAtStart(job) || runRetainedJobIds.has(job.id);
+    const assessDiscoveryPosting = (posting: JobPosting) => {
+      const previous = (posting as Partial<SavedJob>).matchAssessment;
+      // This plan's verdict, or the shared one a job judged before plans kept
+      // their own verdicts still carries; never a blank that hides its fit.
+      const assessment = assessmentPlanId
+        ? ((posting as Partial<SavedJob>).planAssessments?.[assessmentPlanId] ??
+          previous)
+        : previous;
+      return assessmentSession.assess(
+        { ...posting, matchAssessment: assessment ?? null },
+        runJudgments.get(toSavedJobId(posting)) ?? assessment?.judgment ?? null,
       );
+    };
     const selectedTargets = selectTargets(enrichedPreferences, options);
 
     if (selectedTargets.length === 0) {
@@ -1641,8 +1656,30 @@ export function createWorkspaceDiscoveryMethods(
     // population the listing-detail read stage is allowed to touch.
     const runRetainedJobIds = new Set<string>();
     const touchedPendingJobIds = new Set<string>();
-    workingSavedJobs.forEach((job) => touchedSavedJobIds.add(job.id));
-    workingPendingJobs.forEach((job) => touchedPendingJobIds.add(job.id));
+    workingSavedJobs
+      .filter(belongsToSearchPlan)
+      .forEach((job) => touchedSavedJobIds.add(job.id));
+    workingPendingJobs
+      .filter(belongsToSearchPlan)
+      .forEach((job) => touchedPendingJobIds.add(job.id));
+    const originalJobsById = new Map(
+      [...startingSavedJobs, ...startingDiscovery.pendingDiscoveryJobs].map(
+        (job) => [job.id, job],
+      ),
+    );
+    // Working rows show this plan's verdict. Persist it only in that plan's
+    // entry, leaving the shared assessment and other plans unchanged.
+    const storedJob = (job: SavedJob): SavedJob =>
+      withPlanAssessment(
+        {
+          ...job,
+          matchAssessment:
+            originalJobsById.get(job.id)?.matchAssessment ??
+            job.matchAssessment,
+        },
+        assessmentPlanId,
+        job.matchAssessment,
+      );
     // Run-start snapshots define ownership for the whole run: ledger decisions
     // and pending-job removals that differ from these baselines while the run
     // is in flight belong to the user and must survive run persistence.
@@ -1657,11 +1694,11 @@ export function createWorkspaceDiscoveryMethods(
       ) => JobFinderDiscoveryState,
     ): Promise<void> => {
       const workingSavedJobsById = new Map(
-        workingSavedJobs.map((job) => [job.id, job]),
+        workingSavedJobs.map((job) => [job.id, storedJob(job)]),
       );
-      const newSavedJobs = workingSavedJobs.filter(
-        (job) => !savedJobsAtLastCommitById.has(job.id),
-      );
+      const newSavedJobs = workingSavedJobs
+        .filter((job) => !savedJobsAtLastCommitById.has(job.id))
+        .map(storedJob);
 
       await ctx.repository.commitSavedJobDelta({
         upserts: newSavedJobs,
@@ -1682,7 +1719,7 @@ export function createWorkspaceDiscoveryMethods(
       });
 
       for (const job of workingSavedJobs) {
-        savedJobsAtLastCommitById.set(job.id, job);
+        savedJobsAtLastCommitById.set(job.id, storedJob(job));
       }
     };
     const openedSessionSources = new Set<JobSource>();
@@ -1804,7 +1841,7 @@ export function createWorkspaceDiscoveryMethods(
         recentRuns: current.recentRuns,
         pendingDiscoveryJobs: overlayTouchedPendingJobs(
           current.pendingDiscoveryJobs,
-          workingPendingJobs,
+          workingPendingJobs.map(storedJob),
           touchedPendingJobIds,
           baselinePendingJobIds,
         ),
@@ -2283,8 +2320,15 @@ export function createWorkspaceDiscoveryMethods(
           const mergeSeedJobs = settings.discoveryOnly
             ? mergeSavedJobs(workingSavedJobs, workingPendingJobs)
             : workingSavedJobs;
+          const mergeIdentityIndex = createJobIdentityIndex(
+            mergeSeedJobs,
+            toSightingIdentityInput,
+          );
           for (const posting of budgetedPostings) {
-            runRetainedJobIds.add(toSavedJobId(posting));
+            runRetainedJobIds.add(
+              mergeIdentityIndex.find({ ...posting, matchAcrossSources: true })
+                ?.id ?? toSavedJobId(posting),
+            );
           }
           const mergeResult = mergeDiscoveredPostings(
             profile,
@@ -2320,6 +2364,14 @@ export function createWorkspaceDiscoveryMethods(
             executionSignal,
             assessDiscoveryPosting,
           );
+          const beforeMergeById = new Map(
+            mergeSeedJobs.map((job) => [job.id, job]),
+          );
+          mergeResult.mergedJobs = mergeResult.mergedJobs.map((job) =>
+            runRetainedJobIds.has(job.id)
+              ? job
+              : (beforeMergeById.get(job.id) ?? job),
+          );
           resumeAffectingChangedJobIds.push(
             ...collectResumeAffectingChangedJobIds(
               mergeSeedJobs,
@@ -2347,13 +2399,17 @@ export function createWorkspaceDiscoveryMethods(
               nextPendingJobs,
             );
             jobsStaged = mergeResult.newJobs.length;
-            nextPendingJobs.forEach((job) => touchedPendingJobIds.add(job.id));
-            workingSavedJobs.forEach((job) => touchedSavedJobIds.add(job.id));
+            nextPendingJobs
+              .filter(belongsToSearchPlan)
+              .forEach((job) => touchedPendingJobIds.add(job.id));
+            workingSavedJobs
+              .filter(belongsToSearchPlan)
+              .forEach((job) => touchedSavedJobIds.add(job.id));
           } else {
             workingSavedJobs = mergeResult.mergedJobs;
-            mergeResult.mergedJobs.forEach((job) =>
-              touchedSavedJobIds.add(job.id),
-            );
+            mergeResult.mergedJobs
+              .filter(belongsToSearchPlan)
+              .forEach((job) => touchedSavedJobIds.add(job.id));
             jobsPersisted = mergeResult.newJobs.length;
           }
 
@@ -2429,6 +2485,7 @@ export function createWorkspaceDiscoveryMethods(
             workingPendingJobs,
           ).filter(
             (job) =>
+              belongsToSearchPlan(job) &&
               personPickedJob(job) &&
               !runJudgments.has(job.id) &&
               (jobNeedsFitJudgment(job, assessmentSession.contextFingerprint) ||
@@ -2543,7 +2600,7 @@ export function createWorkspaceDiscoveryMethods(
                 ...current,
                 pendingDiscoveryJobs: overlayTouchedPendingJobs(
                   current.pendingDiscoveryJobs,
-                  workingPendingJobs,
+                  workingPendingJobs.map(storedJob),
                   touchedPendingJobIds,
                   baselinePendingJobIds,
                 ),
@@ -2575,7 +2632,7 @@ export function createWorkspaceDiscoveryMethods(
                 ...current,
                 pendingDiscoveryJobs: overlayTouchedPendingJobs(
                   current.pendingDiscoveryJobs,
-                  workingPendingJobs,
+                  workingPendingJobs.map(storedJob),
                   touchedPendingJobIds,
                   baselinePendingJobIds,
                 ),
@@ -2961,8 +3018,17 @@ export function createWorkspaceDiscoveryMethods(
         // Re-seen postings never reach the merge (their content is unchanged),
         // but a card the last search left unread is still a card: it is in
         // this run's retained population for the listing-detail read.
+        const collectedIdentityIndex = createJobIdentityIndex(
+          mergeSavedJobs(workingSavedJobs, workingPendingJobs),
+          toSightingIdentityInput,
+        );
         for (const posting of collectedJobs) {
-          runRetainedJobIds.add(toSavedJobId(posting));
+          runRetainedJobIds.add(
+            collectedIdentityIndex.find({
+              ...posting,
+              matchAcrossSources: true,
+            })?.id ?? toSavedJobId(posting),
+          );
         }
         const collectedProviderKey = getDiscoveryProviderKey({
           target,
@@ -3294,7 +3360,7 @@ export function createWorkspaceDiscoveryMethods(
               ...current,
               pendingDiscoveryJobs: overlayTouchedPendingJobs(
                 current.pendingDiscoveryJobs,
-                workingPendingJobs,
+                workingPendingJobs.map(storedJob),
                 touchedPendingJobIds,
                 baselinePendingJobIds,
               ),
@@ -3398,7 +3464,9 @@ export function createWorkspaceDiscoveryMethods(
       )
         .filter(
           (job) =>
-            jobNeedsListingDetail(job) && canReadListingUrl(job.canonicalUrl),
+            belongsToSearchPlan(job) &&
+            jobNeedsListingDetail(job) &&
+            canReadListingUrl(job.canonicalUrl),
         )
         .sort(
           (left, right) =>
@@ -3647,6 +3715,8 @@ export function createWorkspaceDiscoveryMethods(
       // not answer for keeps the rule score until the next search.
       if (!executionSignal.aborted && ctx.aiClient.judgeJobFits) {
         const toJudge = mergeSavedJobs(workingSavedJobs, workingPendingJobs)
+          .filter(belongsToSearchPlan)
+          .map((job) => readPlanAssessment(storedJob(job), assessmentPlanId))
           .filter((job) =>
             jobNeedsFitJudgment(job, assessmentSession.contextFingerprint),
           )
@@ -3734,10 +3804,13 @@ export function createWorkspaceDiscoveryMethods(
                 } else {
                   touchedSavedJobIds.add(job.id);
                 }
-                return withPlanAssessment(
-                  job,
+                return readPlanAssessment(
+                  withPlanAssessment(
+                    job,
+                    assessmentPlanId,
+                    fullAssessment ?? assessmentSession.assess(job, judgment),
+                  ),
                   assessmentPlanId,
-                  fullAssessment ?? assessmentSession.assess(job, judgment),
                 );
               };
               workingSavedJobs = workingSavedJobs.map(applyJudgment);
@@ -3962,7 +4035,7 @@ export function createWorkspaceDiscoveryMethods(
           ...current,
           pendingDiscoveryJobs: overlayTouchedPendingJobs(
             current.pendingDiscoveryJobs,
-            workingPendingJobs,
+            workingPendingJobs.map(storedJob),
             touchedPendingJobIds,
             baselinePendingJobIds,
           ),

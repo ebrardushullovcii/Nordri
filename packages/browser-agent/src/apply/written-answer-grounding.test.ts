@@ -104,6 +104,12 @@ test.each([
     expect(checks.every((check) => check.supported === supported)).toBe(true);
     const [messages] = chatWithTools.mock.calls[0];
     expect(String(messages[0].content)).toContain(
+      "review the wording before it goes on this application's form",
+    );
+    expect(String(messages[0].content)).not.toContain(
+      "reviewed and submitted by the person",
+    );
+    expect(String(messages[0].content)).toContain(
       "Reject both Yes and No when the country is unresolved",
     );
     expect(String(messages[0].content)).toContain(
@@ -280,6 +286,6 @@ test("conflicts propose wording for person review and omission cannot hide a wor
   expect(prompt).toContain("Do not end with a question or a question mark");
   expect(prompt).toContain("I enjoy this work.");
   expect(prompt).toContain(
-    "reviewed and submitted by the person for this application",
+    "review the wording before it goes on this application's form",
   );
 });

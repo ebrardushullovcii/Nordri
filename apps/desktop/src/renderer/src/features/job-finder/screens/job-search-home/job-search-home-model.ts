@@ -8,6 +8,7 @@ import type {
 } from "@nordri/contracts";
 import {
   evaluateProfileSetupReadiness,
+  resolveCampaignSourceTargetIds,
   getProfileSetupReadinessBlockers,
   PREPARED_PAGE_CLOSED_SUMMARY,
 } from "@nordri/contracts";
@@ -886,8 +887,18 @@ export function buildJobSearchHomeModel(
       ready_check: "your job targets",
     }[setupStep] ?? "where you left off";
 
-  const targets = workspace.searchPreferences.discovery.targets;
-  const enabledTargets = targets.filter((target) => target.enabled);
+  const selectedPlan = workspace.campaigns.find(
+    (plan) => plan.id === workspace.activeCampaignId,
+  );
+  const targets =
+    selectedPlan?.searchPreferences?.discovery.targets ??
+    workspace.searchPreferences.discovery.targets;
+  const selectedSourceIds = selectedPlan?.searchPreferences
+    ? new Set(resolveCampaignSourceTargetIds(selectedPlan))
+    : null;
+  const enabledTargets = targets.filter((target) =>
+    selectedSourceIds ? selectedSourceIds.has(target.id) : target.enabled,
+  );
   const savedSourceCount = targets.length;
   const enabledSourceCount = enabledTargets.length;
   const failingSources = enabledTargets.filter((target) =>

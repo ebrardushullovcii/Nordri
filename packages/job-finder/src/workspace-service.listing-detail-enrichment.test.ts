@@ -1,5 +1,6 @@
 import { describe, expect, test, vi } from "vitest";
 import type { ListingHtmlFetcher } from "./index";
+import { readPlanAssessment } from "./internal/plan-assessment";
 import { htmlToPlainText } from "./internal/listing-detail-extraction";
 import { createSeed } from "./workspace-service.test-fixtures";
 import { createWorkspaceServiceHarness } from "./workspace-service.test-harness";
@@ -120,7 +121,11 @@ describe("listing detail enrichment inside a discovery run", () => {
 
     await workspaceService.runDiscovery();
 
-    const after = await repository.listSavedJobs();
+    const planId =
+      (await repository.getCampaignState())?.activeCampaignId ?? null;
+    const after = (await repository.listSavedJobs()).map((job) =>
+      readPlanAssessment(job, planId),
+    );
     const read = after.filter((job) => job.listingDetailFetch !== null);
     expect(fetched.length).toBeGreaterThan(0);
     expect(read.length).toBe(fetched.length);
@@ -244,7 +249,10 @@ describe("listing detail enrichment inside a discovery run", () => {
         (entry) => entry.id === job.id,
       )!;
       expect(read.listingDetailFetch?.outcome).toBe("enriched");
-      expect(read.matchAssessment.judgment).toBeTruthy();
+      expect(
+        readPlanAssessment(read, snapshot.activeCampaignId).matchAssessment
+          .judgment,
+      ).toBeTruthy();
       expect(onListingAssessmentFinished).toHaveBeenCalledOnce();
       expect(
         (await workspaceService.getWorkspaceSnapshot()).reviewQueue.find(

@@ -327,7 +327,20 @@ export function buildPendingQuestion(input: {
                   : "profile",
             sourceId: suggestion.sourceId,
             confidenceLabel: null,
-            provenance: [],
+            provenance: [
+              {
+                id: `${questionIdFor(control, input.jobId, input.siblings ?? [])}_source`,
+                sourceKind:
+                  suggestion.sourceKind === "answer_library"
+                    ? "user"
+                    : suggestion.sourceKind === "generated"
+                      ? "prior_answer"
+                      : "profile",
+                sourceId: suggestion.sourceId,
+                label: suggestion.provenanceLabel,
+                snippet: null,
+              },
+            ],
           },
         ]
       : [],

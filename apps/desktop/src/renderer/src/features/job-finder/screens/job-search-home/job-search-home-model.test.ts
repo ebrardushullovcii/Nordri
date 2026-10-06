@@ -2322,3 +2322,20 @@ it("separates untouched jobs, queued drafts and active writers in a ten-job batc
     model.stages?.find((stage) => stage.label === "Shortlisted")?.detail,
   ).toContain("20 need a resume · 2 queued · 2 being written");
 });
+
+it("Home counts the selected plan's sources rather than every saved source", () => {
+  const ws = workspace();
+  const target = ws.searchPreferences.discovery.targets[0]!;
+  ws.searchPreferences.discovery.targets = Array.from(
+    { length: 7 },
+    (_, index) => ({ ...target, id: `source-${index}` }),
+  );
+  ws.campaigns[0]!.searchPreferences = ws.searchPreferences;
+  ws.campaigns[0]!.sourceTargetIds = ["source-0"];
+  ws.campaigns[0]!.sourceSelectionMode = "selected";
+  const model = build(ws);
+  expect(model.statusLine).toBe(
+    "Ready to search 1 source. Nothing has been searched yet.",
+  );
+  expect(JSON.stringify(model)).toContain("Job Finder searches 1 source");
+});

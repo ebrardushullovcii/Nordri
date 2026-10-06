@@ -2848,6 +2848,7 @@ export function createPrimaryPageActions(
     onSaveAll: (
       profile: CandidateProfile,
       searchPreferences: JobSearchPreferences,
+      savedSection?: "sources",
     ) =>
       void runSaveAction({
         action: () => actions.saveWorkspaceInputs(profile, searchPreferences),
@@ -2856,10 +2857,18 @@ export function createPrimaryPageActions(
           searchPreferences,
         }),
         failedFallback:
-          "Profile and saved answers were not saved. Retry before leaving this page.",
-        label: "Profile and saved answers",
+          savedSection === "sources"
+            ? "Job sources were not saved. Retry before leaving this page."
+            : "Profile and saved answers were not saved. Retry before leaving this page.",
+        label:
+          savedSection === "sources"
+            ? "Job sources"
+            : "Profile and saved answers",
         onSuccess: () => undefined,
-        savedMessage: "Profile and saved answers saved.",
+        savedMessage:
+          savedSection === "sources"
+            ? "Job sources saved."
+            : "Profile and saved answers saved.",
         scope: jobFinderPendingActions.profileMutation(),
         surface: "answers",
       }),

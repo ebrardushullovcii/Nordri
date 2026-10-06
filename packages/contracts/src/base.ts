@@ -876,7 +876,9 @@ export function formatDiscoveryAccounting(
   >,
 ): string {
   const count = (value: number | null | undefined, label: string) =>
-    value == null ? `${label} not recorded` : `${value} ${label}`;
+    value == null
+      ? `${label} not recorded`
+      : `${value} ${value === 1 && label === "pages covered" ? "page covered" : label}`;
   return [
     count(report.found, "postings seen"),
     count(report.unique, "unique jobs"),

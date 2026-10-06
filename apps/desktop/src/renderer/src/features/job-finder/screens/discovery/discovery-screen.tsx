@@ -621,14 +621,24 @@ export function DiscoveryScreen(props: {
   // this visit is announced: the verdict standing when the screen opens
   // describes a search that ended before, and the results already show it.
   const { showToast } = useToast();
-  const searchVisibleJobs = useRef<{ runId: string; ids: Set<string> } | null>(
-    null,
-  );
+  const searchVisibleJobs = useRef<{
+    runId: string;
+    planId: string | null | undefined;
+    ids: Set<string>;
+  } | null>(null);
   useEffect(() => {
     if (activeRun?.state === "running") {
-      if (searchVisibleJobs.current?.runId !== activeRun.id) {
+      if (activeRun.campaignId && activeRun.campaignId !== activeCampaignId) {
+        searchVisibleJobs.current = null;
+        return;
+      }
+      if (
+        searchVisibleJobs.current?.runId !== activeRun.id ||
+        searchVisibleJobs.current.planId !== activeCampaignId
+      ) {
         searchVisibleJobs.current = {
           runId: activeRun.id,
+          planId: activeCampaignId,
           ids: new Set(
             props.jobs
               .filter((job) => !isDiscoveryAlsoFoundResult(job))
@@ -645,18 +655,34 @@ export function DiscoveryScreen(props: {
     const previous = searchVisibleJobs.current;
     if (!previous) return;
     searchVisibleJobs.current = null;
+    if (previous.planId !== activeCampaignId) return;
+    const currentById = new Map(props.jobs.map((job) => [job.id, job]));
+    const left = [...previous.ids].filter((id) => !currentById.has(id)).length;
     const moved = props.jobs.filter(
       (job) => previous.ids.has(job.id) && isDiscoveryAlsoFoundResult(job),
     ).length;
-    if (moved > 0 && !showAlsoFound)
+    if (left > 0 || moved > 0)
       showToast({
-        title: `${moved} ${moved === 1 ? "job moved" : "jobs moved"} to weaker matches after the fit check.`,
-        action: {
-          label: "Show weaker matches",
-          onClick: () => setShowAlsoFound(true),
-        },
+        title: [
+          left > 0
+            ? `${left} ${left === 1 ? "job left" : "jobs left"} this plan after the fit check.`
+            : null,
+          moved > 0
+            ? `${moved} ${moved === 1 ? "job moved" : "jobs moved"} to weaker matches after the fit check.`
+            : null,
+        ]
+          .filter(Boolean)
+          .join(" "),
+        ...(moved > 0 && !showAlsoFound
+          ? {
+              action: {
+                label: "Show weaker matches",
+                onClick: () => setShowAlsoFound(true),
+              },
+            }
+          : {}),
       });
-  }, [activeRun, props.jobs, showAlsoFound, showToast]);
+  }, [activeRun, activeCampaignId, props.jobs, showAlsoFound, showToast]);
   const assessedRequest = useRef<{
     id: string;
     previous: SavedJob["matchAssessment"];
@@ -738,6 +764,16 @@ export function DiscoveryScreen(props: {
       return null;
     }
 
+    const phaseProgress = (
+      liveEvents.length > 0 ? liveEvents : (activeRun.activity ?? [])
+    ).at(-1)?.progress;
+    if (phaseProgress) {
+      const phase =
+        phaseProgress.phase === "reading_listings"
+          ? "Reading listings"
+          : "Judging fit";
+      return `${phase} ${phaseProgress.completed} of ${phaseProgress.total}`;
+    }
     const evidence = getDiscoveryRunCountEvidence(
       activeRun,
       liveEvents.at(-1) ?? null,

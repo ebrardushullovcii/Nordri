@@ -52,7 +52,7 @@ export function useToast(): ToastContextValue {
 const SCROLL_OWNERS =
   "[data-locked-pane-scroll-region], [data-locked-screen-scroll-area], [data-job-finder-shell-content] > main";
 const TOAST_AVOID =
-  "[data-collection-pagination], [data-job-results-pagination], [data-locked-screen-bottom-content]";
+  "[data-collection-pagination], [data-job-results-pagination], [data-locked-screen-bottom-content], [data-toast-avoid]";
 const EDGE_GAP = 16;
 const CONTENT_GAP = 8;
 

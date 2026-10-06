@@ -850,7 +850,9 @@ describe("CampaignsScreen", () => {
       screen.getAllByText(/\d{1,2}:\d{2}\s?(AM|PM|am|pm)?/).length,
     ).toBeGreaterThan(0);
     expect(screen.queryByText(/:\d{2}:\d{2}/)).toBeNull();
-    expect(screen.getByText(/partially completed/)).toBeTruthy();
+    expect(
+      screen.getByText(/Finished with some sources incomplete/),
+    ).toBeTruthy();
     expect(screen.getByText(/2 consecutive failed runs recorded/)).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Edit" }));
@@ -1415,6 +1417,21 @@ describe("CampaignsScreen", () => {
       screen.getAllByRole("button", { name: "Make current" })[0]!,
     );
     expect(onSelectCampaign).toHaveBeenCalledWith("two");
+    view.rerender(
+      <CampaignsScreen
+        activeCampaignId="two"
+        campaigns={[
+          campaign("one", "Remote TypeScript", "precision"),
+          campaign("two", "Focused frontend", "precision"),
+        ]}
+        onSaveCampaign={onSaveCampaign}
+        onSelectCampaign={onSelectCampaign}
+        pending={false}
+      />,
+    );
+    expect(
+      screen.queryByText(/Search plan "Focused frontend" created\./),
+    ).toBeNull();
   });
 
   it("keeps archived plans out of switch-active controls and tags them", () => {
@@ -2245,7 +2262,7 @@ describe("a finished run reports one set of numbers", () => {
 
     const lastRun =
       screen.getByText("Last run").parentElement?.textContent ?? "";
-    expect(lastRun).not.toContain("skipped");
+    expect(lastRun).not.toContain("Skipped");
     expect(lastRun).not.toContain("outcome not recorded");
     expect(lastRun).toContain("Ran");
   });
@@ -2727,4 +2744,49 @@ it("uses the shared run report for the plan card without replacing new jobs with
     "52 postings seen · 25 unique jobs · 25 new to you · 22 kept by this plan · 27 duplicates merged · 0 rejected · 0 deferred · 7 pages covered",
   );
   expect(details.textContent).not.toContain("22 new to you");
+});
+
+it("uses plain words for saved plan history and keeps toasts off plan actions", () => {
+  const plan = campaign("one", "Plan", "scale");
+  plan.history = [
+    {
+      id: "created",
+      campaignId: plan.id,
+      kind: "created",
+      occurredAt: plan.createdAt,
+      summary: "Plan created in precision mode.",
+      discoveryRunId: null,
+    },
+    {
+      id: "selected",
+      campaignId: plan.id,
+      kind: "activated",
+      occurredAt: plan.createdAt,
+      summary: "Plan selected as the active campaign.",
+      discoveryRunId: null,
+    },
+  ];
+  render(
+    <CampaignsScreen
+      activeCampaignId={plan.id}
+      campaigns={[plan]}
+      onSaveCampaign={vi.fn()}
+      onSelectCampaign={vi.fn()}
+      onRunCampaignNow={vi.fn()}
+      pending={false}
+    />,
+  );
+  expect(screen.getByText(/Made current/)).toBeTruthy();
+  expect(
+    screen.getByText(/Created with the Focused search setting/),
+  ).toBeTruthy();
+  expect(screen.queryByText(/precision mode|active campaign/)).toBeNull();
+  expect(
+    screen
+      .getByRole("button", { name: "Run now" })
+      .closest("[data-toast-avoid]"),
+  ).toBeTruthy();
+  expect(
+    screen.getByRole("button", { name: "Rules" }).closest("[data-toast-avoid]"),
+  ).toBeTruthy();
 });

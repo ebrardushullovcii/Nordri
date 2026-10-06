@@ -1,4 +1,5 @@
 import { afterEach, expect, test, vi } from "vitest";
+import { readPlanAssessment } from "./internal/plan-assessment";
 import type { JudgeJobFitsInput } from "@nordri/ai-providers";
 import { JobDiscoveryTargetSchema } from "@nordri/contracts";
 import {
@@ -102,13 +103,19 @@ test("changing remote geography has the model judge existing feed jobs again wit
   };
   await setRemote(true);
   await workspaceService.runAgentDiscovery();
-  const before = await repository.listSavedJobs();
+  const planId = (await workspaceService.getWorkspaceSnapshot())
+    .activeCampaignId;
+  const before = (await repository.listSavedJobs()).map((job) =>
+    readPlanAssessment(job, planId),
+  );
   expect(before).toHaveLength(6);
   const byLocation = (jobs: typeof before, location: string) =>
     jobs.find((job) => job.location === location)!;
   await setRemote(false);
   const repeat = await workspaceService.runAgentDiscovery();
-  const after = await repository.listSavedJobs();
+  const after = (await repository.listSavedJobs()).map((job) =>
+    readPlanAssessment(job, planId),
+  );
   expect(after.map((job) => job.id).sort()).toEqual(
     before.map((job) => job.id).sort(),
   );

@@ -147,6 +147,7 @@ export function ProfileScreen(props: {
   onSaveAll: (
     profile: CandidateProfile,
     searchPreferences: JobSearchPreferences,
+    savedSection?: "sources",
   ) => void;
   onVerifySourceInstructions: (targetId: string, instructionId: string) => void;
   latestResumeImportReviewCandidates: readonly ResumeImportFieldCandidateSummary[];
@@ -542,7 +543,11 @@ export function ProfileScreen(props: {
     }
 
     setValidationMessage(null);
-    onSaveAll(profileResult.payload, preferencesResult.payload);
+    onSaveAll(
+      profileResult.payload,
+      preferencesResult.payload,
+      activeSection === "sources" ? "sources" : undefined,
+    );
   }
 
   function handleResumeIdentityChoice(choice: "profile_name" | "resume_name") {

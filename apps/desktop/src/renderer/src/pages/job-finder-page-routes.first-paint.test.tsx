@@ -423,6 +423,17 @@ describe("canonical route first paint", () => {
 
   it("opens a browser session from Home without forwarding the React click event", async () => {
     const context = createContext();
+    context.workspace = {
+      ...context.workspace,
+      campaigns: context.workspace.campaigns.map((plan) => ({
+        ...plan,
+        searchPreferences: {
+          ...plan.searchPreferences,
+          discovery: context.workspace.searchPreferences.discovery,
+        },
+        sourceTargetIds: ["source_1"],
+      })),
+    };
     const onOpenBrowserSession = vi.fn();
     context.onOpenBrowserSession = onOpenBrowserSession;
     context.discoveryRunFeedback = createDiscoveryRunInterruptedFeedback({

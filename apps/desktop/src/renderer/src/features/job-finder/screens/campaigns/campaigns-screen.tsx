@@ -115,11 +115,24 @@ const runOutcomeLabels: Record<
   NonNullable<JobSearchCampaignSchedule["runFacts"]["lastRunOutcome"]>,
   string
 > = {
-  success: "succeeded",
-  partial: "partially completed",
-  failed: "failed",
-  skipped: "skipped",
+  success: "Finished",
+  partial: "Finished with some sources incomplete",
+  failed: "Failed",
+  skipped: "Skipped",
 };
+
+function describePlanHistory(
+  entry: JobSearchCampaign["history"][number],
+): string {
+  if (entry.kind === "activated") return "Made current.";
+  if (entry.kind === "created") {
+    if (entry.summary.endsWith("created in precision mode."))
+      return "Created with the Focused search setting.";
+    if (entry.summary.endsWith("created in scale mode."))
+      return "Created with the Wider search setting.";
+  }
+  return entry.summary;
+}
 
 function localTimeZone(): string {
   return deviceTimeZone();
@@ -1708,6 +1721,10 @@ export function CampaignsScreen(props: {
     knownIds: readonly string[];
     resolvedId: string | null;
   } | null>(null);
+  useEffect(() => {
+    if (createdPlanNotice?.resolvedId === props.activeCampaignId)
+      setCreatedPlanNotice(null);
+  }, [createdPlanNotice, props.activeCampaignId]);
   const campaignIdsRef = useRef<readonly string[]>([]);
   useEffect(() => {
     campaignIdsRef.current = props.campaigns.map((campaign) => campaign.id);
@@ -2328,7 +2345,7 @@ export function CampaignsScreen(props: {
                               {formatPlanCardDateTime(entry.occurredAt) ??
                                 "Unknown time"}
                             </span>{" "}
-                            — {entry.summary}
+                            — {describePlanHistory(entry)}
                           </li>
                         ))}
                       </ol>
@@ -2388,7 +2405,10 @@ export function CampaignsScreen(props: {
                       </div>
                     </div>
                   ) : null}
-                  <div className="flex flex-wrap items-center justify-end gap-2">
+                  <div
+                    data-toast-avoid
+                    className="flex flex-wrap items-center justify-end gap-2"
+                  >
                     {/* One search runs at a time. The service refuses a second
                       one with this exact sentence, so the button says it here
                       instead of looking like a click that did nothing. */}

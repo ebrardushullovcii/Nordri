@@ -194,6 +194,7 @@ function buildScreen(overrides?: {
   onRunAgentDiscovery?: () => void;
   onResumeActivity?: () => void;
   selectedJob?: SavedJob;
+  searchSelectivity?: "wide_net" | "best_matches";
 }) {
   return (
     <MemoryRouter>
@@ -213,6 +214,7 @@ function buildScreen(overrides?: {
         isJobPending={() => false}
         isTargetPending={() => false}
         jobs={overrides?.jobs ?? [createJob("strong")]}
+        searchSelectivity={overrides?.searchSelectivity ?? null}
         dismissedJobs={[]}
         liveEvents={[]}
         onDismissJob={vi.fn()}
@@ -788,53 +790,91 @@ it.each(["reading_listings", "judging_fit"] as const)(
     });
     renderScreen({ activeRun: run, isDiscoveryAllPending: true });
     expect(
-      screen.getByText(
+      screen.getAllByText(
         new RegExp(
           `${phase === "reading_listings" ? "Reading listings" : "Judging fit"} 12 of 60`,
         ),
       ),
-    ).toBeTruthy();
+    ).toHaveLength(2);
   },
 );
 
-it("announces jobs moved to weaker matches once when a search finishes", () => {
-  const before = createJob("one");
-  const after = {
-    ...before,
-    discoveryMethod: "json_ld",
-    matchAssessment: {
-      score: 20,
-      recommendation: "skip",
-      contextFingerprint: "context",
-      postingFingerprint: "posting",
-      judgment: {
-        source: "batch",
+it.each([false, true])(
+  "announces jobs moved to weaker matches once when a search finishes (shown: %s)",
+  (alreadyShown) => {
+    const before = createJob("one");
+    const after = {
+      ...before,
+      discoveryMethod: "json_ld",
+      matchAssessment: {
         score: 20,
-        role: "conflict",
-        preferences: "conflict",
-        locationReach: "outside_area",
+        recommendation: "skip",
+        contextFingerprint: "context",
+        postingFingerprint: "posting",
+        judgment: {
+          source: "batch",
+          score: 20,
+          role: "conflict",
+          preferences: "conflict",
+          locationReach: "outside_area",
+        },
       },
-    },
-  } as unknown as SavedJob;
+    } as unknown as SavedJob;
+    const view = render(
+      <ToastProvider>
+        {buildScreen({
+          activeRun: runningRun,
+          jobs: [before],
+          searchSelectivity: alreadyShown ? "wide_net" : "best_matches",
+        })}
+      </ToastProvider>,
+    );
+    view.rerender(
+      <ToastProvider>
+        {buildScreen({
+          activeRun: null,
+          jobs: [after],
+          searchSelectivity: alreadyShown ? "wide_net" : "best_matches",
+        })}
+      </ToastProvider>,
+    );
+    expect(
+      screen.getAllByText("1 job moved to weaker matches after the fit check."),
+    ).toHaveLength(1);
+    view.rerender(
+      <ToastProvider>
+        {buildScreen({
+          activeRun: null,
+          jobs: [after],
+          searchSelectivity: alreadyShown ? "wide_net" : "best_matches",
+        })}
+      </ToastProvider>,
+    );
+    expect(
+      screen.getAllByText("1 job moved to weaker matches after the fit check."),
+    ).toHaveLength(1);
+  },
+);
+
+it("announces jobs that leave the plan once at the end of a search", () => {
   const view = render(
     <ToastProvider>
-      {buildScreen({ activeRun: runningRun, jobs: [before] })}
+      {buildScreen({ activeRun: runningRun, jobs: [createJob("leaving")] })}
     </ToastProvider>,
   );
   view.rerender(
-    <ToastProvider>
-      {buildScreen({ activeRun: null, jobs: [after] })}
-    </ToastProvider>,
+    <ToastProvider>{buildScreen({ activeRun: null, jobs: [] })}</ToastProvider>,
   );
   expect(
-    screen.getAllByText("1 job moved to weaker matches after the fit check."),
+    screen.getAllByText("1 job left this plan after the fit check."),
   ).toHaveLength(1);
+  expect(
+    screen.queryByRole("button", { name: "Show weaker matches" }),
+  ).toBeNull();
   view.rerender(
-    <ToastProvider>
-      {buildScreen({ activeRun: null, jobs: [after] })}
-    </ToastProvider>,
+    <ToastProvider>{buildScreen({ activeRun: null, jobs: [] })}</ToastProvider>,
   );
   expect(
-    screen.getAllByText("1 job moved to weaker matches after the fit check."),
+    screen.getAllByText("1 job left this plan after the fit check."),
   ).toHaveLength(1);
 });

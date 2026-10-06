@@ -847,7 +847,10 @@ export function DiscoveryHistoryModal(props: {
                                       rejected · {counts.duplicates} duplicates
                                       · {counts.deferred} deferred ·{" "}
                                       {counts.pagesCovered ?? "Not recorded"}{" "}
-                                      pages covered.
+                                      {counts.pagesCovered === 1
+                                        ? "page"
+                                        : "pages"}{" "}
+                                      covered.
                                     </p>
                                   ))}
                                 {execution?.rejectedListings?.length ? (

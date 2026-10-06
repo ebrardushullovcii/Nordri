@@ -828,37 +828,45 @@ describe("apply policy executor", () => {
     expect(setToggle).not.toHaveBeenCalledWith("c2", true);
   });
 
-  test("a declaration the person pre-approved is ticked and recorded as theirs", async () => {
-    const page = rawPage({
-      controls: [
-        rawControl({
-          index: 0,
-          inputType: "checkbox",
-          label:
-            "I certify that the information I have given is true and complete",
-        }),
-      ],
-    });
-    const { config } = configFor(page, {
-      authority: {
-        preApprovedAttestationKinds: ["truthfulness_certification"],
-      },
-    });
-    const observation = observationOf(page);
+  test.each([
+    [
+      "truthfulness_certification",
+      "I certify that the information I have given is true and complete",
+    ],
+    ["background_check_consent", "I consent to a background check"],
+  ] as const)(
+    "a %s declaration approved in Settings keeps that source",
+    async (kind, label) => {
+      const page = rawPage({
+        controls: [
+          rawControl({
+            index: 0,
+            inputType: "checkbox",
+            label,
+          }),
+        ],
+      });
+      const { config } = configFor(page, {
+        authority: {
+          preApprovedAttestationKinds: [kind],
+        },
+      });
+      const observation = observationOf(page);
 
-    const outcome = await executeApplyProposal(
-      { tool: "set_checkbox", ref: "c0", checked: true },
-      observation.signature,
-      { config, now, guardState: createApplyGuardState() },
-    );
-
-    expect(outcome.kind).toBe("filled");
-    if (outcome.kind === "filled") {
-      expect(outcome.filled.answer.provenanceLabel).toBe(
-        "your Settings (on by default)",
+      const outcome = await executeApplyProposal(
+        { tool: "set_checkbox", ref: "c0", checked: true },
+        observation.signature,
+        { config, now, guardState: createApplyGuardState() },
       );
-    }
-  });
+
+      expect(outcome.kind).toBe("filled");
+      if (outcome.kind === "filled") {
+        expect(outcome.filled.answer.provenanceLabel).toBe(
+          "your Settings (on by default)",
+        );
+      }
+    },
+  );
 
   test.each(["set_checkbox", "click"] as const)(
     "a radio choice the facts do not support is not made, through %s",
@@ -4223,4 +4231,41 @@ test("does not guess a replacement when a recorded letter field is on another st
   });
   expect(result).toBeNull();
   expect(fill).not.toHaveBeenCalled();
+});
+
+test("keeps a generated numeric suggestion's real source for later review", () => {
+  const control = observationOf(
+    rawPage({
+      controls: [
+        rawControl({
+          index: 0,
+          label: "Years of reporting experience",
+          inputType: "text",
+        }),
+      ],
+    }),
+  ).controls[0]!;
+  const question = buildPendingQuestion({
+    control,
+    jobId: "synthetic",
+    detectedAt: "2026-10-05T10:00:00Z",
+    suggestion: {
+      value: "0",
+      kind: control.questionKind,
+      sourceKind: "generated",
+      sourceId: "generated.reporting",
+      provenanceLabel: "your profile",
+      groundedIn: ["your profile"],
+    },
+  });
+  expect(question.suggestedAnswers[0]).toMatchObject({
+    sourceKind: "prior_answer",
+    provenance: [
+      {
+        sourceId: "generated.reporting",
+        label: "your profile",
+        sourceKind: "prior_answer",
+      },
+    ],
+  });
 });

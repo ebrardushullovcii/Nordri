@@ -77,6 +77,7 @@ function buildProfileScreenProps(
   overrides: {
     onSaveAll?: ProfileScreenProps["onSaveAll"];
     profile?: CandidateProfile;
+    searchPreferences?: JobSearchPreferences;
   } = {},
 ): ProfileScreenProps {
   const props: ProfileScreenProps = {
@@ -115,7 +116,7 @@ function buildProfileScreenProps(
     profileSetupState,
     recentSourceDebugRuns: [],
     resumeImportProgress: null,
-    searchPreferences,
+    searchPreferences: overrides.searchPreferences ?? searchPreferences,
     sourceAccessPrompts: [],
     sourceInstructionArtifacts: [],
   };
@@ -136,6 +137,7 @@ function renderProfileScreen(
     initialEntry?: string;
     onSaveAll?: ProfileScreenProps["onSaveAll"];
     profile?: CandidateProfile;
+    searchPreferences?: JobSearchPreferences;
   } = {},
 ): ReturnType<typeof render> {
   return render(
@@ -1003,5 +1005,36 @@ describe("ProfileScreen ready-state density and save-bar footprint", () => {
       screen.getByRole<HTMLButtonElement>("button", { name: "Save changes" })
         .disabled,
     ).toBe(true);
+  });
+
+  it("carries the Job sources section through its save so the notice names it", () => {
+    const onSaveAll = vi.fn();
+    renderProfileScreen({
+      initialEntry: "/job-finder/profile?section=sources&focus=job-sources",
+      onSaveAll,
+      searchPreferences: JobSearchPreferencesSchema.parse({
+        ...searchPreferences,
+        discovery: {
+          ...searchPreferences.discovery,
+          targets: [
+            {
+              id: "synthetic-source",
+              label: "Example careers",
+              startingUrl: "https://careers.example.com",
+              enabled: true,
+            },
+          ],
+        },
+      }),
+    });
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: /Include .* in searches/ }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    expect(onSaveAll).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      "sources",
+    );
   });
 });

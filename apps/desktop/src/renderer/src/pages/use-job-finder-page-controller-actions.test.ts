@@ -3231,3 +3231,38 @@ it("uses warning toast tone unless every selected send has site confirmation", (
     "submitted";
   expect(preparedApplicationsToastTone(snapshot, ["job"])).toBe("success");
 });
+
+it("names only Job sources when that Profile section is saved", () => {
+  const runSaveAction = vi.fn().mockResolvedValue(true);
+  const pageActions = createPrimaryPageActions({
+    actions: { saveWorkspaceInputs: vi.fn() },
+    runSaveAction,
+  } as unknown as Parameters<typeof createPrimaryPageActions>[0]);
+  pageActions.onSaveAll(
+    CandidateProfileSchema.parse({
+      id: "synthetic",
+      fullName: "Synthetic Applicant",
+      yearsExperience: 0,
+      baseResume: {
+        id: "resume",
+        fileName: "synthetic.txt",
+        uploadedAt: "2026-10-05T10:00:00Z",
+        extractionStatus: "ready",
+      },
+    }),
+    JobSearchPreferencesSchema.parse({
+      minimumSalaryUsd: 0,
+      approvalMode: "review_before_submit",
+      tailoringMode: "balanced",
+    }),
+    "sources",
+  );
+  expect(runSaveAction).toHaveBeenCalledWith(
+    expect.objectContaining({
+      label: "Job sources",
+      savedMessage: "Job sources saved.",
+      failedFallback:
+        "Job sources were not saved. Retry before leaving this page.",
+    }),
+  );
+});

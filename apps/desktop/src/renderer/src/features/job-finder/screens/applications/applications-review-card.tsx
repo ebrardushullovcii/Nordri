@@ -76,8 +76,11 @@ export function ApplicationsReviewCard({
           Read this before you send it
         </h3>
         <p className="text-(length:--text-description) leading-5 text-foreground-soft">
-          Job Finder filled this in on {card.siteLabel}. Nothing has been sent
-          yet. Everything it wrote is below, with where each answer came from.
+          {card.answers.length > 0 ||
+          card.attachments.length > 0 ||
+          card.letter?.fields?.length
+            ? `Job Finder filled in the items below on ${card.siteLabel}. Nothing has been sent yet.`
+            : `Nothing has been filled in on ${card.siteLabel} yet. Nothing has been sent.`}
         </p>
         {card.pageUrl ? (
           <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -175,8 +178,10 @@ export function ApplicationsReviewCard({
               className="grid gap-2 rounded-(--radius-field) border border-warning/40 bg-warning/8 px-3.5 py-3"
             >
               <p>
-                The form still holds the earlier letter. Prepare again to attach
-                the letter you approved.
+                {card.letter.fields?.length
+                  ? "The form still holds the earlier letter."
+                  : "The approved letter has not been added to the form yet."}{" "}
+                Prepare again to attach the letter you approved.
               </p>
               {onPrepareAgain ? (
                 <Button

@@ -1,4 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
+import { readPlanAssessment, withPlanAssessment } from "./plan-assessment";
 import type { JobRequirementAssessment } from "@nordri/contracts";
 import {
   createSeed,
@@ -427,6 +428,12 @@ test("changed goals refresh a full assessment with a full read, not a batch (R3-
         html: "",
       }),
   });
+  const planId = (await workspaceService.getWorkspaceSnapshot())
+    .activeCampaignId;
+  await repository.commitSavedJobDelta({
+    update: (stored) =>
+      stored.id === job.id ? withPlanAssessment(stored, planId, full) : stored,
+  });
   await workspaceService.runDiscovery().catch((error: unknown) => {
     // This source fixture has no new listings. Existing jobs still need a
     // fresh full comparison when the saved goals change.
@@ -435,8 +442,10 @@ test("changed goals refresh a full assessment with a full read, not a batch (R3-
   });
   expect(assessJobFit).toHaveBeenCalled();
   expect(
-    (await repository.listSavedJobs()).find((entry) => entry.id === job.id)
-      ?.matchAssessment,
+    readPlanAssessment(
+      (await repository.listSavedJobs()).find((entry) => entry.id === job.id)!,
+      planId,
+    ).matchAssessment,
   ).toMatchObject({
     score: 32,
     judgment: { source: "full" },

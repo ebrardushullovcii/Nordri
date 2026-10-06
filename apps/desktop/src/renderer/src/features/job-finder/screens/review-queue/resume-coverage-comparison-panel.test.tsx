@@ -303,3 +303,27 @@ it("pairs a translated or bilingual achievement by source identity without word 
   });
   expect(result.rows[0]?.kind).toBe("reworded");
 });
+
+it("pairs translated lines by source even when their wording has no overlap", () => {
+  const rows = buildResumeCoverageComparisonRows({
+    removedClaims: [
+      {
+        field: "bullet",
+        text: "Managed customer orders",
+        restorable: true,
+        sourceAchievementIds: ["experience:role:achievement:0"],
+      },
+    ],
+    addedClaims: [
+      {
+        field: "bullet",
+        text: "Bearbeitung von Kundenaufträgen",
+        restorable: false,
+        sourceAchievementIds: ["experience:role:achievement:0"],
+      },
+    ],
+  });
+  expect(rows.removedLineCount).toBe(0);
+  expect(rows.addedLineCount).toBe(0);
+  expect(rows.rows[0]?.kind).toBe("reworded");
+});

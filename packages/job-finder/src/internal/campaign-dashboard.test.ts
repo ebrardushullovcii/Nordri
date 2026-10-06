@@ -41,7 +41,7 @@ import { enrichSearchPreferencesFromProfile } from "./workspace-helpers";
 import { withSavedJobSearchBehavior } from "./job-search-behavior";
 import { createSavedJob, createSeed } from "../workspace-service.test-fixtures";
 
-function savedJob(id: string, score: number) {
+function savedJob(id: string, score: number, planId = "campaign_precision") {
   const job = createSavedJob({
     id,
     source: "target_site",
@@ -98,6 +98,7 @@ function savedJob(id: string, score: number) {
     ),
     postingFingerprint: createMatchAssessmentPostingFingerprint(job),
   };
+  job.planAssessments = { [planId]: job.matchAssessment };
   return job;
 }
 
@@ -539,9 +540,9 @@ describe("campaign workspace core", () => {
   test("retains discovery-only staged jobs so the active campaign can display them", async () => {
     const seed = createSeed();
     const jobs = [
-      savedJob("staged_low", 40),
-      savedJob("staged_mid", 75),
-      savedJob("staged_high", 95),
+      savedJob("staged_low", 40, "campaign_discovery_only"),
+      savedJob("staged_mid", 75, "campaign_discovery_only"),
+      savedJob("staged_high", 95, "campaign_discovery_only"),
     ];
     const target = seed.searchPreferences.discovery.targets[0];
     if (!target) throw new Error("Expected a saved source.");

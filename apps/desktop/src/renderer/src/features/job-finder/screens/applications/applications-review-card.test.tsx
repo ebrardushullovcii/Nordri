@@ -280,7 +280,12 @@ it("shows the earlier-letter warning beside the letter and prepares again instea
     <ApplicationsReviewCard
       card={{
         ...original,
-        letter: { text: "Earlier letter", groundedIn: [], needsRefresh: true },
+        letter: {
+          text: "Earlier letter",
+          groundedIn: [],
+          needsRefresh: true,
+          fields: ["Cover letter"],
+        },
       }}
       onSubmit={onSubmit}
       onPrepareAgain={onPrepareAgain}
@@ -307,4 +312,32 @@ it("shows the answer review in prepare-only mode without a Job Finder send contr
     screen.queryByRole("button", { name: "Submit application" }),
   ).toBeNull();
   expect(screen.getByRole("button", { name: "Open this page" })).toBeTruthy();
+});
+
+it("does not claim a blank form was filled or holds an earlier letter", () => {
+  render(
+    <ApplicationsReviewCard
+      card={ApplicationReviewCardSchema.parse({
+        siteLabel: "Example",
+        preparedAt: "2026-10-05T10:00:00Z",
+        answers: [],
+        attachments: [],
+        waitingOnYou: [],
+        letter: { text: "Approved draft", groundedIn: [], needsRefresh: true },
+      })}
+    />,
+  );
+  expect(
+    screen.getByText(
+      "Nothing has been filled in on Example yet. Nothing has been sent.",
+    ),
+  ).toBeTruthy();
+  expect(
+    screen.getByText(/The approved letter has not been added to the form yet/),
+  ).toBeTruthy();
+  expect(
+    screen.queryByText(
+      /still holds the earlier letter|Job Finder filled this in/,
+    ),
+  ).toBeNull();
 });

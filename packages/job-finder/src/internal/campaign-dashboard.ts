@@ -427,7 +427,7 @@ export function createCampaign(input: {
         campaignId: input.id,
         kind: "created",
         occurredAt: input.now,
-        summary: `${input.name} created in ${input.mode} mode.`,
+        summary: `${input.name} created with the ${input.mode === "precision" ? "Focused search" : "Wider search"} setting.`,
         discoveryRunId: null,
       },
     ],

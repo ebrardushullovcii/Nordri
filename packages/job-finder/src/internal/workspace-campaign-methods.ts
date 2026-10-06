@@ -460,7 +460,10 @@ export async function commitCampaignRunTerminal(input: {
       const assessment = !jobNeedsFitJudgment(job, session.contextFingerprint)
         ? job.matchAssessment
         : session.assess({ ...job, matchAssessment: null });
-      return withPlanAssessment(job, campaign.id, assessment);
+      return readPlanAssessment(
+        withPlanAssessment(job, campaign.id, assessment),
+        campaign.id,
+      );
     });
     const assessedById = new Map(candidateJobs.map((job) => [job.id, job]));
     const measuredAt = latestRun.completedAt ?? latestRun.startedAt;
@@ -1287,7 +1290,7 @@ export function createWorkspaceCampaignMethods(input: {
                           campaignId: campaign.id,
                           kind: "activated",
                           occurredAt: now,
-                          summary: `${campaign.name} selected as the active campaign.`,
+                          summary: `${campaign.name} made current.`,
                           discoveryRunId: null,
                         },
                         ...campaign.history,

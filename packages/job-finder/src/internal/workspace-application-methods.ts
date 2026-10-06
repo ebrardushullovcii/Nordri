@@ -674,7 +674,9 @@ export function createWorkspaceApplicationMethods(
                 assessmentPlanId,
                 next.matchAssessment,
               ).planAssessments,
-              matchAssessment: next.matchAssessment,
+              matchAssessment: assessmentPlanId
+                ? current.matchAssessment
+                : next.matchAssessment,
             }
           : current;
       await ctx.repository.commitSavedJobDelta({
