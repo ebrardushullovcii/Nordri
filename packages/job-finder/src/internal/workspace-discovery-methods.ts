@@ -1676,6 +1676,18 @@ export function createWorkspaceDiscoveryMethods(
     // Every posting this run retained (new or re-seen), by saved-job id: the
     // population the listing-detail read stage is allowed to touch.
     const runRetainedJobIds = new Set<string>();
+    // The saved-job id each target's postings were actually stored under. A
+    // site's own job number is not an id: two sites can both have a job "2",
+    // and a new posting whose plain id is taken is stored under its own
+    // suffixed id. Plan membership reads these, never a rebuilt plain id.
+    const landedJobIdsByTarget = new Map<string, Set<string>>();
+    const landedJobIdsFor = (targetId: string): Set<string> => {
+      const existing = landedJobIdsByTarget.get(targetId);
+      if (existing) return existing;
+      const created = new Set<string>();
+      landedJobIdsByTarget.set(targetId, created);
+      return created;
+    };
     const touchedPendingJobIds = new Set<string>();
     workingSavedJobs
       .filter(belongsToSearchPlan)
@@ -2346,10 +2358,11 @@ export function createWorkspaceDiscoveryMethods(
             toSightingIdentityInput,
           );
           for (const posting of budgetedPostings) {
-            runRetainedJobIds.add(
-              mergeIdentityIndex.find({ ...posting, matchAcrossSources: true })
-                ?.id ?? toSavedJobId(posting),
-            );
+            const known = mergeIdentityIndex.find({
+              ...posting,
+              matchAcrossSources: true,
+            });
+            if (known) runRetainedJobIds.add(known.id);
           }
           const mergeResult = mergeDiscoveredPostings(
             profile,
@@ -2393,6 +2406,21 @@ export function createWorkspaceDiscoveryMethods(
               ? job
               : (beforeMergeById.get(job.id) ?? job),
           );
+          const landedIndex = createJobIdentityIndex(
+            mergeResult.mergedJobs,
+            toSightingIdentityInput,
+          );
+          const landed = landedJobIdsFor(target.id);
+          for (const posting of budgetedPostings) {
+            const stored = landedIndex.find({
+              ...posting,
+              matchAcrossSources: true,
+            });
+            if (stored) {
+              runRetainedJobIds.add(stored.id);
+              landed.add(stored.id);
+            }
+          }
           resumeAffectingChangedJobIds.push(
             ...collectResumeAffectingChangedJobIds(
               mergeSeedJobs,
@@ -2690,9 +2718,20 @@ export function createWorkspaceDiscoveryMethods(
             // list before that happens.
             encounteredJobIds: uniqueStrings([
               ...entry.encounteredJobIds,
-              ...checkpoint.collectedJobs.map((posting) =>
-                toSavedJobId(posting),
-              ),
+              ...landedJobIdsFor(target.id),
+              ...(() => {
+                const index = createJobIdentityIndex(
+                  mergeSavedJobs(workingSavedJobs, workingPendingJobs),
+                  toSightingIdentityInput,
+                );
+                return checkpoint.collectedJobs.flatMap((posting) => {
+                  const stored = index.find({
+                    ...posting,
+                    matchAcrossSources: true,
+                  });
+                  return stored ? [stored.id] : [];
+                });
+              })(),
             ]),
           }));
 
@@ -2872,9 +2911,9 @@ export function createWorkspaceDiscoveryMethods(
             recordActivity(checkpointEvent);
             await persistTargetWorkingState();
             checkpointState.persistedCheckpointRevision = checkpoint.revision;
-            await addKeptJobsToRunningPlan(
-              checkpointJobs.map((posting) => toSavedJobId(posting)),
-            );
+            // The ids these postings were stored under; a site's own job
+            // number can name another site's job.
+            await addKeptJobsToRunningPlan([...landedJobIdsFor(target.id)]);
             publishActivity(checkpointEvent);
           } catch (error) {
             const interrupted =
@@ -3043,13 +3082,16 @@ export function createWorkspaceDiscoveryMethods(
           mergeSavedJobs(workingSavedJobs, workingPendingJobs),
           toSightingIdentityInput,
         );
+        const collectedStoredIds: string[] = [];
         for (const posting of collectedJobs) {
-          runRetainedJobIds.add(
-            collectedIdentityIndex.find({
-              ...posting,
-              matchAcrossSources: true,
-            })?.id ?? toSavedJobId(posting),
-          );
+          const stored = collectedIdentityIndex.find({
+            ...posting,
+            matchAcrossSources: true,
+          });
+          if (stored) {
+            runRetainedJobIds.add(stored.id);
+            collectedStoredIds.push(stored.id);
+          }
         }
         const collectedProviderKey = getDiscoveryProviderKey({
           target,
@@ -3065,7 +3107,8 @@ export function createWorkspaceDiscoveryMethods(
           // single pass and left no resume checkpoint behind.
           encounteredJobIds: uniqueStrings([
             ...entry.encounteredJobIds,
-            ...collectedJobs.map((posting) => toSavedJobId(posting)),
+            ...landedJobIdsFor(target.id),
+            ...collectedStoredIds,
           ]),
           compactionState:
             collected.result.agentMetadata?.compactionState ?? null,
@@ -3292,6 +3335,12 @@ export function createWorkspaceDiscoveryMethods(
               ? { pagesCovered: collected.result.agentMetadata.pagesCovered }
               : {}),
             state: targetFailed ? "failed" : "completed",
+            encounteredJobIds: uniqueStrings([
+              ...(activeRun.targetExecutions.find(
+                (entry) => entry.targetId === target.id,
+              )?.encounteredJobIds ?? []),
+              ...landedJobIdsFor(target.id),
+            ]),
             requestedJobBudget:
               runJobBudget == null ? null : discoveryBudget.targetJobCount,
             // Execution truth is cumulative across checkpoint flushes and the

@@ -361,3 +361,49 @@ test("a new one-source plan keeps the same jobs after its first and second searc
     seed.savedJobs.length + 2,
   );
 }, 30_000);
+
+test("a plan never takes in another board's job that has the same job number", async () => {
+  const seed = seedWithBoard();
+  // Another board's job 1, already saved under the plain id this search's
+  // own job 1 would have had.
+  const template = createSeed().savedJobs[0]!;
+  const otherBoardJob = {
+    ...template,
+    id: "job_target_site_1",
+    source: "target_site" as const,
+    sourceJobId: "1",
+    title: "Account Executive",
+    company: "Elsewhere",
+    canonicalUrl: "https://job-boards.greenhouse.io/elsewhere/jobs/1",
+    applicationUrl: "https://job-boards.greenhouse.io/elsewhere/jobs/1",
+    status: "discovered" as const,
+  };
+  seed.savedJobs = [otherBoardJob];
+  const { workspaceService } = createWorkspaceServiceHarness({ seed });
+  const initial = await workspaceService.getWorkspaceSnapshot();
+  const created = await workspaceService.saveCampaign(
+    SaveJobSearchCampaignInputSchema.parse({
+      ...initial.campaigns[0]!,
+      id: null,
+      name: "One source",
+      sourceSelectionMode: "selected",
+      sourceTargetIds: ["fit"],
+    }),
+  );
+  const plan = created.campaigns.find(
+    (candidate) => candidate.name === "One source",
+  )!;
+  await workspaceService.selectCampaign(plan.id);
+  for (let search = 0; search < 2; search += 1) {
+    const after = await workspaceService.runAgentDiscovery();
+    const jobIds = after.campaigns.find(
+      (candidate) => candidate.id === plan.id,
+    )!.jobIds;
+    expect(jobIds).not.toContain(otherBoardJob.id);
+    expect(jobIds).toHaveLength(2);
+    const urls = after.discoveryJobs
+      .filter((job) => jobIds.includes(job.id))
+      .map((job) => job.canonicalUrl);
+    expect(urls.every((url) => url.includes("/fit-fixture/"))).toBe(true);
+  }
+}, 30_000);

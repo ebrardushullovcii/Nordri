@@ -259,6 +259,8 @@ export async function runJobSearchAgent(
   const coveredPageKeys = new Set<string>();
   const inspectedPageUrls: string[] = [];
   const lastReadMovementByUrl = new Map<string, number>();
+  // Addresses the model said are not listing pages (sign-in, help, about).
+  const nonListingUrls = new Set<string>();
   let pageMovementRevision = 0;
   const recordListingRead = (url: string, text: string) => {
     const pageKey = `${url}\n${text}`;
@@ -1049,6 +1051,12 @@ export async function runJobSearchAgent(
             ["search_results", "job_detail"].includes(String(args.pageType))
           )
             recordListingRead(observation.url, observation.bodyTextExcerpt);
+          if (
+            outcome.kind === "ok" &&
+            observation?.url &&
+            String(args.pageType) === "other"
+          )
+            nonListingUrls.add(observation.url);
           return outcome;
         },
       });
@@ -1242,8 +1250,36 @@ export async function runJobSearchAgent(
         })
       : null;
 
-    // Visiting an address is not evidence that its job listings were read.
+    // Pages covered: every listing page read, plus every other address the
+    // search visited (numbered pages and search results the model moved
+    // through without marking a read), except a posting's own page and a
+    // page the model said is not a listing page. An address counts once
+    // unless a read saw a new page there.
+    const pageAddress = (url: string) =>
+      (url.split("#")[0] ?? url).replace(/\/(?=$|\?)/u, "");
+    const postingAddresses = new Set(
+      [...collected, ...inspectedCatalog.values()].flatMap((job) =>
+        [job.canonicalUrl, job.applicationUrl]
+          .filter((url): url is string => Boolean(url))
+          .map(pageAddress),
+      ),
+    );
     const coveredPageUrls = [...inspectedPageUrls];
+    const coveredAddresses = new Set([
+      ...coveredPageUrls.map(pageAddress),
+      ...[...nonListingUrls].map(pageAddress),
+    ]);
+    for (const url of pageTools.state.visitedUrls) {
+      const address = pageAddress(url);
+      if (
+        !/^https?:/iu.test(url) ||
+        postingAddresses.has(address) ||
+        coveredAddresses.has(address)
+      )
+        continue;
+      coveredAddresses.add(address);
+      coveredPageUrls.push(url);
+    }
     return {
       deferredListingPageUrls: [...inspectedCatalog]
         .filter(([key]) => !known.has(key))

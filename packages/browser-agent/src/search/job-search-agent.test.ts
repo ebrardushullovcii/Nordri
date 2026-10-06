@@ -2006,21 +2006,64 @@ test("one results page read repeatedly with changing text is one page covered", 
   expect(result.coveredPageUrls).toEqual([pages.current.url]);
 });
 
-test("counts pages actually read instead of addresses only visited", async () => {
+test("counts results pages, not a page marked as something else", async () => {
   const pages = { current: rawPage() };
   const result = await runJobSearchAgent({
     hands: hands(pages),
     config: config(),
     llmClient: scripted([
       { name: "navigate", args: { url: "https://jobs.example.test/about" } },
+      { name: "observe", args: { pageType: "other" } },
       { name: "navigate", args: { url: "https://jobs.example.test/results" } },
       { name: "extract_jobs", args: { pageType: "search_results" } },
       { name: "finish", args: { reason: "Read the one results page" } },
     ]),
     jobExtractor: { extractJobsFromPage: () => Promise.resolve([]) },
   });
-  expect(result.pagesCovered).toBe(1);
-  expect(result.coveredPageUrls).toEqual(["https://jobs.example.test/results"]);
+  // The start page it landed on is a results page; the about page is not.
+  expect(result.pagesCovered).toBe(2);
+  expect(result.coveredPageUrls).toEqual([
+    "https://jobs.example.test/results",
+    "https://jobs.example.test/search?q=engineer",
+  ]);
+});
+
+test("counts every results page moved through, but not a posting's own page", async () => {
+  const pages = { current: rawPage() };
+  const result = await runJobSearchAgent({
+    hands: hands(pages),
+    config: config(),
+    llmClient: scripted([
+      { name: "extract_jobs", args: { pageType: "search_results" } },
+      {
+        name: "navigate",
+        args: { url: "https://jobs.example.test/search?q=engineer&page=2" },
+      },
+      {
+        name: "navigate",
+        args: { url: "https://jobs.example.test/search?q=engineer&page=3" },
+      },
+      {
+        name: "navigate",
+        args: { url: "https://jobs.example.test/search?q=engineer&page=3#top" },
+      },
+      { name: "navigate", args: { url: "https://jobs.example.test/jobs/j1" } },
+      { name: "finish", args: { reason: "Read three results pages" } },
+    ]),
+    jobExtractor: {
+      extractJobsFromPage: () =>
+        Promise.resolve([
+          {
+            ...posting("Platform Engineer", "Northwind", "j1"),
+            canonicalUrl: "https://jobs.example.test/jobs/j1",
+          },
+        ]),
+    },
+  });
+  expect(result.pagesCovered).toBe(3);
+  expect(result.coveredPageUrls).not.toContain(
+    "https://jobs.example.test/jobs/j1",
+  );
 });
 
 test("counts paginated and keyword result reads even when no extraction is needed", async () => {
