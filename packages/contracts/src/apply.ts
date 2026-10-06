@@ -896,6 +896,8 @@ const ApplicationPreparationStartedLocalDateSchema = z
 export const ApplicationReviewAnswerSchema = z
   .object({
     fieldKey: NonEmptyStringSchema.max(2_000).optional(),
+    /** The run's stored fact or saved answer; observed values use observed.*. */
+    sourceId: NonEmptyStringSchema.optional(),
     question: NonEmptyStringSchema.max(2_000),
     answer: NonEmptyStringSchema.max(12_000),
     source: NonEmptyStringSchema.max(240),

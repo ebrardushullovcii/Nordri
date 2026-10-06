@@ -745,7 +745,7 @@ async function runMeasuredApplyAgent(
           outcome.pause.question?.kind === "cover_letter"
         ) {
           const question = outcome.pause.question;
-          question.note = `${question.answerControlType === "file" ? "The form wants a letter file. Review the wording here; your answer will be attached as that file. " : ""}${outcome.pause.reviewDraft.reason}`;
+          question.note = `${question.answerControlType === "file" ? "The form wants a letter file. Your answer will be attached as that file. " : ""}${outcome.pause.reviewDraft.reason}`;
           question.answerControlType = "text";
           question.suggestedAnswers = [
             {
@@ -1735,7 +1735,7 @@ async function runMeasuredApplyAgent(
             suggestion: null,
             reason: created.reason,
           });
-          question.note = `${question.answerControlType === "file" ? "The form wants a letter file. Review the wording here; your answer will be attached as that file. " : ""}${created.reason}`;
+          question.note = `${question.answerControlType === "file" ? "The form wants a letter file. Your answer will be attached as that file. " : ""}${created.reason}`;
           question.answerControlType = "text";
           question.suggestedAnswers = [
             {

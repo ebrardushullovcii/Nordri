@@ -242,3 +242,84 @@ it("credits an answer the person gave in the app, stored as a suggestion until t
     "the filled application form",
   );
 });
+
+it.each([
+  ["answerLibrary.saved_declaration", "your answer to this question"],
+  ["applicationAnswer.approved_answer", "your answer to this question"],
+  [
+    "authority.attestation.background_check_consent",
+    "your Settings (on by default)",
+  ],
+])(
+  "keeps the run's declaration source %s without a question record",
+  (sourceId, source) => {
+    const at = "2026-10-06T10:00:00.000Z";
+    const card = ApplicationReviewCardSchema.parse({
+      siteLabel: "Example",
+      preparedAt: at,
+      answers: [
+        {
+          question: "I consent to a background check",
+          answer: "Yes",
+          source,
+          sourceId,
+          written: false,
+        },
+      ],
+    });
+    const details = ApplyRunDetailsSchema.parse({
+      run: {
+        id: "run",
+        state: "completed",
+        summary: "Prepared",
+        detail: "Ready",
+        jobIds: ["job"],
+        createdAt: at,
+        updatedAt: at,
+      },
+    });
+    expect(withPersonAnswerSources(card, details).answers[0]?.source).toBe(
+      source,
+    );
+  },
+);
+
+it.each([
+  undefined,
+  "observed.c0",
+  "generated.experience",
+  "answerLibrary.application_unused_suggestion",
+  "profile.experience",
+])(
+  "downgrades an unsupported claim about the person's zero answer (source id %s)",
+  (sourceId) => {
+    const at = "2026-10-06T10:00:00.000Z";
+    const card = ApplicationReviewCardSchema.parse({
+      siteLabel: "Example",
+      preparedAt: at,
+      answers: [
+        {
+          question: "Years of experience",
+          answer: "0",
+          source: "your answer to this question",
+          ...(sourceId ? { sourceId } : {}),
+          written: false,
+        },
+      ],
+    });
+    const details = ApplyRunDetailsSchema.parse({
+      run: {
+        id: "run",
+        state: "completed",
+        summary: "Prepared",
+        detail: "Ready",
+        jobIds: ["job"],
+        createdAt: at,
+        updatedAt: at,
+      },
+    });
+    expect(withPersonAnswerSources(card, details).answers[0]?.source).toBe(
+      "the filled application form",
+    );
+  },
+);

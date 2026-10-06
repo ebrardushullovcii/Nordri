@@ -33,6 +33,7 @@ import {
 } from "@nordri/browser-runtime";
 import {
   buildApplyLetterDependencies,
+  mergeApplyReviewCards,
   createApplyFormPreparer,
   resolveApplySiteLabel,
 } from "./agent-application-preparation";
@@ -502,6 +503,87 @@ export function createWorkspaceApplicationMethods(
   ctx: WorkspaceServiceContext,
 ): WorkspaceApplicationMethods {
   const removedResumeJobIds = new Set<string>();
+  async function reviewCardForFreshPreparation(
+    applicationRecordId: string,
+    current: ApplicationReviewCard | null,
+  ): Promise<ApplicationReviewCard | null> {
+    if (!current) return null;
+    const results = await ctx.repository.listApplyJobResults({
+      applicationRecordId,
+    });
+    const previousResult = [...results]
+      .filter((result) => result.reviewCard !== null)
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
+    let previous = previousResult?.reviewCard ?? null;
+    // The earlier screen can credit a form value from its answer records.
+    // Carry that verified evidence too; the new run has different records.
+    const needsRecord = (answer: ApplicationReviewCard["answers"][number]) =>
+      (answer.source === "your answer to this question" ||
+        answer.source === "the filled application form") &&
+      (!answer.sourceId ||
+        answer.sourceId.startsWith("observed.") ||
+        answer.sourceId.startsWith("answerLibrary.application_"));
+    if (previousResult && previous?.answers.some(needsRecord)) {
+      const [questions, answers] = await Promise.all([
+        ctx.repository.listApplicationQuestionRecords({
+          applicationRecordId,
+          runId: previousResult.runId,
+        }),
+        ctx.repository.listApplicationAnswerRecords({
+          applicationRecordId,
+          runId: previousResult.runId,
+        }),
+      ]);
+      const selectedValues = (value: string): string[] => {
+        try {
+          const parsed: unknown = JSON.parse(value);
+          if (
+            Array.isArray(parsed) &&
+            parsed.every((entry) => typeof entry === "string")
+          )
+            return [...parsed].sort();
+        } catch {
+          /* Older answers used separators. */
+        }
+        return value
+          .split(/[\n,;]+/u)
+          .map((part) => part.trim())
+          .filter(Boolean)
+          .sort();
+      };
+      previous = {
+        ...previous,
+        answers: previous.answers.map((answer) => {
+          if (!needsRecord(answer)) return answer;
+          const question = questions.find(
+            (entry) => entry.prompt === answer.question,
+          );
+          const recorded = answers.find(
+            (entry) =>
+              entry.questionId === question?.id &&
+              entry.sourceKind === "user" &&
+              (entry.text === answer.answer ||
+                (question?.answerControlType === "multi_choice" &&
+                  JSON.stringify(selectedValues(entry.text)) ===
+                    JSON.stringify(selectedValues(answer.answer)))) &&
+              (entry.status === "filled" ||
+                (entry.id === question?.selectedAnswerId &&
+                  entry.status !== "rejected" &&
+                  entry.status !== "skipped")),
+          );
+          return recorded
+            ? {
+                ...answer,
+                source: "your answer to this question",
+                sourceId: `applicationAnswer.${recorded.id}`,
+              }
+            : answer;
+        }),
+      };
+    }
+    return mergeApplyReviewCards(previous, current, { freshPreparation: true });
+  }
+
   /**
    * Shortlisting is the moment the job's body starts to matter: the tailored
    * resume is written toward it and the fit score gates "Prepare". If the
@@ -2600,7 +2682,10 @@ export function createWorkspaceApplicationMethods(
             id: jobResult?.id ?? runArtifacts.result.id,
             runId: run.id,
             jobId,
-            reviewCard: preparedReviewCardRun,
+            reviewCard: await reviewCardForFreshPreparation(
+              exactApplicationRecordId,
+              preparedReviewCardRun,
+            ),
             agentTiming: normalizedExecutionResult.agentTiming,
             queuePosition: index,
             state: mapExecutionResultToApplyJobState({
@@ -6808,7 +6893,10 @@ export function createWorkspaceApplicationMethods(
           fallbackUrl: job.applicationUrl ?? job.canonicalUrl,
         });
         const runArtifacts = buildApplyCopilotArtifacts({
-          reviewCard: preparedReviewCardApproved,
+          reviewCard: await reviewCardForFreshPreparation(
+            selectedApplicationRecord.id,
+            preparedReviewCardApproved,
+          ),
           existingAnswerRecords:
             await ctx.repository.listApplicationAnswerRecords({
               applicationRecordId: selectedApplicationRecord.id,
@@ -7492,7 +7580,10 @@ export function createWorkspaceApplicationMethods(
           detectedAt,
           runId: claim.runId,
           resultId: claim.resultId,
-          reviewCard: preparedReviewCardDirect,
+          reviewCard: await reviewCardForFreshPreparation(
+            selectedApplicationRecord.id,
+            preparedReviewCardDirect,
+          ),
           visualCheckpointsEnabled: options?.visualCheckpointsEnabled === true,
         });
         const persistedRun = ApplyRunSchema.parse({

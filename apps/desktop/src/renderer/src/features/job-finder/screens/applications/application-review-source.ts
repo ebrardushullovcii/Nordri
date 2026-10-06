@@ -30,6 +30,15 @@ export function withPersonAnswerSources(
         answer.source !== "your answer to this question"
       )
         return answer;
+      // Saved profile answers count without a question record. Application
+      // answers still need the person's selected/filled record, or evidence
+      // checked against that record before a fresh preparation retained it.
+      if (
+        (answer.sourceId?.startsWith("answerLibrary.") &&
+          !answer.sourceId.startsWith("answerLibrary.application_")) ||
+        answer.sourceId?.startsWith("applicationAnswer.")
+      )
+        return answer;
       const question = details.questionRecords.find(
         (entry) => entry.prompt === answer.question,
       );

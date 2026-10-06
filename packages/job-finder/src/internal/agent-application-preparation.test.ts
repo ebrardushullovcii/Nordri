@@ -747,6 +747,7 @@ describe("the review card shown before you press send", () => {
     expect(card.answers[0]).toMatchObject({
       question: "Email",
       source: "your email address",
+      sourceId: "profile.email",
       written: false,
     });
     expect(card.answers[1]?.written).toBe(true);
@@ -1974,5 +1975,184 @@ test.each(["file", "text"] as const)(
         approved,
       );
     else expect(fill).toHaveBeenCalledWith("c0", approved);
+  },
+);
+
+test("fresh preparations keep unchanged sources without reviving removed answers", () => {
+  const labels = [
+    "Full name",
+    "Email",
+    "Phone",
+    "Portfolio URL",
+    "Why this role?",
+  ];
+  const sources = [
+    "your name",
+    "your email address",
+    "your phone number",
+    "your portfolio",
+    "your answer to this question",
+  ];
+  const values = [
+    "Alex Example",
+    "alex@example.test",
+    "+44123456789",
+    "https://example.test/portfolio",
+    "I build dependable platforms.",
+  ];
+  const previous = ApplicationReviewCardSchema.parse({
+    siteLabel: "Example",
+    pageUrl: PAGE_URL,
+    preparedAt: "2026-10-06T10:00:00.000Z",
+    answers: labels.map((question, i) => ({
+      question,
+      fieldKey: `${PAGE_URL}|Application|c${i}|${question}`,
+      answer: values[i],
+      source: sources[i],
+      written: false,
+    })),
+  });
+  let current = ApplicationReviewCardSchema.parse({
+    ...previous,
+    preparedAt: "2026-10-06T10:01:00.000Z",
+    answers: previous.answers.map((answer, i) => ({
+      ...answer,
+      fieldKey: `${PAGE_URL}|Application|c${i + 10}|${answer.question}`,
+      source: "the filled application form",
+    })),
+  });
+  for (let run = 0; run < 3; run += 1) {
+    current = mergeApplyReviewCards(
+      run === 0 ? previous : current,
+      {
+        ...current,
+        answers: current.answers.map((answer) => ({
+          ...answer,
+          source: "the filled application form",
+        })),
+      },
+      { freshPreparation: true },
+    )!;
+    expect(current.answers.map((answer) => answer.source)).toEqual(sources);
+  }
+  const changed = mergeApplyReviewCards(
+    current,
+    {
+      ...current,
+      answers: current.answers.slice(0, 4).map((answer, i) => ({
+        ...answer,
+        answer: i === 1 ? "changed@example.test" : answer.answer,
+        source: "the filled application form",
+      })),
+    },
+    { freshPreparation: true },
+  )!;
+  expect(changed.answers).toHaveLength(4);
+  expect(changed.answers[1]?.source).toBe("the filled application form");
+  expect(
+    changed.answers.some((answer) => answer.question === "Why this role?"),
+  ).toBe(false);
+  expect(
+    mergeApplyReviewCards(previous, null, { freshPreparation: true }),
+  ).toBeNull();
+});
+
+test.each([false, true])(
+  "a saved declaration reaches the card with the correct evidence (Settings on: %s)",
+  async (settingOn) => {
+    const facts = executionInput();
+    const prompt = "I consent to a background check";
+    facts.settings.aiBehavior = AiBehaviorPreferenceSchema.parse({
+      applying: {
+        preApprovedDeclarations: settingOn ? ["background_check_consent"] : [],
+      },
+    });
+    facts.profile.answerBank.customAnswers = [
+      {
+        id: "saved_declaration",
+        kind: "other",
+        label: prompt,
+        question: prompt,
+        answer: "Yes",
+        roleFamilies: [],
+        proofEntryIds: [],
+      },
+    ];
+    const page = rawPage("Application");
+    page.controls[0] = {
+      ...page.controls[0]!,
+      inputType: "checkbox",
+      label: prompt,
+      id: "declaration",
+      name: "declaration",
+    };
+    let turns = 0;
+    let card: ReturnType<typeof buildApplyReviewCard> | null = null;
+    const result = await runAgentApplicationPreparation({
+      executionInput: facts,
+      siteLabel: "Example",
+      startedAt: "2026-10-06T10:00:00.000Z",
+      session: {
+        ...session(),
+        readPage: () => Promise.resolve(page),
+        setToggle: (_ref, checked) => {
+          page.controls[0]!.checked = checked;
+          return Promise.resolve({
+            ok: true,
+            observedValue: checked ? "Yes" : "No",
+          });
+        },
+      },
+      onPrepared: (prepared) => {
+        card = prepared.reviewCard;
+      },
+      llmClient: {
+        chatWithTools: (_messages, tools) => {
+          const classification =
+            tools[0]?.function.name === "report_question_kinds";
+          const name = classification
+            ? "report_question_kinds"
+            : ++turns === 1
+              ? "set_checkbox"
+              : "finish";
+          const args = classification
+            ? {
+                questions: [
+                  {
+                    index: 0,
+                    asksAboutPay: false,
+                    declarationKind: "background_check_consent",
+                  },
+                ],
+              }
+            : turns === 1
+              ? { ref: "c0", checked: true }
+              : { reason: "Done." };
+          return Promise.resolve({
+            toolCalls: [
+              {
+                id: name,
+                type: "function",
+                function: { name, arguments: JSON.stringify(args) },
+              },
+            ],
+          });
+        },
+      },
+    });
+    expect(result.state).toBe("ready");
+    expect(card).toMatchObject({
+      answers: [
+        expect.objectContaining({
+          answer: "Yes",
+          source: settingOn
+            ? "your Settings (on by default)"
+            : "your answer to this question",
+          sourceId: settingOn
+            ? "authority.attestation.background_check_consent"
+            : "answerLibrary.saved_declaration",
+        }),
+      ],
+    });
   },
 );

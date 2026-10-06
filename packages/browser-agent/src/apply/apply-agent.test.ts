@@ -4463,8 +4463,9 @@ test.each(["upload", "create_application_document"])(
     });
     expect(question?.note).toContain("Your available hours differ");
     expect(question?.note).toContain(
-      "your answer will be attached as that file",
+      "The form wants a letter file. Your answer will be attached as that file.",
     );
+    expect(question?.note).not.toContain("Review the wording here");
     expect(result.attachments).toEqual([]);
   },
 );

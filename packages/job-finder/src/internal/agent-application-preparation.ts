@@ -1127,6 +1127,7 @@ export function buildApplyReviewCard(input: {
         question: clamp(entry.label, 2_000),
         answer: clamp(entry.answer.value, 12_000),
         source: clamp(entry.answer.provenanceLabel, 240),
+        sourceId: entry.answer.sourceId,
         written: entry.answer.sourceKind === "generated",
         groundedIn: clampGrounding(entry.answer.groundedIn),
       })),
@@ -1183,8 +1184,9 @@ export function buildApplyReviewCard(input: {
 export function mergeApplyReviewCards(
   previous: ApplicationReviewCard | null,
   current: ApplicationReviewCard | null,
+  options: { freshPreparation?: boolean } = {},
 ): ApplicationReviewCard | null {
-  if (!current) return previous;
+  if (!current) return options.freshPreparation ? null : previous;
   if (!previous) return current;
   const answerPeers = (card: ApplicationReviewCard) =>
     card.answers.map((entry) => ({ ...entry, label: entry.question }));
@@ -1216,7 +1218,9 @@ export function mergeApplyReviewCards(
         }
       : answer;
   });
-  const earlierAnswers = previous.answers.filter((answer) =>
+  const earlierAnswers = (
+    options.freshPreparation ? [] : previous.answers
+  ).filter((answer) =>
     answer.fieldKey
       ? !current.observedFieldKeys?.some(
           (key) =>
@@ -1231,7 +1235,9 @@ export function mergeApplyReviewCards(
         )
       : !answers.some((entry) => entry.question === answer.question),
   );
-  const earlierAttachments = previous.attachments.filter((attachment) =>
+  const earlierAttachments = (
+    options.freshPreparation ? [] : previous.attachments
+  ).filter((attachment) =>
     attachment.fieldKey
       ? !current.observedFieldKeys?.some(
           (key) =>
@@ -1292,6 +1298,8 @@ export function mergeApplyReviewCards(
             candidate.fileName === entry.fileName,
         ) === index,
     ),
-    letter: current.letter ?? previous.letter,
+    letter: options.freshPreparation
+      ? current.letter
+      : (current.letter ?? previous.letter),
   });
 }

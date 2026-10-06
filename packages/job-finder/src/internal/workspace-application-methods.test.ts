@@ -4,7 +4,14 @@ import {
   type JobFinderRepositorySeed,
 } from "@nordri/db";
 import { describe, expect, test, vi } from "vitest";
-import { CandidateAssetSchema } from "@nordri/contracts";
+import {
+  CandidateAssetSchema,
+  ApplicationReviewCardSchema,
+  ApplyExecutionResultSchema,
+  ApplicationQuestionRecordSchema,
+  ApplicationAnswerRecordSchema,
+} from "@nordri/contracts";
+import * as preparation from "./agent-application-preparation";
 
 import { createJobFinderWorkspaceService } from "../workspace-service";
 import { createSeed } from "../workspace-service.test-fixtures";
@@ -536,3 +543,196 @@ describe("apply prerequisites resolve the resume path the verifier actually read
     ).toMatchObject({ state: "blocked", blockerReason: "resume_missing" });
   });
 });
+
+test.each(["direct", "approved", "queue"] as const)(
+  "%s preparation keeps unchanged answer sources in the persisted card",
+  async (path) => {
+    const seed = createSeed();
+    stageApprovedTailoredExport(seed, RECOVERED_EXPORT_PATH, EXPORT_SHA256);
+    const ready = ApplyExecutionResultSchema.parse({
+      state: "ready",
+      summary: "Prepared",
+      detail: "Nothing sent",
+      submittedAt: null,
+      outcome: null,
+      nextActionLabel: "Review",
+    });
+    const labels = [
+      "Full name",
+      "Email",
+      "Phone",
+      "Portfolio URL",
+      path === "queue" ? "Work areas" : "Why this role?",
+    ];
+    const sources = [
+      "your name",
+      "your email address",
+      "your phone number",
+      "your portfolio",
+      "your answer to this question",
+    ];
+    const ids = [
+      "profile.name",
+      "profile.email",
+      "profile.phone",
+      "profile.portfolio",
+      "answerLibrary.application_answer",
+    ];
+    const values = [
+      "Alex Example",
+      "alex@example.test",
+      "+44123456789",
+      "https://example.test/portfolio",
+      path === "queue" ? "Finance; Reporting" : "I build dependable platforms.",
+    ];
+    let preparations = 0;
+    const preparer = vi
+      .spyOn(preparation, "createApplyFormPreparer")
+      .mockImplementation((input) => {
+        preparations += 1;
+        const card = ApplicationReviewCardSchema.parse({
+          siteLabel: "Example",
+          pageUrl: "https://example.test/apply",
+          preparedAt: new Date().toISOString(),
+          answers: labels
+            .slice(0, preparations === 4 ? 4 : 5)
+            .map((question, index) => ({
+              question,
+              fieldKey: `https://example.test/apply|Application|c${index + preparations * 10}|${question}`,
+              answer:
+                preparations === 4 && index === 1
+                  ? "changed@example.test"
+                  : values[index],
+              source:
+                preparations === 1 && index !== 4
+                  ? sources[index]
+                  : "the filled application form",
+              ...(index === 4 && preparations === 1
+                ? {}
+                : {
+                    sourceId:
+                      preparations === 1 ? ids[index] : `observed.c${index}`,
+                  }),
+              written: false,
+            })),
+        });
+        input.onPrepared?.({
+          reviewCard: card,
+          handoff: { status: "not_ready", reason: "Nothing sent" },
+          result: {
+            outcome: "prepared",
+            reason: "Prepared",
+            steps: 1,
+            finalUrl: card.pageUrl,
+            filled: [],
+            attachments: [],
+            pauses: [],
+            notes: [],
+            timeline: [],
+            modelTurns: 1,
+            readyToSend: null,
+          },
+        });
+        return () => Promise.resolve(ready);
+      });
+    const base = createBrowserRuntime();
+    const repository = createInMemoryJobFinderRepository(seed);
+    const service = createJobFinderWorkspaceService({
+      repository,
+      aiClient: createAiClient(),
+      documentManager: createDocumentManager(),
+      researchAdapter: createResearchAdapter(),
+      exportFileVerifier: createRecoveringExportFileVerifier(
+        new Map([[RECOVERED_EXPORT_PATH, EXPORT_SHA256]]),
+      ),
+      browserRuntime: {
+        ...base,
+        executeApplicationFlow: () => Promise.resolve(ready),
+      },
+    });
+    try {
+      let applicationRecordId: string | null = null;
+      for (let run = 0; run < 4; run += 1) {
+        const snapshot: Awaited<
+          ReturnType<typeof service.startApplyCopilotRun>
+        > =
+          path === "direct"
+            ? await service.startApplyCopilotRun(
+                "job_ready",
+                undefined,
+                applicationRecordId,
+              )
+            : path === "approved"
+              ? await service.approveApply("job_ready", applicationRecordId)
+              : await (async () => {
+                  const staged = await service.startAutoApplyRun(
+                    "job_ready",
+                    applicationRecordId,
+                  );
+                  const pending = staged.applyRuns.find(
+                    (entry) => entry.state === "awaiting_submit_approval",
+                  );
+                  if (!pending) throw new Error("Expected staged run");
+                  return service.approveApplyRun(pending.id);
+                })();
+        const newest: (typeof snapshot.applyJobResults)[number] | undefined = [
+          ...snapshot.applyJobResults,
+        ].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
+        applicationRecordId = newest?.applicationRecordId ?? null;
+        expect(applicationRecordId).not.toBeNull();
+        const card = newest?.reviewCard;
+        expect(card?.answers).toHaveLength(run === 3 ? 4 : 5);
+        expect(card?.answers.map((answer) => answer.source)).toEqual(
+          run === 3
+            ? [
+                sources[0],
+                "the filled application form",
+                ...sources.slice(2, 4),
+              ]
+            : run === 0
+              ? [...sources.slice(0, 4), "the filled application form"]
+              : sources,
+        );
+        if (run > 0 && run !== 3)
+          expect(card?.answers[4]?.sourceId).toBe(
+            "applicationAnswer.approved_answer",
+          );
+        if (run === 0 && newest && applicationRecordId) {
+          const at = new Date().toISOString();
+          await repository.upsertApplicationQuestionRecord(
+            ApplicationQuestionRecordSchema.parse({
+              id: "approved_question",
+              runId: newest.runId,
+              jobId: "job_ready",
+              applicationRecordId,
+              resultId: newest.id,
+              prompt: labels[4],
+              answerControlType: path === "queue" ? "multi_choice" : "text",
+              detectedAt: at,
+              selectedAnswerId: "approved_answer",
+            }),
+          );
+          await repository.upsertApplicationAnswerRecord(
+            ApplicationAnswerRecordSchema.parse({
+              id: "approved_answer",
+              runId: newest.runId,
+              jobId: "job_ready",
+              applicationRecordId,
+              resultId: newest.id,
+              questionId: "approved_question",
+              text:
+                path === "queue"
+                  ? JSON.stringify(["Reporting", "Finance"])
+                  : values[4],
+              sourceKind: "user",
+              status: "suggested",
+              createdAt: at,
+            }),
+          );
+        }
+      }
+    } finally {
+      preparer.mockRestore();
+    }
+  },
+);
