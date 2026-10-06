@@ -31,6 +31,7 @@ import {
   applicationSiteKey,
   type ExecuteApplicationFlowInput,
 } from "@nordri/browser-runtime";
+import { creditOwnApplicationAnswers } from "./review-card-own-answers";
 import {
   buildApplyLetterDependencies,
   mergeApplyReviewCards,
@@ -581,7 +582,15 @@ export function createWorkspaceApplicationMethods(
         }),
       };
     }
-    return mergeApplyReviewCards(previous, current, { freshPreparation: true });
+    const [ownQuestions, ownAnswers] = await Promise.all([
+      ctx.repository.listApplicationQuestionRecords({ applicationRecordId }),
+      ctx.repository.listApplicationAnswerRecords({ applicationRecordId }),
+    ]);
+    return creditOwnApplicationAnswers(
+      mergeApplyReviewCards(previous, current, { freshPreparation: true }),
+      ownQuestions,
+      ownAnswers,
+    );
   }
 
   /**

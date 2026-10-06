@@ -1,5 +1,6 @@
 import { releaseFinishedApplicationPages } from "./application-page-lifecycle";
 import { mergeApplyReviewCards } from "./agent-application-preparation";
+import { creditOwnApplicationAnswers } from "./review-card-own-answers";
 import type { ExecuteApplicationFlowInput } from "@nordri/browser-runtime";
 import {
   completeTaskLocalSignIn,
@@ -1611,7 +1612,15 @@ export function createApplicationUserActionResumer(
       runId: run.id,
       resultId: result.id,
       visualCheckpointsEnabled: run.visualCheckpointsEnabled,
-      reviewCard: mergeApplyReviewCards(result.reviewCard, preparedReviewCard),
+      reviewCard: creditOwnApplicationAnswers(
+        mergeApplyReviewCards(result.reviewCard, preparedReviewCard),
+        await ctx.repository.listApplicationQuestionRecords({
+          applicationRecordId: scope.applicationRecordId,
+        }),
+        await ctx.repository.listApplicationAnswerRecords({
+          applicationRecordId: scope.applicationRecordId,
+        }),
+      ),
     });
     const existingQuestionIds = new Set(
       questionRecords.map((record) => record.id),
